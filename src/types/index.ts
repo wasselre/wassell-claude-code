@@ -207,6 +207,13 @@ export interface AppModel {
   schema: ModelSchema;
   card_config: CardConfig;
   group_id?: string | null;
+  /**
+   * Sidebar display order within the model's group (or within the
+   * ungrouped section if `group_id` is null). Lower = higher in the list.
+   * Optional for backward compatibility; init assigns a value to any model
+   * that lacks one.
+   */
+  order?: number;
   is_system: boolean;
   created_at: string;
   updated_at: string;
@@ -821,6 +828,14 @@ export interface AppState {
   // Groups
   saveGroup: (group: ModelGroup) => void;
   deleteGroup: (groupId: string) => void;
+
+  /**
+   * Reorder the sidebar menu in one atomic commit. The `models` and `groups`
+   * arrays must be the full desired next state — the position of each item
+   * in its array becomes its new `order`. Use this from the Menu Arrangement
+   * settings page; individual save actions are better for single edits.
+   */
+  reorderMenu: (models: AppModel[], groups: ModelGroup[]) => void;
 
   // Records
   getRecords: (modelId: string) => AppRecord[];

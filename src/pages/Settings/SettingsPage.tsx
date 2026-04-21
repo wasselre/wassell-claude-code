@@ -5,7 +5,7 @@ import { useIsAdmin } from '@/hooks/usePermission';
 import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
-  Settings, ScrollText,
+  Settings, ScrollText, ListOrdered,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -30,6 +30,17 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/builder',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'ترتيب القائمة',
+    titleEn: 'Menu Arrangement',
+    descAr: 'ترتيب المجموعات والنماذج في القائمة الجانبية',
+    descEn: 'Reorder groups and models in the sidebar',
+    icon: ListOrdered,
+    color: '#C09B5F',
+    bg: '#C09B5F14',
+    route: '/settings/menu',
     adminOnly: true,
   },
   {

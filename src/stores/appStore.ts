@@ -845,6 +845,76 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  // Reorder the sidebar menu in one atomic commit. Accepts the full new
+  // shape of `models` and `groups` — callers pass arrays whose position
+  // reflects the desired order, and this action:
+  //   • Assigns `order` to each model and group based on its index.
+  //   • Persists each changed row to Supabase (FK-aware: models upsert
+  //     waits for their group if that group is also being written).
+  //   • Commits everything to local state + localStorage in one set().
+  // Idempotent: rows whose order + group_id haven't changed aren't rewritten.
+  reorderMenu: (nextModels: AppModel[], nextGroups: ModelGroup[]) => {
+    set((s) => {
+      const now = new Date().toISOString();
+      // Determine which groups changed order.
+      const changedGroups: ModelGroup[] = [];
+      const finalGroups: ModelGroup[] = nextGroups.map((g, i) => {
+        const prev = s.groups.find((x) => x.id === g.id);
+        const updated: ModelGroup = { ...g, order: i };
+        if (!prev || prev.order !== i || prev.label_ar !== g.label_ar || prev.label_en !== g.label_en) {
+          changedGroups.push(updated);
+        }
+        return updated;
+      });
+
+      // Determine which models changed order or group.
+      // Models are grouped by their new group_id; index within each group = order.
+      const orderByModelId = new Map<string, number>();
+      const groupBuckets = new Map<string | null, AppModel[]>();
+      for (const m of nextModels) {
+        const key = m.group_id ?? null;
+        if (!groupBuckets.has(key)) groupBuckets.set(key, []);
+        groupBuckets.get(key)!.push(m);
+      }
+      for (const [, bucket] of groupBuckets) {
+        bucket.forEach((m, i) => orderByModelId.set(m.id, i));
+      }
+
+      const changedModels: AppModel[] = [];
+      const finalModels: AppModel[] = nextModels.map((m) => {
+        const newOrder = orderByModelId.get(m.id) ?? 0;
+        const prev = s.models.find((x) => x.id === m.id);
+        const nextModel: AppModel = {
+          ...m,
+          order: newOrder,
+          updated_at: now,
+        };
+        if (!prev || prev.order !== newOrder || (prev.group_id ?? null) !== (nextModel.group_id ?? null)) {
+          changedModels.push(nextModel);
+        }
+        return nextModel;
+      });
+
+      // Persist locally.
+      saveLocal('wassell_groups', finalGroups);
+      saveLocal('wassell_models', finalModels);
+
+      // Persist to Supabase — groups first so model upserts see their parents.
+      for (const g of changedGroups) {
+        supabaseUpsert('model_groups', g as unknown as Record<string, unknown>);
+      }
+      for (const m of changedModels) {
+        supabaseUpsert(
+          'models',
+          m as unknown as Record<string, unknown>,
+          m.group_id ? { table: 'model_groups', id: m.group_id } : undefined,
+        );
+      }
+
+      return { models: finalModels, groups: finalGroups };
+    });
+  },
+
   // --- Records ---
   getRecords: (modelId: string) => {
     return get().records[modelId] ?? [];

@@ -87,11 +87,32 @@ export default function Sidebar() {
   // currentUserId is null (pre-init fallback) so nothing flickers.
   const canView = (modelId: string) => hasPermission(currentUserId, users, profiles, modelId, 'view');
 
-  const ungroupedModels = models.filter((m) => !m.group_id && canView(m.id));
+  // Helpers to sort by the optional `order` field, with a stable fallback
+  // to the array position for records that haven't been assigned an order yet.
+  const byModelOrder = (a: typeof models[number], b: typeof models[number]) => {
+    const ao = typeof a.order === 'number' ? a.order : models.indexOf(a);
+    const bo = typeof b.order === 'number' ? b.order : models.indexOf(b);
+    return ao - bo;
+  };
+  const byGroupOrder = (a: typeof groups[number], b: typeof groups[number]) => {
+    const ao = typeof a.order === 'number' ? a.order : groups.indexOf(a);
+    const bo = typeof b.order === 'number' ? b.order : groups.indexOf(b);
+    return ao - bo;
+  };
+
+  const ungroupedModels = models
+    .filter((m) => !m.group_id && canView(m.id))
+    .slice()
+    .sort(byModelOrder);
   const groupedModels = groups
+    .slice()
+    .sort(byGroupOrder)
     .map((g) => ({
       group: g,
-      models: models.filter((m) => m.group_id === g.id && canView(m.id)),
+      models: models
+        .filter((m) => m.group_id === g.id && canView(m.id))
+        .slice()
+        .sort(byModelOrder),
     }))
     .filter((g) => g.models.length > 0);
 
