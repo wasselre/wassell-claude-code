@@ -104,16 +104,41 @@ export const useAppStore = create<AppState>((set, get) => ({
   initialize: async () => {
     if (get().initialized) return;
 
-    // Load models. Three cascading sources: Supabase → localStorage → SEED.
-    // After loading, backfill any system models that are missing from Supabase
-    // (matched by `name`, which is UNIQUE in the schema). This handles three
-    // real-world states for a fresh production deploy:
-    //   • Supabase empty → load SEED, write all 9 to Supabase.
-    //   • Supabase has a partial set (e.g. only 1 of 9 saved) → load what's
-    //     there plus the missing seeds, write the missing ones to Supabase.
-    //   • Supabase fully populated → load from Supabase, no writes.
-    // Without this backfill step the first production deploy stays empty in
-    // Supabase forever because nothing writes the seeds there.
+    // ORDER MATTERS: groups must be persisted to Supabase BEFORE models,
+    // because `models.group_id` is a foreign key to `model_groups.id`. If we
+    // upsert models first, Postgres rejects them with a FK violation that our
+    // silent-fail error handler swallows — leaving some models missing from
+    // Supabase while others (those without a group_id) slip through.
+
+    // --- Groups ---
+    // Load groups with cascading fallback: Supabase → localStorage → SEED.
+    const supabaseGroups = await supabaseLoad<ModelGroup>('model_groups');
+    let groups: ModelGroup[];
+    if (supabaseGroups && supabaseGroups.length > 0) {
+      groups = supabaseGroups;
+    } else {
+      const localGroups = loadLocal<ModelGroup[]>('wassell_groups');
+      groups = localGroups && localGroups.length > 0 ? localGroups : SEED_GROUPS;
+    }
+    saveLocal('wassell_groups', groups);
+    // Backfill any missing groups, and AWAIT — models depend on these existing
+    // in Supabase before their FK-bearing rows can land.
+    if (supabaseGroups !== null) {
+      const existingGroupIds = new Set(supabaseGroups.map((g) => g.id));
+      const missingGroups = groups.filter((g) => !existingGroupIds.has(g.id));
+      if (missingGroups.length > 0) {
+        await Promise.all(
+          missingGroups.map((g) =>
+            supabaseUpsert('model_groups', g as unknown as Record<string, unknown>),
+          ),
+        );
+      }
+    }
+
+    // --- Models ---
+    // Three cascading sources: Supabase → localStorage → SEED. After loading,
+    // backfill any system models missing from Supabase (matched by `name`,
+    // which is UNIQUE in the schema) so subsequent loads see the full set.
     const supabaseModels = await supabaseLoad<AppModel>('models');
     let models: AppModel[];
     if (supabaseModels && supabaseModels.length > 0) {
@@ -122,9 +147,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       const localModels = loadLocal<AppModel[]>('wassell_models');
       models = localModels && localModels.length > 0 ? localModels : SEED_MODELS;
     }
-    // Add any system seed models that Supabase is missing (dedupe by name —
-    // `name` is UNIQUE in the schema, so matching by name avoids creating
-    // duplicate "clients" rows with different UUIDs).
     if (supabaseModels !== null) {
       const existingNames = new Set(supabaseModels.map((m) => m.name));
       const missing = SEED_MODELS.filter((m) => !existingNames.has(m.name));
@@ -134,29 +156,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         const currentNames = new Set(models.map((m) => m.name));
         const toAdd = missing.filter((m) => !currentNames.has(m.name));
         models = [...models, ...toAdd];
-        for (const m of missing) {
-          supabaseUpsert('models', m as unknown as Record<string, unknown>);
-        }
+        // Await the upserts — if the user navigates or reloads immediately, we
+        // want the writes to land. Groups already exist (above), so no FK trap.
+        await Promise.all(
+          missing.map((m) =>
+            supabaseUpsert('models', m as unknown as Record<string, unknown>),
+          ),
+        );
       }
     }
     saveLocal('wassell_models', models);
-
-    // Load groups — same cascading + backfill pattern as models.
-    const supabaseGroups = await supabaseLoad<ModelGroup>('model_groups');
-    const supabaseHasGroups = supabaseGroups !== null && supabaseGroups.length > 0;
-    let groups: ModelGroup[];
-    if (supabaseHasGroups) {
-      groups = supabaseGroups!;
-    } else {
-      const localGroups = loadLocal<ModelGroup[]>('wassell_groups');
-      groups = localGroups && localGroups.length > 0 ? localGroups : SEED_GROUPS;
-    }
-    saveLocal('wassell_groups', groups);
-    if (!supabaseHasGroups) {
-      for (const g of groups) {
-        supabaseUpsert('model_groups', g as unknown as Record<string, unknown>);
-      }
-    }
 
     // Load records
     const records: Record<string, AppRecord[]> = {};
