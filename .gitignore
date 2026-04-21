@@ -53,6 +53,11 @@ Thumbs.db
 Wassel Branding/
 Wassel\ Branding/
 
+# Unrelated side project that happens to live in this folder — NOT part of Wassell.
+# It's a separate Supabase Edge Function (haberchat-webhook / WhatsApp bot). Keep
+# it out of the Wassell repo so the two projects don't get tangled.
+supabase/functions/
+
 # TypeScript build info
 *.tsbuildinfo
 
