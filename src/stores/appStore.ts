@@ -24,6 +24,7 @@ import type {
   Language,
   ToastType,
   FieldTemplate,
+  ModelPermission,
   StoreMutationResult,
 } from '@/types';
 
@@ -564,6 +565,50 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveLocal('wassell_models', models);
     const flatRecords = Object.values(migratedRecords).flat();
     saveLocal('wassell_records', flatRecords);
+
+    // --- Admin profile normalization ---
+    // Every profile flagged `is_admin: true` should have ALL permissions for
+    // EVERY current model. When models are added (seed backfill with fresh
+    // UUIDs from a different session, user creating a new model in the
+    // Builder, etc.) the admin profile's stored `model_permissions` array
+    // drifts out of sync. The runtime check in `permissions.ts` already
+    // bypasses the array for `is_admin` — this step keeps the stored array
+    // matching reality so the Profiles UI shows every checkbox ticked.
+    const ADMIN_ALL_PERMS: ModelPermission[] = ['view', 'create', 'edit', 'delete', 'import', 'export'];
+    const currentModelIds = new Set(models.map((m) => m.id));
+    const upsertedAdminProfiles: Profile[] = [];
+    profiles = profiles.map((p) => {
+      if (!p.is_admin) return p;
+      // Desired state: exactly one entry per current model, all perms. Drop
+      // stale entries (pointing at models that no longer exist), refresh
+      // entries that are missing a perm, and add entries for new models.
+      const kept = p.model_permissions.filter((mp) => currentModelIds.has(mp.model_id));
+      const refreshedKept = kept.map((mp) =>
+        ADMIN_ALL_PERMS.every((perm) => mp.permissions.includes(perm))
+          ? mp
+          : { ...mp, permissions: [...ADMIN_ALL_PERMS] },
+      );
+      const keptIds = new Set(refreshedKept.map((mp) => mp.model_id));
+      const added = models
+        .filter((m) => !keptIds.has(m.id))
+        .map((m) => ({ model_id: m.id, permissions: [...ADMIN_ALL_PERMS] }));
+      const next = [...refreshedKept, ...added];
+      // Any real change? If not, keep the same reference — no upsert needed.
+      const changed =
+        added.length > 0 ||
+        kept.length !== p.model_permissions.length ||
+        refreshedKept.some((mp, i) => mp !== kept[i]);
+      if (!changed) return p;
+      const updated: Profile = { ...p, model_permissions: next, updated_at: new Date().toISOString() };
+      upsertedAdminProfiles.push(updated);
+      return updated;
+    });
+    if (upsertedAdminProfiles.length > 0) {
+      saveLocal('wassell_profiles', profiles);
+      for (const p of upsertedAdminProfiles) {
+        supabaseUpsert('profiles', p as unknown as Record<string, unknown>);
+      }
+    }
 
     set({
       models,
