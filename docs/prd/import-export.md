@@ -1,0 +1,54 @@
+# PRD: Import / Export (Excel + PDF)
+
+**Status:** Live
+**Last updated:** 2026-04-19 (import now surfaces near-duplicate rows in a Review step — user decides per-row whether to Add or Skip each similar record; duplicate-check field per model skips exact matches; range fields now import from two source columns — one each for min and max — via `slug.min` / `slug.max` mapping targets)
+**Related PRDs:** record-management.md, model-builder.md
+
+## What it is (in plain English)
+Users can bring data into the CRM from spreadsheets and take data out of it — either as a spreadsheet or as a formatted Arabic PDF. Excel import/export works on any model. PDF generation is specialized: the `projects_research` model has a dedicated research PDF template that produces a professional RTL document with property details.
+
+## Why it exists
+Most teams already have data in Excel. Forcing manual re-entry is a non-starter. And real-estate research often needs to be shared as a clean PDF with external partners — so we ship both directions.
+
+## Key behaviors
+- **Excel import** (`.xlsx`) — user uploads a file → preview shows detected columns → user maps each spreadsheet column to a field in the target model → preview rendered rows → confirm → records are created in bulk.
+- **Duplicate check on import (new 2026-04-19):** each model has an optional **Duplicate Check Field** configured in the Model Builder (top of the Fields & Sections tab). When set, the import compares each incoming row's value for that field against existing records on the same model — case-insensitive, whitespace-trimmed string compare that also works for numbers and resolved lookup ids. Matching rows are skipped rather than inserted. The check also dedupes within a single file — if the same key appears twice in the uploaded spreadsheet, only the first row is imported. A banner on the mapping step names the active duplicate-check field so users aren't surprised; the success toast reports both imported and skipped counts. Rows that didn't map this field at all pass through unchecked. Eligible field types: `text`, `number`, `email`, `phone`, `currency`, `url`, `date`, `datetime`, `dropdown`, `lookup`, `auto_id` — structural, derived, UI-only, and multi-value types are excluded from the picker.
+- **Near-duplicate review step (new 2026-04-19):** when a Duplicate Check Field is set, the import also flags rows that are *similar but not identical* to existing records — e.g. a phone number with one digit off, a name with a typo, an email with a different domain-half but same local-part. Rows that pass exact-duplicate check but match an existing record above a type-specific similarity threshold surface in a **Review** step between Mapping and Done. The UI shows each pair side-by-side — Incoming vs Existing, with a similarity percentage (e.g. `89% match`) — and lets the user choose **Add** (import as a new record anyway) or **Skip** (discard) per row. Bulk **Add all** / **Skip all** actions are also available. Default decision is Skip (conservative). Truly-new rows (no close match) and exact duplicates (auto-skipped) bypass review and are noted in the review step's header. Confirm button title reflects the live import count including review decisions. Similarity strategies by field type:
+  - `phone` — digits-only normalization (last 9 digits) + Levenshtein ratio ≥ 0.78
+  - `email` — same local-part OR Levenshtein ratio ≥ 0.9 on the full address
+  - `text` / `textarea` / `url` — Levenshtein ratio ≥ 0.85 on lowercased, whitespace-collapsed strings
+  - Everything else (`number`, `currency`, `date`, `datetime`, `auto_id`, `lookup`, `dropdown`, `checkbox`) — exact only, fuzzy matching intentionally skipped (a near-miss number or date is a *different* record, not a probable duplicate).
+  Logic lives in `src/lib/similarity.ts` (pure, framework-free); the review step lives in `ImportModal.tsx`.
+- **Lookup field resolution on import (new 2026-04-19):** when a mapped column targets a `lookup` field, the import matches the cell value against the target model's `lookup_display_field` (case-insensitive, whitespace-trimmed). If an existing record matches, its id is stored. If no match is found, a new record is auto-created in the target model with just the display field populated, and its id is stored. Repeated values within the same import dedupe to one auto-created record. Multi-select lookups (`is_multi: true`) split the cell on `,` or the Arabic comma `،` and resolve each part independently. A toast at the end reports both the imported row count and the number of auto-created linked records.
+- **Range fields split into two mapping targets (new 2026-04-19):** every `range` field appears in the mapping dropdown twice — once as `Label — Minimum` (maps to `slug.min`) and once as `Label — Maximum` (maps to `slug.max`). Each half consumes one source column and the two halves merge into a single `{ min, max }` value on the record. Mapping only one half is allowed — the other side stays empty. Auto-mapping recognizes common markers in header text (`min`/`max`/`minimum`/`maximum` in English, `أدنى`/`أعلى`/`من`/`إلى` in Arabic) and routes the column to the matching half; if the header matches a range field's label but has no marker, the column is left unmapped so the user picks explicitly. Non-numeric or empty cells for a half are silently skipped.
+- **Excel export** (`.xlsx`) — takes the current filtered record list (with whatever filters/search the user has applied) and downloads a file with one column per `show_in_table` field, AR or EN headers depending on current language.
+- **PDF generation (jsPDF)** — creates PDFs with Arabic-RTL support. A custom font is registered so Arabic glyphs render correctly.
+- **Research PDF template** — for the `projects_research` model, a single record can be exported as a formatted multi-section PDF: header with project name/location, property details, images (if any), pricing, and notes. Layout is designed for RTL reading order.
+- Import errors per row (e.g. invalid dropdown value, missing required field) are surfaced in the preview step before confirmation.
+- File size cap on imports is enforced client-side before parsing.
+
+## User flows
+1. **Import:** Record list → "Import" → upload `.xlsx` → column mapping UI → preview → "Import 42 records" → toast confirms success.
+2. **Export:** Record list → "Export" → `.xlsx` downloads immediately with current filtered rows.
+3. **Generate research PDF:** Open a research record → "Generate PDF" → PDF downloads with RTL-formatted sections.
+
+## Data touched
+- Reads: `records` (for export), `models.schema` (for mapping).
+- Writes: `records` (bulk insert on import).
+- Uses libraries: `xlsx` (Excel), `jsPDF` (PDF).
+
+## Key files
+| File | What it does |
+|---|---|
+| `src/pages/Records/components/ImportModal.tsx` | Import wizard (upload → map → review near-duplicates → confirm) |
+| `src/lib/similarity.ts` | Pure helpers for near-duplicate detection: `normalizeBasic`, `normalizePhone`, `similarityRatio`, `findBestSimilarMatch` |
+| `src/lib/excelUtils.ts` | Excel parse + write helpers |
+| `src/lib/pdfGenerator.ts` | PDF generation (Arabic RTL setup, font registration) |
+| `src/pages/Records/components/ResearchPDFTemplate.tsx` | Research PDF layout/content |
+
+## Open questions / known limitations
+- No CSV import/export (Excel only).
+- No Google Sheets integration.
+- Only the research model has a bespoke PDF template; other models fall back to a generic layout if a PDF is requested.
+- No background jobs — very large imports block the UI.
+- No mapping templates — the user has to re-map columns every time they import the same file shape.

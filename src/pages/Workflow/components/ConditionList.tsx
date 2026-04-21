@@ -1,0 +1,180 @@
+import { useTranslation } from 'react-i18next';
+import { v4 as uuid } from 'uuid';
+import { useAppStore } from '@/stores/appStore';
+import { Plus, Trash2, CircleDot } from 'lucide-react';
+import FieldValueInput from './FieldValueInput';
+import type { WorkflowCondition, ConditionOperator, ModelField, WorkflowEvent } from '@/types';
+
+interface ConditionListProps {
+  conditions: WorkflowCondition[];
+  fields: ModelField[];
+  triggerEvent: WorkflowEvent;
+  onChange: (conditions: WorkflowCondition[]) => void;
+  // When true, render without the outer card / icon chrome so the component
+  // nests cleanly inside a branch card. The branch card provides its own
+  // container styling.
+  embedded?: boolean;
+}
+
+const OPERATORS: ConditionOperator[] = [
+  'equals', 'not_equals', 'contains', 'greater_than', 'less_than', 'is_empty', 'is_not_empty',
+];
+
+export default function ConditionList({ conditions, fields, triggerEvent, onChange, embedded = false }: ConditionListProps) {
+  const { t } = useTranslation();
+  const { language } = useAppStore();
+  const isAr = language === 'ar';
+  const showTransitionToggle = triggerEvent === 'update';
+
+  const addCondition = () => {
+    onChange([...conditions, { id: uuid(), field_id: '', operator: 'equals', value: '' }]);
+  };
+
+  const updateCondition = (id: string, updates: Partial<WorkflowCondition>) => {
+    onChange(conditions.map((c) => (c.id === id ? { ...c, ...updates } : c)));
+  };
+
+  const deleteCondition = (id: string) => {
+    onChange(conditions.filter((c) => c.id !== id));
+  };
+
+  const needsValue = (op: ConditionOperator) => op !== 'is_empty' && op !== 'is_not_empty';
+
+  // Get relevant operators for a field type
+  const getOperatorsForField = (fieldName: string): ConditionOperator[] => {
+    const field = fields.find((f) => f.name === fieldName);
+    if (!field) return OPERATORS;
+    switch (field.type) {
+      case 'dropdown':
+      case 'multiselect':
+      case 'lookup':
+      case 'section_selector':
+      case 'checkbox':
+        // Only equality/empty operators make sense for selection fields
+        return ['equals', 'not_equals', 'is_empty', 'is_not_empty'];
+      case 'number':
+      case 'currency':
+        return OPERATORS; // all operators
+      case 'date':
+      case 'datetime':
+        return ['equals', 'not_equals', 'greater_than', 'less_than', 'is_empty', 'is_not_empty'];
+      default:
+        return OPERATORS;
+    }
+  };
+
+  const body = (
+    <>
+      <div className="space-y-2.5">
+        {conditions.length === 0 && (
+          <div className="text-center py-6 text-charcoal/35 text-sm bg-cream-light/60 rounded-xl border border-dashed border-sand/40">
+            {isAr ? 'لا توجد شروط — سيتم تنفيذ هذا الفرع دائمًا.' : 'No conditions — this branch will always run.'}
+          </div>
+        )}
+        {conditions.map((cond, idx) => {
+          const selectedField = fields.find((f) => f.name === cond.field_id);
+          const availableOps = getOperatorsForField(cond.field_id);
+
+          return (
+            <div key={cond.id}>
+              {idx > 0 && (
+                <div className="flex items-center gap-2 my-1.5 ms-2">
+                  <span className="text-[10px] font-bold tracking-wider uppercase text-blue-600/70 bg-blue-500/10 px-2 py-0.5 rounded">
+                    {isAr ? 'و' : 'AND'}
+                  </span>
+                  <div className="flex-1 h-px bg-sand/30" />
+                </div>
+              )}
+              <div className="group p-3 bg-white rounded-xl border border-sand/30 hover:border-blue-400/40 transition-colors space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 w-6 h-6 rounded-md bg-blue-500/10 text-blue-600 text-xs font-bold flex items-center justify-center">{idx + 1}</span>
+                  <select
+                    value={cond.field_id}
+                    onChange={(e) => updateCondition(cond.id, { field_id: e.target.value, value: '' })}
+                    className="form-input text-sm flex-1 py-2"
+                  >
+                    <option value="">— {isAr ? 'اختر حقل' : 'Select field'} —</option>
+                    {fields.map((f) => (
+                      <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={cond.operator}
+                    onChange={(e) => updateCondition(cond.id, { operator: e.target.value as ConditionOperator })}
+                    className="form-input text-sm w-32 py-2"
+                  >
+                    {availableOps.map((op) => (
+                      <option key={op} value={op}>{t(`condition.${op}`)}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => deleteCondition(cond.id)}
+                    className="p-1.5 rounded-md text-charcoal/25 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
+                    aria-label={isAr ? 'حذف' : 'Delete'}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+
+                {needsValue(cond.operator) && (
+                  <div className="ps-8">
+                    <FieldValueInput
+                      field={selectedField}
+                      value={cond.value}
+                      onChange={(val) => updateCondition(cond.id, { value: val })}
+                      className="flex-1"
+                    />
+                  </div>
+                )}
+
+                {showTransitionToggle && (
+                  <label className="flex items-start gap-2 text-xs text-charcoal/60 cursor-pointer select-none ps-8">
+                    <input
+                      type="checkbox"
+                      checked={!!cond.only_on_change}
+                      onChange={(e) => updateCondition(cond.id, { only_on_change: e.target.checked })}
+                      className="mt-0.5 accent-copper"
+                    />
+                    <span className="leading-tight">
+                      <span className="font-medium text-charcoal/70">{t('condition.only_on_change')}</span>
+                      <span className="block text-charcoal/40">{t('condition.only_on_change_hint')}</span>
+                    </span>
+                  </label>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        onClick={addCondition}
+        className="mt-3 w-full py-2 rounded-xl border border-dashed border-blue-400/40 text-blue-600 hover:bg-blue-500/5 transition-colors text-sm font-bold flex items-center justify-center gap-1.5"
+      >
+        <Plus size={14} />
+        {t('workflow.add_condition')}
+      </button>
+    </>
+  );
+
+  if (embedded) return body;
+
+  return (
+    <div className="card p-6">
+      <div className="flex items-center gap-3 mb-5">
+        <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
+          <CircleDot size={20} className="text-blue-500" />
+        </div>
+        <div>
+          <h3 className="font-bold text-chocolate text-lg">{t('workflow.only_if')}</h3>
+          <p className="text-xs text-charcoal/30">
+            {conditions.length === 0
+              ? (isAr ? 'تُنفذ القاعدة دائمًا بدون شروط إضافية.' : 'Rule always executes with no additional conditions.')
+              : (isAr ? `${conditions.length} شرط` : `${conditions.length} condition(s)`)
+            }
+          </p>
+        </div>
+      </div>
+      {body}
+    </div>
+  );
+}

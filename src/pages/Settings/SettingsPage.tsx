@@ -1,0 +1,181 @@
+import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { useAppStore } from '@/stores/appStore';
+import { useIsAdmin } from '@/hooks/usePermission';
+import {
+  Hammer, Zap, LayoutDashboard, Languages,
+  Shield, Briefcase, Users, ChevronRight,
+  Settings, ScrollText,
+} from 'lucide-react';
+
+interface SettingsCard {
+  titleAr: string;
+  titleEn: string;
+  descAr: string;
+  descEn: string;
+  icon: typeof Hammer;
+  color: string;
+  bg: string;
+  route: string;
+  adminOnly: boolean;
+}
+
+const CARDS: SettingsCard[] = [
+  {
+    titleAr: 'بناء النماذج',
+    titleEn: 'Model Builder',
+    descAr: 'إنشاء وتعديل النماذج والحقول والأقسام',
+    descEn: 'Create and edit models, fields, and sections',
+    icon: Hammer,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/builder',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'سير العمل',
+    titleEn: 'Workflows',
+    descAr: 'أتمتة الإجراءات عند إنشاء أو تعديل السجلات',
+    descEn: 'Automate actions on record create or update',
+    icon: Zap,
+    color: '#059669',
+    bg: '#05966914',
+    route: '/workflow',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'سجل تنفيذ سير العمل',
+    titleEn: 'Workflow Execution Logs',
+    descAr: 'كل تفعيل لسير العمل مع شروط وإجراءات بتفاصيل كاملة',
+    descEn: 'Every workflow firing with full condition + action trace',
+    icon: ScrollText,
+    color: '#0369A1',
+    bg: '#0369A114',
+    route: '/workflow/logs',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'لوحات المعلومات',
+    titleEn: 'Dashboards',
+    descAr: 'إنشاء لوحات تحليلية ومشاركتها',
+    descEn: 'Build analytics dashboards and share them',
+    icon: LayoutDashboard,
+    color: '#2563EB',
+    bg: '#2563EB14',
+    route: '/dashboards',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'الترجمات',
+    titleEn: 'Translations',
+    descAr: 'إدارة الترجمات العربية والإنجليزية',
+    descEn: 'Manage Arabic and English translations',
+    icon: Languages,
+    color: '#7C3AED',
+    bg: '#7C3AED14',
+    route: '/settings/translations',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'الصلاحيات',
+    titleEn: 'Profiles',
+    descAr: 'تحديد صلاحيات الوصول لكل نموذج',
+    descEn: 'Define access permissions per model',
+    icon: Shield,
+    color: '#D97706',
+    bg: '#D9770614',
+    route: '/settings/profiles',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'الأدوار',
+    titleEn: 'Roles',
+    descAr: 'إدارة الأدوار وحقولها وأعضائها',
+    descEn: 'Manage roles, their fields, and members',
+    icon: Briefcase,
+    color: '#0D9488',
+    bg: '#0D948814',
+    route: '/settings/roles',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'المستخدمون',
+    titleEn: 'Users',
+    descAr: 'إضافة المستخدمين وتعيين صلاحياتهم وأدوارهم',
+    descEn: 'Add users and assign profiles and roles',
+    icon: Users,
+    color: '#4F46E5',
+    bg: '#4F46E514',
+    route: '/settings/users',
+    adminOnly: true,
+  },
+];
+
+export default function SettingsPage() {
+  const navigate = useNavigate();
+  const { t } = useTranslation();
+  const { language } = useAppStore();
+  const isAdmin = useIsAdmin();
+  const isAr = language === 'ar';
+
+  const visibleCards = isAdmin ? CARDS : CARDS.filter((c) => !c.adminOnly);
+
+  return (
+    <div className="max-w-4xl">
+      {/* Header */}
+      <div className="flex items-center gap-3 mb-8">
+        <div className="w-12 h-12 rounded-2xl bg-charcoal/5 flex items-center justify-center">
+          <Settings size={24} className="text-charcoal/60" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-chocolate">
+            {isAr ? 'الإعدادات' : 'Settings'}
+          </h1>
+          <p className="text-sm text-charcoal/40">
+            {isAr ? 'إدارة النظام والنماذج والصلاحيات' : 'Manage system, models, and access control'}
+          </p>
+        </div>
+      </div>
+
+      {visibleCards.length === 0 && (
+        <div className="card p-8 text-center text-charcoal/40">
+          <Settings size={32} className="mx-auto mb-3 opacity-30" />
+          <p className="text-sm">{t('access.settings_empty_for_role')}</p>
+        </div>
+      )}
+
+      {/* Cards grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {visibleCards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <button
+              key={card.route}
+              onClick={() => navigate(card.route)}
+              className="card p-5 flex items-start gap-4 text-start w-full hover:border-copper/30 transition-all group"
+            >
+              <div
+                className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+                style={{ backgroundColor: card.bg }}
+              >
+                <Icon size={20} style={{ color: card.color }} />
+              </div>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-charcoal group-hover:text-copper transition-colors">
+                  {isAr ? card.titleAr : card.titleEn}
+                </h3>
+                <p className="text-xs text-charcoal/40 mt-0.5 leading-relaxed">
+                  {isAr ? card.descAr : card.descEn}
+                </p>
+              </div>
+              <ChevronRight
+                size={16}
+                className="text-charcoal/15 group-hover:text-copper/50 transition-colors mt-1 shrink-0 rtl:rotate-180"
+              />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

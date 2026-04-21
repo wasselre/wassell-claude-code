@@ -1,0 +1,57 @@
+# PRD: Navigation & Layout
+
+**Status:** Live
+**Last updated:** 2026-04-18
+**Related PRDs:** model-builder.md, internationalization.md, home-dashboard.md
+
+## What it is (in plain English)
+The "shell" of the app: the persistent sidebar on one edge, the header across the top, and the main content area where pages render. The sidebar shows navigation organized into folder-like groups (Projects, People, etc.), plus links to Builder, Workflows, Dashboards, and Settings. The header holds the Wassell logo, the language toggle, and user/profile menu. Everything flips correctly when switching between Arabic (sidebar on the right) and English (sidebar on the left).
+
+## Why it exists
+A consistent, always-visible shell orients the user no matter how many models exist. The sidebar's grouping mechanism keeps navigation scalable when the team has 20+ models.
+
+## Key behaviors
+- **Layout** (`AppLayout.tsx`): renders `<Sidebar />`, `<Header />`, and `<Outlet />` from React Router. Wraps the whole app except the public dashboard route.
+- **Sidebar**:
+  - Top: Wassell logo + app name.
+  - Sections: "Models" group (expandable by `model_groups`), "Builder", "Workflow", "Dashboards", "Settings".
+  - Each model row shows its icon, color dot, AR/EN name.
+  - Click a model → navigates to `/model/:modelName`.
+  - Active route is highlighted.
+  - Background is Charcoal Slate Gray (`#4A4E54`) per brand.
+- **Header**:
+  - Language toggle (AR / EN).
+  - Current user indicator.
+  - Mobile menu toggle on small screens.
+- **Settings hub** (`/settings`): a page with cards linking to Translations, Profiles, Roles, Users.
+- **Public dashboard** route (`/public/dashboard/:token`) intentionally skips the layout — no sidebar, no header.
+- **Model groups** come from the `model_groups` table and can be reordered; sidebar respects that order.
+- **RTL support** — margins/padding use logical properties so the sidebar position flips automatically.
+
+## User flows
+1. **Navigate to a model:** Click model name in sidebar → records list loads.
+2. **Jump to Builder:** Click "Builder" in sidebar → `/builder` opens.
+3. **Change language:** Click AR/EN toggle in header → whole app flips direction.
+4. **Access admin settings:** Click "Settings" → hub page → pick Users, Roles, Profiles, or Translations.
+5. **Share a dashboard externally:** Dashboard editor → copy public URL → share. The recipient lands on a layout-free page.
+
+## Data touched
+- Reads: `model_groups` and `models` (to render sidebar).
+- Reads: `useAppStore().language` (for direction and labels).
+
+## Key files
+| File | What it does |
+|---|---|
+| `src/App.tsx` | Route definitions |
+| `src/components/layout/AppLayout.tsx` | Shell wrapper with Outlet |
+| `src/components/layout/Sidebar.tsx` | Sidebar navigation |
+| `src/components/layout/Header.tsx` | Top bar, language toggle |
+| `src/pages/Settings/SettingsPage.tsx` | Settings hub page |
+| `src/index.css` | `.sidebar`, `.main-content`, `.nav-item` styles |
+| `tailwind.config.js` | Brand color and font setup |
+
+## Open questions / known limitations
+- No breadcrumbs yet — deep pages (e.g. a record inside a model inside a group) don't show the full path.
+- No keyboard shortcuts for navigation.
+- Sidebar doesn't collapse into an icon-only rail on desktop — only full or hidden (mobile).
+- No per-user favorites or pinned models.

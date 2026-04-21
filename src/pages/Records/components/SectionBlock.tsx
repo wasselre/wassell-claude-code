@@ -1,0 +1,451 @@
+import { useState } from 'react';
+import { useAppStore } from '@/stores/appStore';
+import { Shield, Link2, ChevronDown } from 'lucide-react';
+import DynamicField from './DynamicField';
+import DynamicCell from './DynamicCell';
+import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
+import { resolveSectionMirrorField } from '@/lib/sectionMirrorFieldResolver';
+import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
+import SectionMirrorComparison from './SectionMirrorComparison';
+import type { AppModel, ModelField, ModelSection, ModelView } from '@/types';
+
+interface SectionBlockProps {
+  section: ModelSection;
+  formData: Record<string, unknown>;
+  onChange: (fieldName: string, value: unknown) => void;
+  /** The model this record is being edited under. Needed to resolve mirrored sections. */
+  currentModel: AppModel;
+  /**
+   * Pending edits to linked records inside mirrored sections. Keyed by target record id.
+   * Each entry is an overlay on top of that record's current data. Updated via
+   * `onMirrorFieldChange` and applied on save.
+   */
+  mirrorEdits: Record<string, Record<string, unknown>>;
+  /** Handler for edits inside mirrored sections. */
+  onMirrorFieldChange: (targetRecordId: string, fieldName: string, value: unknown) => void;
+  /** Currently active research comparison view (applies to any multi-target section_mirror container on this model). */
+  activeResearchView?: ModelView | null;
+  /** Handler for switching the active research view. */
+  onSelectResearchView?: (viewId: string | null) => void;
+}
+
+function widthClass(width: ModelField['width']): string {
+  return width === 'full'
+    ? 'col-span-12'
+    : width === 'half'
+      ? 'col-span-12 sm:col-span-6'
+      : 'col-span-12 sm:col-span-4';
+}
+
+function MirroredBadge({ isAr, tone = 'muted' }: { isAr: boolean; tone?: 'muted' | 'synced' | 'local' }) {
+  const cls =
+    tone === 'synced'
+      ? 'bg-copper/10 text-copper/80'
+      : tone === 'local'
+        ? 'bg-sand/35 text-charcoal/60'
+        : 'bg-chocolate/8 text-chocolate/70';
+  const label =
+    tone === 'synced'
+      ? (isAr ? 'متزامن' : 'Synced')
+      : tone === 'local'
+        ? (isAr ? 'محلي' : 'Local')
+        : (isAr ? 'مرآة' : 'Mirrored');
+  return (
+    <span className={`inline-flex items-center gap-1 text-[9px] font-bold px-1.5 py-0.5 rounded-full ${cls}`}>
+      <Link2 size={9} />
+      {label}
+    </span>
+  );
+}
+
+export default function SectionBlock({
+  section,
+  formData,
+  onChange,
+  currentModel,
+  mirrorEdits,
+  onMirrorFieldChange,
+  activeResearchView,
+  onSelectResearchView,
+}: SectionBlockProps) {
+  const { language, records, models } = useAppStore();
+  const isAr = language === 'ar';
+  const [collapsed, setCollapsed] = useState<boolean>(!!section.default_collapsed);
+
+  const header = (
+    <button
+      type="button"
+      onClick={() => setCollapsed((c) => !c)}
+      aria-expanded={!collapsed}
+      className="w-full px-6 py-4 flex items-center gap-2.5 text-start hover:bg-sand/10 transition-colors cursor-pointer"
+      style={{ borderInlineStartWidth: '4px', borderInlineStartColor: section.color ?? '#B8734F' }}
+    >
+      <span className="font-bold text-chocolate text-base flex-1">
+        {isAr ? section.label_ar : section.label_en}
+      </span>
+      {section.is_base && <Shield size={13} className="text-copper/40" />}
+      {section.is_mirrored && (
+        <span className="inline-flex items-center gap-1 text-[10px] text-copper/70 bg-copper/8 px-2 py-0.5 rounded-full font-bold">
+          <Link2 size={10} />
+          {isAr ? 'منسوخ' : 'Mirrored'}
+        </span>
+      )}
+      <ChevronDown
+        size={16}
+        className={`text-charcoal/35 transition-transform ${collapsed ? '-rotate-90 rtl:rotate-90' : ''}`}
+      />
+    </button>
+  );
+
+  // ── Mirrored section ──
+  if (section.is_mirrored) {
+    const res = resolveSectionMirror(section, formData, currentModel, records, models);
+
+    if (res.status === 'sibling_not_selected') {
+      return (
+        <div className="section-block">
+          {header}
+          {!collapsed && (
+            <div className="px-6 pb-6 text-sm text-charcoal/40 italic">
+              {isAr ? 'اختر السجل المرتبط أولاً لعرض البيانات هنا.' : 'Select the linked record first to view its data here.'}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (res.status === 'target_record_missing') {
+      return (
+        <div className="section-block">
+          {header}
+          {!collapsed && (
+            <div className="px-6 pb-6 text-sm text-red-400 italic">
+              {isAr ? 'السجل المرتبط محذوف.' : 'The linked record has been deleted.'}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (res.status !== 'ok' || !res.sourceSection || !res.targetRecord || !res.targetModel) {
+      return (
+        <div className="section-block">
+          {header}
+          {!collapsed && (
+            <div className="px-6 pb-6 text-sm text-amber-500 italic">
+              {isAr ? 'إعدادات القسم المنسوخ غير مكتملة.' : 'Mirrored section is not fully configured.'}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const targetRecord = res.targetRecord;
+    const overlay = mirrorEdits[targetRecord.id] ?? {};
+    const effectiveData = { ...targetRecord.data, ...overlay };
+    // Skip model-local field types that don't survive mirroring cleanly.
+    const sortedFields = [...res.sourceSection.fields]
+      .filter((f) => f.type !== 'section_mirror' && f.type !== 'section_selector')
+      .sort((a, b) => a.order - b.order);
+    const targetLabel = (() => {
+      const titleFieldId = res.targetModel.card_config?.title_field_id;
+      const titleField = titleFieldId
+        ? res.targetModel.schema.sections.flatMap((s) => s.fields).find((f) => f.id === titleFieldId)
+        : null;
+      if (titleField) {
+        const v = effectiveData[titleField.name];
+        if (typeof v === 'string' || typeof v === 'number') return String(v);
+      }
+      return targetRecord.id.slice(0, 8);
+    })();
+
+    return (
+      <div className="section-block">
+        {header}
+        {!collapsed && (
+          <>
+            <div className="px-6 -mt-2 pb-2 text-[11px] text-charcoal/40">
+              {isAr
+                ? `تعديلاتك تُحفظ على: ${isAr ? res.targetModel.label_ar : res.targetModel.label_en} / ${targetLabel}`
+                : `Edits save to: ${res.targetModel.label_en} / ${targetLabel}`}
+            </div>
+            <div className="px-6 pb-6 pt-2 grid grid-cols-12 gap-x-5 gap-y-5">
+              {sortedFields.map((field) => (
+                <div key={field.id} className={widthClass(field.width)}>
+                  <DynamicField
+                    field={field}
+                    value={effectiveData[field.name]}
+                    onChange={(val) => onMirrorFieldChange(targetRecord.id, field.name, val)}
+                    recordData={effectiveData}
+                  />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // ── Regular section: expand section_mirror containers into inline children ──
+  const sortedFields = [...section.fields].sort((a, b) => a.order - b.order);
+
+  if (collapsed) {
+    return (
+      <div className="section-block">
+        {header}
+      </div>
+    );
+  }
+
+  // Field renderer — expands section_mirror containers into inline children,
+  // same logic the section body used to inline. Extracted so we can render
+  // ungrouped fields AND each field group's members through the same path.
+  const renderFieldNodes = (fieldsToRender: ModelField[]) =>
+    fieldsToRender.flatMap((field) => {
+          if (field.type !== 'section_mirror') {
+            return [(
+              <div key={field.id} className={widthClass(field.width)}>
+                <DynamicField
+                  field={field}
+                  value={formData[field.name]}
+                  onChange={(val) => onChange(field.name, val)}
+                  recordData={formData}
+                />
+              </div>
+            )];
+          }
+
+          // Multi-project comparison — render a side-by-side table when the sibling
+          // lookup is multi-select AND has ≥2 linked records. Falls through to the
+          // single-target renderer otherwise.
+          const sibling = field.section_mirror_via_lookup_field_id
+            ? currentModel.schema.sections
+                .flatMap((s) => s.fields)
+                .find((f) => f.id === field.section_mirror_via_lookup_field_id)
+            : null;
+          if (sibling && sibling.type === 'lookup' && sibling.is_multi) {
+            const raw = formData[sibling.name];
+            const ids = Array.isArray(raw) ? (raw as unknown[]).filter((v) => typeof v === 'string' && v) : [];
+            if (ids.length >= 2) {
+              const multi = resolveSectionMirrorFieldMulti(field, formData, currentModel, records, models);
+              if (multi.status === 'ok' && multi.sourceModel) {
+                const localOverrides = (formData[field.name] as Record<string, unknown> | undefined) ?? {};
+                // Fields from the current (research) model that can be added as
+                // additional columns — record-level values that repeat across rows.
+                // Excluded:
+                //   - the container itself (would self-reference)
+                //   - other section_mirror / section_selector fields
+                //   - lookups (they ARE the rows, or would be misleading as columns)
+                //   - notes (no useful tabular rendering)
+                //   - mirror type — these resolve per-linked-record, so they're already
+                //     represented in the target-origin columns from the source section.
+                //     Including them here would duplicate + render arrays as concatenated text.
+                const currentModelFields = currentModel.schema.sections
+                  .flatMap((s) => s.fields)
+                  .filter((f) =>
+                    f.id !== field.id &&
+                    f.type !== 'section_mirror' &&
+                    f.type !== 'section_selector' &&
+                    f.type !== 'lookup' &&
+                    f.type !== 'mirror' &&
+                    f.type !== 'notes',
+                  );
+                return [(
+                  <SectionMirrorComparison
+                    key={field.id}
+                    container={field}
+                    sourceModel={multi.sourceModel}
+                    currentModel={currentModel}
+                    currentRecordData={formData}
+                    currentModelFields={currentModelFields}
+                    includedFields={multi.includedFields}
+                    editableFieldNames={multi.editableFieldNames}
+                    syncFieldNames={multi.syncFieldNames}
+                    targets={multi.targets}
+                    pendingOverlay={mirrorEdits}
+                    localOverrides={localOverrides}
+                    onMirrorFieldChange={onMirrorFieldChange}
+                    onLocalOverrideChange={(_targetId, nextMap) => onChange(field.name, nextMap)}
+                    onCurrentFieldChange={(fieldName, val) => onChange(fieldName, val)}
+                    activeView={activeResearchView ?? null}
+                    onSelectView={(id) => onSelectResearchView?.(id)}
+                  />
+                )];
+              }
+            }
+          }
+
+          // Expand mirrored children inline in the section's grid.
+          const res = resolveSectionMirrorField(field, formData, currentModel, records, models);
+
+          if (res.status === 'sibling_missing' || res.status === 'sibling_not_lookup' ||
+              res.status === 'target_model_missing' || res.status === 'target_section_missing') {
+            return [(
+              <div key={field.id} className="col-span-12 text-[12px] text-amber-500 italic">
+                <MirroredBadge isAr={isAr} />{' '}
+                <span className="ms-1.5">
+                  {isAr ? 'إعدادات مرآة القسم غير مكتملة.' : 'Section mirror is not configured.'}
+                </span>
+              </div>
+            )];
+          }
+          if (res.status === 'sibling_not_selected') {
+            return [(
+              <div key={field.id} className="col-span-12 text-[12px] text-charcoal/40 italic">
+                <MirroredBadge isAr={isAr} />{' '}
+                <span className="ms-1.5">
+                  {isAr ? 'اختر السجل المرتبط لعرض الحقول المنسوخة.' : 'Select the linked record to view mirrored fields.'}
+                </span>
+              </div>
+            )];
+          }
+          if (res.status === 'target_record_missing') {
+            return [(
+              <div key={field.id} className="col-span-12 text-[12px] text-red-400 italic">
+                <MirroredBadge isAr={isAr} />{' '}
+                <span className="ms-1.5">
+                  {isAr ? 'السجل المرتبط محذوف.' : 'The linked record has been deleted.'}
+                </span>
+              </div>
+            )];
+          }
+          if (res.status !== 'ok' || !res.targetRecord || !res.targetModel) {
+            return [];
+          }
+
+          const targetRecord = res.targetRecord;
+          const overlay = mirrorEdits[targetRecord.id] ?? {};
+          const localOverrides = (formData[field.name] as Record<string, unknown> | undefined) ?? {};
+          // Effective: local overrides beat sync overlay beat source record value.
+          const effective: Record<string, unknown> = {
+            ...targetRecord.data,
+            ...overlay,
+            ...localOverrides,
+          };
+
+          return res.includedFields.map((child) => {
+            const isEditable = res.editableFieldNames.has(child.name);
+            const willSync = res.syncFieldNames.has(child.name);
+            return (
+              <div key={`${field.id}::${child.name}`} className={widthClass(child.width)}>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <label className="text-[11px] font-bold text-charcoal/60 flex-1 truncate">
+                    {isAr ? child.label_ar : child.label_en}
+                  </label>
+                  <MirroredBadge
+                    isAr={isAr}
+                    tone={!isEditable ? 'muted' : willSync ? 'synced' : 'local'}
+                  />
+                </div>
+                {isEditable ? (
+                  <DynamicField
+                    field={child}
+                    value={effective[child.name]}
+                    onChange={(val) => {
+                      if (willSync) {
+                        onMirrorFieldChange(targetRecord.id, child.name, val);
+                      } else {
+                        onChange(field.name, { ...localOverrides, [child.name]: val });
+                      }
+                    }}
+                    recordData={effective}
+                  />
+                ) : (
+                  <div className="form-input bg-sand/5 cursor-default opacity-80 [&_*]:pointer-events-none">
+                    <DynamicCell
+                      field={child}
+                      value={effective[child.name]}
+                      allRecords={records}
+                      recordData={effective}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          });
+        });
+
+  const groups = [...(section.field_groups ?? [])].sort((a, b) => a.order - b.order);
+  const validGroupIds = new Set(groups.map((g) => g.id));
+  const ungroupedFields = sortedFields.filter(
+    (f) => !f.field_group_id || !validGroupIds.has(f.field_group_id),
+  );
+  const fieldsByGroup = new Map<string, ModelField[]>();
+  for (const g of groups) fieldsByGroup.set(g.id, []);
+  for (const f of sortedFields) {
+    if (f.field_group_id && validGroupIds.has(f.field_group_id)) {
+      fieldsByGroup.get(f.field_group_id)!.push(f);
+    }
+  }
+
+  return (
+    <div className="section-block">
+      {header}
+      {ungroupedFields.length > 0 && (
+        <div className="px-6 pb-2 pt-2 grid grid-cols-12 gap-x-5 gap-y-5">
+          {renderFieldNodes(ungroupedFields)}
+        </div>
+      )}
+      {groups.length > 0 && (
+        <div className="px-6 pb-6 pt-2 space-y-3">
+          {groups.map((g) => {
+            const groupFields = fieldsByGroup.get(g.id) ?? [];
+            if (groupFields.length === 0) return null;
+            return (
+              <FieldGroupBlock
+                key={g.id}
+                group={g}
+                isAr={isAr}
+              >
+                <div className="grid grid-cols-12 gap-x-5 gap-y-5">
+                  {renderFieldNodes(groupFields)}
+                </div>
+              </FieldGroupBlock>
+            );
+          })}
+        </div>
+      )}
+      {ungroupedFields.length === 0 && groups.length === 0 && (
+        <div className="px-6 pb-6 pt-2" />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Collapsible wrapper for an in-section field group. Its own header + its
+ * own local `collapsed` state (seeded from `group.default_collapsed`). The
+ * parent section's collapse state still wins — when the section is
+ * collapsed, this whole tree is hidden.
+ */
+function FieldGroupBlock({
+  group,
+  isAr,
+  children,
+}: {
+  group: { label_ar: string; label_en: string; default_collapsed?: boolean };
+  isAr: boolean;
+  children: React.ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState<boolean>(!!group.default_collapsed);
+  return (
+    <div className="rounded-xl border border-sand/25 bg-cream/20">
+      <button
+        type="button"
+        onClick={() => setCollapsed((c) => !c)}
+        aria-expanded={!collapsed}
+        className="w-full px-4 py-2.5 flex items-center gap-2 text-start hover:bg-sand/20 transition-colors rounded-t-xl"
+      >
+        <span className="font-bold text-chocolate text-sm flex-1">
+          {isAr ? group.label_ar : group.label_en}
+        </span>
+        <ChevronDown
+          size={14}
+          className={`text-charcoal/35 transition-transform ${collapsed ? '-rotate-90 rtl:rotate-90' : ''}`}
+        />
+      </button>
+      {!collapsed && <div className="px-4 pb-4 pt-1">{children}</div>}
+    </div>
+  );
+}
