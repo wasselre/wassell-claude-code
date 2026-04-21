@@ -104,17 +104,59 @@ export const useAppStore = create<AppState>((set, get) => ({
   initialize: async () => {
     if (get().initialized) return;
 
-    // Load models
-    let models = await supabaseLoad<AppModel>('models');
-    if (!models) models = loadLocal<AppModel[]>('wassell_models');
-    if (!models || models.length === 0) models = SEED_MODELS;
+    // Load models. Three cascading sources: Supabase → localStorage → SEED.
+    // After loading, backfill any system models that are missing from Supabase
+    // (matched by `name`, which is UNIQUE in the schema). This handles three
+    // real-world states for a fresh production deploy:
+    //   • Supabase empty → load SEED, write all 9 to Supabase.
+    //   • Supabase has a partial set (e.g. only 1 of 9 saved) → load what's
+    //     there plus the missing seeds, write the missing ones to Supabase.
+    //   • Supabase fully populated → load from Supabase, no writes.
+    // Without this backfill step the first production deploy stays empty in
+    // Supabase forever because nothing writes the seeds there.
+    const supabaseModels = await supabaseLoad<AppModel>('models');
+    let models: AppModel[];
+    if (supabaseModels && supabaseModels.length > 0) {
+      models = supabaseModels;
+    } else {
+      const localModels = loadLocal<AppModel[]>('wassell_models');
+      models = localModels && localModels.length > 0 ? localModels : SEED_MODELS;
+    }
+    // Add any system seed models that Supabase is missing (dedupe by name —
+    // `name` is UNIQUE in the schema, so matching by name avoids creating
+    // duplicate "clients" rows with different UUIDs).
+    if (supabaseModels !== null) {
+      const existingNames = new Set(supabaseModels.map((m) => m.name));
+      const missing = SEED_MODELS.filter((m) => !existingNames.has(m.name));
+      if (missing.length > 0) {
+        // Avoid in-memory duplicates: only add seeds whose name isn't already
+        // in the merged `models` array (e.g. from localStorage fallback).
+        const currentNames = new Set(models.map((m) => m.name));
+        const toAdd = missing.filter((m) => !currentNames.has(m.name));
+        models = [...models, ...toAdd];
+        for (const m of missing) {
+          supabaseUpsert('models', m as unknown as Record<string, unknown>);
+        }
+      }
+    }
     saveLocal('wassell_models', models);
 
-    // Load groups
-    let groups = await supabaseLoad<ModelGroup>('model_groups');
-    if (!groups) groups = loadLocal<ModelGroup[]>('wassell_groups');
-    if (!groups || groups.length === 0) groups = SEED_GROUPS;
+    // Load groups — same cascading + backfill pattern as models.
+    const supabaseGroups = await supabaseLoad<ModelGroup>('model_groups');
+    const supabaseHasGroups = supabaseGroups !== null && supabaseGroups.length > 0;
+    let groups: ModelGroup[];
+    if (supabaseHasGroups) {
+      groups = supabaseGroups!;
+    } else {
+      const localGroups = loadLocal<ModelGroup[]>('wassell_groups');
+      groups = localGroups && localGroups.length > 0 ? localGroups : SEED_GROUPS;
+    }
     saveLocal('wassell_groups', groups);
+    if (!supabaseHasGroups) {
+      for (const g of groups) {
+        supabaseUpsert('model_groups', g as unknown as Record<string, unknown>);
+      }
+    }
 
     // Load records
     const records: Record<string, AppRecord[]> = {};
