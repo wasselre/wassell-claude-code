@@ -46,23 +46,92 @@ function saveLocal<T>(key: string, data: T): void {
   }
 }
 
-// --- Supabase helpers (fire-and-forget) ---
+// ────────────────────────────────────────────────────────────────────
+// Supabase helpers
+// ────────────────────────────────────────────────────────────────────
+// Every Supabase write goes through the helpers below. They add two
+// guarantees on top of the raw Supabase client:
+//
+//   1. Foreign-key ordering.  If you pass a `parent` tuple, the upsert
+//      waits for any in-flight write targeting that row to resolve before
+//      firing.  Without this, a write like `records.model_id = X` can hit
+//      Postgres before the matching `models.id = X` row does, trip the FK
+//      constraint, and silently fail.  The app would then diverge
+//      permanently: the record lives in localStorage, never in Supabase.
+//      FK-bearing tables in the schema today:
+//         models.group_id          → model_groups.id
+//         records.model_id         → models.id           (CASCADE)
+//         workflows.trigger_model_id → models.id         (CASCADE)
+//         model_views.model_id     → models.id           (CASCADE)
+//         users.profile_id         → profiles.id
+//
+//   2. Error surfacing.  The previous implementation caught and discarded
+//      every error with a `// silent fail` comment.  Now errors land in
+//      `reportSupabaseError`, which logs to the console AND — once the
+//      store is initialized — pushes a toast so the user can see when
+//      something went wrong on the server.  LocalStorage remains the
+//      immediate source of truth, so the app keeps working; the user just
+//      gets a heads-up that the server copy fell behind.
 
-async function supabaseUpsert(table: string, row: Record<string, unknown>): Promise<void> {
+// In-flight writes keyed by `${table}:${id}`.  Dependents consult this
+// map before firing so the parent row is guaranteed to exist before the
+// child tries to reference it.
+const pendingWrites = new Map<string, Promise<unknown>>();
+const writeKey = (table: string, id: string): string => `${table}:${id}`;
+
+// Error reporter.  Defaults to console-only for any call that happens
+// before the store is created; `initialize()` replaces this with a
+// toast-backed reporter on first run.
+let reportSupabaseError: (table: string, op: 'upsert' | 'delete' | 'load', msg: string) => void =
+  (table, op, msg) => {
+    console.error(`[supabase] ${op} failed on ${table}: ${msg}`);
+  };
+
+async function supabaseUpsert(
+  table: string,
+  row: Record<string, unknown>,
+  parent?: { table: string; id: string | null | undefined },
+): Promise<void> {
   if (!supabase) return;
+  // Block on any in-flight parent write so the FK exists when we land.
+  // `parent.id` can be null/undefined for optional FKs (e.g. `group_id`).
+  if (parent && parent.id) {
+    const prior = pendingWrites.get(writeKey(parent.table, parent.id));
+    if (prior) {
+      try { await prior; } catch { /* parent errored; we still try our write */ }
+    }
+  }
+  const id = typeof row.id === 'string' ? row.id : undefined;
+  const key = id ? writeKey(table, id) : undefined;
+  const op = (async () => {
+    try {
+      const { error } = await supabase!.from(table).upsert(row);
+      if (error) reportSupabaseError(table, 'upsert', error.message ?? String(error));
+    } catch (err) {
+      reportSupabaseError(table, 'upsert', err instanceof Error ? err.message : String(err));
+    }
+  })();
+  if (key) pendingWrites.set(key, op);
   try {
-    await supabase.from(table).upsert(row);
-  } catch {
-    // silent fail — data is safe in localStorage
+    await op;
+  } finally {
+    if (key && pendingWrites.get(key) === op) pendingWrites.delete(key);
   }
 }
 
 async function supabaseDelete(table: string, id: string): Promise<void> {
   if (!supabase) return;
+  // Wait for any in-flight upsert to this row first — otherwise the
+  // delete can race past it and leave the row orphaned in the DB.
+  const prior = pendingWrites.get(writeKey(table, id));
+  if (prior) {
+    try { await prior; } catch { /* ignore */ }
+  }
   try {
-    await supabase.from(table).delete().eq('id', id);
-  } catch {
-    // silent fail
+    const { error } = await supabase.from(table).delete().eq('id', id);
+    if (error) reportSupabaseError(table, 'delete', error.message ?? String(error));
+  } catch (err) {
+    reportSupabaseError(table, 'delete', err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -70,9 +139,13 @@ async function supabaseLoad<T>(table: string): Promise<T[] | null> {
   if (!supabase) return null;
   try {
     const { data, error } = await supabase.from(table).select('*');
-    if (error) return null;
+    if (error) {
+      reportSupabaseError(table, 'load', error.message ?? String(error));
+      return null;
+    }
     return data as T[];
-  } catch {
+  } catch (err) {
+    reportSupabaseError(table, 'load', err instanceof Error ? err.message : String(err));
     return null;
   }
 }
@@ -103,6 +176,22 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- Initialize ---
   initialize: async () => {
     if (get().initialized) return;
+
+    // Wire the Supabase error reporter to push user-visible toasts. We do
+    // this lazily (here, not at module scope) because `useAppStore` isn't
+    // defined until the `create()` call below finishes — pulling from it
+    // at module load time would be `undefined`.
+    reportSupabaseError = (table, op, msg) => {
+      console.error(`[supabase] ${op} failed on ${table}: ${msg}`);
+      try {
+        useAppStore.getState().addToast(
+          `Server sync failed (${table}): ${msg}`,
+          'error',
+        );
+      } catch {
+        // addToast unavailable — already logged to console above.
+      }
+    };
 
     // ORDER MATTERS: groups must be persisted to Supabase BEFORE models,
     // because `models.group_id` is a foreign key to `model_groups.id`. If we
@@ -197,10 +286,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!views) views = loadLocal<ModelView[]>('wassell_views') ?? [];
     saveLocal('wassell_views', views);
 
-    // Load profiles
-    let profiles = await supabaseLoad<Profile>('profiles');
-    if (!profiles) profiles = loadLocal<Profile[]>('wassell_profiles');
-    if (!profiles || profiles.length === 0) profiles = SEED_PROFILES;
+    // --- Profiles ---
+    // Cascading fallback: Supabase → localStorage → SEED. Same pattern as
+    // models/groups. Users FK into profiles via `profile_id`, so we AWAIT
+    // the profile backfill before moving on to users below.
+    const supabaseProfiles = await supabaseLoad<Profile>('profiles');
+    let profiles: Profile[];
+    if (supabaseProfiles && supabaseProfiles.length > 0) {
+      profiles = supabaseProfiles;
+    } else {
+      const localProfiles = loadLocal<Profile[]>('wassell_profiles');
+      profiles = localProfiles && localProfiles.length > 0 ? localProfiles : SEED_PROFILES;
+    }
 
     // Backfill is_system / is_admin for existing localStorage installs upgraded
     // from a version that didn't have these flags. Idempotent: re-running is a
@@ -223,12 +320,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       profiles = profiles.map((p, i) => (i === promoteIdx ? { ...p, is_admin: true, is_system: true } : p));
     }
     saveLocal('wassell_profiles', profiles);
-    for (const p of profiles) supabaseUpsert('profiles', p as unknown as Record<string, unknown>);
+    // Backfill missing profiles to Supabase and AWAIT — users FK into profiles.
+    if (supabaseProfiles !== null) {
+      const existingProfileIds = new Set(supabaseProfiles.map((p) => p.id));
+      const missingProfiles = profiles.filter((p) => !existingProfileIds.has(p.id));
+      if (missingProfiles.length > 0) {
+        await Promise.all(
+          missingProfiles.map((p) =>
+            supabaseUpsert('profiles', p as unknown as Record<string, unknown>),
+          ),
+        );
+      }
+    }
 
-    // Load roles
-    let roles = await supabaseLoad<Role>('roles');
-    if (!roles) roles = loadLocal<Role[]>('wassell_roles');
-    if (!roles || roles.length === 0) roles = SEED_ROLES;
+    // --- Roles ---
+    // Cascading fallback: Supabase → localStorage → SEED.
+    const supabaseRoles = await supabaseLoad<Role>('roles');
+    let roles: Role[];
+    if (supabaseRoles && supabaseRoles.length > 0) {
+      roles = supabaseRoles;
+    } else {
+      const localRoles = loadLocal<Role[]>('wassell_roles');
+      roles = localRoles && localRoles.length > 0 ? localRoles : SEED_ROLES;
+    }
     // Backfill + migrate legacy `field_definitions` flat list → `schema.sections`.
     // Legacy shape: { field_definitions: [...] }. New shape: { schema: { sections: [{ fields: [...] }] } }.
     // Idempotent: if schema already exists, leave it alone.
@@ -283,15 +397,45 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
     });
     saveLocal('wassell_roles', roles);
-    for (const r of roles) supabaseUpsert('roles', r as unknown as Record<string, unknown>);
+    // Backfill missing roles to Supabase. No FK dependents — fire-and-forget OK.
+    if (supabaseRoles !== null) {
+      const existingRoleIds = new Set(supabaseRoles.map((r) => r.id));
+      for (const r of roles) {
+        if (!existingRoleIds.has(r.id)) {
+          supabaseUpsert('roles', r as unknown as Record<string, unknown>);
+        }
+      }
+    }
 
-    // Load users
-    let users = await supabaseLoad<User>('users');
-    if (!users) users = loadLocal<User[]>('wassell_users');
-    if (!users || users.length === 0) users = SEED_USERS;
+    // --- Users ---
+    // Cascading fallback: Supabase → localStorage → SEED. Profiles are already
+    // in Supabase (we awaited them above), so user FK writes are safe.
+    const supabaseUsers = await supabaseLoad<User>('users');
+    let users: User[];
+    if (supabaseUsers && supabaseUsers.length > 0) {
+      users = supabaseUsers;
+    } else {
+      const localUsers = loadLocal<User[]>('wassell_users');
+      users = localUsers && localUsers.length > 0 ? localUsers : SEED_USERS;
+    }
     saveLocal('wassell_users', users);
+    // Backfill missing users to Supabase, each gated on its profile being
+    // present (helper checks pendingWrites; profiles already landed).
+    if (supabaseUsers !== null) {
+      const existingUserIds = new Set(supabaseUsers.map((u) => u.id));
+      for (const u of users) {
+        if (!existingUserIds.has(u.id)) {
+          supabaseUpsert(
+            'users',
+            u as unknown as Record<string, unknown>,
+            { table: 'profiles', id: u.profile_id },
+          );
+        }
+      }
+    }
 
-    // Load field templates (user-saved reusable field snapshots)
+    // --- Field templates ---
+    // User-created; no seed. Just load and mirror localStorage.
     let fieldTemplates = await supabaseLoad<FieldTemplate>('field_templates');
     if (!fieldTemplates) fieldTemplates = loadLocal<FieldTemplate[]>('wassell_field_templates') ?? [];
     saveLocal('wassell_field_templates', fieldTemplates);
@@ -336,7 +480,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           };
           users = users.map((u) => (u.id === adopted.id ? adopted : u));
           saveLocal('wassell_users', users);
-          supabaseUpsert('users', adopted as unknown as Record<string, unknown>);
+          supabaseUpsert(
+            'users',
+            adopted as unknown as Record<string, unknown>,
+            { table: 'profiles', id: adopted.profile_id },
+          );
           currentUserId = adopted.id;
         } else {
           // No match and not bootstrap → access-denied state. currentUserId stays
@@ -481,20 +629,39 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.models.map((m) => (m.id === model.id ? model : m))
         : [...s.models, model];
       saveLocal('wassell_models', models);
-      supabaseUpsert('models', model as unknown as Record<string, unknown>);
+      // FK: models.group_id → model_groups.id. Gate the upsert on the group
+      // write so a freshly-created group lands before the model references it.
+      supabaseUpsert(
+        'models',
+        model as unknown as Record<string, unknown>,
+        model.group_id ? { table: 'model_groups', id: model.group_id } : undefined,
+      );
       return { models };
     });
   },
   deleteModel: (modelId: string) => {
     set((s) => {
+      // Postgres CASCADE wipes the model's records, workflows, and views on
+      // the server automatically. We need to mirror that locally — otherwise
+      // stale rows sit in localStorage and reappear in memory on next load,
+      // creating the "deleted model's workflows still trigger" class of bug.
       const models = s.models.filter((m) => m.id !== modelId);
       const records = { ...s.records };
       delete records[modelId];
+      const workflows = s.workflows.filter((w) => w.trigger_model_id !== modelId);
+      const views = s.views.filter((v) => v.model_id !== modelId);
+      // Also drop workflow run history tied to this model so the logs view
+      // doesn't show runs for a model that no longer exists.
+      const workflowRuns = s.workflowRuns.filter((r) => r.trigger_model_id !== modelId);
       saveLocal('wassell_models', models);
-      const allRecords = Object.values(records).flat();
-      saveLocal('wassell_records', allRecords);
+      saveLocal('wassell_records', Object.values(records).flat());
+      saveLocal('wassell_workflows', workflows);
+      saveLocal('wassell_views', views);
+      saveLocal('wassell_workflow_runs', workflowRuns);
+      // Server-side CASCADE handles the delete of dependent rows, so we only
+      // need to issue the delete on `models` itself.
       supabaseDelete('models', modelId);
-      return { models, records };
+      return { models, records, workflows, views, workflowRuns };
     });
   },
   renameField: (modelId: string, fieldId: string, updatedField) => {
@@ -542,21 +709,47 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_workflows', result.workflows);
       saveLocal('wassell_views', result.views);
       // Fire-and-forget Supabase upserts for only the rows that changed.
+      // FK-aware: records/workflows/views all reference models, so pass the
+      // model they belong to as a parent gate.
       for (const id of result.changedModelIds) {
         const m = finalModels.find((x) => x.id === id);
-        if (m) supabaseUpsert('models', m as unknown as Record<string, unknown>);
+        if (m) {
+          supabaseUpsert(
+            'models',
+            m as unknown as Record<string, unknown>,
+            m.group_id ? { table: 'model_groups', id: m.group_id } : undefined,
+          );
+        }
       }
       for (const id of result.changedRecordIds) {
         const r = Object.values(result.records).flat().find((x) => x.id === id);
-        if (r) supabaseUpsert('records', r as unknown as Record<string, unknown>);
+        if (r) {
+          supabaseUpsert(
+            'records',
+            r as unknown as Record<string, unknown>,
+            { table: 'models', id: r.model_id },
+          );
+        }
       }
       for (const id of result.changedWorkflowIds) {
         const w = result.workflows.find((x) => x.id === id);
-        if (w) supabaseUpsert('workflows', w as unknown as Record<string, unknown>);
+        if (w) {
+          supabaseUpsert(
+            'workflows',
+            w as unknown as Record<string, unknown>,
+            { table: 'models', id: w.trigger_model_id },
+          );
+        }
       }
       for (const id of result.changedViewIds) {
         const v = result.views.find((x) => x.id === id);
-        if (v) supabaseUpsert('model_views', v as unknown as Record<string, unknown>);
+        if (v) {
+          supabaseUpsert(
+            'model_views',
+            v as unknown as Record<string, unknown>,
+            { table: 'models', id: v.model_id },
+          );
+        }
       }
       return {
         models: finalModels,
@@ -581,10 +774,29 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   deleteGroup: (groupId: string) => {
     set((s) => {
+      // Postgres has `ON DELETE SET NULL` on models.group_id, so the server
+      // nulls out any referring models automatically. Mirror that in memory
+      // + localStorage so the sidebar doesn't keep showing models nested
+      // under a group that no longer exists.
       const groups = s.groups.filter((g) => g.id !== groupId);
+      const touchedModels: AppModel[] = [];
+      const models = s.models.map((m) => {
+        if (m.group_id !== groupId) return m;
+        const updated = { ...m, group_id: null, updated_at: new Date().toISOString() };
+        touchedModels.push(updated);
+        return updated;
+      });
       saveLocal('wassell_groups', groups);
+      saveLocal('wassell_models', models);
       supabaseDelete('model_groups', groupId);
-      return { groups };
+      // Postgres took care of the cascade. No need to re-upsert models —
+      // the server already nulled their group_id. But to keep things tight
+      // in case Supabase was offline, flush the touched models on next
+      // connection via a fire-and-forget upsert.
+      for (const m of touchedModels) {
+        supabaseUpsert('models', m as unknown as Record<string, unknown>);
+      }
+      return { groups, models };
     });
   },
 
@@ -624,12 +836,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       const records = { ...s.records, [record.model_id]: updated };
       const allRecords = Object.values(records).flat();
       saveLocal('wassell_records', allRecords);
-      supabaseUpsert('records', finalRecord as unknown as Record<string, unknown>);
+      // FK: records.model_id → models.id. Gate on the model write so a record
+      // created immediately after a new model doesn't hit an FK violation.
+      supabaseUpsert(
+        'records',
+        finalRecord as unknown as Record<string, unknown>,
+        { table: 'models', id: finalRecord.model_id },
+      );
 
       if (modelChanged && enrichedModel) {
         const models = s.models.map((m) => (m.id === enrichedModel!.id ? enrichedModel! : m));
         saveLocal('wassell_models', models);
-        supabaseUpsert('models', enrichedModel as unknown as Record<string, unknown>);
+        supabaseUpsert(
+          'models',
+          enrichedModel as unknown as Record<string, unknown>,
+          enrichedModel.group_id ? { table: 'model_groups', id: enrichedModel.group_id } : undefined,
+        );
         return { records, models };
       }
       return { records };
@@ -686,7 +908,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.workflows.map((w) => (w.id === workflow.id ? workflow : w))
         : [...s.workflows, workflow];
       saveLocal('wassell_workflows', workflows);
-      supabaseUpsert('workflows', workflow as unknown as Record<string, unknown>);
+      // FK: workflows.trigger_model_id → models.id. Gate on the model write.
+      supabaseUpsert(
+        'workflows',
+        workflow as unknown as Record<string, unknown>,
+        { table: 'models', id: workflow.trigger_model_id },
+      );
       return { workflows };
     });
   },
@@ -767,7 +994,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         );
       }
       saveLocal('wassell_views', views);
-      supabaseUpsert('model_views', view as unknown as Record<string, unknown>);
+      // FK: model_views.model_id → models.id.
+      supabaseUpsert(
+        'model_views',
+        view as unknown as Record<string, unknown>,
+        { table: 'models', id: view.model_id },
+      );
       return { views };
     });
   },
@@ -787,7 +1019,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         const shouldBeDefault = v.id === viewId;
         if (v.is_default === shouldBeDefault) return v;
         const updated = { ...v, is_default: shouldBeDefault, updated_at: now };
-        supabaseUpsert('model_views', updated as unknown as Record<string, unknown>);
+        supabaseUpsert(
+          'model_views',
+          updated as unknown as Record<string, unknown>,
+          { table: 'models', id: updated.model_id },
+        );
         return updated;
       });
       saveLocal('wassell_views', views);
@@ -828,7 +1064,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? state.users.map((u) => (u.id === user.id ? user : u))
         : [...state.users, user];
       saveLocal('wassell_users', users);
-      supabaseUpsert('users', user as unknown as Record<string, unknown>);
+      // FK: users.profile_id → profiles.id. Gate on the profile write so a
+      // user assigned to a newly-created profile doesn't race past it.
+      supabaseUpsert(
+        'users',
+        user as unknown as Record<string, unknown>,
+        { table: 'profiles', id: user.profile_id },
+      );
       return { users };
     });
     return { ok: true };
@@ -918,7 +1160,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           role_assignments: u.role_assignments.filter((ra) => ra.role_id !== roleId),
           updated_at: new Date().toISOString(),
         };
-        supabaseUpsert('users', next as unknown as Record<string, unknown>);
+        supabaseUpsert(
+          'users',
+          next as unknown as Record<string, unknown>,
+          { table: 'profiles', id: next.profile_id },
+        );
         return next;
       });
       saveLocal('wassell_roles', roles);
