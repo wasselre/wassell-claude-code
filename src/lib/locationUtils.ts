@@ -204,8 +204,9 @@ export async function resolveMapsUrlAsync(url: string): Promise<LatLng | null> {
   try {
     const res = await fetch(`/api/resolve-maps-url?url=${encodeURIComponent(url)}`);
     if (!res.ok) {
-      cache[url] = null;
-      saveUrlCache(cache);
+      // Don't cache — could be a pending deploy (404), rate limit, 5xx, etc.
+      // Retry on next mount. Only cache when the server gives us a definitive
+      // 200 + null (URL resolved but no coords found).
       return null;
     }
     const data = (await res.json()) as { lat: number | null; lng: number | null };
