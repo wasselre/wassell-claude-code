@@ -68,12 +68,18 @@ export async function sendPasswordResetEmail(
  * Send an invite / sign-in link. Used by the admin "Add user" flow:
  * after creating the in-app `users` row, we email the invitee a magic
  * link. Clicking it creates the Supabase Auth account (if missing),
- * signs them in, and the store's email→user lookup in `initialize()`
- * binds them to the row the admin just created.
+ * signs them in, and lands them on `/auth/reset-password` so they set
+ * a password before entering the app. After that, every subsequent
+ * sign-in uses email + password via the Login page.
  *
- * Re-sending is harmless — Supabase will send a fresh link (subject to
- * its rate limits). If the invitee already has an auth account, the
- * same call works as a passwordless sign-in.
+ * The password-setup page works off the session the magic-link click
+ * establishes — `updateUser({ password })` accepts any active session,
+ * not just a recovery one.
+ *
+ * Re-sending is harmless — Supabase sends a fresh link (subject to
+ * its rate limits). Resending to a user who already has a password
+ * still works as a passwordless sign-in; they can skip the setup page
+ * or re-set the password.
  *
  * Requires the Supabase project's "Allow new users to sign up" setting
  * to be enabled; otherwise the call fails with "Signups not allowed".
@@ -83,7 +89,7 @@ export async function inviteUser(
   redirectTo?: string,
 ): Promise<AuthVoidResult> {
   if (!supabase) return { error: NOT_CONFIGURED_ERR };
-  const target = redirectTo ?? window.location.origin;
+  const target = redirectTo ?? `${window.location.origin}/auth/reset-password`;
   const { error } = await supabase.auth.signInWithOtp({
     email,
     options: { shouldCreateUser: true, emailRedirectTo: target },
