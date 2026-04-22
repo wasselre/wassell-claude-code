@@ -9,9 +9,10 @@ interface MultiSelectProps {
   value: string[];
   onChange: (value: string[]) => void;
   placeholder?: string;
+  compact?: boolean;
 }
 
-export default function MultiSelect({ options, groups, value, onChange, placeholder }: MultiSelectProps) {
+export default function MultiSelect({ options, groups, value, onChange, placeholder, compact }: MultiSelectProps) {
   const { language } = useAppStore();
   const isAr = language === 'ar';
   const [open, setOpen] = useState(false);
@@ -138,7 +139,7 @@ export default function MultiSelect({ options, groups, value, onChange, placehol
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="form-input flex items-center justify-between gap-2 text-start"
+        className={`form-input flex items-center justify-between gap-2 text-start ${compact ? 'text-sm py-1 px-2' : ''}`}
       >
         <span className="text-charcoal/30 text-sm">
           {selectedOptions.length === 0 ? (placeholder ?? '—') : `${selectedOptions.length} selected`}

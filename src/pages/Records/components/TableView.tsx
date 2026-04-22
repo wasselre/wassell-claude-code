@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { Pencil, Trash2, ArrowUpDown, Check, X, Link2 } from 'lucide-react';
+import { Pencil, Trash2, ArrowUpDown, Check, X, Link2, ExternalLink } from 'lucide-react';
 import DynamicCell from './DynamicCell';
 import PhoneInput from './PhoneInput';
 import RangeField from './RangeField';
 import LookupCombobox from './LookupCombobox';
+import DropdownSelect from './DropdownSelect';
+import MultiSelect from './MultiSelect';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import type { AppModel, AppRecord, ModelField, ModelView } from '@/types';
 
@@ -130,6 +132,48 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
     setEditData((prev) => ({ ...prev, [fieldName]: value }));
   };
 
+  // Dual horizontal scrollbars: a ghost scrollbar above the table mirrors the
+  // real one below so the user can scroll wide tables from the top without
+  // having to reach for the bottom edge. We sync scrollLeft in both directions
+  // and hide the top bar entirely when the table doesn't overflow.
+  const topScrollRef = useRef<HTMLDivElement>(null);
+  const bottomScrollRef = useRef<HTMLDivElement>(null);
+  const [contentWidth, setContentWidth] = useState(0);
+  const [overflows, setOverflows] = useState(false);
+
+  useEffect(() => {
+    const el = bottomScrollRef.current;
+    if (!el) return;
+    const update = () => {
+      setContentWidth(el.scrollWidth);
+      setOverflows(el.scrollWidth > el.clientWidth + 1);
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    const tbl = el.querySelector('table');
+    if (tbl) ro.observe(tbl);
+    return () => ro.disconnect();
+  }, [records.length, sortedRecords.length, editingId]);
+
+  const syncingRef = useRef<'top' | 'bottom' | null>(null);
+  const handleTopScroll = () => {
+    if (syncingRef.current === 'bottom') return;
+    syncingRef.current = 'top';
+    if (bottomScrollRef.current && topScrollRef.current) {
+      bottomScrollRef.current.scrollLeft = topScrollRef.current.scrollLeft;
+    }
+    requestAnimationFrame(() => { syncingRef.current = null; });
+  };
+  const handleBottomScroll = () => {
+    if (syncingRef.current === 'top') return;
+    syncingRef.current = 'bottom';
+    if (bottomScrollRef.current && topScrollRef.current) {
+      topScrollRef.current.scrollLeft = bottomScrollRef.current.scrollLeft;
+    }
+    requestAnimationFrame(() => { syncingRef.current = null; });
+  };
+
   if (records.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-charcoal/30">
@@ -139,7 +183,23 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
   }
 
   return (
-    <div className="card overflow-x-auto">
+    <div className="card">
+      {overflows && (
+        <div
+          ref={topScrollRef}
+          onScroll={handleTopScroll}
+          className="overflow-x-auto overflow-y-hidden border-b border-sand/20"
+          style={{ height: 14 }}
+          aria-hidden="true"
+        >
+          <div style={{ width: contentWidth, height: 1 }} />
+        </div>
+      )}
+      <div
+        ref={bottomScrollRef}
+        onScroll={handleBottomScroll}
+        className="overflow-x-auto"
+      >
       <table className="data-table">
         <thead>
           <tr>
@@ -279,6 +339,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -298,21 +359,35 @@ function InlineInput({
 
   const cls = 'form-input text-sm py-1 px-2';
 
+  // Width = (content length + padding) in ch units, clamped so the input stays
+  // usable but grows to fit what the user is typing. Matches the user's ask
+  // that the field adjust to the text inside it.
+  const autoWidth = (text: string, min = 8, max = 48) => {
+    const len = Math.max(text.length, 0) + 2;
+    const ch = Math.min(Math.max(len, min), max);
+    return `${ch}ch`;
+  };
+
   switch (field.type) {
     case 'text':
     case 'email':
-    case 'url':
-    case 'textarea':
+    case 'textarea': {
+      const text = String(value ?? '');
       return (
         <input
-          type={field.type === 'email' ? 'email' : field.type === 'url' ? 'url' : 'text'}
-          value={String(value ?? '')}
+          type={field.type === 'email' ? 'email' : 'text'}
+          value={text}
           onChange={(e) => onChange(e.target.value)}
           className={cls}
-          dir={['email', 'url'].includes(field.type) ? 'ltr' : undefined}
+          style={{ width: autoWidth(text) }}
+          dir={field.type === 'email' ? 'ltr' : undefined}
           onClick={(e) => e.stopPropagation()}
         />
       );
+    }
+
+    case 'url':
+      return <UrlInlineEditor value={value} onChange={onChange} isAr={isAr} />;
 
     case 'phone':
       return (
@@ -384,56 +459,31 @@ function InlineInput({
       );
 
     case 'dropdown': {
-      const options = field.options ?? [];
       return (
-        <select
-          value={String(value ?? '')}
-          onChange={(e) => onChange(e.target.value)}
-          className={cls}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <option value="">—</option>
-          {options.map((opt) => (
-            <option key={opt.id} value={opt.value}>
-              {isAr ? opt.label_ar : opt.label_en}
-            </option>
-          ))}
-        </select>
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[9rem]">
+          <DropdownSelect
+            options={field.options ?? []}
+            groups={field.option_groups}
+            value={(value as string) ?? undefined}
+            onChange={onChange}
+            compact
+          />
+        </div>
       );
     }
 
     case 'multiselect':
     case 'section_selector': {
-      const options = field.options ?? [];
       const selected = Array.isArray(value) ? (value as string[]) : [];
       return (
-        <div className="flex flex-wrap gap-1 max-w-xs" onClick={(e) => e.stopPropagation()}>
-          {options.map((opt) => {
-            const checked = selected.includes(opt.value);
-            return (
-              <label
-                key={opt.id}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-xs cursor-pointer border transition-colors ${
-                  checked
-                    ? 'border-copper/30 bg-copper/5 text-copper font-bold'
-                    : 'border-sand/30 text-charcoal/40 hover:border-charcoal/20'
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => {
-                    const next = checked
-                      ? selected.filter((v) => v !== opt.value)
-                      : [...selected, opt.value];
-                    onChange(next);
-                  }}
-                  className="sr-only"
-                />
-                {isAr ? opt.label_ar : opt.label_en}
-              </label>
-            );
-          })}
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[10rem]">
+          <MultiSelect
+            options={field.options ?? []}
+            groups={field.option_groups}
+            value={selected}
+            onChange={onChange as (v: string[]) => void}
+            compact
+          />
         </div>
       );
     }
@@ -512,4 +562,116 @@ function InlineInput({
         />
       );
   }
+}
+
+/**
+ * Inline URL editor — renders as an "Edit link" chip in the table cell. Clicking
+ * opens a small popover with a real URL input so the user can edit the value
+ * without a full-width input crowding the row. Enter / Save commits, Escape /
+ * click-outside discards.
+ */
+function UrlInlineEditor({
+  value,
+  onChange,
+  isAr,
+}: {
+  value: unknown;
+  onChange: (value: unknown) => void;
+  isAr: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(String(value ?? ''));
+  const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const current = String(value ?? '');
+  const hasValue = current.trim() !== '';
+  const safeHref = hasValue
+    ? (/^https?:\/\//i.test(current) ? current : `https://${current}`)
+    : '';
+
+  useEffect(() => {
+    if (open) {
+      setDraft(current);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClick = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [open]);
+
+  const commit = () => {
+    onChange(draft.trim() === '' ? undefined : draft);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={rootRef} className="relative inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-copper/10 hover:bg-copper/20 text-copper text-xs font-bold transition-colors"
+        title={hasValue ? current : isAr ? 'أضف رابطًا' : 'Add a link'}
+      >
+        <Link2 size={12} />
+        {isAr ? 'تعديل الرابط' : 'Edit link'}
+      </button>
+      {hasValue && safeHref && (
+        <a
+          href={safeHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-copper/60 hover:text-copper transition-colors"
+          title={isAr ? 'فتح' : 'Open'}
+          dir="ltr"
+        >
+          <ExternalLink size={12} />
+        </a>
+      )}
+      {open && (
+        <div
+          className="absolute z-30 top-full mt-1 start-0 w-72 bg-white rounded-lg border border-sand shadow-lg p-3 animate-[fadeIn_0.1s_ease]"
+        >
+          <label className="block text-[11px] font-bold text-charcoal/60 mb-1">
+            {isAr ? 'الرابط' : 'Link URL'}
+          </label>
+          <input
+            ref={inputRef}
+            type="url"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); commit(); }
+              else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+            }}
+            className="form-input text-sm py-1.5 px-2"
+            placeholder="https://..."
+            dir="ltr"
+          />
+          <div className="flex items-center justify-end gap-1.5 mt-2">
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="px-2.5 py-1 rounded-lg text-xs hover:bg-cream text-charcoal/60"
+            >
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </button>
+            <button
+              type="button"
+              onClick={commit}
+              className="px-2.5 py-1 rounded-lg text-xs bg-copper text-white hover:bg-terracotta font-bold"
+            >
+              {isAr ? 'حفظ' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

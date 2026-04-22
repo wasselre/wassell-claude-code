@@ -10,9 +10,10 @@ interface DropdownSelectProps {
   value: string | undefined;
   onChange: (value: string) => void;
   placeholder?: string;
+  compact?: boolean;
 }
 
-export default function DropdownSelect({ options, groups, value, onChange, placeholder }: DropdownSelectProps) {
+export default function DropdownSelect({ options, groups, value, onChange, placeholder, compact }: DropdownSelectProps) {
   const { language } = useAppStore();
   const isAr = language === 'ar';
   const [open, setOpen] = useState(false);
@@ -94,7 +95,7 @@ export default function DropdownSelect({ options, groups, value, onChange, place
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="form-input flex items-center justify-between gap-2 text-start"
+        className={`form-input flex items-center justify-between gap-2 text-start ${compact ? 'text-sm py-1 px-2' : ''}`}
       >
         {selected ? (
           <Badge label={isAr ? selected.label_ar : selected.label_en} color={selected.color} />
