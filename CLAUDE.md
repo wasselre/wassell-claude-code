@@ -157,9 +157,23 @@ VITE_SUPABASE_URL=your-project-url
 VITE_SUPABASE_ANON_KEY=your-anon-key
 ```
 
+## Deployment Config (CRITICAL — `vercel.json`)
+The app deploys to Vercel. Its config (`vercel.json`) is validated against a **strict JSON schema** (`https://openapi.vercel.sh/vercel.json`) at deploy time — every object inside `headers[]`, `rewrites[]`, `redirects[]`, etc. is `additionalProperties: false`. Any unknown key makes the deploy error out **before the build runs** (duration shows blank in the Vercel dashboard).
+
+**Rules when editing `vercel.json`:**
+1. **No custom keys.** JSON has no comments. Do NOT add `_comment`, `//`, `description`, or any other field the schema doesn't list. Explanations go in the commit message, not the JSON.
+2. **`npm run build` does NOT validate `vercel.json`** — it only runs `tsc + vite build`. A green local build tells you nothing about deploy-config correctness.
+3. **After any edit to `vercel.json` (or adding new Vercel-only config), verify before pushing.** Either:
+   - Run `npx vercel build` locally (reproduces the full production build including config validation), OR
+   - Open `vercel.json` in an editor with JSON-schema support — the `$schema` reference at the top will surface violations inline.
+4. **Past incident (2026-04-22):** commit `f6a07f5` added `_comment` keys inside `headers[]` entries. Local build passed; three consecutive production deploys failed with blank duration until `_comment` was removed in `df7c09a`.
+
+The same "strict schema, not validated by `npm run build`" principle applies to any other deploy-layer config we add later (e.g. `netlify.toml`, GitHub Actions workflows, Supabase `config.toml`).
+
 ## Do Not
 - Do not use `any` TypeScript type
 - Do not hardcode Arabic or English strings in JSX
 - Do not fetch from Supabase directly in components — go through the store
 - Do not delete system models (is_system: true) — disable the delete button instead
 - Do not break RTL layout — always test both directions when adding UI
+- Do not add non-schema keys (`_comment`, etc.) to `vercel.json` — see "Deployment Config" above
