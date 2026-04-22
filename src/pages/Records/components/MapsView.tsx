@@ -8,9 +8,8 @@ import {
   DEFAULT_MAP_ZOOM,
   buildColoredPinIcon,
   parseMapStyleJson,
-  resolveLocation,
-  resolvePinColor,
 } from '@/lib/locationUtils';
+import { useResolvedLocations } from '@/hooks/useResolvedLocations';
 import Badge from '@/components/ui/Badge';
 import type { AppModel, AppRecord, MapsConfig, ModelField } from '@/types';
 
@@ -30,24 +29,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   const cfg = model.maps_config;
   const allFields = useMemo(() => model.schema.sections.flatMap((s) => s.fields), [model]);
 
-  const { resolved, unresolved } = useMemo(() => {
-    const res: { record: AppRecord; lat: number; lng: number; color: string }[] = [];
-    const unres: AppRecord[] = [];
-    for (const rec of records) {
-      const loc = resolveLocation(rec, cfg, allFields);
-      if (loc) {
-        res.push({
-          record: rec,
-          lat: loc.lat,
-          lng: loc.lng,
-          color: resolvePinColor(rec, cfg, allFields, model.color),
-        });
-      } else {
-        unres.push(rec);
-      }
-    }
-    return { resolved: res, unresolved: unres };
-  }, [records, cfg, allFields, model.color]);
+  const { resolved, unresolved, resolving, resolvingCount } = useResolvedLocations(model, records);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -125,6 +107,12 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
       </div>
 
       <aside className="bg-cream/40 rounded-xl border border-sand/30 p-4 max-h-[calc(100vh-320px)] overflow-y-auto">
+        {resolving && (
+          <p className="text-xs text-copper mb-2 flex items-center gap-1">
+            <span className="inline-block w-2 h-2 rounded-full bg-copper animate-pulse" />
+            {t('maps.resolving', { count: resolvingCount })}
+          </p>
+        )}
         <h3 className="text-sm font-bold text-charcoal mb-1">
           {t('maps.unresolvable_records', { count: unresolved.length })}
         </h3>

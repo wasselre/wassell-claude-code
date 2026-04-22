@@ -8,9 +8,8 @@ import {
   DEFAULT_MAP_ZOOM,
   buildColoredPinIcon,
   parseMapStyleJson,
-  resolveLocation,
-  resolvePinColor,
 } from '@/lib/locationUtils';
+import { useResolvedLocations } from '@/hooks/useResolvedLocations';
 import type { AppModel, MapsConfig, ModelField } from '@/types';
 
 interface MapsBuilderProps {
@@ -55,17 +54,19 @@ export default function MapsBuilder({ model, onChange }: MapsBuilderProps) {
   };
 
   const modelRecords = records[model.id] ?? [];
-  const previewPins = useMemo(() => {
-    const result: { id: string; lat: number; lng: number; color: string }[] = [];
-    for (const rec of modelRecords) {
-      if (result.length >= 5) break;
-      const loc = resolveLocation(rec, cfg, allFields);
-      if (!loc) continue;
-      const color = resolvePinColor(rec, cfg, allFields, model.color);
-      result.push({ id: rec.id, lat: loc.lat, lng: loc.lng, color });
-    }
-    return result;
-  }, [modelRecords, cfg, allFields, model.color]);
+  // Show up to 5 pins in the preview. Short URLs that require server-side
+  // resolution populate asynchronously via the same cache the Maps view uses.
+  const { resolved: allResolved } = useResolvedLocations(model, modelRecords);
+  const previewPins = useMemo(
+    () =>
+      allResolved.slice(0, 5).map((p) => ({
+        id: p.record.id,
+        lat: p.lat,
+        lng: p.lng,
+        color: p.color,
+      })),
+    [allResolved],
+  );
 
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
   const keyMissing = !isMapsKeyConfigured();

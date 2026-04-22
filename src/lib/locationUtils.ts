@@ -3,6 +3,11 @@ import type { AppRecord, MapsConfig, ModelField } from '@/types';
 export const DEFAULT_MAP_CENTER = { lat: 24.7136, lng: 46.6753 } as const;
 export const DEFAULT_MAP_ZOOM = 11;
 
+// localStorage key for cached server-resolved coordinates. Keyed by raw URL
+// string → LatLng or null (known-unresolvable). Cached forever because a
+// Google Maps short URL's target is stable.
+const URL_CACHE_KEY = 'wassell_maps_url_cache';
+
 export interface LatLng {
   lat: number;
   lng: number;
@@ -148,4 +153,123 @@ export function buildColoredPinIcon(color: string): GoogleMapsIcon | undefined {
     scaledSize: new window.google.maps.Size(28, 36),
     anchor: new window.google.maps.Point(14, 36),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Async server-side resolution (for shortened goo.gl URLs the browser can't
+// follow due to CORS). Results are cached in localStorage forever.
+// ---------------------------------------------------------------------------
+
+type UrlCache = Record<string, LatLng | null>; // null = known-unresolvable
+
+function loadUrlCache(): UrlCache {
+  try {
+    const raw = localStorage.getItem(URL_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as UrlCache) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveUrlCache(cache: UrlCache): void {
+  try {
+    localStorage.setItem(URL_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // quota full — ignore, cache becomes best-effort
+  }
+}
+
+export function getCachedResolution(url: string): LatLng | null | undefined {
+  const cache = loadUrlCache();
+  return url in cache ? cache[url] : undefined;
+}
+
+/**
+ * Resolve a Google Maps URL to lat/lng, falling back to the server-side
+ * `/api/resolve-maps-url` edge function for short URLs the browser can't
+ * follow. Responses are cached in localStorage (forever) so each unique URL
+ * only hits the server once.
+ *
+ * Returns null for URLs that resolve but yield no parseable coordinates
+ * (treated as known-unresolvable and cached so we don't retry).
+ */
+export async function resolveMapsUrlAsync(url: string): Promise<LatLng | null> {
+  // Fast path: client-side parse works for most long URLs.
+  const sync = parseGoogleMapsUrl(url);
+  if (sync) return sync;
+
+  const cache = loadUrlCache();
+  if (url in cache) return cache[url] ?? null;
+
+  try {
+    const res = await fetch(`/api/resolve-maps-url?url=${encodeURIComponent(url)}`);
+    if (!res.ok) {
+      cache[url] = null;
+      saveUrlCache(cache);
+      return null;
+    }
+    const data = (await res.json()) as { lat: number | null; lng: number | null };
+    const result: LatLng | null =
+      typeof data.lat === 'number' && typeof data.lng === 'number'
+        ? { lat: data.lat, lng: data.lng }
+        : null;
+    cache[url] = result;
+    saveUrlCache(cache);
+    return result;
+  } catch {
+    // Network failure — don't cache, so we'll retry on next mount.
+    return null;
+  }
+}
+
+/**
+ * Sync version of `resolveLocation` that also consults the localStorage cache.
+ * Use this in render paths; async resolution happens in the `useResolvedLocations`
+ * hook before this is called.
+ */
+export function resolveLocationWithCache(
+  record: AppRecord,
+  cfg: MapsConfig,
+  fields: ModelField[],
+): LatLng | null {
+  const direct = resolveLocation(record, cfg, fields);
+  if (direct) return direct;
+
+  if (!cfg.location_url_field_id) return null;
+  const field = fields.find((f) => f.id === cfg.location_url_field_id);
+  if (!field) return null;
+  const raw = record.data[field.name];
+  if (typeof raw !== 'string' || !raw.trim()) return null;
+
+  const cached = getCachedResolution(raw.trim());
+  return cached ?? null;
+}
+
+/**
+ * Pick the records whose location URL needs server-side resolution. Skips
+ * records that already resolve via the sync path (URL parse or manual lat/lng)
+ * and records whose URL has already been cached (hit or miss).
+ */
+export function collectUrlsNeedingResolution(
+  records: AppRecord[],
+  cfg: MapsConfig,
+  fields: ModelField[],
+): string[] {
+  if (!cfg.location_url_field_id) return [];
+  const urlField = fields.find((f) => f.id === cfg.location_url_field_id);
+  if (!urlField) return [];
+
+  const cache = loadUrlCache();
+  const out = new Set<string>();
+  for (const rec of records) {
+    if (resolveLocation(rec, cfg, fields)) continue; // sync path worked
+    const raw = rec.data[urlField.name];
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (parseGoogleMapsUrl(trimmed)) continue; // sync parse works
+    if (trimmed in cache) continue; // already resolved (hit or miss)
+    out.add(trimmed);
+  }
+  return [...out];
 }
