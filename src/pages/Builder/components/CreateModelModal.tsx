@@ -9,6 +9,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import IconPickerModal from './IconPickerModal';
 import { getIconComponent } from '@/components/layout/Sidebar';
+import { MAPS_CONFIG_DEFAULT } from '@/types';
 import type { AppModel } from '@/types';
 
 const COLOR_PRESETS = [
@@ -77,6 +78,7 @@ export default function CreateModelModal({ open, onClose }: CreateModelModalProp
         badge_field_id: null,
         shown_field_ids: [],
       },
+      maps_config: { ...MAPS_CONFIG_DEFAULT },
       schema: {
         section_selector_field_id: null,
         sections: [

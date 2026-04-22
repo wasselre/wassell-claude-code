@@ -3,11 +3,12 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { Plus, Search, Table2, LayoutGrid, Trash2, Download, Upload, Pencil } from 'lucide-react';
+import { Plus, Search, Table2, LayoutGrid, MapPin, Trash2, Download, Upload, Pencil } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import TableView from './components/TableView';
 import CardView from './components/CardView';
+import MapsView from './components/MapsView';
 import ImportModal from './components/ImportModal';
 import BulkEditModal from './components/BulkEditModal';
 import ViewSelector from './components/ViewSelector';
@@ -57,8 +58,8 @@ export default function RecordListPage() {
   };
 
   const storedView = modelName ? localStorage.getItem(`view_mode_${modelName}`) : null;
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>(
-    (storedView as 'table' | 'cards') ?? 'table',
+  const [viewMode, setViewMode] = useState<'table' | 'cards' | 'maps'>(
+    (storedView as 'table' | 'cards' | 'maps') ?? 'table',
   );
   const [search, setSearch] = useState('');
   const [deletingRecord, setDeletingRecord] = useState<AppRecord | null>(null);
@@ -120,7 +121,7 @@ export default function RecordListPage() {
     setEditorOpen(true);
   };
 
-  const toggleView = (mode: 'table' | 'cards') => {
+  const toggleView = (mode: 'table' | 'cards' | 'maps') => {
     setViewMode(mode);
     if (modelName) localStorage.setItem(`view_mode_${modelName}`, mode);
   };
@@ -328,6 +329,15 @@ export default function RecordListPage() {
           >
             <LayoutGrid size={18} />
           </button>
+          <button
+            onClick={() => toggleView('maps')}
+            className={`p-2 rounded-md transition-colors ${
+              viewMode === 'maps' ? 'bg-white text-copper shadow-sm' : 'text-charcoal/40 hover:text-charcoal'
+            }`}
+            title={t('records.view_maps')}
+          >
+            <MapPin size={18} />
+          </button>
         </div>
       </div>
 
@@ -386,15 +396,15 @@ export default function RecordListPage() {
         );
       })()}
 
-      {/* Page size selector — sits just above the list in both views */}
-      {filteredRecords.length > 0 && (
+      {/* Page size selector — sits just above the list (hidden in maps mode) */}
+      {viewMode !== 'maps' && filteredRecords.length > 0 && (
         <div className="flex items-center justify-end mb-2">
           <PageSizeSelector pageSize={pageSize} onChange={updatePageSize} />
         </div>
       )}
 
       {/* Content */}
-      {viewMode === 'table' ? (
+      {viewMode === 'table' && (
         <TableView
           model={model}
           records={pagedRecords}
@@ -405,7 +415,8 @@ export default function RecordListPage() {
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}
         />
-      ) : (
+      )}
+      {viewMode === 'cards' && (
         <CardView
           model={model}
           records={pagedRecords}
@@ -415,14 +426,23 @@ export default function RecordListPage() {
           onToggleSelectAll={toggleSelectAll}
         />
       )}
+      {viewMode === 'maps' && (
+        <MapsView
+          model={model}
+          records={filteredRecords}
+          onCardClick={(rec) => navigate(`/model/${model.name}/${rec.id}`)}
+        />
+      )}
 
-      {/* Page navigator — sits below the list */}
-      <PageNavigator
-        totalCount={filteredRecords.length}
-        currentPage={currentPage}
-        pageSize={pageSize}
-        onPageChange={setCurrentPage}
-      />
+      {/* Page navigator — sits below the list (not shown in maps view) */}
+      {viewMode !== 'maps' && (
+        <PageNavigator
+          totalCount={filteredRecords.length}
+          currentPage={currentPage}
+          pageSize={pageSize}
+          onPageChange={setCurrentPage}
+        />
+      )}
 
       {/* View editor modal */}
       <ViewEditor

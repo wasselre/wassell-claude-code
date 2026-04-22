@@ -10,6 +10,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import SectionManager from '@/pages/Builder/components/SectionManager';
+import { MAPS_CONFIG_DEFAULT } from '@/types';
 import type { Role, AppModel, StoreMutationReason } from '@/types';
 
 function reasonToKey(reason: StoreMutationReason): string {
@@ -38,6 +39,7 @@ function roleAsModel(role: Role): AppModel {
     color: '#0D9488',
     schema: role.schema,
     card_config: { title_field_id: null, subtitle_field_id: null, badge_field_id: null, shown_field_ids: [] },
+    maps_config: { ...MAPS_CONFIG_DEFAULT },
     group_id: null,
     is_system: role.is_system,
     created_at: role.created_at,

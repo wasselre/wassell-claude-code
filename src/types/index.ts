@@ -197,6 +197,44 @@ export interface CardConfig {
   shown_field_ids: string[];
 }
 
+/**
+ * Per-model Maps view config (JSONB on `models.maps_config`). Mirrors the
+ * `card_config` pattern. See src/pages/Records/components/MapsView.tsx.
+ */
+export interface MapsConfig {
+  location_url_field_id: string | null;
+  manual_lat_field_id: string | null;
+  manual_lng_field_id: string | null;
+  pin_color_field_id: string | null;
+  pin_label_field_id: string | null;
+  click_action: 'popup' | 'navigate';
+  popup_title_field_id: string | null;
+  popup_subtitle_field_id: string | null;
+  popup_badge_field_id: string | null;
+  popup_shown_field_ids: string[];
+  map_style_json: string | null;
+  default_center_lat: number | null;
+  default_center_lng: number | null;
+  default_zoom: number | null;
+}
+
+export const MAPS_CONFIG_DEFAULT: MapsConfig = {
+  location_url_field_id: null,
+  manual_lat_field_id: null,
+  manual_lng_field_id: null,
+  pin_color_field_id: null,
+  pin_label_field_id: null,
+  click_action: 'popup',
+  popup_title_field_id: null,
+  popup_subtitle_field_id: null,
+  popup_badge_field_id: null,
+  popup_shown_field_ids: [],
+  map_style_json: null,
+  default_center_lat: null,
+  default_center_lng: null,
+  default_zoom: null,
+};
+
 export interface ModelSchema {
   sections: ModelSection[];
   section_selector_field_id?: string | null;
@@ -215,6 +253,7 @@ export interface AppModel {
   color: string; // hex
   schema: ModelSchema;
   card_config: CardConfig;
+  maps_config: MapsConfig;
   group_id?: string | null;
   /**
    * Sidebar display order within the model's group (or within the

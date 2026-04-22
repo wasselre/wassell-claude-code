@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS models (
   color TEXT NOT NULL DEFAULT '#B8734F',
   schema JSONB NOT NULL DEFAULT '{"sections":[]}'::jsonb,
   card_config JSONB NOT NULL DEFAULT '{"title_field_id":null,"shown_field_ids":[]}'::jsonb,
+  maps_config JSONB NOT NULL DEFAULT '{"location_url_field_id":null,"manual_lat_field_id":null,"manual_lng_field_id":null,"pin_color_field_id":null,"pin_label_field_id":null,"click_action":"popup","popup_title_field_id":null,"popup_subtitle_field_id":null,"popup_badge_field_id":null,"popup_shown_field_ids":[],"map_style_json":null,"default_center_lat":null,"default_center_lng":null,"default_zoom":null}'::jsonb,
   group_id UUID REFERENCES model_groups(id) ON DELETE SET NULL,
   is_system BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -132,6 +133,11 @@ CREATE TABLE IF NOT EXISTS model_views (
 ALTER TABLE model_views
   ADD COLUMN IF NOT EXISTS project_ids JSONB DEFAULT NULL,
   ADD COLUMN IF NOT EXISTS research_container_field_id TEXT DEFAULT NULL;
+
+-- maps_config: JSONB column added for the Maps view (third view type alongside
+-- Table and Cards). Default object matches MAPS_CONFIG_DEFAULT in src/types/index.ts.
+ALTER TABLE models
+  ADD COLUMN IF NOT EXISTS maps_config JSONB NOT NULL DEFAULT '{"location_url_field_id":null,"manual_lat_field_id":null,"manual_lng_field_id":null,"pin_color_field_id":null,"pin_label_field_id":null,"click_action":"popup","popup_title_field_id":null,"popup_subtitle_field_id":null,"popup_badge_field_id":null,"popup_shown_field_ids":[],"map_style_json":null,"default_center_lat":null,"default_center_lng":null,"default_zoom":null}'::jsonb;
 
 -- Users / profiles / roles — the app's own role-and-permission model. These
 -- live alongside Supabase Auth's built-in `auth.users`; the app matches them

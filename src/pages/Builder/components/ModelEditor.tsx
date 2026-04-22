@@ -7,6 +7,7 @@ import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionManager from './SectionManager';
 import CardBuilder from './CardBuilder';
+import MapsBuilder from './MapsBuilder';
 import type { AppModel } from '@/types';
 
 interface ModelEditorProps {
@@ -17,7 +18,7 @@ export default function ModelEditor({ model }: ModelEditorProps) {
   const { t } = useTranslation();
   const { saveModel, deleteModel, language, addToast } = useAppStore();
   const isAr = language === 'ar';
-  const [activeTab, setActiveTab] = useState<'fields' | 'card'>('fields');
+  const [activeTab, setActiveTab] = useState<'fields' | 'card' | 'maps'>('fields');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [showDelete, setShowDelete] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -113,16 +114,32 @@ export default function ModelEditor({ model }: ModelEditorProps) {
         >
           {t('builder.card_builder')}
         </button>
+        <button
+          onClick={() => setActiveTab('maps')}
+          className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${
+            activeTab === 'maps'
+              ? 'bg-white text-copper shadow-sm'
+              : 'text-charcoal/50 hover:text-charcoal'
+          }`}
+        >
+          {t('builder.maps_builder')}
+        </button>
       </div>
 
       {/* Tab Content */}
-      {activeTab === 'fields' ? (
+      {activeTab === 'fields' && (
         <div className="flex-1 min-h-0">
           <SectionManager model={model} onChange={handleModelChange} />
         </div>
-      ) : (
+      )}
+      {activeTab === 'card' && (
         <div className="flex-1 overflow-y-auto">
           <CardBuilder model={model} onChange={handleModelChange} />
+        </div>
+      )}
+      {activeTab === 'maps' && (
+        <div className="flex-1 overflow-y-auto">
+          <MapsBuilder model={model} onChange={handleModelChange} />
         </div>
       )}
 

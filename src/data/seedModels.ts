@@ -1,4 +1,5 @@
 import { v4 as uuid } from 'uuid';
+import { MAPS_CONFIG_DEFAULT } from '@/types';
 import type { AppModel, FieldOption, ModelGroup } from '@/types';
 
 // --- Groups ---
@@ -170,6 +171,7 @@ const developersModel: AppModel = {
     badge_field_id: null,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {
@@ -506,6 +508,7 @@ const clientsModel: AppModel = {
     badge_field_id: clientStatusFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {
@@ -832,6 +835,7 @@ const followupsModel: AppModel = {
     badge_field_id: fuTypeFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     section_selector_field_id: fuTypeFieldId,
     sections: [
@@ -1168,6 +1172,7 @@ const appointmentsModel: AppModel = {
     badge_field_id: apptStatusFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {
@@ -1294,6 +1299,7 @@ const unitsModel: AppModel = {
     badge_field_id: unitStatusFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {
@@ -1425,6 +1431,7 @@ const allProjectsModel: AppModel = {
     badge_field_id: apStatusFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {
@@ -1618,6 +1625,7 @@ const targetedProjectsModel: AppModel = {
     badge_field_id: tpPriorityFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {
@@ -1749,6 +1757,7 @@ const ourProjectsModel: AppModel = {
     badge_field_id: opPhaseFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {
@@ -1877,6 +1886,7 @@ const projectsResearchModel: AppModel = {
     badge_field_id: prCityFieldId,
     shown_field_ids: [],
   },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
   schema: {
     sections: [
       {

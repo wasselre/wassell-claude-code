@@ -1,5 +1,6 @@
 import { v4 as uuid } from 'uuid';
 import { SEED_MODELS, SEED_GROUPS, PROJECTS_GROUP_ID } from '@/data/seedModels';
+import { MAPS_CONFIG_DEFAULT } from '@/types';
 import type { AppModel, AppRecord, Workflow, Dashboard, ModelView, ModelGroup, NoteEntry } from '@/types';
 
 /**
@@ -25,7 +26,7 @@ const PROJECTS_SYSTEM_NAMES = new Set([
  * Bump SCHEMA_VERSION whenever you add a new migration. Each migration is numbered
  * starting at 1; we run the ones between the user's stored version and SCHEMA_VERSION.
  */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 const VERSION_KEY = 'wassell_schema_version';
 
@@ -551,6 +552,39 @@ const migration_8_to_9: Migration = (state) => {
   return { ...state, models: result.models };
 };
 
+/**
+ * Migration 9 → 10: Add the default `maps_config` object to every model that
+ * predates the Maps view feature. Idempotent.
+ */
+const migration_9_to_10: Migration = (state) => {
+  let changed = 0;
+  const models = state.models.map((m) => {
+    if (m.maps_config) return m;
+    changed++;
+    return { ...m, maps_config: { ...MAPS_CONFIG_DEFAULT } };
+  });
+  if (changed > 0) {
+    console.warn(`[schemaMigrations v10] Added default maps_config to ${changed} model(s).`);
+  }
+  return { ...state, models };
+};
+
+/**
+ * Always-run, idempotent heal that ensures every model has a `maps_config`.
+ * Catches version-drift users whose marker advanced past 10 without running
+ * the migration (see migration_5_to_6 for the class of bug).
+ */
+export function healMapsConfigForModels(models: AppModel[]): { models: AppModel[]; changed: boolean } {
+  let changed = false;
+  const next = models.map((m) => {
+    if (m.maps_config) return m;
+    changed = true;
+    return { ...m, maps_config: { ...MAPS_CONFIG_DEFAULT } };
+  });
+  if (changed) console.warn('[healMapsConfig] Backfilled maps_config on one or more models.');
+  return { models: next, changed };
+}
+
 const MIGRATIONS: Record<number, Migration> = {
   2: migration_1_to_2,
   3: migration_2_to_3,
@@ -560,6 +594,7 @@ const MIGRATIONS: Record<number, Migration> = {
   7: migration_6_to_7,
   8: migration_7_to_8,
   9: migration_8_to_9,
+  10: migration_9_to_10,
 };
 
 /**

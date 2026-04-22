@@ -8,7 +8,7 @@ import { executeWorkflows } from '@/lib/workflowEngine';
 import { assignAutoIds } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
-import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, refreshSystemModels } from '@/lib/schemaMigrations';
+import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import type {
   AppState,
@@ -566,6 +566,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       models = healedComparison.models;
       migratedRecords = healedComparison.records;
     }
+
+    // Always-run heal for maps_config. Backfills default on any model missing
+    // it (covers version-drift past 10 without running migration_9_to_10).
+    const healedMaps = healMapsConfigForModels(models);
+    if (healedMaps.changed) models = healedMaps.models;
 
     // Always-run system-model refresh — re-apply seed schema/card_config/labels
     // for every `is_system` model on every load. Makes `seedModels.ts` the live
