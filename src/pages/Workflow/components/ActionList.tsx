@@ -680,7 +680,7 @@ function RoleVariableConfig({
                 <select
                   value={cond.field_name}
                   onChange={(e) => updateCondition(cond.id, { field_name: e.target.value, value: '', trigger_field_id: undefined })}
-                  className="form-input text-xs py-1.5 flex-1 min-w-[100px]"
+                  className="form-input text-xs py-1.5 flex-1 min-w-[80px]"
                 >
                   <option value="">—</option>
                   {selectedRoleFields.map((f) => (
@@ -717,7 +717,7 @@ function RoleVariableConfig({
                   <select
                     value={cond.trigger_field_id ?? ''}
                     onChange={(e) => updateCondition(cond.id, { trigger_field_id: e.target.value })}
-                    className="form-input text-xs py-1.5 flex-1 min-w-[100px]"
+                    className="form-input text-xs py-1.5 flex-1 min-w-[80px]"
                   >
                     <option value="">— {isAr ? 'اختر حقل' : 'Select field'} —</option>
                     {triggerFields.map((f) => (
@@ -728,7 +728,7 @@ function RoleVariableConfig({
                   <input
                     disabled
                     placeholder={isAr ? 'اختر حقل أولاً' : 'Pick a field first'}
-                    className="form-input text-xs py-1.5 flex-1 min-w-[100px] opacity-50"
+                    className="form-input text-xs py-1.5 flex-1 min-w-[80px] opacity-50"
                   />
                 ) : roleField.type === 'checkbox' ? (
                   <select
@@ -743,7 +743,7 @@ function RoleVariableConfig({
                   <select
                     value={String(cond.value ?? '')}
                     onChange={(e) => updateCondition(cond.id, { value: e.target.value })}
-                    className="form-input text-xs py-1.5 flex-1 min-w-[100px]"
+                    className="form-input text-xs py-1.5 flex-1 min-w-[80px]"
                   >
                     <option value="">—</option>
                     {roleField.options.map((o) => (
@@ -755,7 +755,7 @@ function RoleVariableConfig({
                     type={roleField.type === 'number' ? 'number' : 'text'}
                     value={String(cond.value ?? '')}
                     onChange={(e) => updateCondition(cond.id, { value: roleField.type === 'number' ? Number(e.target.value) : e.target.value })}
-                    className="form-input text-xs py-1.5 flex-1 min-w-[100px]"
+                    className="form-input text-xs py-1.5 flex-1 min-w-[80px]"
                   />
                 )}
                 <button onClick={() => deleteCondition(cond.id)} className="p-1 rounded hover:bg-red-50 text-charcoal/20 hover:text-red-500">
@@ -906,7 +906,7 @@ function AssignUserConfig({
                 const source = cond.value_source ?? 'static';
                 return (
                   <div key={cond.id} className="flex items-center gap-2 flex-wrap">
-                    <select value={cond.field_name} onChange={(e) => updateCondition(cond.id, { field_name: e.target.value, value: '', trigger_field_id: undefined })} className="form-input text-xs py-1.5 flex-1 min-w-[120px]">
+                    <select value={cond.field_name} onChange={(e) => updateCondition(cond.id, { field_name: e.target.value, value: '', trigger_field_id: undefined })} className="form-input text-xs py-1.5 flex-1 min-w-[100px]">
                       <option value="">—</option>
                       {selectedRoleFields.map((f) => <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>)}
                     </select>
@@ -933,24 +933,24 @@ function AssignUserConfig({
                       <option value="trigger_field">{isAr ? 'حقل' : 'Field'}</option>
                     </select>
                     {source === 'trigger_field' ? (
-                      <select value={cond.trigger_field_id ?? ''} onChange={(e) => updateCondition(cond.id, { trigger_field_id: e.target.value })} className="form-input text-xs py-1.5 flex-1 min-w-[120px]">
+                      <select value={cond.trigger_field_id ?? ''} onChange={(e) => updateCondition(cond.id, { trigger_field_id: e.target.value })} className="form-input text-xs py-1.5 flex-1 min-w-[100px]">
                         <option value="">— {isAr ? 'اختر حقل' : 'Select field'} —</option>
                         {triggerFields.map((f) => <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>)}
                       </select>
                     ) : !roleField ? (
-                      <input disabled placeholder={isAr ? 'اختر حقل أولاً' : 'Pick a field first'} className="form-input text-xs py-1.5 flex-1 min-w-[120px] opacity-50" />
+                      <input disabled placeholder={isAr ? 'اختر حقل أولاً' : 'Pick a field first'} className="form-input text-xs py-1.5 flex-1 min-w-[100px] opacity-50" />
                     ) : roleField.type === 'checkbox' ? (
                       <select value={String(cond.value ?? '')} onChange={(e) => updateCondition(cond.id, { value: e.target.value === 'true' })} className="form-input text-xs py-1.5 w-20">
                         <option value="true">{isAr ? 'نعم' : 'Yes'}</option>
                         <option value="false">{isAr ? 'لا' : 'No'}</option>
                       </select>
                     ) : roleField.type === 'dropdown' && roleField.options ? (
-                      <select value={String(cond.value ?? '')} onChange={(e) => updateCondition(cond.id, { value: e.target.value })} className="form-input text-xs py-1.5 flex-1 min-w-[120px]">
+                      <select value={String(cond.value ?? '')} onChange={(e) => updateCondition(cond.id, { value: e.target.value })} className="form-input text-xs py-1.5 flex-1 min-w-[100px]">
                         <option value="">—</option>
                         {roleField.options.map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
                       </select>
                     ) : (
-                      <input type={roleField.type === 'number' ? 'number' : 'text'} value={String(cond.value ?? '')} onChange={(e) => updateCondition(cond.id, { value: roleField.type === 'number' ? Number(e.target.value) : e.target.value })} className="form-input text-xs py-1.5 flex-1 min-w-[120px]" />
+                      <input type={roleField.type === 'number' ? 'number' : 'text'} value={String(cond.value ?? '')} onChange={(e) => updateCondition(cond.id, { value: roleField.type === 'number' ? Number(e.target.value) : e.target.value })} className="form-input text-xs py-1.5 flex-1 min-w-[100px]" />
                     )}
                     <button onClick={() => deleteCondition(cond.id)} className="p-1 rounded hover:bg-red-50 text-charcoal/20 hover:text-red-500"><Trash2 size={12} /></button>
                   </div>

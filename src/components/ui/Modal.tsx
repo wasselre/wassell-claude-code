@@ -31,9 +31,9 @@ export default function Modal({
   if (!open) return null;
 
   return createPortal(
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay px-4" onClick={onClose}>
       <div
-        className={`modal-box ${maxWidth} mx-4`}
+        className={`modal-box ${maxWidth}`}
         onClick={(e) => e.stopPropagation()}
       >
         {title && (

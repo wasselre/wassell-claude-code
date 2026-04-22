@@ -8,9 +8,10 @@ import CreateModelModal from './CreateModelModal';
 
 interface ModelListProps {
   selectedModelId?: string;
+  onSelect?: () => void;
 }
 
-export default function ModelList({ selectedModelId }: ModelListProps) {
+export default function ModelList({ selectedModelId, onSelect }: ModelListProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { models, groups, language } = useAppStore();
@@ -46,7 +47,10 @@ export default function ModelList({ selectedModelId }: ModelListProps) {
           return (
             <button
               key={model.id}
-              onClick={() => navigate(`/builder/${model.id}`)}
+              onClick={() => {
+                navigate(`/builder/${model.id}`);
+                onSelect?.();
+              }}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors text-start ${
                 isSelected
                   ? 'bg-copper/10 text-copper'
@@ -77,7 +81,10 @@ export default function ModelList({ selectedModelId }: ModelListProps) {
               return (
                 <button
                   key={model.id}
-                  onClick={() => navigate(`/builder/${model.id}`)}
+                  onClick={() => {
+                navigate(`/builder/${model.id}`);
+                onSelect?.();
+              }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors text-start ${
                     isSelected
                       ? 'bg-copper/10 text-copper'

@@ -20,6 +20,11 @@
     background-color: var(--cream-light);
     color: var(--charcoal);
     -webkit-font-smoothing: antialiased;
+    /* Prevent horizontal page scroll from off-canvas mobile sidebar. The
+       sidebar is absolutely/fixed positioned offscreen when closed, and some
+       browsers include it in the document's scrollable width even though
+       fixed elements usually shouldn't contribute. */
+    overflow-x: hidden;
   }
 
   * {
@@ -40,13 +45,39 @@
     border-inline-end: 1px solid rgba(212, 184, 150, 0.3);
     color: var(--charcoal);
     overflow-y: auto;
-    z-index: 40;
+    z-index: 50;
+    transition: inset-inline-start 0.25s ease;
   }
 
   .main-content {
     margin-inline-start: var(--sidebar-width);
     min-height: 100vh;
     background: var(--cream-light);
+  }
+
+  /* ── Mobile (<768px): sidebar becomes an off-canvas drawer ── */
+  @media (max-width: 767px) {
+    .sidebar {
+      inset-inline-start: calc(-1 * var(--sidebar-width));
+      box-shadow: 0 0 40px rgba(74, 44, 42, 0.18);
+    }
+    .sidebar.is-open {
+      inset-inline-start: 0;
+    }
+    .main-content {
+      margin-inline-start: 0;
+    }
+  }
+
+  /* Backdrop behind the open mobile drawer. Sits below the sidebar
+     (z-50) but above page content (z-30). */
+  .sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(74, 46, 42, 0.4);
+    backdrop-filter: blur(2px);
+    z-index: 45;
+    animation: fadeIn 0.2s ease;
   }
 
   .nav-item {

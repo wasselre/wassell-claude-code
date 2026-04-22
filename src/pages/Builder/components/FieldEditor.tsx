@@ -1135,7 +1135,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
           <>
             <div className="border-t border-sand/10" />
             <div className="space-y-3">
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 <div>
                   <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
                     {t('fields.range_min')}
@@ -1160,7 +1160,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                     placeholder="1000"
                   />
                 </div>
-                <div>
+                <div className="col-span-2 sm:col-span-1">
                   <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
                     {t('fields.range_step')}
                   </label>
@@ -1173,7 +1173,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                   />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
                   <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
                     {t('fields.range_unit_ar')}

@@ -293,9 +293,11 @@ export default function SectionManager({ model, onChange, ownerKind = 'model' }:
   const selectedFieldId = activeField?.field?.id ?? null;
 
   return (
-    <div className="flex gap-4 h-full">
-      {/* Left Panel — Field Properties */}
-      <div className="w-[260px] shrink-0 bg-white rounded-2xl border border-sand/15 overflow-hidden">
+    <div className="flex flex-col md:flex-row gap-4 h-full">
+      {/* Left Panel — Field Properties. Desktop: 260px fixed rail.
+          Mobile: full-width card above the sections, capped to 60vh so it
+          doesn't push the rest of the page offscreen when a field is open. */}
+      <div className="w-full md:w-[260px] shrink-0 bg-white rounded-2xl border border-sand/15 overflow-hidden max-h-[60vh] md:max-h-none">
         {activeField ? (
           <FieldEditor
             field={activeField.field}
@@ -311,26 +313,28 @@ export default function SectionManager({ model, onChange, ownerKind = 'model' }:
       </div>
 
       {/* Center — Sections & Fields */}
-      <div className="flex-1 overflow-y-auto pe-1">
+      <div className="flex-1 overflow-y-auto md:pe-1">
         {/* Model-level settings — duplicate-check key used by import */}
-        <div className="mb-4 flex items-center gap-3 px-4 py-3 rounded-2xl border border-sand/15 bg-white">
-          <div className="w-8 h-8 rounded-lg bg-copper/8 flex items-center justify-center shrink-0">
-            <Copy size={15} className="text-copper" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-bold text-charcoal">
-              {isAr ? 'حقل التحقق من التكرار' : 'Duplicate Check Field'}
+        <div className="mb-4 flex flex-col sm:flex-row sm:items-center gap-3 px-4 py-3 rounded-2xl border border-sand/15 bg-white">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            <div className="w-8 h-8 rounded-lg bg-copper/8 flex items-center justify-center shrink-0">
+              <Copy size={15} className="text-copper" />
             </div>
-            <div className="text-xs text-charcoal/50">
-              {isAr
-                ? 'عند الاستيراد، يتم تجاهل السجلات التي تتطابق قيمتها في هذا الحقل مع سجل موجود.'
-                : 'On import, rows whose value for this field matches an existing record are skipped.'}
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-charcoal">
+                {isAr ? 'حقل التحقق من التكرار' : 'Duplicate Check Field'}
+              </div>
+              <div className="text-xs text-charcoal/50">
+                {isAr
+                  ? 'عند الاستيراد، يتم تجاهل السجلات التي تتطابق قيمتها في هذا الحقل مع سجل موجود.'
+                  : 'On import, rows whose value for this field matches an existing record are skipped.'}
+              </div>
             </div>
           </div>
           <select
             value={duplicateCheckFieldId}
             onChange={(e) => setDuplicateCheckFieldId(e.target.value)}
-            className="form-input text-sm py-1.5 w-[200px] shrink-0"
+            className="form-input text-sm py-1.5 w-full sm:w-[200px] shrink-0"
           >
             <option value="">{isAr ? 'بدون تحقق' : 'No check'}</option>
             {duplicateCheckCandidates.map((f) => (
@@ -371,8 +375,10 @@ export default function SectionManager({ model, onChange, ownerKind = 'model' }:
         </button>
       </div>
 
-      {/* Right Panel — two independently collapsible accordion cards */}
-      <div className="w-[190px] shrink-0 flex flex-col gap-3 overflow-y-auto">
+      {/* Right Panel — two independently collapsible accordion cards. Desktop:
+          190px fixed rail. Mobile: full-width cards below the sections so the
+          catalogs remain usable without forcing a horizontal scroll. */}
+      <div className="w-full md:w-[190px] shrink-0 flex flex-col gap-3 md:overflow-y-auto">
         <div className="bg-white rounded-2xl border border-sand/15 overflow-hidden">
           <FieldTypeCatalog onSelectType={startNewField} />
         </div>

@@ -3,9 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
-import { Languages, User, LogOut, Loader2 } from 'lucide-react';
+import { Languages, Menu, User, LogOut, Loader2 } from 'lucide-react';
 
-export default function Header() {
+interface HeaderProps {
+  onMenuClick?: () => void;
+}
+
+export default function Header({ onMenuClick }: HeaderProps = {}) {
   const { t } = useTranslation();
   const {
     language,
@@ -73,11 +77,22 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-30 bg-cream-light/80 backdrop-blur-md">
-      <div className="flex items-center justify-between px-8 py-4">
-        <h1 className="text-xl font-bold text-chocolate">
-          {getPageTitle()}
-        </h1>
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between gap-3 px-4 md:px-8 py-4">
+        <div className="flex items-center gap-3 min-w-0">
+          {onMenuClick && (
+            <button
+              onClick={onMenuClick}
+              className="md:hidden p-2 -ms-1 rounded-lg hover:bg-white/60 text-charcoal/70 transition-colors"
+              aria-label={isAr ? 'فتح القائمة' : 'Open menu'}
+            >
+              <Menu size={20} />
+            </button>
+          )}
+          <h1 className="text-lg md:text-xl font-bold text-chocolate truncate">
+            {getPageTitle()}
+          </h1>
+        </div>
+        <div className="flex items-center gap-2 md:gap-3 shrink-0">
           {/* ── Current user ──────────────────────────────────────── */}
           {authOn ? (
             /* Production: read-only pill showing the signed-in user. */
