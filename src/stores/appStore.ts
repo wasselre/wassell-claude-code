@@ -88,12 +88,30 @@ let reportSupabaseError: (table: string, op: 'upsert' | 'delete' | 'load', msg: 
     console.error(`[supabase] ${op} failed on ${table}: ${msg}`);
   };
 
+/**
+ * Whether Supabase writes are allowed right now. Returns false when the user
+ * hasn't signed in yet — otherwise the write will be rejected by RLS and the
+ * error toast piles up on the login page. Reads are still allowed (anon role
+ * just returns empty arrays under RLS, no error) so `supabaseLoad` skips this.
+ */
+function canWriteToSupabase(): boolean {
+  if (!supabase) return false;
+  try {
+    return useAppStore.getState().authEmail !== null;
+  } catch {
+    // Store not yet constructed (happens on the very first sync call during
+    // module bootstrap). Fail closed — we'll pick up any missed writes when
+    // initialize re-runs after sign-in.
+    return false;
+  }
+}
+
 async function supabaseUpsert(
   table: string,
   row: Record<string, unknown>,
   parent?: { table: string; id: string | null | undefined },
 ): Promise<void> {
-  if (!supabase) return;
+  if (!canWriteToSupabase() || !supabase) return;
   // Block on any in-flight parent write so the FK exists when we land.
   // `parent.id` can be null/undefined for optional FKs (e.g. `group_id`).
   if (parent && parent.id) {
@@ -121,7 +139,7 @@ async function supabaseUpsert(
 }
 
 async function supabaseDelete(table: string, id: string): Promise<void> {
-  if (!supabase) return;
+  if (!canWriteToSupabase() || !supabase) return;
   // Wait for any in-flight upsert to this row first — otherwise the
   // delete can race past it and leave the row orphaned in the DB.
   const prior = pendingWrites.get(writeKey(table, id));
