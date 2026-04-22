@@ -94,7 +94,7 @@ export default function Login() {
         {/* Logo + title */}
         <div className="flex flex-col items-center mb-8">
           <img
-            src="/assets/logo-icon.png"
+            src="/assets/logo-castle.png"
             alt="Wassel"
             className="w-16 h-16 mb-4 object-contain"
             onError={(e) => {

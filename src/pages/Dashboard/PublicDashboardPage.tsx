@@ -47,7 +47,7 @@ export default function PublicDashboardPage() {
     <div className="min-h-screen bg-cream-light">
       {/* Header */}
       <div className="bg-white border-b border-sand/20 px-6 py-4 flex items-center gap-4">
-        <img src="/assets/logo-icon.png" alt="Wassel" className="w-8 h-8 object-contain" />
+        <img src="/assets/logo-castle.png" alt="Wassel" className="w-8 h-8 object-contain" />
         <h1 className="text-lg font-bold text-chocolate">
           {isAr ? dashboard.label_ar : dashboard.label_en}
         </h1>

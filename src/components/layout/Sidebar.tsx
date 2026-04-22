@@ -4,6 +4,7 @@ import {
   Home,
   Zap,
   Plus,
+  X,
   ChevronDown,
   Users,
   PhoneCall,
@@ -74,7 +75,12 @@ export function getIconComponent(name: string): ComponentType<LucideProps> {
   return ICON_MAP[name] ?? Database;
 }
 
-export default function Sidebar() {
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
+}
+
+export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -121,13 +127,13 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${mobileOpen ? 'is-open' : ''}`}>
       <div className="flex flex-col h-full">
         {/* Logo */}
-        <div className="p-6 pb-4">
+        <div className="p-6 pb-4 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <img
-              src="/assets/logo-icon.png"
+              src="/assets/logo-castle.png"
               alt="Wassel"
               className="w-12 h-12 object-contain"
             />
@@ -137,6 +143,15 @@ export default function Sidebar() {
               </div>
             </div>
           </div>
+          {onMobileClose && (
+            <button
+              onClick={onMobileClose}
+              className="md:hidden p-1.5 rounded-lg hover:bg-cream text-charcoal/40 hover:text-charcoal transition-colors"
+              aria-label={isAr ? 'إغلاق القائمة' : 'Close menu'}
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
 
         {/* Navigation */}
