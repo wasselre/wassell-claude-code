@@ -128,6 +128,15 @@ export interface ModelField {
   // inside the same section render under a collapsible sub-header. Display
   // only — doesn't change storage or field behavior.
   field_group_id?: string | null;
+  // Fallback source field. When set and this field's value is empty at save
+  // time, `saveRecord` copies the referenced field's current value into this
+  // field. User-editable afterward (not a derived/computed snapshot). Disallowed
+  // as *target* for types where "empty" isn't meaningful or the value is already
+  // computed: formula, mirror, section_mirror, section_selector, auto_id, notes,
+  // checkbox, assignee. Cannot self-reference; source may not be formula / mirror
+  // / section_mirror (those resolve in a different phase). Lookup sources resolve
+  // to the linked record's `lookup_display_field` — never a raw UUID.
+  fallback_source_field_id?: string | null;
 }
 
 // Notes field (type: 'notes'). Stored value is a chronological list of entries.
@@ -841,6 +850,10 @@ export interface AppState {
   getRecords: (modelId: string) => AppRecord[];
   saveRecord: (record: AppRecord) => void;
   deleteRecord: (modelId: string, recordId: string) => void;
+  // Re-saves every record on the model where `targetFieldId`'s value is empty,
+  // causing the save-time fallback resolver to fill it. Used by the Builder's
+  // "Apply to existing records" button. Returns the count of records touched.
+  applyFallbackToExistingRecords: (modelId: string, targetFieldId: string) => { count: number };
 
   // Workflows
   saveWorkflow: (workflow: Workflow) => void;

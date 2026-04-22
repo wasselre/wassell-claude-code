@@ -260,6 +260,14 @@ const resources = {
       'fields.auto_id.restart_renumber': 'إعادة ترقيم جميع السجلات',
       'fields.auto_id.restart_renumber_desc': 'إعادة إنشاء معرّف لكل سجل موجود بترتيب الإنشاء. لا تكرارات. يستخدم البادئة والتنسيق الحاليين.',
       'fields.auto_id.restart_confirm': 'متابعة',
+      // Fallback when empty
+      'fields.fallback.label': 'املأ من حقل آخر عند ترك الحقل فارغًا',
+      'fields.fallback.placeholder': 'بدون احتياطي',
+      'fields.fallback.hint': 'عند حفظ الحقل فارغًا، يُنسخ قيمة الحقل المحدد تلقائيًا. يمكنك تعديل القيمة لاحقًا. إذا مسحتها وحفظت من جديد، سيعاد ملؤها.',
+      'fields.fallback.apply_button': 'طبّق على السجلات الحالية',
+      'fields.fallback.apply_confirm': 'تطبيق الاحتياطي على السجلات الحالية؟\n\nسيتم ملء حقل "{{target}}" في كل سجل يكون فيه هذا الحقل فارغًا باستخدام قيمة "{{source}}". ستنطلق سير العمل المربوطة بتحديث السجل.',
+      'fields.fallback.apply_result_filled': 'تم ملء {{count}} سجل.',
+      'fields.fallback.apply_result_none': 'لا توجد سجلات بحاجة إلى ملء.',
       // Formula
       'fields.formula.expression': 'الصيغة',
       'fields.formula.expression_placeholder': 'مثال: {price} * {quantity}',
@@ -744,6 +752,14 @@ const resources = {
       'fields.auto_id.restart_renumber': 'Renumber all records',
       'fields.auto_id.restart_renumber_desc': 'Rewrite every existing record\'s ID in creation order. No duplicates. Uses current prefix and padding.',
       'fields.auto_id.restart_confirm': 'Continue',
+      // Fallback when empty
+      'fields.fallback.label': 'Fill from another field when empty',
+      'fields.fallback.placeholder': 'No fallback',
+      'fields.fallback.hint': 'When saved empty, this field is filled with the selected field\'s value. You can still edit it afterward. Clearing it and saving again will refill it.',
+      'fields.fallback.apply_button': 'Apply to existing records',
+      'fields.fallback.apply_confirm': 'Apply fallback to existing records?\n\nAny record where "{{target}}" is empty will be filled with the value of "{{source}}". Workflows triggered by record updates will fire.',
+      'fields.fallback.apply_result_filled': 'Filled {{count}} records.',
+      'fields.fallback.apply_result_none': 'No records needed filling.',
       // Formula
       'fields.formula.expression': 'Expression',
       'fields.formula.expression_placeholder': 'e.g. {price} * {quantity}',

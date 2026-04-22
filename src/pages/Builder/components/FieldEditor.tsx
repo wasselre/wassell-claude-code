@@ -45,6 +45,22 @@ const LOOKUP_DISPLAY_TYPES: FieldType[] = [
   'text', 'email', 'phone', 'number', 'currency', 'date', 'datetime', 'url', 'dropdown', 'auto_id',
 ];
 
+// Field types that can HAVE a fallback-when-empty source. Excludes types where
+// "empty" isn't meaningful (checkbox) or the value is always computed/structural
+// (formula, mirror, section_mirror, section_selector, auto_id, notes, assignee).
+const FALLBACK_TARGET_TYPES: FieldType[] = [
+  'text', 'textarea', 'number', 'email', 'phone', 'date', 'datetime',
+  'currency', 'url', 'dropdown', 'multiselect', 'lookup', 'range',
+];
+
+// Source-field types excluded from the fallback source picker. Formula / mirror
+// / section_mirror resolve in a different phase of the save pipeline (can't
+// read them here). section_selector / notes / checkbox / assignee don't produce
+// a scalar value that makes sense as a "fill this empty field" source.
+const FALLBACK_SOURCE_DISALLOWED_TYPES: FieldType[] = [
+  'formula', 'mirror', 'section_mirror', 'section_selector', 'notes', 'checkbox', 'assignee',
+];
+
 interface FieldEditorProps {
   field: ModelField | null;
   sectionId: string;
@@ -63,7 +79,10 @@ interface FieldEditorProps {
 
 export default function FieldEditor({ field, sectionId, model, defaultType, onSave, ownerKind = 'model' }: FieldEditorProps) {
   const { t } = useTranslation();
-  const { models, language, roles, records, workflows, views, saveModel, saveRecord, renameField, addToast } = useAppStore();
+  const {
+    models, language, roles, records, workflows, views,
+    saveModel, saveRecord, renameField, addToast, applyFallbackToExistingRecords,
+  } = useAppStore();
   const isAr = language === 'ar';
 
   const sectionFields = model.schema.sections.find((s) => s.id === sectionId)?.fields ?? [];
@@ -115,6 +134,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [formulaDecimals, setFormulaDecimals] = useState<number>(2);
   const [formulaCurrency, setFormulaCurrency] = useState<string>('SAR');
   const [formulaThousandsSeparator, setFormulaThousandsSeparator] = useState<boolean>(true);
+  // Fallback source — sibling field id whose value auto-fills THIS field when empty at save time.
+  const [fallbackSourceFieldId, setFallbackSourceFieldId] = useState<string | null>(null);
   // Ref to the formula textarea so operator/function buttons can insert at the caret.
   const formulaTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   // API name (slug). Initialised from field.name for existing fields; for new
@@ -198,6 +219,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setFormulaDecimals(field.formula_decimals ?? 2);
       setFormulaCurrency(field.formula_currency ?? 'SAR');
       setFormulaThousandsSeparator(field.formula_thousands_separator !== false);
+      setFallbackSourceFieldId(field.fallback_source_field_id ?? null);
       setApiName(field.name);
       setApiNameTouched(true);
     } else {
@@ -240,6 +262,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setFormulaDecimals(2);
       setFormulaCurrency('SAR');
       setFormulaThousandsSeparator(true);
+      setFallbackSourceFieldId(null);
       setApiName('');
       setApiNameTouched(false);
     }
@@ -352,6 +375,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       formula_decimals: type === 'formula' && formulaOutputType !== 'text' ? formulaDecimals : undefined,
       formula_currency: type === 'formula' && formulaOutputType === 'currency' ? formulaCurrency : undefined,
       formula_thousands_separator: type === 'formula' && formulaOutputType !== 'text' ? formulaThousandsSeparator : undefined,
+      fallback_source_field_id: FALLBACK_TARGET_TYPES.includes(type) ? fallbackSourceFieldId : null,
     };
     return saved;
   };
@@ -1580,6 +1604,73 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                     </div>
                   )}
                 </div>
+              </div>
+            </>
+          );
+        })()}
+
+        {/* Fallback when empty — per-field setting available on most target types. */}
+        {FALLBACK_TARGET_TYPES.includes(type) && (() => {
+          const allFields = model.schema.sections.flatMap((s) => s.fields);
+          const sourceCandidates = allFields.filter((f) => (
+            f.id !== field?.id && !FALLBACK_SOURCE_DISALLOWED_TYPES.includes(f.type)
+          ));
+          // Only offer "Apply to existing records" when the CURRENTLY SAVED field
+          // has a fallback configured — the button re-saves records that match
+          // the committed config, not an in-progress edit.
+          const savedFallbackId = field?.fallback_source_field_id ?? null;
+          const canBulkApply = !!field && !!savedFallbackId && ownerKind === 'model';
+          return (
+            <>
+              <div className="border-t border-sand/10" />
+              <div>
+                <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
+                  {t('fields.fallback.label')}
+                </label>
+                <select
+                  value={fallbackSourceFieldId ?? ''}
+                  onChange={(e) => setFallbackSourceFieldId(e.target.value || null)}
+                  className="form-input text-sm"
+                >
+                  <option value="">{t('fields.fallback.placeholder')}</option>
+                  {sourceCandidates.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {isAr ? f.label_ar : f.label_en} · {t(`fields.type.${f.type}`)}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-charcoal/30 mt-1.5">{t('fields.fallback.hint')}</p>
+                {canBulkApply && (() => {
+                  const savedSource = allFields.find((f) => f.id === savedFallbackId);
+                  const savedSourceLabel = savedSource
+                    ? (isAr ? savedSource.label_ar : savedSource.label_en)
+                    : '';
+                  const fieldLabel = isAr ? (field?.label_ar ?? '') : (field?.label_en ?? '');
+                  const onClick = () => {
+                    const msg = t('fields.fallback.apply_confirm', {
+                      target: fieldLabel,
+                      source: savedSourceLabel,
+                    });
+                    if (!window.confirm(msg)) return;
+                    const result = applyFallbackToExistingRecords(model.id, field!.id);
+                    addToast(
+                      result.count > 0
+                        ? t('fields.fallback.apply_result_filled', { count: result.count })
+                        : t('fields.fallback.apply_result_none'),
+                      result.count > 0 ? 'success' : 'info',
+                    );
+                  };
+                  return (
+                    <button
+                      type="button"
+                      onClick={onClick}
+                      className="mt-2 flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold text-copper bg-copper/5 hover:bg-copper/10 transition-colors"
+                    >
+                      <RotateCcw size={12} />
+                      {t('fields.fallback.apply_button')}
+                    </button>
+                  );
+                })()}
               </div>
             </>
           );

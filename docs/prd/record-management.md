@@ -125,6 +125,7 @@ Once models exist, the real day-to-day work of the business happens here — sal
 | `src/pages/Records/components/DynamicField.tsx` | Renders a field in the form based on type (passes `isMulti` to lookup; handles array mirror values; auto_id badge; formula live-preview via `evaluateFormulaInModel` — full-graph re-eval + `formatFormulaValue`) |
 | `src/pages/Records/components/DynamicCell.tsx` | Renders a field value in a table cell (array lookup + array mirror support; auto_id mono-font badge; formula rendered via `formatFormulaValue` — decimals / currency / percentage / thousands — with `#REF` / `#DIV0` / `#ERR` in red) |
 | `src/lib/autoIdAssigner.ts` | Pure auto_id helpers used by the store's save pipeline and by the Builder's Restart modal |
+| `src/lib/fieldFallbackResolver.ts` | Save-pipeline step that fills empty target fields from their configured source field (see model-builder.md). Runs after auto_id, before formula snapshots |
 | `src/lib/formulaEngine.ts` | Recursive-descent formula parser + evaluator used at save time (snapshot via `computeAllFormulas`) and in the form's live preview (`evaluateFormulaInModel`); also owns `formatFormulaValue` for shared display formatting |
 | `src/lib/sectionMirrorResolver.ts` | Resolves a mirrored section to (source section, target record) for rendering |
 | `src/lib/sectionMirrorExpand.ts` | Container-expansion helpers for section_mirror fields; includes `resolveSectionMirrorFieldMulti` for multi-project comparison and the shared `computeEditAndSync` helper used by both single- and multi-target resolvers |

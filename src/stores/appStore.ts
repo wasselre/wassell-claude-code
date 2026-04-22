@@ -6,6 +6,7 @@ import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
 import { executeWorkflows } from '@/lib/workflowEngine';
 import { assignAutoIds } from '@/lib/autoIdAssigner';
+import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
@@ -952,6 +953,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       const assigned = assignAutoIds(origModel, record.data, isNew);
       enrichedModel = assigned.model;
       enrichedData = assigned.data;
+      enrichedData = applyFieldFallbacks(
+        enrichedModel,
+        enrichedData,
+        (modelId) => (state.records[modelId] ?? []).map((r) => ({ id: r.id, data: r.data })),
+      );
       const formulaValues = computeAllFormulas(enrichedModel, enrichedData);
       if (Object.keys(formulaValues).length > 0) {
         enrichedData = { ...enrichedData, ...formulaValues };
@@ -1031,6 +1037,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       supabaseDelete('records', recordId);
       return { records };
     });
+  },
+  // Bulk-apply the fallback configured on `targetFieldId` to every existing
+  // record on `modelId` whose target value is empty. Re-saves each via
+  // `saveRecord` so auto_id / formulas / update-trigger workflows all fire
+  // per record. Returns how many records were actually touched.
+  applyFallbackToExistingRecords: (modelId: string, targetFieldId: string) => {
+    const state = get();
+    const model = state.models.find((m) => m.id === modelId);
+    if (!model) return { count: 0 };
+    const targetField = model.schema.sections.flatMap((s) => s.fields).find((f) => f.id === targetFieldId);
+    if (!targetField || !targetField.fallback_source_field_id) return { count: 0 };
+    const modelRecords = state.records[modelId] ?? [];
+    const isEmpty = (v: unknown): boolean => {
+      if (v === undefined || v === null) return true;
+      if (typeof v === 'string') return v.trim() === '';
+      if (Array.isArray(v)) return v.length === 0;
+      return false;
+    };
+    const pending = modelRecords.filter((r) => isEmpty(r.data[targetField.name]));
+    for (const rec of pending) {
+      get().saveRecord(rec);
+    }
+    return { count: pending.length };
   },
 
   // --- Workflows ---
