@@ -19,8 +19,8 @@ A consistent, always-visible shell orients the user no matter how many models ex
   - Click a model → navigates to `/model/:modelName`.
   - Active route is highlighted.
   - Background is Charcoal Slate Gray (`#4A4E54`) per brand.
-  - **Desktop (≥768px):** always-visible fixed rail; main content is offset by the sidebar width via `margin-inline-start`.
-  - **Mobile (<768px):** off-canvas drawer, closed by default. Opens when the header hamburger is tapped and closes on route change, backdrop click, or the in-drawer X button. A semi-transparent backdrop dims the page content while the drawer is open.
+  - **Desktop (≥768px):** always-visible fixed rail; main content is offset by the sidebar width via `margin-inline-start`. A chevron toggle button in the sidebar header collapses the rail to a narrow icon-only column (72px). When collapsed, labels, section headings ("Dashboard", "System"), the group/folder layer, and the user's email are hidden — group members render as a flat list of icons, and each icon gets a `title` tooltip with its full label. The collapsed/expanded state is persisted in `localStorage` (key: `sidebar_collapsed`) via an `html.sidebar-collapsed` class that CSS uses to resize both the sidebar and the main-content margin together.
+  - **Mobile (<768px):** off-canvas drawer, closed by default. Opens when the header hamburger is tapped and closes on route change, backdrop click, or the in-drawer X button. A semi-transparent backdrop dims the page content while the drawer is open. The desktop collapse toggle is hidden on mobile (the drawer replaces it).
 - **Header**:
   - Language toggle (AR / EN).
   - Current user indicator.
@@ -37,6 +37,7 @@ A consistent, always-visible shell orients the user no matter how many models ex
 3. **Change language:** Click AR/EN toggle in header → whole app flips direction.
 4. **Access admin settings:** Click "Settings" → hub page → pick Users, Roles, Profiles, or Translations.
 5. **Share a dashboard externally:** Dashboard editor → copy public URL → share. The recipient lands on a layout-free page.
+6. **Collapse the sidebar to a rail (desktop):** Click the chevron in the sidebar header → sidebar shrinks to icons only, main content expands. Hovering an icon reveals the label as a tooltip. Click the chevron again to expand. Choice persists across reloads.
 
 ## Data touched
 - Reads: `model_groups` and `models` (to render sidebar).
@@ -56,6 +57,6 @@ A consistent, always-visible shell orients the user no matter how many models ex
 ## Open questions / known limitations
 - No breadcrumbs yet — deep pages (e.g. a record inside a model inside a group) don't show the full path.
 - No keyboard shortcuts for navigation.
-- Sidebar doesn't collapse into an icon-only rail on desktop — only full (desktop) or off-canvas drawer (mobile).
+- When the sidebar is collapsed to the rail, groups lose their folder structure and are flattened into a single icon list — there's no popout or hover-to-reveal per group.
 - No per-user favorites or pinned models.
 - Mobile layout uses Tailwind's default `md` breakpoint (768px) as the desktop threshold. Tablets in portrait (<768px) get the mobile drawer.

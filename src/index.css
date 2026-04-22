@@ -12,6 +12,7 @@
   --cream-light: #FAF7F2;
   --gold: #C09B5F;
   --sidebar-width: 280px;
+  --sidebar-collapsed-width: 72px;
 }
 
 @layer base {
@@ -53,6 +54,26 @@
     margin-inline-start: var(--sidebar-width);
     min-height: 100vh;
     background: var(--cream-light);
+    transition: margin-inline-start 0.25s ease;
+  }
+
+  .sidebar {
+    transition: inset-inline-start 0.25s ease, width 0.25s ease;
+  }
+
+  /* ── Desktop collapsed rail: icon-only, narrower ── */
+  @media (min-width: 768px) {
+    html.sidebar-collapsed .sidebar {
+      width: var(--sidebar-collapsed-width);
+    }
+    html.sidebar-collapsed .main-content {
+      margin-inline-start: var(--sidebar-collapsed-width);
+    }
+    html.sidebar-collapsed .sidebar .nav-item {
+      justify-content: center;
+      padding-inline: 0.5rem;
+      gap: 0;
+    }
   }
 
   /* ── Mobile (<768px): sidebar becomes an off-canvas drawer ── */
