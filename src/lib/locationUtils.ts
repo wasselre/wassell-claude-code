@@ -44,6 +44,13 @@ export function parseGoogleMapsUrl(input: string): LatLng | null {
     const p = toLatLng(qMatch[1], qMatch[2]);
     if (p) return p;
   }
+  // Path-based: /maps/search/LAT,+LNG/... or /maps/place/.../LAT,LNG/...
+  // Google URL-encodes the space between lat and lng as `+` or `%20`.
+  const pathMatch = str.match(/\/(?:search|place|dir)\/(-?\d+\.?\d*)[,\s+](?:\+|%20)?\s*(-?\d+\.?\d*)/);
+  if (pathMatch) {
+    const p = toLatLng(pathMatch[1], pathMatch[2]);
+    if (p) return p;
+  }
   const bareMatch = str.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
   if (bareMatch) {
     const p = toLatLng(bareMatch[1], bareMatch[2]);

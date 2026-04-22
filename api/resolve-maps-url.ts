@@ -74,6 +74,10 @@ function parseFromUrl(url: string): { lat: number; lng: number } | null {
   const qMatch = url.match(/[?&](?:q|ll|query)=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
   if (qMatch) return toLatLng(qMatch[1], qMatch[2]);
 
+  // Path-based: /maps/search/LAT,+LNG/... or /maps/place/.../LAT,LNG/...
+  const pathMatch = url.match(/\/(?:search|place|dir)\/(-?\d+\.?\d*)[,\s+](?:\+|%20)?\s*(-?\d+\.?\d*)/);
+  if (pathMatch) return toLatLng(pathMatch[1], pathMatch[2]);
+
   return null;
 }
 
