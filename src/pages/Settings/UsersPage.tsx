@@ -3,7 +3,8 @@ import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { bilingualFromInput } from '@/lib/autoTranslate';
-import { Users as UsersIcon, Plus, Pencil, Trash2, Shield } from 'lucide-react';
+import { inviteUser, isAuthAvailable } from '@/lib/auth';
+import { Users as UsersIcon, Plus, Pencil, Trash2, Shield, Mail, Loader2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
@@ -35,6 +36,10 @@ export default function UsersPage() {
 
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
   const [deactivatingUser, setDeactivatingUser] = useState<User | null>(null);
+  const [resendingFor, setResendingFor] = useState<string | null>(null);
+  // Default the invite checkbox to ON only when auth is actually configured —
+  // otherwise there's no email backend and sending would just fail.
+  const [sendInvite, setSendInvite] = useState(isAuthAvailable());
 
   const openNew = () => {
     setEditing(null);
@@ -42,6 +47,7 @@ export default function UsersPage() {
     setEmail('');
     setProfileId(profiles[0]?.id ?? '');
     setRoleAssignments([]);
+    setSendInvite(isAuthAvailable());
     setShowModal(true);
   };
 
@@ -55,29 +61,66 @@ export default function UsersPage() {
     setShowModal(true);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim() || !email.trim() || !profileId) return;
     const labels = editing
       ? { name_ar: isAr ? name.trim() : editing.name_ar, name_en: isAr ? editing.name_en : name.trim() }
       : (() => { const l = bilingualFromInput(name.trim(), language); return { name_ar: l.label_ar, name_en: l.label_en }; })();
 
+    const trimmedEmail = email.trim();
     const user: User = {
       id: editing?.id ?? uuid(),
       ...labels,
-      email: email.trim(),
+      email: trimmedEmail,
       profile_id: profileId,
       role_assignments: roleAssignments,
       is_active: editing?.is_active ?? true,
       created_at: editing?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    const wasNew = editing === null;
     const result = saveUser(user);
     if (!result.ok) {
       addToast(t(reasonToKey(result.reason)), 'error');
       return;
     }
-    addToast(t('toast.saved'), 'success');
     setShowModal(false);
+
+    // For newly-created users, optionally send a magic-link invite so they can
+    // sign in without the admin touching the Supabase dashboard. Errors are
+    // surfaced inline and do NOT roll back the user row — the row is still
+    // valid and the admin can click "Resend invite" to retry.
+    if (wasNew && sendInvite && isAuthAvailable()) {
+      const { error } = await inviteUser(trimmedEmail);
+      if (error) {
+        addToast(
+          isAr ? `تم إنشاء المستخدم، لكن فشل إرسال الدعوة: ${error}` : `User created, but failed to send invite: ${error}`,
+          'error',
+        );
+      } else {
+        addToast(
+          isAr ? `تم إنشاء المستخدم وإرسال الدعوة إلى ${trimmedEmail}` : `User created and invite sent to ${trimmedEmail}`,
+          'success',
+        );
+      }
+    } else {
+      addToast(t('toast.saved'), 'success');
+    }
+  };
+
+  const handleResendInvite = async (user: User) => {
+    if (!isAuthAvailable()) {
+      addToast(isAr ? 'المصادقة غير مُهيأة في هذه البيئة' : 'Auth is not configured in this environment', 'error');
+      return;
+    }
+    setResendingFor(user.id);
+    const { error } = await inviteUser(user.email);
+    setResendingFor(null);
+    if (error) {
+      addToast(isAr ? `فشل إرسال الدعوة: ${error}` : `Failed to send invite: ${error}`, 'error');
+    } else {
+      addToast(isAr ? `تم إرسال الدعوة إلى ${user.email}` : `Invite sent to ${user.email}`, 'success');
+    }
   };
 
   const toggleRole = (roleId: string) => {
@@ -179,6 +222,16 @@ export default function UsersPage() {
                   <input type="checkbox" checked={user.is_active} onChange={() => onToggleActiveClick(user)} className="sr-only peer" />
                   <div className="w-9 h-5 bg-sand/50 rounded-full peer peer-checked:bg-copper peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border after:rounded-full after:h-4 after:w-4 after:transition-all" />
                 </label>
+                {isAuthAvailable() && (
+                  <button
+                    onClick={() => void handleResendInvite(user)}
+                    disabled={resendingFor === user.id}
+                    title={isAr ? 'إعادة إرسال الدعوة' : 'Resend invite'}
+                    className="p-2 rounded-lg hover:bg-cream text-charcoal/30 hover:text-charcoal disabled:opacity-40"
+                  >
+                    {resendingFor === user.id ? <Loader2 size={16} className="animate-spin" /> : <Mail size={16} />}
+                  </button>
+                )}
                 <button onClick={() => openEdit(user)} className="p-2 rounded-lg hover:bg-cream text-charcoal/30 hover:text-charcoal"><Pencil size={16} /></button>
                 <button
                   onClick={() => setDeletingUser(user)}
@@ -209,7 +262,7 @@ export default function UsersPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setShowModal(false)}>{t('common.cancel')}</Button>
-            <Button onClick={handleSave} disabled={!name.trim() || !email.trim() || !profileId}>{t('common.save')}</Button>
+            <Button onClick={() => void handleSave()} disabled={!name.trim() || !email.trim() || !profileId}>{t('common.save')}</Button>
           </>
         }
       >
@@ -229,6 +282,26 @@ export default function UsersPage() {
             type="email"
             dir="ltr"
           />
+          {/* Invite toggle — only meaningful for new users and only when auth
+              is actually configured. Supabase's OTP call needs a live backend. */}
+          {!editing && isAuthAvailable() && (
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={sendInvite}
+                onChange={(e) => setSendInvite(e.target.checked)}
+                className="w-4 h-4 mt-0.5 rounded border-sand text-copper focus:ring-copper/30"
+              />
+              <span className="text-sm text-charcoal">
+                <span className="font-bold block">{isAr ? 'إرسال دعوة للبريد الإلكتروني' : 'Send invite email'}</span>
+                <span className="text-xs text-charcoal/50 block">
+                  {isAr
+                    ? 'سيتلقى المستخدم رابط تسجيل دخول فوري.'
+                    : 'The user will receive a one-click sign-in link.'}
+                </span>
+              </span>
+            </label>
+          )}
           <div>
             <label className="block text-sm font-bold text-charcoal mb-1">
               {isAr ? 'الملف الشخصي' : 'Profile'} <span className="text-red-500">*</span>

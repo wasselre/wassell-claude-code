@@ -64,6 +64,33 @@ export async function sendPasswordResetEmail(
   return { error: error ? mapAuthError(error) : null };
 }
 
+/**
+ * Send an invite / sign-in link. Used by the admin "Add user" flow:
+ * after creating the in-app `users` row, we email the invitee a magic
+ * link. Clicking it creates the Supabase Auth account (if missing),
+ * signs them in, and the store's email→user lookup in `initialize()`
+ * binds them to the row the admin just created.
+ *
+ * Re-sending is harmless — Supabase will send a fresh link (subject to
+ * its rate limits). If the invitee already has an auth account, the
+ * same call works as a passwordless sign-in.
+ *
+ * Requires the Supabase project's "Allow new users to sign up" setting
+ * to be enabled; otherwise the call fails with "Signups not allowed".
+ */
+export async function inviteUser(
+  email: string,
+  redirectTo?: string,
+): Promise<AuthVoidResult> {
+  if (!supabase) return { error: NOT_CONFIGURED_ERR };
+  const target = redirectTo ?? window.location.origin;
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: true, emailRedirectTo: target },
+  });
+  return { error: error ? mapAuthError(error) : null };
+}
+
 /** Update the current user's password. Only valid while a recovery session is active. */
 export async function updatePassword(newPassword: string): Promise<AuthVoidResult> {
   if (!supabase) return { error: NOT_CONFIGURED_ERR };
