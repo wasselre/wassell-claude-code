@@ -1672,6 +1672,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     await supabaseUpsert('posts', updated as unknown as Record<string, unknown>);
   },
 
+  updateOperationResearch: async (operationId, output) => {
+    const now = new Date().toISOString();
+    set((s) => ({
+      marketingOperations: s.marketingOperations.map((o) =>
+        o.id === operationId ? { ...o, research_output: output, updated_at: now } : o,
+      ),
+    }));
+    saveLocal('wassell_marketing_operations', get().marketingOperations);
+    if (!supabase) return;
+    const { error } = await supabase
+      .from('marketing_operations')
+      .update({ research_output: output, updated_at: now })
+      .eq('id', operationId);
+    if (error) throw new Error(`Could not save research edits: ${error.message}`);
+  },
+
   approveMarketingOperation: async (operationId: string) => {
     const state = get();
     const op = state.marketingOperations.find((o) => o.id === operationId);

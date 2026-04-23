@@ -1167,6 +1167,9 @@ export interface AppState {
   /** Persist an edited post. */
   savePost: (post: Post) => Promise<void>;
 
+  /** Persist human edits to an operation's research_output (facts table). */
+  updateOperationResearch: (operationId: string, output: ResearchOutput) => Promise<void>;
+
   /**
    * Flip an operation's status to `approved` once every reel/post underneath
    * it is approved. Also marks any lingering `ready_for_review` children
