@@ -540,15 +540,70 @@ export async function uploadFile(formData: FormData): Promise<{ fileId: string; 
     try { body = await res.json(); } catch { body = await res.text().catch(() => null); }
     throw new HaberchatError(res.status, `Haberchat POST /files failed: ${res.status}`, body);
   }
-  const raw = (await res.json()) as Record<string, unknown>;
-  const fileId = (raw.id as string) ?? (raw._id as string) ?? (raw.fileId as string) ?? '';
-  if (!fileId) throw new HaberchatError(502, 'Haberchat /files returned no id');
+  const raw = (await res.json()) as unknown;
+  // Haberchat's /files response shape is inconsistent across versions —
+  // try every common variant before giving up.
+  const found = extractFilePayload(raw);
+  if (!found) {
+    // Include the response shape in the error so operators can see what
+    // Haberchat actually returned. Logged server-side by the proxy.
+    const keys = raw && typeof raw === 'object'
+      ? Object.keys(raw as Record<string, unknown>).join(',')
+      : typeof raw;
+    throw new HaberchatError(502, `Haberchat /files returned no id (keys: ${keys})`);
+  }
+  return found;
+}
+
+function extractFilePayload(raw: unknown): { fileId: string; mime: string | null; size: number | null; filename: string | null } | null {
+  // Array → take first element
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const f = extractFilePayload(item);
+      if (f) return f;
+    }
+    return null;
+  }
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+
+  // Nested wrappers Haberchat sometimes uses.
+  if (obj.file && typeof obj.file === 'object') {
+    const nested = extractFilePayload(obj.file);
+    if (nested) return nested;
+  }
+  if (obj.data && typeof obj.data === 'object') {
+    const nested = extractFilePayload(obj.data);
+    if (nested) return nested;
+  }
+  if (obj.result && typeof obj.result === 'object') {
+    const nested = extractFilePayload(obj.result);
+    if (nested) return nested;
+  }
+
+  // Look for an id-like field on this object directly.
+  const fileId =
+    asString(obj.id) ??
+    asString(obj._id) ??
+    asString(obj.fileId) ??
+    asString(obj.file_id) ??
+    asString(obj.uuid) ??
+    null;
+  if (!fileId) return null;
+
   return {
     fileId,
-    mime: (raw.mime as string) ?? (raw.mimetype as string) ?? null,
-    size: typeof raw.size === 'number' ? raw.size as number : null,
-    filename: (raw.filename as string) ?? (raw.name as string) ?? null,
+    mime: asString(obj.mime) ?? asString(obj.mimetype) ?? asString(obj.contentType) ?? asString(obj.content_type) ?? null,
+    size: asNumber(obj.size) ?? asNumber(obj.length) ?? null,
+    filename: asString(obj.filename) ?? asString(obj.name) ?? asString(obj.originalName) ?? null,
   };
+}
+
+function asString(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+function asNumber(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
 }
 
 /**
