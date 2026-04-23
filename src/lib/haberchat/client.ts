@@ -32,6 +32,19 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new HaberchatClientError(res.status, err?.error ?? `POST ${path} failed (${res.status})`);
+  }
+  return (await res.json()) as T;
+}
+
 export async function listDevices(): Promise<HaberchatDevice[]> {
   const { devices } = await get<{ devices: HaberchatDevice[] }>('/api/haberchat/devices');
   return devices;
@@ -91,4 +104,22 @@ export async function listMessages(
     quoted: m.quoted,
   }));
   return { messages, hasMore: res.hasMore };
+}
+
+/** Send a message. Returns the server-assigned wid + status. */
+export async function sendMessage(input: {
+  deviceId: string;
+  phone?: string;
+  group?: string;
+  channel?: string;
+  body?: string;
+  mediaFileId?: string;
+  mediaCaption?: string;
+  quotedWid?: string;
+  reference?: string;
+}): Promise<{ wid: string; status: string; reference: string | null }> {
+  return post<{ wid: string; status: string; reference: string | null }>(
+    '/api/haberchat/messages',
+    input,
+  );
 }

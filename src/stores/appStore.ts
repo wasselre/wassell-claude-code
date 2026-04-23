@@ -11,7 +11,7 @@ import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
-import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages } from '@/lib/haberchat/client';
+import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord } from '@/lib/haberchat/normalize';
 import type {
   AppState,
@@ -1973,6 +1973,111 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
 
     return { hasMore: result.hasMore };
+  },
+
+  sendChatMessage: async (chatWid: string, input: { body: string; quotedWid?: string }) => {
+    const state = get();
+    const chatsModel = state.models.find((m) => m.name === 'chats');
+    if (!chatsModel) throw new Error('chats model not found');
+
+    const record = (state.records[chatsModel.id] ?? []).find((r) => {
+      const wid = (r.data as Record<string, unknown>).wid;
+      return typeof wid === 'string' && wid === chatWid;
+    });
+    if (!record) throw new Error('conversation not found in records');
+
+    const data = record.data as Record<string, unknown>;
+    const kind = (data.kind as string | null) ?? 'user';
+    if (kind !== 'user') {
+      // v1 only supports direct chats. Groups/channels come later.
+      throw new Error(get().language === 'ar'
+        ? 'الإرسال للمجموعات والقنوات غير مدعوم حاليًا'
+        : 'Sending to groups and channels is not yet supported');
+    }
+    const phone = data.phone as string | null;
+    if (!phone) throw new Error('conversation is missing the recipient phone');
+
+    const recordDeviceId = (data.device_id as string | undefined) ?? null;
+    const deviceId =
+      recordDeviceId ??
+      state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
+      state.waDevices.find((d) => d.is_active)?.device_id ??
+      state.waDevicesLive[0]?.id ??
+      '';
+    if (!deviceId) throw new Error('no WhatsApp device configured to send from');
+
+    // From-phone for the optimistic placeholder: whichever device is sending.
+    const fromPhone =
+      state.waDevicesLive.find((d) => d.id === deviceId)?.phone ??
+      state.waDevices.find((d) => d.device_id === deviceId)?.phone ??
+      null;
+
+    // Optimistic placeholder — rendered immediately, swapped on server ack.
+    const clientId = uuid();
+    const placeholder: ChatMessage = {
+      id: `pending:${clientId}`,
+      chat_wid: chatWid,
+      flow: 'out',
+      kind: 'text',
+      body: input.body,
+      from_phone: fromPhone,
+      to_phone: phone,
+      ack: 'pending',
+      date: new Date().toISOString(),
+      media_file_id: null,
+      media_mime: null,
+      media_size: null,
+      media_caption: null,
+      reference: clientId,
+      quoted: null,
+      pending: true,
+      client_id: clientId,
+    };
+    set((s) => {
+      const existing = s.chatMessages[chatWid] ?? [];
+      return { chatMessages: { ...s.chatMessages, [chatWid]: [...existing, placeholder] } };
+    });
+
+    try {
+      const result = await sendHaberchatMessage({
+        deviceId,
+        phone,
+        body: input.body,
+        quotedWid: input.quotedWid,
+        reference: clientId,
+      });
+      // Swap the placeholder for a real row keyed by the server wid. We
+      // keep the ack as 'sent' until the message:out:ack webhook upgrades
+      // it to delivered/read (that lands in Step 8).
+      set((s) => {
+        const existing = s.chatMessages[chatWid] ?? [];
+        const next = existing.map((m) =>
+          m.client_id === clientId
+            ? {
+                ...m,
+                id: result.wid,
+                pending: false,
+                ack: 'sent' as const,
+                reference: result.reference ?? m.reference,
+              }
+            : m,
+        );
+        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+      });
+    } catch (err) {
+      // Mark the placeholder as failed so the bubble shows the red warning.
+      set((s) => {
+        const existing = s.chatMessages[chatWid] ?? [];
+        const next = existing.map((m) =>
+          m.client_id === clientId ? { ...m, pending: false, ack: 'failed' as const } : m,
+        );
+        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+      });
+      // Surface the error as a toast so the user knows something went wrong.
+      const msg = err instanceof Error ? err.message : String(err);
+      get().addToast(msg, 'error');
+      throw err;
+    }
   },
 
   createMarketingOperation: async (input) => {

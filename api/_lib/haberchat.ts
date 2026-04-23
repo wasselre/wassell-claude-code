@@ -467,6 +467,61 @@ function coerceIsoDate(value: string | number | null | undefined): string | null
 }
 
 /**
+ * Send a single message. Haberchat's endpoint is `POST /messages`. The
+ * target is one of `phone` (direct chat), `group`, or `channel`. v1 only
+ * supports direct chats (phone); groups/channels come later.
+ *
+ * `reference` is a client-side correlation key — we echo it back in the
+ * webhook so the browser can match the optimistic placeholder to the
+ * server-assigned wid when the send ack arrives.
+ */
+export async function sendMessage(input: {
+  deviceId: string;
+  phone?: string;
+  group?: string;
+  channel?: string;
+  body?: string;
+  mediaFileId?: string;
+  mediaCaption?: string;
+  quotedWid?: string;
+  reference?: string;
+}): Promise<{ wid: string; status: string; reference: string | null }> {
+  if (!input.deviceId) throw new HaberchatError(400, 'deviceId is required');
+  const targets = [input.phone, input.group, input.channel].filter(Boolean);
+  if (targets.length !== 1) {
+    throw new HaberchatError(400, 'exactly one of phone / group / channel is required');
+  }
+  if (!input.body && !input.mediaFileId) {
+    throw new HaberchatError(400, 'body or mediaFileId is required');
+  }
+  const payload: Record<string, unknown> = {
+    device: input.deviceId,
+  };
+  if (input.phone)    payload.phone = input.phone;
+  if (input.group)    payload.group = input.group;
+  if (input.channel)  payload.channel = input.channel;
+  if (input.body)     payload.message = input.body;
+  if (input.mediaFileId) {
+    payload.media = { file: input.mediaFileId };
+    if (input.mediaCaption) payload.caption = input.mediaCaption;
+  }
+  if (input.quotedWid) payload.quoted = input.quotedWid;
+  if (input.reference) payload.reference = input.reference;
+
+  const raw = await request<Record<string, unknown>>(`/messages`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const wid = (raw.id as string) ?? (raw.wid as string) ?? (raw._id as string) ?? '';
+  const status = (raw.status as string) ?? 'queued';
+  const reference = (raw.reference as string) ?? input.reference ?? null;
+  if (!wid) {
+    throw new HaberchatError(502, 'Haberchat POST /messages returned no id');
+  }
+  return { wid, status, reference };
+}
+
+/**
  * Haberchat conversation WIDs embed the E.164 phone. `966555...@c.us` for
  * a user; `...@g.us` for a group. Only meaningful for user chats.
  */

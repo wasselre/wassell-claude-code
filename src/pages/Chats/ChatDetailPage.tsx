@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import MessageThread from './components/MessageThread';
+import Composer from './components/Composer';
 
 /**
  * Placeholder detail page for a single conversation. Replaces the generic
@@ -124,14 +125,20 @@ export default function ChatDetailPage() {
         </div>
       </div>
 
-      {/* Message thread. Composer comes in Step 7. */}
+      {/* Message thread + composer. Disabled for groups/channels since v1
+          only supports direct chats (send proxy rejects non-user kinds). */}
       <MessageThread chatWid={(data.wid as string) ?? ''} />
-
-      <p className="text-xs text-charcoal/40 mt-3 text-center">
-        {isAr
-          ? 'إرسال الرسائل قيد الإنشاء — الخطوة التالية.'
-          : 'Sending replies from the app comes next.'}
-      </p>
+      <Composer
+        chatWid={(data.wid as string) ?? ''}
+        disabled={kind !== 'user'}
+      />
+      {kind !== 'user' && (
+        <p className="text-xs text-charcoal/40 mt-2 text-center">
+          {isAr
+            ? 'الإرسال للمجموعات والقنوات غير مدعوم حاليًا.'
+            : 'Sending to groups and channels is not yet supported.'}
+        </p>
+      )}
     </div>
   );
 }

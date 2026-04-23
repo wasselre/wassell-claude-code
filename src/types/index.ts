@@ -1390,6 +1390,16 @@ export interface AppState {
    * action.
    */
   loadMessagesForChat: (chatWid: string, opts?: { before?: string; size?: number }) => Promise<{ hasMore: boolean }>;
+  /**
+   * Send an outbound text message on a conversation. Optimistic UI: inserts
+   * a `pending: true` placeholder immediately; when the proxy returns the
+   * server wid, swaps the placeholder for a real ChatMessage keyed by wid.
+   * On failure marks the placeholder `ack: 'failed'`.
+   *
+   * v1 handles user (direct-chat) kind. Group/channel sends are rejected
+   * at the action boundary so the UI doesn't silently no-op.
+   */
+  sendChatMessage: (chatWid: string, input: { body: string; quotedWid?: string }) => Promise<void>;
 
   // --- Presentations ---
   // Deck-template catalog + jobs fired from the app. Template rows are
