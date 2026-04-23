@@ -894,6 +894,12 @@ export interface AppState {
   // "Apply to existing records" button. Returns the count of records touched.
   applyFallbackToExistingRecords: (modelId: string, targetFieldId: string) => { count: number };
 
+  // Prev/next navigation context published by RecordListPage so RecordFormPage
+  // can step through the list in the order the user was viewing (filtered +
+  // sorted). In-memory only; clears on page refresh.
+  recordNavContext: { modelId: string; orderedIds: string[] } | null;
+  setRecordNavContext: (modelId: string, orderedIds: string[]) => void;
+
   // Workflows
   saveWorkflow: (workflow: Workflow) => void;
   deleteWorkflow: (workflowId: string) => void;

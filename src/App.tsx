@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useEffect, type ReactNode } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
@@ -34,6 +34,18 @@ import ResetPassword from '@/pages/auth/ResetPassword';
  * wait and avoids a flash of "logged out" before the cached Supabase session
  * is restored from localStorage.
  */
+/**
+ * Remounts `RecordFormPage` whenever the `:recordId` URL param changes.
+ * The form stores heavy local state (formData, mirrorEdits, activeResearchViewId,
+ * isDirty) that must reset cleanly when prev/next navigation jumps to another
+ * record — keying on recordId gives us that remount for free, without
+ * scattering resets across useEffects.
+ */
+function RecordFormPageRoute() {
+  const { recordId } = useParams();
+  return <RecordFormPage key={recordId ?? 'new'} />;
+}
+
 function RequireAuth({ children }: { children: ReactNode }) {
   const authReady = useAppStore((s) => s.authReady);
   const authEmail = useAppStore((s) => s.authEmail);
@@ -83,7 +95,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/model/:modelName" element={<RecordListPage />} />
           <Route path="/model/:modelName/new" element={<RecordFormPage />} />
-          <Route path="/model/:modelName/:recordId" element={<RecordFormPage />} />
+          <Route path="/model/:modelName/:recordId" element={<RecordFormPageRoute />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/builder/:modelId" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/workflow" element={<RequireAdmin><WorkflowListPage /></RequireAdmin>} />

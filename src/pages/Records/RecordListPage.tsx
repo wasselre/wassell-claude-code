@@ -31,7 +31,7 @@ export default function RecordListPage() {
   const { modelName } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { models, records, views, language, currentUserId, deleteRecord, addToast } = useAppStore();
+  const { models, records, views, language, currentUserId, deleteRecord, addToast, setRecordNavContext } = useAppStore();
   const isAr = language === 'ar';
 
   const model = models.find((m) => m.name === modelName);
@@ -158,16 +158,48 @@ export default function RecordListPage() {
     return out;
   }, [search, modelRecords, model, activeView, adhocFilters]);
 
+  // Apply the active view's default sort before pagination. Mirrors the
+  // comparator in TableView so prev/next in the record form matches the
+  // order the user sees here. Column-header sorts inside TableView live in
+  // local state and aren't reflected in nav context — v1 tradeoff.
+  const orderedFilteredRecords = useMemo(() => {
+    if (!model) return filteredRecords;
+    const sortFieldId = activeView?.sort_field_id ?? null;
+    if (!sortFieldId) return filteredRecords;
+    const sortField = model.schema.sections
+      .flatMap((s) => s.fields)
+      .find((f) => f.id === sortFieldId);
+    if (!sortField) return filteredRecords;
+    const dir = activeView?.sort_direction ?? 'asc';
+    const name = sortField.name;
+    return [...filteredRecords].sort((a, b) => {
+      const va = a.data[name];
+      const vb = b.data[name];
+      if (va === vb) return 0;
+      if (va === undefined || va === null) return 1;
+      if (vb === undefined || vb === null) return -1;
+      const cmp = String(va).localeCompare(String(vb), isAr ? 'ar' : 'en', { numeric: true });
+      return dir === 'asc' ? cmp : -cmp;
+    });
+  }, [filteredRecords, model, activeView, isAr]);
+
+  // Publish the currently-visible, sorted record IDs so the record form can
+  // offer prev/next navigation in the same order the user was browsing.
+  useEffect(() => {
+    if (!model) return;
+    setRecordNavContext(model.id, orderedFilteredRecords.map((r) => r.id));
+  }, [model, orderedFilteredRecords, setRecordNavContext]);
+
   // Reset to first page whenever the filter pipeline changes its output size
   // (new search, different view, ad-hoc filter edits, records added/deleted).
   useEffect(() => {
     setCurrentPage(1);
-  }, [filteredRecords.length, activeViewId]);
+  }, [orderedFilteredRecords.length, activeViewId]);
 
   const pagedRecords = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return filteredRecords.slice(start, start + pageSize);
-  }, [filteredRecords, currentPage, pageSize]);
+    return orderedFilteredRecords.slice(start, start + pageSize);
+  }, [orderedFilteredRecords, currentPage, pageSize]);
 
   if (!model) {
     return (

@@ -191,6 +191,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   language: (loadLocal<Language>('wassell_language') ?? 'ar'),
   toasts: [],
   pendingResearchPromptTargetedIds: [],
+  recordNavContext: null,
   initialized: false,
 
   // --- Initialize ---
@@ -942,6 +943,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- Records ---
   getRecords: (modelId: string) => {
     return get().records[modelId] ?? [];
+  },
+  setRecordNavContext: (modelId: string, orderedIds: string[]) => {
+    set({ recordNavContext: { modelId, orderedIds } });
   },
   saveRecord: (record: AppRecord) => {
     const state = get();
