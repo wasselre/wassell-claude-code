@@ -25,6 +25,7 @@ import UsersPage from '@/pages/Settings/UsersPage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import CompetitorsPage from '@/pages/Settings/CompetitorsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
+import ChatDetailPage from '@/pages/Chats/ChatDetailPage';
 import MarketingListPage from '@/pages/Marketing/MarketingListPage';
 import OperationDetailPage from '@/pages/Marketing/OperationDetailPage';
 import ReelEditor from '@/pages/Marketing/ReelEditor';
@@ -52,6 +53,21 @@ import ResetPassword from '@/pages/auth/ResetPassword';
 function RecordFormPageRoute() {
   const { recordId } = useParams();
   return <RecordFormPage key={recordId ?? 'new'} />;
+}
+
+/**
+ * Dispatcher for `/model/:modelName/:recordId`. The `chats` system model
+ * needs a custom detail UI (message thread + composer) instead of the
+ * generic record form, so we swap the rendered page by modelName. Keying
+ * on recordId remounts the page when the URL flips between chats for
+ * clean local-state resets (same rationale as RecordFormPageRoute).
+ */
+function RecordDetailDispatcher() {
+  const { modelName, recordId } = useParams();
+  if (modelName === 'chats') {
+    return <ChatDetailPage key={recordId ?? 'new'} />;
+  }
+  return <RecordFormPageRoute />;
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -103,7 +119,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/model/:modelName" element={<RecordListPage />} />
           <Route path="/model/:modelName/new" element={<RecordFormPage />} />
-          <Route path="/model/:modelName/:recordId" element={<RecordFormPageRoute />} />
+          <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/builder/:modelId" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/workflow" element={<RequireAdmin><WorkflowListPage /></RequireAdmin>} />
