@@ -320,7 +320,39 @@ export interface FieldTemplate {
 
 // Workflow types
 
-export type WorkflowEvent = 'create' | 'update' | 'delete';
+export type WorkflowEvent = 'create' | 'update' | 'delete' | 'webhook';
+
+// A declared inbound-webhook endpoint. External systems POST JSON to
+// /functions/v1/inbox/<slug> and the workflow engine fires any workflow
+// whose `trigger_webhook_slug_id` points at this slug's id.
+export interface WebhookSlug {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  secret?: string | null;
+  payload_schema?: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by?: string | null;
+}
+
+// One received payload row. Kept as an audit trail; `consumed_at` is claimed
+// atomically by the first client that runs its workflows so multiple open
+// browsers don't double-fire.
+export interface WebhookPayload {
+  id: string;
+  slug: string;
+  slug_id?: string | null;
+  payload: Record<string, unknown>;
+  signature_valid?: boolean | null;
+  source_ip?: string | null;
+  received_at: string;
+  consumed_at?: string | null;
+  consumed_by?: string | null;
+  error?: string | null;
+}
 
 export type ConditionOperator =
   | 'equals'
@@ -497,8 +529,16 @@ export interface Workflow {
   id: string;
   label_ar: string;
   label_en: string;
+  // For record-event triggers (create/update/delete): the model whose event
+  // fires the workflow. Empty string when `trigger_event === 'webhook'`.
   trigger_model_id: string;
   trigger_event: WorkflowEvent;
+  // Webhook trigger: the id of a `WebhookSlug`. Only meaningful when
+  // `trigger_event === 'webhook'`. When a payload arrives on this slug the
+  // client claims it and runs this workflow with the payload as the trigger
+  // record (conditions + field mappings reference payload fields via the
+  // existing `trigger_field` source).
+  trigger_webhook_slug_id?: string | null;
   // Branched workflow (if / else if / else). Introduced after the flat
   // conditions+actions shape. Always present on workflows saved by the current
   // editor. Older saves may be missing this field; the engine falls back to
@@ -1528,6 +1568,10 @@ export interface AppState {
   posts: Post[];
   marketingNotifications: MarketingNotification[];
 
+  // Webhooks — user-declared inbound endpoints + received payload audit log.
+  webhookSlugs: WebhookSlug[];
+  webhookPayloads: WebhookPayload[];
+
   // Competitors
   saveCompetitor: (competitor: Competitor) => Promise<void>;
   deleteCompetitor: (competitorId: string) => Promise<void>;
@@ -1557,6 +1601,18 @@ export interface AppState {
 
   /** Persist human edits to an operation's research_output (facts table). */
   updateOperationResearch: (operationId: string, output: ResearchOutput) => Promise<void>;
+
+  /** CRUD for user-declared webhook endpoints. */
+  saveWebhookSlug: (slug: WebhookSlug) => Promise<void>;
+  deleteWebhookSlug: (slugId: string) => Promise<void>;
+
+  /**
+   * Atomically claim an unconsumed webhook_payloads row and — if claimed —
+   * fire every workflow whose `trigger_webhook_slug_id` matches the payload's
+   * slug_id. Returns true iff this client claimed the row (so multiple open
+   * browsers don't double-fire workflows).
+   */
+  claimAndRunWebhookPayload: (payloadId: string) => Promise<boolean>;
 
   /**
    * Subscribe to Postgres changes on the 5 marketing tables so the UI

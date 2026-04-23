@@ -5,7 +5,7 @@ import { getSession, getSessionEmail, onAuthChange, signOut as authSignOut, isAu
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
 import { SEED_PRESENTATION_TEMPLATES } from '@/data/seedPresentationTemplates';
-import { executeWorkflows } from '@/lib/workflowEngine';
+import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine';
 import { assignAutoIds } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
@@ -39,6 +39,8 @@ import type {
   Reel,
   Post,
   MarketingNotification,
+  WebhookSlug,
+  WebhookPayload,
   WhatsAppNumber,
   ChatMessage,
 } from '@/types';
@@ -286,6 +288,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   reels: [],
   posts: [],
   marketingNotifications: [],
+  webhookSlugs: [],
+  webhookPayloads: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
   authEmail: null,
   authReady: false,
@@ -640,6 +644,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!marketingNotifications) marketingNotifications = loadLocal<MarketingNotification[]>('wassell_marketing_notifications') ?? [];
     saveLocal('wassell_marketing_notifications', marketingNotifications);
 
+    // --- Webhook inbox (user-declared inbound endpoints) ---
+    let webhookSlugs = await supabaseLoad<WebhookSlug>('webhook_slugs');
+    if (!webhookSlugs) webhookSlugs = loadLocal<WebhookSlug[]>('wassell_webhook_slugs') ?? [];
+    saveLocal('wassell_webhook_slugs', webhookSlugs);
+
     // ────────────────────────────────────────────────────────────────────
     // Resolve the current user based on auth state.
     //
@@ -835,6 +844,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       reels,
       posts,
       marketingNotifications,
+      webhookSlugs,
       currentUserId,
       initialized: true,
     });
@@ -950,6 +960,19 @@ export const useAppStore = create<AppState>((set, get) => ({
             saveLocal('wassell_marketing_notifications', next);
             return { marketingNotifications: next };
           });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'webhook_payloads' },
+        (payload) => {
+          const row = payload.new as WebhookPayload;
+          if (!row?.id) return;
+          // Update the local cache so the UI can show recent payloads, then
+          // attempt the atomic claim. If another tab beats us to the claim,
+          // the workflow run happens there instead (no double-fire).
+          set((s) => ({ webhookPayloads: upsertById(s.webhookPayloads, row) }));
+          void get().claimAndRunWebhookPayload(row.id);
         },
       )
       .subscribe();
@@ -2357,6 +2380,93 @@ export const useAppStore = create<AppState>((set, get) => ({
       .update({ research_output: output, updated_at: now })
       .eq('id', operationId);
     if (error) throw new Error(`Could not save research edits: ${error.message}`);
+  },
+
+  saveWebhookSlug: async (slug) => {
+    const now = new Date().toISOString();
+    const updated: WebhookSlug = { ...slug, updated_at: now };
+    set((s) => {
+      const exists = s.webhookSlugs.some((w) => w.id === slug.id);
+      const next = exists
+        ? s.webhookSlugs.map((w) => (w.id === slug.id ? updated : w))
+        : [...s.webhookSlugs, updated];
+      saveLocal('wassell_webhook_slugs', next);
+      return { webhookSlugs: next };
+    });
+    await supabaseUpsert('webhook_slugs', updated as unknown as Record<string, unknown>);
+  },
+
+  deleteWebhookSlug: async (slugId) => {
+    set((s) => {
+      const next = s.webhookSlugs.filter((w) => w.id !== slugId);
+      saveLocal('wassell_webhook_slugs', next);
+      return { webhookSlugs: next };
+    });
+    await supabaseDelete('webhook_slugs', slugId);
+  },
+
+  claimAndRunWebhookPayload: async (payloadId) => {
+    if (!supabase) return false;
+    const state = get();
+    const session = await supabase.auth.getSession();
+    const userId = session.data.session?.user.id ?? null;
+
+    // Atomic claim: the `consumed_at IS NULL` guard means only the first
+    // client to run this UPDATE gets the returned row. Everyone else gets
+    // zero rows and skips.
+    const { data: claimed, error: claimErr } = await supabase
+      .from('webhook_payloads')
+      .update({ consumed_at: new Date().toISOString(), consumed_by: userId })
+      .eq('id', payloadId)
+      .is('consumed_at', null)
+      .select('*')
+      .maybeSingle();
+    if (claimErr) {
+      console.error('[claimAndRunWebhookPayload] claim failed:', claimErr.message);
+      return false;
+    }
+    if (!claimed) return false;
+
+    const payloadRow = claimed as WebhookPayload;
+    if (!payloadRow.slug_id) return true;
+
+    const matches = state.workflows.filter(
+      (w) =>
+        w.is_active &&
+        w.trigger_event === 'webhook' &&
+        w.trigger_webhook_slug_id === payloadRow.slug_id,
+    );
+    if (matches.length === 0) return true;
+
+    const triggerRecord: AppRecord = {
+      id: payloadRow.id,
+      model_id: '__webhook__',
+      data: (payloadRow.payload ?? {}) as Record<string, unknown>,
+      created_at: payloadRow.received_at,
+      updated_at: payloadRow.received_at,
+    };
+
+    try {
+      await executeWebhookWorkflows(
+        matches,
+        triggerRecord,
+        state.models,
+        state.records,
+        state.users,
+        state.roles,
+        (record) => void get().saveRecord(record),
+        (message) => get().addToast(message, 'info'),
+        userId,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[claimAndRunWebhookPayload] engine failed:', msg);
+      await supabase
+        .from('webhook_payloads')
+        .update({ error: msg.slice(0, 500) })
+        .eq('id', payloadId);
+    }
+    return true;
   },
 
   approveMarketingOperation: async (operationId: string) => {

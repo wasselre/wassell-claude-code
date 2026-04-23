@@ -306,6 +306,54 @@ export async function executeWorkflows(
   }
 }
 
+// Run a pre-filtered list of webhook-triggered workflows against a synthetic
+// trigger record built from a webhook_payloads row. The engine treats the
+// payload JSON as the trigger record's `data`, so conditions and field
+// mappings reference payload fields via the existing `trigger_field` source.
+export async function executeWebhookWorkflows(
+  workflows: Workflow[],
+  triggerRecord: AppRecord,
+  allModels: AppModel[],
+  allRecords: Record<string, AppRecord[]>,
+  allUsers: User[],
+  _allRoles: Role[],
+  saveRecord: (record: AppRecord) => void,
+  showToast: (message: string) => void,
+  currentUserId?: string | null,
+): Promise<void> {
+  for (const workflow of workflows) {
+    const branches = getWorkflowBranches(workflow);
+    let winner: WorkflowBranch | undefined;
+
+    for (const branch of branches) {
+      if (winner) continue;
+      if (branch.is_else) { winner = branch; continue; }
+      const ok = branch.conditions.every((c) => evaluateCondition(c, triggerRecord.data));
+      if (ok) winner = branch;
+    }
+    if (!winner) continue;
+
+    for (let i = 0; i < winner.actions.length; i++) {
+      try {
+        await executeAction(
+          winner.actions[i]!,
+          i,
+          triggerRecord,
+          allModels,
+          allRecords,
+          allUsers,
+          _allRoles,
+          saveRecord,
+          showToast,
+          currentUserId,
+        );
+      } catch (err) {
+        console.error('[executeWebhookWorkflows] action failed:', err);
+      }
+    }
+  }
+}
+
 function evaluateCondition(
   condition: WorkflowCondition,
   data: Record<string, unknown>,
