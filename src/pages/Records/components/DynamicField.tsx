@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { ExternalLink, Fingerprint, Calculator } from 'lucide-react';
 import DropdownSelect from './DropdownSelect';
@@ -11,7 +12,15 @@ import RangeField from './RangeField';
 import TableField from './TableField';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
-import type { ModelField } from '@/types';
+import type { FieldOption, ModelField } from '@/types';
+
+// Rotating palette used when the user inline-creates a new dropdown /
+// multiselect option from the record form. Matches the palette the Builder's
+// OptionsEditor uses when adding options manually.
+const INLINE_OPTION_COLORS = [
+  '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899',
+  '#06B6D4', '#84CC16', '#F97316', '#6366F1',
+];
 
 interface DynamicFieldProps {
   field: ModelField;
@@ -28,8 +37,44 @@ interface DynamicFieldProps {
 
 export default function DynamicField({ field, value, onChange, recordData, compact }: DynamicFieldProps) {
   const { t } = useTranslation();
-  const { language, models, records } = useAppStore();
+  const { language, models, records, saveModel } = useAppStore();
   const isAr = language === 'ar';
+
+  /**
+   * Inline-create a new dropdown / multiselect option for this field. Appends
+   * a fresh `FieldOption` to the field inside its parent model's schema,
+   * persists via `saveModel`, and returns the new option's `value` so the
+   * picker can select it. `section_selector` fields are intentionally not
+   * wired to this path because their options carry section-id semantics.
+   */
+  const createOptionOnField = (label: string): string => {
+    const owningModel = models.find((m) =>
+      m.schema.sections.some((s) => s.fields.some((f) => f.id === field.id)),
+    );
+    if (!owningModel) return '';
+    const existing = field.options ?? [];
+    const newOption: FieldOption = {
+      id: uuid(),
+      label_ar: label,
+      label_en: label,
+      value: uuid(),
+      color: INLINE_OPTION_COLORS[existing.length % INLINE_OPTION_COLORS.length],
+    };
+    const updatedModel = {
+      ...owningModel,
+      schema: {
+        ...owningModel.schema,
+        sections: owningModel.schema.sections.map((sec) => ({
+          ...sec,
+          fields: sec.fields.map((f) =>
+            f.id === field.id ? { ...f, options: [...existing, newOption] } : f,
+          ),
+        })),
+      },
+    };
+    saveModel(updatedModel);
+    return newOption.value;
+  };
   const label = isAr ? field.label_ar : field.label_en;
   // In compact mode the column header already shows the field title — strip
   // placeholders so empty cells don't echo the same label on every row.
@@ -182,10 +227,22 @@ export default function DynamicField({ field, value, onChange, recordData, compa
             value={(value as string) ?? undefined}
             onChange={onChange}
             placeholder={placeholder}
+            onCreateOption={createOptionOnField}
           />
         );
 
       case 'multiselect':
+        return (
+          <MultiSelect
+            options={field.options ?? []}
+            groups={field.option_groups}
+            value={Array.isArray(value) ? (value as string[]) : []}
+            onChange={onChange}
+            placeholder={placeholder}
+            onCreateOption={createOptionOnField}
+          />
+        );
+
       case 'section_selector':
         return (
           <MultiSelect

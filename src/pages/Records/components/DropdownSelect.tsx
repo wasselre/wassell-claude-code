@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { ChevronDown, ChevronRight, Search } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Search } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import type { FieldOption, FieldOptionGroup } from '@/types';
 
@@ -12,9 +12,18 @@ interface DropdownSelectProps {
   onChange: (value: string) => void;
   placeholder?: string;
   compact?: boolean;
+  /**
+   * When provided, the menu shows a "Create: '<query>'" row whenever the user
+   * types a query that doesn't match any existing option. The callback is
+   * responsible for persisting the new option (e.g. appending to the model
+   * schema) and must return the new option's `value` so this component can
+   * select it. When set, the search input is always shown regardless of option
+   * count so the user can always type to create.
+   */
+  onCreateOption?: (label: string) => string;
 }
 
-export default function DropdownSelect({ options, groups, value, onChange, placeholder, compact }: DropdownSelectProps) {
+export default function DropdownSelect({ options, groups, value, onChange, placeholder, compact, onCreateOption }: DropdownSelectProps) {
   const { t } = useTranslation();
   const { language } = useAppStore();
   const isAr = language === 'ar';
@@ -28,8 +37,9 @@ export default function DropdownSelect({ options, groups, value, onChange, place
   const selected = options.find((o) => o.value === value);
 
   // Only expose a search box when there are enough options to make it useful —
-  // matches the threshold used in the Advanced Filter panel.
-  const showSearch = options.length > 6;
+  // matches the threshold used in the Advanced Filter panel. When inline-create
+  // is enabled we always show the search so the user can type a new value.
+  const showSearch = options.length > 6 || !!onCreateOption;
 
   // Case-insensitive match against both labels so the user can type in either language.
   const filteredOptions = useMemo(() => {
@@ -107,6 +117,27 @@ export default function DropdownSelect({ options, groups, value, onChange, place
     });
   };
 
+  // Inline-create: if the user typed a value that doesn't exactly match any
+  // existing option label (ar or en, case-insensitive), offer a copper "Create"
+  // row at the bottom of the menu. Clicking it delegates to the parent which
+  // persists the option and returns its new `value` slug for selection.
+  const trimmedQuery = query.trim();
+  const canCreate =
+    !!onCreateOption &&
+    trimmedQuery.length > 0 &&
+    !options.some(
+      (o) =>
+        o.label_ar.toLowerCase() === trimmedQuery.toLowerCase() ||
+        o.label_en.toLowerCase() === trimmedQuery.toLowerCase(),
+    );
+
+  const handleCreate = () => {
+    if (!canCreate || !onCreateOption) return;
+    const newValue = onCreateOption(trimmedQuery);
+    onChange(newValue);
+    setOpen(false);
+  };
+
   const renderOption = (opt: FieldOption, indent = false) => (
     <button
       key={opt.id}
@@ -176,13 +207,23 @@ export default function DropdownSelect({ options, groups, value, onChange, place
                 </div>
               );
             })}
-            {options.length === 0 && (
+            {options.length === 0 && !canCreate && (
               <div className="px-3 py-2 text-xs text-charcoal/30 text-center">—</div>
             )}
-            {options.length > 0 && filteredOptions.length === 0 && (
+            {options.length > 0 && filteredOptions.length === 0 && !canCreate && (
               <div className="px-3 py-3 text-xs text-charcoal/30 text-center">
                 {t('common.no_results')}
               </div>
+            )}
+            {canCreate && (
+              <button
+                type="button"
+                onClick={handleCreate}
+                className={`w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm flex items-center gap-2 text-copper font-bold ${ungrouped.length > 0 || hasGroups ? 'border-t border-sand/50' : ''}`}
+              >
+                <Plus size={14} />
+                {isAr ? `إنشاء: "${trimmedQuery}"` : `Create: "${trimmedQuery}"`}
+              </button>
             )}
           </div>
         </div>
