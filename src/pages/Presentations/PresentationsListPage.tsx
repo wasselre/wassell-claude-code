@@ -132,27 +132,24 @@ export default function PresentationsListPage(): JSX.Element {
 
   const recordLabel = (job: PresentationJob): string | null => {
     if (!job.record_id) return null;
+    const untitled = isAr ? 'بدون اسم' : '(Untitled)';
     const modelId = job.record_model_id;
     const model = modelId ? models.find((m) => m.id === modelId) : null;
-    const list = model ? records[model.id] ?? [] : [];
-    const rec = list.find((r) => r.id === job.record_id);
-    if (!rec) return job.record_id.slice(0, 8);
-    if (model?.card_config.title_field_id) {
-      const titleField = model.schema.sections
-        .flatMap((s) => s.fields)
-        .find((f) => f.id === model.card_config.title_field_id);
-      if (titleField) {
-        const v = rec.data[titleField.name];
-        if (typeof v === 'string' || typeof v === 'number') return String(v);
-      }
+    if (!model) return untitled;
+    const rec = (records[model.id] ?? []).find((r) => r.id === job.record_id);
+    if (!rec) return untitled;
+    const titleId = model.card_config.title_field_id;
+    const titleField = titleId
+      ? model.schema.sections.flatMap((s) => s.fields).find((f) => f.id === titleId)
+      : null;
+    if (titleField) {
+      const v = rec.data[titleField.name];
+      if (typeof v === 'string' && v.trim()) return v;
+      if (typeof v === 'number') return String(v);
     }
-    for (const section of model?.schema.sections ?? []) {
-      for (const field of section.fields) {
-        const v = rec.data[field.name];
-        if (typeof v === 'string' && v.trim()) return v;
-      }
-    }
-    return rec.id.slice(0, 8);
+    // Don't scan other fields — lookups / section_mirrors store UUIDs that
+    // look like strings but aren't human-readable. Show explicit "untitled".
+    return untitled;
   };
 
   const templateLabel = (job: PresentationJob): string => {

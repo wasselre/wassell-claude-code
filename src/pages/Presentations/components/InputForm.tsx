@@ -142,26 +142,21 @@ export default function InputForm({
   };
 
   const recordLabel = (rec: AppRecord): string => {
-    if (!boundModel) return rec.id;
-    const { card_config } = boundModel;
-    const titleId = card_config.title_field_id;
-    if (titleId) {
-      const titleField = boundModel.schema.sections
-        .flatMap((s) => s.fields)
-        .find((f) => f.id === titleId);
-      if (titleField) {
-        const v = rec.data[titleField.name];
-        if (typeof v === 'string' || typeof v === 'number') return String(v);
-      }
+    if (!boundModel) return isAr ? 'بدون اسم' : '(Untitled)';
+    const titleId = boundModel.card_config.title_field_id;
+    const titleField = titleId
+      ? boundModel.schema.sections.flatMap((s) => s.fields).find((f) => f.id === titleId)
+      : null;
+    if (titleField) {
+      const v = rec.data[titleField.name];
+      if (typeof v === 'string' && v.trim()) return v;
+      if (typeof v === 'number') return String(v);
     }
-    // Fallback: first non-empty string field.
-    for (const section of boundModel.schema.sections) {
-      for (const field of section.fields) {
-        const v = rec.data[field.name];
-        if (typeof v === 'string' && v.trim()) return v;
-      }
-    }
-    return rec.id.slice(0, 8);
+    // Title field empty — don't fall back to scanning other fields: lookup /
+    // section_mirror / auto_id values are strings but they're UUIDs or similar
+    // internal identifiers that the user can't read. Show an explicit "untitled"
+    // placeholder instead so the dropdown stays comprehensible.
+    return isAr ? 'بدون اسم' : '(Untitled)';
   };
 
   return (
