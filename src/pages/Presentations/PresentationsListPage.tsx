@@ -138,17 +138,26 @@ export default function PresentationsListPage(): JSX.Element {
     if (!model) return untitled;
     const rec = (records[model.id] ?? []).find((r) => r.id === job.record_id);
     if (!rec) return untitled;
+    const allFields = model.schema.sections.flatMap((s) => s.fields);
     const titleId = model.card_config.title_field_id;
-    const titleField = titleId
-      ? model.schema.sections.flatMap((s) => s.fields).find((f) => f.id === titleId)
-      : null;
-    if (titleField) {
-      const v = rec.data[titleField.name];
+    const titleField = titleId ? allFields.find((f) => f.id === titleId) ?? null : null;
+    const readStr = (slug: string): string | null => {
+      const v = rec.data[slug];
       if (typeof v === 'string' && v.trim()) return v;
       if (typeof v === 'number') return String(v);
+      return null;
+    };
+    if (titleField) {
+      const v = readStr(titleField.name);
+      if (v !== null) return v;
     }
-    // Don't scan other fields — lookups / section_mirrors store UUIDs that
-    // look like strings but aren't human-readable. Show explicit "untitled".
+    // Fall back to first text/textarea field with content (card_config.title_field_id
+    // may dangle if the field was deleted; those are user-typed, not UUIDs).
+    for (const f of allFields) {
+      if (f.type !== 'text' && f.type !== 'textarea') continue;
+      const v = readStr(f.name);
+      if (v !== null) return v;
+    }
     return untitled;
   };
 

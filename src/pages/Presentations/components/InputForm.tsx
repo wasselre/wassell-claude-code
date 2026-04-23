@@ -142,21 +142,32 @@ export default function InputForm({
   };
 
   const recordLabel = (rec: AppRecord): string => {
-    if (!boundModel) return isAr ? 'بدون اسم' : '(Untitled)';
+    const untitled = isAr ? 'بدون اسم' : '(Untitled)';
+    if (!boundModel) return untitled;
+    const allFields = boundModel.schema.sections.flatMap((s) => s.fields);
     const titleId = boundModel.card_config.title_field_id;
-    const titleField = titleId
-      ? boundModel.schema.sections.flatMap((s) => s.fields).find((f) => f.id === titleId)
-      : null;
-    if (titleField) {
-      const v = rec.data[titleField.name];
+    const titleField = titleId ? allFields.find((f) => f.id === titleId) ?? null : null;
+    const readStr = (slug: string): string | null => {
+      const v = rec.data[slug];
       if (typeof v === 'string' && v.trim()) return v;
       if (typeof v === 'number') return String(v);
+      return null;
+    };
+    if (titleField) {
+      const v = readStr(titleField.name);
+      if (v !== null) return v;
     }
-    // Title field empty — don't fall back to scanning other fields: lookup /
-    // section_mirror / auto_id values are strings but they're UUIDs or similar
-    // internal identifiers that the user can't read. Show an explicit "untitled"
-    // placeholder instead so the dropdown stays comprehensible.
-    return isAr ? 'بدون اسم' : '(Untitled)';
+    // card_config.title_field_id may dangle (field deleted after card_config
+    // was saved) or the title field's value may be empty. Fall back to the
+    // first TEXT/TEXTAREA field with content — those are user-typed strings,
+    // never UUIDs. Explicitly skip lookup / mirror / auto_id / section_mirror
+    // which all store UUID-like identifiers that look readable but aren't.
+    for (const f of allFields) {
+      if (f.type !== 'text' && f.type !== 'textarea') continue;
+      const v = readStr(f.name);
+      if (v !== null) return v;
+    }
+    return untitled;
   };
 
   return (
