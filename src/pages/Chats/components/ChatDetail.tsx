@@ -1,6 +1,6 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus, X, Plus, Check, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
@@ -16,6 +16,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const markChatAsRead = useAppStore((s) => s.markChatAsRead);
+  const patchChat = useAppStore((s) => s.patchChat);
 
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
   const record = useMemo(() => {
@@ -88,7 +89,12 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-base font-bold text-chocolate truncate">{name}</h1>
-            <StatusBadge status={status} isAr={isAr} />
+            <StatusPicker
+              chatWid={chatWid}
+              status={status}
+              isAr={isAr}
+              onChange={(next) => patchChat(chatWid ?? '', { status: next })}
+            />
           </div>
           {phone && (
             <p className="text-xs text-charcoal/60 mt-0.5 font-mono" dir="ltr">
@@ -107,13 +113,12 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                 {formatDateTime(lastMessageAt, isAr)}
               </span>
             )}
-            {labels.length > 0 && (
-              <span className="inline-flex items-center gap-1 flex-wrap">
-                <Tag size={10} />
-                {labels.slice(0, 3).join(' · ')}
-                {labels.length > 3 && ` +${labels.length - 3}`}
-              </span>
-            )}
+            <LabelsEditor
+              chatWid={chatWid}
+              labels={labels}
+              isAr={isAr}
+              onChange={(next) => patchChat(chatWid ?? '', { labels: next })}
+            />
           </div>
           {/* Client link row — either navigates to the matched client or
               offers to create a new one from this phone. */}
@@ -166,14 +171,185 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
-function StatusBadge({ status, isAr }: { status: string; isAr: boolean }) {
+/** Editable status pill — click to cycle through active / resolved /
+ *  archived via a small menu. Optimistic; toasts + reverts on failure. */
+function StatusPicker({
+  chatWid,
+  status,
+  isAr,
+  onChange,
+}: {
+  chatWid: string | null;
+  status: string;
+  isAr: boolean;
+  onChange: (status: 'active' | 'resolved' | 'archived') => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState<'active' | 'resolved' | 'archived' | null>(null);
   const color = statusColor(status);
+  const options: Array<'active' | 'resolved' | 'archived'> = ['active', 'resolved', 'archived'];
+
+  const pick = async (next: 'active' | 'resolved' | 'archived') => {
+    if (!chatWid || next === status || saving) return;
+    setSaving(next);
+    try {
+      await onChange(next);
+    } catch {
+      // store toasts + reverts; we just close the menu.
+    } finally {
+      setSaving(null);
+      setOpen(false);
+    }
+  };
+
   return (
-    <span
-      className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full"
-      style={{ backgroundColor: `${color}14`, color }}
-    >
-      {statusLabel(status, isAr)}
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        disabled={!chatWid || saving != null}
+        className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full hover:brightness-95 disabled:opacity-60"
+        style={{ backgroundColor: `${color}14`, color }}
+      >
+        {saving ? <Loader2 size={10} className="animate-spin" /> : null}
+        {statusLabel(status, isAr)}
+      </button>
+      {open && (
+        <>
+          {/* Click-outside overlay */}
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-full start-0 mt-1 z-50 bg-white rounded-lg shadow-lg border border-sand/20 py-1 min-w-[140px]">
+            {options.map((opt) => {
+              const c = statusColor(opt);
+              const isCurrent = opt === status;
+              return (
+                <button
+                  key={opt}
+                  onClick={() => pick(opt)}
+                  disabled={isCurrent || saving != null}
+                  className={`w-full px-3 py-1.5 text-start text-xs flex items-center gap-2 transition-colors ${
+                    isCurrent ? 'bg-charcoal/5' : 'hover:bg-cream/60'
+                  }`}
+                >
+                  <span
+                    className="inline-block w-2 h-2 rounded-full"
+                    style={{ backgroundColor: c }}
+                  />
+                  <span className="flex-1">{statusLabel(opt, isAr)}</span>
+                  {isCurrent && <Check size={12} className="text-charcoal/40" />}
+                  {saving === opt && <Loader2 size={12} className="animate-spin text-charcoal/40" />}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Labels chip list with inline add/remove. Shows a small `+` button at
+ *  the end; clicking it reveals a tiny text input that adds a label on
+ *  Enter. Removing a label uses the × on each chip. */
+function LabelsEditor({
+  chatWid,
+  labels,
+  isAr,
+  onChange,
+}: {
+  chatWid: string | null;
+  labels: string[];
+  isAr: boolean;
+  onChange: (next: string[]) => Promise<void>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const commit = async (next: string[]) => {
+    if (!chatWid || saving) return;
+    setSaving(true);
+    try {
+      await onChange(next);
+    } catch {
+      // store toasts + reverts
+    } finally {
+      setSaving(false);
+      setText('');
+      setAdding(false);
+    }
+  };
+
+  const removeLabel = (label: string) => {
+    if (saving) return;
+    void commit(labels.filter((l) => l !== label));
+  };
+
+  const addLabel = () => {
+    const t = text.trim();
+    if (!t) {
+      setAdding(false);
+      return;
+    }
+    if (labels.includes(t)) {
+      setText('');
+      setAdding(false);
+      return;
+    }
+    void commit([...labels, t]);
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1 flex-wrap">
+      <Tag size={10} />
+      {labels.length === 0 && !adding && (
+        <span className="text-charcoal/40">{isAr ? 'بدون تصنيفات' : 'no labels'}</span>
+      )}
+      {labels.map((label) => (
+        <span
+          key={label}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-copper/10 text-copper text-[10px] font-medium"
+        >
+          {label}
+          <button
+            onClick={() => removeLabel(label)}
+            disabled={saving}
+            className="hover:text-red-600 disabled:opacity-50"
+            aria-label={isAr ? `حذف ${label}` : `Remove ${label}`}
+          >
+            <X size={9} />
+          </button>
+        </span>
+      ))}
+      {adding ? (
+        <input
+          type="text"
+          autoFocus
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addLabel();
+            } else if (e.key === 'Escape') {
+              setText('');
+              setAdding(false);
+            }
+          }}
+          onBlur={addLabel}
+          placeholder={isAr ? 'تصنيف...' : 'label…'}
+          className="text-[10px] px-1.5 py-0.5 rounded-full border border-copper/30 bg-white text-copper focus:outline-none focus:ring-1 focus:ring-copper/40 w-24"
+          disabled={saving}
+        />
+      ) : (
+        <button
+          onClick={() => setAdding(true)}
+          disabled={saving || !chatWid}
+          className="inline-flex items-center px-1 py-0.5 rounded-full text-charcoal/40 hover:text-copper disabled:opacity-50"
+          aria-label={isAr ? 'إضافة تصنيف' : 'Add label'}
+        >
+          {saving ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />}
+        </button>
+      )}
     </span>
   );
 }

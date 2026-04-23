@@ -1641,6 +1641,16 @@ export interface AppState {
    * opens a chat. Local-only write; Haberchat tracks unread separately.
    */
   markChatAsRead: (chatWid: string) => void;
+  /**
+   * Patch a chat's status and / or labels. Optimistic: updates the local
+   * record immediately, then calls the proxy. On failure, reverts the
+   * patched fields and shows a toast. Haberchat's chat:update webhook
+   * later confirms the new state via Realtime — idempotent.
+   */
+  patchChat: (
+    chatWid: string,
+    patch: { status?: 'active' | 'resolved' | 'archived'; labels?: string[] },
+  ) => Promise<void>;
 
   // --- Presentations ---
   // Deck-template catalog + jobs fired from the app. Template rows are

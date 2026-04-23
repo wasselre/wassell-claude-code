@@ -11,7 +11,7 @@ import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
-import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage } from '@/lib/haberchat/client';
+import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import type {
   AppState,
@@ -2552,6 +2552,82 @@ export const useAppStore = create<AppState>((set, get) => ({
       nextList[idx] = { ...rec, data: { ...data, unread_count: 0 } };
       return { records: { ...s.records, [chatsModel.id]: nextList } };
     });
+  },
+
+  patchChat: async (
+    chatWid: string,
+    patch: { status?: 'active' | 'resolved' | 'archived'; labels?: string[] },
+  ) => {
+    if (!chatWid) return;
+    const state = get();
+    const chatsModel = state.models.find((m) => m.name === 'chats');
+    if (!chatsModel) throw new Error('chats model not found');
+    const list = state.records[chatsModel.id] ?? [];
+    const idx = list.findIndex(
+      (r) => ((r.data as Record<string, unknown>).wid as string | undefined) === chatWid,
+    );
+    const rec = list[idx];
+    if (!rec) throw new Error('conversation not found in records');
+
+    const data = rec.data as Record<string, unknown>;
+    const deviceId = (data.device_id as string | undefined) ??
+      state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
+      state.waDevices.find((d) => d.is_active)?.device_id ??
+      state.waDevicesLive[0]?.id ??
+      '';
+    if (!deviceId) throw new Error('no WhatsApp device configured for this chat');
+
+    // Optimistic local patch. Remember the previous values so we can
+    // revert on failure — users typically react faster than the network,
+    // and a silent revert is worse than a loud error + undo.
+    const prevStatus = (data.status as string | undefined) ?? 'active';
+    const prevLabels = Array.isArray(data.labels) ? (data.labels as string[]) : [];
+    const nextData: Record<string, unknown> = { ...data };
+    if (patch.status) nextData.status = patch.status;
+    if (patch.labels) nextData.labels = patch.labels;
+    set((s) => {
+      const curList = s.records[chatsModel.id] ?? [];
+      const curIdx = curList.findIndex(
+        (r) => ((r.data as Record<string, unknown>).wid as string | undefined) === chatWid,
+      );
+      if (curIdx === -1) return s;
+      const curRec = curList[curIdx];
+      if (!curRec) return s;
+      const nextList = [...curList];
+      nextList[curIdx] = { ...curRec, data: nextData, updated_at: new Date().toISOString() };
+      return { records: { ...s.records, [chatsModel.id]: nextList } };
+    });
+    void supabaseUpsert(
+      'records',
+      { ...rec, data: nextData } as unknown as Record<string, unknown>,
+      { table: 'models', id: rec.model_id },
+    );
+
+    try {
+      await patchHaberchatChat(deviceId, chatWid, patch);
+    } catch (err) {
+      // Revert local state.
+      set((s) => {
+        const curList = s.records[chatsModel.id] ?? [];
+        const curIdx = curList.findIndex(
+          (r) => ((r.data as Record<string, unknown>).wid as string | undefined) === chatWid,
+        );
+        if (curIdx === -1) return s;
+        const curRec = curList[curIdx];
+        if (!curRec) return s;
+        const revertData = {
+          ...(curRec.data as Record<string, unknown>),
+          status: prevStatus,
+          labels: prevLabels,
+        };
+        const nextList = [...curList];
+        nextList[curIdx] = { ...curRec, data: revertData };
+        return { records: { ...s.records, [chatsModel.id]: nextList } };
+      });
+      const msg = err instanceof Error ? err.message : String(err);
+      get().addToast(msg, 'error');
+      throw err;
+    }
   },
 
   createMarketingOperation: async (input) => {

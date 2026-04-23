@@ -607,6 +607,59 @@ function asNumber(v: unknown): number | null {
 }
 
 /**
+ * Patch a single chat — change status (resolved / active / archived) and /
+ * or labels. Haberchat's endpoint is `PATCH /chat/{deviceId}/chats` in bulk
+ * "action" form; we fan out one request per semantic change so we can
+ * report on each separately. Calls are issued sequentially; on first
+ * failure we stop and throw (caller's optimistic state gets reverted).
+ *
+ * Status mapping:
+ *   'resolved'   → { action: 'resolve',   wids: [...] }
+ *   'active'     → { action: 'unresolve', wids: [...] } (+ unarchive if was archived)
+ *   'archived'   → { action: 'archive',   wids: [...] }
+ */
+export async function patchChat(
+  deviceId: string,
+  chatWid: string,
+  patch: { status?: 'active' | 'resolved' | 'archived'; labels?: string[] },
+): Promise<void> {
+  if (!deviceId) throw new HaberchatError(400, 'deviceId is required');
+  if (!chatWid) throw new HaberchatError(400, 'chatWid is required');
+  const path = `/chat/${encodeURIComponent(deviceId)}/chats`;
+
+  if (patch.status) {
+    const action =
+      patch.status === 'resolved' ? 'resolve' :
+      patch.status === 'archived' ? 'archive' :
+      'unresolve';
+    await request<Record<string, unknown>>(path, {
+      method: 'PATCH',
+      body: JSON.stringify({ action, wids: [chatWid] }),
+    });
+    // Going from archived → active also needs an unarchive call.
+    if (patch.status === 'active') {
+      try {
+        await request<Record<string, unknown>>(path, {
+          method: 'PATCH',
+          body: JSON.stringify({ action: 'unarchive', wids: [chatWid] }),
+        });
+      } catch {
+        // Not all Haberchat plans expose unarchive as its own action —
+        // swallow a 400/405 here since the primary 'unresolve' above
+        // already succeeded.
+      }
+    }
+  }
+
+  if (patch.labels) {
+    await request<Record<string, unknown>>(path, {
+      method: 'PATCH',
+      body: JSON.stringify({ action: 'label', wids: [chatWid], labels: patch.labels }),
+    });
+  }
+}
+
+/**
  * Stream a file download from Haberchat. We return the raw Response so
  * the proxy handler can pipe it straight back to the browser without
  * buffering — the whole point is to keep the token server-side.

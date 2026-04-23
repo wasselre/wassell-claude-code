@@ -124,6 +124,24 @@ export async function sendMessage(input: {
   );
 }
 
+/** Patch a chat's status / labels via the proxy. */
+export async function patchChat(
+  deviceId: string,
+  chatWid: string,
+  patch: { status?: 'active' | 'resolved' | 'archived'; labels?: string[] },
+): Promise<void> {
+  const qs = new URLSearchParams({ deviceId }).toString();
+  const res = await fetch(`/api/haberchat/chats/${encodeURIComponent(chatWid)}?${qs}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new HaberchatClientError(res.status, err?.error ?? `PATCH chat failed (${res.status})`);
+  }
+}
+
 /** Upload a file to Haberchat (via proxy). Returns the Haberchat file id. */
 export async function uploadFile(
   file: File,
