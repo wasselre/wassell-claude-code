@@ -26,8 +26,7 @@ import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import CompetitorsPage from '@/pages/Settings/CompetitorsPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
-import ChatDetailPage from '@/pages/Chats/ChatDetailPage';
-import ChatListPage from '@/pages/Chats/ChatListPage';
+import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import MarketingListPage from '@/pages/Marketing/MarketingListPage';
 import OperationDetailPage from '@/pages/Marketing/OperationDetailPage';
 import ReelEditor from '@/pages/Marketing/ReelEditor';
@@ -65,24 +64,28 @@ function RecordFormPageRoute() {
  * clean local-state resets (same rationale as RecordFormPageRoute).
  */
 function RecordDetailDispatcher() {
-  const { modelName, recordId } = useParams();
+  const { modelName } = useParams();
   if (modelName === 'chats') {
-    return <ChatDetailPage key={recordId ?? 'new'} />;
+    // ChatsSplitPage reads :recordId itself from useParams — no need to
+    // pass it. Not keyed on recordId: the split page stays mounted while
+    // the user navigates between conversations so its global Realtime
+    // subscription doesn't flap, and the right-pane swap is keyed
+    // internally.
+    return <ChatsSplitPage />;
   }
   return <RecordFormPageRoute />;
 }
 
 /**
  * Dispatcher for `/model/:modelName`. The `chats` system model renders
- * as a purpose-built WhatsApp-style list (avatars, preview, unread
- * badges) instead of the generic table/cards/maps record list — the
- * rest of the record-page features (saved views, import, bulk edit)
- * aren't meaningful for a conversation inbox.
+ * as a purpose-built two-pane layout (list on the left, detail on the
+ * right, updates live via a global Realtime subscription). Everything
+ * else stays on the generic RecordListPage.
  */
 function RecordListDispatcher() {
   const { modelName } = useParams();
   if (modelName === 'chats') {
-    return <ChatListPage />;
+    return <ChatsSplitPage />;
   }
   return <RecordListPage />;
 }

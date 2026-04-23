@@ -245,13 +245,14 @@ function applyRealtimeRow(row: DbChatMessageRow): void {
     reference: row.reference,
     quoted: row.quoted,
   };
+  // Capture whether this id is new BEFORE we mutate the slice — used by
+  // bumpParentFromMessage to decide whether to increment unread_count.
+  const prevState = useAppStore.getState();
+  const wasKnown = (prevState.chatMessages[row.chat_wid] ?? []).some((m) => m.id === row.id);
   useAppStore.setState((s) => {
     const existing = s.chatMessages[row.chat_wid] ?? [];
     const byId = new Map<string, ChatMessage>();
     for (const m of existing) {
-      // Match optimistic placeholder by reference OR client_id — whichever
-      // Haberchat chose to echo. Drop the placeholder and let the real
-      // row take its place below.
       if (m.pending && (m.reference === row.reference || m.client_id === row.reference)) continue;
       byId.set(m.id, m);
     }
@@ -259,7 +260,50 @@ function applyRealtimeRow(row: DbChatMessageRow): void {
     const merged = [...byId.values()].sort((a, b) => a.date.localeCompare(b.date));
     return { chatMessages: { ...s.chatMessages, [row.chat_wid]: merged } };
   });
+  // Also bump the parent conversation record so the ChatList reflects
+  // new activity without a full refresh.
+  bumpParentFromMessage(row, wasKnown);
 }
+
+/** Update the chats record's last_message_at / last_message_preview /
+ *  unread_count in local state from an incoming chat_messages row. Skips
+ *  if the incoming is older than what we already show. Unread only
+ *  increments on NEW inbound rows (not on UPDATEs to existing rows like
+ *  ack progression). */
+function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
+  useAppStore.setState((s) => {
+    const chatsModel = s.models.find((m) => m.name === 'chats');
+    if (!chatsModel) return s;
+    const list = s.records[chatsModel.id] ?? [];
+    const idx = list.findIndex(
+      (r) => ((r.data as Record<string, unknown>).wid as string | undefined) === row.chat_wid,
+    );
+    const rec = list[idx];
+    if (!rec) return s;
+    const data = rec.data as Record<string, unknown>;
+    const curAt = (data.last_message_at as string | undefined) ?? '';
+    const curPreview = (data.last_message_preview as string | null | undefined) ?? null;
+    const curUnread = typeof data.unread_count === 'number' ? data.unread_count : 0;
+    const isNewer = !curAt || row.date > curAt;
+    const nextUnread = row.flow === 'in' && !wasKnown ? curUnread + 1 : curUnread;
+    if (!isNewer && nextUnread === curUnread) return s;
+    const nextData = {
+      ...data,
+      last_message_at: isNewer ? row.date : curAt,
+      last_message_preview: isNewer ? (row.body ? row.body.slice(0, 120) : curPreview) : curPreview,
+      unread_count: nextUnread,
+    };
+    const nextList = [...list];
+    nextList[idx] = { ...rec, data: nextData, updated_at: new Date().toISOString() };
+    return { records: { ...s.records, [chatsModel.id]: nextList } };
+  });
+}
+
+/** Module-scope singleton: one global Realtime channel across the app,
+ *  created on first subscribeToAllChats() call and torn down by
+ *  unsubscribeFromAllChats(). Keeps React state free of non-serializable
+ *  Supabase handles. */
+let globalChatsChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
 
 // --- Store ---
 
@@ -2194,6 +2238,47 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!channel || !supabase) return;
     void supabase.removeChannel(channel);
     chatRealtimeChannels.delete(chatWid);
+  },
+
+  subscribeToAllChats: () => {
+    if (!supabase || globalChatsChannel) return;
+    globalChatsChannel = supabase
+      .channel('chat_messages:all')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'chat_messages' },
+        (payload) => {
+          const row = payload.new as DbChatMessageRow | null;
+          if (!row || !row.id) return;
+          applyRealtimeRow(row);
+        },
+      )
+      .subscribe();
+  },
+
+  unsubscribeFromAllChats: () => {
+    if (!globalChatsChannel || !supabase) return;
+    void supabase.removeChannel(globalChatsChannel);
+    globalChatsChannel = null;
+  },
+
+  markChatAsRead: (chatWid: string) => {
+    if (!chatWid) return;
+    set((s) => {
+      const chatsModel = s.models.find((m) => m.name === 'chats');
+      if (!chatsModel) return s;
+      const list = s.records[chatsModel.id] ?? [];
+      const idx = list.findIndex(
+        (r) => ((r.data as Record<string, unknown>).wid as string | undefined) === chatWid,
+      );
+      const rec = list[idx];
+      if (!rec) return s;
+      const data = rec.data as Record<string, unknown>;
+      if ((data.unread_count ?? 0) === 0) return s;
+      const nextList = [...list];
+      nextList[idx] = { ...rec, data: { ...data, unread_count: 0 } };
+      return { records: { ...s.records, [chatsModel.id]: nextList } };
+    });
   },
 
   createMarketingOperation: async (input) => {

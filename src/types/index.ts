@@ -1526,6 +1526,19 @@ export interface AppState {
   /** Unsubscribe from Realtime for a conversation. Safe to call even if
    *  no subscription exists. Called by ChatDetailPage on unmount. */
   unsubscribeFromChat: (chatWid: string) => void;
+  /**
+   * Global Realtime subscription on the whole `chat_messages` table —
+   * no chat_wid filter. Used by ChatsSplitPage to keep the conversation
+   * list up to date with unread counts / last-message previews for every
+   * chat, even ones the user isn't currently viewing. Idempotent.
+   */
+  subscribeToAllChats: () => void;
+  unsubscribeFromAllChats: () => void;
+  /**
+   * Zero out unread_count on the local chat record. Called when the user
+   * opens a chat. Local-only write; Haberchat tracks unread separately.
+   */
+  markChatAsRead: (chatWid: string) => void;
 
   // --- Presentations ---
   // Deck-template catalog + jobs fired from the app. Template rows are
