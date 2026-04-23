@@ -1,7 +1,7 @@
 # PRD: Workflow Automation
 
 **Status:** Live
-**Last updated:** 2026-04-22 (action-row min-widths reduced so condition rows wrap more cleanly inside the existing `flex-wrap` container on narrow screens — no behavior change, just mobile-friendliness) | 2026-04-20 (branching workflows: one trigger can now fan out into if / else-if / else arms, each with its own conditions + actions, rendered as a top-down tree in the editor)
+**Last updated:** 2026-04-23 (**`http_request` action (new):** outbound HTTP call with method, URL, header pairs, JSON body template, and timeout. URL / headers / body support `{field_slug}` templating against the trigger record. Trace captures method, resolved URL, body snippet, response status + first 500 chars of the body. 4xx/5xx is logged as failed; network errors and timeouts as failed with the cause. Foundation for webhook-driven pipelines.) | 2026-04-22 (action-row min-widths reduced so condition rows wrap more cleanly inside the existing `flex-wrap` container on narrow screens — no behavior change, just mobile-friendliness) | 2026-04-20 (branching workflows: one trigger can now fan out into if / else-if / else arms, each with its own conditions + actions, rendered as a top-down tree in the editor)
 **Related PRDs:** model-builder.md, record-management.md, access-control.md
 
 ## What it is (in plain English)

@@ -175,6 +175,7 @@ const resources = {
       'fields.type.range': 'نطاق',
       'fields.type.auto_id': 'معرّف تلقائي',
       'fields.type.formula': 'صيغة',
+      'fields.type.table': 'جدول',
       'fields.range_min': 'الحد الأدنى',
       'fields.range_max': 'الحد الأعلى',
       'fields.api_name': 'اسم API',

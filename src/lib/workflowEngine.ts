@@ -31,6 +31,18 @@ export function getWorkflowBranches(workflow: Workflow): WorkflowBranch[] {
 
 const MAX_DEPTH = 3;
 
+// Replace `{field_slug}` tokens in a template string with the trigger
+// record's values. Missing fields substitute to an empty string. Used by the
+// `http_request` action for URL, headers, and JSON body templating.
+function substituteFieldTokens(template: string, triggerRecord: AppRecord): string {
+  return template.replace(/\{([a-zA-Z_][\w]*)\}/g, (_, slug) => {
+    const value = triggerRecord.data[slug];
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  });
+}
+
 function getFieldTypeMap(allModels: AppModel[], modelId: string): Map<string, string> {
   const model = allModels.find((m) => m.id === modelId);
   const map = new Map<string, string>();
@@ -632,6 +644,89 @@ async function executeAction(
         };
       }
 
+      case 'http_request': {
+        const timeoutMs = Math.max(1000, Math.min(120_000, action.timeout_ms ?? 30_000));
+        // Resolve templating on URL + header values against the trigger record.
+        const resolvedUrl = substituteFieldTokens(action.url, triggerRecord);
+        const resolvedHeaders: Record<string, string> = {};
+        for (const pair of action.headers ?? []) {
+          if (!pair.name.trim()) continue;
+          resolvedHeaders[pair.name] = substituteFieldTokens(pair.value, triggerRecord);
+        }
+        // Build the request body per the selected mode.
+        const targetFieldTypes = new Map<string, string>();
+        let bodyString: string | undefined;
+        if (action.body_mode === 'json_template' && action.body_template) {
+          bodyString = substituteFieldTokens(action.body_template, triggerRecord);
+        } else if (action.body_mode === 'form_mappings' && action.body_mappings?.length) {
+          const bodyObj: Record<string, unknown> = {};
+          for (const mapping of action.body_mappings) {
+            const { value } = resolveFieldMappingWithTrace(
+              mapping, triggerRecord, allUsers, allRecords, currentUserId,
+              targetFieldTypes.get(mapping.target_field_id),
+            );
+            bodyObj[mapping.target_field_id] = value;
+          }
+          bodyString = JSON.stringify(bodyObj);
+        }
+        // Default Content-Type when we have a body and the caller didn't set one.
+        if (bodyString !== undefined && !Object.keys(resolvedHeaders).some((k) => k.toLowerCase() === 'content-type')) {
+          resolvedHeaders['Content-Type'] = 'application/json';
+        }
+
+        let responseStatus: number | undefined;
+        let responseSnippet: string | undefined;
+        let errorMsg: string | undefined;
+
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(resolvedUrl, {
+            method: action.method,
+            headers: resolvedHeaders,
+            body: action.method === 'GET' || action.method === 'DELETE' ? undefined : bodyString,
+            signal: controller.signal,
+          });
+          responseStatus = response.status;
+          try {
+            const text = await response.text();
+            responseSnippet = text.slice(0, 500);
+          } catch {
+            /* ignore — body unreadable */
+          }
+        } catch (err) {
+          errorMsg = (err as Error).name === 'AbortError'
+            ? `Request aborted after ${timeoutMs}ms timeout`
+            : (err instanceof Error ? err.message : String(err));
+        } finally {
+          clearTimeout(timer);
+        }
+
+        const base = {
+          ...traceBase,
+          type: 'http_request' as const,
+          duration_ms: Date.now() - startedAt,
+          method: action.method,
+          resolved_url: resolvedUrl,
+          resolved_headers: Object.keys(resolvedHeaders).length > 0 ? resolvedHeaders : undefined,
+          body_mode: action.body_mode,
+          resolved_body: bodyString?.slice(0, 1000),
+          response_status: responseStatus,
+          response_snippet: responseSnippet,
+          timeout_ms: timeoutMs,
+        };
+
+        if (errorMsg) {
+          return { ...base, status: 'failed', error: errorMsg };
+        }
+        // Treat 2xx/3xx as executed; 4xx/5xx as failed (with the error code
+        // captured from the response) so the run log clearly flags bad calls.
+        if (responseStatus !== undefined && responseStatus >= 400) {
+          return { ...base, status: 'failed', error: `HTTP ${responseStatus}` };
+        }
+        return { ...base, status: 'executed' };
+      }
+
       case 'assign_user': {
         const previousAssignee = triggerRecord.data[action.assignment_field_id];
         let assignedUserId: string | undefined;
@@ -722,6 +817,7 @@ async function executeAction(
       ...(action.type === 'update_record' ? { target_model_id: action.target_model_id, filter_field_id: action.filter_field_id, filter_value_source: (action.filter_value_source ?? 'static'), resolved_filter_value: null, field_mappings: [] } : {}),
       ...(action.type === 'send_notification' ? { message_ar: action.message_ar, message_en: action.message_en, shown_message: '', shown_language: 'en' } : {}),
       ...(action.type === 'assign_user' ? { assignment_field_id: action.assignment_field_id, mode: action.mode, role_conditions_count: action.role_conditions.length } : {}),
+      ...(action.type === 'http_request' ? { method: action.method, resolved_url: action.url, body_mode: action.body_mode } : {}),
     } as WorkflowActionTrace;
   }
 
