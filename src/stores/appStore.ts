@@ -379,7 +379,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       const localGroups = loadLocal<ModelGroup[]>('wassell_groups');
       groups = localGroups && localGroups.length > 0 ? localGroups : SEED_GROUPS;
     }
+
+    // Union with SEED_GROUPS by id — catches returning users whose stored
+    // groups predate a newly-added seed group (e.g. the Marketing group
+    // added in phase 3A). Without this, models that reference the new
+    // group's id fail Postgres's models_group_id_fkey on insert.
+    {
+      const existingGroupIds = new Set(groups.map((g) => g.id));
+      const seedExtras = SEED_GROUPS.filter((g) => !existingGroupIds.has(g.id));
+      if (seedExtras.length > 0) {
+        groups = [...groups, ...seedExtras];
+      }
+    }
     saveLocal('wassell_groups', groups);
+
     // Backfill any missing groups, and AWAIT — models depend on these existing
     // in Supabase before their FK-bearing rows can land.
     if (supabaseGroups !== null) {
