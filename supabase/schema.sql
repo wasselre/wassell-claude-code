@@ -825,3 +825,73 @@ RETURNS SETOF presentation_jobs AS $$
    )
    RETURNING *;
 $$ LANGUAGE sql;
+
+-- ============================================================
+-- CALLS MODULE (Hatif webhook)
+-- ============================================================
+-- Every call event Hatif's platform sees (inbound, outbound-IVR, and calls
+-- agents place from Hatif's own mobile/desktop app on a channel we own) is
+-- POSTed to /api/webhook/hatif-call and upserted here.
+--
+-- Linking to clients: Hatif gives us `contactNumber`; we normalize to E.164
+-- and store it as `contact_phone`. The UI queries this table by the client's
+-- phone field at render time, so records remain loosely coupled — a call logs
+-- correctly even if the client record is created AFTER the call, and moving a
+-- call between clients is just a phone-number edit.
+--
+-- See docs/prd/calling.md for the full spec.
+
+CREATE TABLE IF NOT EXISTS call_logs (
+  id                         UUID PRIMARY KEY,                 -- Hatif callId (already UUID)
+  workspace_id               UUID,                             -- Hatif workspace
+  channel_id                 UUID NOT NULL,                    -- Hatif channel
+  direction                  TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+  status                     TEXT NOT NULL,                    -- completed | missed | rejected_by_caller | rejected_by_callee | no_answer | cancelled | failed | ringing | active
+  caller_number              TEXT,                             -- raw from Hatif
+  callee_number              TEXT,                             -- raw from Hatif
+  contact_phone              TEXT,                             -- normalized E.164 of the customer side — used for client matching
+  contact_id                 UUID,                             -- Hatif contactId (NOT our records.id)
+  agent_user_id              UUID,                             -- Hatif userId of the agent who handled the call
+  agent_name                 TEXT,                             -- denormalized for list display
+  ai_agent_id                UUID,                             -- non-null if an AI agent handled the call
+  pickup_time                TIMESTAMPTZ,
+  hangup_time                TIMESTAMPTZ,
+  duration_seconds           INT,                              -- parsed from Hatif's HH:MM:SS callLength string
+  recording_url              TEXT,
+  summary                    TEXT,                             -- AI-generated call summary
+  sentiment                  TEXT CHECK (sentiment IN ('positive', 'neutral', 'negative', 'mixed', 'unknown')),
+  transcription              JSONB,                            -- { text, words: [{ text, start, end, type, speaker }] }
+  evaluation_criteria_result JSONB,                            -- [{ id, dataType, description, value, rationale }]
+  -- Raw webhook payload kept for forensics / schema drift / replay
+  raw_event                  JSONB NOT NULL,
+  creation_time              TIMESTAMPTZ NOT NULL,             -- Hatif event creationTime
+  created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_call_logs_contact_phone ON call_logs(contact_phone);
+CREATE INDEX IF NOT EXISTS idx_call_logs_channel       ON call_logs(channel_id);
+CREATE INDEX IF NOT EXISTS idx_call_logs_creation      ON call_logs(creation_time DESC);
+CREATE INDEX IF NOT EXISTS idx_call_logs_agent         ON call_logs(agent_user_id);
+
+-- updated_at trigger — reuse existing update_updated_at_column function
+DROP TRIGGER IF EXISTS set_updated_at_call_logs ON call_logs;
+CREATE TRIGGER set_updated_at_call_logs BEFORE UPDATE ON call_logs
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+ALTER TABLE call_logs ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated full access" ON call_logs;
+CREATE POLICY "Authenticated full access" ON call_logs FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- Realtime so the CallHistoryPanel on a client record streams live updates
+-- when a webhook arrives while the user is on that record.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'call_logs'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE call_logs;
+  END IF;
+END $$;
