@@ -27,6 +27,14 @@ import type {
   FieldTemplate,
   ModelPermission,
   StoreMutationResult,
+  Competitor,
+  MarketingOperation,
+  ResearchQuestion,
+  Reel,
+  Post,
+  MarketingNotification,
+  ReelsSettings,
+  PostsSettings,
 } from '@/types';
 
 // --- localStorage helpers ---
@@ -185,6 +193,12 @@ export const useAppStore = create<AppState>((set, get) => ({
   profiles: [],
   roles: [],
   fieldTemplates: [],
+  competitors: [],
+  marketingOperations: [],
+  researchQuestions: [],
+  reels: [],
+  posts: [],
+  marketingNotifications: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
   authEmail: null,
   authReady: false,
@@ -461,6 +475,34 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!fieldTemplates) fieldTemplates = loadLocal<FieldTemplate[]>('wassell_field_templates') ?? [];
     saveLocal('wassell_field_templates', fieldTemplates);
 
+    // --- Marketing operations (reels + posts content pipeline) ---
+    // All six tables use the same Supabase-first + localStorage-fallback pattern.
+    // The edge functions use the service-role key and bypass RLS, so these
+    // tables stay in sync even while the user isn't on the app.
+    let competitors = await supabaseLoad<Competitor>('competitors');
+    if (!competitors) competitors = loadLocal<Competitor[]>('wassell_competitors') ?? [];
+    saveLocal('wassell_competitors', competitors);
+
+    let marketingOperations = await supabaseLoad<MarketingOperation>('marketing_operations');
+    if (!marketingOperations) marketingOperations = loadLocal<MarketingOperation[]>('wassell_marketing_operations') ?? [];
+    saveLocal('wassell_marketing_operations', marketingOperations);
+
+    let researchQuestions = await supabaseLoad<ResearchQuestion>('research_questions');
+    if (!researchQuestions) researchQuestions = loadLocal<ResearchQuestion[]>('wassell_research_questions') ?? [];
+    saveLocal('wassell_research_questions', researchQuestions);
+
+    let reels = await supabaseLoad<Reel>('reels');
+    if (!reels) reels = loadLocal<Reel[]>('wassell_reels') ?? [];
+    saveLocal('wassell_reels', reels);
+
+    let posts = await supabaseLoad<Post>('posts');
+    if (!posts) posts = loadLocal<Post[]>('wassell_posts') ?? [];
+    saveLocal('wassell_posts', posts);
+
+    let marketingNotifications = await supabaseLoad<MarketingNotification>('marketing_notifications');
+    if (!marketingNotifications) marketingNotifications = loadLocal<MarketingNotification[]>('wassell_marketing_notifications') ?? [];
+    saveLocal('wassell_marketing_notifications', marketingNotifications);
+
     // ────────────────────────────────────────────────────────────────────
     // Resolve the current user based on auth state.
     //
@@ -647,6 +689,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       roles,
       users,
       fieldTemplates,
+      competitors,
+      marketingOperations,
+      researchQuestions,
+      reels,
+      posts,
+      marketingNotifications,
       currentUserId,
       initialized: true,
     });

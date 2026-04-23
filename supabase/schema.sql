@@ -366,6 +366,186 @@ CREATE POLICY "Authenticated full access" ON wa_conversations FOR ALL TO authent
 CREATE POLICY "Authenticated full access" ON wa_leads         FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON wa_errors        FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
+-- ============================================================
+-- MARKETING OPERATIONS (reels + posts content pipeline)
+-- ============================================================
+-- Replaces the old OMA Google Sheets system. Every marketing operation is
+-- a request to generate content (reels and/or posts) for a project. The
+-- pipeline runs: research → contradictions handshake (if any) → reels and
+-- posts in parallel → ready_for_review → human edits → approved.
+--
+-- Orchestration lives in Supabase Edge Functions (marketing-research,
+-- marketing-research-resume, marketing-content, marketing-reels,
+-- marketing-posts). Agents callback into these tables using the service-role
+-- key and bypass RLS. RLS is still enabled so the SPA can read/write for
+-- authenticated staff.
+
+CREATE TABLE IF NOT EXISTS competitors (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name        TEXT NOT NULL,
+  type        TEXT NOT NULL CHECK (type IN ('reel_script', 'post_example')),
+  content     TEXT NOT NULL,
+  tags        TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  notes       TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by  UUID REFERENCES auth.users(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_competitors_type ON competitors(type);
+
+CREATE TABLE IF NOT EXISTS marketing_operations (
+  id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  project_record_id UUID NOT NULL REFERENCES records(id) ON DELETE RESTRICT,
+  status            TEXT NOT NULL DEFAULT 'research_pending' CHECK (status IN (
+                      'research_pending',
+                      'research_in_progress',
+                      'research_waiting_answers',
+                      'research_complete',
+                      'content_generating',
+                      'ready_for_review',
+                      'approved',
+                      'failed'
+                    )),
+  reels_settings    JSONB,
+  posts_settings    JSONB,
+  research_output   JSONB,
+  research_error    TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_by        UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  CHECK (reels_settings IS NOT NULL OR posts_settings IS NOT NULL)
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketing_operations_project ON marketing_operations(project_record_id);
+CREATE INDEX IF NOT EXISTS idx_marketing_operations_status ON marketing_operations(status);
+CREATE INDEX IF NOT EXISTS idx_marketing_operations_created ON marketing_operations(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS research_questions (
+  id               UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  operation_id     UUID NOT NULL REFERENCES marketing_operations(id) ON DELETE CASCADE,
+  question_number  INT NOT NULL,
+  question         TEXT NOT NULL,
+  source_conflict  TEXT,
+  answer           TEXT,
+  status           TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'answered')),
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  answered_at      TIMESTAMPTZ,
+  answered_by      UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+  UNIQUE (operation_id, question_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_research_questions_operation ON research_questions(operation_id);
+
+CREATE TABLE IF NOT EXISTS reels (
+  id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  operation_id       UUID NOT NULL REFERENCES marketing_operations(id) ON DELETE CASCADE,
+  project_record_id  UUID NOT NULL REFERENCES records(id) ON DELETE RESTRICT,
+  reel_number        INT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+                       'pending', 'writing', 'draft_ready', 'approved', 'published', 'failed'
+                     )),
+  type               TEXT,
+  duration           TEXT,
+  platform           TEXT,
+  voiceover          TEXT,
+  goal               TEXT,
+  scenes             JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (operation_id, reel_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reels_operation ON reels(operation_id);
+CREATE INDEX IF NOT EXISTS idx_reels_project ON reels(project_record_id);
+CREATE INDEX IF NOT EXISTS idx_reels_status ON reels(status);
+
+CREATE TABLE IF NOT EXISTS posts (
+  id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  operation_id       UUID NOT NULL REFERENCES marketing_operations(id) ON DELETE CASCADE,
+  project_record_id  UUID NOT NULL REFERENCES records(id) ON DELETE RESTRICT,
+  post_number        INT NOT NULL,
+  status             TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+                       'pending', 'writing', 'draft_ready', 'approved', 'published', 'failed'
+                     )),
+  type               TEXT,
+  components         TEXT,
+  visual             TEXT,
+  usage              TEXT,
+  title              TEXT,
+  design_text_1      TEXT,
+  design_text_2      TEXT,
+  design_text_3      TEXT,
+  caption            TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (operation_id, post_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_posts_operation ON posts(operation_id);
+CREATE INDEX IF NOT EXISTS idx_posts_project ON posts(project_record_id);
+CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status);
+
+CREATE TABLE IF NOT EXISTS marketing_notifications (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id       UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  type          TEXT NOT NULL CHECK (type IN (
+                  'research_waiting_answers',
+                  'research_complete',
+                  'content_ready_reels',
+                  'content_ready_posts',
+                  'operation_ready',
+                  'operation_failed'
+                )),
+  message_ar    TEXT NOT NULL,
+  message_en    TEXT NOT NULL,
+  operation_id  UUID REFERENCES marketing_operations(id) ON DELETE CASCADE,
+  read_at       TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketing_notifications_user_unread ON marketing_notifications(user_id, read_at);
+CREATE INDEX IF NOT EXISTS idx_marketing_notifications_created ON marketing_notifications(created_at DESC);
+
+-- updated_at triggers
+DROP TRIGGER IF EXISTS set_updated_at_competitors ON competitors;
+CREATE TRIGGER set_updated_at_competitors BEFORE UPDATE ON competitors
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS set_updated_at_marketing_operations ON marketing_operations;
+CREATE TRIGGER set_updated_at_marketing_operations BEFORE UPDATE ON marketing_operations
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS set_updated_at_reels ON reels;
+CREATE TRIGGER set_updated_at_reels BEFORE UPDATE ON reels
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS set_updated_at_posts ON posts;
+CREATE TRIGGER set_updated_at_posts BEFORE UPDATE ON posts
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- RLS — authenticated users full access (matches v1 policy).
+ALTER TABLE competitors             ENABLE ROW LEVEL SECURITY;
+ALTER TABLE marketing_operations    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE research_questions      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reels                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE posts                   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE marketing_notifications ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated full access" ON competitors;
+DROP POLICY IF EXISTS "Authenticated full access" ON marketing_operations;
+DROP POLICY IF EXISTS "Authenticated full access" ON research_questions;
+DROP POLICY IF EXISTS "Authenticated full access" ON reels;
+DROP POLICY IF EXISTS "Authenticated full access" ON posts;
+DROP POLICY IF EXISTS "Authenticated full access" ON marketing_notifications;
+
+CREATE POLICY "Authenticated full access" ON competitors             FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON marketing_operations    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON research_questions      FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON reels                   FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON posts                   FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON marketing_notifications FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
 -- ------------------------------------------------------------
 -- search_all_projects — RPC used by the edge function search_projects tool.
 -- Notes on the JSONB value shape (see src/data/seedModels.ts):
