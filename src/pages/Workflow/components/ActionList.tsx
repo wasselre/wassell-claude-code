@@ -4,7 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp } from 'lucide-react';
 import FieldValueInput from './FieldValueInput';
-import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator } from '@/types';
+import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator } from '@/types';
 
 type DateOffsetUnit = 'min' | 'h' | 'd' | 'w' | 'mo' | 'y';
 interface DateOffsetRow {
@@ -90,6 +90,14 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     label_ar: 'تعيين مستخدم',
     label_en: 'Assign User',
   },
+  http_request: {
+    bg: 'bg-rose-500/5 border-b border-sand/25',
+    hoverBorder: 'hover:border-rose-400/40',
+    badgeBg: 'bg-rose-500/15',
+    badgeText: 'text-rose-700',
+    label_ar: 'طلب HTTP',
+    label_en: 'HTTP Request',
+  },
 };
 
 export default function ActionList({ actions, triggerFields, onChange, embedded = false }: ActionListProps) {
@@ -156,6 +164,8 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                         updateAction(action.id, { id: action.id, type: 'update_record', target_model_id: '', filter_field_id: '', filter_value_source: 'static', filter_value: '', field_mappings: [] });
                       } else if (type === 'assign_user') {
                         updateAction(action.id, { id: action.id, type: 'assign_user', assignment_field_id: '', mode: 'role_based', role_conditions: [], selection_strategy: 'least_workload' });
+                      } else if (type === 'http_request') {
+                        updateAction(action.id, { id: action.id, type: 'http_request', method: 'POST', url: '', headers: [], body_mode: 'json_template', body_template: '{\n  "operation_id": "{id}"\n}', timeout_ms: 30000 });
                       } else {
                         updateAction(action.id, { id: action.id, type: 'create_record', target_model_id: '', field_mappings: [] });
                       }
@@ -166,6 +176,7 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                     <option value="update_record">{isAr ? ACTION_STYLE.update_record.label_ar : ACTION_STYLE.update_record.label_en}</option>
                     <option value="send_notification">{isAr ? ACTION_STYLE.send_notification.label_ar : ACTION_STYLE.send_notification.label_en}</option>
                     <option value="assign_user">{isAr ? ACTION_STYLE.assign_user.label_ar : ACTION_STYLE.assign_user.label_en}</option>
+                    <option value="http_request">{isAr ? ACTION_STYLE.http_request.label_ar : ACTION_STYLE.http_request.label_en}</option>
                   </select>
                   <button
                     onClick={() => toggleActionCollapsed(action.id)}
@@ -252,6 +263,14 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
 
                   {action.type === 'assign_user' && (
                     <AssignUserConfig
+                      action={action}
+                      triggerFields={triggerFields}
+                      onUpdate={(updated) => updateAction(action.id, updated)}
+                    />
+                  )}
+
+                  {action.type === 'http_request' && (
+                    <HttpRequestConfig
                       action={action}
                       triggerFields={triggerFields}
                       onUpdate={(updated) => updateAction(action.id, updated)}
@@ -1321,6 +1340,184 @@ function DateOffsetEditor({ value, onChange }: { value: string; onChange: (next:
       >
         + {isAr ? 'إضافة إزاحة' : 'Add offset'}
       </button>
+    </div>
+  );
+}
+
+// Config panel for the http_request action. Supports URL + method + headers
+// + body mode with a JSON template. Templating uses {trigger_field_slug}.
+function HttpRequestConfig({
+  action,
+  triggerFields,
+  onUpdate,
+}: {
+  action: WorkflowActionHttpRequest;
+  triggerFields: ModelField[];
+  onUpdate: (updated: WorkflowActionHttpRequest) => void;
+}) {
+  const { language } = useAppStore();
+  const isAr = language === 'ar';
+  const headers = action.headers ?? [];
+
+  const setHeaders = (next: HttpHeaderPair[]) => onUpdate({ ...action, headers: next });
+  const addHeader = () =>
+    setHeaders([...headers, { id: uuid(), name: '', value: '' }]);
+  const updateHeader = (id: string, patch: Partial<HttpHeaderPair>) =>
+    setHeaders(headers.map((h) => (h.id === id ? { ...h, ...patch } : h)));
+  const removeHeader = (id: string) => setHeaders(headers.filter((h) => h.id !== id));
+
+  const timeoutSeconds = Math.round((action.timeout_ms ?? 30000) / 1000);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2 items-end">
+        <div className="shrink-0">
+          <label className="block text-xs font-bold text-charcoal/40 mb-1">
+            {isAr ? 'الطريقة' : 'Method'}
+          </label>
+          <select
+            value={action.method}
+            onChange={(e) => onUpdate({ ...action, method: e.target.value as HttpMethod })}
+            className="form-input text-sm font-bold"
+          >
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="PATCH">PATCH</option>
+            <option value="DELETE">DELETE</option>
+          </select>
+        </div>
+        <div className="flex-1">
+          <label className="block text-xs font-bold text-charcoal/40 mb-1">URL</label>
+          <input
+            type="url"
+            dir="ltr"
+            value={action.url}
+            onChange={(e) => onUpdate({ ...action, url: e.target.value })}
+            placeholder="https://…/functions/v1/inbox?slug=research-done"
+            className="form-input text-sm font-mono"
+          />
+        </div>
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs font-bold text-charcoal/40">
+            {isAr ? 'الترويسات' : 'Headers'}
+          </label>
+          <button
+            type="button"
+            onClick={addHeader}
+            className="text-xs text-copper hover:text-terracotta font-bold"
+          >
+            + {isAr ? 'إضافة ترويسة' : 'Add header'}
+          </button>
+        </div>
+        {headers.length === 0 && (
+          <div className="text-xs text-charcoal/35 py-1">
+            {isAr ? 'لا توجد ترويسات (Content-Type سيُضاف تلقائياً)' : 'No headers (Content-Type is auto-added)'}
+          </div>
+        )}
+        {headers.map((h) => (
+          <div key={h.id} className="flex gap-2 items-center mb-1">
+            <input
+              type="text"
+              dir="ltr"
+              value={h.name}
+              onChange={(e) => updateHeader(h.id, { name: e.target.value })}
+              placeholder="Authorization"
+              className="form-input text-xs flex-1 font-mono"
+            />
+            <input
+              type="text"
+              dir="ltr"
+              value={h.value}
+              onChange={(e) => updateHeader(h.id, { value: e.target.value })}
+              placeholder="Bearer eyJ..."
+              className="form-input text-xs flex-[2] font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => removeHeader(h.id)}
+              className="p-1 rounded hover:bg-red-50 text-charcoal/25 hover:text-red-500"
+              aria-label={isAr ? 'حذف' : 'Remove'}
+            >
+              <Trash2 size={12} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div>
+        <label className="block text-xs font-bold text-charcoal/40 mb-1">
+          {isAr ? 'نوع الجسم' : 'Body mode'}
+        </label>
+        <select
+          value={action.body_mode}
+          onChange={(e) =>
+            onUpdate({ ...action, body_mode: e.target.value as WorkflowActionHttpRequest['body_mode'] })
+          }
+          className="form-input text-sm"
+        >
+          <option value="none">{isAr ? 'بدون جسم' : 'No body'}</option>
+          <option value="json_template">{isAr ? 'قالب JSON' : 'JSON template'}</option>
+          <option value="form_mappings">{isAr ? 'خرائط حقول' : 'Field mappings'}</option>
+        </select>
+      </div>
+
+      {action.body_mode === 'json_template' && (
+        <div>
+          <label className="block text-xs font-bold text-charcoal/40 mb-1">
+            {isAr ? 'القالب' : 'Template'}{' '}
+            <span className="text-charcoal/35 font-normal">
+              ({isAr ? 'استخدم' : 'use'} <code className="bg-sand/20 px-1 rounded">{'{field_slug}'}</code>)
+            </span>
+          </label>
+          <textarea
+            dir="ltr"
+            value={action.body_template ?? ''}
+            onChange={(e) => onUpdate({ ...action, body_template: e.target.value })}
+            rows={6}
+            className="form-input text-xs font-mono w-full"
+            placeholder={'{\n  "operation_id": "{id}",\n  "status": "{status}"\n}'}
+          />
+          {triggerFields.length > 0 && (
+            <div className="mt-1 text-[10px] text-charcoal/40">
+              {isAr ? 'حقول متاحة:' : 'Available fields:'}{' '}
+              {triggerFields.map((f) => (
+                <code key={f.id} className="bg-sand/15 px-1 rounded mx-0.5">{`{${f.name}}`}</code>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {action.body_mode === 'form_mappings' && (
+        <div className="text-xs text-charcoal/50 bg-cream-light/40 rounded-lg p-2 border border-sand/30">
+          {isAr
+            ? 'قريباً — استخدم "قالب JSON" الآن.'
+            : 'Coming soon — use "JSON template" for now.'}
+        </div>
+      )}
+
+      <div>
+        <label className="block text-xs font-bold text-charcoal/40 mb-1">
+          {isAr ? 'المهلة (ثوان)' : 'Timeout (s)'}
+        </label>
+        <input
+          type="number"
+          min={1}
+          max={120}
+          value={timeoutSeconds}
+          onChange={(e) => {
+            const raw = parseInt(e.target.value, 10);
+            if (Number.isFinite(raw)) {
+              onUpdate({ ...action, timeout_ms: Math.max(1000, Math.min(120000, raw * 1000)) });
+            }
+          }}
+          className="form-input text-sm w-24"
+        />
+      </div>
     </div>
   );
 }

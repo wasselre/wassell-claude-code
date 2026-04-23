@@ -4,7 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   Type, AlignLeft, Hash, AtSign, Phone, CalendarDays, Clock, DollarSign,
   Link2, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
-  StickyNote, SlidersHorizontal, Plus, Rows3, Fingerprint, Calculator,
+  StickyNote, SlidersHorizontal, Plus, Rows3, Fingerprint, Calculator, Table2,
 } from 'lucide-react';
 import type { FieldType } from '@/types';
 import type { ComponentType } from 'react';
@@ -39,6 +39,7 @@ const TYPE_CARDS: TypeCard[] = [
   { type: 'assignee',         icon: UserCheck,         color: '#7C3AED', bg: '#7C3AED15' },
   { type: 'auto_id',          icon: Fingerprint,       color: '#0891B2', bg: '#0891B215' },
   { type: 'formula',          icon: Calculator,        color: '#7E22CE', bg: '#7E22CE15' },
+  { type: 'table',            icon: Table2,            color: '#B8734F', bg: '#B8734F15' },
 ];
 
 interface FieldTypeCatalogProps {

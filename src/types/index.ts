@@ -19,7 +19,24 @@ export type FieldType =
   | 'notes'
   | 'range'
   | 'auto_id'
-  | 'formula';
+  | 'formula'
+  | 'table';
+
+// Column in a `table` field. The table's stored value on a record is an
+// array of row objects keyed by `name` (slug). Phase-1 storage mode is
+// always 'inline' (JSONB on the parent record). A future `child_model`
+// mode can add relational storage without a breaking change.
+export type TableColumnType = 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'url' | 'dropdown';
+
+export interface TableColumn {
+  id: string;
+  name: string; // slug, snake_case
+  label_ar: string;
+  label_en: string;
+  type: TableColumnType;
+  required?: boolean;
+  options?: FieldOption[]; // dropdown columns only
+}
 
 // Tri-state control used by `section_mirror` for edit permissions and sync-back.
 // - 'all': every mirrored child field follows the rule
@@ -137,6 +154,12 @@ export interface ModelField {
   // / section_mirror (those resolve in a different phase). Lookup sources resolve
   // to the linked record's `lookup_display_field` — never a raw UUID.
   fallback_source_field_id?: string | null;
+  // Table field (type: 'table'). Stored value shape is Array<Record<columnSlug, unknown>>.
+  // Columns are defined inline on the field so each table can have its own
+  // schema. Phase 1: inline JSONB storage only (never a separate table/model).
+  table_columns?: TableColumn[];
+  table_min_rows?: number; // validation hint; 0 = any
+  table_max_rows?: number; // 0/undefined = unlimited
 }
 
 // Notes field (type: 'notes'). Stored value is a chronological list of entries.
@@ -348,7 +371,20 @@ export interface FieldMapping {
   formula_expression?: string;
 }
 
-export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user';
+export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user' | 'http_request';
+
+// HTTP method for the outbound `http_request` workflow action.
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+// A single header pair on the http_request action. The value supports the
+// same `{field_slug}` templating as `url` and `body_template`.
+export interface HttpHeaderPair {
+  id: string;
+  name: string;   // e.g. "Authorization", "Content-Type"
+  value: string;  // may include "{trigger_field_slug}" tokens
+}
+
+export type HttpBodyMode = 'none' | 'json_template' | 'form_mappings';
 
 export interface WorkflowActionCreateRecord {
   id: string;
@@ -404,11 +440,36 @@ export interface WorkflowActionAssignUser {
   selection_strategy: SelectionStrategy;
 }
 
+// Outbound HTTP request. Intended for calling external webhooks (e.g. a
+// Supabase edge function that runs an AI agent) from a workflow. Fire-and-
+// forget by default — the action records the response status in the run log
+// but doesn't block other actions and doesn't write the response back to any
+// record (the callee should write its own result via a record update or via
+// an inbound webhook that triggers another workflow).
+export interface WorkflowActionHttpRequest {
+  id: string;
+  type: 'http_request';
+  method: HttpMethod;
+  url: string;                   // may include "{trigger_field_slug}" tokens
+  headers?: HttpHeaderPair[];    // optional extra headers
+  body_mode: HttpBodyMode;       // 'none' | 'json_template' | 'form_mappings'
+  // For 'json_template': raw JSON string with {field_slug} tokens. Invalid
+  // JSON after substitution is sent as-is; the response is logged for debug.
+  body_template?: string;
+  // For 'form_mappings': each mapping becomes one top-level key in a JSON body.
+  body_mappings?: FieldMapping[];
+  // Max wall time before we abort the request and log a 'failed' trace.
+  // Default 30000 (30s). Cap at 120000 (2min) so a stuck request can't wedge
+  // the workflow run.
+  timeout_ms?: number;
+}
+
 export type WorkflowAction =
   | WorkflowActionCreateRecord
   | WorkflowActionUpdateRecord
   | WorkflowActionSendNotification
-  | WorkflowActionAssignUser;
+  | WorkflowActionAssignUser
+  | WorkflowActionHttpRequest;
 
 // A workflow branch — an if / else-if / else arm. Evaluated top-to-bottom; the
 // first non-else branch whose conditions all pass is the winner and its actions
@@ -550,11 +611,24 @@ export interface WorkflowActionTraceAssign extends WorkflowActionTraceBase {
   previous_assignee_id?: unknown;
 }
 
+export interface WorkflowActionTraceHttpRequest extends WorkflowActionTraceBase {
+  type: 'http_request';
+  method: HttpMethod;
+  resolved_url: string;              // url after {field} substitution
+  resolved_headers?: Record<string, string>;
+  body_mode: HttpBodyMode;
+  resolved_body?: string;            // serialized body that was sent (may be truncated)
+  response_status?: number;
+  response_snippet?: string;         // first ~500 chars of the response body
+  timeout_ms?: number;
+}
+
 export type WorkflowActionTrace =
   | WorkflowActionTraceCreate
   | WorkflowActionTraceUpdate
   | WorkflowActionTraceNotify
-  | WorkflowActionTraceAssign;
+  | WorkflowActionTraceAssign
+  | WorkflowActionTraceHttpRequest;
 
 // One branch's evaluation trace. Populated for every branch evaluated during a
 // run (including ones that were short-circuited past because an earlier branch

@@ -8,6 +8,7 @@ import PhoneInput from './PhoneInput';
 import DynamicCell from './DynamicCell';
 import NotesField from './NotesField';
 import RangeField from './RangeField';
+import TableField from './TableField';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import type { ModelField } from '@/types';
@@ -63,6 +64,9 @@ export default function DynamicField({ field, value, onChange, recordData, compa
 
       case 'range':
         return <RangeField field={field} value={value} onChange={onChange} />;
+
+      case 'table':
+        return <TableField field={field} value={value} onChange={onChange} />;
 
       case 'number':
         return (

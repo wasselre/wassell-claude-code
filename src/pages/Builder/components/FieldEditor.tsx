@@ -18,13 +18,13 @@ import { countRenameImpact, type RenameImpact } from '@/lib/fieldRename';
 import { countRecordsWithFieldData, isTypeChangeLossy } from '@/lib/fieldDataImpact';
 import type {
   ModelField, FieldType, FieldWidth, FieldOption, FieldOptionGroup, AppModel,
-  SectionMirrorControlMode, SectionMirrorFieldMode,
+  SectionMirrorControlMode, SectionMirrorFieldMode, TableColumn, TableColumnType,
 } from '@/types';
 
 const FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'notes', 'number', 'range', 'email', 'phone', 'date', 'datetime',
   'currency', 'url', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'mirror', 'section_mirror', 'section_selector', 'assignee',
-  'auto_id', 'formula',
+  'auto_id', 'formula', 'table',
 ];
 
 // Field types that can be the scope of an auto_id counter — values we can use
@@ -136,6 +136,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [formulaThousandsSeparator, setFormulaThousandsSeparator] = useState<boolean>(true);
   // Fallback source — sibling field id whose value auto-fills THIS field when empty at save time.
   const [fallbackSourceFieldId, setFallbackSourceFieldId] = useState<string | null>(null);
+  // Table field — inline JSONB row schema. Each entry defines one column.
+  const [tableColumns, setTableColumns] = useState<TableColumn[]>([]);
   // Ref to the formula textarea so operator/function buttons can insert at the caret.
   const formulaTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   // API name (slug). Initialised from field.name for existing fields; for new
@@ -217,6 +219,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setFormulaExpression(field.formula_expression ?? '');
       setFormulaOutputType(field.formula_output_type ?? 'number');
       setFormulaDecimals(field.formula_decimals ?? 2);
+      setTableColumns(field.table_columns ?? []);
       setFormulaCurrency(field.formula_currency ?? 'SAR');
       setFormulaThousandsSeparator(field.formula_thousands_separator !== false);
       setFallbackSourceFieldId(field.fallback_source_field_id ?? null);
@@ -376,6 +379,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       formula_currency: type === 'formula' && formulaOutputType === 'currency' ? formulaCurrency : undefined,
       formula_thousands_separator: type === 'formula' && formulaOutputType !== 'text' ? formulaThousandsSeparator : undefined,
       fallback_source_field_id: FALLBACK_TARGET_TYPES.includes(type) ? fallbackSourceFieldId : null,
+      table_columns: type === 'table' ? tableColumns : undefined,
     };
     return saved;
   };
@@ -1232,6 +1236,18 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
           </>
         )}
 
+        {/* Table columns config */}
+        {type === 'table' && (
+          <>
+            <div className="border-t border-sand/10" />
+            <TableColumnsEditor
+              columns={tableColumns}
+              onChange={setTableColumns}
+              isAr={isAr}
+            />
+          </>
+        )}
+
         {/* Section selector info */}
         {type === 'section_selector' && (
           <>
@@ -1887,5 +1903,124 @@ export function FieldEditorEmpty() {
         </p>
       </div>
     </div>
+  );
+}
+
+// Sub-editor for the `table` field type. Lets the user define columns — each
+// column becomes a cell input when the field is rendered in the record form.
+const TABLE_COLUMN_TYPES: TableColumnType[] = ['text', 'textarea', 'number', 'currency', 'date', 'url', 'dropdown'];
+
+function TableColumnsEditor({
+  columns,
+  onChange,
+  isAr,
+}: {
+  columns: TableColumn[];
+  onChange: (next: TableColumn[]) => void;
+  isAr: boolean;
+}) {
+  const addColumn = () => {
+    onChange([
+      ...columns,
+      {
+        id: crypto.randomUUID(),
+        name: `col_${columns.length + 1}`,
+        label_ar: '',
+        label_en: '',
+        type: 'text',
+      },
+    ]);
+  };
+  const updateColumn = (id: string, patch: Partial<TableColumn>) => {
+    onChange(columns.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  };
+  const removeColumn = (id: string) => onChange(columns.filter((c) => c.id !== id));
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <label className="text-xs font-bold text-charcoal/60">
+          {isAr ? 'أعمدة الجدول' : 'Table columns'}
+        </label>
+        <button
+          type="button"
+          onClick={addColumn}
+          className="text-xs text-copper hover:text-terracotta font-bold"
+        >
+          + {isAr ? 'إضافة عمود' : 'Add column'}
+        </button>
+      </div>
+      {columns.length === 0 && (
+        <div className="text-xs text-charcoal/35 py-2">
+          {isAr ? 'لم يتم إضافة أعمدة بعد.' : 'No columns added yet.'}
+        </div>
+      )}
+      <div className="space-y-2">
+        {columns.map((col) => (
+          <div key={col.id} className="border border-sand/40 rounded-lg p-2 bg-cream/10">
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <input
+                type="text"
+                value={col.label_ar}
+                onChange={(e) => updateColumn(col.id, { label_ar: e.target.value })}
+                placeholder={isAr ? 'عنوان العمود (عربي)' : 'Label (Arabic)'}
+                className="form-input text-xs"
+                dir="rtl"
+              />
+              <input
+                type="text"
+                value={col.label_en}
+                onChange={(e) => updateColumn(col.id, { label_en: e.target.value })}
+                placeholder="Label (English)"
+                className="form-input text-xs"
+                dir="ltr"
+              />
+            </div>
+            <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+              <input
+                type="text"
+                value={col.name}
+                onChange={(e) =>
+                  updateColumn(col.id, {
+                    name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                  })
+                }
+                placeholder="slug_name"
+                className="form-input text-xs font-mono"
+                dir="ltr"
+              />
+              <select
+                value={col.type}
+                onChange={(e) => updateColumn(col.id, { type: e.target.value as TableColumnType })}
+                className="form-input text-xs"
+              >
+                {TABLE_COLUMN_TYPES.map((t) => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => removeColumn(col.id)}
+                className="p-1.5 rounded text-red-600/60 hover:text-red-700 hover:bg-red-50"
+                aria-label={isAr ? 'حذف' : 'Remove'}
+              >
+                <Trash2Icon />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Trash2Icon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
+      <path d="M10 11v6M14 11v6" />
+      <path d="M9 6V4a2 2 0 012-2h2a2 2 0 012 2v2" />
+    </svg>
   );
 }

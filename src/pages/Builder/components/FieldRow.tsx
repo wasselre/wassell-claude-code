@@ -4,7 +4,7 @@ import { GripVertical, Trash2, AlertTriangle } from 'lucide-react';
 import {
   Type, AlignLeft, Hash, AtSign, Phone, CalendarDays, Clock, DollarSign,
   Link2, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
-  StickyNote, SlidersHorizontal, Rows3, Fingerprint, Calculator,
+  StickyNote, SlidersHorizontal, Rows3, Fingerprint, Calculator, Table2,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { validateFormula, findUnknownReferences } from '@/lib/formulaEngine';
@@ -32,6 +32,7 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   assignee:         { icon: UserCheck,         color: '#7C3AED', bg: '#7C3AED12' },
   auto_id:          { icon: Fingerprint,       color: '#0891B2', bg: '#0891B212' },
   formula:          { icon: Calculator,        color: '#7E22CE', bg: '#7E22CE12' },
+  table:            { icon: Table2,             color: '#B8734F', bg: '#B8734F12' },
 };
 
 function detectMirrorMisconfig(field: ModelField, model: AppModel | null, allModels: AppModel[]): boolean {
