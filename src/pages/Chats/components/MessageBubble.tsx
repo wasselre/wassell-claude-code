@@ -1,5 +1,8 @@
-import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle } from 'lucide-react';
 import AckIndicator from './AckIndicator';
+import { fetchFileBlob } from '@/lib/haberchat/client';
+import { useAppStore } from '@/stores/appStore';
 import type { ChatMessage } from '@/types';
 
 /**
@@ -7,8 +10,9 @@ import type { ChatMessage } from '@/types';
  * (warm sand). Alignment is keyed off `flow`, not document direction — an
  * Arabic message from "you" still appears on the right in RTL mode.
  *
- * Step 6 covers text + a minimal placeholder for non-text kinds. Media
- * rendering (actual <img>/<audio>/<video>) lands in Step 9.
+ * Renders inline media via an authenticated blob fetch (see
+ * useMediaBlob). Download URLs never leave the server; <img src> would
+ * bypass the auth header and can't access the Haberchat token anyway.
  */
 export default function MessageBubble({
   message,
@@ -40,10 +44,8 @@ export default function MessageBubble({
           </div>
         )}
 
-        {/* Body / media placeholder */}
         <MessageBody message={message} isAr={isAr} />
 
-        {/* Footer: time + ack */}
         <div className="flex items-center gap-1.5 mt-1 text-[10px] text-charcoal/50 justify-end">
           <span>{formatTime(message.date, isAr)}</span>
           <AckIndicator message={message} />
@@ -53,7 +55,15 @@ export default function MessageBubble({
   );
 }
 
+// ─── Body ───────────────────────────────────────────────────────────
+
 function MessageBody({ message, isAr }: { message: ChatMessage; isAr: boolean }) {
+  const hasMedia = !!message.media_file_id;
+
+  if (hasMedia) {
+    return <MediaRenderer message={message} isAr={isAr} />;
+  }
+
   if (message.body) {
     return (
       <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
@@ -61,9 +71,10 @@ function MessageBody({ message, isAr }: { message: ChatMessage; isAr: boolean })
       </p>
     );
   }
-  // Non-text placeholders — real rendering lands in Step 9.
+
+  // No body, no media — non-text kinds without an attachment (location,
+  // sticker, system event, etc.). Show a generic icon chip.
   const kind = message.kind;
-  const caption = message.media_caption;
   const { Icon, labelAr, labelEn } = iconFor(kind);
   return (
     <div className="flex items-center gap-2 text-charcoal/70">
@@ -72,7 +83,202 @@ function MessageBody({ message, isAr }: { message: ChatMessage; isAr: boolean })
       </div>
       <div className="min-w-0">
         <div className="text-sm font-medium">{isAr ? labelAr : labelEn}</div>
-        {caption && <div className="text-xs text-charcoal/60 truncate">{caption}</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Media renderer ─────────────────────────────────────────────────
+
+function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean }) {
+  // Resolve the deviceId this conversation is bound to — the download
+  // endpoint is device-scoped on Haberchat's side.
+  const deviceId = useAppStore((s) => {
+    const chatsModel = s.models.find((m) => m.name === 'chats');
+    if (!chatsModel) return null;
+    const rec = (s.records[chatsModel.id] ?? []).find((r) =>
+      ((r.data as Record<string, unknown>).wid as string | undefined) === message.chat_wid,
+    );
+    return rec ? ((rec.data as Record<string, unknown>).device_id as string | undefined) ?? null : null;
+  });
+
+  const { url, status, error } = useMediaBlob(message.media_file_id, deviceId);
+
+  const mime = message.media_mime ?? '';
+  const kind = message.kind;
+  const caption = message.media_caption ?? message.body ?? null;
+
+  // Image
+  if (kind === 'image' || mime.startsWith('image/')) {
+    return (
+      <div className="-mx-1">
+        {status === 'loading' && <MediaLoadingSkeleton />}
+        {status === 'error' && <MediaErrorRow message={error} isAr={isAr} />}
+        {status === 'ready' && url && (
+          <a href={url} target="_blank" rel="noreferrer">
+            <img
+              src={url}
+              alt={caption ?? ''}
+              className="rounded-xl max-w-full max-h-80 object-cover"
+              loading="lazy"
+            />
+          </a>
+        )}
+        {caption && (
+          <p className="text-sm mt-1.5 whitespace-pre-wrap break-words">{caption}</p>
+        )}
+      </div>
+    );
+  }
+
+  // Video
+  if (kind === 'video' || mime.startsWith('video/')) {
+    return (
+      <div className="-mx-1">
+        {status === 'loading' && <MediaLoadingSkeleton />}
+        {status === 'error' && <MediaErrorRow message={error} isAr={isAr} />}
+        {status === 'ready' && url && (
+          <video src={url} controls className="rounded-xl max-w-full max-h-80 bg-black" />
+        )}
+        {caption && (
+          <p className="text-sm mt-1.5 whitespace-pre-wrap break-words">{caption}</p>
+        )}
+      </div>
+    );
+  }
+
+  // Audio — compact inline player.
+  if (kind === 'audio' || mime.startsWith('audio/')) {
+    return (
+      <div>
+        {status === 'loading' && <MediaLoadingSkeleton compact />}
+        {status === 'error' && <MediaErrorRow message={error} isAr={isAr} />}
+        {status === 'ready' && url && (
+          <audio src={url} controls className="w-full max-w-[260px]" />
+        )}
+        {caption && (
+          <p className="text-sm mt-1.5 whitespace-pre-wrap break-words">{caption}</p>
+        )}
+      </div>
+    );
+  }
+
+  // Document / generic file — styled as a download chip.
+  const filename = deriveFilename(message);
+  return (
+    <div>
+      <a
+        href={url ?? '#'}
+        download={filename ?? undefined}
+        target="_blank"
+        rel="noreferrer"
+        className={`flex items-center gap-2.5 rounded-xl bg-charcoal/5 hover:bg-charcoal/10 px-3 py-2 transition-colors ${
+          status === 'ready' ? '' : 'pointer-events-none opacity-70'
+        }`}
+      >
+        <div className="w-10 h-10 rounded-lg bg-white flex items-center justify-center shrink-0">
+          {status === 'loading'
+            ? <Loader2 size={18} className="animate-spin text-charcoal/60" />
+            : status === 'error'
+              ? <AlertCircle size={18} className="text-red-500" />
+              : <FileText size={18} className="text-charcoal/70" />}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium truncate">{filename ?? (isAr ? 'مستند' : 'Document')}</div>
+          <div className="text-[10px] text-charcoal/50">
+            {formatFileSize(message.media_size, isAr)}
+            {status === 'error' && <span className="ms-1 text-red-600">· {error}</span>}
+          </div>
+        </div>
+        {status === 'ready' && url && <Download size={14} className="text-charcoal/40 shrink-0" />}
+      </a>
+      {caption && (
+        <p className="text-sm mt-1.5 whitespace-pre-wrap break-words">{caption}</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Media fetching hook ────────────────────────────────────────────
+
+type MediaState = { url: string | null; status: 'loading' | 'ready' | 'error'; error: string | null };
+
+/**
+ * Fetch a media blob via the authenticated proxy and expose it as a
+ * blob: URL. Revokes the URL on unmount / input change so we don't
+ * leak memory. A tiny in-memory cache keyed by (fileId, deviceId)
+ * avoids re-fetching when the user scrolls the same message back
+ * into view.
+ */
+const mediaCache = new Map<string, string>(); // key = fileId|deviceId, value = blob: URL
+
+function useMediaBlob(fileId: string | null, deviceId: string | null): MediaState {
+  const cacheKey = fileId && deviceId ? `${fileId}|${deviceId}` : null;
+  const initial = useMemo<MediaState>(() => {
+    if (!fileId || !deviceId) {
+      return { url: null, status: 'error', error: 'missing file id or device id' };
+    }
+    const cached = cacheKey ? mediaCache.get(cacheKey) : null;
+    if (cached) return { url: cached, status: 'ready', error: null };
+    return { url: null, status: 'loading', error: null };
+  }, [fileId, deviceId, cacheKey]);
+  const [state, setState] = useState<MediaState>(initial);
+
+  useEffect(() => {
+    setState(initial);
+    if (initial.status !== 'loading' || !fileId || !deviceId || !cacheKey) return;
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    void (async () => {
+      try {
+        const blob = await fetchFileBlob(fileId, deviceId);
+        if (cancelled) return;
+        const objectUrl = URL.createObjectURL(blob);
+        createdUrl = objectUrl;
+        mediaCache.set(cacheKey, objectUrl);
+        setState({ url: objectUrl, status: 'ready', error: null });
+      } catch (err) {
+        if (cancelled) return;
+        setState({
+          url: null,
+          status: 'error',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+      // Don't revoke cached URLs — other bubbles may still be using them.
+      // The blob stays alive until the page unloads; acceptable trade-off
+      // for avoiding re-fetches while scrolling.
+      if (createdUrl && !mediaCache.has(cacheKey)) URL.revokeObjectURL(createdUrl);
+    };
+  }, [fileId, deviceId, cacheKey, initial]);
+
+  return state;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function MediaLoadingSkeleton({ compact = false }: { compact?: boolean }) {
+  return (
+    <div
+      className={`rounded-xl bg-charcoal/5 flex items-center justify-center ${
+        compact ? 'h-10 w-40' : 'h-40 w-full min-w-[240px]'
+      }`}
+    >
+      <Loader2 size={20} className="animate-spin text-charcoal/40" />
+    </div>
+  );
+}
+
+function MediaErrorRow({ message, isAr }: { message: string | null; isAr: boolean }) {
+  return (
+    <div className="rounded-xl bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-center gap-2">
+      <AlertCircle size={14} />
+      <div className="flex-1">
+        <div className="font-medium">{isAr ? 'تعذّر تحميل الملف' : 'Could not load file'}</div>
+        {message && <div className="text-[11px] text-red-600/80 mt-0.5 truncate">{message}</div>}
       </div>
     </div>
   );
@@ -88,6 +294,25 @@ function iconFor(kind: string): { Icon: typeof FileText; labelAr: string; labelE
     case 'location': return { Icon: MapPin, labelAr: 'موقع', labelEn: 'Location' };
     default: return { Icon: FileText, labelAr: `[${kind}]`, labelEn: `[${kind}]` };
   }
+}
+
+function deriveFilename(message: ChatMessage): string | null {
+  // Haberchat message payloads sometimes include a filename in media;
+  // our normalizer currently drops it — fall back to the mime-derived
+  // default or the file id.
+  if (message.body) return null;
+  if (message.media_mime) {
+    const ext = message.media_mime.split('/')[1] ?? 'bin';
+    return `${message.media_file_id ?? 'file'}.${ext}`;
+  }
+  return message.media_file_id ?? null;
+}
+
+function formatFileSize(bytes: number | null, isAr: boolean): string {
+  if (bytes == null) return '';
+  if (bytes < 1024) return `${bytes} ${isAr ? 'ب' : 'B'}`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} ${isAr ? 'ك.ب' : 'KB'}`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} ${isAr ? 'م.ب' : 'MB'}`;
 }
 
 function formatTime(iso: string, isAr: boolean): string {

@@ -522,6 +522,55 @@ export async function sendMessage(input: {
 }
 
 /**
+ * Upload a file to Haberchat's `POST /files`. Browser forwards multipart
+ * form-data through our proxy; we replay it with the token header.
+ * Returns the Haberchat file id plus mime/size so the caller can embed
+ * the file in a subsequent POST /messages.
+ */
+export async function uploadFile(formData: FormData): Promise<{ fileId: string; mime: string | null; size: number | null; filename: string | null }> {
+  // Note: we do NOT set Content-Type here — `fetch` computes the correct
+  // multipart/form-data boundary automatically when given FormData.
+  const res = await fetch(`${BASE_URL}/files`, {
+    method: 'POST',
+    headers: { Token: token() },
+    body: formData,
+  });
+  if (!res.ok) {
+    let body: unknown;
+    try { body = await res.json(); } catch { body = await res.text().catch(() => null); }
+    throw new HaberchatError(res.status, `Haberchat POST /files failed: ${res.status}`, body);
+  }
+  const raw = (await res.json()) as Record<string, unknown>;
+  const fileId = (raw.id as string) ?? (raw._id as string) ?? (raw.fileId as string) ?? '';
+  if (!fileId) throw new HaberchatError(502, 'Haberchat /files returned no id');
+  return {
+    fileId,
+    mime: (raw.mime as string) ?? (raw.mimetype as string) ?? null,
+    size: typeof raw.size === 'number' ? raw.size as number : null,
+    filename: (raw.filename as string) ?? (raw.name as string) ?? null,
+  };
+}
+
+/**
+ * Stream a file download from Haberchat. We return the raw Response so
+ * the proxy handler can pipe it straight back to the browser without
+ * buffering — the whole point is to keep the token server-side.
+ */
+export async function downloadFile(deviceId: string, fileId: string): Promise<Response> {
+  if (!deviceId) throw new HaberchatError(400, 'deviceId is required');
+  if (!fileId) throw new HaberchatError(400, 'fileId is required');
+  const res = await fetch(`${BASE_URL}/chat/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(fileId)}/download`, {
+    headers: { Token: token() },
+  });
+  if (!res.ok) {
+    // Read once so the response body can be abandoned cleanly.
+    const preview = await res.text().catch(() => '');
+    throw new HaberchatError(res.status, `Haberchat file download failed: ${res.status} ${preview.slice(0, 120)}`);
+  }
+  return res;
+}
+
+/**
  * Haberchat conversation WIDs embed the E.164 phone. `966555...@c.us` for
  * a user; `...@g.us` for a group. Only meaningful for user chats.
  */

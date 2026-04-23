@@ -1513,7 +1513,25 @@ export interface AppState {
    * v1 handles user (direct-chat) kind. Group/channel sends are rejected
    * at the action boundary so the UI doesn't silently no-op.
    */
-  sendChatMessage: (chatWid: string, input: { body: string; quotedWid?: string }) => Promise<void>;
+  sendChatMessage: (
+    chatWid: string,
+    input: {
+      body?: string;
+      quotedWid?: string;
+      /** Haberchat file id from POST /api/haberchat/files. Required
+       *  when `body` is empty. */
+      mediaFileId?: string;
+      /** Optional caption to display with the media attachment. */
+      mediaCaption?: string;
+      /** Haberchat kind for the outbound bubble (image | document | audio |
+       *  video | text). Defaults to `text` when body is set. */
+      kind?: ChatMessage['kind'];
+      /** Mime / size for the optimistic placeholder (so the bubble
+       *  renders something reasonable before the proxy upload echoes). */
+      mediaMime?: string | null;
+      mediaSize?: number | null;
+    },
+  ) => Promise<void>;
   /**
    * Start a brand-new WhatsApp conversation to a phone number we've never
    * messaged before. Creates a local chats record (optimistic — so the

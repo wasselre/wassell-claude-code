@@ -2205,7 +2205,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     return { hasMore: result.hasMore };
   },
 
-  sendChatMessage: async (chatWid: string, input: { body: string; quotedWid?: string }) => {
+  sendChatMessage: async (
+    chatWid: string,
+    input: {
+      body?: string;
+      quotedWid?: string;
+      mediaFileId?: string;
+      mediaCaption?: string;
+      kind?: ChatMessage['kind'];
+      mediaMime?: string | null;
+      mediaSize?: number | null;
+    },
+  ) => {
     const state = get();
     const chatsModel = state.models.find((m) => m.name === 'chats');
     if (!chatsModel) throw new Error('chats model not found');
@@ -2217,15 +2228,22 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!record) throw new Error('conversation not found in records');
 
     const data = record.data as Record<string, unknown>;
-    const kind = (data.kind as string | null) ?? 'user';
-    if (kind !== 'user') {
-      // v1 only supports direct chats. Groups/channels come later.
+    const convKind = (data.kind as string | null) ?? 'user';
+    if (convKind !== 'user') {
       throw new Error(get().language === 'ar'
         ? 'الإرسال للمجموعات والقنوات غير مدعوم حاليًا'
         : 'Sending to groups and channels is not yet supported');
     }
     const phone = data.phone as string | null;
     if (!phone) throw new Error('conversation is missing the recipient phone');
+
+    const body = input.body?.trim() || undefined;
+    const mediaFileId = input.mediaFileId || undefined;
+    if (!body && !mediaFileId) {
+      throw new Error(get().language === 'ar'
+        ? 'يلزم نص أو مرفق للإرسال'
+        : 'Body or attachment is required');
+    }
 
     const recordDeviceId = (data.device_id as string | undefined) ?? null;
     const deviceId =
@@ -2236,28 +2254,38 @@ export const useAppStore = create<AppState>((set, get) => ({
       '';
     if (!deviceId) throw new Error('no WhatsApp device configured to send from');
 
-    // From-phone for the optimistic placeholder: whichever device is sending.
     const fromPhone =
       state.waDevicesLive.find((d) => d.id === deviceId)?.phone ??
       state.waDevices.find((d) => d.device_id === deviceId)?.phone ??
       null;
 
-    // Optimistic placeholder — rendered immediately, swapped on server ack.
+    // Pick the bubble kind. If caller supplied one, use that. Else infer
+    // from whether there's media (guessing 'image' is safer than 'document'
+    // for display purposes — the webhook echo corrects it anyway).
+    const bubbleKind: ChatMessage['kind'] =
+      input.kind ??
+      (mediaFileId
+        ? (input.mediaMime?.startsWith('image/') ? 'image'
+         : input.mediaMime?.startsWith('video/') ? 'video'
+         : input.mediaMime?.startsWith('audio/') ? 'audio'
+         : 'document')
+        : 'text');
+
     const clientId = uuid();
     const placeholder: ChatMessage = {
       id: `pending:${clientId}`,
       chat_wid: chatWid,
       flow: 'out',
-      kind: 'text',
-      body: input.body,
+      kind: bubbleKind,
+      body: body ?? null,
       from_phone: fromPhone,
       to_phone: phone,
       ack: 'pending',
       date: new Date().toISOString(),
-      media_file_id: null,
-      media_mime: null,
-      media_size: null,
-      media_caption: null,
+      media_file_id: mediaFileId ?? null,
+      media_mime: input.mediaMime ?? null,
+      media_size: input.mediaSize ?? null,
+      media_caption: input.mediaCaption ?? null,
       reference: clientId,
       quoted: null,
       pending: true,
@@ -2272,7 +2300,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       const result = await sendHaberchatMessage({
         deviceId,
         phone,
-        body: input.body,
+        body,
+        mediaFileId,
+        mediaCaption: input.mediaCaption,
         quotedWid: input.quotedWid,
         reference: clientId,
       });

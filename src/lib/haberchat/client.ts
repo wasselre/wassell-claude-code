@@ -123,3 +123,37 @@ export async function sendMessage(input: {
     input,
   );
 }
+
+/** Upload a file to Haberchat (via proxy). Returns the Haberchat file id. */
+export async function uploadFile(
+  file: File,
+): Promise<{ fileId: string; mime: string | null; size: number | null; filename: string | null }> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  const res = await fetch('/api/haberchat/files', {
+    method: 'POST',
+    headers: await authHeader(),
+    body: form,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new HaberchatClientError(res.status, err?.error ?? `Upload failed (${res.status})`);
+  }
+  return (await res.json()) as { fileId: string; mime: string | null; size: number | null; filename: string | null };
+}
+
+/** Fetch a file through the proxy as a blob. The browser creates a
+ *  blob: URL to render in <img>/<video>/<audio>/download-link. Using
+ *  fetch (not <img src>) lets us attach the Supabase JWT header — the
+ *  download endpoint requires auth and <img src> can't send headers. */
+export async function fetchFileBlob(fileId: string, deviceId: string): Promise<Blob> {
+  const qs = new URLSearchParams({ deviceId }).toString();
+  const res = await fetch(`/api/haberchat/files/${encodeURIComponent(fileId)}?${qs}`, {
+    headers: await authHeader(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new HaberchatClientError(res.status, err?.error ?? `File download failed (${res.status})`);
+  }
+  return await res.blob();
+}
