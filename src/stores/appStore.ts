@@ -1473,4 +1473,288 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ authEmail: null, currentUserId: null });
     saveLocal('wassell_current_user_id', '');
   },
+
+  // ────────────────────────────────────────────────────────────────────
+  // Marketing operations (reels + posts content pipeline)
+  // ────────────────────────────────────────────────────────────────────
+  // Replaces the old OMA Google Sheets system. Flow:
+  //   createMarketingOperation → INSERT + fire marketing-research fn
+  //   answerResearchQuestion → UPDATE; last answer fires resume fn
+  //   saveReel / savePost → human edits to agent-generated drafts
+  //   approveMarketingOperation → flip operation + all children to approved
+
+  saveCompetitor: async (competitor: Competitor) => {
+    set((s) => {
+      const idx = s.competitors.findIndex((c) => c.id === competitor.id);
+      const competitors = idx >= 0
+        ? s.competitors.map((c) => (c.id === competitor.id ? competitor : c))
+        : [...s.competitors, competitor];
+      saveLocal('wassell_competitors', competitors);
+      return { competitors };
+    });
+    await supabaseUpsert('competitors', competitor as unknown as Record<string, unknown>);
+  },
+
+  deleteCompetitor: async (competitorId: string) => {
+    set((s) => {
+      const competitors = s.competitors.filter((c) => c.id !== competitorId);
+      saveLocal('wassell_competitors', competitors);
+      return { competitors };
+    });
+    await supabaseDelete('competitors', competitorId);
+  },
+
+  createMarketingOperation: async (input) => {
+    if (!supabase) throw new Error('Supabase is not configured');
+    if (!input.reelsSettings && !input.postsSettings) {
+      throw new Error('يجب اختيار نوع محتوى واحد على الأقل');
+    }
+
+    // Resolve the current auth user id for the FK.
+    const session = await supabase.auth.getSession();
+    const authUserId = session.data.session?.user.id ?? null;
+
+    const operationId = uuid();
+    const now = new Date().toISOString();
+    const operationRow: MarketingOperation = {
+      id: operationId,
+      project_record_id: input.projectRecordId,
+      status: 'research_pending',
+      reels_settings: input.reelsSettings,
+      posts_settings: input.postsSettings,
+      research_output: null,
+      research_error: null,
+      created_at: now,
+      updated_at: now,
+      created_by: authUserId,
+    };
+
+    // Pre-create empty reels + posts rows so the agent has targets to UPDATE.
+    const newReels: Reel[] = input.reelsSettings
+      ? Array.from({ length: input.reelsSettings.count }, (_, i): Reel => ({
+          id: uuid(),
+          operation_id: operationId,
+          project_record_id: input.projectRecordId,
+          reel_number: i + 1,
+          status: 'pending',
+          type: input.reelsSettings!.type,
+          duration: null,
+          platform: input.reelsSettings!.platform,
+          voiceover: input.reelsSettings!.voiceover,
+          goal: null,
+          scenes: [],
+          created_at: now,
+          updated_at: now,
+        }))
+      : [];
+
+    const newPosts: Post[] = input.postsSettings
+      ? Array.from({ length: input.postsSettings.count }, (_, i): Post => ({
+          id: uuid(),
+          operation_id: operationId,
+          project_record_id: input.projectRecordId,
+          post_number: i + 1,
+          status: 'pending',
+          type: input.postsSettings!.type,
+          components: null,
+          visual: null,
+          usage: input.postsSettings!.usage,
+          title: null,
+          design_text_1: null,
+          design_text_2: null,
+          design_text_3: null,
+          caption: null,
+          created_at: now,
+          updated_at: now,
+        }))
+      : [];
+
+    // Persist parent → children in order (child FKs point at parent).
+    const { error: opErr } = await supabase
+      .from('marketing_operations')
+      .insert(operationRow as unknown as Record<string, unknown>);
+    if (opErr) throw new Error(`Could not create operation: ${opErr.message}`);
+
+    if (newReels.length > 0) {
+      const { error: reelsErr } = await supabase.from('reels').insert(
+        newReels.map((r) => r as unknown as Record<string, unknown>),
+      );
+      if (reelsErr) throw new Error(`Could not create reels: ${reelsErr.message}`);
+    }
+    if (newPosts.length > 0) {
+      const { error: postsErr } = await supabase.from('posts').insert(
+        newPosts.map((p) => p as unknown as Record<string, unknown>),
+      );
+      if (postsErr) throw new Error(`Could not create posts: ${postsErr.message}`);
+    }
+
+    set((s) => ({
+      marketingOperations: [...s.marketingOperations, operationRow],
+      reels: [...s.reels, ...newReels],
+      posts: [...s.posts, ...newPosts],
+    }));
+    saveLocal('wassell_marketing_operations', get().marketingOperations);
+    saveLocal('wassell_reels', get().reels);
+    saveLocal('wassell_posts', get().posts);
+
+    // Fire the research edge function. Fire-and-forget — the agent writes back
+    // to the DB, and the UI picks up the new status on the next refetch.
+    void supabase.functions.invoke('marketing-research', {
+      body: { operationId },
+    }).catch((err: unknown) => {
+      console.error('[createMarketingOperation] research invoke failed:', err);
+    });
+
+    return operationId;
+  },
+
+  answerResearchQuestion: async (questionId, answer) => {
+    if (!supabase) throw new Error('Supabase is not configured');
+    const state = get();
+    const question = state.researchQuestions.find((q) => q.id === questionId);
+    if (!question) throw new Error('Question not found');
+
+    const now = new Date().toISOString();
+    const session = await supabase.auth.getSession();
+    const answeredBy = session.data.session?.user.id ?? null;
+
+    const updated: ResearchQuestion = {
+      ...question,
+      answer,
+      status: 'answered',
+      answered_at: now,
+      answered_by: answeredBy,
+    };
+
+    set((s) => ({
+      researchQuestions: s.researchQuestions.map((q) => (q.id === questionId ? updated : q)),
+    }));
+    saveLocal('wassell_research_questions', get().researchQuestions);
+
+    const { error } = await supabase
+      .from('research_questions')
+      .update({
+        answer,
+        status: 'answered',
+        answered_at: now,
+        answered_by: answeredBy,
+      })
+      .eq('id', questionId);
+    if (error) throw new Error(`Could not save answer: ${error.message}`);
+
+    // If this was the last unanswered question for the operation, fire resume.
+    const operationQuestions = get().researchQuestions.filter(
+      (q) => q.operation_id === question.operation_id,
+    );
+    const stillWaiting = operationQuestions.filter((q) => q.status !== 'answered');
+    if (stillWaiting.length === 0 && operationQuestions.length > 0) {
+      void supabase.functions.invoke('marketing-research-resume', {
+        body: { operationId: question.operation_id },
+      }).catch((err: unknown) => {
+        console.error('[answerResearchQuestion] resume invoke failed:', err);
+      });
+    }
+  },
+
+  saveReel: async (reel: Reel) => {
+    const updated = { ...reel, updated_at: new Date().toISOString() };
+    set((s) => ({
+      reels: s.reels.map((r) => (r.id === reel.id ? updated : r)),
+    }));
+    saveLocal('wassell_reels', get().reels);
+    await supabaseUpsert('reels', updated as unknown as Record<string, unknown>);
+  },
+
+  savePost: async (post: Post) => {
+    const updated = { ...post, updated_at: new Date().toISOString() };
+    set((s) => ({
+      posts: s.posts.map((p) => (p.id === post.id ? updated : p)),
+    }));
+    saveLocal('wassell_posts', get().posts);
+    await supabaseUpsert('posts', updated as unknown as Record<string, unknown>);
+  },
+
+  approveMarketingOperation: async (operationId: string) => {
+    const state = get();
+    const op = state.marketingOperations.find((o) => o.id === operationId);
+    if (!op) throw new Error('Operation not found');
+
+    const now = new Date().toISOString();
+    const reelsToApprove = state.reels.filter(
+      (r) => r.operation_id === operationId && r.status === 'draft_ready',
+    );
+    const postsToApprove = state.posts.filter(
+      (p) => p.operation_id === operationId && p.status === 'draft_ready',
+    );
+
+    const updatedReels = state.reels.map((r) =>
+      reelsToApprove.some((x) => x.id === r.id)
+        ? { ...r, status: 'approved' as const, updated_at: now }
+        : r,
+    );
+    const updatedPosts = state.posts.map((p) =>
+      postsToApprove.some((x) => x.id === p.id)
+        ? { ...p, status: 'approved' as const, updated_at: now }
+        : p,
+    );
+    const updatedOperation: MarketingOperation = { ...op, status: 'approved', updated_at: now };
+
+    set({
+      marketingOperations: state.marketingOperations.map((o) =>
+        o.id === operationId ? updatedOperation : o,
+      ),
+      reels: updatedReels,
+      posts: updatedPosts,
+    });
+    saveLocal('wassell_marketing_operations', get().marketingOperations);
+    saveLocal('wassell_reels', get().reels);
+    saveLocal('wassell_posts', get().posts);
+
+    if (!supabase) return;
+    await supabase
+      .from('marketing_operations')
+      .update({ status: 'approved', updated_at: now })
+      .eq('id', operationId);
+    for (const r of reelsToApprove) {
+      await supabase.from('reels').update({ status: 'approved', updated_at: now }).eq('id', r.id);
+    }
+    for (const p of postsToApprove) {
+      await supabase.from('posts').update({ status: 'approved', updated_at: now }).eq('id', p.id);
+    }
+  },
+
+  markNotificationRead: async (id: string | null) => {
+    const state = get();
+    const now = new Date().toISOString();
+    if (id === null) {
+      const updated = state.marketingNotifications.map((n) =>
+        n.read_at ? n : { ...n, read_at: now },
+      );
+      set({ marketingNotifications: updated });
+      saveLocal('wassell_marketing_notifications', updated);
+      if (supabase) {
+        await supabase
+          .from('marketing_notifications')
+          .update({ read_at: now })
+          .is('read_at', null);
+      }
+      return;
+    }
+
+    const notification = state.marketingNotifications.find((n) => n.id === id);
+    if (!notification || notification.read_at) return;
+    const updated = { ...notification, read_at: now };
+    set({
+      marketingNotifications: state.marketingNotifications.map((n) =>
+        n.id === id ? updated : n,
+      ),
+    });
+    saveLocal('wassell_marketing_notifications', get().marketingNotifications);
+    if (supabase) {
+      await supabase
+        .from('marketing_notifications')
+        .update({ read_at: now })
+        .eq('id', id);
+    }
+  },
 }));
