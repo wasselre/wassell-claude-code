@@ -56,6 +56,13 @@ agents consult on every run (no redeploy needed to update it).
 - **In-app bell for progress notifications.** Six notification types cover
   the pipeline: research waiting answers, content ready (reels/posts),
   operation ready for review, operation failed.
+- **Live UI — no refresh needed.** The app subscribes to Postgres changes
+  on the 5 marketing tables (`marketing_operations`, `research_questions`,
+  `reels`, `posts`, `marketing_notifications`). As the agents write, the
+  operation status, reel/post cards, question list, and bell all update
+  in place. Enabled via `ALTER PUBLICATION supabase_realtime ADD TABLE`
+  + `REPLICA IDENTITY FULL`; wired in `subscribeMarketingRealtime()` in
+  the store, called once at `initialize()`.
 - **Research table is human-editable.** Once research lands, the reviewer
   can click **Edit** on the research section to adjust any fact (value,
   source, source URL), add rows for facts the agent missed, or delete

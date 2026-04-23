@@ -696,6 +696,127 @@ export const useAppStore = create<AppState>((set, get) => ({
       currentUserId,
       initialized: true,
     });
+
+    // Realtime: subscribe to agent-driven changes so the UI flips from
+    // research_pending → research_waiting_answers → content_generating →
+    // ready_for_review without the user reloading.
+    get().subscribeMarketingRealtime();
+  },
+
+  subscribeMarketingRealtime: () => {
+    if (!supabase) return () => {};
+    const globals = globalThis as unknown as { __wasselMarketingChannel?: unknown };
+    if (globals.__wasselMarketingChannel) return () => {};
+
+    const upsertById = <T extends { id: string }>(list: T[], row: T): T[] => {
+      const idx = list.findIndex((r) => r.id === row.id);
+      if (idx >= 0) {
+        const next = list.slice();
+        next[idx] = row;
+        return next;
+      }
+      return [...list, row];
+    };
+
+    const channel = supabase
+      .channel('marketing-pipeline')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'marketing_operations' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as MarketingOperation;
+          if (!row?.id) return;
+          set((s) => {
+            if (payload.eventType === 'DELETE') {
+              const next = s.marketingOperations.filter((o) => o.id !== row.id);
+              saveLocal('wassell_marketing_operations', next);
+              return { marketingOperations: next };
+            }
+            const next = upsertById(s.marketingOperations, row);
+            saveLocal('wassell_marketing_operations', next);
+            return { marketingOperations: next };
+          });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'research_questions' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as ResearchQuestion;
+          if (!row?.id) return;
+          set((s) => {
+            if (payload.eventType === 'DELETE') {
+              const next = s.researchQuestions.filter((q) => q.id !== row.id);
+              saveLocal('wassell_research_questions', next);
+              return { researchQuestions: next };
+            }
+            const next = upsertById(s.researchQuestions, row);
+            saveLocal('wassell_research_questions', next);
+            return { researchQuestions: next };
+          });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'reels' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Reel;
+          if (!row?.id) return;
+          set((s) => {
+            if (payload.eventType === 'DELETE') {
+              const next = s.reels.filter((r) => r.id !== row.id);
+              saveLocal('wassell_reels', next);
+              return { reels: next };
+            }
+            const next = upsertById(s.reels, row);
+            saveLocal('wassell_reels', next);
+            return { reels: next };
+          });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'posts' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as Post;
+          if (!row?.id) return;
+          set((s) => {
+            if (payload.eventType === 'DELETE') {
+              const next = s.posts.filter((p) => p.id !== row.id);
+              saveLocal('wassell_posts', next);
+              return { posts: next };
+            }
+            const next = upsertById(s.posts, row);
+            saveLocal('wassell_posts', next);
+            return { posts: next };
+          });
+        },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'marketing_notifications' },
+        (payload) => {
+          const row = (payload.new ?? payload.old) as MarketingNotification;
+          if (!row?.id) return;
+          set((s) => {
+            if (payload.eventType === 'DELETE') {
+              const next = s.marketingNotifications.filter((n) => n.id !== row.id);
+              saveLocal('wassell_marketing_notifications', next);
+              return { marketingNotifications: next };
+            }
+            const next = upsertById(s.marketingNotifications, row);
+            saveLocal('wassell_marketing_notifications', next);
+            return { marketingNotifications: next };
+          });
+        },
+      )
+      .subscribe();
+
+    globals.__wasselMarketingChannel = channel;
+    return () => {
+      supabase!.removeChannel(channel);
+      globals.__wasselMarketingChannel = undefined;
+    };
   },
 
   // --- Language ---

@@ -1171,6 +1171,14 @@ export interface AppState {
   updateOperationResearch: (operationId: string, output: ResearchOutput) => Promise<void>;
 
   /**
+   * Subscribe to Postgres changes on the 5 marketing tables so the UI
+   * reflects agent writes live. Idempotent — a second call is a no-op.
+   * Returns an unsubscribe function; callers don't need to use it
+   * (the single channel lives for the app's lifetime).
+   */
+  subscribeMarketingRealtime: () => () => void;
+
+  /**
    * Flip an operation's status to `approved` once every reel/post underneath
    * it is approved. Also marks any lingering `ready_for_review` children
    * so the aggregate state stays consistent.
