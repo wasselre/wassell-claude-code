@@ -45,14 +45,34 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
     if (urls.length === 0) return;
 
     let cancelled = false;
-    setResolvingCount(urls.length);
+    let remaining = urls.length;
+    setResolvingCount(remaining);
 
-    // Resolve in parallel — edge function is cheap and each URL is independent.
-    Promise.allSettled(urls.map((u) => resolveMapsUrlAsync(u))).then(() => {
-      if (cancelled) return;
-      setTick((t) => t + 1);
-      setResolvingCount(0);
-    });
+    // Run with limited concurrency so we don't hammer the edge function (or
+    // Google's redirect endpoint for short URLs) in parallel — 40+ simultaneous
+    // fetches to `maps.app.goo.gl` trips anti-abuse rate limiting. Each result
+    // bumps `tick` so pins render live as they land, not only at the end.
+    const CONCURRENCY = 6;
+    let nextIndex = 0;
+
+    async function worker(): Promise<void> {
+      while (!cancelled) {
+        const i = nextIndex++;
+        if (i >= urls.length) return;
+        try {
+          await resolveMapsUrlAsync(urls[i]!);
+        } catch {
+          // resolveMapsUrlAsync swallows its own errors and returns null.
+          // This catch is defensive only.
+        }
+        if (cancelled) return;
+        remaining -= 1;
+        setResolvingCount(remaining);
+        setTick((t) => t + 1);
+      }
+    }
+
+    void Promise.all(Array.from({ length: Math.min(CONCURRENCY, urls.length) }, worker));
 
     return () => {
       cancelled = true;
