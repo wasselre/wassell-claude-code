@@ -37,7 +37,6 @@ import {
   Shield,
   Presentation,
   Settings,
-  Megaphone,
   MessageCircle,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -333,30 +332,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
                   )}
                 </div>
               ))}
-
-          {/* Marketing */}
-          {!railCollapsed && (
-            <div className="pt-5 pb-2 px-3">
-              <span className="text-[0.6875rem] font-bold text-charcoal/30 uppercase tracking-widest">
-                {isAr ? 'التسويق' : 'Marketing'}
-              </span>
-            </div>
-          )}
-          {(() => {
-            const label = isAr ? 'العمليات التسويقية' : 'Marketing Operations';
-            return (
-              <NavLink
-                to="/marketing"
-                className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-                title={railCollapsed ? label : undefined}
-              >
-                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-copper/10">
-                  <Megaphone size={16} className="text-copper" />
-                </div>
-                {!railCollapsed && <span>{label}</span>}
-              </NavLink>
-            );
-          })()}
 
           {/* Settings */}
           {!railCollapsed && (

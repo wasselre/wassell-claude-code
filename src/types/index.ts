@@ -1093,199 +1093,13 @@ export interface DaemonStatus {
 // ────────────────────────────────────────────────────────────────────
 // MARKETING OPERATIONS (reels + posts content pipeline)
 // ────────────────────────────────────────────────────────────────────
-// Replaces the old OMA Google Sheets system. Every "marketing operation"
-// is one request to generate content for a project. The pipeline runs:
-// research → (optional contradictions Q&A) → reels + posts → review →
-// approved. State lives in the six tables added at the bottom of
-// supabase/schema.sql; the edge functions in supabase/functions/marketing-*
-// do the orchestration and AI work.
-
-export type CompetitorType = 'reel_script' | 'post_example';
-
-export interface Competitor {
-  id: string;
-  name: string;
-  type: CompetitorType;
-  content: string;
-  tags: string[];
-  notes?: string | null;
-  created_at: string;
-  updated_at: string;
-  created_by?: string | null;
-}
-
-export type MarketingOperationStatus =
-  | 'research_pending'
-  | 'research_in_progress'
-  | 'research_waiting_answers'
-  | 'research_complete'
-  | 'content_generating'
-  | 'ready_for_review'
-  | 'approved'
-  | 'failed';
-
-// Settings the user picks in the create-operation modal. Agent fills in the
-// rest (duration + goal for reels; components + visual for posts).
-export type ReelType = 'ترويجي' | 'تغطية' | 'سينمائي';
-export type ReelPlatform = 'حسابات' | 'إعلان' | 'واتساب' | 'موقع';
-export type ReelVoiceover = 'رجل' | 'امرأة' | 'بدون';
-export type ReelDuration = '15' | '20' | '30' | '45' | '60' | '90' | '120' | '120+';
-export type ReelGoal = 'مهتمين' | 'وعي';
-
-export interface ReelsSettings {
-  count: number;           // 1..10
-  type: ReelType;
-  platform: ReelPlatform;
-  voiceover: ReelVoiceover;
-}
-
-export type PostType = 'توعية' | 'إهتمام';
-export type PostUsage = 'الحسابات' | 'إعلانات' | 'واتساب' | 'موقع';
-export type PostComponent =
-  | 'الموقع' | 'الواجهة' | 'الخصوصية' | 'المساحات' | 'التوزيع الداخلي'
-  | 'أسلوب الحياة' | 'المخططات' | 'المميزات والخدمات' | 'الأسعار'
-  | 'الجاهزية' | 'العرض' | 'نوع الوحدة' | 'نوع المشروع' | 'اسم المشروع'
-  | 'تمويل' | 'الضمانات';
-export type PostVisual = 'الواجهات الخارجية' | 'المجلس' | 'الصالة' | 'غرف النوم' | 'الزوايا';
-
-export interface PostsSettings {
-  count: number;           // 1..10
-  type: PostType;
-  usage: PostUsage;
-}
-
-// Research output shape (mirrors the OMA research agent JSON).
-export interface ResearchFact {
-  dataType: string;
-  value: string;
-  source: string;
-  sourceUrl?: string;
-  confidence?: 'high' | 'medium' | 'low';
-}
-
-export interface ResearchSource {
-  url: string;
-  title?: string;
-  type?: string;
-  reliability?: 'high' | 'medium' | 'low';
-}
-
-export interface ResearchOutput {
-  facts: ResearchFact[];
-  sources: ResearchSource[];
-  notFound?: string[];
-  confidence?: 'high' | 'medium' | 'low';
-  researchNotes?: string;
-}
-
-export interface MarketingOperation {
-  id: string;
-  project_record_id: string;
-  status: MarketingOperationStatus;
-  reels_settings: ReelsSettings | null;
-  posts_settings: PostsSettings | null;
-  research_output: ResearchOutput | null;
-  research_error?: string | null;
-  created_at: string;
-  updated_at: string;
-  created_by?: string | null;
-}
-
-export type ResearchQuestionStatus = 'waiting' | 'answered';
-
-export interface ResearchQuestion {
-  id: string;
-  operation_id: string;
-  question_number: number;
-  question: string;
-  source_conflict?: string | null;
-  answer?: string | null;
-  status: ResearchQuestionStatus;
-  created_at: string;
-  answered_at?: string | null;
-  answered_by?: string | null;
-}
-
-export type ReelStatus = 'pending' | 'writing' | 'draft_ready' | 'approved' | 'published' | 'failed';
-
-export interface ReelScene {
-  number: number;
-  description: string;
-  text: string;
-}
-
-export interface Reel {
-  id: string;
-  operation_id: string;
-  project_record_id: string;
-  reel_number: number;
-  status: ReelStatus;
-  type?: ReelType | null;
-  duration?: ReelDuration | null;
-  platform?: ReelPlatform | null;
-  voiceover?: ReelVoiceover | null;
-  goal?: ReelGoal | null;
-  scenes: ReelScene[];
-  created_at: string;
-  updated_at: string;
-}
-
-export type PostStatus = ReelStatus;
-
-export interface Post {
-  id: string;
-  operation_id: string;
-  project_record_id: string;
-  post_number: number;
-  status: PostStatus;
-  type?: PostType | null;
-  components?: PostComponent | null;
-  visual?: PostVisual | null;
-  usage?: PostUsage | null;
-  title?: string | null;
-  design_text_1?: string | null;
-  design_text_2?: string | null;
-  design_text_3?: string | null;
-  caption?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export type MarketingNotificationType =
-  | 'research_waiting_answers'
-  | 'research_complete'
-  | 'content_ready_reels'
-  | 'content_ready_posts'
-  | 'operation_ready'
-  | 'operation_failed';
-
-export interface MarketingNotification {
-  id: string;
-  user_id: string;
-  type: MarketingNotificationType;
-  message_ar: string;
-  message_en: string;
-  operation_id?: string | null;
-  read_at?: string | null;
-  created_at: string;
-}
-
-// Dropdown option catalogues — used by the create-operation modal and editors.
-export const REEL_TYPES: ReelType[] = ['ترويجي', 'تغطية', 'سينمائي'];
-export const REEL_PLATFORMS: ReelPlatform[] = ['حسابات', 'إعلان', 'واتساب', 'موقع'];
-export const REEL_VOICEOVERS: ReelVoiceover[] = ['رجل', 'امرأة', 'بدون'];
-export const REEL_DURATIONS: ReelDuration[] = ['15', '20', '30', '45', '60', '90', '120', '120+'];
-export const REEL_GOALS: ReelGoal[] = ['مهتمين', 'وعي'];
-
-export const POST_TYPES: PostType[] = ['توعية', 'إهتمام'];
-export const POST_USAGES: PostUsage[] = ['الحسابات', 'إعلانات', 'واتساب', 'موقع'];
-export const POST_COMPONENTS: PostComponent[] = [
-  'الموقع', 'الواجهة', 'الخصوصية', 'المساحات', 'التوزيع الداخلي',
-  'أسلوب الحياة', 'المخططات', 'المميزات والخدمات', 'الأسعار',
-  'الجاهزية', 'العرض', 'نوع الوحدة', 'نوع المشروع', 'اسم المشروع',
-  'تمويل', 'الضمانات',
-];
-export const POST_VISUALS: PostVisual[] = ['الواجهات الخارجية', 'المجلس', 'الصالة', 'غرف النوم', 'الزوايا'];
+// Marketing-operations pipeline types were removed when the pipeline was
+// ported to the generic records + workflows system. The seed models in
+// src/data/seedModels.ts define the schema (marketing_operations, reels,
+// posts, research_questions, competitors); src/data/seedWorkflows.ts
+// wires the 5 edge functions into record writes via webhook-triggered
+// workflows. Records stream through the app via the regular
+// RecordListPage / RecordFormPage pages under /model/<slug>.
 
 // UI types
 
@@ -1742,47 +1556,14 @@ export interface AppState {
    */
   retryPresentationJob: (jobId: string) => Promise<PresentationJob | null>;
 
-  // ── Marketing operations (reels + posts content pipeline) ──────────
-  competitors: Competitor[];
-  marketingOperations: MarketingOperation[];
-  researchQuestions: ResearchQuestion[];
-  reels: Reel[];
-  posts: Post[];
-  marketingNotifications: MarketingNotification[];
-
-  // Webhooks — user-declared inbound endpoints + received payload audit log.
+  // ── Marketing pipeline — workflow-driven ───────────────────────────
+  // Every marketing record (marketing_operations / reels / posts /
+  // research_questions / competitors) lives in the generic `records`
+  // store, keyed by model_id. Edge-function side-effects arrive on the
+  // `webhook_payloads` table; the app atomically claims each payload
+  // and fans it out to user-editable workflows.
   webhookSlugs: WebhookSlug[];
   webhookPayloads: WebhookPayload[];
-
-  // Competitors
-  saveCompetitor: (competitor: Competitor) => Promise<void>;
-  deleteCompetitor: (competitorId: string) => Promise<void>;
-
-  /**
-   * Create a marketing operation for a project + pre-create empty reels/posts
-   * rows + fire the research edge function. Atomic on the DB side.
-   * Returns the new operation's id so the caller can navigate to it.
-   */
-  createMarketingOperation: (input: {
-    projectRecordId: string;
-    reelsSettings: ReelsSettings | null;
-    postsSettings: PostsSettings | null;
-  }) => Promise<string>;
-
-  /**
-   * Answer a single contradiction question. If this was the last unanswered
-   * question for its operation, fires the research-resume edge function.
-   */
-  answerResearchQuestion: (questionId: string, answer: string) => Promise<void>;
-
-  /** Persist an edited reel (agent-generated draft → human tweaks). */
-  saveReel: (reel: Reel) => Promise<void>;
-
-  /** Persist an edited post. */
-  savePost: (post: Post) => Promise<void>;
-
-  /** Persist human edits to an operation's research_output (facts table). */
-  updateOperationResearch: (operationId: string, output: ResearchOutput) => Promise<void>;
 
   /** CRUD for user-declared webhook endpoints. */
   saveWebhookSlug: (slug: WebhookSlug) => Promise<void>;
@@ -1797,23 +1578,10 @@ export interface AppState {
   claimAndRunWebhookPayload: (payloadId: string) => Promise<boolean>;
 
   /**
-   * Subscribe to Postgres changes on the 5 marketing tables so the UI
-   * reflects agent writes live. Idempotent — a second call is a no-op.
-   * Returns an unsubscribe function; callers don't need to use it
-   * (the single channel lives for the app's lifetime).
+   * Subscribe to webhook_payloads INSERTs so incoming agent events fan
+   * out to the workflow engine without a page reload. Idempotent — a
+   * second call is a no-op. Returns an unsubscribe function; callers
+   * don't need to use it (the channel lives for the app's lifetime).
    */
   subscribeMarketingRealtime: () => () => void;
-
-  /**
-   * Flip an operation's status to `approved` once every reel/post underneath
-   * it is approved. Also marks any lingering `ready_for_review` children
-   * so the aggregate state stays consistent.
-   */
-  approveMarketingOperation: (operationId: string) => Promise<void>;
-
-  /**
-   * Mark a single notification (or all of a user's notifications) as read.
-   * Pass `null` for `id` to mark all read.
-   */
-  markNotificationRead: (id: string | null) => Promise<void>;
 }
