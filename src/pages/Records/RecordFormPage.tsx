@@ -12,6 +12,7 @@ import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
 import RecordDecksPanel from './components/RecordDecksPanel';
+import CallHistoryPanel from './components/CallHistoryPanel';
 import TemplatePickerModal from '@/pages/Presentations/components/TemplatePickerModal';
 import { usePermission } from '@/hooks/usePermission';
 import { usePresentationJobsPolling } from '@/pages/Presentations/hooks/usePresentationJobsPolling';
@@ -139,6 +140,22 @@ export default function RecordFormPage() {
     setShowDelete(false);
     setIsDirty(false);
   }, [recordId, modelName, existingRecord?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Every phone-type value currently on the record. Passed to CallHistoryPanel
+  // so we load call_logs rows keyed on any phone on the record (main +
+  // alternates). When the list is empty, the panel renders nothing.
+  const phoneValues = useMemo(() => {
+    if (!model) return [] as string[];
+    const out: string[] = [];
+    for (const section of model.schema.sections) {
+      for (const field of section.fields) {
+        if (field.type !== 'phone') continue;
+        const raw = formData[field.name];
+        if (typeof raw === 'string' && raw.trim()) out.push(raw);
+      }
+    }
+    return out;
+  }, [model, formData]);
 
   const visibleSections = useMemo(() => {
     if (!model) return [];
@@ -419,6 +436,13 @@ export default function RecordFormPage() {
           />
         ))}
       </div>
+
+      {/* Call history — every Hatif-logged call for any phone on this record */}
+      {existingRecord && phoneValues.length > 0 && (
+        <div className="mt-6">
+          <CallHistoryPanel phones={phoneValues} />
+        </div>
+      )}
 
       {/* Recent decks generated for this record */}
       {existingRecord && (

@@ -1330,6 +1330,77 @@ export interface ChatMessage {
   client_id?: string;
 }
 
+// ─── Calls (Hatif) ────────────────────────────────────────────────
+// Call events Hatif POSTs to our webhook. Mirrors `call_logs` in schema.sql —
+// keep in sync. Every call Hatif's platform sees lands here: inbound,
+// outbound-IVR, and calls agents place from Hatif's own app on our channel.
+
+export type CallDirection = 'inbound' | 'outbound';
+
+// Normalized from Hatif's integer status field. Raw mapping lives in the
+// webhook handler; consumers only see the string.
+export type CallStatus =
+  | 'active'
+  | 'completed'
+  | 'missed'
+  | 'rejected_by_caller'
+  | 'rejected_by_callee'
+  | 'no_answer'
+  | 'cancelled'
+  | 'failed'
+  | 'ringing';
+
+export type CallSentiment = 'positive' | 'neutral' | 'negative' | 'mixed' | 'unknown';
+
+/** A single transcription word with Hatif's diarization info. */
+export interface CallTranscriptionWord {
+  text: string;
+  start: number;          // seconds
+  end: number;            // seconds
+  type?: string;           // 'word' | 'punctuation' | ...
+  speaker?: string | number | null;
+}
+
+export interface CallTranscription {
+  text: string;
+  words: CallTranscriptionWord[];
+}
+
+export interface CallEvaluationResult {
+  id: string;
+  dataType: string;
+  description: string;
+  value: unknown;
+  rationale: string | null;
+}
+
+/** A call row as the SPA consumes it (snake_case from Postgres). */
+export interface CallLog {
+  id: string;                                       // Hatif callId
+  workspace_id: string | null;
+  channel_id: string;
+  direction: CallDirection;
+  status: CallStatus;
+  caller_number: string | null;
+  callee_number: string | null;
+  contact_phone: string | null;                     // normalized E.164 — used to match to clients
+  contact_id: string | null;                        // Hatif contactId (NOT records.id)
+  agent_user_id: string | null;
+  agent_name: string | null;
+  ai_agent_id: string | null;
+  pickup_time: string | null;                       // ISO
+  hangup_time: string | null;                       // ISO
+  duration_seconds: number | null;
+  recording_url: string | null;
+  summary: string | null;
+  sentiment: CallSentiment | null;
+  transcription: CallTranscription | null;
+  evaluation_criteria_result: CallEvaluationResult[] | null;
+  creation_time: string;                            // ISO — Hatif event creationTime
+  created_at: string;                               // ISO — row inserted
+  updated_at: string;                               // ISO
+}
+
 // Store types
 
 export interface AppState {
