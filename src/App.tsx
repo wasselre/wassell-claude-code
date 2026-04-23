@@ -27,6 +27,7 @@ import CompetitorsPage from '@/pages/Settings/CompetitorsPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
 import ChatDetailPage from '@/pages/Chats/ChatDetailPage';
+import ChatListPage from '@/pages/Chats/ChatListPage';
 import MarketingListPage from '@/pages/Marketing/MarketingListPage';
 import OperationDetailPage from '@/pages/Marketing/OperationDetailPage';
 import ReelEditor from '@/pages/Marketing/ReelEditor';
@@ -69,6 +70,21 @@ function RecordDetailDispatcher() {
     return <ChatDetailPage key={recordId ?? 'new'} />;
   }
   return <RecordFormPageRoute />;
+}
+
+/**
+ * Dispatcher for `/model/:modelName`. The `chats` system model renders
+ * as a purpose-built WhatsApp-style list (avatars, preview, unread
+ * badges) instead of the generic table/cards/maps record list — the
+ * rest of the record-page features (saved views, import, bulk edit)
+ * aren't meaningful for a conversation inbox.
+ */
+function RecordListDispatcher() {
+  const { modelName } = useParams();
+  if (modelName === 'chats') {
+    return <ChatListPage />;
+  }
+  return <RecordListPage />;
 }
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -118,7 +134,7 @@ export default function App() {
           }
         >
           <Route path="/" element={<HomePage />} />
-          <Route path="/model/:modelName" element={<RecordListPage />} />
+          <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordFormPage />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
