@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Search, X } from 'lucide-react';
+import { Search, X, Plus } from 'lucide-react';
 
 interface LookupComboboxProps {
   lookupModelId: string;
@@ -19,7 +20,7 @@ export default function LookupCombobox({
   value,
   onChange,
 }: LookupComboboxProps) {
-  const { models, records, language } = useAppStore();
+  const { models, records, language, saveRecord } = useAppStore();
   const isAr = language === 'ar';
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -100,6 +101,29 @@ export default function LookupCombobox({
     }
   };
 
+  // Inline-create: if the user types a value that doesn't match an existing
+  // record, they can create a new record in the target model with the typed
+  // value written to the configured display field, then auto-select it.
+  const trimmedQuery = query.trim();
+  const canCreate =
+    trimmedQuery.length > 0 &&
+    !!lookupDisplayField &&
+    !filteredRecords.some((r) => labelFor(r).toLowerCase() === trimmedQuery.toLowerCase());
+
+  const createAndPick = () => {
+    if (!canCreate || !linkedModel) return;
+    const now = new Date().toISOString();
+    const newRec = {
+      id: uuid(),
+      model_id: lookupModelId,
+      data: { [lookupDisplayField]: trimmedQuery },
+      created_at: now,
+      updated_at: now,
+    };
+    saveRecord(newRec);
+    pickRecord(newRec.id);
+  };
+
   if (!linkedModel) {
     return <div className="text-sm text-red-400">{isAr ? 'نموذج غير موجود' : 'Linked model not found'}</div>;
   }
@@ -142,21 +166,30 @@ export default function LookupCombobox({
         </div>
         {open && (
           <div className="absolute z-20 mt-1 w-full bg-white rounded-lg border border-sand shadow-lg max-h-48 overflow-y-auto animate-[fadeIn_0.1s_ease]">
-            {filteredRecords.length === 0 ? (
+            {filteredRecords.length === 0 && !canCreate && (
               <div className="px-3 py-3 text-sm text-charcoal/30 text-center">
                 {isAr ? 'لا توجد نتائج' : 'No results'}
               </div>
-            ) : (
-              filteredRecords.map((rec) => (
-                <button
-                  key={rec.id}
-                  type="button"
-                  onClick={() => pickRecord(rec.id)}
-                  className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
-                >
-                  {labelFor(rec)}
-                </button>
-              ))
+            )}
+            {filteredRecords.map((rec) => (
+              <button
+                key={rec.id}
+                type="button"
+                onClick={() => pickRecord(rec.id)}
+                className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
+              >
+                {labelFor(rec)}
+              </button>
+            ))}
+            {canCreate && (
+              <button
+                type="button"
+                onClick={createAndPick}
+                className={`w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm flex items-center gap-2 text-copper font-bold ${filteredRecords.length > 0 ? 'border-t border-sand/50' : ''}`}
+              >
+                <Plus size={14} />
+                {isAr ? `إنشاء: "${trimmedQuery}"` : `Create: "${trimmedQuery}"`}
+              </button>
             )}
           </div>
         )}
@@ -190,21 +223,30 @@ export default function LookupCombobox({
 
       {open && selectedIds.length === 0 && (
         <div className="absolute z-20 mt-1 w-full bg-white rounded-lg border border-sand shadow-lg max-h-48 overflow-y-auto animate-[fadeIn_0.1s_ease]">
-          {filteredRecords.length === 0 ? (
+          {filteredRecords.length === 0 && !canCreate && (
             <div className="px-3 py-3 text-sm text-charcoal/30 text-center">
               {isAr ? 'لا توجد نتائج' : 'No results'}
             </div>
-          ) : (
-            filteredRecords.map((rec) => (
-              <button
-                key={rec.id}
-                type="button"
-                onClick={() => pickRecord(rec.id)}
-                className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
-              >
-                {labelFor(rec)}
-              </button>
-            ))
+          )}
+          {filteredRecords.map((rec) => (
+            <button
+              key={rec.id}
+              type="button"
+              onClick={() => pickRecord(rec.id)}
+              className="w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm"
+            >
+              {labelFor(rec)}
+            </button>
+          ))}
+          {canCreate && (
+            <button
+              type="button"
+              onClick={createAndPick}
+              className={`w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm flex items-center gap-2 text-copper font-bold ${filteredRecords.length > 0 ? 'border-t border-sand/50' : ''}`}
+            >
+              <Plus size={14} />
+              {isAr ? `إنشاء: "${trimmedQuery}"` : `Create: "${trimmedQuery}"`}
+            </button>
           )}
         </div>
       )}
