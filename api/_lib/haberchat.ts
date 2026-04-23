@@ -117,53 +117,132 @@ export async function listChats(deviceId: string, opts: { size?: number; page?: 
   const size = opts.size ?? 100;
   const page = opts.page ?? 0;
   const raw = await request<HaberchatChatsResponse>(`/chat/${encodeURIComponent(deviceId)}/chats?size=${size}&page=${page}`);
-  const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
-  return items.map(normalizeChat);
+  const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? raw.chats ?? []);
+  // Skip (don't throw) on individual chats we can't identify — one bad row
+  // shouldn't fail the entire page.
+  return items.map(normalizeChat).filter((c): c is HaberchatChat => c !== null);
 }
 
 type HaberchatChatsResponse =
   | HaberchatChatRaw[]
-  | { items?: HaberchatChatRaw[]; data?: HaberchatChatRaw[] };
+  | { items?: HaberchatChatRaw[]; data?: HaberchatChatRaw[]; chats?: HaberchatChatRaw[] };
 
-// Raw chat shape — Haberchat's response nests contact info and the last
-// message under sub-objects; flatten what we need, keep everything else in
-// `meta` for forward-compat.
+// Raw chat shape — Haberchat's response is inconsistently shaped across plans
+// and API versions. Accept every id field we've seen in the wild, let
+// normalizeChat pick the first populated one, and skip rows where nothing
+// identifies the conversation.
 interface HaberchatChatRaw {
+  // Identifier candidates (Haberchat has used all of these in different contexts)
   wid?: string;
+  widFull?: string;
   _id?: string;
+  id?: string;
+  chatId?: string;
+  chat_id?: string;
+  chatWid?: string;
+  // Chat type
   kind?: string;
   type?: string;
+  isGroup?: boolean;
+  // Display
   name?: string | null;
+  title?: string | null;
   contactName?: string | null;
-  contact?: { phone?: string; name?: string | null } | null;
+  pushName?: string | null;
+  contact?: { phone?: string; name?: string | null; pushName?: string | null; wid?: string } | null;
   phone?: string | null;
+  number?: string | null;
+  // State
   status?: string;
+  state?: string;
+  archived?: boolean;
+  resolved?: boolean;
+  // Assignment / labels
   owner?: string | null;
   ownerAgentId?: string | null;
   labels?: string[];
-  stats?: { unread?: number } | null;
+  // Stats
+  stats?: { unread?: number; unreadCount?: number } | null;
+  unread?: number;
   unreadCount?: number;
-  lastMessage?: { body?: string | null; date?: string | null; kind?: string } | null;
+  // Last message — might be nested under `lastMessage`, or flat (lastMessageAt,
+  // lastMessageBody), or under `last`.
+  lastMessage?: { body?: string | null; text?: string | null; date?: string | null; timestamp?: number | string; kind?: string; type?: string } | null;
+  last?: { body?: string | null; date?: string | null } | null;
   lastMessageAt?: string | null;
+  lastMessageBody?: string | null;
+  lastMessageDate?: string | null;
+  lastActivity?: string | null;
+  updatedAt?: string | null;
+  // Allow anything else through so we don't lose forward-compat data
+  [k: string]: unknown;
 }
 
-function normalizeChat(raw: HaberchatChatRaw): HaberchatChat {
-  const wid = raw.wid ?? raw._id ?? '';
-  if (!wid) throw new HaberchatError(500, 'Haberchat chat missing wid');
-  const kind = (raw.kind ?? raw.type ?? 'user').toLowerCase();
-  const contactName = raw.contact?.name ?? null;
-  const phone = raw.contact?.phone ?? raw.phone ?? extractPhoneFromWid(wid);
+function normalizeChat(raw: HaberchatChatRaw): HaberchatChat | null {
+  const wid =
+    raw.wid ??
+    raw.widFull ??
+    raw.chatWid ??
+    raw.chatId ??
+    raw.chat_id ??
+    raw._id ??
+    raw.id ??
+    raw.contact?.wid ??
+    '';
+  if (!wid) {
+    // One-line log so we can see what Haberchat actually sent — inspect via
+    // Vercel function logs.
+    try {
+      console.warn('[haberchat.normalizeChat] skipping chat with no id; keys=', Object.keys(raw).join(','));
+    } catch { /* ignore */ }
+    return null;
+  }
+  const rawKind = (raw.kind ?? raw.type ?? (raw.isGroup ? 'group' : 'user')).toString().toLowerCase();
+  const kind = rawKind === 'user' || rawKind === 'group' || rawKind === 'channel' ? rawKind : 'user';
+
+  const contactName = raw.contact?.name ?? raw.contact?.pushName ?? null;
+  const displayName = raw.name ?? raw.title ?? contactName ?? raw.pushName ?? raw.contactName ?? null;
+  const phone = raw.contact?.phone ?? raw.phone ?? raw.number ?? extractPhoneFromWid(wid);
+
+  const status =
+    raw.status ??
+    raw.state ??
+    (raw.archived ? 'archived' : raw.resolved ? 'resolved' : 'active');
+
+  const unreadCount =
+    raw.stats?.unread ??
+    raw.stats?.unreadCount ??
+    raw.unread ??
+    raw.unreadCount ??
+    0;
+
+  const lastMessageAt =
+    raw.lastMessageAt ??
+    raw.lastMessage?.date ??
+    raw.last?.date ??
+    raw.lastMessageDate ??
+    raw.lastActivity ??
+    raw.updatedAt ??
+    null;
+
+  const lastMessagePreview =
+    raw.lastMessage?.body ??
+    raw.lastMessage?.text ??
+    raw.last?.body ??
+    raw.lastMessageBody ??
+    null;
+
   return {
     wid,
     kind,
-    name: raw.name ?? contactName ?? null,
+    name: displayName,
     phone,
-    status: raw.status,
+    status,
     ownerAgentId: raw.owner ?? raw.ownerAgentId ?? null,
     labels: raw.labels ?? [],
-    unreadCount: raw.stats?.unread ?? raw.unreadCount ?? 0,
-    lastMessageAt: raw.lastMessageAt ?? raw.lastMessage?.date ?? null,
-    lastMessagePreview: raw.lastMessage?.body ?? null,
+    unreadCount,
+    lastMessageAt,
+    lastMessagePreview,
     meta: {},
   };
 }
