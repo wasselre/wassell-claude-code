@@ -317,6 +317,54 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
  *  Supabase handles. */
 let globalChatsChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
 
+/**
+ * Sweep every unlinked chat and try to link it to a client. Called from
+ * saveRecord when the user saves a clients record (new or edit) so a
+ * freshly-created client immediately gets attached to any matching
+ * existing conversation. Never overwrites existing links.
+ *
+ * Uses setState + a batched Supabase upsert per changed chat row so the
+ * UI updates in one frame and the server sees the linked fields on the
+ * next reload.
+ */
+function relinkChatsAgainstClients(): void {
+  const state = useAppStore.getState();
+  const chatsModel = state.models.find((m) => m.name === 'chats');
+  const clientsModel = state.models.find((m) => m.name === 'clients');
+  if (!chatsModel || !clientsModel) return;
+  const chats = state.records[chatsModel.id] ?? [];
+  const clients = state.records[clientsModel.id] ?? [];
+  const slugs = phoneFieldSlugs(clientsModel);
+  if (slugs.length === 0 || clients.length === 0 || chats.length === 0) return;
+
+  const patched: AppRecord[] = [];
+  const next = chats.map((rec) => {
+    const data = rec.data as Record<string, unknown>;
+    if (data.client_link) return rec;
+    const link = resolveClientLink(data.phone as string | null | undefined, clients, slugs);
+    if (!link) return rec;
+    const updated = { ...rec, data: { ...data, client_link: link }, updated_at: new Date().toISOString() };
+    patched.push(updated);
+    return updated;
+  });
+
+  if (patched.length === 0) return;
+
+  useAppStore.setState((s) => {
+    const records = { ...s.records, [chatsModel.id]: next };
+    const allRecords = Object.values(records).flat();
+    saveLocal('wassell_records', allRecords);
+    return { records };
+  });
+
+  for (const rec of patched) {
+    void supabaseUpsert('records', rec as unknown as Record<string, unknown>, {
+      table: 'models',
+      id: rec.model_id,
+    });
+  }
+}
+
 // --- Store ---
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -1436,6 +1484,16 @@ export const useAppStore = create<AppState>((set, get) => ({
             : { pendingResearchPromptTargetedIds: [...s.pendingResearchPromptTargetedIds, finalRecord.id] }
         ));
       });
+    }
+
+    // When a clients record is saved, sweep every unlinked chat and try
+    // to match it to a client. Handles the "message arrived, then the
+    // user created the client" ordering — previously the chat would
+    // stay unlinked until the next inbound message or a chats-page
+    // re-mount. Runs in a microtask so the clients-record write lands
+    // first and our sweep reads the fresh state.
+    if (origModel && origModel.name === 'clients') {
+      queueMicrotask(() => relinkChatsAgainstClients());
     }
   },
   deleteRecord: (modelId: string, recordId: string) => {
