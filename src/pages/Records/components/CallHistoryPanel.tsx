@@ -143,6 +143,12 @@ function CallRow({ call, isAr }: { call: CallLog; isAr: boolean }) {
                 {sentimentLabelOf(call.sentiment, isAr)}
               </span>
             )}
+            {call.dtmf_digit && (
+              <span className="badge bg-copper/15 text-copper inline-flex items-center gap-1" dir="ltr">
+                <span className="font-bold">{call.dtmf_digit}</span>
+                {call.dtmf_label && <span>· {call.dtmf_label}</span>}
+              </span>
+            )}
             {call.agent_name && (
               <span className="text-xs text-charcoal/60 inline-flex items-center gap-1">
                 {call.ai_agent_id ? <Bot size={12} /> : <User size={12} />}

@@ -57,6 +57,14 @@ interface HatifCallEvent {
   summary?: string | null;
   sentiment?: number | null;
   evaluationCriteriaResult?: unknown;
+  // IVR-result fields (present only when the webhook was fired by an
+  // outbound-IVR call completing). Hatif's doc names aren't fully pinned, so
+  // we accept the common variants and pick whichever is set.
+  selectedDigit?: string | null;
+  digit?: string | null;
+  selectedOption?: { digit?: string; label?: string } | null;
+  optionDigit?: string | null;
+  optionLabel?: string | null;
 }
 
 export default async function handler(req: Request): Promise<Response> {
@@ -143,6 +151,20 @@ async function upsertCallLog(event: HatifCallEvent, rawBody: string) {
     ? event.evaluationCriteriaResult
     : null;
 
+  // DTMF (IVR result). Pulled from whichever field variant Hatif populates —
+  // we've seen `selectedDigit`, `digit`, and a nested `selectedOption`. When
+  // none are set the call wasn't IVR-triggered and these stay null.
+  const dtmfDigit =
+    event.selectedDigit ??
+    event.digit ??
+    event.selectedOption?.digit ??
+    event.optionDigit ??
+    null;
+  const dtmfLabel =
+    event.selectedOption?.label ??
+    event.optionLabel ??
+    null;
+
   const row = {
     id: event.callId,
     workspace_id: event.workspaceId ?? null,
@@ -164,6 +186,8 @@ async function upsertCallLog(event: HatifCallEvent, rawBody: string) {
     sentiment,
     transcription,
     evaluation_criteria_result: evaluation,
+    dtmf_digit: dtmfDigit,
+    dtmf_label: dtmfLabel,
     raw_event: safeJsonParse(rawBody),
     creation_time: event.creationTime,
   };

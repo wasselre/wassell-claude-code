@@ -317,6 +317,7 @@ function ActionTraceCard({ action, isAr, models }: { action: WorkflowActionTrace
           {action.type === 'create_record' && <CreateTraceBody action={action} isAr={isAr} targetModel={targetModel} />}
           {action.type === 'send_notification' && <NotifyTraceBody action={action} isAr={isAr} />}
           {action.type === 'assign_user' && <AssignTraceBody action={action} isAr={isAr} />}
+          {action.type === 'outbound_ivr' && <IvrTraceBody action={action} isAr={isAr} />}
         </div>
       )}
     </div>
@@ -429,6 +430,53 @@ function AssignTraceBody({
       )}
       {assignedUser && (
         <KvRow label={isAr ? 'المُعيَّن الجديد' : 'New assignee'} value={<span className="font-bold">{isAr ? assignedUser.name_ar : assignedUser.name_en} ({assignedUser.email})</span>} />
+      )}
+    </>
+  );
+}
+
+function IvrTraceBody({
+  action, isAr,
+}: { action: Extract<WorkflowActionTrace, { type: 'outbound_ivr' }>; isAr: boolean }) {
+  return (
+    <>
+      <KvRow
+        label={isAr ? 'الرقم المُتصل به' : 'Dialed number'}
+        value={<span dir="ltr" className="font-mono">{action.resolved_to_number ?? '—'}</span>}
+      />
+      <KvRow
+        label={isAr ? 'مصدر الصوت' : 'Audio source'}
+        value={action.audio_mode === 'tts'
+          ? (isAr ? 'نص إلى كلام' : 'Text-to-speech')
+          : (isAr ? 'ملف صوتي' : 'Audio file')}
+      />
+      {action.audio_mode === 'tts' && action.resolved_tts_text && (
+        <KvRow
+          label={isAr ? 'النص المُرسَل' : 'Sent text'}
+          value={<span className="whitespace-pre-wrap">{action.resolved_tts_text}</span>}
+        />
+      )}
+      {action.audio_mode === 'tts' && action.tts_voice && (
+        <KvRow
+          label={isAr ? 'الصوت' : 'Voice'}
+          value={action.tts_voice === 'Female' ? (isAr ? 'أنثى' : 'Female') : (isAr ? 'ذكر' : 'Male')}
+        />
+      )}
+      {action.audio_mode === 'audio' && action.audio_file_url && (
+        <KvRow
+          label={isAr ? 'رابط الملف الصوتي' : 'Audio file URL'}
+          value={<a href={action.audio_file_url} target="_blank" rel="noopener noreferrer" className="underline text-copper break-all">{action.audio_file_url}</a>}
+        />
+      )}
+      <KvRow label={isAr ? 'عدد الخيارات' : 'Options'} value={String(action.options_count)} />
+      {action.ivr_call_id && (
+        <KvRow
+          label={isAr ? 'معرّف المكالمة' : 'IVR call id'}
+          value={<code className="text-xs font-mono">{action.ivr_call_id}</code>}
+        />
+      )}
+      {action.response_status !== undefined && (
+        <KvRow label={isAr ? 'حالة الاستجابة' : 'Response status'} value={String(action.response_status)} />
       )}
     </>
   );
@@ -585,6 +633,8 @@ function describeActionType(type: string, isAr: boolean): string {
   if (type === 'update_record') return isAr ? 'تحديث سجل' : 'Update record';
   if (type === 'send_notification') return isAr ? 'إرسال إشعار' : 'Send notification';
   if (type === 'assign_user') return isAr ? 'تعيين مستخدم' : 'Assign user';
+  if (type === 'http_request') return isAr ? 'طلب HTTP' : 'HTTP Request';
+  if (type === 'outbound_ivr') return isAr ? 'مكالمة آلية' : 'Automated call';
   return type;
 }
 

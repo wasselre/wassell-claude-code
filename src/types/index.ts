@@ -403,7 +403,7 @@ export interface FieldMapping {
   formula_expression?: string;
 }
 
-export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user' | 'http_request';
+export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user' | 'http_request' | 'outbound_ivr';
 
 // HTTP method for the outbound `http_request` workflow action.
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -496,12 +496,48 @@ export interface WorkflowActionHttpRequest {
   timeout_ms?: number;
 }
 
+// outbound_ivr — fires an automated phone call via Hatif. Customer (from a
+// phone field on the trigger record) hears a TTS message or a pre-uploaded
+// audio file, then picks one of the configured digit options. The DTMF
+// choice flows back through the post-call webhook into `call_logs.dtmf_*`.
+// Tokens like `{field_slug}` in `tts_text` resolve against the trigger record.
+export interface WorkflowIvrOption {
+  id: string;
+  digit: string;      // '0'-'9', '*', '#'
+  label_ar: string;
+  label_en: string;
+}
+
+export interface WorkflowActionOutboundIvr {
+  id: string;
+  type: 'outbound_ivr';
+  // Trigger-model field (type=phone) whose value is the number to dial.
+  to_field_id: string;
+  // Hatif channel id. Optional — server falls back to HATIF_DEFAULT_CHANNEL_ID
+  // when empty. Exposed as a field so multi-channel tenants can route per workflow.
+  channel_id?: string;
+  // Audio source: 'tts' speaks the text; 'audio' plays a pre-uploaded Hatif file.
+  audio_mode: 'tts' | 'audio';
+  // For audio_mode='tts': the message text. Supports `{field_slug}` tokens.
+  tts_text?: string;
+  tts_voice?: 'Male' | 'Female';
+  // For audio_mode='audio': the URL returned by POST /v1/support/upload-audio.
+  audio_file_url?: string;
+  // Display name the editor shows next to the stored URL (not sent to Hatif).
+  audio_file_label?: string;
+  // IVR menu options. Hatif requires at least one.
+  options: WorkflowIvrOption[];
+  // Language hint for Hatif's voice engine. 'ar' or 'en'.
+  language?: 'ar' | 'en';
+}
+
 export type WorkflowAction =
   | WorkflowActionCreateRecord
   | WorkflowActionUpdateRecord
   | WorkflowActionSendNotification
   | WorkflowActionAssignUser
-  | WorkflowActionHttpRequest;
+  | WorkflowActionHttpRequest
+  | WorkflowActionOutboundIvr;
 
 // A workflow branch — an if / else-if / else arm. Evaluated top-to-bottom; the
 // first non-else branch whose conditions all pass is the winner and its actions
@@ -663,12 +699,29 @@ export interface WorkflowActionTraceHttpRequest extends WorkflowActionTraceBase 
   timeout_ms?: number;
 }
 
+export interface WorkflowActionTraceOutboundIvr extends WorkflowActionTraceBase {
+  type: 'outbound_ivr';
+  resolved_to_number?: string;       // dialed E.164 number (after phone-field resolution)
+  to_field_id?: string;              // phone field the number was pulled from
+  channel_id?: string;               // Hatif channel used (resolved)
+  audio_mode: 'tts' | 'audio';
+  resolved_tts_text?: string;        // text after token substitution (may be truncated)
+  audio_file_url?: string;           // for audio_mode='audio'
+  tts_voice?: 'Male' | 'Female';
+  options_count: number;
+  // Hatif returns an IVR call id we can use to correlate webhook → call_logs.
+  ivr_call_id?: string;
+  response_status?: number;
+  response_snippet?: string;
+}
+
 export type WorkflowActionTrace =
   | WorkflowActionTraceCreate
   | WorkflowActionTraceUpdate
   | WorkflowActionTraceNotify
   | WorkflowActionTraceAssign
-  | WorkflowActionTraceHttpRequest;
+  | WorkflowActionTraceHttpRequest
+  | WorkflowActionTraceOutboundIvr;
 
 // One branch's evaluation trace. Populated for every branch evaluated during a
 // run (including ones that were short-circuited past because an earlier branch
@@ -1396,6 +1449,10 @@ export interface CallLog {
   sentiment: CallSentiment | null;
   transcription: CallTranscription | null;
   evaluation_criteria_result: CallEvaluationResult[] | null;
+  // DTMF outcome from an outbound-IVR call triggered by a workflow. Null for
+  // inbound / agent-placed calls.
+  dtmf_digit: string | null;
+  dtmf_label: string | null;
   creation_time: string;                            // ISO — Hatif event creationTime
   created_at: string;                               // ISO — row inserted
   updated_at: string;                               // ISO
