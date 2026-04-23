@@ -5,7 +5,7 @@ import { useIsAdmin } from '@/hooks/usePermission';
 import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
-  Settings, ScrollText, ListOrdered, Megaphone, MessageCircle,
+  Settings, ScrollText, ListOrdered, Megaphone, MessageCircle, Webhook,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -129,6 +129,17 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/competitors',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'نقاط الخطافات',
+    titleEn: 'Webhooks',
+    descAr: 'نقاط استقبال HTTP واردة للربط مع الأنظمة الخارجية وتشغيل سير العمل تلقائياً',
+    descEn: 'Inbound HTTP endpoints for external systems to POST to — fire workflows on receipt',
+    icon: Webhook,
+    color: '#DB2777',
+    bg: '#DB277714',
+    route: '/settings/webhooks',
     adminOnly: true,
   },
   {

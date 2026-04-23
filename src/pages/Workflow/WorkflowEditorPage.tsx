@@ -9,7 +9,7 @@ import Input from '@/components/ui/Input';
 import { bilingualFromInput } from '@/lib/autoTranslate';
 import TriggerPanel from './components/TriggerPanel';
 import BranchCard from './components/BranchCard';
-import type { Workflow, WorkflowEvent, WorkflowBranch, WorkflowAction } from '@/types';
+import type { Workflow, WorkflowEvent, WorkflowBranch, WorkflowAction, ModelField } from '@/types';
 
 // Build the branch list for the editor. New workflows get a single empty "IF"
 // branch. Older saves that only have flat `conditions` / `actions` are wrapped
@@ -198,10 +198,38 @@ export default function WorkflowEditorPage() {
   }, [existing]);
 
   const triggerModel = models.find((m) => m.id === workflow.trigger_model_id);
-  const triggerFields = useMemo(
-    () => triggerModel?.schema.sections.flatMap((s) => s.fields) ?? [],
-    [triggerModel],
-  );
+  const webhookSlugs = useAppStore((s) => s.webhookSlugs);
+  const triggerSlug = webhookSlugs.find((s) => s.id === workflow.trigger_webhook_slug_id);
+  const isWebhookTrigger = workflow.trigger_event === 'webhook';
+
+  // For webhook workflows, synthesize the "trigger fields" from the slug's
+  // declared payload_schema so the existing condition/mapping pickers still
+  // work. Each declared field becomes a ModelField of type 'text' — enough
+  // to drive field-picker dropdowns.
+  const triggerFields = useMemo<ModelField[]>(() => {
+    if (isWebhookTrigger && triggerSlug) {
+      const declared = (triggerSlug.payload_schema as { fields?: Array<{ name: string; label_ar?: string; label_en?: string }> } | undefined)?.fields ?? [];
+      return declared
+        .filter((f) => f.name && f.name.trim())
+        .map((f, idx): ModelField => ({
+          id: `__webhook_${triggerSlug.id}_${f.name}`,
+          name: f.name,
+          label_ar: f.label_ar || f.name,
+          label_en: f.label_en || f.name,
+          type: 'text',
+          required: false,
+          order: idx,
+          section_id: '__webhook__',
+          width: 'full',
+          show_in_table: false,
+        }));
+    }
+    return triggerModel?.schema.sections.flatMap((s) => s.fields) ?? [];
+  }, [isWebhookTrigger, triggerSlug, triggerModel]);
+
+  // Whether the trigger is fully configured — gates the branches panel. Record
+  // triggers need a model; webhook triggers need a slug.
+  const isTriggerConfigured = isWebhookTrigger ? !!workflow.trigger_webhook_slug_id : !!workflow.trigger_model_id;
 
   const branches = workflow.branches ?? [];
   const hasElseBranch = branches.some((b) => b.is_else);
@@ -349,17 +377,33 @@ export default function WorkflowEditorPage() {
         <TriggerPanel
           triggerModelId={workflow.trigger_model_id}
           triggerEvent={workflow.trigger_event}
+          triggerWebhookSlugId={workflow.trigger_webhook_slug_id ?? null}
           onModelChange={(id) => setWorkflow({
             ...workflow,
             trigger_model_id: id,
             // Reset conditions inside every branch since the available fields changed.
             branches: (workflow.branches ?? []).map((b) => ({ ...b, conditions: [] })),
           })}
-          onEventChange={(event) => setWorkflow({ ...workflow, trigger_event: event })}
+          onEventChange={(event) => {
+            // Switching between record and webhook triggers changes the whole
+            // trigger-field set, so reset conditions to avoid stale refs.
+            setWorkflow({
+              ...workflow,
+              trigger_event: event,
+              trigger_model_id: event === 'webhook' ? '' : workflow.trigger_model_id,
+              trigger_webhook_slug_id: event === 'webhook' ? workflow.trigger_webhook_slug_id : null,
+              branches: (workflow.branches ?? []).map((b) => ({ ...b, conditions: [] })),
+            });
+          }}
+          onWebhookSlugChange={(slugId) => setWorkflow({
+            ...workflow,
+            trigger_webhook_slug_id: slugId,
+            branches: (workflow.branches ?? []).map((b) => ({ ...b, conditions: [] })),
+          })}
         />
 
         {/* Connector from trigger to first branch */}
-        {workflow.trigger_model_id && branches.length > 0 && (
+        {isTriggerConfigured && branches.length > 0 && (
           <div className="flex flex-col items-center py-2">
             <div className="w-px h-6 bg-sand/50" />
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-cream border border-sand/40">
@@ -373,7 +417,7 @@ export default function WorkflowEditorPage() {
         )}
 
         {/* Branches */}
-        {workflow.trigger_model_id ? (
+        {isTriggerConfigured ? (
           <>
             {/* Add branch / else controls — shown up top so they're reachable
                 without scrolling past a long list of branches. New branches are

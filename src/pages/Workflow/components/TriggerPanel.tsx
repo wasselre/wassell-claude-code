@@ -6,22 +6,34 @@ import type { WorkflowEvent } from '@/types';
 interface TriggerPanelProps {
   triggerModelId: string;
   triggerEvent: WorkflowEvent;
+  triggerWebhookSlugId: string | null | undefined;
   onModelChange: (id: string) => void;
   onEventChange: (event: WorkflowEvent) => void;
+  onWebhookSlugChange: (slugId: string | null) => void;
 }
 
-export default function TriggerPanel({ triggerModelId, triggerEvent, onModelChange, onEventChange }: TriggerPanelProps) {
+export default function TriggerPanel({
+  triggerModelId,
+  triggerEvent,
+  triggerWebhookSlugId,
+  onModelChange,
+  onEventChange,
+  onWebhookSlugChange,
+}: TriggerPanelProps) {
   const { t } = useTranslation();
-  const { models, language } = useAppStore();
+  const { models, webhookSlugs, language } = useAppStore();
   const isAr = language === 'ar';
 
   const events: { value: WorkflowEvent; label: string }[] = [
     { value: 'create', label: t('workflow.event_create') },
     { value: 'update', label: t('workflow.event_update') },
     { value: 'delete', label: t('workflow.event_delete') },
+    { value: 'webhook', label: isAr ? 'خطاف وارد' : 'Webhook' },
   ];
 
   const selectedModel = models.find((m) => m.id === triggerModelId);
+  const selectedSlug = webhookSlugs.find((s) => s.id === triggerWebhookSlugId);
+  const isWebhook = triggerEvent === 'webhook';
 
   return (
     <div className="rounded-2xl bg-gradient-to-br from-amber-500/5 via-amber-500/[0.03] to-transparent border border-amber-400/30 p-5">
@@ -54,22 +66,56 @@ export default function TriggerPanel({ triggerModelId, triggerEvent, onModelChan
         </div>
         <div>
           <label className="block text-[11px] font-bold tracking-wider uppercase text-charcoal/50 mb-1.5">
-            {t('workflow.trigger_model')}
+            {isWebhook
+              ? (isAr ? 'نقطة الاستقبال' : 'Webhook endpoint')
+              : t('workflow.trigger_model')}
           </label>
-          <select
-            value={triggerModelId}
-            onChange={(e) => onModelChange(e.target.value)}
-            className="form-input text-sm font-bold"
-          >
-            <option value="">— {isAr ? 'اختر نموذج' : 'Select model'} —</option>
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>{isAr ? m.label_ar : m.label_en}</option>
-            ))}
-          </select>
+          {isWebhook ? (
+            <select
+              value={triggerWebhookSlugId ?? ''}
+              onChange={(e) => onWebhookSlugChange(e.target.value || null)}
+              className="form-input text-sm font-bold"
+            >
+              <option value="">— {isAr ? 'اختر نقطة' : 'Select endpoint'} —</option>
+              {webhookSlugs.map((s) => (
+                <option key={s.id} value={s.id} disabled={!s.is_active}>
+                  {s.name}{!s.is_active ? ` (${isAr ? 'معطّل' : 'disabled'})` : ''}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={triggerModelId}
+              onChange={(e) => onModelChange(e.target.value)}
+              className="form-input text-sm font-bold"
+            >
+              <option value="">— {isAr ? 'اختر نموذج' : 'Select model'} —</option>
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>{isAr ? m.label_ar : m.label_en}</option>
+              ))}
+            </select>
+          )}
         </div>
       </div>
 
-      {selectedModel && (
+      {isWebhook && webhookSlugs.length === 0 && (
+        <div className="mt-3 text-xs text-amber-800/80 bg-amber-100/40 border border-amber-300/40 rounded-lg px-3 py-2 leading-relaxed">
+          {isAr
+            ? 'لا توجد نقاط استقبال. أنشئ واحدة من الإعدادات → نقاط الخطافات.'
+            : 'No webhook endpoints defined. Create one at Settings → Webhooks.'}
+        </div>
+      )}
+
+      {isWebhook && selectedSlug && (
+        <div className="mt-3 text-sm text-charcoal/60 leading-relaxed">
+          <span className="text-charcoal/40">{isAr ? 'سيتم التشغيل عند استقبال طلب على ' : 'Will fire on POST to '}</span>
+          <code className="text-[11px] font-mono text-copper bg-copper/5 border border-copper/20 rounded px-1.5 py-0.5" dir="ltr">
+            /functions/v1/inbox/{selectedSlug.slug}
+          </code>
+        </div>
+      )}
+
+      {!isWebhook && selectedModel && (
         <div className="mt-3 text-sm text-charcoal/60 leading-relaxed">
           <span className="text-charcoal/40">{isAr ? 'سيتم التشغيل' : 'Will fire'} </span>
           <span className="font-bold text-amber-700">{events.find((e) => e.value === triggerEvent)?.label}</span>
