@@ -39,11 +39,21 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   // 1. Signature check ──────────────────────────────────────────────
+  // Haberchat's recommended pattern is "?secret=..." in the URL (their
+  // own UI hints at this). Some integrations use custom headers — we
+  // accept either so the admin can pick whichever their Haberchat plan
+  // supports. Constant-time comparison isn't critical here since the
+  // secret rotates out of band.
   const expected = process.env.HABERCHAT_WEBHOOK_SECRET;
   if (!expected) {
     return json({ error: 'HABERCHAT_WEBHOOK_SECRET not configured' }, 500);
   }
-  const sent = req.headers.get('x-webhook-secret');
+  const url = new URL(req.url);
+  const sent =
+    req.headers.get('x-webhook-secret') ??
+    url.searchParams.get('secret') ??
+    url.searchParams.get('token') ??
+    '';
   if (sent !== expected) {
     return json({ error: 'bad secret' }, 401);
   }
