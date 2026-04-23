@@ -1626,9 +1626,13 @@ function OutboundIvrConfig({
         </label>
         {phoneFields.length === 0 ? (
           <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
-            {isAr
-              ? 'النموذج المشغّل لا يحتوي على حقل هاتف. أضف حقل من نوع "هاتف" في المنشئ أولاً.'
-              : 'The trigger model has no phone field. Add a "Phone" field in the Builder first.'}
+            {triggerFields.length === 0
+              ? (isAr
+                  ? 'اختر النموذج المشغّل أولاً من لوحة المُشغّل أعلاه.'
+                  : 'Pick a trigger model first (in the trigger panel above).')
+              : (isAr
+                  ? 'النموذج المشغّل لا يحتوي على حقل هاتف. أضف حقل من نوع "هاتف" في المنشئ أولاً.'
+                  : 'The trigger model has no phone field. Add a "Phone" field in the Builder first.')}
           </p>
         ) : (
           <select
