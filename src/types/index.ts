@@ -1474,6 +1474,18 @@ export interface AppState {
    * at the action boundary so the UI doesn't silently no-op.
    */
   sendChatMessage: (chatWid: string, input: { body: string; quotedWid?: string }) => Promise<void>;
+  /**
+   * Subscribe to Supabase Realtime INSERT/UPDATE events on `chat_messages`
+   * for one conversation. Idempotent — calling twice for the same chatWid
+   * is a no-op. The webhook writes rows via service-role; Realtime pushes
+   * them to every open browser, and the store merges the incoming row
+   * into `chatMessages[chatWid]` (replacing pending placeholders when
+   * `reference` matches).
+   */
+  subscribeToChat: (chatWid: string) => void;
+  /** Unsubscribe from Realtime for a conversation. Safe to call even if
+   *  no subscription exists. Called by ChatDetailPage on unmount. */
+  unsubscribeFromChat: (chatWid: string) => void;
 
   // --- Presentations ---
   // Deck-template catalog + jobs fired from the app. Template rows are

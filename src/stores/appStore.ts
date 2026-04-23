@@ -194,6 +194,71 @@ async function supabaseLoad<T>(table: string): Promise<T[] | null> {
   }
 }
 
+// ─── Chats Realtime plumbing ────────────────────────────────────────
+// Per-chat Supabase Realtime channels live outside the Zustand state so
+// that non-serializable RealtimeChannel instances never leak into
+// localStorage or cause React re-renders. The map is keyed by chat wid.
+const chatRealtimeChannels = new Map<string, ReturnType<NonNullable<typeof supabase>['channel']>>();
+
+// Shape of the `chat_messages` table row (snake_case from Supabase REST).
+interface DbChatMessageRow {
+  id: string;
+  chat_wid: string;
+  conversation_record_id: string;
+  device_id: string;
+  flow: 'in' | 'out';
+  kind: string;
+  body: string | null;
+  from_phone: string | null;
+  to_phone: string | null;
+  ack: ChatMessage['ack'];
+  date: string;
+  media_file_id: string | null;
+  media_mime: string | null;
+  media_size: number | null;
+  media_caption: string | null;
+  reference: string | null;
+  quoted: ChatMessage['quoted'];
+}
+
+/** Merge one live `chat_messages` row into `chatMessages[chat_wid]`.
+ *  If the row's `reference` matches a pending optimistic placeholder, the
+ *  placeholder is replaced (keyed by client_id). Otherwise the row is
+ *  upserted by id. List stays sorted ascending by date. */
+function applyRealtimeRow(row: DbChatMessageRow): void {
+  const incoming: ChatMessage = {
+    id: row.id,
+    chat_wid: row.chat_wid,
+    flow: row.flow,
+    kind: row.kind,
+    body: row.body,
+    from_phone: row.from_phone,
+    to_phone: row.to_phone,
+    ack: row.ack,
+    date: row.date,
+    media_file_id: row.media_file_id,
+    media_mime: row.media_mime,
+    media_size: row.media_size,
+    media_caption: row.media_caption,
+    reference: row.reference,
+    quoted: row.quoted,
+  };
+  useAppStore.setState((s) => {
+    const existing = s.chatMessages[row.chat_wid] ?? [];
+    const byId = new Map<string, ChatMessage>();
+    for (const m of existing) {
+      // Match optimistic placeholder by reference OR client_id — whichever
+      // Haberchat chose to echo. Drop the placeholder and let the real
+      // row take its place below.
+      if (m.pending && (m.reference === row.reference || m.client_id === row.reference)) continue;
+      byId.set(m.id, m);
+    }
+    byId.set(incoming.id, incoming);
+    const merged = [...byId.values()].sort((a, b) => a.date.localeCompare(b.date));
+    return { chatMessages: { ...s.chatMessages, [row.chat_wid]: merged } };
+  });
+}
+
 // --- Store ---
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -2078,6 +2143,34 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().addToast(msg, 'error');
       throw err;
     }
+  },
+
+  subscribeToChat: (chatWid: string) => {
+    if (!supabase || !chatWid) return;
+    const existing = chatRealtimeChannels.get(chatWid);
+    if (existing) return; // Idempotent — already subscribed.
+
+    const channel = supabase
+      .channel(`chat_messages:${chatWid}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'chat_messages', filter: `chat_wid=eq.${chatWid}` },
+        (payload) => {
+          const row = payload.new as DbChatMessageRow | null;
+          if (!row || !row.id) return;
+          applyRealtimeRow(row);
+        },
+      )
+      .subscribe();
+
+    chatRealtimeChannels.set(chatWid, channel);
+  },
+
+  unsubscribeFromChat: (chatWid: string) => {
+    const channel = chatRealtimeChannels.get(chatWid);
+    if (!channel || !supabase) return;
+    void supabase.removeChannel(channel);
+    chatRealtimeChannels.delete(chatWid);
   },
 
   createMarketingOperation: async (input) => {

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -25,6 +25,18 @@ export default function ChatDetailPage() {
     if (!chatsModel || !recordId) return null;
     return (records[chatsModel.id] ?? []).find((r) => r.id === recordId) ?? null;
   }, [chatsModel, records, recordId]);
+
+  const chatWid = (record?.data as Record<string, unknown> | undefined)?.wid as string | undefined ?? null;
+  const subscribeToChat = useAppStore((s) => s.subscribeToChat);
+  const unsubscribeFromChat = useAppStore((s) => s.unsubscribeFromChat);
+
+  // Subscribe to Supabase Realtime on mount so the webhook → DB → UI path
+  // is live while this page is open. Cleanup on unmount removes the channel.
+  useEffect(() => {
+    if (!chatWid) return;
+    subscribeToChat(chatWid);
+    return () => unsubscribeFromChat(chatWid);
+  }, [chatWid, subscribeToChat, unsubscribeFromChat]);
 
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
 
