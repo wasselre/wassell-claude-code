@@ -327,8 +327,8 @@ export default function RecordListPage() {
         </div>
       </div>
 
-      {/* Advanced (faceted) filters — only in table mode */}
-      {viewMode === 'table' && (
+      {/* Advanced (faceted) filters — shown in table + maps modes */}
+      {viewMode !== 'cards' && (
         <AdvancedFilterPanel
           model={model}
           state={adhocFilters}
