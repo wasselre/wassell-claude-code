@@ -12,7 +12,7 @@ import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage } from '@/lib/haberchat/client';
-import { mergeChatIntoRecord, resolveClientLink } from '@/lib/haberchat/normalize';
+import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import type {
   AppState,
   AppModel,
@@ -292,7 +292,8 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
     if (!data.client_link) {
       const clientsModel = s.models.find((m) => m.name === 'clients');
       const clients = clientsModel ? (s.records[clientsModel.id] ?? []) : [];
-      const link = resolveClientLink(data.phone as string | null | undefined, clients);
+      const slugs = phoneFieldSlugs(clientsModel);
+      const link = resolveClientLink(data.phone as string | null | undefined, clients, slugs);
       if (link) clientLinkPatch = { client_link: link };
     }
 
@@ -2068,10 +2069,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     // client and we respect that.
     const clientsModel = state.models.find((m) => m.name === 'clients');
     const clientRecords = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
+    const clientPhoneSlugs = phoneFieldSlugs(clientsModel);
     const merged = [...byId.values()].map((rec) => {
       const data = rec.data as Record<string, unknown>;
       if (data.client_link) return rec;
-      const link = resolveClientLink(data.phone as string | null | undefined, clientRecords);
+      const link = resolveClientLink(data.phone as string | null | undefined, clientRecords, clientPhoneSlugs);
       if (!link) return rec;
       return { ...rec, data: { ...data, client_link: link } };
     });

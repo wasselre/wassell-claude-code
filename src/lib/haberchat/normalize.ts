@@ -5,7 +5,7 @@
  */
 
 import { v5 as uuidv5 } from 'uuid';
-import type { AppRecord, HaberchatChat } from '@/types';
+import type { AppRecord, AppModel, HaberchatChat } from '@/types';
 
 /** Strip everything but digits — lets "+966 55 444 6109", "0555 444 6109",
  *  and "966554446109" all match. Returns '' for null/empty. */
@@ -15,24 +15,49 @@ export function normalizePhoneDigits(phone: string | null | undefined): string {
 }
 
 /**
+ * Walk a model's schema and return every field slug whose type is 'phone'.
+ * Used so the chat-to-client link resolver doesn't hardcode `data.phone`
+ * — the Wassell clients model ships with `phone_number`, and admins may
+ * rename/add phone fields via the Builder.
+ */
+export function phoneFieldSlugs(model: AppModel | null | undefined): string[] {
+  if (!model) return [];
+  const slugs: string[] = [];
+  for (const section of model.schema.sections) {
+    for (const field of section.fields) {
+      if (field.type === 'phone') slugs.push(field.name);
+    }
+  }
+  return slugs;
+}
+
+/**
  * Find a clients record whose phone matches the given phone (digits-only
  * compare so format differences don't block the match). Returns the
- * record id or null. Short phones (< 6 digits) never match — too ambiguous.
+ * record id or null. Short phones (< 6 digits) never match — too
+ * ambiguous. Which fields on each client record are considered "phone"
+ * is derived from the clients model's schema (every `type: 'phone'`
+ * field slug).
  */
 export function resolveClientLink(
   phone: string | null | undefined,
   clients: AppRecord[],
+  phoneSlugs: string[],
 ): string | null {
   const target = normalizePhoneDigits(phone);
   if (target.length < 6) return null;
+  if (phoneSlugs.length === 0) return null;
   for (const c of clients) {
     const d = c.data as Record<string, unknown>;
-    const p = normalizePhoneDigits(d.phone as string | null | undefined);
-    if (!p) continue;
-    // Match on exact digit-string OR last 9 digits — covers cases where
-    // one side has the country code and the other doesn't.
-    if (p === target || p.endsWith(target) || target.endsWith(p)) {
-      if (Math.min(p.length, target.length) >= 6) return c.id;
+    for (const slug of phoneSlugs) {
+      const p = normalizePhoneDigits(d[slug] as string | null | undefined);
+      if (!p || p.length < 6) continue;
+      // Match on exact digit-string OR either side being a suffix of
+      // the other — covers the case where one side has a country code
+      // and the other doesn't ("966555…" vs local "0555…").
+      if (p === target || p.endsWith(target) || target.endsWith(p)) {
+        return c.id;
+      }
     }
   }
   return null;
