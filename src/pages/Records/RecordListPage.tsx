@@ -27,15 +27,23 @@ import {
 import { useModelPermissions } from '@/hooks/usePermission';
 import type { AppRecord, ModelView } from '@/types';
 
+// Stable empty array reference. Returned when a model has no records yet
+// (the key is simply missing from the store's `records` map — not initialized
+// to `[]` by refreshSystemModels for freshly seeded models). Using a module-
+// scoped constant keeps `modelRecords`, `filteredRecords`, and
+// `orderedFilteredRecords` referentially stable across renders, which
+// prevents the setRecordNavContext effect below from looping.
+const EMPTY_RECORDS: AppRecord[] = [];
+
 export default function RecordListPage() {
   const { modelName } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { models, records, views, language, currentUserId, deleteRecord, addToast, setRecordNavContext } = useAppStore();
+  const { models, records, views, language, currentUserId, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
   const isAr = language === 'ar';
 
   const model = models.find((m) => m.name === modelName);
-  const modelRecords = model ? (records[model.id] ?? []) : [];
+  const modelRecords = model ? (records[model.id] ?? EMPTY_RECORDS) : EMPTY_RECORDS;
   const perms = useModelPermissions(model?.id ?? '');
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -130,6 +138,15 @@ export default function RecordListPage() {
   useEffect(() => {
     setSelectedIds(new Set());
   }, [model?.id]);
+
+  // Chats-specific: on every mount of /model/chats, pull fresh conversations
+  // from Haberchat (via our proxy) into the records store. Idempotent — the
+  // store merges new rows and preserves manual fields. Silent failure keeps
+  // the list usable offline; the Settings page surfaces token/device errors.
+  useEffect(() => {
+    if (model?.name !== 'chats') return;
+    void loadChatsFromHaberchat();
+  }, [model?.id, model?.name, loadChatsFromHaberchat]);
 
   // Filter pipeline: view conditions → ad-hoc faceted filters → text search.
   const filteredRecords = useMemo(() => {

@@ -22,6 +22,7 @@ import RolesPage from '@/pages/Settings/RolesPage';
 import UsersPage from '@/pages/Settings/UsersPage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import CompetitorsPage from '@/pages/Settings/CompetitorsPage';
+import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
 import MarketingListPage from '@/pages/Marketing/MarketingListPage';
 import OperationDetailPage from '@/pages/Marketing/OperationDetailPage';
 import ReelEditor from '@/pages/Marketing/ReelEditor';
@@ -122,6 +123,7 @@ export default function App() {
           <Route path="/settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
           <Route path="/settings/competitors" element={<RequireAdmin><CompetitorsPage /></RequireAdmin>} />
+          <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />
         </Route>
       </Routes>
       <ToastContainer />

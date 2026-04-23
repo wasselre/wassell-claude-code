@@ -5,7 +5,7 @@ import { useIsAdmin } from '@/hooks/usePermission';
 import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
-  Settings, ScrollText, ListOrdered,
+  Settings, ScrollText, ListOrdered, MessageCircle,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -118,6 +118,17 @@ const CARDS: SettingsCard[] = [
     color: '#4F46E5',
     bg: '#4F46E514',
     route: '/settings/users',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'أرقام واتساب',
+    titleEn: 'WhatsApp Numbers',
+    descAr: 'الأرقام المتصلة عبر Haberchat والرقم الافتراضي للمحادثات',
+    descEn: 'Connected Haberchat numbers and default for new chats',
+    icon: MessageCircle,
+    color: '#25D366',
+    bg: '#25D36614',
+    route: '/settings/whatsapp-numbers',
     adminOnly: true,
   },
 ];

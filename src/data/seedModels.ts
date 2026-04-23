@@ -2162,6 +2162,214 @@ const projectsResearchModel: AppModel = {
 };
 
 // ============================================================
+// CHATS MODEL (WhatsApp conversations via Haberchat)
+// ============================================================
+// Conversations surface as ordinary records in the `records` table (keyed by
+// uuidv5(chat_wid)). Messages live in a separate `chat_messages` table and
+// are streamed via Supabase Realtime. See docs/prd/chats.md.
+// The detail route is overridden to render ChatDetailPage instead of the
+// generic RecordFormPage — see App.tsx dispatcher.
+
+export const chatsId = uuid();
+const chatsBaseSectionId = uuid();
+const chatsNameFieldId = uuid();
+const chatsPhoneFieldId = uuid();
+const chatsStatusFieldId = uuid();
+
+const chatsModel: AppModel = {
+  id: chatsId,
+  name: 'chats',
+  label_ar: 'المحادثات',
+  label_en: 'Chats',
+  icon: 'message-circle',
+  color: '#25D366',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: chatsNameFieldId,
+    subtitle_field_id: chatsPhoneFieldId,
+    badge_field_id: chatsStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: chatsBaseSectionId,
+        label_ar: 'معلومات المحادثة',
+        label_en: 'Conversation Info',
+        order: 0,
+        is_base: true,
+        color: '#25D366',
+        fields: [
+          {
+            id: uuid(),
+            name: 'wid',
+            label_ar: 'المعرف',
+            label_en: 'WID',
+            type: 'text',
+            required: false,
+            order: 0,
+            section_id: chatsBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: chatsNameFieldId,
+            name: 'name',
+            label_ar: 'الاسم',
+            label_en: 'Name',
+            type: 'text',
+            required: false,
+            order: 1,
+            section_id: chatsBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+          },
+          {
+            id: chatsPhoneFieldId,
+            name: 'phone',
+            label_ar: 'رقم الهاتف',
+            label_en: 'Phone',
+            type: 'phone',
+            required: false,
+            order: 2,
+            section_id: chatsBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            default_country_code: '+966',
+          },
+          {
+            id: uuid(),
+            name: 'kind',
+            label_ar: 'النوع',
+            label_en: 'Kind',
+            type: 'dropdown',
+            required: false,
+            order: 3,
+            section_id: chatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'محادثة', label_en: 'Direct', value: 'user' },
+              { id: uuid(), label_ar: 'مجموعة', label_en: 'Group', value: 'group' },
+              { id: uuid(), label_ar: 'قناة', label_en: 'Channel', value: 'channel' },
+            ],
+          },
+          {
+            id: uuid(),
+            name: 'device_id',
+            label_ar: 'الرقم المرتبط',
+            label_en: 'Linked Number',
+            type: 'text',
+            required: false,
+            order: 4,
+            section_id: chatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: chatsStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: false,
+            order: 5,
+            section_id: chatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'نشط', label_en: 'Active', value: 'active', color: '#22c55e' },
+              { id: uuid(), label_ar: 'تم الحل', label_en: 'Resolved', value: 'resolved', color: '#6b7280' },
+              { id: uuid(), label_ar: 'مؤرشف', label_en: 'Archived', value: 'archived', color: '#9ca3af' },
+            ],
+          },
+          {
+            id: uuid(),
+            name: 'owner',
+            label_ar: 'المسؤول',
+            label_en: 'Owner',
+            type: 'assignee',
+            required: false,
+            order: 6,
+            section_id: chatsBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'labels',
+            label_ar: 'التصنيفات',
+            label_en: 'Labels',
+            type: 'multiselect',
+            required: false,
+            order: 7,
+            section_id: chatsBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+            options: [],
+          },
+          {
+            id: uuid(),
+            name: 'unread_count',
+            label_ar: 'غير مقروءة',
+            label_en: 'Unread',
+            type: 'number',
+            required: false,
+            order: 8,
+            section_id: chatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'last_message_at',
+            label_ar: 'آخر رسالة',
+            label_en: 'Last Message',
+            type: 'datetime',
+            required: false,
+            order: 9,
+            section_id: chatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'last_message_preview',
+            label_ar: 'معاينة',
+            label_en: 'Preview',
+            type: 'text',
+            required: false,
+            order: 10,
+            section_id: chatsBaseSectionId,
+            width: 'full',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'client_link',
+            label_ar: 'العميل المرتبط',
+            label_en: 'Linked Client',
+            type: 'lookup',
+            required: false,
+            order: 11,
+            section_id: chatsBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            lookup_model_id: clientsId,
+            lookup_display_field: 'name',
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 export const SEED_MODELS: AppModel[] = [
@@ -2174,4 +2382,5 @@ export const SEED_MODELS: AppModel[] = [
   targetedProjectsModel,
   ourProjectsModel,
   projectsResearchModel,
+  chatsModel,
 ];

@@ -36,6 +36,7 @@ import {
   Shield,
   Settings,
   Megaphone,
+  MessageCircle,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
@@ -72,6 +73,7 @@ const ICON_MAP: Record<string, ComponentType<LucideProps>> = {
   heart: Heart,
   award: Award,
   shield: Shield,
+  'message-circle': MessageCircle,
 };
 
 export function getIconComponent(name: string): ComponentType<LucideProps> {

@@ -991,6 +991,61 @@ export interface Toast {
   type: ToastType;
 }
 
+// ─── Chats module (WhatsApp via Haberchat) ─────────────────────────────
+// Conversations surface as regular records in the `chats` system model
+// (id = uuidv5(chat_wid)). Messages live in the Supabase `chat_messages`
+// table and stream via Realtime. See docs/prd/chats.md.
+
+/**
+ * Local overlay for one Haberchat device (connected WhatsApp number).
+ * Mirrors the `whatsapp_numbers` table. Merged with the live Haberchat
+ * device list at render time so the admin sees both sides in one view.
+ */
+export interface WhatsAppNumber {
+  device_id: string;
+  phone: string;
+  friendly_name_ar: string | null;
+  friendly_name_en: string | null;
+  is_default: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The Haberchat device shape the browser sees (post-proxy normalization).
+ * Source of truth for phone/status is Haberchat; `WhatsAppNumber` is our
+ * local overlay for friendly names + default flag. Note the property
+ * names match api/_lib/haberchat.ts — keep in sync.
+ */
+export interface HaberchatDevice {
+  id: string;
+  phone: string;
+  name: string | null;
+  status?: 'online' | 'offline' | 'disconnected' | 'pending' | string;
+  plan?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Live Haberchat conversation (post-proxy normalization). Mirrors the
+ * HaberchatChat type in api/_lib/haberchat.ts — keep in sync.
+ */
+export interface HaberchatChat {
+  wid: string;
+  kind: 'user' | 'group' | 'channel' | string;
+  name: string | null;
+  phone: string | null;
+  status?: 'active' | 'resolved' | 'archived' | 'muted' | string;
+  ownerAgentId?: string | null;
+  labels?: string[];
+  unreadCount?: number;
+  lastMessageAt?: string | null;
+  lastMessagePreview?: string | null;
+  meta?: Record<string, unknown>;
+}
+
 // Store types
 
 export interface AppState {
@@ -1131,6 +1186,27 @@ export interface AppState {
   // Field templates
   saveFieldTemplate: (template: FieldTemplate) => void;
   deleteFieldTemplate: (templateId: string) => void;
+
+  // ── Chats module (WhatsApp via Haberchat) ───────────────────────────
+  /** Connected WhatsApp numbers; empty until loadWhatsAppNumbers() runs. */
+  waDevices: WhatsAppNumber[];
+  /** Live Haberchat-side device state, fetched via /api/haberchat/devices.
+   *  Not persisted — refreshed on demand by the Settings page. */
+  waDevicesLive: HaberchatDevice[];
+  /**
+   * Fetch the live Haberchat device list via the proxy AND the local
+   * `whatsapp_numbers` overlay from Supabase; update both state slices.
+   * Admins call this on mount of /settings/whatsapp-numbers and after edits.
+   */
+  loadWhatsAppNumbers: () => Promise<void>;
+  /** Upsert one local overlay row. Used to rename, set default, activate/hide. */
+  saveWhatsAppNumber: (entry: WhatsAppNumber) => Promise<void>;
+  /**
+   * Fetch every active device's conversation list from Haberchat (via the
+   * proxy) and upsert each chat as a record on the `chats` system model.
+   * Idempotent — safe to call on every Chats list page mount.
+   */
+  loadChatsFromHaberchat: () => Promise<void>;
 
   // ── Marketing operations (reels + posts content pipeline) ──────────
   competitors: Competitor[];

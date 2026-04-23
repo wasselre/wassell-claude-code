@@ -302,12 +302,14 @@ CREATE POLICY "Authenticated full access" ON field_templates FOR ALL TO authenti
 CREATE POLICY "Public dashboard read" ON dashboards FOR SELECT TO anon USING (is_public = true);
 
 -- ============================================================
--- WHATSAPP AI AGENT (HaberChat webhook)
+-- WHATSAPP AI AGENT (HaberChat webhook) — DEPRECATED
 -- ============================================================
--- State for the Supabase Edge Function at supabase/functions/haberchat-webhook/.
--- The edge function uses the service-role key and bypasses RLS. RLS is still
--- enabled + an "authenticated full access" policy is added so the Wassel SPA
--- can surface a WhatsApp leads dashboard to logged-in staff.
+-- Scaffolded for a never-shipped autonomous AI replier (the supabase/functions/
+-- haberchat-webhook/ Edge Function directory does not exist in the repo).
+-- SUPERSEDED by the Chats module — see `chat_messages` / `whatsapp_numbers`
+-- below and docs/prd/chats.md. Do NOT write to `wa_conversations` / `wa_leads`
+-- / `wa_errors`. Left in place so any historical rows are not lost; a future
+-- migration can drop them once confirmed empty.
 
 CREATE TABLE IF NOT EXISTS wa_conversations (
   phone TEXT PRIMARY KEY,
@@ -365,6 +367,99 @@ DROP POLICY IF EXISTS "Authenticated full access" ON wa_errors;
 CREATE POLICY "Authenticated full access" ON wa_conversations FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON wa_leads         FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON wa_errors        FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ============================================================
+-- CHATS MODULE (WhatsApp via Haberchat)
+-- ============================================================
+-- Conversations surface as ordinary rows in `records` (model_id = chats model
+-- id, id = uuidv5(chat_wid)) so the existing list/card/table UIs work as-is.
+-- Messages live here in their own table with Realtime enabled so the detail
+-- page streams updates. `whatsapp_numbers` tracks which Haberchat devices
+-- (phone numbers) are connected and which is the default for new chats.
+-- See docs/prd/chats.md for the full spec.
+
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id                     TEXT PRIMARY KEY,                 -- Haberchat message wid
+  chat_wid               TEXT NOT NULL,                    -- conversation wid on Haberchat
+  conversation_record_id UUID NOT NULL,                    -- uuidv5(chat_wid); matches records.id
+  device_id              TEXT NOT NULL,                    -- Haberchat device id (24-hex)
+  flow                   TEXT NOT NULL CHECK (flow IN ('in', 'out')),
+  kind                   TEXT NOT NULL,                    -- text | image | video | audio | document | sticker | location | template | ...
+  body                   TEXT,                             -- text body or caption
+  from_phone             TEXT,
+  to_phone               TEXT,
+  ack                    TEXT,                             -- failed | pending | sent | delivered | read | played
+  date                   TIMESTAMPTZ NOT NULL,             -- message timestamp from Haberchat
+  media_file_id          TEXT,                             -- Haberchat file id; render via /api/haberchat/files/:id proxy
+  media_mime             TEXT,
+  media_size             INT,
+  media_caption          TEXT,
+  reference              TEXT,                             -- outbound idempotency key — match optimistic send to webhook ack
+  quoted                 JSONB,                            -- { wid, body, kind } for replies
+  meta                   JSONB NOT NULL DEFAULT '{}'::jsonb, -- room for buttons / list responses / template payloads
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_chat_messages_chat_date     ON chat_messages(chat_wid, date DESC);
+CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation  ON chat_messages(conversation_record_id);
+-- Partial index for the dashboard "in-flight deliveries" query — skips the
+-- overwhelmingly common 'read' state.
+CREATE INDEX IF NOT EXISTS idx_chat_messages_ack_inflight  ON chat_messages(ack, date)
+  WHERE ack IN ('pending', 'sent', 'delivered');
+
+-- Connected WhatsApp numbers (Haberchat devices). The row is a local overlay
+-- on top of what Haberchat already knows — friendly names + default flag are
+-- ours; the Haberchat device + phone are the authoritative reference. Admin
+-- manages via /settings/whatsapp-numbers.
+CREATE TABLE IF NOT EXISTS whatsapp_numbers (
+  device_id        TEXT PRIMARY KEY,                       -- Haberchat device id
+  phone            TEXT NOT NULL,                          -- E.164 display (e.g. +9665...)
+  friendly_name_ar TEXT,
+  friendly_name_en TEXT,
+  is_default       BOOLEAN NOT NULL DEFAULT false,
+  is_active        BOOLEAN NOT NULL DEFAULT true,          -- admin can hide a number without removing it from Haberchat
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- At most one default number at a time. Partial unique index means rows with
+-- is_default=false are unconstrained.
+CREATE UNIQUE INDEX IF NOT EXISTS one_default_whatsapp_number
+  ON whatsapp_numbers ((is_default)) WHERE is_default = true;
+
+-- updated_at triggers — reuse existing update_updated_at_column function
+DROP TRIGGER IF EXISTS set_updated_at_chat_messages ON chat_messages;
+CREATE TRIGGER set_updated_at_chat_messages BEFORE UPDATE ON chat_messages
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS set_updated_at_whatsapp_numbers ON whatsapp_numbers;
+CREATE TRIGGER set_updated_at_whatsapp_numbers BEFORE UPDATE ON whatsapp_numbers
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+ALTER TABLE chat_messages    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE whatsapp_numbers ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated full access" ON chat_messages;
+DROP POLICY IF EXISTS "Authenticated full access" ON whatsapp_numbers;
+
+CREATE POLICY "Authenticated full access" ON chat_messages    FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON whatsapp_numbers FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- Enable Realtime for chat_messages so the detail page streams new messages.
+-- `records` is intentionally NOT added to realtime here — that would impact
+-- every model in the app. Webhook handler bumps parent conversation records
+-- via normal writes; list-page updates come from on-mount refresh, not from
+-- a live stream.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_publication_tables
+    WHERE pubname = 'supabase_realtime' AND schemaname = 'public' AND tablename = 'chat_messages'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE chat_messages;
+  END IF;
+END $$;
 
 -- ============================================================
 -- MARKETING OPERATIONS (reels + posts content pipeline)

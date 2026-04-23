@@ -10,6 +10,8 @@ import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
+import { listDevices as listHaberchatDevices, listChats as listHaberchatChats } from '@/lib/haberchat/client';
+import { mergeChatIntoRecord } from '@/lib/haberchat/normalize';
 import type {
   AppState,
   AppModel,
@@ -33,6 +35,7 @@ import type {
   Reel,
   Post,
   MarketingNotification,
+  WhatsAppNumber,
 } from '@/types';
 
 // --- localStorage helpers ---
@@ -191,6 +194,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   profiles: [],
   roles: [],
   fieldTemplates: [],
+  waDevices: [],
+  waDevicesLive: [],
   competitors: [],
   marketingOperations: [],
   researchQuestions: [],
@@ -1500,6 +1505,113 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { competitors };
     });
     await supabaseDelete('competitors', competitorId);
+  },
+
+  // ── Chats module: WhatsApp numbers ────────────────────────────────
+  // `waDevices` is the local overlay (friendly names + default flag),
+  // `waDevicesLive` is the authoritative Haberchat-side state fetched
+  // through our proxy. The Settings page merges them at render time.
+  loadWhatsAppNumbers: async () => {
+    // Local overlay first — survives if Haberchat proxy is unreachable.
+    let overlay = await supabaseLoad<WhatsAppNumber>('whatsapp_numbers');
+    if (!overlay) overlay = loadLocal<WhatsAppNumber[]>('wassell_wa_numbers') ?? [];
+    saveLocal('wassell_wa_numbers', overlay);
+    set({ waDevices: overlay });
+
+    // Live list — tolerated to fail (admin still sees the overlay even
+    // if HABERCHAT_TOKEN is misconfigured). We re-throw after the overlay
+    // is in place so the calling page can render an error banner; the
+    // overlay update already happened so nothing is lost on partial failure.
+    const live = await listHaberchatDevices();
+    set({ waDevicesLive: live });
+  },
+
+  saveWhatsAppNumber: async (entry: WhatsAppNumber) => {
+    const next: WhatsAppNumber = {
+      ...entry,
+      updated_at: new Date().toISOString(),
+    };
+    set((s) => {
+      // If this row is being set as default, clear the flag on every other row.
+      const normalized = next.is_default
+        ? s.waDevices.map((d) => (d.device_id === next.device_id ? next : { ...d, is_default: false }))
+        : s.waDevices.some((d) => d.device_id === next.device_id)
+          ? s.waDevices.map((d) => (d.device_id === next.device_id ? next : d))
+          : [...s.waDevices, next];
+      saveLocal('wassell_wa_numbers', normalized);
+      return { waDevices: normalized };
+    });
+    // whatsapp_numbers.device_id is the PK, so supabase-js infers onConflict.
+    // The generic supabaseUpsert works even though `row.id` is undefined —
+    // the write still succeeds; it just isn't tracked in `pendingWrites`.
+    await supabaseUpsert('whatsapp_numbers', next as unknown as Record<string, unknown>);
+  },
+
+  loadChatsFromHaberchat: async () => {
+    const state = get();
+    const chatsModel = state.models.find((m) => m.name === 'chats');
+    if (!chatsModel) return;
+
+    // Figure out which devices to sync. Preferred: active rows in the local
+    // overlay. Fallback: every live device from Haberchat (if we never
+    // populated the overlay). This lets the first-ever Chats page visit
+    // work before the admin opens /settings/whatsapp-numbers.
+    let deviceIds: string[] = state.waDevices.filter((d) => d.is_active).map((d) => d.device_id);
+    if (deviceIds.length === 0) {
+      // Best-effort: fetch live device list once; if that fails too, bail
+      // quietly so the list page can still render its local view.
+      try {
+        const live = await listHaberchatDevices();
+        set({ waDevicesLive: live });
+        deviceIds = live.map((d) => d.id);
+      } catch (err) {
+        console.warn('[loadChatsFromHaberchat] could not resolve any device:', err);
+        return;
+      }
+    }
+    if (deviceIds.length === 0) return;
+
+    // Fetch each device's chats in parallel. A single failed device
+    // shouldn't block the others — collect failures and log them.
+    const results = await Promise.allSettled(deviceIds.map((id) => listHaberchatChats(id).then((chats) => ({ id, chats }))));
+
+    const existing = state.records[chatsModel.id] ?? [];
+    const byId = new Map<string, AppRecord>(existing.map((r) => [r.id, r]));
+    let changed = false;
+
+    for (const r of results) {
+      if (r.status === 'rejected') {
+        console.warn('[loadChatsFromHaberchat] device sync failed:', r.reason);
+        continue;
+      }
+      const { id: deviceId, chats } = r.value;
+      for (const chat of chats) {
+        const prev = byId.get(mergeChatIntoRecord(null, chat, deviceId, chatsModel.id).id) ?? null;
+        const next = mergeChatIntoRecord(prev, chat, deviceId, chatsModel.id);
+        byId.set(next.id, next);
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+
+    const merged = [...byId.values()];
+    set((s) => {
+      const nextRecords = { ...s.records, [chatsModel.id]: merged };
+      // Persist the flat records array to localStorage so a refresh keeps
+      // the list even if Haberchat is offline on next load.
+      const allRecords = Object.values(nextRecords).flat();
+      saveLocal('wassell_records', allRecords);
+      return { records: nextRecords };
+    });
+
+    // Background Supabase upsert of every chat record. Done per-row so one
+    // row's failure doesn't abort the rest. No FK parent gating needed —
+    // the chats model itself is already in Supabase.
+    for (const rec of merged) {
+      // Intentionally not awaited — fire-and-forget batched via microtask.
+      void supabaseUpsert('records', rec as unknown as Record<string, unknown>);
+    }
   },
 
   createMarketingOperation: async (input) => {
