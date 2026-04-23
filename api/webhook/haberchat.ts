@@ -181,11 +181,7 @@ async function handleAck(event: WebhookEvent) {
 
 async function handleChatUpdate(event: WebhookEvent, deviceId: string) {
   const chat = (event.data?.chat ?? event.data ?? event) as Record<string, unknown>;
-  const chatWid =
-    (chat.wid as string | undefined) ??
-    (chat._id as string | undefined) ??
-    (chat.chatWid as string | undefined) ??
-    '';
+  const chatWid = pickId(chat) ?? '';
   if (!chatWid) return;
 
   const patch: Record<string, unknown> = {};
@@ -315,13 +311,19 @@ function normalizeWebhookMessage(
     '';
   if (!id) return null;
 
+  // Haberchat nests the full chat object under `chat` / `data.chat`. Extract
+  // the wid whether it's a bare string or an object with {id|wid}. Same for
+  // the event envelope.
   const chatWid =
-    (raw.chatWid as string | undefined) ??
-    (raw.chat as string | undefined) ??
-    (raw.conversationId as string | undefined) ??
-    // Derive from the parties — on inbound, the sender IS the chat wid in
-    // 1-to-1 chats; on outbound, the recipient is.
-    (flow === 'in' ? (raw.from as string | undefined) : (raw.to as string | undefined)) ??
+    pickId(raw.chatWid) ??
+    pickId(raw.chat) ??
+    pickId((event as Record<string, unknown>).chat) ??
+    pickId(event.data?.chat) ??
+    pickId(raw.conversationId) ??
+    // Fall back to the parties — on inbound, the sender IS the chat wid in
+    // 1-to-1 chats; on outbound, the recipient is. These fields might also
+    // be objects with {id}/{wid} — pickId handles both shapes.
+    (flow === 'in' ? pickId(raw.from) : pickId(raw.to)) ??
     '';
   if (!chatWid) return null;
 
@@ -334,8 +336,8 @@ function normalizeWebhookMessage(
 
   const body = (raw.body as string | null | undefined) ?? (raw.text as string | null | undefined) ?? (raw.message as string | null | undefined) ?? (raw.caption as string | null | undefined) ?? null;
 
-  const fromPhone = (raw.from as string | null | undefined) ?? (raw.sender as string | null | undefined) ?? null;
-  const toPhone = (raw.to as string | null | undefined) ?? (raw.recipient as string | null | undefined) ?? null;
+  const fromPhone = pickPhone(raw.from) ?? pickPhone(raw.sender) ?? null;
+  const toPhone = pickPhone(raw.to) ?? pickPhone(raw.recipient) ?? null;
 
   const date = coerceIsoDate(raw.date ?? raw.timestamp ?? raw.createdAt ?? null) ?? new Date().toISOString();
 
@@ -391,6 +393,50 @@ function ackFrom(raw: Record<string, unknown>): string | null {
   const v = String(raw.ack ?? raw.status ?? '').toLowerCase();
   if (!v) return null;
   if (v in ACK_ORDER) return v === 'played' ? 'read' : v;
+  return null;
+}
+
+/**
+ * Extract a WhatsApp id/wid from either a bare string or an object with
+ * `id` / `wid` / `chatWid`. Haberchat's webhooks frequently nest a whole
+ * chat / contact / message object where a simple string would be simplest
+ * — we defensively accept both. Returns null for unusable shapes.
+ */
+function pickId(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value || null;
+  if (typeof value === 'object') {
+    const v = value as Record<string, unknown>;
+    const candidate = v.id ?? v.wid ?? v.widFull ?? v._id ?? v.chatWid;
+    if (typeof candidate === 'string' && candidate) return candidate;
+    // `chat.contact.userWid` is another spot where Haberchat stores the
+    // 1-to-1 chat wid — e.g. "966555...@c.us" derived from the contact.
+    const userWid = (v.userWid ?? (v.contact as Record<string, unknown> | undefined)?.userWid);
+    if (typeof userWid === 'string' && userWid) return userWid;
+  }
+  return null;
+}
+
+/**
+ * Same idea as pickId but for phone numbers. Accepts a bare string, or an
+ * object with { phone } / { contact: { phone } } / { number }.
+ */
+function pickPhone(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') return value || null;
+  if (typeof value === 'object') {
+    const v = value as Record<string, unknown>;
+    if (typeof v.phone === 'string' && v.phone) return v.phone;
+    if (typeof v.number === 'string' && v.number) return v.number;
+    const contact = v.contact as Record<string, unknown> | undefined;
+    if (contact && typeof contact.phone === 'string' && contact.phone) return contact.phone;
+    // Derive from a wid like "966555...@c.us" if nothing else matches.
+    const id = pickId(v);
+    if (id) {
+      const match = id.match(/^(\+?\d+)@c\.us$/);
+      if (match) return match[1].startsWith('+') ? match[1] : `+${match[1]}`;
+    }
+  }
   return null;
 }
 
