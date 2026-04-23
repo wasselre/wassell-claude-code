@@ -19,6 +19,7 @@ This folder contains the **living source of truth** for what every section of th
 | 9 | [data-storage.md](data-storage.md) | Supabase sync, offline localStorage fallback, JSONB schema |
 | 10 | [home-dashboard.md](home-dashboard.md) | Home landing page — overview stats and quick actions |
 | 11 | [workflow-logs.md](workflow-logs.md) | Workflow execution logs — detailed audit trail of every firing |
+| 12 | [presentations.md](presentations.md) | Deck generation from Claude Code templates — catalog, jobs, daemon |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 

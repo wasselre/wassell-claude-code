@@ -14,6 +14,7 @@ import {
   Target,
   Star,
   FileSearch,
+  FileText,
   Database,
   Globe,
   Folder,
@@ -34,6 +35,7 @@ import {
   Heart,
   Award,
   Shield,
+  Presentation,
   Settings,
   Megaphone,
   MessageCircle,
@@ -51,6 +53,8 @@ const ICON_MAP: Record<string, ComponentType<LucideProps>> = {
   target: Target,
   star: Star,
   'file-search': FileSearch,
+  'file-text': FileText,
+  presentation: Presentation,
   database: Database,
   globe: Globe,
   folder: Folder,
@@ -222,6 +226,16 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           >
             <Home size={20} />
             {!railCollapsed && <span>{t('nav.home')}</span>}
+          </NavLink>
+
+          {/* Presentations (catalog of decks fired from the app) */}
+          <NavLink
+            to="/presentations"
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            title={railCollapsed ? t('nav.presentations') : undefined}
+          >
+            <Presentation size={20} />
+            {!railCollapsed && <span>{t('nav.presentations')}</span>}
           </NavLink>
 
           {/* Divider label */}

@@ -783,6 +783,147 @@ export interface User {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// Presentations — decks built by Claude Code templates, fired from the app
+// ────────────────────────────────────────────────────────────────────
+// Each template is authored in Claude Code (skill + slash command +
+// manifest JSON on disk). A local daemon syncs the manifest into
+// `presentation_templates`. The app shows templates in a picker, and
+// firing one inserts a `presentation_jobs` row. The daemon polls jobs,
+// spawns `claude --print <command>`, parses a sentinel line, and writes
+// back the Drive URL. See `docs/prd/presentations.md`.
+
+/** Types a template input field can take. Kept small on purpose; widen
+ *  only when a template actually needs the new shape. */
+export type PresentationInputType = 'text' | 'textarea' | 'number' | 'date' | 'dropdown';
+
+/** How the input's default value is sourced at form render time.
+ *  - 'user': leave blank, user types it in.
+ *  - 'record_field': pre-fill from the bound record's field with slug `record_field`. */
+export type PresentationInputSource = 'user' | 'record_field';
+
+export interface PresentationInputDropdownOption {
+  value: string;
+  label_ar: string;
+  label_en: string;
+}
+
+export interface PresentationInput {
+  name: string;                                  // slug used in inputs payload
+  label_ar: string;
+  label_en: string;
+  type: PresentationInputType;
+  required: boolean;
+  source: PresentationInputSource;
+  record_field?: string;                         // field slug on the bound model; only when source === 'record_field'
+  default_value?: string | number;
+  placeholder_ar?: string;
+  placeholder_en?: string;
+  /** Only for type === 'dropdown'. */
+  options?: PresentationInputDropdownOption[];
+}
+
+export interface PresentationRecordBinding {
+  /** Model `name` slug (matches `AppModel.name`). */
+  model_slug: string;
+  /** When false, the picker can only be reached from a record of this model;
+   *  when true, the picker shows the template without requiring a record. */
+  optional: boolean;
+}
+
+export interface PresentationTemplate {
+  id: string;
+  slug: string;                                  // e.g. 'wassel'
+  label_ar: string;
+  label_en: string;
+  description_ar?: string;
+  description_en?: string;
+  /** Slash command the daemon runs, e.g. '/wassel'. */
+  command: string;
+  icon: string;                                  // Lucide icon name
+  input_schema: PresentationInput[];
+  record_binding: PresentationRecordBinding | null;
+  estimated_duration_seconds: number | null;
+  is_available: boolean;
+  manifest_path: string | null;                  // daemon-only; null on seeded rows
+  manifest_synced_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export type PresentationJobStatus =
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'canceled';
+
+/** Classified error codes. Unknown / unclassified go to 'unknown'. */
+export type PresentationErrorCode =
+  | 'chrome_session_expired'
+  | 'drive_upload_failed'
+  | 'claude_error'
+  | 'timeout'
+  | 'daemon_restarted'
+  | 'validation_failed'
+  | 'unknown';
+
+/** Shape of the sentinel JSON the daemon extracts from Claude's stdout. */
+export interface PresentationJobResult {
+  ok: boolean;
+  drive_folder_url?: string;
+  drive_deck_url?: string;
+  drive_sheet_url?: string;
+  local_paths?: Record<string, string>;
+  warnings?: string[];
+  research_stats?: {
+    filled: number;
+    total: number;
+    gaps: number;
+    conflicts: number;
+  };
+}
+
+export interface PresentationJob {
+  id: string;
+  template_id: string;
+  template_slug: string;
+  template_snapshot: PresentationTemplate;        // frozen at queue time
+  record_id: string | null;
+  record_model_id: string | null;
+  record_snapshot: Record<string, unknown> | null;
+  inputs: Record<string, unknown>;
+  client_dedup_key: string | null;
+  requested_by_user_id: string | null;
+  status: PresentationJobStatus;
+  progress_stage: string | null;
+  progress_message_ar: string | null;
+  progress_message_en: string | null;
+  claimed_by: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  result: PresentationJobResult | null;
+  drive_folder_url: string | null;
+  drive_deck_url: string | null;
+  error_code: PresentationErrorCode | null;
+  error_message: string | null;
+  error_detail: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Singleton daemon heartbeat row. `id` is always `'presentations'` in v1. */
+export interface DaemonStatus {
+  id: 'presentations';
+  last_heartbeat_at: string;
+  hostname: string | null;
+  pid: number | null;
+  version: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+}
+
+// ────────────────────────────────────────────────────────────────────
 // MARKETING OPERATIONS (reels + posts content pipeline)
 // ────────────────────────────────────────────────────────────────────
 // Replaces the old OMA Google Sheets system. Every "marketing operation"
@@ -1208,6 +1349,39 @@ export interface AppState {
    */
   loadChatsFromHaberchat: () => Promise<void>;
 
+  // --- Presentations ---
+  // Deck-template catalog + jobs fired from the app. Template rows are
+  // daemon-owned (synced from ~/.claude/ppt/templates/<slug>/template.json);
+  // the app only reads them. Jobs are inserted by the app and consumed by
+  // the daemon. See `docs/prd/presentations.md`.
+  presentationTemplates: PresentationTemplate[];
+  presentationJobs: PresentationJob[];
+  daemonStatus: DaemonStatus | null;
+  /**
+   * Insert a new job row with status='queued'. Computes a SHA-256
+   * `client_dedup_key` from (template_id + record_id + normalized inputs)
+   * — if a queued/running row with the same key already exists, returns
+   * that row instead of creating a duplicate. Freezes the template and
+   * (when present) the bound record at queue time so later edits to
+   * either don't mutate in-flight jobs.
+   */
+  queuePresentationJob: (input: {
+    templateId: string;
+    recordId?: string | null;
+    inputs: Record<string, unknown>;
+  }) => Promise<PresentationJob>;
+  /**
+   * Cancel a queued job. Running / completed / failed jobs can't be canceled
+   * from here (running cancellation would require killing a live Claude run,
+   * which leaves orphan Drive state — out of scope for v1).
+   */
+  cancelPresentationJob: (jobId: string) => void;
+  /**
+   * Create a fresh queued job with the same template + record + inputs as
+   * the given job. Used as "retry" for failed jobs.
+   */
+  retryPresentationJob: (jobId: string) => Promise<PresentationJob | null>;
+
   // ── Marketing operations (reels + posts content pipeline) ──────────
   competitors: Competitor[];
   marketingOperations: MarketingOperation[];
@@ -1242,6 +1416,17 @@ export interface AppState {
 
   /** Persist an edited post. */
   savePost: (post: Post) => Promise<void>;
+
+  /** Persist human edits to an operation's research_output (facts table). */
+  updateOperationResearch: (operationId: string, output: ResearchOutput) => Promise<void>;
+
+  /**
+   * Subscribe to Postgres changes on the 5 marketing tables so the UI
+   * reflects agent writes live. Idempotent — a second call is a no-op.
+   * Returns an unsubscribe function; callers don't need to use it
+   * (the single channel lives for the app's lifetime).
+   */
+  subscribeMarketingRealtime: () => () => void;
 
   /**
    * Flip an operation's status to `approved` once every reel/post underneath

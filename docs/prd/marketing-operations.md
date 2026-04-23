@@ -1,7 +1,7 @@
 # PRD: Marketing Operations (Reels + Posts)
 
 **Status:** Live
-**Last updated:** 2026-04-23
+**Last updated:** 2026-04-23 (editable research table, collapsible, PDF export)
 **Related PRDs:** `record-management.md` (project lookup), `data-storage.md` (Supabase), `workflow-automation.md` (future auto-publish hooks)
 
 ## What it is (in plain English)
@@ -56,6 +56,23 @@ agents consult on every run (no redeploy needed to update it).
 - **In-app bell for progress notifications.** Six notification types cover
   the pipeline: research waiting answers, content ready (reels/posts),
   operation ready for review, operation failed.
+- **Live UI — no refresh needed.** The app subscribes to Postgres changes
+  on the 5 marketing tables (`marketing_operations`, `research_questions`,
+  `reels`, `posts`, `marketing_notifications`). As the agents write, the
+  operation status, reel/post cards, question list, and bell all update
+  in place. Enabled via `ALTER PUBLICATION supabase_realtime ADD TABLE`
+  + `REPLICA IDENTITY FULL`; wired in `subscribeMarketingRealtime()` in
+  the store, called once at `initialize()`.
+- **Research table is human-editable.** Once research lands, the reviewer
+  can click **Edit** on the research section to adjust any fact (value,
+  source, source URL), add rows for facts the agent missed, or delete
+  spurious rows. Saving writes the whole `research_output` JSONB back to
+  `marketing_operations`. The section is also collapsible via a chevron.
+- **PDF export for reels and posts.** Each reel/post card has a selection
+  checkbox. The section header exposes **Export selected** (only the
+  ticked rows) and **Export all PDF** buttons. Output is an A4 portrait
+  RTL-styled Arabic PDF — one PDF per kind — produced client-side via
+  `html2canvas` + `jsPDF` with multi-page overflow handling.
 
 ## User flows
 
@@ -123,7 +140,9 @@ the v1 policy used on `models`/`records`/etc).
 | `supabase/functions/marketing-reels/index.ts` | Reels writer — UPDATEs pre-created rows |
 | `supabase/functions/marketing-posts/index.ts` | Posts writer — UPDATEs pre-created rows |
 | `src/types/index.ts` | Adds 6 marketing interfaces + dropdown option catalogs + `AppState` slices/actions |
-| `src/stores/appStore.ts` | Loads marketing state from Supabase + actions (`createMarketingOperation`, `answerResearchQuestion`, `saveReel`, `savePost`, `approveMarketingOperation`, `markNotificationRead`, competitor CRUD) |
+| `src/stores/appStore.ts` | Loads marketing state from Supabase + actions (`createMarketingOperation`, `answerResearchQuestion`, `saveReel`, `savePost`, `updateOperationResearch`, `approveMarketingOperation`, `markNotificationRead`, competitor CRUD) |
+| `src/lib/marketingPdf.ts` | Renders the reel/post templates into A4 PDF via html2canvas + jsPDF, multi-page aware |
+| `src/pages/Marketing/components/MarketingPdfTemplates.tsx` | RTL Arabic HTML templates for reels/posts PDFs (brand colors, Amiri font) |
 | `src/App.tsx` | Adds `/marketing*` + `/settings/competitors` routes |
 | `src/components/layout/Sidebar.tsx` | Adds Marketing section + `Megaphone` icon + link |
 | `src/components/layout/Header.tsx` | Inserts `NotificationBell` |

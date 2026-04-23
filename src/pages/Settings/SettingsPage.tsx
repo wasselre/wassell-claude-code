@@ -5,7 +5,7 @@ import { useIsAdmin } from '@/hooks/usePermission';
 import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
-  Settings, ScrollText, ListOrdered, MessageCircle,
+  Settings, ScrollText, ListOrdered, Megaphone, MessageCircle,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -118,6 +118,17 @@ const CARDS: SettingsCard[] = [
     color: '#4F46E5',
     bg: '#4F46E514',
     route: '/settings/users',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'مكتبة المنافسين',
+    titleEn: 'Competitors Library',
+    descAr: 'إدارة نصوص الريلز وأمثلة المنشورات التي تستخدمها وكلاء التسويق كمرجع للأسلوب',
+    descEn: "Manage reel scripts and post examples the marketing agents use as style references",
+    icon: Megaphone,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/settings/competitors',
     adminOnly: true,
   },
   {
