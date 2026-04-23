@@ -11,7 +11,7 @@ import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
-import { listDevices as listHaberchatDevices, listChats as listHaberchatChats } from '@/lib/haberchat/client';
+import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord } from '@/lib/haberchat/normalize';
 import type {
   AppState,
@@ -40,6 +40,7 @@ import type {
   Post,
   MarketingNotification,
   WhatsAppNumber,
+  ChatMessage,
 } from '@/types';
 
 // --- localStorage helpers ---
@@ -210,6 +211,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   fieldTemplates: [],
   waDevices: [],
   waDevicesLive: [],
+  chatMessages: {},
   presentationTemplates: [],
   presentationJobs: [],
   daemonStatus: null,
@@ -1920,6 +1922,57 @@ export const useAppStore = create<AppState>((set, get) => ({
       // Intentionally not awaited — fire-and-forget batched via microtask.
       void supabaseUpsert('records', rec as unknown as Record<string, unknown>);
     }
+  },
+
+  loadMessagesForChat: async (chatWid: string, opts: { before?: string; size?: number } = {}) => {
+    if (!chatWid) return { hasMore: false };
+    const state = get();
+    const chatsModel = state.models.find((m) => m.name === 'chats');
+    if (!chatsModel) return { hasMore: false };
+
+    // Find the parent conversation record so we know which device to query.
+    const record = (state.records[chatsModel.id] ?? []).find((r) => {
+      const wid = (r.data as Record<string, unknown>).wid;
+      return typeof wid === 'string' && wid === chatWid;
+    });
+    const recordDeviceId = record ? ((record.data as Record<string, unknown>).device_id as string | undefined) : undefined;
+
+    // Pick the device: record's own device_id first, else the overlay
+    // default, else the first active device. This lets us load messages
+    // even if the chats list hasn't been refreshed yet this session.
+    const fallbackDevice =
+      state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
+      state.waDevices.find((d) => d.is_active)?.device_id ??
+      state.waDevicesLive[0]?.id ??
+      null;
+    const deviceId = recordDeviceId ?? fallbackDevice;
+    if (!deviceId) {
+      console.warn('[loadMessagesForChat] no deviceId available — is a number set as default in Settings?');
+      return { hasMore: false };
+    }
+
+    let result: { messages: ChatMessage[]; hasMore: boolean };
+    try {
+      result = await listHaberchatMessages(deviceId, chatWid, opts);
+    } catch (err) {
+      console.warn('[loadMessagesForChat] proxy call failed:', err);
+      return { hasMore: false };
+    }
+
+    // Merge into the slice. When `before` is set, we're loading older
+    // history — prepend. Otherwise replace the window with the fresh latest.
+    // Either way, dedupe by message id and keep ascending by date.
+    set((s) => {
+      const existing = s.chatMessages[chatWid] ?? [];
+      const byId = new Map<string, ChatMessage>();
+      // Existing rows first so fresh-from-Haberchat values overwrite stale ones.
+      for (const m of existing) byId.set(m.id, m);
+      for (const m of result.messages) byId.set(m.id, m);
+      const merged = [...byId.values()].sort((a, b) => a.date.localeCompare(b.date));
+      return { chatMessages: { ...s.chatMessages, [chatWid]: merged } };
+    });
+
+    return { hasMore: result.hasMore };
   },
 
   createMarketingOperation: async (input) => {

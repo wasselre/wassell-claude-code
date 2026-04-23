@@ -73,6 +73,24 @@ export interface HaberchatChat {
   meta?: Record<string, unknown>;
 }
 
+export interface HaberchatMessage {
+  wid: string;                // message id
+  chatWid: string;            // parent conversation id
+  flow: 'in' | 'out';
+  kind: 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'location' | 'template' | 'contact' | 'poll' | 'interactive' | string;
+  body: string | null;
+  fromPhone: string | null;
+  toPhone: string | null;
+  ack: 'failed' | 'pending' | 'sent' | 'delivered' | 'read' | 'played' | null;
+  date: string;               // ISO
+  mediaFileId: string | null;
+  mediaMime: string | null;
+  mediaSize: number | null;
+  mediaCaption: string | null;
+  reference: string | null;
+  quoted: { wid: string; body: string | null; kind: string } | null;
+}
+
 // ─── Endpoints ────────────────────────────────────────────────────────
 
 /**
@@ -245,6 +263,207 @@ function normalizeChat(raw: HaberchatChatRaw): HaberchatChat | null {
     lastMessagePreview,
     meta: {},
   };
+}
+
+/**
+ * List messages in one chat. Haberchat's endpoint is
+ * `GET /chat/{deviceId}/chats/{chatWid}/sync?size=...&before=...`. Pass
+ * `before` to paginate backwards through history. Returns ascending by date
+ * so the UI can append without re-sorting.
+ */
+export async function listMessages(
+  deviceId: string,
+  chatWid: string,
+  opts: { size?: number; before?: string } = {},
+): Promise<HaberchatMessage[]> {
+  if (!deviceId) throw new HaberchatError(400, 'deviceId is required');
+  if (!chatWid) throw new HaberchatError(400, 'chatWid is required');
+  const size = opts.size ?? 50;
+  const params = new URLSearchParams({ size: String(size) });
+  if (opts.before) params.set('before', opts.before);
+  const path = `/chat/${encodeURIComponent(deviceId)}/chats/${encodeURIComponent(chatWid)}/sync?${params.toString()}`;
+  const raw = await request<HaberchatMessagesResponse>(path);
+  const items: HaberchatMessageRaw[] = Array.isArray(raw)
+    ? raw
+    : (raw.messages ?? raw.items ?? raw.data ?? []);
+  const normalized = items
+    .map((r) => normalizeMessage(r, chatWid))
+    .filter((m): m is HaberchatMessage => m !== null);
+  // Oldest first — Haberchat sometimes returns newest-first, which the UI
+  // would have to reverse anyway. Sort defensively.
+  normalized.sort((a, b) => a.date.localeCompare(b.date));
+  return normalized;
+}
+
+type HaberchatMessagesResponse =
+  | HaberchatMessageRaw[]
+  | { messages?: HaberchatMessageRaw[]; items?: HaberchatMessageRaw[]; data?: HaberchatMessageRaw[] };
+
+// Raw Haberchat message — field-name drift tolerated same as chats.
+interface HaberchatMessageRaw {
+  // id candidates
+  wid?: string;
+  widFull?: string;
+  _id?: string;
+  id?: string;
+  messageId?: string;
+  // parent conversation
+  chatWid?: string;
+  chat?: string;
+  conversationId?: string;
+  // direction
+  flow?: string;
+  direction?: string;
+  fromMe?: boolean;
+  // body
+  body?: string | null;
+  text?: string | null;
+  message?: string | null;
+  caption?: string | null;
+  // kind
+  kind?: string;
+  type?: string;
+  // parties
+  from?: string | null;
+  to?: string | null;
+  sender?: string | null;
+  recipient?: string | null;
+  // delivery
+  ack?: string | null;
+  status?: string | null;
+  // time
+  date?: string | number | null;
+  timestamp?: string | number | null;
+  createdAt?: string | null;
+  // media
+  media?: {
+    id?: string;
+    mime?: string;
+    mimetype?: string;
+    size?: number;
+    caption?: string | null;
+    filename?: string;
+  } | null;
+  mediaId?: string;
+  // reply
+  quoted?: {
+    wid?: string;
+    _id?: string;
+    id?: string;
+    body?: string | null;
+    text?: string | null;
+    kind?: string;
+    type?: string;
+  } | null;
+  quotedMessageId?: string | null;
+  // client correlation key
+  reference?: string | null;
+  [k: string]: unknown;
+}
+
+function normalizeMessage(raw: HaberchatMessageRaw, fallbackChatWid: string): HaberchatMessage | null {
+  const wid = raw.wid ?? raw.widFull ?? raw._id ?? raw.id ?? raw.messageId ?? '';
+  if (!wid) {
+    try {
+      console.warn('[haberchat.normalizeMessage] skipping message with no id; keys=', Object.keys(raw).join(','));
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  const rawFlow = (raw.flow ?? raw.direction ?? (raw.fromMe ? 'out' : 'in')).toString().toLowerCase();
+  const flow: 'in' | 'out' = rawFlow === 'out' || rawFlow === 'outbound' || rawFlow === 'sent' ? 'out' : 'in';
+
+  const rawKind = (raw.kind ?? raw.type ?? 'text').toString().toLowerCase();
+  // Normalize a few Haberchat synonyms to our canonical set.
+  const kind =
+    rawKind === 'chat' || rawKind === 'textmessage' ? 'text' :
+    rawKind === 'img' || rawKind === 'photo' ? 'image' :
+    rawKind === 'file' || rawKind === 'doc' ? 'document' :
+    rawKind;
+
+  const body = raw.body ?? raw.text ?? raw.message ?? raw.caption ?? null;
+
+  const fromPhone = raw.from ?? raw.sender ?? null;
+  const toPhone = raw.to ?? raw.recipient ?? null;
+
+  const rawAck = (raw.ack ?? raw.status ?? '').toString().toLowerCase();
+  const ack: HaberchatMessage['ack'] =
+    rawAck === 'failed' || rawAck === 'pending' || rawAck === 'sent' ||
+    rawAck === 'delivered' || rawAck === 'read' || rawAck === 'played'
+      ? rawAck
+      : rawAck === ''
+        ? null
+        : null;
+
+  // Date: prefer ISO strings, else coerce numeric (seconds or millis) to ISO.
+  const date = coerceIsoDate(raw.date ?? raw.timestamp ?? raw.createdAt ?? null);
+  if (!date) {
+    try {
+      console.warn('[haberchat.normalizeMessage] skipping message with no date; wid=', wid);
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  // Media
+  const mediaFileId = raw.media?.id ?? raw.mediaId ?? null;
+  const mediaMime = raw.media?.mime ?? raw.media?.mimetype ?? null;
+  const mediaSize = raw.media?.size ?? null;
+  const mediaCaption = raw.media?.caption ?? null;
+
+  // Quoted reply — Haberchat sometimes returns just the id, sometimes the
+  // full nested object. Build what we can.
+  let quoted: HaberchatMessage['quoted'] = null;
+  if (raw.quoted && typeof raw.quoted === 'object') {
+    const qw = raw.quoted.wid ?? raw.quoted._id ?? raw.quoted.id ?? '';
+    if (qw) {
+      quoted = {
+        wid: qw,
+        body: raw.quoted.body ?? raw.quoted.text ?? null,
+        kind: (raw.quoted.kind ?? raw.quoted.type ?? 'text').toString().toLowerCase(),
+      };
+    }
+  } else if (raw.quotedMessageId) {
+    quoted = { wid: raw.quotedMessageId, body: null, kind: 'text' };
+  }
+
+  const chatWid = raw.chatWid ?? raw.chat ?? raw.conversationId ?? fallbackChatWid;
+
+  return {
+    wid,
+    chatWid,
+    flow,
+    kind,
+    body,
+    fromPhone,
+    toPhone,
+    ack,
+    date,
+    mediaFileId,
+    mediaMime,
+    mediaSize,
+    mediaCaption,
+    reference: raw.reference ?? null,
+    quoted,
+  };
+}
+
+function coerceIsoDate(value: string | number | null | undefined): string | null {
+  if (value == null) return null;
+  if (typeof value === 'string') {
+    if (!value.trim()) return null;
+    // If it parses as a date, return its ISO form for consistency.
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Heuristic: values below 10^12 are seconds, else millis.
+    const ms = value < 1e12 ? value * 1000 : value;
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toISOString();
+  }
+  return null;
 }
 
 /**

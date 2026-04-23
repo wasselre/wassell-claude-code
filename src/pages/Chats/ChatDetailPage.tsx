@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import MessageThread from './components/MessageThread';
 
 /**
  * Placeholder detail page for a single conversation. Replaces the generic
@@ -123,22 +124,14 @@ export default function ChatDetailPage() {
         </div>
       </div>
 
-      {/* Placeholder for the message thread + composer. Steps 6 and 7 fill
-          this in. For now we just tell the user what's coming so the page
-          doesn't look empty. */}
-      <div className="card p-8 text-center">
-        <MessageCircle size={32} className="mx-auto mb-3 text-charcoal/20" />
-        <p className="text-sm text-charcoal/60 font-medium">
-          {isAr
-            ? 'واجهة الرسائل والإرسال قيد الإنشاء'
-            : 'Message thread and composer coming next'}
-        </p>
-        <p className="text-xs text-charcoal/40 mt-2 max-w-md mx-auto leading-relaxed">
-          {isAr
-            ? 'المحادثة مرتبطة بحساب Haberchat. الخطوة التالية: عرض سجل الرسائل والسماح بإرسال الرد من داخل التطبيق.'
-            : 'This conversation is wired to Haberchat. Next step: load message history and enable replies from inside the app.'}
-        </p>
-      </div>
+      {/* Message thread. Composer comes in Step 7. */}
+      <MessageThread chatWid={(data.wid as string) ?? ''} />
+
+      <p className="text-xs text-charcoal/40 mt-3 text-center">
+        {isAr
+          ? 'إرسال الرسائل قيد الإنشاء — الخطوة التالية.'
+          : 'Sending replies from the app comes next.'}
+      </p>
     </div>
   );
 }

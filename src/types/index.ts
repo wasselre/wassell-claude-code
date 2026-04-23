@@ -1187,6 +1187,35 @@ export interface HaberchatChat {
   meta?: Record<string, unknown>;
 }
 
+/**
+ * A single message in a chat. Post-proxy normalization — mirrors the
+ * HaberchatMessage type in api/_lib/haberchat.ts.
+ * `pending` + `client_id` are optimistic-only: set when the user presses
+ * Send and cleared when the webhook echoes the server-assigned wid.
+ */
+export interface ChatMessage {
+  id: string;                 // = Haberchat message wid
+  chat_wid: string;
+  flow: 'in' | 'out';
+  kind: 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'location' | 'template' | 'contact' | 'poll' | 'interactive' | string;
+  body: string | null;
+  from_phone: string | null;
+  to_phone: string | null;
+  ack: 'failed' | 'pending' | 'sent' | 'delivered' | 'read' | 'played' | null;
+  date: string;
+  media_file_id: string | null;
+  media_mime: string | null;
+  media_size: number | null;
+  media_caption: string | null;
+  reference: string | null;
+  quoted: { wid: string; body: string | null; kind: string } | null;
+  /** Optimistic placeholder — true between send click and webhook ack. */
+  pending?: boolean;
+  /** Local correlation key used to match the optimistic placeholder to
+   *  the real message when it arrives via webhook or ack. */
+  client_id?: string;
+}
+
 // Store types
 
 export interface AppState {
@@ -1348,6 +1377,19 @@ export interface AppState {
    * Idempotent — safe to call on every Chats list page mount.
    */
   loadChatsFromHaberchat: () => Promise<void>;
+  /**
+   * Per-chat message store. Keyed by chat WID, ascending by date. Fills on
+   * ChatDetailPage mount and (Step 8) on webhook → Realtime push.
+   */
+  chatMessages: Record<string, ChatMessage[]>;
+  /**
+   * Load the latest page of messages for one conversation from Haberchat
+   * (via the proxy). Writes to `chatMessages[chatWid]`. When `before` is
+   * passed, prepends older messages (for infinite scroll up). Returns
+   * `{ hasMore }` so the page knows whether to keep offering a "load older"
+   * action.
+   */
+  loadMessagesForChat: (chatWid: string, opts?: { before?: string; size?: number }) => Promise<{ hasMore: boolean }>;
 
   // --- Presentations ---
   // Deck-template catalog + jobs fired from the app. Template rows are
