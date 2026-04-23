@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { ArrowRight, Save, Trash2, FileDown, Presentation } from 'lucide-react';
+import { ArrowRight, Save, Trash2, FileDown, Presentation, ChevronLeft, ChevronRight } from 'lucide-react';
 import { generateResearchPDF } from '@/lib/pdfGenerator';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
@@ -31,6 +31,7 @@ export default function RecordFormPage() {
     views,
     currentUserId,
     presentationTemplates,
+    recordNavContext,
   } = useAppStore();
   const isAr = language === 'ar';
 
@@ -52,6 +53,9 @@ export default function RecordFormPage() {
   const [mirrorEdits, setMirrorEdits] = useState<Record<string, Record<string, unknown>>>({});
   const [showDelete, setShowDelete] = useState(false);
   const [deckPickerOpen, setDeckPickerOpen] = useState(false);
+  // Tracks whether the form has unsaved user edits. Used to guard prev/next
+  // navigation with a confirm prompt.
+  const [isDirty, setIsDirty] = useState(false);
 
   // Templates whose record_binding targets this model. When ≥1, we expose a
   // "Generate deck" button in the action bar (only for existing records —
@@ -66,6 +70,22 @@ export default function RecordFormPage() {
   // Keep the "Recent decks" panel and the button labels in sync with daemon
   // updates while the user sits on this page with a running job.
   usePresentationJobsPolling({ intervalMs: 3000, enabled: !isNew });
+
+  // Prev/next navigation uses the filtered+sorted list published by
+  // RecordListPage. If no nav context is available (e.g. deep-linked into a
+  // record), fall back to the full model's insertion order.
+  const orderedIds = useMemo(() => {
+    if (recordNavContext && model && recordNavContext.modelId === model.id) {
+      return recordNavContext.orderedIds;
+    }
+    return model ? (records[model.id] ?? []).map((r) => r.id) : [];
+  }, [recordNavContext, model, records]);
+  const currentIndex = recordId ? orderedIds.indexOf(recordId) : -1;
+  const prevId = currentIndex > 0 ? orderedIds[currentIndex - 1] ?? null : null;
+  const nextId =
+    currentIndex >= 0 && currentIndex < orderedIds.length - 1
+      ? orderedIds[currentIndex + 1] ?? null
+      : null;
 
   // Active research comparison view — per research record, persisted to localStorage.
   const researchViewKey = useMemo(
@@ -117,6 +137,7 @@ export default function RecordFormPage() {
     setFormData(existingRecord?.data ?? {});
     setMirrorEdits({});
     setShowDelete(false);
+    setIsDirty(false);
   }, [recordId, modelName, existingRecord?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const visibleSections = useMemo(() => {
@@ -146,6 +167,7 @@ export default function RecordFormPage() {
 
   const handleFieldChange = (fieldName: string, value: unknown) => {
     setFormData((prev) => ({ ...prev, [fieldName]: value }));
+    setIsDirty(true);
   };
 
   const handleMirrorFieldChange = (targetRecordId: string, fieldName: string, value: unknown) => {
@@ -153,6 +175,12 @@ export default function RecordFormPage() {
       ...prev,
       [targetRecordId]: { ...(prev[targetRecordId] ?? {}), [fieldName]: value },
     }));
+    setIsDirty(true);
+  };
+
+  const goToRecord = (targetId: string) => {
+    if (isDirty && !window.confirm(t('records.discard_changes_confirm'))) return;
+    navigate(`/model/${model!.name}/${targetId}`);
   };
 
   const handleSave = () => {
@@ -269,6 +297,7 @@ export default function RecordFormPage() {
     };
 
     saveRecord(record);
+    setIsDirty(false);
     addToast(t('toast.saved'), 'success');
     navigate(`/model/${model.name}`);
   };
@@ -306,6 +335,30 @@ export default function RecordFormPage() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          {!isNew && (
+            <>
+              <button
+                type="button"
+                onClick={() => prevId && goToRecord(prevId)}
+                disabled={!prevId}
+                title={t('records.previous_record')}
+                aria-label={t('records.previous_record')}
+                className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-charcoal/40"
+              >
+                <ChevronLeft size={20} className="rtl:rotate-180" />
+              </button>
+              <button
+                type="button"
+                onClick={() => nextId && goToRecord(nextId)}
+                disabled={!nextId}
+                title={t('records.next_record')}
+                aria-label={t('records.next_record')}
+                className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-charcoal/40"
+              >
+                <ChevronRight size={20} className="rtl:rotate-180" />
+              </button>
+            </>
+          )}
           {model.name === 'projects_research' && existingRecord && (
             <Button
               variant="secondary"

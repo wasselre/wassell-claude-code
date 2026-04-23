@@ -44,6 +44,13 @@ export function parseGoogleMapsUrl(input: string): LatLng | null {
     const p = toLatLng(qMatch[1], qMatch[2]);
     if (p) return p;
   }
+  // Path-based: /maps/search/LAT,+LNG/... or /maps/place/.../LAT,LNG/...
+  // Google URL-encodes the space between lat and lng as `+` or `%20`.
+  const pathMatch = str.match(/\/(?:search|place|dir)\/(-?\d+\.?\d*)[,\s+](?:\+|%20)?\s*(-?\d+\.?\d*)/);
+  if (pathMatch) {
+    const p = toLatLng(pathMatch[1], pathMatch[2]);
+    if (p) return p;
+  }
   const bareMatch = str.match(/^(-?\d+\.?\d*)\s*,\s*(-?\d+\.?\d*)$/);
   if (bareMatch) {
     const p = toLatLng(bareMatch[1], bareMatch[2]);
@@ -199,27 +206,25 @@ export async function resolveMapsUrlAsync(url: string): Promise<LatLng | null> {
   if (sync) return sync;
 
   const cache = loadUrlCache();
-  if (url in cache) return cache[url] ?? null;
+  const cached = cache[url];
+  // Only short-circuit on a SUCCESSFUL cached resolution. `null` means
+  // "previously failed" and we always retry (in case the edge function was
+  // down / mid-deploy when it was cached).
+  if (cached) return cached;
 
   try {
     const res = await fetch(`/api/resolve-maps-url?url=${encodeURIComponent(url)}`);
-    if (!res.ok) {
-      // Don't cache — could be a pending deploy (404), rate limit, 5xx, etc.
-      // Retry on next mount. Only cache when the server gives us a definitive
-      // 200 + null (URL resolved but no coords found).
-      return null;
-    }
+    if (!res.ok) return null; // don't cache — retry on next mount
     const data = (await res.json()) as { lat: number | null; lng: number | null };
-    const result: LatLng | null =
-      typeof data.lat === 'number' && typeof data.lng === 'number'
-        ? { lat: data.lat, lng: data.lng }
-        : null;
-    cache[url] = result;
-    saveUrlCache(cache);
-    return result;
+    if (typeof data.lat === 'number' && typeof data.lng === 'number') {
+      const result: LatLng = { lat: data.lat, lng: data.lng };
+      cache[url] = result;
+      saveUrlCache(cache);
+      return result;
+    }
+    return null; // 200 but server found no coords — don't cache, always retry
   } catch {
-    // Network failure — don't cache, so we'll retry on next mount.
-    return null;
+    return null; // network failure — don't cache, retry next mount
   }
 }
 
@@ -249,7 +254,9 @@ export function resolveLocationWithCache(
 /**
  * Pick the records whose location URL needs server-side resolution. Skips
  * records that already resolve via the sync path (URL parse or manual lat/lng)
- * and records whose URL has already been cached (hit or miss).
+ * and records whose URL is SUCCESSFULLY cached. A `null` cache entry (prior
+ * failed resolution) is NOT skipped — it retries so that previously-failed
+ * URLs auto-recover once the edge function comes online or the deploy lands.
  */
 export function collectUrlsNeedingResolution(
   records: AppRecord[],
@@ -269,7 +276,7 @@ export function collectUrlsNeedingResolution(
     const trimmed = raw.trim();
     if (!trimmed) continue;
     if (parseGoogleMapsUrl(trimmed)) continue; // sync parse works
-    if (trimmed in cache) continue; // already resolved (hit or miss)
+    if (cache[trimmed]) continue; // successfully cached — skip; null/missing retries
     out.add(trimmed);
   }
   return [...out];

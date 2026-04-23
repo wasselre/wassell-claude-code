@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { useEffect, type ReactNode } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
@@ -23,6 +23,11 @@ import ProfilesPage from '@/pages/Settings/ProfilesPage';
 import RolesPage from '@/pages/Settings/RolesPage';
 import UsersPage from '@/pages/Settings/UsersPage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
+import CompetitorsPage from '@/pages/Settings/CompetitorsPage';
+import MarketingListPage from '@/pages/Marketing/MarketingListPage';
+import OperationDetailPage from '@/pages/Marketing/OperationDetailPage';
+import ReelEditor from '@/pages/Marketing/ReelEditor';
+import PostEditor from '@/pages/Marketing/PostEditor';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
@@ -36,6 +41,18 @@ import ResetPassword from '@/pages/auth/ResetPassword';
  * wait and avoids a flash of "logged out" before the cached Supabase session
  * is restored from localStorage.
  */
+/**
+ * Remounts `RecordFormPage` whenever the `:recordId` URL param changes.
+ * The form stores heavy local state (formData, mirrorEdits, activeResearchViewId,
+ * isDirty) that must reset cleanly when prev/next navigation jumps to another
+ * record — keying on recordId gives us that remount for free, without
+ * scattering resets across useEffects.
+ */
+function RecordFormPageRoute() {
+  const { recordId } = useParams();
+  return <RecordFormPage key={recordId ?? 'new'} />;
+}
+
 function RequireAuth({ children }: { children: ReactNode }) {
   const authReady = useAppStore((s) => s.authReady);
   const authEmail = useAppStore((s) => s.authEmail);
@@ -85,7 +102,7 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/model/:modelName" element={<RecordListPage />} />
           <Route path="/model/:modelName/new" element={<RecordFormPage />} />
-          <Route path="/model/:modelName/:recordId" element={<RecordFormPage />} />
+          <Route path="/model/:modelName/:recordId" element={<RecordFormPageRoute />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/builder/:modelId" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/workflow" element={<RequireAdmin><WorkflowListPage /></RequireAdmin>} />
@@ -96,6 +113,10 @@ export default function App() {
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
           <Route path="/presentations" element={<PresentationsListPage />} />
           <Route path="/presentations/:jobId" element={<PresentationDetailPage />} />
+          <Route path="/marketing" element={<MarketingListPage />} />
+          <Route path="/marketing/:operationId" element={<OperationDetailPage />} />
+          <Route path="/marketing/:operationId/reels/:reelId" element={<ReelEditor />} />
+          <Route path="/marketing/:operationId/posts/:postId" element={<PostEditor />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/translations" element={<RequireAdmin><TranslationSettingsPage /></RequireAdmin>} />
           <Route path="/settings/profiles" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />
@@ -104,6 +125,7 @@ export default function App() {
           <Route path="/settings/roles/:roleId" element={<RequireAdmin><RolesPage /></RequireAdmin>} />
           <Route path="/settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
+          <Route path="/settings/competitors" element={<RequireAdmin><CompetitorsPage /></RequireAdmin>} />
         </Route>
       </Routes>
       <ToastContainer />
