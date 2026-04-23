@@ -33,8 +33,6 @@ import type {
   Reel,
   Post,
   MarketingNotification,
-  ReelsSettings,
-  PostsSettings,
 } from '@/types';
 
 // --- localStorage helpers ---
