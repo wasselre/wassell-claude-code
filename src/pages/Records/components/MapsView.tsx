@@ -61,88 +61,64 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   const selectedPin = resolved.find((r) => r.record.id === selectedId);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-      <div className="relative">
-        <GoogleMap
-          mapContainerStyle={mapContainerStyle}
-          center={center}
-          zoom={zoom}
-          options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: true }}
-        >
-          {resolved.map((p) => (
-            <Marker
-              key={p.record.id}
-              position={{ lat: p.lat, lng: p.lng }}
-              icon={buildColoredPinIcon(p.color) as google.maps.Icon | undefined}
-              onClick={() => {
-                if (cfg.click_action === 'navigate') onCardClick(p.record);
-                else setSelectedId(p.record.id);
-              }}
+    <div className="relative">
+      <GoogleMap
+        mapContainerStyle={mapContainerStyle}
+        center={center}
+        zoom={zoom}
+        options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: true }}
+      >
+        {resolved.map((p) => (
+          <Marker
+            key={p.record.id}
+            position={{ lat: p.lat, lng: p.lng }}
+            icon={buildColoredPinIcon(p.color) as google.maps.Icon | undefined}
+            onClick={() => {
+              if (cfg.click_action === 'navigate') onCardClick(p.record);
+              else setSelectedId(p.record.id);
+            }}
+          />
+        ))}
+        {cfg.click_action === 'popup' && selectedPin && (
+          <InfoWindow
+            position={{ lat: selectedPin.lat, lng: selectedPin.lng }}
+            onCloseClick={() => setSelectedId(null)}
+          >
+            <PopupContent
+              record={selectedPin.record}
+              cfg={cfg}
+              fields={allFields}
+              isAr={isAr}
+              openLabel={t('maps.open_record')}
+              onOpen={() => onCardClick(selectedPin.record)}
             />
-          ))}
-          {cfg.click_action === 'popup' && selectedPin && (
-            <InfoWindow
-              position={{ lat: selectedPin.lat, lng: selectedPin.lng }}
-              onCloseClick={() => setSelectedId(null)}
-            >
-              <PopupContent
-                record={selectedPin.record}
-                cfg={cfg}
-                fields={allFields}
-                isAr={isAr}
-                openLabel={t('maps.open_record')}
-                onOpen={() => onCardClick(selectedPin.record)}
-              />
-            </InfoWindow>
-          )}
-        </GoogleMap>
-        {resolved.length === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="bg-white/90 rounded-lg border border-sand/50 px-4 py-2 text-center">
-              <p className="text-sm font-bold text-charcoal/70">{t('maps.no_pins')}</p>
-              <p className="text-xs text-charcoal/50 mt-0.5">{t('maps.configure_in_builder')}</p>
-            </div>
-          </div>
+          </InfoWindow>
         )}
-      </div>
+      </GoogleMap>
 
-      <aside className="bg-cream/40 rounded-xl border border-sand/30 p-4 max-h-[calc(100vh-320px)] overflow-y-auto">
-        {resolving && (
-          <p className="text-xs text-copper mb-2 flex items-center gap-1">
-            <span className="inline-block w-2 h-2 rounded-full bg-copper animate-pulse" />
+      {/* Floating progress chip — top-start corner, shows while the resolver
+          is working through unresolved URLs. Hidden once all land. */}
+      {resolving && (
+        <div className="absolute top-3 start-3 bg-white/95 rounded-full border border-copper/40 px-3 py-1 shadow-sm flex items-center gap-2 pointer-events-none">
+          <span className="inline-block w-2 h-2 rounded-full bg-copper animate-pulse" />
+          <span className="text-xs font-bold text-copper">
             {t('maps.resolving', { count: resolvingCount })}
-          </p>
-        )}
-        <h3 className="text-sm font-bold text-charcoal mb-1">
-          {t('maps.unresolvable_records', { count: unresolved.length })}
-        </h3>
-        <p className="text-xs text-charcoal/50 mb-3">{t('maps.unresolvable_hint')}</p>
-        {unresolved.length === 0 ? (
-          <p className="text-xs text-charcoal/40">—</p>
-        ) : (
-          <ul className="space-y-1">
-            {unresolved.map((rec) => {
-              const labelField =
-                allFields.find((f) => f.id === cfg.pin_label_field_id) ??
-                allFields.find((f) => f.id === cfg.popup_title_field_id);
-              const label =
-                (labelField && String(rec.data[labelField.name] ?? '').trim()) ||
-                `#${rec.id.slice(0, 8)}`;
-              return (
-                <li key={rec.id}>
-                  <button
-                    type="button"
-                    onClick={() => onCardClick(rec)}
-                    className="w-full text-start text-sm text-charcoal hover:text-copper hover:bg-white/70 rounded-md px-2 py-1 transition-colors"
-                  >
-                    {label}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </aside>
+          </span>
+        </div>
+      )}
+
+      {resolved.length === 0 && !resolving && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="bg-white/90 rounded-lg border border-sand/50 px-4 py-2 text-center">
+            <p className="text-sm font-bold text-charcoal/70">{t('maps.no_pins')}</p>
+            <p className="text-xs text-charcoal/50 mt-0.5">
+              {unresolved.length > 0
+                ? t('maps.unresolvable_records', { count: unresolved.length })
+                : t('maps.configure_in_builder')}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
