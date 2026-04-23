@@ -1515,6 +1515,19 @@ export interface AppState {
    */
   sendChatMessage: (chatWid: string, input: { body: string; quotedWid?: string }) => Promise<void>;
   /**
+   * Start a brand-new WhatsApp conversation to a phone number we've never
+   * messaged before. Creates a local chats record (optimistic — so the
+   * user can navigate to it immediately), then POSTs the first message
+   * through the proxy. The webhook later fires `message:out:new` and the
+   * Realtime subscription reconciles the real wid/ack. Returns the local
+   * record id so the caller can navigate to the detail page.
+   */
+  startNewChat: (input: {
+    phone: string;
+    body: string;
+    deviceId?: string;
+  }) => Promise<{ recordId: string; chatWid: string }>;
+  /**
    * Subscribe to Supabase Realtime INSERT/UPDATE events on `chat_messages`
    * for one conversation. Idempotent — calling twice for the same chatWid
    * is a no-op. The webhook writes rows via service-role; Realtime pushes

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageCircle, RefreshCw, Search } from 'lucide-react';
+import { MessageCircle, RefreshCw, Search, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import StartChatModal from './StartChatModal';
 import type { AppRecord } from '@/types';
 
 /**
@@ -20,6 +21,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
 
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
+  const [showStartModal, setShowStartModal] = useState(false);
 
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
   const chatRecords = chatsModel ? (records[chatsModel.id] ?? []) : [];
@@ -80,6 +82,8 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const showDeviceBadges = waDevices.filter((d) => d.is_active).length > 1;
 
   return (
+    <>
+    {showStartModal && <StartChatModal onClose={() => setShowStartModal(false)} />}
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-3 border-b border-sand/20 shrink-0">
@@ -92,6 +96,14 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
             </span>
           )}
         </h2>
+        <button
+          onClick={() => setShowStartModal(true)}
+          className="p-1.5 rounded-lg text-charcoal/50 hover:text-copper hover:bg-cream transition-colors"
+          aria-label={isAr ? 'محادثة جديدة' : 'New chat'}
+          title={isAr ? 'محادثة جديدة' : 'New chat'}
+        >
+          <Plus size={16} />
+        </button>
         <button
           onClick={handleRefresh}
           disabled={refreshing}
@@ -143,6 +155,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         ))}
       </div>
     </div>
+    </>
   );
 }
 

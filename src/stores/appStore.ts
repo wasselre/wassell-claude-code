@@ -2310,6 +2310,151 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  startNewChat: async (input: { phone: string; body: string; deviceId?: string }) => {
+    const state = get();
+    const chatsModel = state.models.find((m) => m.name === 'chats');
+    if (!chatsModel) throw new Error('chats model not found');
+
+    const body = input.body.trim();
+    if (!body) throw new Error(state.language === 'ar' ? 'الرسالة مطلوبة' : 'Message body is required');
+
+    // Normalize phone. Accept "+966...", "966...", "0555...". Strip
+    // everything but digits, then ensure we have a leading country
+    // code. For Saudi we default to 966 if the number starts with 05.
+    const digits = input.phone.replace(/\D/g, '');
+    if (digits.length < 7) throw new Error(state.language === 'ar' ? 'رقم هاتف غير صالح' : 'Invalid phone number');
+    const withCountry = digits.startsWith('0') ? `966${digits.slice(1)}` : digits;
+    const e164 = `+${withCountry}`;
+    const chatWid = `${withCountry}@c.us`;
+
+    // Pick the send-from device — explicit, else default, else first active.
+    const deviceId =
+      input.deviceId ??
+      state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
+      state.waDevices.find((d) => d.is_active)?.device_id ??
+      state.waDevicesLive[0]?.id ??
+      '';
+    if (!deviceId) {
+      throw new Error(state.language === 'ar'
+        ? 'لم يتم تحديد رقم واتساب للإرسال — أضف رقم افتراضي في الإعدادات'
+        : 'No WhatsApp device configured — set a default in Settings');
+    }
+
+    // Create / upsert the local chat record. Use mergeChatIntoRecord with
+    // a synthesized HaberchatChat so we share the same shape + normalizer
+    // with loadChatsFromHaberchat. If a record already exists for this
+    // phone (the user is "starting new" to someone they already chatted
+    // with), we reuse it instead of duplicating.
+    const existing = (state.records[chatsModel.id] ?? []).find((r) => {
+      return ((r.data as Record<string, unknown>).wid as string | undefined) === chatWid;
+    });
+    const synth = {
+      wid: chatWid,
+      kind: 'user' as const,
+      name: existing ? ((existing.data as Record<string, unknown>).name as string | null) ?? null : null,
+      phone: e164,
+      status: 'active',
+      ownerAgentId: null,
+      labels: [],
+      unreadCount: 0,
+      lastMessageAt: new Date().toISOString(),
+      lastMessagePreview: body.slice(0, 120),
+      meta: {},
+    };
+    let record = mergeChatIntoRecord(existing ?? null, synth, deviceId, chatsModel.id);
+    // Opportunistic client link for brand-new chats.
+    if (!(record.data as Record<string, unknown>).client_link) {
+      const clientsModel = state.models.find((m) => m.name === 'clients');
+      const clients = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
+      const slugs = phoneFieldSlugs(clientsModel);
+      const link = resolveClientLink(e164, clients, slugs);
+      if (link) record = { ...record, data: { ...record.data, client_link: link } };
+    }
+
+    set((s) => {
+      const list = s.records[chatsModel.id] ?? [];
+      const idx = list.findIndex((r) => r.id === record.id);
+      const nextList = idx >= 0
+        ? list.map((r) => (r.id === record.id ? record : r))
+        : [...list, record];
+      const nextRecords = { ...s.records, [chatsModel.id]: nextList };
+      saveLocal('wassell_records', Object.values(nextRecords).flat());
+      return { records: nextRecords };
+    });
+    void supabaseUpsert('records', record as unknown as Record<string, unknown>, {
+      table: 'models',
+      id: record.model_id,
+    });
+
+    // Now send the first message — use the same optimistic+proxy flow as
+    // sendChatMessage. We inline it (not delegate) because sendChatMessage
+    // expects the record to already exist in state and resolves the
+    // device from there; we'd end up with a redundant lookup.
+    const clientId = uuid();
+    const placeholder: ChatMessage = {
+      id: `pending:${clientId}`,
+      chat_wid: chatWid,
+      flow: 'out',
+      kind: 'text',
+      body,
+      from_phone: null,
+      to_phone: e164,
+      ack: 'pending',
+      date: new Date().toISOString(),
+      media_file_id: null,
+      media_mime: null,
+      media_size: null,
+      media_caption: null,
+      reference: clientId,
+      quoted: null,
+      pending: true,
+      client_id: clientId,
+    };
+    set((s) => ({
+      chatMessages: {
+        ...s.chatMessages,
+        [chatWid]: [...(s.chatMessages[chatWid] ?? []), placeholder],
+      },
+    }));
+
+    try {
+      const result = await sendHaberchatMessage({
+        deviceId,
+        phone: e164,
+        body,
+        reference: clientId,
+      });
+      set((s) => {
+        const existing = s.chatMessages[chatWid] ?? [];
+        const next = existing.map((m) =>
+          m.client_id === clientId
+            ? {
+                ...m,
+                id: result.wid,
+                pending: false,
+                ack: 'sent' as const,
+                reference: result.reference ?? m.reference,
+              }
+            : m,
+        );
+        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+      });
+    } catch (err) {
+      set((s) => {
+        const existing = s.chatMessages[chatWid] ?? [];
+        const next = existing.map((m) =>
+          m.client_id === clientId ? { ...m, pending: false, ack: 'failed' as const } : m,
+        );
+        return { chatMessages: { ...s.chatMessages, [chatWid]: next } };
+      });
+      const msg = err instanceof Error ? err.message : String(err);
+      get().addToast(msg, 'error');
+      throw err;
+    }
+
+    return { recordId: record.id, chatWid };
+  },
+
   subscribeToChat: (chatWid: string) => {
     if (!supabase || !chatWid) return;
     const existing = chatRealtimeChannels.get(chatWid);
