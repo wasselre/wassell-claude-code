@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
@@ -31,6 +31,19 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const status = (data?.status as string | null | undefined) ?? 'active';
   const lastMessageAt = (data?.last_message_at as string | null | undefined) ?? null;
   const labels = Array.isArray(data?.labels) ? (data?.labels as string[]) : [];
+  const clientLinkId = (data?.client_link as string | null | undefined) ?? null;
+
+  // Look up the linked client (if any) so we can render its name without
+  // a round-trip. `records.clients` is already in the store.
+  const linkedClient = useAppStore((s) => {
+    if (!clientLinkId) return null;
+    const clientsModel = s.models.find((m) => m.name === 'clients');
+    if (!clientsModel) return null;
+    return (s.records[clientsModel.id] ?? []).find((r) => r.id === clientLinkId) ?? null;
+  });
+  const linkedClientName = linkedClient
+    ? ((linkedClient.data as Record<string, unknown>).name as string | null) ?? null
+    : null;
 
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
 
@@ -100,6 +113,32 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                 {labels.slice(0, 3).join(' · ')}
                 {labels.length > 3 && ` +${labels.length - 3}`}
               </span>
+            )}
+          </div>
+          {/* Client link row — either navigates to the matched client or
+              offers to create a new one from this phone. */}
+          <div className="flex items-center gap-2 mt-1.5 text-xs">
+            {clientLinkId ? (
+              <button
+                onClick={() => navigate(`/model/clients/${clientLinkId}`)}
+                className="inline-flex items-center gap-1.5 text-copper hover:text-terracotta font-medium"
+                title={isAr ? 'فتح بطاقة العميل' : 'Open client record'}
+              >
+                <User size={12} />
+                <span className="truncate max-w-[220px]">
+                  {isAr ? 'عميل مرتبط: ' : 'Linked client: '}
+                  {linkedClientName ?? (isAr ? 'عرض البطاقة' : 'open record')}
+                </span>
+              </button>
+            ) : (
+              <button
+                onClick={() => navigate('/model/clients/new')}
+                className="inline-flex items-center gap-1.5 text-charcoal/60 hover:text-copper"
+                title={isAr ? 'إنشاء عميل جديد من هذا الرقم' : 'Create a client from this phone'}
+              >
+                <UserPlus size={12} />
+                {isAr ? 'لا يوجد عميل مرتبط — إنشاء' : 'No linked client — create'}
+              </button>
             )}
           </div>
         </div>

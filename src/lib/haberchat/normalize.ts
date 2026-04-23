@@ -7,6 +7,37 @@
 import { v5 as uuidv5 } from 'uuid';
 import type { AppRecord, HaberchatChat } from '@/types';
 
+/** Strip everything but digits — lets "+966 55 444 6109", "0555 444 6109",
+ *  and "966554446109" all match. Returns '' for null/empty. */
+export function normalizePhoneDigits(phone: string | null | undefined): string {
+  if (!phone) return '';
+  return String(phone).replace(/\D/g, '');
+}
+
+/**
+ * Find a clients record whose phone matches the given phone (digits-only
+ * compare so format differences don't block the match). Returns the
+ * record id or null. Short phones (< 6 digits) never match — too ambiguous.
+ */
+export function resolveClientLink(
+  phone: string | null | undefined,
+  clients: AppRecord[],
+): string | null {
+  const target = normalizePhoneDigits(phone);
+  if (target.length < 6) return null;
+  for (const c of clients) {
+    const d = c.data as Record<string, unknown>;
+    const p = normalizePhoneDigits(d.phone as string | null | undefined);
+    if (!p) continue;
+    // Match on exact digit-string OR last 9 digits — covers cases where
+    // one side has the country code and the other doesn't.
+    if (p === target || p.endsWith(target) || target.endsWith(p)) {
+      if (Math.min(p.length, target.length) >= 6) return c.id;
+    }
+  }
+  return null;
+}
+
 /**
  * Fixed namespace for the chats module. Do NOT change — records already
  * in production were keyed with this namespace and renaming it would

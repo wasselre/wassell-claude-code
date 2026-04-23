@@ -12,7 +12,7 @@ import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage } from '@/lib/haberchat/client';
-import { mergeChatIntoRecord } from '@/lib/haberchat/normalize';
+import { mergeChatIntoRecord, resolveClientLink } from '@/lib/haberchat/normalize';
 import type {
   AppState,
   AppModel,
@@ -286,12 +286,23 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
     const curUnread = typeof data.unread_count === 'number' ? data.unread_count : 0;
     const isNewer = !curAt || row.date > curAt;
     const nextUnread = row.flow === 'in' && !wasKnown ? curUnread + 1 : curUnread;
-    if (!isNewer && nextUnread === curUnread) return s;
+
+    // Opportunistic client link — only if the chat isn't already linked.
+    let clientLinkPatch: { client_link: string } | null = null;
+    if (!data.client_link) {
+      const clientsModel = s.models.find((m) => m.name === 'clients');
+      const clients = clientsModel ? (s.records[clientsModel.id] ?? []) : [];
+      const link = resolveClientLink(data.phone as string | null | undefined, clients);
+      if (link) clientLinkPatch = { client_link: link };
+    }
+
+    if (!isNewer && nextUnread === curUnread && !clientLinkPatch) return s;
     const nextData = {
       ...data,
       last_message_at: isNewer ? row.date : curAt,
       last_message_preview: isNewer ? (row.body ? row.body.slice(0, 120) : curPreview) : curPreview,
       unread_count: nextUnread,
+      ...(clientLinkPatch ?? {}),
     };
     const nextList = [...list];
     nextList[idx] = { ...rec, data: nextData, updated_at: new Date().toISOString() };
@@ -2037,7 +2048,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     if (!changed) return;
 
-    const merged = [...byId.values()];
+    // Resolve client_link for any unlinked chats. Matches clients records
+    // by digits-only phone compare so format differences ("+966...",
+    // "0...", "966...") don't block the match. Never overwrites an
+    // existing link — an admin may have manually linked to a different
+    // client and we respect that.
+    const clientsModel = state.models.find((m) => m.name === 'clients');
+    const clientRecords = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
+    const merged = [...byId.values()].map((rec) => {
+      const data = rec.data as Record<string, unknown>;
+      if (data.client_link) return rec;
+      const link = resolveClientLink(data.phone as string | null | undefined, clientRecords);
+      if (!link) return rec;
+      return { ...rec, data: { ...data, client_link: link } };
+    });
+
     set((s) => {
       const nextRecords = { ...s.records, [chatsModel.id]: merged };
       // Persist the flat records array to localStorage so a refresh keeps
