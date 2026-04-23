@@ -9,6 +9,7 @@ const resources = {
       'nav.builder': 'منشئ النماذج',
       'nav.workflows': 'سير العمل',
       'nav.dashboards': 'لوحات المعلومات',
+      'nav.presentations': 'العروض التقديمية',
       'nav.new_model': '+ نموذج جديد',
       'nav.builder_tools': 'أدوات البناء',
 
@@ -366,6 +367,8 @@ const resources = {
       'records.search_placeholder': 'بحث في السجلات...',
       'records.currency_sar': 'ر.س',
       'records.generate_pdf': 'تصدير PDF',
+      'records.generate_deck': 'إنشاء عرض',
+      'records.generate_deck_one': 'إنشاء {{name}}',
       'records.select_all': 'تحديد الكل',
       'records.deselect_all': 'إلغاء تحديد الكل',
       'records.selected_count': '{{count}} محدد',
@@ -505,6 +508,13 @@ const resources = {
       'dashboard.no_dashboards': 'لا توجد لوحات معلومات بعد',
       'dashboard.create_first': 'أنشئ أول لوحة',
 
+      // Presentations
+      'presentations.title': 'العروض التقديمية',
+      'presentations.new': '+ عرض جديد',
+      'presentations.empty_title': 'لا توجد عروض بعد',
+      'presentations.empty_hint': 'أنشئ أول عرض من قالب جاهز',
+      'presentations.pick_template': 'اختر قالب العرض',
+
       // System model names
       'models.clients': 'العملاء',
       'models.followups': 'المتابعات',
@@ -523,6 +533,7 @@ const resources = {
       'nav.builder': 'Model Builder',
       'nav.workflows': 'Workflows',
       'nav.dashboards': 'Dashboards',
+      'nav.presentations': 'Presentations',
       'nav.new_model': '+ New Model',
       'nav.builder_tools': 'Builder Tools',
 
@@ -893,6 +904,8 @@ const resources = {
       'records.search_placeholder': 'Search records...',
       'records.currency_sar': 'SAR',
       'records.generate_pdf': 'Generate PDF',
+      'records.generate_deck': 'Generate Deck',
+      'records.generate_deck_one': 'Generate {{name}}',
       'records.select_all': 'Select all',
       'records.deselect_all': 'Deselect all',
       'records.selected_count': '{{count}} selected',
@@ -1031,6 +1044,13 @@ const resources = {
       'dashboard.not_available': 'This dashboard is not available',
       'dashboard.no_dashboards': 'No dashboards yet',
       'dashboard.create_first': 'Create your first dashboard',
+
+      // Presentations
+      'presentations.title': 'Presentations',
+      'presentations.new': '+ New Presentation',
+      'presentations.empty_title': 'No presentations yet',
+      'presentations.empty_hint': 'Generate your first deck from a template',
+      'presentations.pick_template': 'Pick a template',
 
       // System model names
       'models.clients': 'Clients',

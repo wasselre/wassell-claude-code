@@ -4,21 +4,34 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { ArrowRight, Save, Trash2, FileDown } from 'lucide-react';
+import { ArrowRight, Save, Trash2, FileDown, Presentation } from 'lucide-react';
 import { generateResearchPDF } from '@/lib/pdfGenerator';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
+import RecordDecksPanel from './components/RecordDecksPanel';
+import TemplatePickerModal from '@/pages/Presentations/components/TemplatePickerModal';
 import { usePermission } from '@/hooks/usePermission';
+import { usePresentationJobsPolling } from '@/pages/Presentations/hooks/usePresentationJobsPolling';
 import type { ModelView } from '@/types';
 
 export default function RecordFormPage() {
   const { modelName, recordId } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { models, records, language, saveRecord, deleteRecord, addToast, views, currentUserId } = useAppStore();
+  const {
+    models,
+    records,
+    language,
+    saveRecord,
+    deleteRecord,
+    addToast,
+    views,
+    currentUserId,
+    presentationTemplates,
+  } = useAppStore();
   const isAr = language === 'ar';
 
   const model = models.find((m) => m.name === modelName);
@@ -38,6 +51,21 @@ export default function RecordFormPage() {
   // Keyed by target record id → field-name → new value.
   const [mirrorEdits, setMirrorEdits] = useState<Record<string, Record<string, unknown>>>({});
   const [showDelete, setShowDelete] = useState(false);
+  const [deckPickerOpen, setDeckPickerOpen] = useState(false);
+
+  // Templates whose record_binding targets this model. When ≥1, we expose a
+  // "Generate deck" button in the action bar (only for existing records —
+  // a brand-new unsaved record has no id to pass as the job's record_id).
+  const matchingTemplates = useMemo(() => {
+    if (!model) return [];
+    return presentationTemplates.filter(
+      (tpl) => tpl.is_available && tpl.record_binding?.model_slug === model.name,
+    );
+  }, [model, presentationTemplates]);
+
+  // Keep the "Recent decks" panel and the button labels in sync with daemon
+  // updates while the user sits on this page with a running job.
+  usePresentationJobsPolling({ intervalMs: 3000, enabled: !isNew });
 
   // Active research comparison view — per research record, persisted to localStorage.
   const researchViewKey = useMemo(
@@ -287,6 +315,26 @@ export default function RecordFormPage() {
               {t('records.generate_pdf')}
             </Button>
           )}
+          {existingRecord && matchingTemplates.length > 0 && (
+            <Button
+              variant="secondary"
+              onClick={() => setDeckPickerOpen(true)}
+              title={
+                matchingTemplates.length === 1
+                  ? isAr
+                    ? matchingTemplates[0]!.label_ar
+                    : matchingTemplates[0]!.label_en
+                  : undefined
+              }
+            >
+              <Presentation size={16} />
+              {matchingTemplates.length === 1
+                ? t('records.generate_deck_one', {
+                    name: isAr ? matchingTemplates[0]!.label_ar : matchingTemplates[0]!.label_en,
+                  })
+                : t('records.generate_deck')}
+            </Button>
+          )}
           {!isNew && canDelete && (
             <Button variant="danger" onClick={() => setShowDelete(true)}>
               <Trash2 size={16} />
@@ -318,6 +366,24 @@ export default function RecordFormPage() {
           />
         ))}
       </div>
+
+      {/* Recent decks generated for this record */}
+      {existingRecord && (
+        <div className="mt-6">
+          <RecordDecksPanel recordId={existingRecord.id} />
+        </div>
+      )}
+
+      {/* Deck generator */}
+      {existingRecord && model && (
+        <TemplatePickerModal
+          open={deckPickerOpen}
+          onClose={() => setDeckPickerOpen(false)}
+          lockedRecordId={existingRecord.id}
+          filterByModelSlug={model.name}
+          onJobQueued={(jobId) => navigate(`/presentations/${jobId}`)}
+        />
+      )}
 
       {/* Delete modal */}
       <Modal

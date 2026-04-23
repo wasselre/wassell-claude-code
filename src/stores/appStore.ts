@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase';
 import { getSession, getSessionEmail, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
+import { SEED_PRESENTATION_TEMPLATES } from '@/data/seedPresentationTemplates';
 import { executeWorkflows } from '@/lib/workflowEngine';
 import { assignAutoIds } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
@@ -27,6 +28,9 @@ import type {
   FieldTemplate,
   ModelPermission,
   StoreMutationResult,
+  PresentationTemplate,
+  PresentationJob,
+  DaemonStatus,
 } from '@/types';
 
 // --- localStorage helpers ---
@@ -46,6 +50,16 @@ function saveLocal<T>(key: string, data: T): void {
   } catch {
     // localStorage full or unavailable — silently ignore
   }
+}
+
+/** Browser-side SHA-256 → lowercase hex. Used for presentation-job dedup keys
+ *  (hash of template_id + record_id + inputs) to block duplicate queues. */
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -185,6 +199,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   profiles: [],
   roles: [],
   fieldTemplates: [],
+  presentationTemplates: [],
+  presentationJobs: [],
+  daemonStatus: null,
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
   authEmail: null,
   authReady: false,
@@ -460,6 +477,56 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!fieldTemplates) fieldTemplates = loadLocal<FieldTemplate[]>('wassell_field_templates') ?? [];
     saveLocal('wassell_field_templates', fieldTemplates);
 
+    // --- Presentation templates (Phase 1: seed fallback) ---
+    // Once the daemon (Phase 2) starts syncing manifests, Supabase becomes the
+    // canonical source. Until then, fall through to localStorage, then to the
+    // bundled seed (so the catalog is never empty on a fresh install).
+    const supabasePresTemplates = await supabaseLoad<PresentationTemplate>('presentation_templates');
+    let presentationTemplates: PresentationTemplate[];
+    if (supabasePresTemplates && supabasePresTemplates.length > 0) {
+      presentationTemplates = supabasePresTemplates;
+    } else {
+      const localPresTemplates = loadLocal<PresentationTemplate[]>('wassell_presentation_templates');
+      presentationTemplates =
+        localPresTemplates && localPresTemplates.length > 0
+          ? localPresTemplates
+          : SEED_PRESENTATION_TEMPLATES;
+    }
+    saveLocal('wassell_presentation_templates', presentationTemplates);
+    // Backfill seed rows to Supabase so the daemon has a real id to sync against.
+    // No FK dependents on this table.
+    if (supabasePresTemplates !== null) {
+      const existingSlugs = new Set(supabasePresTemplates.map((t) => t.slug));
+      for (const tpl of presentationTemplates) {
+        if (!existingSlugs.has(tpl.slug)) {
+          supabaseUpsert('presentation_templates', tpl as unknown as Record<string, unknown>);
+        }
+      }
+    }
+
+    // --- Presentation jobs ---
+    // User-created; no seed. Local mirror for offline.
+    let presentationJobs = await supabaseLoad<PresentationJob>('presentation_jobs');
+    if (!presentationJobs) presentationJobs = loadLocal<PresentationJob[]>('wassell_presentation_jobs') ?? [];
+    saveLocal('wassell_presentation_jobs', presentationJobs);
+
+    // --- Daemon status (singleton heartbeat) ---
+    // Phase 1: no daemon runs, so the row is always absent. The app reads it
+    // to show the "daemon offline" banner. Only loads when Supabase is reachable.
+    let daemonStatus: DaemonStatus | null = null;
+    if (supabase) {
+      try {
+        const { data } = await supabase
+          .from('daemon_status')
+          .select('*')
+          .eq('id', 'presentations')
+          .maybeSingle();
+        if (data) daemonStatus = data as DaemonStatus;
+      } catch {
+        // Same fail-open pattern as `supabaseLoad` — banner just shows offline.
+      }
+    }
+
     // ────────────────────────────────────────────────────────────────────
     // Resolve the current user based on auth state.
     //
@@ -646,6 +713,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       roles,
       users,
       fieldTemplates,
+      presentationTemplates,
+      presentationJobs,
+      daemonStatus,
       currentUserId,
       initialized: true,
     });
@@ -1360,6 +1430,123 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_field_templates', fieldTemplates);
       supabaseDelete('field_templates', templateId);
       return { fieldTemplates };
+    });
+  },
+
+  // --- Presentations ---
+  queuePresentationJob: async ({ templateId, recordId, inputs }) => {
+    const s = get();
+    const template = s.presentationTemplates.find((t) => t.id === templateId);
+    if (!template) {
+      throw new Error(`Presentation template not found: ${templateId}`);
+    }
+    const resolvedRecordId = recordId ?? null;
+    let recordSnapshot: Record<string, unknown> | null = null;
+    let recordModelId: string | null = null;
+    if (resolvedRecordId) {
+      for (const [modelId, list] of Object.entries(s.records)) {
+        const found = list.find((r) => r.id === resolvedRecordId);
+        if (found) {
+          recordSnapshot = { ...found.data };
+          recordModelId = modelId;
+          break;
+        }
+      }
+    }
+
+    // Dedup key: SHA-256 of (template_id + record_id + normalized inputs).
+    // If a queued/running job with the same key exists, return it instead of
+    // creating a duplicate.
+    const normalizedInputs = JSON.stringify(inputs, Object.keys(inputs).sort());
+    const dedupPayload = `${templateId}|${resolvedRecordId ?? ''}|${normalizedInputs}`;
+    const dedupKey = await sha256Hex(dedupPayload);
+    const existing = s.presentationJobs.find(
+      (j) =>
+        j.template_id === templateId &&
+        j.client_dedup_key === dedupKey &&
+        (j.status === 'queued' || j.status === 'running'),
+    );
+    if (existing) return existing;
+
+    const nowIso = new Date().toISOString();
+    const job: PresentationJob = {
+      id: uuid(),
+      template_id: templateId,
+      template_slug: template.slug,
+      template_snapshot: template,
+      record_id: resolvedRecordId,
+      record_model_id: recordModelId,
+      record_snapshot: recordSnapshot,
+      inputs,
+      client_dedup_key: dedupKey,
+      requested_by_user_id: s.currentUserId,
+      status: 'queued',
+      progress_stage: null,
+      progress_message_ar: null,
+      progress_message_en: null,
+      claimed_by: null,
+      started_at: null,
+      finished_at: null,
+      duration_ms: null,
+      result: null,
+      drive_folder_url: null,
+      drive_deck_url: null,
+      error_code: null,
+      error_message: null,
+      error_detail: null,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+
+    set((prev) => {
+      const next = [job, ...prev.presentationJobs];
+      saveLocal('wassell_presentation_jobs', next);
+      // FK: presentation_jobs.template_id → presentation_templates.id
+      supabaseUpsert(
+        'presentation_jobs',
+        job as unknown as Record<string, unknown>,
+        { table: 'presentation_templates', id: templateId },
+      );
+      return { presentationJobs: next };
+    });
+    return job;
+  },
+
+  cancelPresentationJob: (jobId: string) => {
+    set((s) => {
+      const nowIso = new Date().toISOString();
+      let changed = false;
+      const next = s.presentationJobs.map((j) => {
+        if (j.id !== jobId) return j;
+        if (j.status !== 'queued') return j; // running/completed/failed can't be canceled here
+        changed = true;
+        const updated: PresentationJob = {
+          ...j,
+          status: 'canceled',
+          finished_at: nowIso,
+          updated_at: nowIso,
+        };
+        supabaseUpsert(
+          'presentation_jobs',
+          updated as unknown as Record<string, unknown>,
+          { table: 'presentation_templates', id: updated.template_id },
+        );
+        return updated;
+      });
+      if (!changed) return {};
+      saveLocal('wassell_presentation_jobs', next);
+      return { presentationJobs: next };
+    });
+  },
+
+  retryPresentationJob: async (jobId: string) => {
+    const s = get();
+    const source = s.presentationJobs.find((j) => j.id === jobId);
+    if (!source) return null;
+    return get().queuePresentationJob({
+      templateId: source.template_id,
+      recordId: source.record_id,
+      inputs: source.inputs,
     });
   },
 

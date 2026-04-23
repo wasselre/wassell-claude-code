@@ -1,0 +1,95 @@
+# PRD: Presentations
+
+**Status:** Live (Phase 4 — daily-driver ready; full feature set shipped)
+**Last updated:** 2026-04-23 (Phase 4: rotating daily daemon logs with 7-day retention, local-paths fallback card on the detail page when Drive upload fails, `template-scaffolder` skill for one-prompt template authoring, opt-in Windows-service wrapper via node-windows)
+**Related PRDs:** record-management.md, data-storage.md, navigation-layout.md
+
+## What it is (in plain English)
+
+Presentations lets a user generate a branded PowerPoint deck — market analysis, project proposal, monthly report, etc. — by picking a pre-built **template** and firing it with one click. The user never opens a slide editor. They pick a template, optionally link a CRM record (a project, a client), fill in any remaining inputs, and hit **Generate**. A job lands in the queue with `status='queued'`. A local background worker ("the daemon") picks it up, runs the matching Claude Code slash command on the user's machine — doing the research, writing the content, building the `.pptx`, uploading to Drive — and writes the Drive URL back to the job. The app polls for updates and shows the link inline.
+
+**Templates are authored outside the app**, in Claude Code, as a slash command + skill + manifest file (`~/.claude/ppt/templates/<slug>/template.json`). Adding a new template doesn't require app code changes — the daemon syncs the manifests into `presentation_templates` on the server, and the app's picker updates automatically.
+
+## Why it exists
+
+The firm generates 15-slide Arabic real-estate decks regularly. Today that flow is: open Claude Code, type `/wassel <brief>`, wait, copy the Drive link. This works for one operator on one machine, but it isolates deck generation from the CRM where the project records actually live. Presentations puts the trigger inside the CRM so (a) a deck is bound to a project record, (b) history is visible to the team, and (c) adding new deck types (study, monthly report, client proposal) is a pure Claude-Code authoring exercise — no app releases.
+
+## Key behaviors
+
+- **URL:** `/presentations` (list of all past + pending jobs), `/presentations/:jobId` (one job's detail).
+- **Sidebar:** top-level nav entry (between Home and the model list), available to every signed-in user.
+- **New presentation flow (two entry points):**
+  - **From `/presentations`:** click `+ New Presentation` → `TemplatePickerModal` lists every available template → picking one swaps the modal to an input form → submit → job is inserted with `status='queued'` → app navigates to the detail page for that job.
+  - **From a CRM record:** every record page shows a `Generate deck` action button in the header bar whenever there is ≥1 template with `record_binding.model_slug === model.name`. Clicking opens the same picker modal but filtered to matching templates only, with the record pre-bound to the job. When exactly one template matches (today's case for Targeted Projects), the modal auto-advances past the picker straight into the pre-filled input form.
+- **Template catalog (`presentation_templates`):**
+  - Daemon-owned. The app reads, never writes. (Phase 1 exception: a bundled seed of the `wassel` template ships so the picker isn't empty before the daemon lands.)
+  - Each template has `slug`, bilingual labels, a Claude slash command to fire, an icon, an `input_schema` describing what to collect from the user, and an optional `record_binding` that links the template to a specific model (e.g. Wassel → `targeted_projects`).
+  - `is_available=false` hides a template from the picker without breaking old jobs that referenced it.
+- **Input types in `input_schema`:** `text`, `textarea`, `number`, `date`, `dropdown`. Each input has `source='user'` (blank for the user to fill) or `source='record_field'` (prefill from the selected record's field slug). The form lets the user override a prefilled value — but switching the linked record refreshes every un-touched `record_field` input.
+- **Record binding:** when a template declares `record_binding`, the input form shows a record picker at the top; the user must pick one unless `optional=true`.
+- **Job lifecycle (`presentation_jobs`):** `queued` → `running` → `completed` or `failed` or `canceled`. Status transitions are written by the daemon; the app only inserts new rows and can cancel `queued` rows. The snapshot of both the template manifest and (if any) the linked record data is frozen at queue time so later edits to either don't mutate in-flight jobs.
+- **Idempotency:** every new job carries a `client_dedup_key` = SHA-256 of (template_id + record_id + normalized inputs). A unique partial index blocks a second `queued`/`running` row with the same key; double-clicking "Generate" returns the existing job rather than duplicating work.
+- **Daemon offline banner:** the page reads a singleton `daemon_status` row. If `last_heartbeat_at` is missing or older than 60 seconds, a warning banner shows at the top of `/presentations` with "last seen X min ago" copy. The daemon heartbeats every 15s while running, so the banner disappears within 15s of `npm start`.
+
+- **The daemon.** A local Node process in `daemon/`. Polls `presentation_jobs` via the `claim_next_presentation_job` RPC (which uses `FOR UPDATE SKIP LOCKED` so concurrent daemons never pick the same row). For each claim it spawns `claude --print --permission-mode bypassPermissions "<template.command> <brief>"`, tails stdout, and writes back when the CLI exits. Single worker (Paseetah drives real Chrome). Crash recovery: on boot, any `running` row matching this host+pid flips to `failed` with `error_code='daemon_restarted'` — no auto-resume. Heartbeat row upserted every `HEARTBEAT_INTERVAL_MS` (default 15s). Job wall-clock capped at `JOB_TIMEOUT_SECONDS` (default 30 min); exceeded jobs are SIGTERM'd then SIGKILL'd and classified as `timeout`. Writes a daily rotating log file to `daemon/logs/daemon-YYYY-MM-DD.log` (overridable via `LOG_DIR`); logs older than 7 days are swept on boot. Opt-in Windows-service wrapper at `daemon/scripts/install-service.mjs` — auto-start on login for users who don't want to keep a terminal open.
+
+- **Result sentinel.** Every template's slash command must print a final line of the form `###PRESENTATION-RESULT###{...json...}` where the JSON matches `PresentationJobResult`. The daemon parses the last such line in stdout. Progress updates use `###PRESENTATION-PROGRESS###{"stage":"...","message_ar":"...","message_en":"..."}` (one per line, any number); each updates the job row's `progress_*` columns in real time. The `/wassel` command emits the result sentinel at the end of Step 5, and progress sentinels at the top of each step — `paseetah` (Step 1), `research` (Step 2), `upload` (Step 3). The app's list and detail pages render `progress_message_ar` / `progress_message_en` inline next to the Running chip.
+
+- **Template manifests on disk.** Each template is `~/.claude/ppt/templates/<slug>/template.json`. The daemon reads these on boot and upserts them into `presentation_templates` by id. A chokidar watcher resyncs within a second of any manifest edit. Manifests that disappear from disk flip the DB row to `is_available=false` (the app hides unavailable templates from the picker but keeps them for historical jobs that referenced them).
+- **Polling:** `usePresentationJobsPolling` refreshes the daemon heartbeat every 3 seconds, and any jobs in `queued`/`running` every 3 seconds on the list page (1.5 seconds on the detail page). Polling stops when all visible jobs are terminal. No Supabase Realtime in v1.
+- **Result payload:** a completed job carries `drive_deck_url`, `drive_folder_url`, and optionally `drive_sheet_url` (the evidence sheet). The detail page renders each as a copper link. A `research_stats` object (filled / total / gaps / conflicts) is shown as a footnote when present.
+
+- **Local-paths fallback.** When the slash command couldn't upload to Drive but still produced the deliverable locally, its result sentinel carries `"ok": true` with all `drive_*` URLs null and a `local_paths` object mapping `{name: "C:\path\..."}`. The detail page swaps its "Result" card for an amber-tinted "Drive upload failed — files saved locally" card that lists each local path as a copyable `<code>` block. The user copies the path, uploads to Drive manually, and their deliverable is in hand instead of lost.
+- **Error surfacing:** failed jobs classify into bilingual copy per `error_code` (chrome session expired, Drive upload failed, Claude Code error, timeout, daemon restarted, validation failed, unknown). The raw stdout tail is tucked behind a collapsed `<details>` block.
+- **Retry:** failed or canceled jobs expose a retry button that queues a fresh job with the same template + record + inputs and navigates to it. The old job stays around as history.
+- **Cancel:** only queued jobs can be canceled from the app. Running-job cancellation is out of scope for v1 (killing a mid-Paseetah run or mid-Drive-upload leaves orphan state).
+
+## User flows
+
+1. **Happy path from `/presentations`:** click `+ New Presentation` → pick the Wassel template → (optional) link a Targeted Project record → fill project brief → click Generate → land on the job detail page in `Queued` → daemon claims within ~5s → status flips to `Running` → the job runs for ~15 min (Paseetah, research, build, review, Drive upload) → status flips to `Completed` with a Drive link → click link to open the deck.
+2. **Double-click protection:** click Generate twice → second click returns the same job id; no duplicate row is created.
+3. **Daemon offline:** job stays `Queued` indefinitely. Banner at the top of `/presentations` reads "Presentations daemon is not running. Queued jobs will stay pending until you start the daemon on your machine." Starting `cd daemon && npm start` makes the banner disappear within 15s and the queue drains.
+4. **Failure:** a `chrome_session_expired` error surfaces as "paseet.ai session expired. Sign in in Chrome, then retry." with a Retry button that queues a fresh job.
+5. **Cancel:** on a queued job, clicking Cancel flips status to `canceled` and disables the button. Retry is shown in its place.
+
+## Data touched
+
+- **Writes:** `presentation_jobs` (inserts on queue, updates on cancel + retry flow).
+- **Reads:** `presentation_templates` (catalog), `daemon_status` (heartbeat), `records` + `models` (for record binding + snapshot labels).
+- **localStorage mirrors:** `wassell_presentation_templates`, `wassell_presentation_jobs` (dual-write for offline parity, same pattern as models/records).
+
+## Key files
+
+| File | What it does |
+|---|---|
+| `src/pages/Presentations/PresentationsListPage.tsx` | List of jobs, daemon-offline banner, "New" button, template picker entry |
+| `src/pages/Presentations/PresentationDetailPage.tsx` | One job — status, progress, result links, error detail, retry/cancel |
+| `src/pages/Presentations/components/TemplatePickerModal.tsx` | Template picker → input form flow in a single modal |
+| `src/pages/Presentations/components/InputForm.tsx` | Renders a form from `template.input_schema`; prefills from the linked record |
+| `src/pages/Presentations/hooks/usePresentationJobsPolling.ts` | Refreshes daemon heartbeat + live jobs on an interval; auto-stops on terminal status |
+| `src/types/index.ts` | `PresentationInput`, `PresentationTemplate`, `PresentationJob`, `DaemonStatus`, job status / error enums |
+| `src/stores/appStore.ts` | `presentationTemplates`, `presentationJobs`, `daemonStatus` state + `queuePresentationJob`, `cancelPresentationJob`, `retryPresentationJob`, `sha256Hex` |
+| `src/data/seedPresentationTemplates.ts` | Bundled `wassel` template seed — the daemon upserts by `id`, so this row is the offline/pre-daemon fallback |
+| `src/components/layout/Sidebar.tsx` | Top-level Presentations nav item (icon: `Presentation`) |
+| `supabase/schema.sql` | Tables `presentation_templates`, `presentation_jobs`, `daemon_status` + idempotency unique index + `claim_next_presentation_job` RPC |
+| `daemon/src/index.ts` | Main loop — sweep stale jobs, sync templates, heartbeat, poll queue, dispatch to runner |
+| `daemon/src/templates.ts` | Manifest reader + chokidar watcher that upserts `presentation_templates` from disk |
+| `daemon/src/runner.ts` | Spawns `claude --print`, tails stdout for progress + result sentinels, writes job row back |
+| `daemon/src/heartbeat.ts` | 15s upsert of the singleton `daemon_status` row |
+| `daemon/src/smoke.ts` | `npm run smoke` — env + Supabase + templates + heartbeat + RPC sanity check |
+| `~/.claude/ppt/templates/wassel/template.json` | On-disk manifest the daemon syncs to the DB |
+| `~/.claude/commands/wassel.md` | Slash command the daemon invokes; § 5 defines the `###PRESENTATION-RESULT###` sentinel contract; progress sentinels at top of §§ 1, 2, 3 |
+| `src/pages/Records/RecordFormPage.tsx` | Host of the record-level `Generate deck` action button (lines ~297–316) and the `RecordDecksPanel` below the form |
+| `src/pages/Records/components/RecordDecksPanel.tsx` | Inline "recent decks for this record" panel — up to 3 most recent, status chips, Drive links |
+| `daemon/src/logger.ts` | Tees `console.log/warn/error` to a daily rotating file under `LOG_DIR`; sweeps files older than 7 days on boot |
+| `daemon/scripts/install-service.mjs` + `uninstall-service.mjs` + `run-with-tsx.mjs` | Opt-in Windows-service wrapper via `node-windows`; the launcher boots tsx + src/index.ts |
+| `~/.claude/skills/template-scaffolder/SKILL.md` | Generates the three-file bundle (command, manifest, skill stub) for a new deck template in one prompt |
+
+## Open questions / known limitations
+
+- **Progress sentinels don't land live — they arrive in a batch at end of run.** `/wassel` emits three stage sentinels (`paseetah`, `research`, `upload`), but the daemon invokes Claude with `--output-format text`, which buffers stdout until the CLI exits. The sentinels ARE parsed correctly on exit (verified end-to-end with the `ping-test` template, which completes in ~5 s with correct UTF-8 and Arabic), but during the 10–15 min real pipeline the Running chip stays on `Running (…)` with no stage subtitle. Fixing this requires switching the runner to `--output-format stream-json` and unwrapping the assistant-text events from each event line — a parser overhaul that's deferred until we hit a user who needs the live view.
+- **Single worker.** Paseetah drives the real Chrome window — two concurrent runs would thrash it. The daemon enforces strict serialization via `FOR UPDATE SKIP LOCKED`; concurrent queued jobs wait in line. A "N ahead of you" hint on queued jobs is a nice-to-have that isn't in yet.
+- **Running-job cancel is out of scope.** Only queued jobs can be canceled from the app. Safe-cancel of a running job would need a cooperative shutdown flag the daemon polls between stages plus a Drive-folder cleanup pass, neither of which is cheap to build right.
+- **Windows service runs as LocalSystem by default.** LocalSystem can't see the logged-in user's Chrome profile, which Paseetah needs. The install script documents overriding `svc.user` / `svc.password` to the user's own account, but this is manual.
+- **Service-role key on one machine.** The daemon needs the Supabase service-role key locally. If a teammate needs to fire decks, they need their own daemon running on their own box — a shared queue isn't in v1.
+- **Linux / macOS service wrappers** (systemd / launchd) aren't shipped. Only the Windows-service wrapper is in the box; other platforms stick with `npm start`.

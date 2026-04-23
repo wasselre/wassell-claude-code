@@ -413,3 +413,140 @@ CREATE OR REPLACE FUNCTION search_all_projects(
   ORDER BY score DESC, r.updated_at DESC
   LIMIT p_limit;
 $$ LANGUAGE sql STABLE;
+
+-- ============================================================
+-- PRESENTATIONS (decks built by Claude Code templates)
+-- ============================================================
+-- A "template" is authored by the user in Claude Code (skill + slash
+-- command + manifest) and surfaced in the app as a picker option. The
+-- user picks a template + fills inputs, a row lands in presentation_jobs
+-- with status='queued', and a local daemon (Phase 2) picks it up, runs
+-- the Claude command, and writes back a Drive link.
+--
+-- Phase 1 installs the tables only — no daemon runs yet. Jobs stay in
+-- 'queued' until the daemon ships.
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS presentation_templates (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  slug TEXT UNIQUE NOT NULL,
+  label_ar TEXT NOT NULL,
+  label_en TEXT NOT NULL,
+  description_ar TEXT,
+  description_en TEXT,
+  command TEXT NOT NULL,                                    -- e.g. '/wassel'
+  icon TEXT NOT NULL DEFAULT 'file-text',
+  input_schema JSONB NOT NULL DEFAULT '[]'::jsonb,          -- PresentationInput[]
+  record_binding JSONB,                                     -- { model_slug, optional } or NULL
+  estimated_duration_seconds INT,
+  is_available BOOLEAN NOT NULL DEFAULT true,               -- daemon flips false when manifest deleted
+  manifest_path TEXT,                                       -- filesystem path on the daemon host (nullable for seeds)
+  manifest_synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS presentation_jobs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  template_id UUID NOT NULL REFERENCES presentation_templates(id) ON DELETE RESTRICT,
+  template_slug TEXT NOT NULL,                              -- denormalized for reads after template deletion
+  template_snapshot JSONB NOT NULL,                         -- frozen manifest at queue time
+  record_id UUID REFERENCES records(id) ON DELETE SET NULL,
+  record_model_id UUID REFERENCES models(id) ON DELETE SET NULL,
+  record_snapshot JSONB,                                    -- frozen record data at queue time (for replay/debug)
+  inputs JSONB NOT NULL DEFAULT '{}'::jsonb,
+  client_dedup_key TEXT,                                    -- SHA-256(template_id + record_id + inputs)
+  requested_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+    CHECK (status IN ('queued','running','completed','failed','canceled')),
+  progress_stage TEXT,                                      -- 'paseetah' | 'research' | 'build' | 'review' | 'upload' | free-form
+  progress_message_ar TEXT,
+  progress_message_en TEXT,
+  claimed_by TEXT,                                          -- '<hostname>:<pid>' of daemon that owns the run
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  duration_ms INT,
+  -- Result payload — the full sentinel JSON the command emitted
+  result JSONB,
+  drive_folder_url TEXT,                                    -- extracted from result for fast list queries
+  drive_deck_url TEXT,                                      -- ditto
+  -- Error info
+  error_code TEXT,                                          -- 'chrome_session_expired' | 'drive_upload_failed' | 'claude_error' | 'timeout' | 'daemon_restarted' | 'validation_failed' | 'unknown'
+  error_message TEXT,
+  error_detail TEXT,                                        -- stdout tail, not shown by default
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pjobs_status ON presentation_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_pjobs_record_id ON presentation_jobs(record_id);
+CREATE INDEX IF NOT EXISTS idx_pjobs_template_slug ON presentation_jobs(template_slug);
+CREATE INDEX IF NOT EXISTS idx_pjobs_created_at ON presentation_jobs(created_at DESC);
+
+-- Idempotency — blocks double-click within the queued/running window.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_pjobs_dedup
+  ON presentation_jobs(template_id, client_dedup_key)
+  WHERE client_dedup_key IS NOT NULL AND status IN ('queued','running');
+
+-- Singleton heartbeat row written by the local daemon every ~15s. Presence
+-- with a recent `last_heartbeat_at` = daemon healthy. Missing or stale =
+-- daemon offline (banner shows in the app).
+CREATE TABLE IF NOT EXISTS daemon_status (
+  id TEXT PRIMARY KEY,                                      -- always 'presentations' in v1
+  last_heartbeat_at TIMESTAMPTZ NOT NULL,
+  hostname TEXT,
+  pid INT,
+  version TEXT,
+  last_error TEXT,
+  last_error_at TIMESTAMPTZ
+);
+
+-- updated_at triggers
+DROP TRIGGER IF EXISTS set_updated_at_presentation_templates ON presentation_templates;
+CREATE TRIGGER set_updated_at_presentation_templates BEFORE UPDATE ON presentation_templates
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS set_updated_at_presentation_jobs ON presentation_jobs;
+CREATE TRIGGER set_updated_at_presentation_jobs BEFORE UPDATE ON presentation_jobs
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- RLS — same pattern as other tables: authenticated staff full access.
+ALTER TABLE presentation_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE presentation_jobs      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE daemon_status          ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated full access" ON presentation_templates;
+DROP POLICY IF EXISTS "Authenticated full access" ON presentation_jobs;
+DROP POLICY IF EXISTS "Authenticated full access" ON daemon_status;
+
+CREATE POLICY "Authenticated full access" ON presentation_templates FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON presentation_jobs      FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON daemon_status          FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ------------------------------------------------------------
+-- claim_next_presentation_job — atomic claim used by the local daemon.
+--
+-- Supabase's JS client can't express `FOR UPDATE SKIP LOCKED` directly, so the
+-- claim is encapsulated here. The daemon invokes this via `rpc()` and receives
+-- the full claimed row (or NULL when the queue is empty). The function is
+-- transactional: the SELECT locks the oldest queued row, the UPDATE transitions
+-- it to running + records the worker id + started_at, and the RETURNING surfaces
+-- the final state. Two daemons running concurrently (future case) never grab the
+-- same row because of SKIP LOCKED.
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION claim_next_presentation_job(p_worker TEXT)
+RETURNS SETOF presentation_jobs AS $$
+  UPDATE presentation_jobs
+     SET status      = 'running',
+         claimed_by  = p_worker,
+         started_at  = now(),
+         updated_at  = now()
+   WHERE id = (
+     SELECT id FROM presentation_jobs
+      WHERE status = 'queued'
+      ORDER BY created_at ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+   )
+   RETURNING *;
+$$ LANGUAGE sql;

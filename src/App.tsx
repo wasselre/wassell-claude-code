@@ -15,6 +15,8 @@ import WorkflowRunDetailPage from '@/pages/Workflow/WorkflowRunDetailPage';
 import DashboardListPage from '@/pages/Dashboard/DashboardListPage';
 import DashboardEditorPage from '@/pages/Dashboard/DashboardEditorPage';
 import PublicDashboardPage from '@/pages/Dashboard/PublicDashboardPage';
+import PresentationsListPage from '@/pages/Presentations/PresentationsListPage';
+import PresentationDetailPage from '@/pages/Presentations/PresentationDetailPage';
 import SettingsPage from '@/pages/Settings/SettingsPage';
 import TranslationSettingsPage from '@/pages/Settings/TranslationSettingsPage';
 import ProfilesPage from '@/pages/Settings/ProfilesPage';
@@ -92,6 +94,8 @@ export default function App() {
           <Route path="/workflow/:workflowId" element={<RequireAdmin><WorkflowEditorPage /></RequireAdmin>} />
           <Route path="/dashboards" element={<RequireAdmin><DashboardListPage /></RequireAdmin>} />
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
+          <Route path="/presentations" element={<PresentationsListPage />} />
+          <Route path="/presentations/:jobId" element={<PresentationDetailPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/translations" element={<RequireAdmin><TranslationSettingsPage /></RequireAdmin>} />
           <Route path="/settings/profiles" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />
