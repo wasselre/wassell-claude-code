@@ -622,6 +622,15 @@ async function executeAction(
             if (byId) { target = byId; matchedByRecordId = true; }
           }
         }
+        // Literal 'id' filter — match the target by its top-level record id.
+        // Covers the webhook pattern where a payload carries a record_id /
+        // operation_id field and the workflow wants to target that exact
+        // record. Without this branch, the next line would look for a
+        // data.id key on each record, which doesn't exist.
+        if (!target && action.filter_field_id === 'id' && typeof filterValue === 'string') {
+          const byId = targetRecords.find((r) => r.id === filterValue);
+          if (byId) { target = byId; matchedByRecordId = true; }
+        }
         if (!target) {
           target = targetRecords.find((r) => r.data[action.filter_field_id] === filterValue);
         }
