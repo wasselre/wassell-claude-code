@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
+import { resolveRecordTitle } from '@/lib/recordTitle';
 import type { PresentationTemplate, PresentationInput, AppRecord, AppModel } from '@/types';
 
 // (selectedRecord memo removed — resolveDefaultValue is called with the fresh
@@ -144,30 +145,7 @@ export default function InputForm({
   const recordLabel = (rec: AppRecord): string => {
     const untitled = isAr ? 'بدون اسم' : '(Untitled)';
     if (!boundModel) return untitled;
-    const allFields = boundModel.schema.sections.flatMap((s) => s.fields);
-    const titleId = boundModel.card_config.title_field_id;
-    const titleField = titleId ? allFields.find((f) => f.id === titleId) ?? null : null;
-    const readStr = (slug: string): string | null => {
-      const v = rec.data[slug];
-      if (typeof v === 'string' && v.trim()) return v;
-      if (typeof v === 'number') return String(v);
-      return null;
-    };
-    if (titleField) {
-      const v = readStr(titleField.name);
-      if (v !== null) return v;
-    }
-    // card_config.title_field_id may dangle (field deleted after card_config
-    // was saved) or the title field's value may be empty. Fall back to the
-    // first TEXT/TEXTAREA field with content — those are user-typed strings,
-    // never UUIDs. Explicitly skip lookup / mirror / auto_id / section_mirror
-    // which all store UUID-like identifiers that look readable but aren't.
-    for (const f of allFields) {
-      if (f.type !== 'text' && f.type !== 'textarea') continue;
-      const v = readStr(f.name);
-      if (v !== null) return v;
-    }
-    return untitled;
+    return resolveRecordTitle(boundModel, rec, records) ?? untitled;
   };
 
   return (

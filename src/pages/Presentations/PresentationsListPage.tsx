@@ -16,6 +16,7 @@ import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { usePresentationJobsPolling } from './hooks/usePresentationJobsPolling';
 import TemplatePickerModal from './components/TemplatePickerModal';
+import { resolveRecordTitle } from '@/lib/recordTitle';
 import type { PresentationJob, PresentationJobStatus } from '@/types';
 
 function statusConfig(
@@ -133,32 +134,11 @@ export default function PresentationsListPage(): JSX.Element {
   const recordLabel = (job: PresentationJob): string | null => {
     if (!job.record_id) return null;
     const untitled = isAr ? 'بدون اسم' : '(Untitled)';
-    const modelId = job.record_model_id;
-    const model = modelId ? models.find((m) => m.id === modelId) : null;
+    const model = job.record_model_id ? models.find((m) => m.id === job.record_model_id) : null;
     if (!model) return untitled;
     const rec = (records[model.id] ?? []).find((r) => r.id === job.record_id);
     if (!rec) return untitled;
-    const allFields = model.schema.sections.flatMap((s) => s.fields);
-    const titleId = model.card_config.title_field_id;
-    const titleField = titleId ? allFields.find((f) => f.id === titleId) ?? null : null;
-    const readStr = (slug: string): string | null => {
-      const v = rec.data[slug];
-      if (typeof v === 'string' && v.trim()) return v;
-      if (typeof v === 'number') return String(v);
-      return null;
-    };
-    if (titleField) {
-      const v = readStr(titleField.name);
-      if (v !== null) return v;
-    }
-    // Fall back to first text/textarea field with content (card_config.title_field_id
-    // may dangle if the field was deleted; those are user-typed, not UUIDs).
-    for (const f of allFields) {
-      if (f.type !== 'text' && f.type !== 'textarea') continue;
-      const v = readStr(f.name);
-      if (v !== null) return v;
-    }
-    return untitled;
+    return resolveRecordTitle(model, rec, records) ?? untitled;
   };
 
   const templateLabel = (job: PresentationJob): string => {
