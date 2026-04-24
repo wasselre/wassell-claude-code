@@ -955,6 +955,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Realtime: watch the webhook_payloads table so incoming agent
     // webhooks fan out to the workflow engine without a page reload.
     get().subscribeMarketingRealtime();
+
+    // Backfill unconsumed webhooks from the last 24 hours. Realtime only
+    // delivers INSERTs that happen while we're subscribed, so anything
+    // that landed while every browser tab was closed would sit forever
+    // unless we sweep here. Each payload is claimed atomically by the
+    // server, so only one tab will actually run the workflows for a
+    // given row — multi-tab safe.
+    if (supabase) {
+      void (async () => {
+        try {
+          const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          const { data: stuck, error: stuckErr } = await supabase
+            .from('webhook_payloads')
+            .select('id')
+            .is('consumed_at', null)
+            .gte('received_at', since)
+            .order('received_at', { ascending: true })
+            .limit(200);
+          if (stuckErr) {
+            console.warn('[webhook-backfill] lookup failed:', stuckErr.message);
+            return;
+          }
+          for (const row of stuck ?? []) {
+            await get().claimAndRunWebhookPayload(row.id);
+          }
+        } catch (err) {
+          console.warn('[webhook-backfill] failed:', err);
+        }
+      })();
+    }
   },
 
   subscribeMarketingRealtime: () => {

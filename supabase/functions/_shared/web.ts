@@ -3,7 +3,9 @@
 // returns clean text. Tool schema matches the Anthropic tools API.
 
 const MAX_PAGE_TEXT = 50_000;
-const REQUEST_TIMEOUT_MS = 30_000;
+// Tightened to 15 s so a slow or hung external page can't eat most of the
+// 150 s Supabase edge-function wall budget on a single fetch_url call.
+const REQUEST_TIMEOUT_MS = 15_000;
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36";
 

@@ -1,7 +1,7 @@
 # PRD: Marketing Operations (Reels + Posts)
 
 **Status:** Live
-**Last updated:** 2026-04-24 (edge functions now tracked in git — narrowed the gitignore to `supabase/functions/haberchat-webhook/`)
+**Last updated:** 2026-04-24 (**Two production bugs fixed:** (1) the `research-question` / `reel-generated` / `post-generated` webhook slugs had auto-generated HMAC secrets from the seed migration, but the agents' `webhookOutbox` never signs outgoing POSTs — every per-item webhook was getting 401'd by the inbox. Cleared the secrets to match the other 6 slugs, which always had `secret=NULL`. (2) The research agent's synchronous tool-use loop ran past Supabase free-tier's 150 s wall-clock limit on complex projects, so the gateway 502'd the call before the `research-complete` webhook could fire. Switched the agent to fire-and-forget via `EdgeRuntime.waitUntil` — HTTP response returns in ~2 s while the agent keeps running in the background; reduced max iterations 15→6 and web_search max_uses 10→5; tightened `fetch_url` timeout 30 s → 15 s. Also added a webhook-payload backfill sweep on app init so if a webhook lands while no browser tab is listening, it gets claimed + run on the next sign-in within a 24 h window.)
 **Related PRDs:** `record-management.md` (project lookup), `data-storage.md` (Supabase), `workflow-automation.md` (webhook triggers + http_request action), `model-builder.md` (table field type)
 
 ## What it is (in plain English)
