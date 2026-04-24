@@ -39,6 +39,7 @@ import {
   Settings,
   MessageCircle,
   MessageSquare,
+  SquarePen,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
@@ -237,6 +238,16 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           >
             <Presentation size={20} />
             {!railCollapsed && <span>{t('nav.presentations')}</span>}
+          </NavLink>
+
+          {/* Whiteboard (tldraw freeform canvas — annotations, planning) */}
+          <NavLink
+            to="/whiteboard"
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            title={railCollapsed ? t('nav.whiteboard') : undefined}
+          >
+            <SquarePen size={20} />
+            {!railCollapsed && <span>{t('nav.whiteboard')}</span>}
           </NavLink>
 
           {/* Divider label */}

@@ -1,8 +1,8 @@
 # PRD: Navigation & Layout
 
 **Status:** Live
-**Last updated:** 2026-04-22
-**Related PRDs:** model-builder.md, internationalization.md, home-dashboard.md
+**Last updated:** 2026-04-24 (**Whiteboard nav entry:** new top-level "Whiteboard" / "اللوحة البيضاء" link added to the sidebar right after Presentations, using the `SquarePen` icon. Opens `/whiteboard`. See whiteboard.md.)
+**Related PRDs:** model-builder.md, internationalization.md, home-dashboard.md, whiteboard.md
 
 ## What it is (in plain English)
 The "shell" of the app: the persistent sidebar on one edge, the header across the top, and the main content area where pages render. The sidebar shows navigation organized into folder-like groups (Projects, People, etc.), plus links to Builder, Workflows, Dashboards, and Settings. The header holds the Wassell logo, the language toggle, and user/profile menu. Everything flips correctly when switching between Arabic (sidebar on the right) and English (sidebar on the left).
@@ -14,7 +14,7 @@ A consistent, always-visible shell orients the user no matter how many models ex
 - **Layout** (`AppLayout.tsx`): renders `<Sidebar />`, `<Header />`, and `<Outlet />` from React Router. Wraps the whole app except the public dashboard route.
 - **Sidebar**:
   - Top: Wassell logo + app name.
-  - Sections: "Models" group (expandable by `model_groups`), "Builder", "Workflow", "Dashboards", "Settings".
+  - Sections: Home, Presentations, Whiteboard, "Models" group (expandable by `model_groups`), "Builder", "Workflow", "Dashboards", "Settings".
   - Each model row shows its icon, color dot, AR/EN name.
   - Click a model → navigates to `/model/:modelName`.
   - Active route is highlighted.

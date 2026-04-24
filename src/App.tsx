@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, lazy, Suspense, type ReactNode } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
 import AppLayout from '@/components/layout/AppLayout';
@@ -30,6 +30,10 @@ import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
+
+// Lazy-loaded so tldraw's bundle + stylesheet are only fetched when the
+// whiteboard route is visited. Keeps the main app bundle lean.
+const WhiteboardPage = lazy(() => import('@/pages/Whiteboard/WhiteboardPage'));
 
 /**
  * Auth gate. Renders children only when:
@@ -162,6 +166,14 @@ export default function App() {
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
           <Route path="/presentations" element={<PresentationsListPage />} />
           <Route path="/presentations/:jobId" element={<PresentationDetailPage />} />
+          <Route
+            path="/whiteboard"
+            element={
+              <Suspense fallback={null}>
+                <WhiteboardPage />
+              </Suspense>
+            }
+          />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/translations" element={<RequireAdmin><TranslationSettingsPage /></RequireAdmin>} />
           <Route path="/settings/profiles" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />
