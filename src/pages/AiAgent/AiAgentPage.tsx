@@ -60,7 +60,7 @@ export default function AiAgentPage() {
 
   if (!aiChatsModel) {
     return (
-      <div className="p-8 text-center text-text/70">
+      <div className="p-8 text-center text-charcoal/70">
         {isAr
           ? 'نموذج المساعد الذكي غير مهيأ بعد. أعد تحميل الصفحة.'
           : 'AI Agent model not initialized. Please reload.'}
@@ -79,7 +79,7 @@ export default function AiAgentPage() {
         <div className="p-3 border-b border-sand/20 flex items-center gap-2">
           <button
             onClick={startNewChat}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-primary text-white hover:bg-secondary transition-colors text-sm font-medium"
+            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-sm font-medium"
           >
             <Plus size={16} />
             {isAr ? 'محادثة جديدة' : 'New chat'}
@@ -87,7 +87,7 @@ export default function AiAgentPage() {
         </div>
         <div className="flex-1 overflow-y-auto">
           {chats.length === 0 ? (
-            <div className="p-6 text-center text-sm text-text/60">
+            <div className="p-6 text-center text-sm text-charcoal/60">
               {isAr ? 'لا توجد محادثات بعد.' : 'No conversations yet.'}
             </div>
           ) : (
@@ -101,16 +101,16 @@ export default function AiAgentPage() {
                 <button
                   key={chat.id}
                   onClick={() => navigate(`/model/ai_chats/${chat.id}`)}
-                  className={`w-full text-start p-3 border-b border-sand/10 hover:bg-background transition-colors ${
-                    active ? 'bg-background' : ''
+                  className={`w-full text-start p-3 border-b border-sand/10 hover:bg-cream transition-colors ${
+                    active ? 'bg-cream' : ''
                   }`}
                 >
                   <div className="flex items-center gap-2">
-                    <MessageSquare size={14} className="text-primary shrink-0" />
+                    <MessageSquare size={14} className="text-copper shrink-0" />
                     <div className="font-medium text-sm truncate">{title}</div>
                   </div>
                   {preview && (
-                    <div className="text-xs text-text/60 truncate mt-1 ps-6">
+                    <div className="text-xs text-charcoal/60 truncate mt-1 ps-6">
                       {preview}
                     </div>
                   )}
@@ -144,20 +144,20 @@ function lastMessagePreview(chat: AppRecord): string | null {
 function EmptyPane({ isAr, onStart }: { isAr: boolean; onStart: () => void }) {
   return (
     <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-      <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-        <Sparkles size={32} className="text-primary" />
+      <div className="w-16 h-16 rounded-full bg-copper/10 flex items-center justify-center mb-4">
+        <Sparkles size={32} className="text-copper" />
       </div>
-      <h2 className="text-xl font-semibold text-text mb-2">
+      <h2 className="text-xl font-semibold text-charcoal mb-2">
         {isAr ? 'مساعد وصل العقارية' : 'Wassel AI Assistant'}
       </h2>
-      <p className="text-sm text-text/70 max-w-md mb-6">
+      <p className="text-sm text-charcoal/70 max-w-md mb-6">
         {isAr
           ? 'مساعد ذكي يعرف مشاريعنا الحالية ويمكنه الرد على استفسارات العملاء. ابدأ محادثة للتجربة.'
           : 'An AI assistant that knows our current projects and can answer customer questions. Start a chat to try it out.'}
       </p>
       <button
         onClick={onStart}
-        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-white hover:bg-secondary transition-colors"
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors"
       >
         <Plus size={16} />
         {isAr ? 'محادثة جديدة' : 'New chat'}

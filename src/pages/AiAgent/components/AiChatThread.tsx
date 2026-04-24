@@ -153,7 +153,7 @@ export default function AiChatThread({ recordId, modelId, onNewChat }: Props) {
 
   if (!record) {
     return (
-      <div className="flex-1 flex items-center justify-center text-text/60">
+      <div className="flex-1 flex items-center justify-center text-charcoal/60">
         {isAr ? 'المحادثة غير موجودة' : 'Conversation not found'}
       </div>
     );
@@ -163,15 +163,15 @@ export default function AiChatThread({ recordId, modelId, onNewChat }: Props) {
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
       <div className="p-3 border-b border-sand/20 flex items-center gap-2">
-        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-          <Sparkles size={16} className="text-primary" />
+        <div className="w-8 h-8 rounded-full bg-copper/10 flex items-center justify-center shrink-0">
+          <Sparkles size={16} className="text-copper" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="font-medium text-sm truncate">
             {(record.data.title as string | undefined) ??
               (isAr ? 'محادثة' : 'Conversation')}
           </div>
-          <div className="text-xs text-text/60">
+          <div className="text-xs text-charcoal/60">
             {isAr ? 'مساعد وصل العقارية' : 'Wassel AI Assistant'}
           </div>
         </div>
@@ -180,7 +180,7 @@ export default function AiChatThread({ recordId, modelId, onNewChat }: Props) {
             chat is open) and as a prominent affordance inside any thread. */}
         <button
           onClick={onNewChat}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white hover:bg-secondary transition-colors text-xs font-medium shrink-0"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-xs font-medium shrink-0"
           title={isAr ? 'محادثة جديدة' : 'New chat'}
         >
           <Plus size={14} />
@@ -215,12 +215,12 @@ export default function AiChatThread({ recordId, modelId, onNewChat }: Props) {
             disabled={sending}
             rows={2}
             placeholder={isAr ? 'اكتب رسالتك...' : 'Type your message...'}
-            className="flex-1 resize-none rounded-lg border border-sand/40 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none px-3 py-2 text-sm bg-white disabled:bg-background"
+            className="flex-1 resize-none rounded-lg border border-sand/40 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none px-3 py-2 text-sm bg-white disabled:bg-cream"
           />
           <button
             onClick={() => void handleSend()}
             disabled={sending || !input.trim()}
-            className="p-3 rounded-lg bg-primary text-white hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="p-3 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             aria-label={isAr ? 'إرسال' : 'Send'}
           >
             {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
@@ -250,8 +250,8 @@ function Bubble({
       <div
         className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap shadow-sm ${
           isUser
-            ? 'bg-primary text-white border border-primary'
-            : 'bg-background text-text border border-sand/30'
+            ? 'bg-copper text-white border border-primary'
+            : 'bg-cream text-charcoal border border-sand/30'
         }`}
       >
         {content}
@@ -279,7 +279,7 @@ function ToolBadge({ name, isAr }: { name: string; isAr: boolean }) {
             : 'Saving lead...'
           : name;
   return (
-    <div className="flex items-center gap-2 text-xs text-text/60 italic ps-2">
+    <div className="flex items-center gap-2 text-xs text-charcoal/60 italic ps-2">
       <Icon size={12} className="animate-pulse" />
       <span>{label}</span>
     </div>
@@ -288,8 +288,8 @@ function ToolBadge({ name, isAr }: { name: string; isAr: boolean }) {
 
 function WelcomeHint({ isAr }: { isAr: boolean }) {
   return (
-    <div className="text-center p-6 text-sm text-text/60">
-      <Sparkles size={24} className="mx-auto mb-2 text-primary" />
+    <div className="text-center p-6 text-sm text-charcoal/60">
+      <Sparkles size={24} className="mx-auto mb-2 text-copper" />
       <div>
         {isAr
           ? 'مثال: ما هي المشاريع المتاحة في شمال الرياض بميزانية مليون ريال؟'
