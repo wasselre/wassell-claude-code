@@ -14,14 +14,18 @@ import { useAppStore } from '@/stores/appStore';
  * explicit `dir="ltr"` container regardless of app language. Arabic
  * labels in our own page header still follow the app direction.
  *
- * License: tldraw's default terms allow development use only. Before
- * this is exposed to customers in production we must either (a) pay
- * for a commercial license key and pass it to <Tldraw licenseKey=...>,
- * or (b) accept the "Made with tldraw" watermark on the hobby license.
+ * License: tldraw enforces its license in production by unmounting the
+ * editor after 5 seconds on any non-localhost hostname when the license
+ * state is `unlicensed-production` (see @tldraw/editor LicenseProvider
+ * — LICENSE_TIMEOUT + shouldHideEditorAfterDelay). We pass the key via
+ * the `VITE_TLDRAW_LICENSE_KEY` build-time env var so it gets inlined
+ * at `vite build` time and never lives in source. Localhost is always
+ * treated as development, so an empty key is fine for local dev.
  */
 export default function WhiteboardPage(): JSX.Element {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language) === 'ar';
+  const licenseKey = import.meta.env.VITE_TLDRAW_LICENSE_KEY as string | undefined;
 
   return (
     <div>
@@ -40,7 +44,7 @@ export default function WhiteboardPage(): JSX.Element {
         dir="ltr"
         className="relative h-[calc(100vh-10rem)] w-full rounded-2xl overflow-hidden border border-sand/40 bg-white"
       >
-        <Tldraw persistenceKey="wassel-whiteboard-v1" />
+        <Tldraw persistenceKey="wassel-whiteboard-v1" licenseKey={licenseKey} />
       </div>
     </div>
   );
