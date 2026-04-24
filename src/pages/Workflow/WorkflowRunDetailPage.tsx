@@ -549,6 +549,12 @@ function WhatsAppMessageTraceBody({
       {action.response_status !== undefined && (
         <KvRow label={isAr ? 'حالة الاستجابة' : 'Response status'} value={String(action.response_status)} />
       )}
+      {action.response_snippet && (
+        <KvRow
+          label={isAr ? 'جسم الاستجابة' : 'Response body'}
+          value={<code className="text-xs whitespace-pre-wrap break-all">{action.response_snippet}</code>}
+        />
+      )}
     </>
   );
 }

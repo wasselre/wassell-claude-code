@@ -21,6 +21,7 @@ import { evaluateFormula } from './formulaEngine';
 import { v4 as uuid } from 'uuid';
 import { supabase } from '@/lib/supabase';
 import { normalizePhone } from '@/lib/phone';
+import { useAppStore } from '@/stores/appStore';
 
 /**
  * Resolve an outbound_ivr action's destination to a normalized E.164 phone.
@@ -1151,12 +1152,26 @@ async function executeAction(
         let messageWid: string | undefined;
         let errorMsg: string | undefined;
 
+        // Resolve the send-from device: explicit action config → the
+        // local overlay's default → first active overlay device → first
+        // live Haberchat device → let the proxy fall back to
+        // HABERCHAT_DEFAULT_DEVICE_ID. Mirrors sendChatMessage's resolver
+        // so the workflow path and the manual composer path agree on
+        // which number sends.
+        const storeState = useAppStore.getState();
+        const resolvedDeviceId =
+          action.device_id ||
+          storeState.waDevices.find((d) => d.is_default && d.is_active)?.device_id ||
+          storeState.waDevices.find((d) => d.is_active)?.device_id ||
+          storeState.waDevicesLive[0]?.id ||
+          undefined;
+
         try {
           const res = await fetch('/api/haberchat/messages', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...authHeader },
             body: JSON.stringify({
-              deviceId: action.device_id || undefined,
+              deviceId: resolvedDeviceId,
               phone: normalized,
               body: resolvedBody,
               // Pass the action trace id as the idempotency key. The
