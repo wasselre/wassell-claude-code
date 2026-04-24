@@ -670,30 +670,48 @@ export async function patchChat(
  * Haberchat has TWO separate namespaces for files:
  *  - Account-scoped (`/v1/files/{id}/download`): files we uploaded via
  *    POST /files. Used by the Chat Templates flow — the template pre-
- *    uploads media and stores the returned id.
+ *    uploads media and stores the returned id. Also the id that shows
+ *    up on outbound message bubbles BEFORE the webhook rewrites the
+ *    row with Haberchat's own transcoded id.
  *  - Device-scoped (`/v1/chat/{deviceId}/files/{id}/download`): files
  *    that exist as part of a delivered message (transcodes Haberchat
  *    creates when sending, inbound media from the contact). Used when
- *    rendering a message bubble from chat_messages.media_file_id.
+ *    rendering a bubble AFTER the webhook has echoed the message.
  *
- * Caller tells us which by passing deviceId (device-scoped) or omitting
- * it (account-scoped). We try the requested path only — these ids live
- * in different namespaces and fallbacks would mask bugs.
+ * Because the exact same media_file_id value can live in either space
+ * depending on the message's lifecycle, we try both when deviceId is
+ * passed: device-scoped first (most common for inbound + post-echo
+ * outbound), fall back to account-scoped on 404 (covers pre-echo
+ * outbound with template ids). When no deviceId is passed, only try
+ * account-scoped — caller deliberately asked for that space.
  */
 export async function downloadFile(fileId: string, deviceId?: string): Promise<Response> {
   if (!fileId) throw new HaberchatError(400, 'fileId is required');
-  const path = deviceId
+
+  const tryPath = async (path: string): Promise<Response | { status: number; preview: string }> => {
+    const r = await fetch(`${BASE_URL}${path}`, { headers: { Token: token() } });
+    if (r.ok) return r;
+    const preview = await r.text().catch(() => '');
+    return { status: r.status, preview };
+  };
+
+  // 1. First pass — the path the caller asked for.
+  const primaryPath = deviceId
     ? `/chat/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(fileId)}/download`
     : `/files/${encodeURIComponent(fileId)}/download`;
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { Token: token() },
-  });
-  if (!res.ok) {
-    // Read once so the response body can be abandoned cleanly.
-    const preview = await res.text().catch(() => '');
-    throw new HaberchatError(res.status, `Haberchat file download failed: ${res.status} ${preview.slice(0, 120)}`);
+  const primary = await tryPath(primaryPath);
+  if (primary instanceof Response) return primary;
+
+  // 2. Fallback to account-scoped when device-scoped 404s. Covers the
+  //    optimistic-placeholder / template-id case where the bubble is
+  //    rendered before the webhook row overwrites media_file_id.
+  if (deviceId && primary.status === 404) {
+    const fallback = await tryPath(`/files/${encodeURIComponent(fileId)}/download`);
+    if (fallback instanceof Response) return fallback;
+    throw new HaberchatError(fallback.status, `Haberchat file download failed: ${fallback.status} ${fallback.preview.slice(0, 120)}`);
   }
-  return res;
+
+  throw new HaberchatError(primary.status, `Haberchat file download failed: ${primary.status} ${primary.preview.slice(0, 120)}`);
 }
 
 /**
