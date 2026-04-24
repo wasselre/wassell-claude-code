@@ -127,6 +127,15 @@ export default async function handler(req: Request): Promise<Response> {
     console.error('[hatif-webhook] upsert failed:', err);
   }
 
+  // Mirror a lightweight "header" into the phone_calls records table so the
+  // Builder, workflows, views, and dashboards see every call as a first-class
+  // CRM record. Failures are isolated from the call_logs write above.
+  try {
+    await upsertPhoneCallRecord(event);
+  } catch (err) {
+    console.error('[hatif-webhook] phone_calls record upsert failed:', err);
+  }
+
   return json({ ok: true });
 }
 
@@ -195,6 +204,128 @@ async function upsertCallLog(event: HatifCallEvent, rawBody: string) {
   const { error } = await supa.from('call_logs').upsert(row, { onConflict: 'id' });
   if (error) {
     throw new Error(`call_logs upsert: ${error.message}`);
+  }
+}
+
+// ─── Phone calls (user-facing records) ─────────────────────────────
+// Seed-model lookup cached per Edge isolate so the "find model id by name"
+// round-trip doesn't happen on every webhook event.
+let phoneCallsModelIdCache: string | null = null;
+async function findPhoneCallsModelId(): Promise<string | null> {
+  if (phoneCallsModelIdCache) return phoneCallsModelIdCache;
+  const supa = getServiceSupabase();
+  const { data } = await supa
+    .from('models')
+    .select('id')
+    .eq('name', 'phone_calls')
+    .maybeSingle();
+  phoneCallsModelIdCache = (data?.id as string | undefined) ?? null;
+  return phoneCallsModelIdCache;
+}
+
+let clientsModelIdCache: string | null = null;
+async function findClientsModelId(): Promise<string | null> {
+  if (clientsModelIdCache) return clientsModelIdCache;
+  const supa = getServiceSupabase();
+  const { data } = await supa
+    .from('models')
+    .select('id')
+    .eq('name', 'clients')
+    .maybeSingle();
+  clientsModelIdCache = (data?.id as string | undefined) ?? null;
+  return clientsModelIdCache;
+}
+
+/**
+ * Best-effort lookup of a client record whose phone matches `contactPhone`.
+ * The seed Clients model stores phone in `phone_number`; tenants who renamed
+ * that slug will fall through and the call_logs row is still written.
+ * Returns null when no match is found.
+ */
+async function findClientRecordIdByPhone(contactPhone: string): Promise<string | null> {
+  const clientsModelId = await findClientsModelId();
+  if (!clientsModelId) return null;
+  const supa = getServiceSupabase();
+  // JSONB text-extract filter: `data->>phone_number` = contactPhone.
+  // Supabase-js uses `.eq('column', value)` — for JSONB paths it's the
+  // identical string form, column-name side.
+  const { data } = await supa
+    .from('records')
+    .select('id')
+    .eq('model_id', clientsModelId)
+    .eq('data->>phone_number', contactPhone)
+    .limit(1)
+    .maybeSingle();
+  return (data?.id as string | undefined) ?? null;
+}
+
+/**
+ * Upsert the lightweight phone_calls record. Keyed by Hatif's callId (which
+ * is already a UUID), so retries are idempotent and the records.id equals
+ * the call_logs.id — useful for any future cross-reference UI.
+ */
+async function upsertPhoneCallRecord(event: HatifCallEvent) {
+  const modelId = await findPhoneCallsModelId();
+  if (!modelId) {
+    // Seed hasn't run in this Supabase — fall through gracefully.
+    console.warn('[hatif-webhook] phone_calls model not found; skipping record mirror');
+    return;
+  }
+
+  const direction = mapCallDirection(event.type);
+  const status = mapCallStatus(event.status);
+  const sentiment = mapCallSentiment(event.sentiment);
+
+  const customerRaw =
+    event.contactNumber ??
+    (direction === 'inbound' ? event.callerNumber : event.calleeNumber) ??
+    null;
+  const contactPhone = normalizePhoneE164(customerRaw);
+
+  const dtmfDigit =
+    event.selectedDigit ??
+    event.digit ??
+    event.selectedOption?.digit ??
+    event.optionDigit ??
+    null;
+  const dtmfLabel =
+    event.selectedOption?.label ??
+    event.optionLabel ??
+    null;
+
+  const clientRecordId = contactPhone ? await findClientRecordIdByPhone(contactPhone) : null;
+
+  // Lookup fields store a single target-record id (string) when `is_multi`
+  // is unset on the field definition (phone_calls.client_link is not multi).
+  const data: Record<string, unknown> = {
+    call_id: event.callId,
+    direction,
+    status,
+    customer_phone: contactPhone,
+    caller_number: event.callerNumber ?? null,
+    callee_number: event.calleeNumber ?? null,
+    duration_seconds: parseCallLengthSeconds(event.callLength),
+    call_time: event.creationTime,
+    agent_name: event.userName ?? null,
+    dtmf_digit: dtmfDigit,
+    dtmf_label: dtmfLabel,
+    sentiment,
+    ai_summary: event.summary ?? null,
+    recording_url: event.recordingUrl ?? null,
+    ...(clientRecordId ? { client_link: clientRecordId } : {}),
+  };
+
+  const supa = getServiceSupabase();
+  const { error } = await supa.from('records').upsert(
+    {
+      id: event.callId,
+      model_id: modelId,
+      data,
+    },
+    { onConflict: 'id' },
+  );
+  if (error) {
+    throw new Error(`phone_calls records upsert: ${error.message}`);
   }
 }
 

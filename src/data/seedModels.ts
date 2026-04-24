@@ -2386,6 +2386,270 @@ const chatsModel: AppModel = {
 };
 
 // ============================================================
+// PHONE CALLS MODEL (Hatif call events as user-facing records)
+// ============================================================
+// Every inbound, outbound-IVR, and agent-placed call Hatif logs gets a
+// lightweight "header" row in this model, keyed by uuidv5(callId), so the
+// Builder machinery — views, filters, workflows, dashboards — works on
+// calls out of the box. Full audio/AI data (word-level transcription,
+// evaluation array, raw webhook JSON) lives in the dedicated `call_logs`
+// table; the webhook writes to BOTH on every event. See docs/prd/calling.md.
+//
+// Workflow triggers: use `create_record` on this model with conditions.
+// Examples:
+//   - "missed incoming call":     direction = incoming AND status IN (missed, no_answer)
+//   - "customer pressed 2 in IVR": dtmf_digit = 2
+//   - "long call w/ negative tone": duration_seconds > 300 AND sentiment = negative
+
+export const phoneCallsId = uuid();
+const phoneCallsBaseSectionId = uuid();
+const phoneCallsDirectionFieldId = uuid();
+const phoneCallsStatusFieldId = uuid();
+const phoneCallsCustomerPhoneFieldId = uuid();
+
+const phoneCallsModel: AppModel = {
+  id: phoneCallsId,
+  name: 'phone_calls',
+  label_ar: 'المكالمات',
+  label_en: 'Phone Calls',
+  icon: 'phone-call',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: phoneCallsCustomerPhoneFieldId,
+    subtitle_field_id: phoneCallsStatusFieldId,
+    badge_field_id: phoneCallsDirectionFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: phoneCallsBaseSectionId,
+        label_ar: 'تفاصيل المكالمة',
+        label_en: 'Call Details',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          {
+            id: uuid(),
+            name: 'call_id',
+            label_ar: 'معرّف المكالمة',
+            label_en: 'Call ID',
+            type: 'text',
+            required: false,
+            order: 0,
+            section_id: phoneCallsBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: phoneCallsDirectionFieldId,
+            name: 'direction',
+            label_ar: 'الاتجاه',
+            label_en: 'Direction',
+            type: 'dropdown',
+            required: false,
+            order: 1,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'واردة',  label_en: 'Incoming', value: 'inbound',  color: '#3b82f6' },
+              { id: uuid(), label_ar: 'صادرة', label_en: 'Outgoing', value: 'outbound', color: '#8b5cf6' },
+            ],
+          },
+          {
+            id: phoneCallsStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: false,
+            order: 2,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'مكتملة',   label_en: 'Completed',          value: 'completed',          color: '#22c55e' },
+              { id: uuid(), label_ar: 'فائتة',    label_en: 'Missed',             value: 'missed',             color: '#ef4444' },
+              { id: uuid(), label_ar: 'بدون رد',  label_en: 'No Answer',          value: 'no_answer',          color: '#f97316' },
+              { id: uuid(), label_ar: 'مرفوضة',   label_en: 'Rejected (by them)', value: 'rejected_by_callee', color: '#dc2626' },
+              { id: uuid(), label_ar: 'ملغاة',    label_en: 'Rejected (by us)',   value: 'rejected_by_caller', color: '#a3a3a3' },
+              { id: uuid(), label_ar: 'ملغاة',    label_en: 'Cancelled',          value: 'cancelled',          color: '#a3a3a3' },
+              { id: uuid(), label_ar: 'فشلت',     label_en: 'Failed',             value: 'failed',             color: '#991b1b' },
+              { id: uuid(), label_ar: 'يرن',      label_en: 'Ringing',            value: 'ringing',            color: '#eab308' },
+              { id: uuid(), label_ar: 'نشطة',     label_en: 'Active',             value: 'active',             color: '#eab308' },
+            ],
+          },
+          {
+            id: phoneCallsCustomerPhoneFieldId,
+            name: 'customer_phone',
+            label_ar: 'رقم العميل',
+            label_en: 'Customer Phone',
+            type: 'phone',
+            required: false,
+            order: 3,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            default_country_code: '+966',
+          },
+          {
+            id: uuid(),
+            name: 'caller_number',
+            label_ar: 'رقم المتصل',
+            label_en: 'Caller Number',
+            type: 'phone',
+            required: false,
+            order: 4,
+            section_id: phoneCallsBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+            default_country_code: '+966',
+          },
+          {
+            id: uuid(),
+            name: 'callee_number',
+            label_ar: 'رقم المتلقي',
+            label_en: 'Callee Number',
+            type: 'phone',
+            required: false,
+            order: 5,
+            section_id: phoneCallsBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+            default_country_code: '+966',
+          },
+          {
+            id: uuid(),
+            name: 'duration_seconds',
+            label_ar: 'مدة المكالمة (ثوانٍ)',
+            label_en: 'Duration (seconds)',
+            type: 'number',
+            required: false,
+            order: 6,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'call_time',
+            label_ar: 'وقت المكالمة',
+            label_en: 'Call Time',
+            type: 'datetime',
+            required: false,
+            order: 7,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'agent_name',
+            label_ar: 'الوكيل',
+            label_en: 'Agent',
+            type: 'text',
+            required: false,
+            order: 8,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'dtmf_digit',
+            label_ar: 'الرقم المضغوط',
+            label_en: 'DTMF Digit',
+            type: 'text',
+            required: false,
+            order: 9,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'dtmf_label',
+            label_ar: 'تسمية الخيار',
+            label_en: 'DTMF Label',
+            type: 'text',
+            required: false,
+            order: 10,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'sentiment',
+            label_ar: 'الانطباع',
+            label_en: 'Sentiment',
+            type: 'dropdown',
+            required: false,
+            order: 11,
+            section_id: phoneCallsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'إيجابي', label_en: 'Positive', value: 'positive', color: '#22c55e' },
+              { id: uuid(), label_ar: 'محايد',  label_en: 'Neutral',  value: 'neutral',  color: '#6b7280' },
+              { id: uuid(), label_ar: 'سلبي',   label_en: 'Negative', value: 'negative', color: '#ef4444' },
+              { id: uuid(), label_ar: 'متباين', label_en: 'Mixed',    value: 'mixed',    color: '#eab308' },
+              { id: uuid(), label_ar: 'غير معروف', label_en: 'Unknown', value: 'unknown', color: '#9ca3af' },
+            ],
+          },
+          {
+            id: uuid(),
+            name: 'ai_summary',
+            label_ar: 'ملخص الذكاء الاصطناعي',
+            label_en: 'AI Summary',
+            type: 'textarea',
+            required: false,
+            order: 12,
+            section_id: phoneCallsBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'recording_url',
+            label_ar: 'رابط التسجيل',
+            label_en: 'Recording URL',
+            type: 'url',
+            required: false,
+            order: 13,
+            section_id: phoneCallsBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'client_link',
+            label_ar: 'العميل المرتبط',
+            label_en: 'Linked Client',
+            type: 'lookup',
+            required: false,
+            order: 14,
+            section_id: phoneCallsBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            lookup_model_id: clientsId,
+            lookup_display_field: 'name',
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // MARKETING MODELS (reels + posts content pipeline — migration from
 // hardcoded tables to user-editable models, 2026-04-23)
 // ============================================================
@@ -2692,6 +2956,7 @@ export const SEED_MODELS: AppModel[] = [
   ourProjectsModel,
   projectsResearchModel,
   chatsModel,
+  phoneCallsModel,
   // Marketing (phase 3A, 2026-04-23): user-editable replacements for the
   // hardcoded marketing_operations / reels / posts / research_questions /
   // competitors tables. The old pipeline still owns writes until the
