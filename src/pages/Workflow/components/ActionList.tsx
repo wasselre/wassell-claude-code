@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/appStore';
 import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp, Phone, Upload, Loader2 } from 'lucide-react';
 import FieldValueInput from './FieldValueInput';
 import { supabase } from '@/lib/supabase';
-import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowIvrOption, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator } from '@/types';
+import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowIvrOption, OutboundIvrDestination, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator, AppModel } from '@/types';
 
 type DateOffsetUnit = 'min' | 'h' | 'd' | 'w' | 'mo' | 'y';
 interface DateOffsetRow {
@@ -187,7 +187,7 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                         updateAction(action.id, {
                           id: action.id,
                           type: 'outbound_ivr',
-                          to_field_id: '',
+                          to: { kind: 'trigger_field', field_name: '' },
                           audio_mode: 'tts',
                           tts_text: '',
                           tts_voice: 'Female',
@@ -318,6 +318,8 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                     <OutboundIvrConfig
                       action={action}
                       triggerFields={triggerFields}
+                      allModels={models}
+                      priorActions={actions.slice(0, idx)}
                       onUpdate={(updated) => updateAction(action.id, updated)}
                     />
                   )}
@@ -1585,15 +1587,39 @@ function HttpRequestConfig({
 function OutboundIvrConfig({
   action,
   triggerFields,
+  allModels,
+  priorActions,
   onUpdate,
 }: {
   action: WorkflowActionOutboundIvr;
   triggerFields: ModelField[];
+  allModels: AppModel[];
+  /** Actions earlier in the same branch — used for the `prev_action_output` source. */
+  priorActions: WorkflowAction[];
   onUpdate: (a: WorkflowActionOutboundIvr) => void;
 }) {
   const { language } = useAppStore();
   const isAr = language === 'ar';
-  const phoneFields = triggerFields.filter((f) => f.type === 'phone');
+  // Normalize storage shape: old actions saved `to_field_id`; new ones save `to`.
+  const destination: OutboundIvrDestination =
+    action.to ?? { kind: 'trigger_field', field_name: action.to_field_id ?? '' };
+
+  function setDestination(next: OutboundIvrDestination) {
+    // Drop the legacy `to_field_id` whenever a new destination is written,
+    // so the two shapes never disagree on the same action.
+    const { to_field_id: _ignored, ...rest } = action;
+    void _ignored;
+    onUpdate({ ...rest, to: next });
+  }
+
+  // Per-source context.
+  const triggerPhoneFields = triggerFields.filter((f) => f.type === 'phone');
+  const triggerLookupFields = triggerFields.filter(
+    (f) => f.type === 'lookup' && !!f.lookup_model_id,
+  );
+  const priorCreateActions = priorActions.filter(
+    (a): a is Extract<WorkflowAction, { type: 'create_record' }> => a.type === 'create_record' && !!a.target_model_id,
+  );
 
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -1643,34 +1669,180 @@ function OutboundIvrConfig({
 
   return (
     <div className="space-y-3">
-      {/* Destination */}
+      {/* Destination — source picker + per-source sub-fields */}
       <div>
-        <label className="block text-xs font-bold text-charcoal/40 mb-1">
-          {isAr ? 'رقم الوجهة (حقل الهاتف)' : 'Destination (phone field)'}
+        <label className="block text-xs font-bold text-charcoal/40 mb-2">
+          {isAr ? 'مصدر رقم الوجهة' : 'Destination source'}
         </label>
-        {phoneFields.length === 0 ? (
-          <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
-            {triggerFields.length === 0
-              ? (isAr
-                  ? 'اختر النموذج المشغّل أولاً من لوحة المُشغّل أعلاه.'
-                  : 'Pick a trigger model first (in the trigger panel above).')
-              : (isAr
-                  ? 'النموذج المشغّل لا يحتوي على حقل هاتف. أضف حقل من نوع "هاتف" في المنشئ أولاً.'
-                  : 'The trigger model has no phone field. Add a "Phone" field in the Builder first.')}
-          </p>
-        ) : (
-          <select
-            value={action.to_field_id}
-            onChange={(e) => onUpdate({ ...action, to_field_id: e.target.value })}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 mb-2">
+          {(
+            [
+              { kind: 'trigger_field',      ar: 'حقل في المُشغِّل', en: 'Trigger field' },
+              { kind: 'lookup',             ar: 'حقل مرجعي',        en: 'Lookup' },
+              { kind: 'static',             ar: 'رقم ثابت',          en: 'Static number' },
+              { kind: 'prev_action_output', ar: 'مخرج إجراء سابق',   en: 'Previous action' },
+            ] as const
+          ).map(({ kind, ar, en }) => (
+            <button
+              key={kind}
+              type="button"
+              onClick={() => {
+                if (destination.kind === kind) return;
+                // Reset sub-fields when switching source to avoid leaking stale ids.
+                if (kind === 'trigger_field')      setDestination({ kind, field_name: '' });
+                if (kind === 'lookup')             setDestination({ kind, lookup_field_name: '', target_phone_field_name: '' });
+                if (kind === 'static')             setDestination({ kind, phone: '' });
+                if (kind === 'prev_action_output') setDestination({ kind, action_id: '', phone_field_name: '' });
+              }}
+              className={`text-xs px-2 py-1.5 rounded-md border transition-colors text-center ${
+                destination.kind === kind
+                  ? 'bg-copper/10 border-copper/40 text-copper font-bold'
+                  : 'bg-white border-sand/40 text-charcoal/60 hover:bg-sand/10'
+              }`}
+            >
+              {isAr ? ar : en}
+            </button>
+          ))}
+        </div>
+
+        {/* Per-source sub-fields */}
+        {destination.kind === 'trigger_field' && (
+          triggerFields.length === 0 ? (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+              {isAr ? 'اختر النموذج المشغّل أولاً من لوحة المُشغّل أعلاه.' : 'Pick a trigger model first (in the trigger panel above).'}
+            </p>
+          ) : triggerPhoneFields.length === 0 ? (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+              {isAr ? 'النموذج المشغّل لا يحتوي على حقل هاتف. أضف حقل من نوع "هاتف" في المنشئ أولاً.' : 'The trigger model has no phone field. Add a "Phone" field in the Builder first.'}
+            </p>
+          ) : (
+            <select
+              value={destination.field_name}
+              onChange={(e) => setDestination({ kind: 'trigger_field', field_name: e.target.value })}
+              className="form-input text-sm w-full"
+            >
+              <option value="">{isAr ? '— اختر حقل —' : '— Pick a phone field —'}</option>
+              {triggerPhoneFields.map((f) => (
+                <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>
+              ))}
+            </select>
+          )
+        )}
+
+        {destination.kind === 'lookup' && (
+          triggerLookupFields.length === 0 ? (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+              {isAr ? 'النموذج المشغّل لا يحتوي على حقل مرجعي (Lookup).' : 'The trigger model has no lookup fields.'}
+            </p>
+          ) : (() => {
+            const pickedLookup = triggerLookupFields.find((f) => f.name === destination.lookup_field_name);
+            const targetModel = pickedLookup?.lookup_model_id
+              ? allModels.find((m) => m.id === pickedLookup.lookup_model_id)
+              : undefined;
+            const targetPhoneFields = targetModel
+              ? targetModel.schema.sections.flatMap((s) => s.fields).filter((f) => f.type === 'phone')
+              : [];
+            return (
+              <div className="space-y-1.5">
+                <select
+                  value={destination.lookup_field_name}
+                  onChange={(e) => setDestination({ kind: 'lookup', lookup_field_name: e.target.value, target_phone_field_name: '' })}
+                  className="form-input text-sm w-full"
+                >
+                  <option value="">{isAr ? '— اختر الحقل المرجعي —' : '— Pick the lookup field —'}</option>
+                  {triggerLookupFields.map((f) => (
+                    <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>
+                  ))}
+                </select>
+                {pickedLookup && (
+                  targetPhoneFields.length === 0 ? (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+                      {isAr
+                        ? `النموذج "${targetModel ? (isAr ? targetModel.label_ar : targetModel.label_en) : ''}" لا يحتوي على حقل هاتف.`
+                        : `Target model "${targetModel ? (isAr ? targetModel.label_ar : targetModel.label_en) : ''}" has no phone field.`}
+                    </p>
+                  ) : (
+                    <select
+                      value={destination.target_phone_field_name}
+                      onChange={(e) => setDestination({ kind: 'lookup', lookup_field_name: destination.lookup_field_name, target_phone_field_name: e.target.value })}
+                      className="form-input text-sm w-full"
+                    >
+                      <option value="">{isAr ? '— اختر حقل الهاتف في النموذج المرتبط —' : '— Pick a phone field on the linked model —'}</option>
+                      {targetPhoneFields.map((f) => (
+                        <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>
+                      ))}
+                    </select>
+                  )
+                )}
+              </div>
+            );
+          })()
+        )}
+
+        {destination.kind === 'static' && (
+          <input
+            type="tel"
+            dir="ltr"
+            value={destination.phone}
+            onChange={(e) => setDestination({ kind: 'static', phone: e.target.value })}
+            placeholder="+9665XXXXXXXX"
             className="form-input text-sm w-full"
-          >
-            <option value="">{isAr ? '— اختر حقل —' : '— Pick a field —'}</option>
-            {phoneFields.map((f) => (
-              <option key={f.id} value={f.name}>
-                {isAr ? f.label_ar : f.label_en}
-              </option>
-            ))}
-          </select>
+          />
+        )}
+
+        {destination.kind === 'prev_action_output' && (
+          priorCreateActions.length === 0 ? (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+              {isAr
+                ? 'لا يوجد إجراء "إنشاء سجل" قبل هذا الإجراء. أضف إجراء إنشاء سجل في موضع أعلى أولاً.'
+                : 'No "Create Record" action exists before this one. Add a Create Record action earlier in the workflow first.'}
+            </p>
+          ) : (() => {
+            const pickedAction = priorCreateActions.find((a) => a.id === destination.action_id);
+            const targetModel = pickedAction ? allModels.find((m) => m.id === pickedAction.target_model_id) : undefined;
+            const targetPhoneFields = targetModel
+              ? targetModel.schema.sections.flatMap((s) => s.fields).filter((f) => f.type === 'phone')
+              : [];
+            // Each prior create_record action shows up as "Action N: Create in <Model>".
+            const priorLabel = (a: Extract<WorkflowAction, { type: 'create_record' }>) => {
+              const idx = priorActions.findIndex((p) => p.id === a.id);
+              const m = allModels.find((mm) => mm.id === a.target_model_id);
+              const mName = m ? (isAr ? m.label_ar : m.label_en) : (isAr ? '(بدون نموذج)' : '(no model)');
+              return isAr ? `الإجراء ${idx + 1}: إنشاء في ${mName}` : `Action ${idx + 1}: Create in ${mName}`;
+            };
+            return (
+              <div className="space-y-1.5">
+                <select
+                  value={destination.action_id}
+                  onChange={(e) => setDestination({ kind: 'prev_action_output', action_id: e.target.value, phone_field_name: '' })}
+                  className="form-input text-sm w-full"
+                >
+                  <option value="">{isAr ? '— اختر إجراء إنشاء سابق —' : '— Pick a prior Create Record action —'}</option>
+                  {priorCreateActions.map((a) => (
+                    <option key={a.id} value={a.id}>{priorLabel(a)}</option>
+                  ))}
+                </select>
+                {pickedAction && (
+                  targetPhoneFields.length === 0 ? (
+                    <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+                      {isAr ? 'النموذج المُستهدف لا يحتوي على حقل هاتف.' : 'The target model has no phone field.'}
+                    </p>
+                  ) : (
+                    <select
+                      value={destination.phone_field_name}
+                      onChange={(e) => setDestination({ kind: 'prev_action_output', action_id: destination.action_id, phone_field_name: e.target.value })}
+                      className="form-input text-sm w-full"
+                    >
+                      <option value="">{isAr ? '— اختر حقل الهاتف —' : '— Pick a phone field —'}</option>
+                      {targetPhoneFields.map((f) => (
+                        <option key={f.id} value={f.name}>{isAr ? f.label_ar : f.label_en}</option>
+                      ))}
+                    </select>
+                  )
+                )}
+              </div>
+            );
+          })()
         )}
       </div>
 

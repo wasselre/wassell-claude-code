@@ -109,7 +109,16 @@ export default async function handler(req: Request): Promise<Response> {
       if (err instanceof HatifError) {
         // Map Hatif 4xx to our 4xx; Hatif 5xx becomes 502 (we're proxying).
         const status = err.status >= 500 ? 502 : err.status;
-        return jsonError(status, err.message);
+        // Attach Hatif's response body to the error message so the workflow
+        // run log shows what Hatif actually rejected (e.g. "destinationNumber
+        // must not contain '+'"), not just "HTTP 400".
+        const bodyText = err.body == null
+          ? ''
+          : typeof err.body === 'string'
+            ? err.body
+            : (() => { try { return JSON.stringify(err.body); } catch { return String(err.body); } })();
+        const message = bodyText ? `${err.message}: ${bodyText.slice(0, 500)}` : err.message;
+        return jsonError(status, message);
       }
       return jsonError(500, err instanceof Error ? err.message : String(err));
     }

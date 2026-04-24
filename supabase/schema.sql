@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS workflows (
 
 -- Workflow execution log — audit trail of every workflow run.
 -- The row snapshot keeps the entry readable even if the workflow is later edited.
+-- Columns mirror the `WorkflowRun` type in src/types/index.ts. The branched
+-- engine added conditions_trace / actions_trace / branches_trace etc; keeping
+-- them in sync with the type is load-bearing because supabaseUpsert sends all
+-- keys verbatim — any missing column makes the whole insert fail silently.
 CREATE TABLE IF NOT EXISTS workflow_runs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   workflow_id UUID NOT NULL,
@@ -87,13 +91,56 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
   trigger_model_label_en TEXT,
   trigger_record_id TEXT,
   trigger_record_snapshot JSONB,
+  previous_record_snapshot JSONB,
+  triggered_by_user_id UUID,
+  depth INT NOT NULL DEFAULT 0,
+  duration_ms INT NOT NULL DEFAULT 0,
   status TEXT,
   started_at TIMESTAMPTZ,
   finished_at TIMESTAMPTZ,
-  actions JSONB NOT NULL DEFAULT '[]'::jsonb,
-  error_message TEXT,
+  conditions_trace JSONB NOT NULL DEFAULT '[]'::jsonb,
+  conditions_passed BOOLEAN NOT NULL DEFAULT true,
+  actions_trace JSONB NOT NULL DEFAULT '[]'::jsonb,
+  branches_trace JSONB,
+  selected_branch_id TEXT,
+  error TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- For existing installs: bring the old workflow_runs table up to the branched-
+-- engine shape. Writes on stale schemas fail silently (unknown columns), which
+-- leaves the logs page showing 0 even though the engine is firing runs.
+ALTER TABLE workflow_runs
+  ADD COLUMN IF NOT EXISTS previous_record_snapshot JSONB,
+  ADD COLUMN IF NOT EXISTS triggered_by_user_id UUID,
+  ADD COLUMN IF NOT EXISTS depth INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS duration_ms INT NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS conditions_trace JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS conditions_passed BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS actions_trace JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS branches_trace JSONB,
+  ADD COLUMN IF NOT EXISTS selected_branch_id TEXT,
+  ADD COLUMN IF NOT EXISTS error TEXT;
+
+-- Rename the legacy error_message column into `error` (matching the TS type).
+-- Idempotent: only runs when the old column still exists AND the new one is
+-- empty / freshly-added, and carries any existing data across before the
+-- redundant column is dropped further below.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'workflow_runs' AND column_name = 'error_message'
+  ) THEN
+    UPDATE workflow_runs SET error = COALESCE(error, error_message) WHERE error_message IS NOT NULL;
+    ALTER TABLE workflow_runs DROP COLUMN error_message;
+  END IF;
+END $$;
+
+-- The pre-branch engine wrote a single `actions` JSONB; the new engine splits
+-- it into actions_trace / branches_trace. Drop the dead column so upserts that
+-- don't include it don't carry stale data forward. Safe no-op on fresh installs.
+ALTER TABLE workflow_runs DROP COLUMN IF EXISTS actions;
 
 CREATE TABLE IF NOT EXISTS dashboards (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
