@@ -25,47 +25,52 @@ export const AGENT_MAX_TOKENS = 16_000;
 // Kept in a single const so prompt caching works — every byte of the system
 // prompt is deterministic and stable across requests. DO NOT interpolate
 // timestamps or session ids into it. See shared/prompt-caching.md.
-export const AGENT_SYSTEM_PROMPT = `You are the AI sales assistant for Wassel Real Estate (وصل العقارية), a Saudi Arabian real estate marketing company. Your display name to customers is "مساعد وصل العقارية" (Wassel assistant).
+export const AGENT_SYSTEM_PROMPT = `You are the AI sales assistant for Wassel Real Estate (وصل العقارية), a Saudi Arabian real estate marketing company. Your display name to customers is "مساعد وصل العقارية".
 
 # Your role
-Customers come to you to learn about real estate projects Wassel markets. You help them:
-- Understand what projects are available (prices, unit types, locations, features).
-- Narrow down to projects that match their needs (city, district, budget, type, size).
-- Ask natural clarifying questions — ONE at a time — until you know what they want.
-- When they seem interested and share their contact info, capture a lead with save_lead.
+Help customers find real estate projects that match their needs, answer their questions about those projects, and — when they're ready — capture a lead.
+
+# Search behavior (CRITICAL — this is where the agent usually gets it wrong)
+- Call search_projects EARLY. The moment the customer mentions ANY signal (city, budget, property type, even "I'm looking for something"), search. Do not clarify 3 times before searching.
+- Pass only filters the customer has stated. Empty filters are fine — search_projects with no filters returns a broad list.
+- If search returns projects, present 2–3 top matches in ONE message. Don't ask another clarifying question first.
+- If search returns NOTHING with a filter the customer mentioned (e.g. "الرياض"), try again with a looser filter (e.g. drop the district, or drop the price cap) before apologizing. Only apologize after you've actually widened the search.
+- The search returns projects from three models: "our_projects" (Wassel-marketed — prioritize these), "targeted_projects", and "all_projects" (market universe). Each result has a "source" field. If you only find results in "all_projects", say so: "هذا مشروع من السوق العام، ما هو ضمن المشاريع اللي نسوّقها حالياً، لكن أقدر أربطك بأحد مستشارينا لو يهمك."
+
+# Reading project data
+- Field names vary. The common human-readable fields are: project_name, preferred_city, preferred_neighborhoods, price_range ({min,max}), area_range ({min,max}), bedroom_range ({min,max}).
+- Some fields may be missing on a given record. State only what's present. Don't invent.
+- Prices are in SAR. Format them with thousand separators when presenting: "1,298,000 ر.س".
 
 # Language behavior
 - Match the customer's language exactly. Arabic in → Arabic out. English in → English out.
 - Default to Arabic (warm, professional Saudi tone). Use "حضرتك" when appropriate.
-- Keep replies short — 2–4 sentences max. Customers are on WhatsApp, nobody reads walls of text.
-- Ask exactly ONE question per message. Never list three questions at once.
+- Replies: 2–4 sentences. Customers are on WhatsApp — no walls of text.
+- Ask at most ONE clarifying question per message, and only when necessary (budget if they said "cheap", city if they said "apartment" with no location). Never list multiple questions.
 
-# Honesty rules (CRITICAL — never violate)
-- NEVER invent prices, sizes, completion dates, availability, or any other facts. Only state what tools actually returned.
-- If the customer asks about something you don't have data on, say so and offer to find out: "ما عندي هذي المعلومة حالياً، بقدر أتحقق وأرجع لك."
-- NEVER claim a project exists if search_projects didn't return it.
-- NEVER give financial or investment advice. If asked, redirect: "القرار لك بالطبع — أقدر بس أشارك معك البيانات المتاحة."
-- NEVER promise discounts, timelines, or availability without explicit data.
+# Honesty rules
+- NEVER invent prices, sizes, completion dates, availability. Only state what tools actually returned.
+- If asked about something not in the data: "ما عندي هذي المعلومة حالياً، بقدر أتحقق وأرجع لك."
+- No financial advice. If asked: "القرار لك بالطبع — أقدر بس أشارك معك البيانات المتاحة."
+- No promises about discounts, timelines, or availability without data.
 
 # What NOT to say
-- NEVER say "Wassel CRM" or mention any internal system. We are just "Wassel" / "وصل العقارية".
-- Do not volunteer that you are an AI. If the customer asks directly, be honest: "نعم، أنا مساعد ذكي يعمل لصالح فريق وصل العقارية."
-- Never disparage or compare with named competitors.
+- NEVER say "Wassel CRM" or name any internal system. We are "Wassel" / "وصل العقارية".
+- Don't volunteer you're an AI. If asked directly: "نعم، أنا مساعد ذكي يعمل لصالح فريق وصل العقارية."
+- No competitor disparagement or comparison.
 
-# Using tools
-- search_projects: call this FIRST whenever the customer asks about availability or describes preferences. Pass only the filters they've actually stated — do not guess or add filters they didn't mention.
-- get_project: after the customer expresses interest in a specific project from the search results, use this for full details (features, units, contact).
-- save_lead: when you have at least name AND phone AND the customer has confirmed they want to be contacted. Always ask permission first: "أقدر أحفظ بياناتك حتى يتواصل معك أحد مستشارينا؟"
+# Lead capture
+- Ask for name + phone only after the customer shows real interest in a specific project or asks to be contacted.
+- Always confirm before saving: "أقدر أحفظ بياناتك حتى يتواصل معك أحد مستشارينا؟"
+- After save_lead succeeds: "تمام، سجّلت بياناتك وسيتواصل معك أحد مستشارينا قريباً إن شاء الله."
 
-# Conversation flow
-1. Greet warmly and ask how you can help.
-2. When they describe what they want, call search_projects with relevant filters.
-3. Briefly present 2–3 top matches (name + location + starting price). Ask which interests them.
-4. For the selected project, call get_project for full details. Answer their follow-up questions.
-5. If interested, ask for name and phone. Confirm and call save_lead.
-6. Close: "تمام، سجّلت بياناتك وسيتواصل معك أحد مستشارينا قريباً إن شاء الله."
+# Conversation shape (default)
+1. Short greeting + ask how you can help (ONE message).
+2. Customer describes what they want → search_projects → present top 2–3 matches with price + location.
+3. Customer picks one → get_project for full details → answer follow-ups from the real data.
+4. Customer interested → ask name + phone → save_lead → close warmly.
 
-Begin the conversation naturally when the user sends their first message.`;
+Begin when the user sends their first message.`;
 
 type ToolUnion = Anthropic.Messages.Tool;
 
@@ -178,47 +183,79 @@ interface SearchInput {
   query?: string;
 }
 
+// Project-search scope: all three project models unioned. In the current
+// data, `our_projects` is often empty while `all_projects` holds the full
+// market universe — searching just one misses inventory. We tag each result
+// with `source` so the agent can prioritize Wassel-marketed projects when
+// multiple models have matches.
+const PROJECT_MODELS = ['our_projects', 'targeted_projects', 'all_projects'] as const;
+
 async function searchProjects(
   supabase: SupabaseClient,
   input: SearchInput,
 ): Promise<string> {
-  const modelId = await getModelIdByName(supabase, 'our_projects');
-  if (!modelId) {
-    return JSON.stringify({
-      error: 'our_projects model not found',
-      projects: [],
-    });
+  const modelMap = new Map<string, string>(); // model_id → model_name
+  for (const name of PROJECT_MODELS) {
+    const id = await getModelIdByName(supabase, name);
+    if (id) modelMap.set(id, name);
   }
+  if (modelMap.size === 0) {
+    return JSON.stringify({ error: 'no project models found', projects: [] });
+  }
+
   const { data, error } = await supabase
     .from('records')
     .select('id, data, model_id')
-    .eq('model_id', modelId)
-    .limit(100);
+    .in('model_id', [...modelMap.keys()])
+    .limit(500);
   if (error) {
     return JSON.stringify({ error: error.message, projects: [] });
   }
   const rows = (data ?? []) as RecordRow[];
   const scored = rows
     .map((r) => ({ row: r, score: scoreMatch(r.data, input) }))
-    .filter((x) => x.score > 0 || matchesAllProvided(x.row.data, input))
-    .sort((a, b) => b.score - a.score)
+    .filter((x) => x.score > 0 && matchesAllProvided(x.row.data, input))
+    // Prefer our_projects > targeted > all when scores tie, so Wassel-owned
+    // inventory surfaces first.
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return sourceRank(modelMap.get(a.row.model_id)) - sourceRank(modelMap.get(b.row.model_id));
+    })
     .slice(0, 15);
   const summary = scored.map(({ row }) => ({
     id: row.id,
-    ...row.data,
+    source: modelMap.get(row.model_id) ?? 'unknown',
+    ...cleanRecord(row.data),
   }));
   return JSON.stringify({ projects: summary, total: summary.length });
 }
 
-// Score a record against filters. Every filter match adds a point. If any
-// non-empty filter is contradicted, the record is excluded via
-// `matchesAllProvided`. Free-text `query` is matched against the JSON string
-// of the record.
+function sourceRank(name: string | undefined): number {
+  if (name === 'our_projects') return 0;
+  if (name === 'targeted_projects') return 1;
+  return 2;
+}
+
+// Strip opaque `item_*` foreign-key slugs so Claude doesn't waste tokens
+// or hallucinate explanations for them. Keeps any field with a human-
+// readable name (project_name, preferred_city, price_range, etc.).
+function cleanRecord(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    if (k.startsWith('item_')) continue;
+    if (v === '#REF' || v === null || v === undefined) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+// Score a record against filters. Every filter match adds a point. Free-
+// text `query` is matched against the JSON string of the record.
 function scoreMatch(data: Record<string, unknown>, input: SearchInput): number {
   let score = 1; // baseline so unfiltered searches still return results
   const asText = JSON.stringify(data).toLowerCase();
-  if (input.city && asText.includes(input.city.toLowerCase())) score += 2;
-  if (input.district && asText.includes(input.district.toLowerCase())) score += 3;
+  if (input.city && asText.includes(input.city.toLowerCase())) score += 3;
+  if (input.district && asText.includes(input.district.toLowerCase())) score += 4;
   if (input.property_type && asText.includes(input.property_type.toLowerCase())) score += 2;
   if (input.query) {
     for (const term of input.query.toLowerCase().split(/\s+/).filter(Boolean)) {
@@ -232,22 +269,43 @@ function matchesAllProvided(
   data: Record<string, unknown>,
   input: SearchInput,
 ): boolean {
-  const price = pickNumber(data, ['price', 'starting_price', 'price_from', 'min_price']);
-  if (input.min_price != null && price != null && price < input.min_price) return false;
-  if (input.max_price != null && price != null && price > input.max_price) return false;
-  const bedrooms = pickNumber(data, ['bedrooms', 'rooms', 'bedroom_count']);
-  if (input.bedrooms != null && bedrooms != null && bedrooms !== input.bedrooms) return false;
+  const priceMin = pickRangeMin(data, ['price_range', 'price']);
+  const priceMax = pickRangeMax(data, ['price_range', 'price']);
+  if (input.max_price != null && priceMin != null && priceMin > input.max_price) return false;
+  if (input.min_price != null && priceMax != null && priceMax < input.min_price) return false;
+
+  const bedroomMin = pickRangeMin(data, ['bedroom_range', 'bedrooms', 'rooms']);
+  const bedroomMax = pickRangeMax(data, ['bedroom_range', 'bedrooms', 'rooms']);
+  if (input.bedrooms != null) {
+    if (bedroomMin != null && input.bedrooms < bedroomMin) return false;
+    if (bedroomMax != null && input.bedrooms > bedroomMax) return false;
+  }
   return true;
 }
 
-function pickNumber(
-  data: Record<string, unknown>,
-  keys: string[],
-): number | null {
+// Range-aware number extractor. Handles `{min, max}` objects (the shape used
+// by `price_range` / `bedroom_range` / `area_range` in this project's data),
+// falls back to a flat number when the field is plain.
+function pickRangeMin(data: Record<string, unknown>, keys: string[]): number | null {
   for (const k of keys) {
     const v = data[k];
     if (typeof v === 'number') return v;
-    if (typeof v === 'string' && !Number.isNaN(Number(v))) return Number(v);
+    if (v && typeof v === 'object' && 'min' in v) {
+      const m = (v as { min?: unknown }).min;
+      if (typeof m === 'number') return m;
+    }
+  }
+  return null;
+}
+
+function pickRangeMax(data: Record<string, unknown>, keys: string[]): number | null {
+  for (const k of keys) {
+    const v = data[k];
+    if (typeof v === 'number') return v;
+    if (v && typeof v === 'object' && 'max' in v) {
+      const m = (v as { max?: unknown }).max;
+      if (typeof m === 'number') return m;
+    }
   }
   return null;
 }
@@ -264,7 +322,7 @@ async function getProject(
   if (error || !data) {
     return JSON.stringify({ error: error?.message ?? 'project not found' });
   }
-  return JSON.stringify({ id: data.id, ...data.data });
+  return JSON.stringify({ id: data.id, ...cleanRecord(data.data) });
 }
 
 interface LeadInput {
