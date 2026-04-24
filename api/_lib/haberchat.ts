@@ -667,15 +667,25 @@ export async function patchChat(
  * the proxy handler can pipe it straight back to the browser without
  * buffering — the whole point is to keep the token server-side.
  *
- * Uploaded files are ACCOUNT-scoped on Haberchat, not device-scoped —
- * the download endpoint is `/v1/files/{id}/download`, NOT the per-device
- * `/v1/chat/{deviceId}/files/{id}/download` path I initially guessed
- * from an older doc skim. The links.download field on the upload
- * response (`/v1/files/<id>/download`) confirms this.
+ * Haberchat has TWO separate namespaces for files:
+ *  - Account-scoped (`/v1/files/{id}/download`): files we uploaded via
+ *    POST /files. Used by the Chat Templates flow — the template pre-
+ *    uploads media and stores the returned id.
+ *  - Device-scoped (`/v1/chat/{deviceId}/files/{id}/download`): files
+ *    that exist as part of a delivered message (transcodes Haberchat
+ *    creates when sending, inbound media from the contact). Used when
+ *    rendering a message bubble from chat_messages.media_file_id.
+ *
+ * Caller tells us which by passing deviceId (device-scoped) or omitting
+ * it (account-scoped). We try the requested path only — these ids live
+ * in different namespaces and fallbacks would mask bugs.
  */
-export async function downloadFile(fileId: string): Promise<Response> {
+export async function downloadFile(fileId: string, deviceId?: string): Promise<Response> {
   if (!fileId) throw new HaberchatError(400, 'fileId is required');
-  const res = await fetch(`${BASE_URL}/files/${encodeURIComponent(fileId)}/download`, {
+  const path = deviceId
+    ? `/chat/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(fileId)}/download`
+    : `/files/${encodeURIComponent(fileId)}/download`;
+  const res = await fetch(`${BASE_URL}${path}`, {
     headers: { Token: token() },
   });
   if (!res.ok) {

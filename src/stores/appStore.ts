@@ -256,7 +256,13 @@ function applyRealtimeRow(row: DbChatMessageRow): void {
     const existing = s.chatMessages[row.chat_wid] ?? [];
     const byId = new Map<string, ChatMessage>();
     for (const m of existing) {
-      if (m.pending && (m.reference === row.reference || m.client_id === row.reference)) continue;
+      // Dedupe on reference match — handles BOTH cases:
+      //  a) pending optimistic placeholder still present (pre-ack)
+      //  b) post-ack message whose id came from POST /messages (Haberchat
+      //     `id`) but the webhook echoes with a different WhatsApp-style
+      //     wid (`3EB0...`). Without this dedupe by reference the row
+      //     would be added as a second bubble.
+      if (row.reference && (m.reference === row.reference || m.client_id === row.reference)) continue;
       byId.set(m.id, m);
     }
     byId.set(incoming.id, incoming);

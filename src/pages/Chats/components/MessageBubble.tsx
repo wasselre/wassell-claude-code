@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import { fetchFileBlob } from '@/lib/haberchat/client';
+import { useAppStore } from '@/stores/appStore';
 import type { ChatMessage } from '@/types';
 
 /**
@@ -90,10 +91,21 @@ function MessageBody({ message, isAr }: { message: ChatMessage; isAr: boolean })
 // ─── Media renderer ─────────────────────────────────────────────────
 
 function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean }) {
-  // Haberchat's download endpoint is account-scoped, not device-scoped
-  // (confirmed via a direct curl against /v1/files/<id>/download). No
-  // deviceId needed — fileId alone is enough.
-  const { url, status, error } = useMediaBlob(message.media_file_id);
+  // Message media lives in Haberchat's DEVICE-scoped namespace (separate
+  // from the ACCOUNT-scoped /v1/files/ where our template pre-uploads
+  // go). Haberchat even re-ids the file during send (e.g. transcoding
+  // audio/ogg → audio/mp3) and the new id is only resolvable with the
+  // deviceId. Pull the device_id from the parent chat record.
+  const deviceId = useAppStore((s) => {
+    const chatsModel = s.models.find((m) => m.name === 'chats');
+    if (!chatsModel) return undefined;
+    const rec = (s.records[chatsModel.id] ?? []).find((r) =>
+      ((r.data as Record<string, unknown>).wid as string | undefined) === message.chat_wid,
+    );
+    return rec ? ((rec.data as Record<string, unknown>).device_id as string | undefined) ?? undefined : undefined;
+  });
+
+  const { url, status, error } = useMediaBlob(message.media_file_id, deviceId);
 
   const mime = message.media_mime ?? '';
   const kind = message.kind;
@@ -197,14 +209,15 @@ type MediaState = { url: string | null; status: 'loading' | 'ready' | 'error'; e
 /**
  * Fetch a media blob via the authenticated proxy and expose it as a
  * blob: URL. Revokes the URL on unmount / input change so we don't
- * leak memory. A tiny in-memory cache keyed by fileId avoids re-fetching
- * when the user scrolls the same message back into view. No deviceId
- * needed — Haberchat's download endpoint is account-scoped.
+ * leak memory. A tiny in-memory cache keyed by (fileId, deviceId)
+ * avoids re-fetching when the user scrolls the same message back into
+ * view. deviceId matters because the same id can resolve to different
+ * content (or not resolve at all) across namespaces.
  */
-const mediaCache = new Map<string, string>(); // key = fileId, value = blob: URL
+const mediaCache = new Map<string, string>(); // key = fileId|deviceId, value = blob: URL
 
-function useMediaBlob(fileId: string | null): MediaState {
-  const cacheKey = fileId || null;
+function useMediaBlob(fileId: string | null, deviceId: string | undefined): MediaState {
+  const cacheKey = fileId ? `${fileId}|${deviceId ?? ''}` : null;
   const initial = useMemo<MediaState>(() => {
     if (!fileId) {
       return { url: null, status: 'error', error: 'missing file id' };
@@ -222,7 +235,7 @@ function useMediaBlob(fileId: string | null): MediaState {
     let createdUrl: string | null = null;
     void (async () => {
       try {
-        const blob = await fetchFileBlob(fileId);
+        const blob = await fetchFileBlob(fileId, deviceId);
         if (cancelled) return;
         const objectUrl = URL.createObjectURL(blob);
         createdUrl = objectUrl;
@@ -244,7 +257,7 @@ function useMediaBlob(fileId: string | null): MediaState {
       // for avoiding re-fetches while scrolling.
       if (createdUrl && !mediaCache.has(cacheKey)) URL.revokeObjectURL(createdUrl);
     };
-  }, [fileId, cacheKey, initial]);
+  }, [fileId, deviceId, cacheKey, initial]);
 
   return state;
 }

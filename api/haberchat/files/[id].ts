@@ -1,20 +1,20 @@
 /**
- * GET /api/haberchat/files/:id
+ * GET /api/haberchat/files/:id[?deviceId=<24-hex>]
  *
- * Stream a Haberchat-hosted media file back to the browser. Haberchat's
- * download endpoint is account-scoped (`GET /v1/files/{id}/download`)
- * and requires the Token header, so the browser CANNOT hit it directly.
- * This proxy adds the token server-side and pipes the response through
- * without buffering.
+ * Stream a Haberchat-hosted media file back to the browser. Haberchat
+ * has two file namespaces:
+ *  - Account-scoped  (no deviceId): files we uploaded via POST /files.
+ *    Used by the Chat Templates flow.
+ *  - Device-scoped   (deviceId set): media on a delivered message
+ *    (Haberchat transcodes audio/video when sending, and inbound media
+ *    lives here too). Used when rendering message bubbles.
  *
- * Used by MessageBubble to render inline media — the browser fetches the
- * file via an authenticated fetch() and creates a blob: URL for <img> /
- * <video> / <audio> / the download link.
+ * The browser decides which path to take — MessageBubble passes the
+ * conversation's device_id so bubble-media resolves correctly;
+ * ChatTemplateFormPage (if it ever needs to re-download) passes no
+ * deviceId so the template's own uploaded file resolves.
  *
- * Note: no `deviceId` query param. Uploaded files on Haberchat are
- * account-wide (the upload response's `links.download` points at
- * `/v1/files/<id>/download` — no device segment). Kept the route shape
- * unchanged for compat; the param is just ignored now.
+ * The Token header is added server-side so the browser never holds it.
  */
 
 import { withAuth, jsonError } from '../../_lib/auth.js';
@@ -30,14 +30,13 @@ export default async function handler(req: Request): Promise<Response> {
   }
   return withAuth(req, async () => {
     const url = new URL(req.url);
-    // Extract file id from the path — the edge runtime doesn't expose
-    // Next-style dynamic params, so parse it from the URL.
     const match = url.pathname.match(/\/api\/haberchat\/files\/([^/]+)\/?$/);
     const fileId = match ? decodeURIComponent(match[1]) : '';
     if (!fileId) return jsonError(400, 'fileId is missing from path');
+    const deviceId = url.searchParams.get('deviceId') || undefined;
 
     try {
-      const upstream = await downloadFile(fileId);
+      const upstream = await downloadFile(fileId, deviceId);
       // Copy through content-type + size + cache headers. Haberchat URLs
       // resolve to immutable file content so a long private cache is
       // safe and saves repeat round-trips when the user scrolls back up.

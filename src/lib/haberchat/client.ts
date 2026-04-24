@@ -165,12 +165,13 @@ export async function uploadFile(
  *  fetch (not <img src>) lets us attach the Supabase JWT header — the
  *  download endpoint requires auth and <img src> can't send headers.
  *
- *  No deviceId needed — Haberchat uploaded files are account-scoped.
- *  The argument used to be required; now ignored. Callers migrated to
- *  the 1-arg form; keeping the old 2-arg signature as a no-op would
- *  mask usage bugs so it's gone. */
-export async function fetchFileBlob(fileId: string): Promise<Blob> {
-  const res = await fetch(`/api/haberchat/files/${encodeURIComponent(fileId)}`, {
+ *  Pass deviceId for bubble-media (Haberchat stores transcoded /
+ *  inbound media in a device-scoped namespace). Omit deviceId for
+ *  template-uploaded files (account-scoped). See downloadFile() in
+ *  api/_lib/haberchat.ts for the namespace split. */
+export async function fetchFileBlob(fileId: string, deviceId?: string): Promise<Blob> {
+  const qs = deviceId ? `?${new URLSearchParams({ deviceId }).toString()}` : '';
+  const res = await fetch(`/api/haberchat/files/${encodeURIComponent(fileId)}${qs}`, {
     headers: await authHeader(),
   });
   if (!res.ok) {
