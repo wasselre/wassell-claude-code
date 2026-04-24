@@ -34,7 +34,8 @@ import ResetPassword from '@/pages/auth/ResetPassword';
 
 // Lazy-loaded so tldraw's bundle + stylesheet are only fetched when the
 // whiteboard route is visited. Keeps the main app bundle lean.
-const WhiteboardPage = lazy(() => import('@/pages/Whiteboard/WhiteboardPage'));
+const WhiteboardListPage = lazy(() => import('@/pages/Whiteboard/WhiteboardListPage'));
+const WhiteboardEditorPage = lazy(() => import('@/pages/Whiteboard/WhiteboardEditorPage'));
 
 /**
  * Auth gate. Renders children only when:
@@ -180,7 +181,15 @@ export default function App() {
             path="/whiteboard"
             element={
               <Suspense fallback={null}>
-                <WhiteboardPage />
+                <WhiteboardListPage />
+              </Suspense>
+            }
+          />
+          <Route
+            path="/whiteboard/:boardId"
+            element={
+              <Suspense fallback={null}>
+                <WhiteboardEditorPage />
               </Suspense>
             }
           />

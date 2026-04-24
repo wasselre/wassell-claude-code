@@ -969,3 +969,50 @@ BEGIN
     ALTER PUBLICATION supabase_realtime ADD TABLE call_logs;
   END IF;
 END $$;
+
+-- ============================================================
+-- WHITEBOARD
+-- ============================================================
+-- Freeform drawing canvases (tldraw). Boards live in optional flat folders
+-- and are shared across every authenticated user — no owner column because
+-- we treat the workspace as a team library (same as dashboards).
+-- See docs/prd/whiteboard.md.
+
+CREATE TABLE IF NOT EXISTS whiteboard_folders (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  name        TEXT NOT NULL,
+  "order"     INT NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS whiteboards (
+  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  folder_id   UUID REFERENCES whiteboard_folders(id) ON DELETE SET NULL,
+  name        TEXT NOT NULL,
+  -- tldraw store snapshot — `editor.getSnapshot()`. Null until first save.
+  snapshot    JSONB,
+  "order"     INT NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_whiteboards_folder ON whiteboards(folder_id);
+CREATE INDEX IF NOT EXISTS idx_whiteboards_updated ON whiteboards(updated_at DESC);
+
+DROP TRIGGER IF EXISTS set_updated_at_whiteboard_folders ON whiteboard_folders;
+CREATE TRIGGER set_updated_at_whiteboard_folders BEFORE UPDATE ON whiteboard_folders
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS set_updated_at_whiteboards ON whiteboards;
+CREATE TRIGGER set_updated_at_whiteboards BEFORE UPDATE ON whiteboards
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+ALTER TABLE whiteboard_folders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE whiteboards ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated full access" ON whiteboard_folders;
+CREATE POLICY "Authenticated full access" ON whiteboard_folders FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Authenticated full access" ON whiteboards;
+CREATE POLICY "Authenticated full access" ON whiteboards FOR ALL TO authenticated USING (true) WITH CHECK (true);

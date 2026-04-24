@@ -38,6 +38,8 @@ import type {
   WebhookPayload,
   WhatsAppNumber,
   ChatMessage,
+  Whiteboard,
+  WhiteboardFolder,
 } from '@/types';
 
 // --- localStorage helpers ---
@@ -397,6 +399,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   daemonStatus: null,
   webhookSlugs: [],
   webhookPayloads: [],
+  whiteboards: [],
+  whiteboardFolders: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
   authEmail: null,
   authReady: false,
@@ -526,6 +530,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     let dashboards = await supabaseLoad<Dashboard>('dashboards');
     if (!dashboards) dashboards = loadLocal<Dashboard[]>('wassell_dashboards') ?? [];
     saveLocal('wassell_dashboards', dashboards);
+
+    // Load whiteboards + their folders
+    let whiteboardFolders = await supabaseLoad<WhiteboardFolder>('whiteboard_folders');
+    if (!whiteboardFolders) whiteboardFolders = loadLocal<WhiteboardFolder[]>('wassell_whiteboard_folders') ?? [];
+    saveLocal('wassell_whiteboard_folders', whiteboardFolders);
+    let whiteboards = await supabaseLoad<Whiteboard>('whiteboards');
+    if (!whiteboards) whiteboards = loadLocal<Whiteboard[]>('wassell_whiteboards') ?? [];
+    saveLocal('wassell_whiteboards', whiteboards);
 
     // Load saved table views
     let views = await supabaseLoad<ModelView>('model_views');
@@ -954,6 +966,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       presentationJobs,
       daemonStatus,
       webhookSlugs,
+      whiteboardFolders,
+      whiteboards,
       currentUserId,
       initialized: true,
     });
@@ -1538,6 +1552,113 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_dashboards', dashboards);
       supabaseDelete('dashboards', dashboardId);
       return { dashboards };
+    });
+  },
+
+  // --- Whiteboards ---
+  createWhiteboardFolder: (name: string) => {
+    const folder: WhiteboardFolder = {
+      id: uuid(),
+      name: name.trim(),
+      order: get().whiteboardFolders.length,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    set((s) => {
+      const whiteboardFolders = [...s.whiteboardFolders, folder];
+      saveLocal('wassell_whiteboard_folders', whiteboardFolders);
+      supabaseUpsert('whiteboard_folders', folder as unknown as Record<string, unknown>);
+      return { whiteboardFolders };
+    });
+    return folder;
+  },
+  renameWhiteboardFolder: (folderId: string, name: string) => {
+    set((s) => {
+      const whiteboardFolders = s.whiteboardFolders.map((f) =>
+        f.id === folderId
+          ? { ...f, name: name.trim(), updated_at: new Date().toISOString() }
+          : f,
+      );
+      saveLocal('wassell_whiteboard_folders', whiteboardFolders);
+      const updated = whiteboardFolders.find((f) => f.id === folderId);
+      if (updated) supabaseUpsert('whiteboard_folders', updated as unknown as Record<string, unknown>);
+      return { whiteboardFolders };
+    });
+  },
+  deleteWhiteboardFolder: (folderId: string) => {
+    set((s) => {
+      // DB has ON DELETE SET NULL on whiteboards.folder_id, so boards survive
+      // — mirror that locally by clearing folder_id on affected boards.
+      const whiteboards = s.whiteboards.map((b) =>
+        b.folder_id === folderId
+          ? { ...b, folder_id: null, updated_at: new Date().toISOString() }
+          : b,
+      );
+      const whiteboardFolders = s.whiteboardFolders.filter((f) => f.id !== folderId);
+      saveLocal('wassell_whiteboard_folders', whiteboardFolders);
+      saveLocal('wassell_whiteboards', whiteboards);
+      supabaseDelete('whiteboard_folders', folderId);
+      return { whiteboardFolders, whiteboards };
+    });
+  },
+
+  createWhiteboard: (name: string, folderId: string | null) => {
+    const board: Whiteboard = {
+      id: uuid(),
+      folder_id: folderId,
+      name: name.trim(),
+      snapshot: null,
+      order: get().whiteboards.filter((b) => b.folder_id === folderId).length,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    set((s) => {
+      const whiteboards = [...s.whiteboards, board];
+      saveLocal('wassell_whiteboards', whiteboards);
+      supabaseUpsert('whiteboards', board as unknown as Record<string, unknown>);
+      return { whiteboards };
+    });
+    return board;
+  },
+  renameWhiteboard: (boardId: string, name: string) => {
+    set((s) => {
+      const whiteboards = s.whiteboards.map((b) =>
+        b.id === boardId ? { ...b, name: name.trim(), updated_at: new Date().toISOString() } : b,
+      );
+      saveLocal('wassell_whiteboards', whiteboards);
+      const updated = whiteboards.find((b) => b.id === boardId);
+      if (updated) supabaseUpsert('whiteboards', updated as unknown as Record<string, unknown>);
+      return { whiteboards };
+    });
+  },
+  deleteWhiteboard: (boardId: string) => {
+    set((s) => {
+      const whiteboards = s.whiteboards.filter((b) => b.id !== boardId);
+      saveLocal('wassell_whiteboards', whiteboards);
+      supabaseDelete('whiteboards', boardId);
+      return { whiteboards };
+    });
+  },
+  moveWhiteboard: (boardId: string, folderId: string | null) => {
+    set((s) => {
+      const whiteboards = s.whiteboards.map((b) =>
+        b.id === boardId ? { ...b, folder_id: folderId, updated_at: new Date().toISOString() } : b,
+      );
+      saveLocal('wassell_whiteboards', whiteboards);
+      const updated = whiteboards.find((b) => b.id === boardId);
+      if (updated) supabaseUpsert('whiteboards', updated as unknown as Record<string, unknown>);
+      return { whiteboards };
+    });
+  },
+  saveWhiteboardSnapshot: (boardId: string, snapshot: unknown) => {
+    set((s) => {
+      const whiteboards = s.whiteboards.map((b) =>
+        b.id === boardId ? { ...b, snapshot, updated_at: new Date().toISOString() } : b,
+      );
+      saveLocal('wassell_whiteboards', whiteboards);
+      const updated = whiteboards.find((b) => b.id === boardId);
+      if (updated) supabaseUpsert('whiteboards', updated as unknown as Record<string, unknown>);
+      return { whiteboards };
     });
   },
 

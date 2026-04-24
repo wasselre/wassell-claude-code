@@ -927,6 +927,27 @@ export interface Dashboard {
   updated_at: string;
 }
 
+// Whiteboard — flat folders holding tldraw-backed boards, shared across the
+// workspace. The snapshot is whatever `editor.getSnapshot()` returns, stored
+// as JSONB; we treat it as opaque here to avoid pulling in tldraw types.
+export interface WhiteboardFolder {
+  id: string;
+  name: string;
+  order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Whiteboard {
+  id: string;
+  folder_id: string | null;
+  name: string;
+  snapshot: unknown | null;
+  order: number;
+  created_at: string;
+  updated_at: string;
+}
+
 // Saved-view types (per-model, per-user, optionally shared)
 
 export interface ModelView {
@@ -1659,4 +1680,19 @@ export interface AppState {
    * don't need to use it (the channel lives for the app's lifetime).
    */
   subscribeMarketingRealtime: () => () => void;
+
+  // --- Whiteboards ---
+  // Flat folder list + boards shared across the workspace. See whiteboard.md.
+  whiteboardFolders: WhiteboardFolder[];
+  whiteboards: Whiteboard[];
+
+  createWhiteboardFolder: (name: string) => WhiteboardFolder;
+  renameWhiteboardFolder: (folderId: string, name: string) => void;
+  deleteWhiteboardFolder: (folderId: string) => void;
+
+  createWhiteboard: (name: string, folderId: string | null) => Whiteboard;
+  renameWhiteboard: (boardId: string, name: string) => void;
+  deleteWhiteboard: (boardId: string) => void;
+  moveWhiteboard: (boardId: string, folderId: string | null) => void;
+  saveWhiteboardSnapshot: (boardId: string, snapshot: unknown) => void;
 }

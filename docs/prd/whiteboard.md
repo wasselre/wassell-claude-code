@@ -1,50 +1,79 @@
 # PRD: Whiteboard
 
 **Status:** Live
-**Last updated:** 2026-04-24 (**Quick-connect handles:** hovering a geo shape (rectangle, ellipse, etc.) now surfaces four small copper "+" buttons just outside its top / right / bottom / left edges. Clicking one creates a matching-type shape 80px away in that direction and connects it to the source with an arrow — both ends bound. Handles stay on the source after each click so the user can fan out in multiple directions without re-hovering. Implemented as a custom `InFrontOfTheCanvas` component; arrows, text, images etc. don't trigger handles.) | 2026-04-24 (**License wired:** `<Tldraw licenseKey>` now reads from `VITE_TLDRAW_LICENSE_KEY` at build time. Running on a 100-day free trial key that expires **2026-08-02** — before that date we need to either switch to a commercial license or fall back to the hobby license with watermark.)
-**Related PRDs:** navigation-layout.md, internationalization.md
+**Last updated:** 2026-04-25 (**Multi-board + folders:** `/whiteboard` is now a hub page listing every board organized into flat folders instead of a single canvas. Clicking a board opens `/whiteboard/:boardId` with its own tldraw canvas. Boards auto-save to Supabase via `editor.store.listen({ source: 'user', scope: 'document' })` with a 1.5 s debounce, mirrored through localStorage per the CRM's standard pattern. Folders are flat (Miro-style spaces, no nesting), all boards are shared across every authenticated user in the workspace. Storage lives in two new Supabase tables — `whiteboard_folders` and `whiteboards(snapshot JSONB)`. 3-dot menu on each board card for rename / move-to-folder / delete; inline rename/delete on folders.) | 2026-04-24 (**Quick-connect handles:** hovering a geo shape surfaces four copper "+" buttons; clicking one creates a same-type shape 80 px away with both arrow ends bound.) | 2026-04-24 (**License wired:** `<Tldraw licenseKey>` reads `VITE_TLDRAW_LICENSE_KEY` at build time. Trial key expires **2026-08-02**.)
+**Related PRDs:** navigation-layout.md, internationalization.md, data-storage.md
 
 ## What it is (in plain English)
-A full-bleed drawing canvas embedded in the app. The user can sketch, drop shapes and arrows, pin text, paste images (e.g. a project site plan or floor plan screenshot), and annotate on top. Think of it as a built-in whiteboard for quick visual planning — marketing campaigns, plot maps, sales funnels, brainstorming — without leaving the CRM. The board is **personal to the browser**: everything the user draws is saved locally and reloads automatically on next visit.
+A built-in library of interactive drawing boards. Users create folders (like "Marketing plans" or "Project maps"), drop boards inside, and open any board to sketch, drag shapes, pin images, and connect ideas with arrows. Everything autosaves as they draw — no save button. Boards are shared across every teammate in the workspace, so anyone can open, edit, and pick up where someone else left off.
 
 ## Why it exists
-Real-estate teams often plan visually (site boundaries, journey maps, campaign funnels) but today they'd bounce to Miro/FigJam and lose the link back to the CRM. A lightweight built-in whiteboard removes that friction. We use the tldraw SDK under the hood — enterprise-grade infinite-canvas engine — rather than rolling our own.
+Real-estate teams often plan visually — site boundaries on a satellite image, a sales funnel on a whiteboard, a "who follows up with whom" map for a launch event. Without a built-in canvas, that work drifts into Miro/FigJam and loses the link back to the CRM. We use the tldraw SDK under the hood — enterprise-grade infinite-canvas engine — rather than rolling our own, organized into folders so 50 boards don't become a wall of tiles.
 
 ## Key behaviors
-- URL: `/whiteboard` (top-level, sits next to Home, Presentations, etc. in the sidebar).
-- Canvas fills a fixed viewport-relative box (`calc(100vh - 10rem)`) below the page header.
-- **Tools included out of the box** (from tldraw): select, hand, draw, eraser, rectangle / ellipse / triangle / diamond / arrow / line / frame shapes, text, sticky note, laser pointer, highlighter, image upload.
-- **Persistence:** the canvas auto-saves to the browser's **IndexedDB** under the `persistenceKey` `wassel-whiteboard-v1`. No Save button — every edit is persisted within milliseconds, and reopening the page restores the last state. Nothing is synced to Supabase yet, so it is per-browser-profile only.
-- **Language/direction:** the tldraw UI chrome (toolbar, menus, handle controls) is English-LTR only. We force `dir="ltr"` on the canvas wrapper regardless of the app's current language so the chrome stays readable. Our own page header (title + subtitle) still follows the app language.
-- **Bundle isolation:** the Whiteboard route is lazy-loaded via `React.lazy`, so tldraw's code and its stylesheet are only downloaded when a user first visits `/whiteboard` — the main bundle stays lean.
-- **License posture:** tldraw enforces its license in production by **unmounting the editor after 5 seconds** on any non-localhost hostname when it can't validate a key (see `@tldraw/editor` `LicenseProvider` → `LICENSE_TIMEOUT` + `shouldHideEditorAfterDelay`). We pass the key via `VITE_TLDRAW_LICENSE_KEY` at build time so it gets inlined by Vite and never lives in source. Keys are **domain-bound** — every production hostname (Vercel prod + any custom domain) must be registered when the key is issued. Current key is a 100-day trial expiring 2026-08-02; we need to renew to commercial or fall back to the hobby license (watermark) before then.
+### Hub page (`/whiteboard`)
+- **Two create buttons** at the top — "New folder" and "New board" (prompts for a name via native `window.prompt()`; upgrade to a proper modal later if team wants descriptions/icons).
+- **Folder sections** render vertically, each with its name, a board-count, and inline "Board here" / rename / delete icons.
+- **Unfiled section** appears at the bottom whenever boards exist without a folder.
+- **Empty state** (no folders and no boards): a big "+ New board" CTA.
+- **Board cards** show name and relative "last updated" (moments / mins / hours / days ago). A 3-dot menu on hover offers Rename, Move to folder (pick from existing folders or "No folder"), Delete.
+- **Deleting a folder** cascades to loose boards: the DB has `ON DELETE SET NULL` on `whiteboards.folder_id`, and the client mirrors that (boards move to "Unfiled" instead of disappearing). Confirmation dialog spells this out when the folder has boards in it.
+
+### Editor page (`/whiteboard/:boardId`)
+- Page header has a back-arrow ("← Back to list"), the board name with an inline pencil to rename, and a small "Changes save automatically" hint.
+- Canvas fills `calc(100vh - 10rem)` below the header, wrapped in a forced `dir="ltr"` container so tldraw's English UI chrome stays readable even in Arabic mode.
+- **Tools** come from tldraw's default toolbar: select / hand / draw / eraser / shapes / arrow / text / sticky / laser / highlighter / image upload.
+- **Quick-connect "+" handles** appear when hovering any geo shape (rectangle, ellipse, etc.) — four copper buttons just outside the shape's top / right / bottom / left edges. Clicking one creates a matching-type shape 80 px away in that direction and binds an arrow between them. Handles stay visible after each click so the user can fan out in multiple directions without re-hovering.
+- **Autosave:** `editor.store.listen({ source: 'user', scope: 'document' })` fires on any user-originated document mutation. We debounce 1.5 s then call `saveWhiteboardSnapshot(boardId, editor.getSnapshot())`. The store action mirrors to `localStorage('wassell_whiteboards')` first, then `upsert` to Supabase (gated on an authenticated session — no-op when running unauthenticated locally).
+- **Unmount flush:** if the user navigates away mid-debounce, the `onMount` cleanup flushes a final save so the last few strokes survive.
+- **Board not found:** if `:boardId` doesn't match any row in the store, the editor shows a "Board not found" card with a link back to the list.
+
+### Persistence model
+- **Two tables in Supabase** — `whiteboard_folders(id, name, "order", timestamps)` and `whiteboards(id, folder_id FK nullable, name, snapshot JSONB, "order", timestamps)`.
+- **RLS:** `FOR ALL TO authenticated USING (true) WITH CHECK (true)` — any signed-in user can read and write anything (workspace-shared).
+- **Offline mirror:** `loadLocal<Whiteboard[]>('wassell_whiteboards')` and `loadLocal<WhiteboardFolder[]>('wassell_whiteboard_folders')` back up every change instantly, so drawings survive a reload even before the Supabase round-trip completes.
+- **Language/direction:** the tldraw UI chrome (toolbar, menus, handles) is LTR-only. We force `dir="ltr"` on the canvas wrapper regardless of the app's current language so the chrome stays readable. Our own page headers, folder names, and board names still flip for Arabic.
+- **Bundle isolation:** both `/whiteboard` and `/whiteboard/:id` are lazy-loaded via `React.lazy`, so tldraw's code and its stylesheet only download when a user first visits the Whiteboard section — the main app bundle stays lean.
+
+### License
+tldraw enforces its license in production by **unmounting the editor after 5 seconds** on any non-localhost hostname when it can't validate a key (see `@tldraw/editor` `LicenseProvider` — `LICENSE_TIMEOUT` + `shouldHideEditorAfterDelay`). We pass the key via `VITE_TLDRAW_LICENSE_KEY` at build time so it gets inlined by Vite and never lives in source. Current key is a 100-day trial expiring **2026-08-02**; renew to commercial or switch to the hobby license (watermark) before then.
 
 ## User flows
-1. **Open the whiteboard:** sidebar → "Whiteboard" → canvas renders with whatever was drawn last time (or a blank board on first visit).
-2. **Draw / annotate:** pick a tool from the bottom toolbar → draw → tldraw auto-saves as you go.
-3. **Add an image:** drag an image file into the canvas, or use the image tool from the toolbar → annotate on top.
-4. **Reset the board:** tldraw's "Edit → Select All → Delete" clears the current canvas. There is no dedicated "new board" button in v1 — the board is a single persistent document per browser profile.
-5. **Empty state:** first visit shows a blank infinite canvas with the default tldraw toolbar. Title + one-line subtitle appear in our own page header above.
+1. **Create a folder:** `/whiteboard` → "New folder" → enter name → folder section appears at the bottom, empty.
+2. **Create a board in a folder:** hover folder header → "Board here" → enter name → redirects to the editor. Alternatively, click "New board" in the page header → enter name → board lands in "Unfiled".
+3. **Open a board:** click a card → editor loads with the board's last saved state.
+4. **Draw and leave:** sketch anything → wait 1.5 s for autosave → navigate away. Reopening the board later shows the same content.
+5. **Rename:** inline pencil on the editor page, or 3-dot menu → Rename on a card. Rename a folder via the pencil next to its name.
+6. **Move a board:** 3-dot menu → Move to folder → pick target (any folder or "No folder").
+7. **Delete:** 3-dot on a card → Delete (confirms). Or delete a folder via its trash icon — boards inside get moved to Unfiled automatically.
 
 ## Data touched
-- **Writes:** browser IndexedDB (owned and managed by the tldraw SDK, keyed by `persistenceKey`).
-- **Reads:** same IndexedDB entry on subsequent visits.
-- Nothing is read from or written to Supabase, `records`, `models`, or any other app table.
+- **Reads/writes:** `whiteboard_folders` and `whiteboards` (Supabase) — mirrored to `localStorage['wassell_whiteboard_folders']` and `localStorage['wassell_whiteboards']`.
+- `whiteboards.snapshot` stores the full tldraw editor snapshot (`editor.getSnapshot()`) as JSONB.
+- No reads/writes to `records`, `models`, or any other app table.
 
 ## Key files
 | File | What it does |
 |---|---|
-| `src/pages/Whiteboard/WhiteboardPage.tsx` | Page component — renders `<Tldraw>` inside a sized, LTR-forced wrapper; registers the quick-connect component via the `components` prop |
-| `src/pages/Whiteboard/components/QuickConnectHandles.tsx` | Miro-style "+" handles that appear on hover, create a new shape + arrow binding on click |
-| `src/App.tsx` | Lazy-loads `WhiteboardPage` and mounts the `/whiteboard` route under `AppLayout` |
-| `src/components/layout/Sidebar.tsx` | Nav entry ("Whiteboard" / "اللوحة البيضاء") using the `SquarePen` icon |
+| `src/pages/Whiteboard/WhiteboardListPage.tsx` | Hub page — folder sections + board cards + create/rename/delete/move actions |
+| `src/pages/Whiteboard/WhiteboardEditorPage.tsx` | Per-board editor — loads snapshot, renders `<Tldraw>`, debounced autosave on user edits |
+| `src/pages/Whiteboard/components/QuickConnectHandles.tsx` | Miro-style "+" handles on hover, create shape + arrow binding on click |
+| `src/App.tsx` | Lazy-loads both pages; routes `/whiteboard` and `/whiteboard/:boardId` |
+| `src/stores/appStore.ts` | `whiteboards` + `whiteboardFolders` state; CRUD actions (`createWhiteboard`, `saveWhiteboardSnapshot`, `moveWhiteboard`, …) mirror to localStorage + Supabase |
+| `src/types/index.ts` | `Whiteboard` and `WhiteboardFolder` interfaces |
+| `supabase/schema.sql` | `whiteboard_folders` + `whiteboards` table definitions, indexes, RLS policies, `updated_at` triggers |
+| `src/components/layout/Sidebar.tsx` | Top-level "Whiteboard" nav entry (`SquarePen` icon) |
 | `src/lib/i18n.ts` | `nav.whiteboard` and `whiteboard.title` strings in both languages |
 | `package.json` | `tldraw` dependency (currently `^4.5.10`) |
 
 ## Open questions / known limitations
-- **Per-browser only.** Because persistence is IndexedDB and not Supabase, the user loses the board when switching browsers/devices and it isn't shareable with teammates. Next step when the need arises: serialize tldraw's store snapshot to a new `whiteboards` table (one row, JSONB), plus the obvious multi-board list page.
-- **Not multiplayer.** tldraw supports real-time collaboration but it requires running a sync backend. Not set up in v1.
-- **RTL UI.** tldraw's toolbar and menus don't support right-to-left layout; Arabic users see English chrome by design. The user-facing page header (above the canvas) still honors language.
-- **Trial license clock.** The current `VITE_TLDRAW_LICENSE_KEY` is a 100-day trial that expires **2026-08-02**. When it lapses, tldraw's enforcement re-engages and the editor will again unmount after 5 seconds in production. Renew to a commercial license or switch to the hobby license (adds a "Made with tldraw" watermark on the canvas) before the expiry.
-- **No export / import.** Users can't yet export the canvas as PNG/SVG or import a saved board. tldraw supports both APIs; we just haven't surfaced them.
-- **Single board per browser.** `persistenceKey` is hard-coded. There's no way to have multiple named boards (one per project, one per campaign) without introducing a list page + board-id URL param.
+- **Sharing is workspace-wide only.** Every authenticated user sees and can edit every board. There's no per-user "my boards" filter, no "share with specific teammate" UI, no read-only mode. Fine for a small internal team today; add a `visibility` enum (`private | team`) and per-user ownership when it starts biting.
+- **Not multiplayer.** Two users editing the same board at the same time will stomp on each other's saves (last write wins; no CRDT sync). tldraw supports real-time collaboration but it requires running a sync backend. Not set up.
+- **Native `prompt()` dialogs** for create/rename. Functional but ugly; upgrade to styled modals when we want board descriptions, icons, or color accents.
+- **No nesting.** Folders are flat (1 level, Miro-style). Adding a `parent_id` column gives us nesting when the board count demands it.
+- **Legacy single-board not migrated.** The prior `persistenceKey="wassel-whiteboard-v1"` IndexedDB blob is orphaned when this change ships — it won't show up in the new list. Users who had content there would need to manually export and re-import (tldraw supports JSON export via its menu). Not painful for the one-week-old single-board era, but worth documenting.
+- **RTL UI.** tldraw's toolbar and menus don't support right-to-left layout; Arabic users see English chrome by design. Our folder names, board names, and headers still honor language.
+- **Trial license clock.** `VITE_TLDRAW_LICENSE_KEY` is a 100-day trial expiring **2026-08-02**. Renew to commercial or switch to the hobby license (adds a "Made with tldraw" watermark on the canvas) before expiry.
+- **No thumbnails yet.** Cards show a generic pencil icon. tldraw has an SVG export API we could call periodically to generate a thumbnail, but it adds meaningful storage + compute; defer until a user asks.
+- **No reordering.** Folders and boards sort by `order`/`name` or `updated_at`; no drag-to-reorder. Add when it starts feeling needed.
+- **Unauthenticated writes are local-only.** By design, `canWriteToSupabase()` returns false without a signed-in session, so all CRUD falls back to localStorage. Matches the rest of the app — just worth remembering when testing.
