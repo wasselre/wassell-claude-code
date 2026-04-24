@@ -38,6 +38,7 @@ import {
   Presentation,
   Settings,
   MessageCircle,
+  MessageSquare,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
@@ -77,6 +78,7 @@ const ICON_MAP: Record<string, ComponentType<LucideProps>> = {
   award: Award,
   shield: Shield,
   'message-circle': MessageCircle,
+  'message-square': MessageSquare,
 };
 
 export function getIconComponent(name: string): ComponentType<LucideProps> {

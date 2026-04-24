@@ -1,16 +1,30 @@
 import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
-import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic } from 'lucide-react';
+import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile } from '@/lib/haberchat/client';
+import TemplatePickerModal from './TemplatePickerModal';
 import type { ChatMessage } from '@/types';
 
 /**
- * Message composer: textarea + attach + send button. Enter sends,
- * Shift+Enter newline. Attach opens a native file picker; the chosen
- * file shows as a removable chip above the composer. When Send fires
- * with an attachment, we upload it through the proxy first, then
- * sendChatMessage with the returned mediaFileId.
+ * Composer — textarea + attach + templates + send. Supports two kinds
+ * of attachments:
+ *   • Local file (from the paperclip / file picker). Uploaded on Send.
+ *   • Pre-uploaded (from a template). Already has a Haberchat fileId,
+ *     no re-upload at send time.
+ * Both are mutually exclusive (picking from one path clears the other).
  */
+
+type LocalAttachment = { kind: 'local'; file: File };
+type TemplateAttachment = {
+  kind: 'template';
+  fileId: string;
+  mime: string | null;
+  size: number | null;
+  filename: string | null;
+  mediaKind: string | null;
+};
+type Attachment = LocalAttachment | TemplateAttachment;
+
 export default function Composer({
   chatWid,
   disabled = false,
@@ -23,8 +37,9 @@ export default function Composer({
   const addToast = useAppStore((s) => s.addToast);
 
   const [text, setText] = useState('');
-  const [attachment, setAttachment] = useState<File | null>(null);
+  const [attachment, setAttachment] = useState<Attachment | null>(null);
   const [sending, setSending] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -38,7 +53,7 @@ export default function Composer({
 
   const canSend = (text.trim().length > 0 || attachment !== null) && !sending && !disabled;
 
-  const kindForAttachment = (file: File): ChatMessage['kind'] => {
+  const kindForLocalFile = (file: File): ChatMessage['kind'] => {
     if (file.type.startsWith('image/')) return 'image';
     if (file.type.startsWith('video/')) return 'video';
     if (file.type.startsWith('audio/')) return 'audio';
@@ -48,32 +63,39 @@ export default function Composer({
   const doSend = async () => {
     if (!canSend) return;
     const body = text.trim();
-    const file = attachment;
+    const att = attachment;
     setSending(true);
-    // Clear inputs optimistically so the user can keep typing. On error
-    // we toast — the text/file don't come back (matches WhatsApp desktop).
     setText('');
     setAttachment(null);
     try {
-      if (file) {
-        // Upload first — blocking. A spinner on the send button tells
-        // the user we're waiting for the upload to finish.
-        const uploaded = await uploadFile(file);
+      if (att?.kind === 'local') {
+        // Upload first, then send. Spinner on the send button covers the wait.
+        const uploaded = await uploadFile(att.file);
         await sendChatMessage(chatWid, {
           body: body || undefined,
           mediaFileId: uploaded.fileId,
           mediaCaption: body || undefined,
-          kind: kindForAttachment(file),
-          mediaMime: uploaded.mime ?? file.type,
-          mediaSize: uploaded.size ?? file.size,
+          kind: kindForLocalFile(att.file),
+          mediaMime: uploaded.mime ?? att.file.type,
+          mediaSize: uploaded.size ?? att.file.size,
+        });
+      } else if (att?.kind === 'template') {
+        // Reuse the template's pre-uploaded Haberchat file — no upload needed.
+        const kind = (att.mediaKind as ChatMessage['kind']) || 'document';
+        await sendChatMessage(chatWid, {
+          body: body || undefined,
+          mediaFileId: att.fileId,
+          mediaCaption: body || undefined,
+          kind,
+          mediaMime: att.mime,
+          mediaSize: att.size,
         });
       } else {
         await sendChatMessage(chatWid, { body });
       }
     } catch (err) {
-      // sendChatMessage toasts its own errors. Upload errors surface here.
       const msg = err instanceof Error ? err.message : String(err);
-      if (file) addToast(msg, 'error');
+      if (att) addToast(msg, 'error');
     } finally {
       setSending(false);
       textareaRef.current?.focus();
@@ -91,100 +113,139 @@ export default function Composer({
   const onFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    // Haberchat plan caps — 10 MB is the most generous tier. We warn but
-    // let the upload attempt proceed; the proxy returns a real error if
-    // the plan is lower.
     if (f.size > 10 * 1024 * 1024) {
       addToast(isAr ? 'حجم الملف أكبر من 10 ميغابايت' : 'File is larger than 10 MB', 'error');
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
-    setAttachment(f);
+    setAttachment({ kind: 'local', file: f });
+    textareaRef.current?.focus();
+  };
+
+  const handleTemplatePicked = (picked: {
+    body: string;
+    mediaFileId: string | null;
+    mediaMime: string | null;
+    mediaSize: number | null;
+    mediaFilename: string | null;
+    mediaKind: string | null;
+  }) => {
+    // Fill the textarea with the template body; user can edit before
+    // sending. If the user already had text, replace — the picker is an
+    // explicit action, not an append.
+    setText(picked.body);
+    if (picked.mediaFileId) {
+      setAttachment({
+        kind: 'template',
+        fileId: picked.mediaFileId,
+        mime: picked.mediaMime,
+        size: picked.mediaSize,
+        filename: picked.mediaFilename,
+        mediaKind: picked.mediaKind,
+      });
+    } else {
+      setAttachment(null);
+    }
+    setShowPicker(false);
     textareaRef.current?.focus();
   };
 
   return (
-    <div className="card p-3 mt-3 flex flex-col gap-2">
-      {/* Attachment preview chip */}
-      {attachment && (
-        <AttachmentChip
-          file={attachment}
-          isAr={isAr}
-          onRemove={() => {
-            setAttachment(null);
-            if (fileInputRef.current) fileInputRef.current.value = '';
-          }}
+    <>
+      {showPicker && (
+        <TemplatePickerModal
+          currentLanguage={isAr ? 'ar' : 'en'}
+          onClose={() => setShowPicker(false)}
+          onPick={handleTemplatePicked}
         />
       )}
 
-      <div className="flex items-end gap-2">
-        {/* Attach */}
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={sending || disabled}
-          className="shrink-0 w-9 h-9 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream disabled:text-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
-          aria-label={isAr ? 'إرفاق ملف' : 'Attach file'}
-          title={isAr ? 'إرفاق ملف' : 'Attach file'}
-          type="button"
-        >
-          <Paperclip size={16} />
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx,.pptx,.zip,.txt"
-          onChange={onFilePicked}
-        />
+      <div className="card p-3 mt-3 flex flex-col gap-2">
+        {attachment && <AttachmentChip attachment={attachment} isAr={isAr} onRemove={() => setAttachment(null)} />}
 
-        <textarea
-          ref={textareaRef}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={
-            attachment
-              ? (isAr ? 'أضف تعليقًا (اختياري)...' : 'Add a caption (optional)…')
-              : (isAr ? 'اكتب رسالتك...' : 'Type a message…')
-          }
-          disabled={sending || disabled}
-          rows={1}
-          className="flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-charcoal placeholder:text-charcoal/40 focus:outline-none leading-relaxed"
-          dir="auto"
-        />
-        <button
-          onClick={doSend}
-          disabled={!canSend}
-          className="shrink-0 w-10 h-10 rounded-full bg-copper text-white hover:bg-terracotta disabled:bg-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
-          aria-label={isAr ? 'إرسال' : 'Send'}
-          title={isAr ? 'إرسال (Enter)' : 'Send (Enter)'}
-          type="button"
-        >
-          {sending ? (
-            <Loader2 size={18} className="animate-spin" />
-          ) : (
-            <Send size={16} className={isAr ? 'rotate-180' : ''} />
-          )}
-        </button>
+        <div className="flex items-end gap-2">
+          {/* Attach file */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sending || disabled}
+            className="shrink-0 w-9 h-9 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream disabled:text-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+            aria-label={isAr ? 'إرفاق ملف' : 'Attach file'}
+            title={isAr ? 'إرفاق ملف' : 'Attach file'}
+            type="button"
+          >
+            <Paperclip size={16} />
+          </button>
+
+          {/* Templates */}
+          <button
+            onClick={() => setShowPicker(true)}
+            disabled={sending || disabled}
+            className="shrink-0 w-9 h-9 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream disabled:text-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+            aria-label={isAr ? 'قوالب' : 'Templates'}
+            title={isAr ? 'قوالب الرسائل' : 'Message templates'}
+            type="button"
+          >
+            <MessageSquare size={16} />
+          </button>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx,.pptx,.zip,.txt"
+            onChange={onFilePicked}
+          />
+
+          <textarea
+            ref={textareaRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder={
+              attachment
+                ? (isAr ? 'أضف تعليقًا (اختياري)...' : 'Add a caption (optional)…')
+                : (isAr ? 'اكتب رسالتك...' : 'Type a message…')
+            }
+            disabled={sending || disabled}
+            rows={1}
+            className="flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-charcoal placeholder:text-charcoal/40 focus:outline-none leading-relaxed"
+            dir="auto"
+          />
+          <button
+            onClick={doSend}
+            disabled={!canSend}
+            className="shrink-0 w-10 h-10 rounded-full bg-copper text-white hover:bg-terracotta disabled:bg-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
+            aria-label={isAr ? 'إرسال' : 'Send'}
+            title={isAr ? 'إرسال (Enter)' : 'Send (Enter)'}
+            type="button"
+          >
+            {sending ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <Send size={16} className={isAr ? 'rotate-180' : ''} />
+            )}
+          </button>
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
 function AttachmentChip({
-  file,
+  attachment,
   isAr,
   onRemove,
 }: {
-  file: File;
+  attachment: Attachment;
   isAr: boolean;
   onRemove: () => void;
 }) {
-  const Icon = file.type.startsWith('image/')
+  const { name, sizeBytes, mime } = attachmentMeta(attachment);
+  const Icon = mime?.startsWith('image/')
     ? ImageIcon
-    : file.type.startsWith('video/')
+    : mime?.startsWith('video/')
       ? Video
-      : file.type.startsWith('audio/')
+      : mime?.startsWith('audio/')
         ? Mic
         : FileText;
   return (
@@ -193,9 +254,12 @@ function AttachmentChip({
         <Icon size={14} className="text-charcoal/60" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium text-charcoal truncate">{file.name}</div>
+        <div className="text-xs font-medium text-charcoal truncate">{name}</div>
         <div className="text-[10px] text-charcoal/50">
-          {(file.size / 1024).toFixed(0)} KB
+          {sizeBytes != null ? `${(sizeBytes / 1024).toFixed(0)} KB` : ''}
+          {attachment.kind === 'template' && (
+            <span className="ms-1 text-copper">· {isAr ? 'من قالب' : 'from template'}</span>
+          )}
         </div>
       </div>
       <button
@@ -208,4 +272,11 @@ function AttachmentChip({
       </button>
     </div>
   );
+}
+
+function attachmentMeta(att: Attachment): { name: string; sizeBytes: number | null; mime: string | null } {
+  if (att.kind === 'local') {
+    return { name: att.file.name, sizeBytes: att.file.size, mime: att.file.type };
+  }
+  return { name: att.filename ?? 'attachment', sizeBytes: att.size, mime: att.mime };
 }

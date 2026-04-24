@@ -26,6 +26,7 @@ import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
+import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
@@ -59,7 +60,7 @@ function RecordFormPageRoute() {
  * clean local-state resets (same rationale as RecordFormPageRoute).
  */
 function RecordDetailDispatcher() {
-  const { modelName } = useParams();
+  const { modelName, recordId } = useParams();
   if (modelName === 'chats') {
     // ChatsSplitPage reads :recordId itself from useParams — no need to
     // pass it. Not keyed on recordId: the split page stays mounted while
@@ -68,7 +69,23 @@ function RecordDetailDispatcher() {
     // internally.
     return <ChatsSplitPage />;
   }
+  if (modelName === 'chat_templates') {
+    // Custom editor — generic record form doesn't handle the file upload
+    // + preview flow well. Keyed on recordId so prev/next nav across
+    // templates cleanly resets the form's local state.
+    return <ChatTemplateFormPage key={recordId ?? 'new'} />;
+  }
   return <RecordFormPageRoute />;
+}
+
+/**
+ * Dispatcher for `/model/:modelName/new`. Generic create uses RecordFormPage;
+ * chat_templates swaps in the custom editor (same one used for edit).
+ */
+function RecordNewDispatcher() {
+  const { modelName } = useParams();
+  if (modelName === 'chat_templates') return <ChatTemplateFormPage key="new" />;
+  return <RecordFormPage />;
 }
 
 /**
@@ -133,7 +150,7 @@ export default function App() {
         >
           <Route path="/" element={<HomePage />} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
-          <Route path="/model/:modelName/new" element={<RecordFormPage />} />
+          <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/builder/:modelId" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />

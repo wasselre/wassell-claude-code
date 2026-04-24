@@ -2979,6 +2979,192 @@ const postsModel: AppModel = {
 };
 
 // ============================================================
+// CHAT TEMPLATES MODEL
+// ============================================================
+// Pre-written WhatsApp message templates with optional media. Each
+// template is one row on this system model. The Chats Composer shows a
+// "Templates" button that opens a picker; selecting a template fills
+// the textarea with the body and attaches the pre-uploaded media (no
+// re-upload needed — we store Haberchat's file id on the record).
+// The generic record list shows them as a table; create/edit uses a
+// custom ChatTemplateFormPage because the media upload doesn't fit the
+// generic record form. See docs/prd/chats.md.
+
+export const chatTemplatesId = uuid();
+const chatTemplatesBaseSectionId = uuid();
+const chatTemplatesNameFieldId = uuid();
+const chatTemplatesLanguageFieldId = uuid();
+
+const chatTemplatesModel: AppModel = {
+  id: chatTemplatesId,
+  name: 'chat_templates',
+  label_ar: 'قوالب الرسائل',
+  label_en: 'Chat Templates',
+  icon: 'message-square',
+  color: '#25D366',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: chatTemplatesNameFieldId,
+    subtitle_field_id: chatTemplatesLanguageFieldId,
+    badge_field_id: null,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: chatTemplatesBaseSectionId,
+        label_ar: 'القالب',
+        label_en: 'Template',
+        order: 0,
+        is_base: true,
+        color: '#25D366',
+        fields: [
+          {
+            id: chatTemplatesNameFieldId,
+            name: 'name',
+            label_ar: 'اسم القالب',
+            label_en: 'Name',
+            type: 'text',
+            required: true,
+            order: 0,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+          },
+          {
+            id: chatTemplatesLanguageFieldId,
+            name: 'language',
+            label_ar: 'اللغة',
+            label_en: 'Language',
+            type: 'dropdown',
+            required: false,
+            order: 1,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'العربية', label_en: 'Arabic', value: 'ar' },
+              { id: uuid(), label_ar: 'الإنجليزية', label_en: 'English', value: 'en' },
+              { id: uuid(), label_ar: 'الاثنان', label_en: 'Both', value: 'both' },
+            ],
+          },
+          {
+            id: uuid(),
+            name: 'tags',
+            label_ar: 'التصنيفات',
+            label_en: 'Tags',
+            type: 'multiselect',
+            required: false,
+            order: 2,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'full',
+            show_in_table: true,
+            options: [],
+          },
+          {
+            id: uuid(),
+            name: 'body_ar',
+            label_ar: 'النص العربي',
+            label_en: 'Arabic body',
+            type: 'textarea',
+            required: false,
+            order: 3,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'body_en',
+            label_ar: 'النص الإنجليزي',
+            label_en: 'English body',
+            type: 'textarea',
+            required: false,
+            order: 4,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'media_kind',
+            label_ar: 'نوع المرفق',
+            label_en: 'Media kind',
+            type: 'dropdown',
+            required: false,
+            order: 5,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'صورة', label_en: 'Image', value: 'image' },
+              { id: uuid(), label_ar: 'فيديو', label_en: 'Video', value: 'video' },
+              { id: uuid(), label_ar: 'صوت', label_en: 'Audio', value: 'audio' },
+              { id: uuid(), label_ar: 'مستند', label_en: 'Document', value: 'document' },
+            ],
+          },
+          {
+            id: uuid(),
+            name: 'media_filename',
+            label_ar: 'اسم الملف',
+            label_en: 'Filename',
+            type: 'text',
+            required: false,
+            order: 6,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          // Haberchat file id — opaque token. Stored as text so the form
+          // preserves it; the custom editor owns the upload flow.
+          {
+            id: uuid(),
+            name: 'media_file_id',
+            label_ar: 'معرّف الملف',
+            label_en: 'Haberchat file id',
+            type: 'text',
+            required: false,
+            order: 7,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'media_mime',
+            label_ar: 'نوع MIME',
+            label_en: 'MIME type',
+            type: 'text',
+            required: false,
+            order: 8,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'media_size',
+            label_ar: 'حجم الملف',
+            label_en: 'File size (bytes)',
+            type: 'number',
+            required: false,
+            order: 9,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 export const SEED_MODELS: AppModel[] = [
@@ -2992,6 +3178,7 @@ export const SEED_MODELS: AppModel[] = [
   ourProjectsModel,
   projectsResearchModel,
   chatsModel,
+  chatTemplatesModel,
   phoneCallsModel,
   // Marketing (phase 3A, 2026-04-23): user-editable replacements for the
   // hardcoded marketing_operations / reels / posts / research_questions /
