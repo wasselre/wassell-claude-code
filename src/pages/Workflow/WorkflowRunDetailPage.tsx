@@ -318,6 +318,7 @@ function ActionTraceCard({ action, isAr, models }: { action: WorkflowActionTrace
           {action.type === 'send_notification' && <NotifyTraceBody action={action} isAr={isAr} />}
           {action.type === 'assign_user' && <AssignTraceBody action={action} isAr={isAr} />}
           {action.type === 'outbound_ivr' && <IvrTraceBody action={action} isAr={isAr} />}
+          {action.type === 'send_whatsapp_message' && <WhatsAppMessageTraceBody action={action} isAr={isAr} />}
         </div>
       )}
     </div>
@@ -482,6 +483,40 @@ function IvrTraceBody({
   );
 }
 
+function WhatsAppMessageTraceBody({
+  action, isAr,
+}: { action: Extract<WorkflowActionTrace, { type: 'send_whatsapp_message' }>; isAr: boolean }) {
+  return (
+    <>
+      <KvRow
+        label={isAr ? 'الرقم المستقبل' : 'Recipient'}
+        value={<span dir="ltr" className="font-mono">{action.resolved_to_number ?? '—'}</span>}
+      />
+      {action.resolved_body && (
+        <KvRow
+          label={isAr ? 'نص الرسالة' : 'Message body'}
+          value={<span className="whitespace-pre-wrap">{action.resolved_body}</span>}
+        />
+      )}
+      {action.device_id && (
+        <KvRow
+          label={isAr ? 'الرقم المُرسِل' : 'Send-from device'}
+          value={<code className="text-xs font-mono">{action.device_id}</code>}
+        />
+      )}
+      {action.message_wid && (
+        <KvRow
+          label={isAr ? 'معرّف الرسالة' : 'Message wid'}
+          value={<code className="text-xs font-mono">{action.message_wid}</code>}
+        />
+      )}
+      {action.response_status !== undefined && (
+        <KvRow label={isAr ? 'حالة الاستجابة' : 'Response status'} value={String(action.response_status)} />
+      )}
+    </>
+  );
+}
+
 function KvRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-start gap-3 text-xs">
@@ -635,6 +670,7 @@ function describeActionType(type: string, isAr: boolean): string {
   if (type === 'assign_user') return isAr ? 'تعيين مستخدم' : 'Assign user';
   if (type === 'http_request') return isAr ? 'طلب HTTP' : 'HTTP Request';
   if (type === 'outbound_ivr') return isAr ? 'مكالمة آلية' : 'Automated call';
+  if (type === 'send_whatsapp_message') return isAr ? 'إرسال واتساب' : 'Send WhatsApp';
   return type;
 }
 

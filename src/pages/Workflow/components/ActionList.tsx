@@ -5,7 +5,7 @@ import { useAppStore } from '@/stores/appStore';
 import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp, Phone, Upload, Loader2 } from 'lucide-react';
 import FieldValueInput from './FieldValueInput';
 import { supabase } from '@/lib/supabase';
-import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowIvrOption, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator } from '@/types';
+import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowIvrOption, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator } from '@/types';
 
 type DateOffsetUnit = 'min' | 'h' | 'd' | 'w' | 'mo' | 'y';
 interface DateOffsetRow {
@@ -107,6 +107,14 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     label_ar: 'مكالمة آلية',
     label_en: 'Automated Call',
   },
+  send_whatsapp_message: {
+    bg: 'bg-green-500/5 border-b border-sand/25',
+    hoverBorder: 'hover:border-green-400/40',
+    badgeBg: 'bg-green-500/15',
+    badgeText: 'text-green-700',
+    label_ar: 'إرسال واتساب',
+    label_en: 'Send WhatsApp',
+  },
 };
 
 export default function ActionList({ actions, triggerFields, onChange, embedded = false }: ActionListProps) {
@@ -186,6 +194,13 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                           options: [{ id: uuid(), digit: '1', label_ar: 'تأكيد', label_en: 'Confirm' }],
                           language: 'ar',
                         });
+                      } else if (type === 'send_whatsapp_message') {
+                        updateAction(action.id, {
+                          id: action.id,
+                          type: 'send_whatsapp_message',
+                          to_field_id: '',
+                          body_template: '',
+                        });
                       } else {
                         updateAction(action.id, { id: action.id, type: 'create_record', target_model_id: '', field_mappings: [] });
                       }
@@ -198,6 +213,7 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                     <option value="assign_user">{isAr ? ACTION_STYLE.assign_user.label_ar : ACTION_STYLE.assign_user.label_en}</option>
                     <option value="http_request">{isAr ? ACTION_STYLE.http_request.label_ar : ACTION_STYLE.http_request.label_en}</option>
                     <option value="outbound_ivr">{isAr ? ACTION_STYLE.outbound_ivr.label_ar : ACTION_STYLE.outbound_ivr.label_en}</option>
+                    <option value="send_whatsapp_message">{isAr ? ACTION_STYLE.send_whatsapp_message.label_ar : ACTION_STYLE.send_whatsapp_message.label_en}</option>
                   </select>
                   <button
                     onClick={() => toggleActionCollapsed(action.id)}
@@ -300,6 +316,14 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
 
                   {action.type === 'outbound_ivr' && (
                     <OutboundIvrConfig
+                      action={action}
+                      triggerFields={triggerFields}
+                      onUpdate={(updated) => updateAction(action.id, updated)}
+                    />
+                  )}
+
+                  {action.type === 'send_whatsapp_message' && (
+                    <SendWhatsAppMessageConfig
                       action={action}
                       triggerFields={triggerFields}
                       onUpdate={(updated) => updateAction(action.id, updated)}
@@ -1851,6 +1875,133 @@ function OutboundIvrConfig({
           </p>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── send_whatsapp_message config UI ────────────────────────────────
+// Mirrors OutboundIvrConfig's "destination + templated text + optional
+// device / channel" pattern. No audio mode / DTMF options — WhatsApp
+// is just text for v1 (media-from-workflow would need a way to resolve
+// file ids dynamically, which is out of scope).
+
+function SendWhatsAppMessageConfig({
+  action,
+  triggerFields,
+  onUpdate,
+}: {
+  action: WorkflowActionSendWhatsAppMessage;
+  triggerFields: ModelField[];
+  onUpdate: (a: WorkflowActionSendWhatsAppMessage) => void;
+}) {
+  const { language, waDevices, waDevicesLive, loadWhatsAppNumbers } = useAppStore();
+  const isAr = language === 'ar';
+  const phoneFields = triggerFields.filter((f) => f.type === 'phone');
+
+  // Kick the devices list if empty — the editor is a good moment to
+  // warm it since the admin typically has the Settings page cached.
+  if (waDevices.length === 0 && waDevicesLive.length === 0) {
+    void loadWhatsAppNumbers().catch(() => { /* silent; the device picker just stays empty */ });
+  }
+
+  // Build the picker options: prefer the local overlay (has friendly
+  // names), fall back to whatever Haberchat currently reports live.
+  const deviceOptions = waDevices.length > 0
+    ? waDevices.filter((d) => d.is_active).map((d) => ({
+        id: d.device_id,
+        label: (isAr ? d.friendly_name_ar : d.friendly_name_en) ?? d.phone,
+        isDefault: d.is_default,
+      }))
+    : waDevicesLive.map((d) => ({
+        id: d.id,
+        label: d.name ?? d.phone,
+        isDefault: false,
+      }));
+
+  return (
+    <div className="space-y-3">
+      {/* Destination phone field */}
+      <div>
+        <label className="block text-xs font-bold text-charcoal/40 mb-1">
+          {isAr ? 'الرقم المستقبل (حقل الهاتف)' : 'Recipient (phone field)'}
+        </label>
+        {phoneFields.length === 0 ? (
+          <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+            {triggerFields.length === 0
+              ? (isAr
+                  ? 'اختر النموذج المشغّل أولاً من لوحة المُشغّل أعلاه.'
+                  : 'Pick a trigger model first (in the trigger panel above).')
+              : (isAr
+                  ? 'النموذج المشغّل لا يحتوي على حقل هاتف. أضف حقل من نوع "هاتف" في المنشئ أولاً.'
+                  : 'The trigger model has no phone field. Add a "Phone" field in the Builder first.')}
+          </p>
+        ) : (
+          <select
+            value={action.to_field_id}
+            onChange={(e) => onUpdate({ ...action, to_field_id: e.target.value })}
+            className="form-input text-sm w-full"
+          >
+            <option value="">{isAr ? '— اختر حقل —' : '— Pick a field —'}</option>
+            {phoneFields.map((f) => (
+              <option key={f.id} value={f.name}>
+                {isAr ? f.label_ar : f.label_en}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Message body template */}
+      <div>
+        <label className="block text-xs font-bold text-charcoal/40 mb-1">
+          {isAr ? 'نص الرسالة' : 'Message body'}
+        </label>
+        <textarea
+          value={action.body_template}
+          onChange={(e) => onUpdate({ ...action, body_template: e.target.value })}
+          rows={4}
+          dir="auto"
+          className="form-input text-sm w-full"
+          placeholder={isAr
+            ? 'مرحباً {name}، شكراً لتواصلك مع وصل العقارية 👋'
+            : 'Hi {name}, thanks for reaching out to Wassel Real Estate 👋'}
+        />
+        <p className="text-[10px] text-charcoal/40 mt-1">
+          {isAr
+            ? 'يمكنك استخدام {field_slug} لإدراج قيمة أي حقل من السجل المُشغِّل.'
+            : 'Use {field_slug} to insert any field value from the triggering record.'}
+        </p>
+      </div>
+
+      {/* Device picker — only meaningful when >1 device is active. */}
+      {deviceOptions.length > 1 && (
+        <div>
+          <label className="block text-xs font-bold text-charcoal/40 mb-1">
+            {isAr ? 'الإرسال من' : 'Send from'}
+          </label>
+          <select
+            value={action.device_id ?? ''}
+            onChange={(e) => onUpdate({ ...action, device_id: e.target.value || undefined })}
+            className="form-input text-sm w-full"
+          >
+            <option value="">
+              {isAr ? '— الرقم الافتراضي —' : '— Default number —'}
+            </option>
+            {deviceOptions.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label}{d.isDefault ? (isAr ? ' (افتراضي)' : ' (default)') : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {deviceOptions.length <= 1 && (
+        <p className="text-[10px] text-charcoal/40">
+          {isAr
+            ? 'سيُستخدم الرقم الافتراضي المعيّن في إعدادات أرقام واتساب.'
+            : 'The default WhatsApp number from Settings → WhatsApp Numbers will be used.'}
+        </p>
+      )}
     </div>
   );
 }

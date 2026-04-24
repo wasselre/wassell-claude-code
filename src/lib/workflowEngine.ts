@@ -981,6 +981,107 @@ async function executeAction(
         if (errorMsg) return { ...traceCommon, status: 'failed', error: errorMsg };
         return { ...traceCommon, status: 'executed' };
       }
+
+      case 'send_whatsapp_message': {
+        // Resolve the recipient phone from the trigger record's phone field —
+        // same pattern as outbound_ivr above. Empty / malformed numbers skip
+        // the action rather than failing the whole workflow run.
+        const rawPhone = triggerRecord.data[action.to_field_id];
+        const normalized = typeof rawPhone === 'string' ? normalizePhone(rawPhone) : null;
+        if (!normalized) {
+          return {
+            ...traceBase,
+            type: 'send_whatsapp_message',
+            status: 'skipped',
+            skip_reason: 'no_destination_number',
+            duration_ms: Date.now() - startedAt,
+            to_field_id: action.to_field_id,
+            device_id: action.device_id,
+          };
+        }
+
+        const resolvedBody = substituteFieldTokens(action.body_template ?? '', triggerRecord);
+        if (!resolvedBody.trim()) {
+          return {
+            ...traceBase,
+            type: 'send_whatsapp_message',
+            status: 'skipped',
+            skip_reason: 'empty_body_after_substitution',
+            duration_ms: Date.now() - startedAt,
+            to_field_id: action.to_field_id,
+            resolved_to_number: normalized,
+            device_id: action.device_id,
+            resolved_body: '',
+          };
+        }
+
+        // Same auth dance as outbound_ivr — forward the current session's
+        // Supabase JWT so the /api/haberchat/messages proxy's withAuth
+        // gate lets us through.
+        let authHeader: Record<string, string> = {};
+        if (supabase) {
+          try {
+            const { data } = await supabase.auth.getSession();
+            const token = data.session?.access_token;
+            if (token) authHeader = { Authorization: `Bearer ${token}` };
+          } catch {
+            /* ignore — proxy will return 401 and we log it as failed */
+          }
+        }
+
+        let responseStatus: number | undefined;
+        let responseSnippet: string | undefined;
+        let messageWid: string | undefined;
+        let errorMsg: string | undefined;
+
+        try {
+          const res = await fetch('/api/haberchat/messages', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader },
+            body: JSON.stringify({
+              deviceId: action.device_id || undefined,
+              phone: normalized,
+              body: resolvedBody,
+              // Pass the action trace id as the idempotency key. The
+              // message:out:new webhook echoes this on the chat_messages
+              // row so our Realtime merge path can match a future UI
+              // placeholder without creating duplicates.
+              reference: traceBase.id,
+            }),
+          });
+          responseStatus = res.status;
+          const text = await res.text().catch(() => '');
+          responseSnippet = text.slice(0, 500);
+          if (res.ok) {
+            try {
+              const parsed = JSON.parse(text) as { wid?: string | null };
+              messageWid = parsed.wid ?? undefined;
+            } catch {
+              /* non-JSON success body — ignore; messageWid stays undefined */
+            }
+          } else {
+            errorMsg = `HTTP ${res.status}`;
+          }
+        } catch (err) {
+          errorMsg = err instanceof Error ? err.message : String(err);
+        }
+
+        const traceCommon = {
+          ...traceBase,
+          type: 'send_whatsapp_message' as const,
+          duration_ms: Date.now() - startedAt,
+          resolved_to_number: normalized,
+          to_field_id: action.to_field_id,
+          device_id: action.device_id,
+          resolved_body: resolvedBody.slice(0, 500),
+          message_wid: messageWid,
+          response_status: responseStatus,
+          response_snippet: responseSnippet,
+        };
+
+        if (errorMsg) return { ...traceCommon, status: 'failed', error: errorMsg };
+        return { ...traceCommon, status: 'executed' };
+      }
     }
   } catch (err) {
     return {
@@ -996,6 +1097,7 @@ async function executeAction(
       ...(action.type === 'assign_user' ? { assignment_field_id: action.assignment_field_id, mode: action.mode, role_conditions_count: action.role_conditions.length } : {}),
       ...(action.type === 'http_request' ? { method: action.method, resolved_url: action.url, body_mode: action.body_mode } : {}),
       ...(action.type === 'outbound_ivr' ? { to_field_id: action.to_field_id, audio_mode: action.audio_mode, options_count: action.options.length } : {}),
+      ...(action.type === 'send_whatsapp_message' ? { to_field_id: action.to_field_id, device_id: action.device_id } : {}),
     } as WorkflowActionTrace;
   }
 

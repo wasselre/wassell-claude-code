@@ -403,7 +403,7 @@ export interface FieldMapping {
   formula_expression?: string;
 }
 
-export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user' | 'http_request' | 'outbound_ivr';
+export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user' | 'http_request' | 'outbound_ivr' | 'send_whatsapp_message';
 
 // HTTP method for the outbound `http_request` workflow action.
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -531,13 +531,33 @@ export interface WorkflowActionOutboundIvr {
   language?: 'ar' | 'en';
 }
 
+// send_whatsapp_message — sends an automated WhatsApp message through the
+// Chats module's proxy. Recipient phone comes from a field on the trigger
+// record; body supports `{field_slug}` token substitution like http_request
+// and outbound_ivr. Mirror-pattern of outbound_ivr (both are "resolve a
+// phone + template text + dispatch via a Haberchat/Hatif proxy" flows).
+export interface WorkflowActionSendWhatsAppMessage {
+  id: string;
+  type: 'send_whatsapp_message';
+  // Trigger-model field (type=phone) whose value is the recipient's number.
+  to_field_id: string;
+  // Haberchat device id. Optional — server falls back to
+  // HABERCHAT_DEFAULT_DEVICE_ID when empty, then to whichever default the
+  // admin marked in /settings/whatsapp-numbers.
+  device_id?: string;
+  // Message body. Supports `{field_slug}` tokens resolved against the
+  // trigger record via substituteFieldTokens().
+  body_template: string;
+}
+
 export type WorkflowAction =
   | WorkflowActionCreateRecord
   | WorkflowActionUpdateRecord
   | WorkflowActionSendNotification
   | WorkflowActionAssignUser
   | WorkflowActionHttpRequest
-  | WorkflowActionOutboundIvr;
+  | WorkflowActionOutboundIvr
+  | WorkflowActionSendWhatsAppMessage;
 
 // A workflow branch — an if / else-if / else arm. Evaluated top-to-bottom; the
 // first non-else branch whose conditions all pass is the winner and its actions
@@ -715,13 +735,27 @@ export interface WorkflowActionTraceOutboundIvr extends WorkflowActionTraceBase 
   response_snippet?: string;
 }
 
+export interface WorkflowActionTraceSendWhatsAppMessage extends WorkflowActionTraceBase {
+  type: 'send_whatsapp_message';
+  resolved_to_number?: string;       // E.164 number after phone-field resolution
+  to_field_id?: string;              // phone field the number was pulled from
+  device_id?: string;                // Haberchat device used (resolved)
+  resolved_body?: string;            // body after token substitution (may be truncated)
+  // Haberchat returns the new message's wid. Stored so the Realtime row
+  // that later arrives via the webhook can be correlated with this action.
+  message_wid?: string;
+  response_status?: number;
+  response_snippet?: string;
+}
+
 export type WorkflowActionTrace =
   | WorkflowActionTraceCreate
   | WorkflowActionTraceUpdate
   | WorkflowActionTraceNotify
   | WorkflowActionTraceAssign
   | WorkflowActionTraceHttpRequest
-  | WorkflowActionTraceOutboundIvr;
+  | WorkflowActionTraceOutboundIvr
+  | WorkflowActionTraceSendWhatsAppMessage;
 
 // One branch's evaluation trace. Populated for every branch evaluated during a
 // run (including ones that were short-circuited past because an earlier branch
