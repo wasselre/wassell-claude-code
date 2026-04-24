@@ -23,6 +23,7 @@ This folder contains the **living source of truth** for what every section of th
 | 13 | [calling.md](calling.md) | Call logging via Hatif — post-call webhook, transcripts, client-record link |
 | 14 | [chats.md](chats.md) | WhatsApp inbox via Haberchat — two-pane list + thread, live webhook updates, media, client auto-link |
 | 15 | [whiteboard.md](whiteboard.md) | Built-in drawing canvas (tldraw) — freeform sketching, annotations, per-browser IndexedDB persistence |
+| 16 | [ai-agent.md](ai-agent.md) | Internal Claude-powered AI sales agent — chat UI inside the app, tool-use loop over project records, save_lead into clients |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 

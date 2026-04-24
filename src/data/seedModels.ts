@@ -2386,6 +2386,122 @@ const chatsModel: AppModel = {
 };
 
 // ============================================================
+// AI CHATS MODEL (internal Wassel AI sales agent conversations)
+// ============================================================
+// Each record is one chat session between a user and the AI agent. Messages
+// live inline in `record.data.messages` as a JSONB array — no separate table
+// (unlike `chat_messages` for WhatsApp, which has external writers). The
+// detail route is overridden to render AiAgentPage instead of the generic
+// RecordFormPage — see App.tsx dispatcher.
+
+export const aiChatsId = uuid();
+const aiChatsBaseSectionId = uuid();
+const aiChatsTitleFieldId = uuid();
+const aiChatsStatusFieldId = uuid();
+const aiChatsLastMessageFieldId = uuid();
+
+const aiChatsModel: AppModel = {
+  id: aiChatsId,
+  name: 'ai_chats',
+  label_ar: 'المساعد الذكي',
+  label_en: 'AI Agent',
+  icon: 'sparkles',
+  color: '#7C3AED',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: aiChatsTitleFieldId,
+    subtitle_field_id: aiChatsLastMessageFieldId,
+    badge_field_id: aiChatsStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: aiChatsBaseSectionId,
+        label_ar: 'معلومات المحادثة',
+        label_en: 'Conversation',
+        order: 0,
+        is_base: true,
+        color: '#7C3AED',
+        fields: [
+          {
+            id: aiChatsTitleFieldId,
+            name: 'title',
+            label_ar: 'العنوان',
+            label_en: 'Title',
+            type: 'text',
+            required: false,
+            order: 0,
+            section_id: aiChatsBaseSectionId,
+            width: 'full',
+            show_in_table: true,
+          },
+          {
+            id: aiChatsStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: false,
+            order: 1,
+            section_id: aiChatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'نشط', label_en: 'Active', value: 'active', color: '#22c55e' },
+              { id: uuid(), label_ar: 'مؤرشف', label_en: 'Archived', value: 'archived', color: '#9ca3af' },
+            ],
+          },
+          {
+            id: uuid(),
+            name: 'message_count',
+            label_ar: 'عدد الرسائل',
+            label_en: 'Messages',
+            type: 'number',
+            required: false,
+            order: 2,
+            section_id: aiChatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: aiChatsLastMessageFieldId,
+            name: 'last_message_at',
+            label_ar: 'آخر رسالة',
+            label_en: 'Last Message',
+            type: 'datetime',
+            required: false,
+            order: 3,
+            section_id: aiChatsBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'linked_client_id',
+            label_ar: 'العميل المرتبط',
+            label_en: 'Linked Client',
+            type: 'lookup',
+            required: false,
+            order: 4,
+            section_id: aiChatsBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+            lookup_model_id: clientsId,
+            lookup_display_field: 'name',
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // PHONE CALLS MODEL (Hatif call events as user-facing records)
 // ============================================================
 // Every inbound, outbound-IVR, and agent-placed call Hatif logs gets a
@@ -3179,6 +3295,7 @@ export const SEED_MODELS: AppModel[] = [
   projectsResearchModel,
   chatsModel,
   chatTemplatesModel,
+  aiChatsModel,
   phoneCallsModel,
   // Marketing (phase 3A, 2026-04-23): user-editable replacements for the
   // hardcoded marketing_operations / reels / posts / research_questions /

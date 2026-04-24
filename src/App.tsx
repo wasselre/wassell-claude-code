@@ -27,6 +27,7 @@ import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
+import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
@@ -73,6 +74,12 @@ function RecordDetailDispatcher() {
     // internally.
     return <ChatsSplitPage />;
   }
+  if (modelName === 'ai_chats') {
+    // AiAgentPage is a split-pane chat UI just like ChatsSplitPage — it
+    // reads :recordId from useParams and handles its own right-pane
+    // mount keying.
+    return <AiAgentPage />;
+  }
   if (modelName === 'chat_templates') {
     // Custom editor — generic record form doesn't handle the file upload
     // + preview flow well. Keyed on recordId so prev/next nav across
@@ -102,6 +109,9 @@ function RecordListDispatcher() {
   const { modelName } = useParams();
   if (modelName === 'chats') {
     return <ChatsSplitPage />;
+  }
+  if (modelName === 'ai_chats') {
+    return <AiAgentPage />;
   }
   return <RecordListPage />;
 }

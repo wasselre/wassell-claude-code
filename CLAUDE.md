@@ -136,6 +136,11 @@ They are editable in the Builder but cannot be deleted (is_system: true).
 7. `chats` — WhatsApp conversations via Haberchat. Top-level (no group).
    Renders a custom two-pane UI (list + thread) instead of the generic
    record table/form. See `docs/prd/chats.md`.
+8. `ai_chats` — Internal Claude-powered AI sales agent. Top-level
+   (no group). Each record is one conversation; messages live inline in
+   `record.data.messages` as a JSON array. Renders a custom split-pane
+   UI. Backed by `api/agent.ts` + `api/_lib/aiAgent.ts`. Requires
+   `ANTHROPIC_API_KEY`. See `docs/prd/ai-agent.md`.
 
 ## Current Build Status
 - [x] Phase 1: Foundation (types, store, layout, routing)
@@ -160,7 +165,9 @@ They are editable in the Builder but cannot be deleted (is_system: true).
 ```
 VITE_SUPABASE_URL=your-project-url
 VITE_SUPABASE_ANON_KEY=your-anon-key
+ANTHROPIC_API_KEY=sk-ant-...   # server-side only, powers /api/agent
 ```
+See `.env.example` for the full set including Haberchat + Hatif keys.
 
 ## Deployment Config (CRITICAL — `vercel.json`)
 The app deploys to Vercel. Its config (`vercel.json`) is validated against a **strict JSON schema** (`https://openapi.vercel.sh/vercel.json`) at deploy time — every object inside `headers[]`, `rewrites[]`, `redirects[]`, etc. is `additionalProperties: false`. Any unknown key makes the deploy error out **before the build runs** (duration shows blank in the Vercel dashboard).
