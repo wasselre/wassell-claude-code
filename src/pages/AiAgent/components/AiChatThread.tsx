@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { Send, Loader2, Sparkles, Search, FileSearch, UserPlus } from 'lucide-react';
+import { Send, Loader2, Sparkles, Search, FileSearch, UserPlus, Plus } from 'lucide-react';
 import type { AppRecord } from '@/types';
 import { streamAgentTurn, type AgentApiMessage } from '@/lib/aiAgent/client';
 
@@ -13,6 +13,7 @@ interface StoredMessage {
 interface Props {
   recordId: string;
   modelId: string;
+  onNewChat: () => void;
 }
 
 /**
@@ -20,7 +21,7 @@ interface Props {
  * message, streams the agent's reply into the transcript, and persists
  * the turn back to the ai_chats record on completion.
  */
-export default function AiChatThread({ recordId, modelId }: Props) {
+export default function AiChatThread({ recordId, modelId, onNewChat }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const recordsByModel = useAppStore((s) => s.records);
   const saveRecord = useAppStore((s) => s.saveRecord);
@@ -162,10 +163,10 @@ export default function AiChatThread({ recordId, modelId }: Props) {
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
       <div className="p-3 border-b border-sand/20 flex items-center gap-2">
-        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
           <Sparkles size={16} className="text-primary" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="font-medium text-sm truncate">
             {(record.data.title as string | undefined) ??
               (isAr ? 'محادثة' : 'Conversation')}
@@ -174,6 +175,17 @@ export default function AiChatThread({ recordId, modelId }: Props) {
             {isAr ? 'مساعد وصل العقارية' : 'Wassel AI Assistant'}
           </div>
         </div>
+        {/* New chat button — also present in the left pane, but exposed here
+            so it's reachable on mobile (where the list pane is hidden while a
+            chat is open) and as a prominent affordance inside any thread. */}
+        <button
+          onClick={onNewChat}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white hover:bg-secondary transition-colors text-xs font-medium shrink-0"
+          title={isAr ? 'محادثة جديدة' : 'New chat'}
+        >
+          <Plus size={14} />
+          <span className="hidden sm:inline">{isAr ? 'جديدة' : 'New'}</span>
+        </button>
       </div>
 
       {/* Transcript */}
@@ -229,13 +241,17 @@ function Bubble({
   typing?: boolean;
 }) {
   const isUser = role === 'user';
+  // Using a column flex wrapper with items-end/items-start is more robust
+  // across RTL/LTR than the `justify-end`/`justify-start` pattern on a row
+  // flex — the alignment flips with `direction` and was rendering user
+  // bubbles in the wrong spot in RTL.
   return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex flex-col w-full ${isUser ? 'items-end' : 'items-start'}`}>
       <div
-        className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap ${
+        className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm whitespace-pre-wrap shadow-sm ${
           isUser
-            ? 'bg-primary text-white rounded-ee-sm'
-            : 'bg-background text-text rounded-es-sm'
+            ? 'bg-primary text-white border border-primary'
+            : 'bg-background text-text border border-sand/30'
         }`}
       >
         {content}

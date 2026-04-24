@@ -124,7 +124,7 @@ export default function AiAgentPage() {
       {/* Right pane — active chat or welcome */}
       <div className={`flex-1 min-w-0 flex-col ${!recordId ? 'hidden md:flex' : 'flex'}`}>
         {recordId ? (
-          <AiChatThread key={recordId} recordId={recordId} modelId={aiChatsModel.id} />
+          <AiChatThread key={recordId} recordId={recordId} modelId={aiChatsModel.id} onNewChat={startNewChat} />
         ) : (
           <EmptyPane isAr={isAr} onStart={startNewChat} />
         )}
