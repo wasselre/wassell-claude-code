@@ -1158,7 +1158,21 @@ async function executeAction(
         // HABERCHAT_DEFAULT_DEVICE_ID. Mirrors sendChatMessage's resolver
         // so the workflow path and the manual composer path agree on
         // which number sends.
-        const storeState = useAppStore.getState();
+        //
+        // Warm the lists first if this is a cold session — workflow
+        // triggers fire from saveRecord, which can happen before the
+        // user has ever visited /settings/whatsapp-numbers or /model/chats
+        // in this tab. Without this, action.device_id being empty means
+        // we hit the proxy with no deviceId and get HTTP 400.
+        let storeState = useAppStore.getState();
+        if (storeState.waDevices.length === 0 && storeState.waDevicesLive.length === 0) {
+          try {
+            await storeState.loadWhatsAppNumbers();
+            storeState = useAppStore.getState();
+          } catch {
+            /* ignore — fall through to the proxy-env fallback */
+          }
+        }
         const resolvedDeviceId =
           action.device_id ||
           storeState.waDevices.find((d) => d.is_default && d.is_active)?.device_id ||
