@@ -1,7 +1,7 @@
 # PRD: Marketing Operations (Reels + Posts)
 
 **Status:** Live
-**Last updated:** 2026-04-23 (workflow-driven rewrite — dropped 6 hardcoded tables + old Marketing pages; pipeline now runs on the generic records + workflows system)
+**Last updated:** 2026-04-24 (edge functions now tracked in git — narrowed the gitignore to `supabase/functions/haberchat-webhook/`)
 **Related PRDs:** `record-management.md` (project lookup), `data-storage.md` (Supabase), `workflow-automation.md` (webhook triggers + http_request action), `model-builder.md` (table field type)
 
 ## What it is (in plain English)
@@ -229,12 +229,9 @@ migrated into `records`.
   `authenticated full access` policy, so unauthenticated previews
   see zero seeded workflows. The seeder only runs once the user
   signs in and webhook slugs hydrate.
-- **Edge functions in `.gitignore`.** `supabase/functions/` was
-  originally gitignored for the unrelated haberchat-webhook project;
-  the marketing pipeline functions live in the same directory but
-  are excluded from git. They're deployed via MCP or Supabase CLI
-  directly — commits only cover client-side code. A future cleanup
-  should narrow the ignore to `supabase/functions/haberchat-webhook/`
-  and track the marketing functions too.
 - **No tests yet.** Manual verification only. The engine's `http_request`
   + webhook-trigger paths would benefit from targeted unit tests.
+- **Deploys are still CLI-only.** The marketing edge function sources
+  are tracked in git, but no CI job builds or deploys them on merge.
+  Updates currently require a manual `supabase functions deploy` or
+  an MCP deploy call.

@@ -55,8 +55,13 @@ Wassel\ Branding/
 
 # Unrelated side project that happens to live in this folder — NOT part of Wassell.
 # It's a separate Supabase Edge Function (haberchat-webhook / WhatsApp bot). Keep
-# it out of the Wassell repo so the two projects don't get tangled.
-supabase/functions/
+# it out of the Wassell repo so the two projects don't get tangled. Everything
+# else under supabase/functions/ (the marketing pipeline agents + the inbox +
+# _shared helpers) IS part of Wassell and lives in git.
+supabase/functions/haberchat-webhook/
+# Deno lock/cache noise inside function dirs
+supabase/functions/**/deno.lock
+supabase/functions/**/.deno/
 
 # TypeScript build info
 *.tsbuildinfo
