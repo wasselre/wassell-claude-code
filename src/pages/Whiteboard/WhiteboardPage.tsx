@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Tldraw } from 'tldraw';
+import { Tldraw, type TLComponents } from 'tldraw';
 import 'tldraw/tldraw.css';
 import { useAppStore } from '@/stores/appStore';
+import { QuickConnectHandles } from './components/QuickConnectHandles';
 
 /**
  * Whiteboard — full-bleed tldraw canvas.
@@ -27,6 +29,13 @@ export default function WhiteboardPage(): JSX.Element {
   const isAr = useAppStore((s) => s.language) === 'ar';
   const licenseKey = import.meta.env.VITE_TLDRAW_LICENSE_KEY as string | undefined;
 
+  // Keep the components object referentially stable so tldraw doesn't
+  // remount the InFrontOfTheCanvas slot on every render.
+  const components = useMemo<TLComponents>(
+    () => ({ InFrontOfTheCanvas: QuickConnectHandles }),
+    [],
+  );
+
   return (
     <div>
       <div className="mb-4">
@@ -44,7 +53,11 @@ export default function WhiteboardPage(): JSX.Element {
         dir="ltr"
         className="relative h-[calc(100vh-10rem)] w-full rounded-2xl overflow-hidden border border-sand/40 bg-white"
       >
-        <Tldraw persistenceKey="wassel-whiteboard-v1" licenseKey={licenseKey} />
+        <Tldraw
+          persistenceKey="wassel-whiteboard-v1"
+          licenseKey={licenseKey}
+          components={components}
+        />
       </div>
     </div>
   );

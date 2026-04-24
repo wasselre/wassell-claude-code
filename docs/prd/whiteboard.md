@@ -1,7 +1,7 @@
 # PRD: Whiteboard
 
 **Status:** Live
-**Last updated:** 2026-04-24 (**License wired:** `<Tldraw licenseKey>` now reads from `VITE_TLDRAW_LICENSE_KEY` at build time. Running on a 100-day free trial key that expires **2026-08-02** — before that date we need to either switch to a commercial license or fall back to the hobby license with watermark.)
+**Last updated:** 2026-04-24 (**Quick-connect handles:** hovering a geo shape (rectangle, ellipse, etc.) now surfaces four small copper "+" buttons just outside its top / right / bottom / left edges. Clicking one creates a matching-type shape 80px away in that direction and connects it to the source with an arrow — both ends bound. Handles stay on the source after each click so the user can fan out in multiple directions without re-hovering. Implemented as a custom `InFrontOfTheCanvas` component; arrows, text, images etc. don't trigger handles.) | 2026-04-24 (**License wired:** `<Tldraw licenseKey>` now reads from `VITE_TLDRAW_LICENSE_KEY` at build time. Running on a 100-day free trial key that expires **2026-08-02** — before that date we need to either switch to a commercial license or fall back to the hobby license with watermark.)
 **Related PRDs:** navigation-layout.md, internationalization.md
 
 ## What it is (in plain English)
@@ -34,7 +34,8 @@ Real-estate teams often plan visually (site boundaries, journey maps, campaign f
 ## Key files
 | File | What it does |
 |---|---|
-| `src/pages/Whiteboard/WhiteboardPage.tsx` | Page component — renders `<Tldraw>` inside a sized, LTR-forced wrapper |
+| `src/pages/Whiteboard/WhiteboardPage.tsx` | Page component — renders `<Tldraw>` inside a sized, LTR-forced wrapper; registers the quick-connect component via the `components` prop |
+| `src/pages/Whiteboard/components/QuickConnectHandles.tsx` | Miro-style "+" handles that appear on hover, create a new shape + arrow binding on click |
 | `src/App.tsx` | Lazy-loads `WhiteboardPage` and mounts the `/whiteboard` route under `AppLayout` |
 | `src/components/layout/Sidebar.tsx` | Nav entry ("Whiteboard" / "اللوحة البيضاء") using the `SquarePen` icon |
 | `src/lib/i18n.ts` | `nav.whiteboard` and `whiteboard.title` strings in both languages |
