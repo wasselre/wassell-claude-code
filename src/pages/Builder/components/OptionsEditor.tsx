@@ -4,9 +4,10 @@ import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { v4 as uuid } from 'uuid';
-import { GripVertical, Trash2, Plus, ChevronDown, ChevronRight, FolderPlus, Folder, Pencil, Lock, Check } from 'lucide-react';
+import { GripVertical, Trash2, Plus, ChevronDown, ChevronRight, FolderPlus, Folder, Pencil, Lock, Check, List } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { bilingualFromInput, slugify } from '@/lib/autoTranslate';
+import Modal from '@/components/ui/Modal';
 import type { FieldOption, FieldOptionGroup } from '@/types';
 
 const OPTION_COLORS = [
@@ -395,6 +396,7 @@ export default function OptionsEditor({
   const { language } = useAppStore();
   const isAr = language === 'ar';
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [modalOpen, setModalOpen] = useState(false);
 
   const isLocked = (o: FieldOption) => lockSectionOptions && !!o.is_section_option;
 
@@ -480,24 +482,81 @@ export default function OptionsEditor({
   }
 
   const hasOptions = options.length > 0;
+  const editableCount = options.filter((o) => !isLocked(o)).length;
+  const lockedCount = options.length - editableCount;
+  // Preview first few labels in the user's current UI language for the
+  // collapsed trigger — enough of a glance that they can find the field
+  // without opening the modal.
+  const previewLabels = options
+    .slice(0, 5)
+    .map((o) => (isAr ? o.label_ar : o.label_en) || o.value || '…')
+    .filter(Boolean);
+
+  const headerTitle = label ?? t('fields.options');
 
   return (
     <div>
-      <label className="block text-sm font-bold text-charcoal mb-1">{label ?? t('fields.options')}</label>
+      {/* Compact trigger — the Field Properties side panel is too narrow for
+        * the full three-column editor to breathe, so clicking this button
+        * opens a roomy modal. */}
+      <label className="block text-sm font-bold text-charcoal mb-1">{headerTitle}</label>
       {hint && <p className="text-[11px] text-charcoal/45 mb-2">{hint}</p>}
-      <div className="rounded-lg border border-sand/30 bg-white/50 overflow-hidden">
-        {/* Column headers — rendered once at the top of the options table. */}
-        {hasOptions && (
-          <div className="flex items-center gap-1.5 py-1.5 px-2 bg-sand/10 text-[10px] font-bold text-charcoal/40 uppercase tracking-wider">
-            <span className="w-[14px] shrink-0" aria-hidden />
-            <span className="flex-1 text-start" dir="rtl">{isAr ? 'عربي' : 'Arabic'}</span>
-            <span className="flex-1 text-start" dir="ltr">{isAr ? 'إنجليزي' : 'English'}</span>
-            <span className="flex-1 text-start font-mono normal-case tracking-normal" dir="ltr">api_name</span>
-            {groups.length > 0 && <span className="w-[22px] shrink-0" aria-hidden />}
-            <span className="w-[24px] shrink-0" aria-hidden />
-            <span className="w-[22px] shrink-0" aria-hidden />
+      <button
+        type="button"
+        onClick={() => setModalOpen(true)}
+        className="w-full flex items-center gap-2 py-2 px-3 rounded-lg border border-sand/40 bg-white/50 hover:bg-copper/5 hover:border-copper/30 transition-colors text-start"
+      >
+        <List size={15} className="text-copper shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-bold text-charcoal">
+            {isAr ? 'تحرير الخيارات' : 'Edit options'}
+            <span className="ms-2 text-xs font-normal text-charcoal/45">
+              ({editableCount}{lockedCount > 0 ? ` + ${lockedCount} ${isAr ? 'مُقفل' : 'locked'}` : ''})
+            </span>
           </div>
-        )}
+          {previewLabels.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {previewLabels.map((l, i) => (
+                <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-sand/20 text-charcoal/55 truncate max-w-[110px]">
+                  {l}
+                </span>
+              ))}
+              {options.length > previewLabels.length && (
+                <span className="text-[10px] px-1.5 py-0.5 text-charcoal/35">
+                  +{options.length - previewLabels.length}
+                </span>
+              )}
+            </div>
+          )}
+          {!hasOptions && (
+            <div className="text-[11px] text-charcoal/35 mt-0.5">
+              {isAr ? 'لا توجد خيارات بعد — انقر للإضافة' : 'No options yet — click to add'}
+            </div>
+          )}
+        </div>
+        <ChevronRight size={14} className={`text-charcoal/30 shrink-0 ${isAr ? 'rotate-180' : ''}`} />
+      </button>
+
+      <Modal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={headerTitle}
+        maxWidth="max-w-4xl"
+      >
+        {hint && <p className="text-[12px] text-charcoal/60 mb-3">{hint}</p>}
+        <div className="rounded-lg border border-sand/30 bg-white overflow-hidden">
+          {/* Column headers — rendered once at the top of the options table. */}
+          {hasOptions && (
+            <div className="flex items-center gap-2 py-2 px-3 bg-sand/10 text-[11px] font-bold text-charcoal/50 uppercase tracking-wider">
+              <span className="w-[14px] shrink-0" aria-hidden />
+              <span className="flex-1 text-start" dir="rtl">{isAr ? 'عربي' : 'Arabic'}</span>
+              <span className="flex-1 text-start" dir="ltr">{isAr ? 'إنجليزي' : 'English'}</span>
+              <span className="flex-1 text-start font-mono normal-case tracking-normal" dir="ltr">api_name</span>
+              {groups.length > 0 && <span className="w-[22px] shrink-0" aria-hidden />}
+              <span className="w-[28px] shrink-0" aria-hidden />
+              <span className="w-[22px] shrink-0" aria-hidden />
+            </div>
+          )}
         <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={options.map((o) => o.id)} strategy={verticalListSortingStrategy}>
             {/* Ungrouped options (rendered first so they're easy to find). */}
@@ -555,23 +614,31 @@ export default function OptionsEditor({
             })}
           </SortableContext>
         </DndContext>
-      </div>
-      <div className="mt-2 flex items-center gap-2 flex-wrap">
-        <button
-          onClick={() => addOption()}
-          className="pill text-copper border-copper/30 hover:bg-copper/5"
-        >
-          <Plus size={14} />
-          {t('fields.add_option')}
-        </button>
-        <button
-          onClick={addGroup}
-          className="pill text-charcoal/60 border-sand/40 hover:bg-sand/10"
-        >
-          <FolderPlus size={14} />
-          {t('fields.add_group')}
-        </button>
-      </div>
+        </div>
+        <div className="mt-3 flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => addOption()}
+            className="pill text-copper border-copper/30 hover:bg-copper/5"
+          >
+            <Plus size={14} />
+            {t('fields.add_option')}
+          </button>
+          <button
+            onClick={addGroup}
+            className="pill text-charcoal/60 border-sand/40 hover:bg-sand/10"
+          >
+            <FolderPlus size={14} />
+            {t('fields.add_group')}
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={() => setModalOpen(false)}
+            className="pill bg-copper text-white border-copper hover:bg-copper/90"
+          >
+            {isAr ? 'تم' : 'Done'}
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }
