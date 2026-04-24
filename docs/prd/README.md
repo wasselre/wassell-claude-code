@@ -21,6 +21,7 @@ This folder contains the **living source of truth** for what every section of th
 | 11 | [workflow-logs.md](workflow-logs.md) | Workflow execution logs — detailed audit trail of every firing |
 | 12 | [presentations.md](presentations.md) | Deck generation from Claude Code templates — catalog, jobs, daemon |
 | 13 | [calling.md](calling.md) | Call logging via Hatif — post-call webhook, transcripts, client-record link |
+| 14 | [chats.md](chats.md) | WhatsApp inbox via Haberchat — two-pane list + thread, live webhook updates, media, client auto-link |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 

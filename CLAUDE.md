@@ -109,11 +109,13 @@ This is a special field type (`section_selector`) that controls which non-base s
 
 ## Supabase Tables
 ```
-models          — model definitions (schema as JSONB)
-model_groups    — sidebar folder groups
-records         — all records for all models (data as JSONB)
-workflows       — automation workflow definitions
-dashboards      — dashboard configurations (widgets as JSONB)
+models            — model definitions (schema as JSONB)
+model_groups      — sidebar folder groups
+records           — all records for all models (data as JSONB)
+workflows         — automation workflow definitions
+dashboards        — dashboard configurations (widgets as JSONB)
+chat_messages     — WhatsApp messages per conversation (Realtime-enabled)
+whatsapp_numbers  — local overlay on Haberchat devices: friendly name + default flag
 ```
 
 ## Offline / Local Fallback
@@ -131,6 +133,9 @@ They are editable in the Builder but cannot be deleted (is_system: true).
 4. `targeted_projects` — Targeted Projects (group: Projects)
 5. `our_projects` — Our Projects (group: Projects)
 6. `projects_research` — Research with PDF generation (group: Projects)
+7. `chats` — WhatsApp conversations via Haberchat. Top-level (no group).
+   Renders a custom two-pane UI (list + thread) instead of the generic
+   record table/form. See `docs/prd/chats.md`.
 
 ## Current Build Status
 - [x] Phase 1: Foundation (types, store, layout, routing)
