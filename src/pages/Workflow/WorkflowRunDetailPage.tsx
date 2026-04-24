@@ -502,6 +502,12 @@ function IvrTraceBody({
       {action.response_status !== undefined && (
         <KvRow label={isAr ? 'حالة الاستجابة' : 'Response status'} value={String(action.response_status)} />
       )}
+      {action.response_snippet && (
+        <KvRow
+          label={isAr ? 'ردّ الخادم' : 'Server response'}
+          value={<code className="text-xs font-mono break-all whitespace-pre-wrap bg-sand/20 px-2 py-1 rounded block">{action.response_snippet}</code>}
+        />
+      )}
     </>
   );
 }

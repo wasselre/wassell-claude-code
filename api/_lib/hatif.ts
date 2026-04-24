@@ -174,9 +174,17 @@ export async function triggerOutboundIvr(input: TriggerIvrInput): Promise<Trigge
     throw new HatifError(400, 'exactly one of ttsText or audioFileUrl is required');
   }
 
+  // Hatif's IVR endpoint accepts E.164 WITHOUT the leading '+'. The example in
+  // the doc is `"9665xxxxxxxx"`, and trialed payloads with '+' get 400'd. Our
+  // internal canonical form is `+9665...`, so strip the sign here at the
+  // adapter boundary — nowhere else should do this.
+  const destination = input.destinationNumber.startsWith('+')
+    ? input.destinationNumber.slice(1)
+    : input.destinationNumber;
+
   const payload: Record<string, unknown> = {
     channelId: input.channelId,
-    destinationNumber: input.destinationNumber,
+    destinationNumber: destination,
     webhookUrl: input.webhookUrl,
     options: input.options,
   };
