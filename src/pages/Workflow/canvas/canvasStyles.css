@@ -1,0 +1,103 @@
+/* Wassel branded overrides for @xyflow/react and drawer animations. Keeps
+   all canvas-specific style in one place so the node components don't have
+   to fight xyflow's defaults. */
+
+/* Edge path — default stroke uses Tailwind's sand token so edges read as
+   woven into the cream background rather than black on white. */
+.react-flow__edge-path {
+  stroke: #D4B896;
+  stroke-width: 2;
+  transition: stroke 0.15s ease, stroke-width 0.15s ease;
+}
+.react-flow__edge:hover .react-flow__edge-path,
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #B8734F;
+  stroke-width: 2.5;
+}
+
+/* The edge-label renderer wraps custom controls (like the "+" button); we
+   let it receive pointer events only on its direct children. */
+.workflow-addable-edge-label {
+  font-size: 0;
+}
+
+/* xyflow's built-in Controls panel — give it the cream brand look. */
+.react-flow__controls {
+  box-shadow: 0 4px 12px rgba(74, 44, 42, 0.08);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(212, 184, 150, 0.5);
+}
+.react-flow__controls-button {
+  background: #ffffff;
+  border-bottom: 1px solid rgba(212, 184, 150, 0.4);
+  color: #4A4E54;
+}
+.react-flow__controls-button:hover {
+  background: #F5EDE0;
+  color: #4A2C2A;
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+/* MiniMap — soft tint so it doesn't fight the canvas background. */
+.react-flow__minimap {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(212, 184, 150, 0.5);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* The group/branch lane node's background is rendered by the React component,
+   but xyflow still wants to paint a default border. Strip it. */
+.react-flow__node-branchGroup {
+  background: transparent;
+  border: none;
+  padding: 0;
+  z-index: 0;
+}
+.react-flow__node-trigger,
+.react-flow__node-condition,
+.react-flow__node-action {
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+
+/* xyflow draws a selection ring by default on every node; we handle the
+   selected visual inside each node component, so hide the default. */
+.react-flow__node.selected {
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Drawer — slide in from the inline-end edge. Pairs with `insetInlineEnd: 0`
+   and `direction` inherited from dir attribute. */
+.workflow-drawer {
+  animation: drawerIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes drawerIn {
+  from { transform: translateX(12%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+[dir='rtl'] .workflow-drawer {
+  animation-name: drawerInRtl;
+}
+@keyframes drawerInRtl {
+  from { transform: translateX(-12%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* Ensure the xyflow canvas container stretches to its parent's block size. */
+.workflow-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 640px;
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(212, 184, 150, 0.5);
+  background:
+    radial-gradient(circle at 1px 1px, rgba(74, 78, 84, 0.08) 1px, transparent 0) 0 0 / 20px 20px,
+    #FBF7F0;
+}

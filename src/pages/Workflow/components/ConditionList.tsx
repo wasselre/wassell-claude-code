@@ -20,6 +20,41 @@ const OPERATORS: ConditionOperator[] = [
   'equals', 'not_equals', 'contains', 'greater_than', 'less_than', 'is_empty', 'is_not_empty',
 ];
 
+// Short operator symbols for the canvas node card. Mirrors the i18n keys but
+// stays terse and language-agnostic so it fits the ~40-char summary budget.
+const OPERATOR_SYMBOL: Record<ConditionOperator, string> = {
+  equals: '=',
+  not_equals: '≠',
+  contains: '⊇',
+  intersects: '∩',
+  greater_than: '>',
+  less_than: '<',
+  is_empty: 'Ø',
+  is_not_empty: '≠ Ø',
+};
+
+// One-line textual summary for a condition, used by ConditionNode on the
+// canvas. Truncates long values so a full-width node stays one line tall.
+export function summarizeCondition(cond: WorkflowCondition, fields: ModelField[], isAr: boolean): string {
+  if (!cond.field_id) return isAr ? 'اختر حقلًا' : 'Pick a field';
+  const field = fields.find((f) => f.name === cond.field_id);
+  const name = field ? (isAr ? field.label_ar : field.label_en) : cond.field_id;
+  const sym = OPERATOR_SYMBOL[cond.operator];
+  if (cond.operator === 'is_empty' || cond.operator === 'is_not_empty') {
+    return `${name} ${sym}`;
+  }
+  const v = cond.value;
+  const shown = v == null || v === ''
+    ? (isAr ? '(فارغ)' : '(empty)')
+    : typeof v === 'string'
+      ? v
+      : Array.isArray(v)
+        ? v.join(', ')
+        : String(v);
+  const trimmed = shown.length > 22 ? shown.slice(0, 19) + '…' : shown;
+  return `${name} ${sym} ${trimmed}`;
+}
+
 export default function ConditionList({ conditions, fields, triggerEvent, onChange, embedded = false }: ConditionListProps) {
   const { t } = useTranslation();
   const { language } = useAppStore();

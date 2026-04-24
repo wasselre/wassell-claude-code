@@ -50,20 +50,25 @@ interface ActionListProps {
 
 // Color-coded styling per action type. Full class strings (not template
 // interpolation) so Tailwind's JIT scanner picks them up at build time.
-interface ActionStyle {
+export interface ActionStyle {
   bg: string;      // header bg tint
   hoverBorder: string;
   badgeBg: string;
   badgeText: string;
+  // Solid backgrounds for the canvas node header (doesn't need the /5 tint).
+  nodeBg: string;
+  nodeBorder: string;
   label_ar: string;
   label_en: string;
 }
-const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
+export const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
   create_record: {
     bg: 'bg-emerald-500/5 border-b border-sand/25',
     hoverBorder: 'hover:border-emerald-400/40',
     badgeBg: 'bg-emerald-500/15',
     badgeText: 'text-emerald-700',
+    nodeBg: 'bg-emerald-500',
+    nodeBorder: 'border-emerald-500/50',
     label_ar: 'إنشاء سجل',
     label_en: 'Create Record',
   },
@@ -72,6 +77,8 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     hoverBorder: 'hover:border-sky-400/40',
     badgeBg: 'bg-sky-500/15',
     badgeText: 'text-sky-700',
+    nodeBg: 'bg-sky-500',
+    nodeBorder: 'border-sky-500/50',
     label_ar: 'تحديث سجل',
     label_en: 'Update Record',
   },
@@ -80,6 +87,8 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     hoverBorder: 'hover:border-amber-400/40',
     badgeBg: 'bg-amber-500/15',
     badgeText: 'text-amber-700',
+    nodeBg: 'bg-amber-500',
+    nodeBorder: 'border-amber-500/50',
     label_ar: 'إرسال إشعار',
     label_en: 'Send Notification',
   },
@@ -88,6 +97,8 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     hoverBorder: 'hover:border-violet-400/40',
     badgeBg: 'bg-violet-500/15',
     badgeText: 'text-violet-700',
+    nodeBg: 'bg-violet-500',
+    nodeBorder: 'border-violet-500/50',
     label_ar: 'تعيين مستخدم',
     label_en: 'Assign User',
   },
@@ -96,6 +107,8 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     hoverBorder: 'hover:border-rose-400/40',
     badgeBg: 'bg-rose-500/15',
     badgeText: 'text-rose-700',
+    nodeBg: 'bg-rose-500',
+    nodeBorder: 'border-rose-500/50',
     label_ar: 'طلب HTTP',
     label_en: 'HTTP Request',
   },
@@ -104,6 +117,8 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     hoverBorder: 'hover:border-copper/40',
     badgeBg: 'bg-copper/15',
     badgeText: 'text-copper',
+    nodeBg: 'bg-copper',
+    nodeBorder: 'border-copper/50',
     label_ar: 'مكالمة آلية',
     label_en: 'Automated Call',
   },
@@ -112,10 +127,63 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     hoverBorder: 'hover:border-green-400/40',
     badgeBg: 'bg-green-500/15',
     badgeText: 'text-green-700',
+    nodeBg: 'bg-green-500',
+    nodeBorder: 'border-green-500/50',
     label_ar: 'إرسال واتساب',
     label_en: 'Send WhatsApp',
   },
 };
+
+// Plain-English one-liner for canvas nodes. Intentionally short — node cards
+// are ~260px wide so each summary needs to fit in ~40 chars. Returns a
+// direction-agnostic string; the caller provides its own dir-attribute.
+export function summarizeAction(action: WorkflowAction, models: AppModel[], isAr: boolean): string {
+  switch (action.type) {
+    case 'create_record': {
+      const target = models.find((m) => m.id === action.target_model_id);
+      if (!target) return isAr ? 'اختر نموذجًا' : 'Pick a model';
+      const name = isAr ? target.label_ar : target.label_en;
+      const mappings = action.field_mappings.length;
+      const mappingStr = mappings === 0
+        ? (isAr ? 'بلا حقول' : 'no fields')
+        : isAr ? `${mappings} حقل` : `${mappings} field${mappings === 1 ? '' : 's'}`;
+      return `${name} · ${mappingStr}`;
+    }
+    case 'update_record': {
+      const target = models.find((m) => m.id === action.target_model_id);
+      if (!target) return isAr ? 'اختر نموذجًا' : 'Pick a model';
+      const name = isAr ? target.label_ar : target.label_en;
+      return isAr ? `تحديث «${name}»` : `Update ${name}`;
+    }
+    case 'send_notification': {
+      const msg = (isAr ? action.message_ar : action.message_en) || (isAr ? '(بدون رسالة)' : '(no message)');
+      return msg.length > 48 ? msg.slice(0, 45) + '…' : msg;
+    }
+    case 'assign_user': {
+      if (action.mode === 'specific_user') return isAr ? 'مستخدم محدَّد' : 'Specific user';
+      const conds = action.role_conditions.length;
+      return isAr
+        ? `حسب الدور · ${conds} ${conds === 1 ? 'شرط' : 'شروط'}`
+        : `Role-based · ${conds} ${conds === 1 ? 'rule' : 'rules'}`;
+    }
+    case 'http_request': {
+      const url = action.url || (isAr ? '(بلا عنوان)' : '(no url)');
+      const trimmed = url.length > 38 ? '…' + url.slice(-35) : url;
+      return `${action.method} ${trimmed}`;
+    }
+    case 'outbound_ivr': {
+      const mode = action.audio_mode === 'tts'
+        ? (isAr ? 'نص مُنطوق' : 'Text-to-speech')
+        : (isAr ? 'ملف صوتي' : 'Audio file');
+      return mode;
+    }
+    case 'send_whatsapp_message': {
+      const body = action.body_template?.split('\n')[0] ?? '';
+      const first = body || (isAr ? '(بدون نص)' : '(empty)');
+      return first.length > 48 ? first.slice(0, 45) + '…' : first;
+    }
+  }
+}
 
 export default function ActionList({ actions, triggerFields, onChange, embedded = false }: ActionListProps) {
   const { t } = useTranslation();
