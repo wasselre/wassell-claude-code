@@ -295,6 +295,14 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
 
   const clientRecordId = contactPhone ? await findClientRecordIdByPhone(contactPhone) : null;
 
+  // Full transcription text (plain string, no word-level timings) — the
+  // rich JSONB `words` array stays in call_logs.transcription. This text
+  // view is what users filter/search on in the Builder.
+  const transcriptionText =
+    isPlainObject(event.transcription) && typeof (event.transcription as { text?: unknown }).text === 'string'
+      ? ((event.transcription as { text: string }).text)
+      : null;
+
   // Lookup fields store a single target-record id (string) when `is_multi`
   // is unset on the field definition (phone_calls.client_link is not multi).
   const data: Record<string, unknown> = {
@@ -306,11 +314,14 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
     callee_number: event.calleeNumber ?? null,
     duration_seconds: parseCallLengthSeconds(event.callLength),
     call_time: event.creationTime,
+    pickup_time: event.pickupTime ?? null,
+    hangup_time: event.hangupTime ?? null,
     agent_name: event.userName ?? null,
     dtmf_digit: dtmfDigit,
     dtmf_label: dtmfLabel,
     sentiment,
     ai_summary: event.summary ?? null,
+    transcription_text: transcriptionText,
     recording_url: event.recordingUrl ?? null,
     ...(clientRecordId ? { client_link: clientRecordId } : {}),
   };
