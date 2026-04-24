@@ -5,6 +5,8 @@ import type {
   WorkflowCondition,
   FieldMapping,
   WorkflowAction,
+  WorkflowActionOutboundIvr,
+  OutboundIvrDestination,
   AppModel,
   User,
   Role,
@@ -18,6 +20,77 @@ import { evaluateFormula } from './formulaEngine';
 import { v4 as uuid } from 'uuid';
 import { supabase } from '@/lib/supabase';
 import { normalizePhone } from '@/lib/phone';
+
+/**
+ * Resolve an outbound_ivr action's destination to a normalized E.164 phone.
+ * Returns null when the source can't be resolved (missing record, empty field,
+ * bad phone format) — callers return `skipped: no_destination_number`.
+ *
+ * `prevActionOutputs` is a map of prior-action-id → AppRecord the engine
+ * populates as it runs each action. Only `create_record` actions currently
+ * contribute to this map.
+ */
+export function resolveIvrDestination(
+  dest: OutboundIvrDestination,
+  triggerRecord: AppRecord,
+  prevActionOutputs: Record<string, AppRecord>,
+  allRecords: Record<string, AppRecord[]>,
+  allModels: AppModel[],
+): { number: string | null; description: string } {
+  switch (dest.kind) {
+    case 'trigger_field': {
+      const raw = triggerRecord.data[dest.field_name];
+      const num = typeof raw === 'string' ? normalizePhone(raw) : null;
+      return { number: num, description: `trigger.${dest.field_name}` };
+    }
+    case 'static': {
+      return {
+        number: normalizePhone(dest.phone),
+        description: `static: ${dest.phone}`,
+      };
+    }
+    case 'lookup': {
+      const lookupValue = triggerRecord.data[dest.lookup_field_name];
+      const targetId = Array.isArray(lookupValue) ? lookupValue[0] : lookupValue;
+      if (typeof targetId !== 'string' || !targetId) {
+        return { number: null, description: `lookup(trigger.${dest.lookup_field_name}) empty` };
+      }
+      const triggerModel = allModels.find((m) => m.id === triggerRecord.model_id);
+      const lookupField = triggerModel?.schema.sections
+        .flatMap((s) => s.fields)
+        .find((f) => f.name === dest.lookup_field_name);
+      if (!lookupField?.lookup_model_id) {
+        return { number: null, description: `lookup field not found: ${dest.lookup_field_name}` };
+      }
+      const targetRecord = (allRecords[lookupField.lookup_model_id] ?? []).find((r) => r.id === targetId);
+      if (!targetRecord) {
+        return { number: null, description: `lookup target record ${targetId} not found` };
+      }
+      const raw = targetRecord.data[dest.target_phone_field_name];
+      const num = typeof raw === 'string' ? normalizePhone(raw) : null;
+      return { number: num, description: `lookup(${dest.lookup_field_name}).${dest.target_phone_field_name}` };
+    }
+    case 'prev_action_output': {
+      const rec = prevActionOutputs[dest.action_id];
+      if (!rec) {
+        return { number: null, description: `prev action ${dest.action_id} produced no record` };
+      }
+      const raw = rec.data[dest.phone_field_name];
+      const num = typeof raw === 'string' ? normalizePhone(raw) : null;
+      return { number: num, description: `action(${dest.action_id}).${dest.phone_field_name}` };
+    }
+  }
+}
+
+/**
+ * Normalize the outbound_ivr action's destination. Old actions stored
+ * `to_field_id`; new actions store `to`. This helper returns the new shape
+ * regardless, so callers don't branch on storage format.
+ */
+export function getIvrDestination(action: WorkflowActionOutboundIvr): OutboundIvrDestination {
+  if (action.to) return action.to;
+  return { kind: 'trigger_field', field_name: action.to_field_id ?? '' };
+}
 
 // Normalize a workflow into its branch list. Workflows saved by the branched
 // editor always carry `branches`. Older saves are wrapped into a single
@@ -248,6 +321,10 @@ export async function executeWorkflows(
     let anyFailed = false;
     let anyExecuted = false;
     let topLevelError: string | undefined;
+    // Map of action_id -> the AppRecord that action created. Populated as we
+    // go so `outbound_ivr` and future actions can resolve `prev_action_output`
+    // destinations against real records.
+    const prevActionOutputs: Record<string, AppRecord> = {};
 
     try {
       for (let i = 0; i < winner.actions.length; i++) {
@@ -263,6 +340,7 @@ export async function executeWorkflows(
           saveRecord,
           showToast,
           currentUserId,
+          prevActionOutputs,
         );
         actionsTrace.push(trace);
         if (trace.status === 'failed') anyFailed = true;
@@ -335,6 +413,7 @@ export async function executeWebhookWorkflows(
     }
     if (!winner) continue;
 
+    const webhookPrevOutputs: Record<string, AppRecord> = {};
     for (let i = 0; i < winner.actions.length; i++) {
       try {
         await executeAction(
@@ -348,6 +427,7 @@ export async function executeWebhookWorkflows(
           saveRecord,
           showToast,
           currentUserId,
+          webhookPrevOutputs,
         );
       } catch (err) {
         console.error('[executeWebhookWorkflows] action failed:', err);
@@ -539,6 +619,7 @@ async function executeAction(
   saveRecord: (record: AppRecord) => void,
   showToast: (message: string) => void,
   currentUserId?: string | null,
+  prevActionOutputs: Record<string, AppRecord> = {},
 ): Promise<WorkflowActionTrace> {
   const startedAt = Date.now();
   const traceBase = { id: action.id, order, duration_ms: 0 };
@@ -583,6 +664,9 @@ async function executeAction(
           updated_at: new Date().toISOString(),
         };
         saveRecord(newRecord);
+        // Make the created record visible to downstream actions referencing it
+        // as `prev_action_output` (e.g. outbound_ivr calling the new record's phone).
+        prevActionOutputs[action.id] = newRecord;
         return {
           ...traceBase,
           type: 'create_record',
@@ -865,9 +949,17 @@ async function executeAction(
       }
 
       case 'outbound_ivr': {
-        // Resolve the destination phone from the trigger record's phone field.
-        const rawPhone = triggerRecord.data[action.to_field_id];
-        const normalized = typeof rawPhone === 'string' ? normalizePhone(rawPhone) : null;
+        // Resolve the destination from whichever source the user picked:
+        // trigger_field / lookup / static / prev_action_output.
+        const destination = getIvrDestination(action);
+        const { number: normalized, description: destDescription } = resolveIvrDestination(
+          destination,
+          triggerRecord,
+          prevActionOutputs,
+          allRecords,
+          allModels,
+        );
+
         if (!normalized) {
           return {
             ...traceBase,
@@ -875,7 +967,8 @@ async function executeAction(
             status: 'skipped',
             skip_reason: 'no_destination_number',
             duration_ms: Date.now() - startedAt,
-            to_field_id: action.to_field_id,
+            destination_kind: destination.kind,
+            destination_description: destDescription,
             audio_mode: action.audio_mode,
             options_count: action.options.length,
           };
@@ -889,7 +982,8 @@ async function executeAction(
             error: 'outbound_ivr action has no options (Hatif requires at least one)',
             duration_ms: Date.now() - startedAt,
             resolved_to_number: normalized,
-            to_field_id: action.to_field_id,
+            destination_kind: destination.kind,
+            destination_description: destDescription,
             audio_mode: action.audio_mode,
             options_count: 0,
           };
@@ -966,7 +1060,8 @@ async function executeAction(
           type: 'outbound_ivr' as const,
           duration_ms: Date.now() - startedAt,
           resolved_to_number: normalized,
-          to_field_id: action.to_field_id,
+          destination_kind: destination.kind,
+          destination_description: destDescription,
           channel_id: action.channel_id,
           audio_mode: action.audio_mode,
           resolved_tts_text: resolvedTts?.slice(0, 500),
@@ -995,7 +1090,7 @@ async function executeAction(
       ...(action.type === 'send_notification' ? { message_ar: action.message_ar, message_en: action.message_en, shown_message: '', shown_language: 'en' } : {}),
       ...(action.type === 'assign_user' ? { assignment_field_id: action.assignment_field_id, mode: action.mode, role_conditions_count: action.role_conditions.length } : {}),
       ...(action.type === 'http_request' ? { method: action.method, resolved_url: action.url, body_mode: action.body_mode } : {}),
-      ...(action.type === 'outbound_ivr' ? { to_field_id: action.to_field_id, audio_mode: action.audio_mode, options_count: action.options.length } : {}),
+      ...(action.type === 'outbound_ivr' ? { destination_kind: getIvrDestination(action).kind, audio_mode: action.audio_mode, options_count: action.options.length } : {}),
     } as WorkflowActionTrace;
   }
 

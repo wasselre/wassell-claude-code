@@ -508,11 +508,29 @@ export interface WorkflowIvrOption {
   label_en: string;
 }
 
+/**
+ * Where the outbound-IVR action pulls its destination phone number from.
+ * Four sources:
+ *   - trigger_field       — phone field on the record that triggered the workflow
+ *   - lookup              — 1-hop traversal: lookup field on trigger → phone field on target
+ *   - static              — hardcoded E.164 number (e.g. always call the office)
+ *   - prev_action_output  — phone field on a record created by a prior create_record action in the same branch
+ */
+export type OutboundIvrDestination =
+  | { kind: 'trigger_field'; field_name: string }
+  | { kind: 'lookup'; lookup_field_name: string; target_phone_field_name: string }
+  | { kind: 'static'; phone: string }
+  | { kind: 'prev_action_output'; action_id: string; phone_field_name: string };
+
 export interface WorkflowActionOutboundIvr {
   id: string;
   type: 'outbound_ivr';
-  // Trigger-model field (type=phone) whose value is the number to dial.
-  to_field_id: string;
+  // Destination resolver. Replaces the old `to_field_id` shape. For backward
+  // compatibility, actions saved before this field existed have `to_field_id`
+  // populated and `to` missing — use `getIvrDestination(action)` helper.
+  to?: OutboundIvrDestination;
+  /** @deprecated — kept for backward compat; migrated to `to` at read time. */
+  to_field_id?: string;
   // Hatif channel id. Optional — server falls back to HATIF_DEFAULT_CHANNEL_ID
   // when empty. Exposed as a field so multi-channel tenants can route per workflow.
   channel_id?: string;
@@ -701,8 +719,13 @@ export interface WorkflowActionTraceHttpRequest extends WorkflowActionTraceBase 
 
 export interface WorkflowActionTraceOutboundIvr extends WorkflowActionTraceBase {
   type: 'outbound_ivr';
-  resolved_to_number?: string;       // dialed E.164 number (after phone-field resolution)
-  to_field_id?: string;              // phone field the number was pulled from
+  resolved_to_number?: string;       // dialed E.164 number (after resolution)
+  /** Which source was used to derive the phone: trigger_field / lookup / static / prev_action_output. */
+  destination_kind?: OutboundIvrDestination['kind'];
+  /** Descriptor captured at resolve time — e.g. "trigger.phone_number" or "static +96655…". */
+  destination_description?: string;
+  /** @deprecated kept for backward compat with historic run logs. */
+  to_field_id?: string;
   channel_id?: string;               // Hatif channel used (resolved)
   audio_mode: 'tts' | 'audio';
   resolved_tts_text?: string;        // text after token substitution (may be truncated)

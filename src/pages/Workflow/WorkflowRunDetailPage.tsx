@@ -438,12 +438,36 @@ function AssignTraceBody({
 function IvrTraceBody({
   action, isAr,
 }: { action: Extract<WorkflowActionTrace, { type: 'outbound_ivr' }>; isAr: boolean }) {
+  const kindLabel = (kind: NonNullable<typeof action.destination_kind>): string => {
+    const map: Record<typeof kind, { ar: string; en: string }> = {
+      trigger_field:      { ar: 'حقل في المُشغِّل', en: 'Trigger field' },
+      lookup:             { ar: 'حقل مرجعي',        en: 'Lookup' },
+      static:             { ar: 'رقم ثابت',          en: 'Static number' },
+      prev_action_output: { ar: 'مخرج إجراء سابق',   en: 'Previous action output' },
+    };
+    const entry = map[kind];
+    return isAr ? entry.ar : entry.en;
+  };
+
   return (
     <>
       <KvRow
         label={isAr ? 'الرقم المُتصل به' : 'Dialed number'}
         value={<span dir="ltr" className="font-mono">{action.resolved_to_number ?? '—'}</span>}
       />
+      {action.destination_kind && (
+        <KvRow
+          label={isAr ? 'مصدر الرقم' : 'Number source'}
+          value={
+            <span>
+              {kindLabel(action.destination_kind)}
+              {action.destination_description && (
+                <span className="text-charcoal/50 ms-2" dir="ltr">· {action.destination_description}</span>
+              )}
+            </span>
+          }
+        />
+      )}
       <KvRow
         label={isAr ? 'مصدر الصوت' : 'Audio source'}
         value={action.audio_mode === 'tts'
