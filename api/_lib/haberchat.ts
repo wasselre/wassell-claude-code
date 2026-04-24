@@ -500,11 +500,14 @@ export async function sendMessage(input: {
   if (input.phone)    payload.phone = input.phone;
   if (input.group)    payload.group = input.group;
   if (input.channel)  payload.channel = input.channel;
-  if (input.body)     payload.message = input.body;
-  if (input.mediaFileId) {
-    payload.media = { file: input.mediaFileId };
-    if (input.mediaCaption) payload.caption = input.mediaCaption;
-  }
+  // Haberchat's /messages validator is strict (additionalProperties:false).
+  // For media messages, `message` doubles as the caption — there's no
+  // separate `caption` field at top level or under `media`. Dedupe here
+  // so the browser can pass both `body` and `mediaCaption` with the same
+  // text without us sending both to Haberchat.
+  const messageText = input.body || input.mediaCaption;
+  if (messageText) payload.message = messageText;
+  if (input.mediaFileId) payload.media = { file: input.mediaFileId };
   if (input.quotedWid) payload.quoted = input.quotedWid;
   if (input.reference) payload.reference = input.reference;
 
@@ -663,11 +666,16 @@ export async function patchChat(
  * Stream a file download from Haberchat. We return the raw Response so
  * the proxy handler can pipe it straight back to the browser without
  * buffering — the whole point is to keep the token server-side.
+ *
+ * Uploaded files are ACCOUNT-scoped on Haberchat, not device-scoped —
+ * the download endpoint is `/v1/files/{id}/download`, NOT the per-device
+ * `/v1/chat/{deviceId}/files/{id}/download` path I initially guessed
+ * from an older doc skim. The links.download field on the upload
+ * response (`/v1/files/<id>/download`) confirms this.
  */
-export async function downloadFile(deviceId: string, fileId: string): Promise<Response> {
-  if (!deviceId) throw new HaberchatError(400, 'deviceId is required');
+export async function downloadFile(fileId: string): Promise<Response> {
   if (!fileId) throw new HaberchatError(400, 'fileId is required');
-  const res = await fetch(`${BASE_URL}/chat/${encodeURIComponent(deviceId)}/files/${encodeURIComponent(fileId)}/download`, {
+  const res = await fetch(`${BASE_URL}/files/${encodeURIComponent(fileId)}/download`, {
     headers: { Token: token() },
   });
   if (!res.ok) {

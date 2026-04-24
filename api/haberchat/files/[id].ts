@@ -1,8 +1,8 @@
 /**
- * GET /api/haberchat/files/:id?deviceId=<24-hex>
+ * GET /api/haberchat/files/:id
  *
  * Stream a Haberchat-hosted media file back to the browser. Haberchat's
- * download endpoint is device-scoped (`GET /chat/{deviceId}/files/{id}/download`)
+ * download endpoint is account-scoped (`GET /v1/files/{id}/download`)
  * and requires the Token header, so the browser CANNOT hit it directly.
  * This proxy adds the token server-side and pipes the response through
  * without buffering.
@@ -10,10 +10,15 @@
  * Used by MessageBubble to render inline media — the browser fetches the
  * file via an authenticated fetch() and creates a blob: URL for <img> /
  * <video> / <audio> / the download link.
+ *
+ * Note: no `deviceId` query param. Uploaded files on Haberchat are
+ * account-wide (the upload response's `links.download` points at
+ * `/v1/files/<id>/download` — no device segment). Kept the route shape
+ * unchanged for compat; the param is just ignored now.
  */
 
 import { withAuth, jsonError } from '../../_lib/auth.js';
-import { downloadFile, defaultDeviceId, HaberchatError } from '../../_lib/haberchat.js';
+import { downloadFile, HaberchatError } from '../../_lib/haberchat.js';
 
 export const config = {
   runtime: 'edge',
@@ -31,13 +36,8 @@ export default async function handler(req: Request): Promise<Response> {
     const fileId = match ? decodeURIComponent(match[1]) : '';
     if (!fileId) return jsonError(400, 'fileId is missing from path');
 
-    const deviceId = url.searchParams.get('deviceId') ?? defaultDeviceId();
-    if (!deviceId) {
-      return jsonError(400, 'deviceId is required — pass ?deviceId=... or set HABERCHAT_DEFAULT_DEVICE_ID');
-    }
-
     try {
-      const upstream = await downloadFile(deviceId, fileId);
+      const upstream = await downloadFile(fileId);
       // Copy through content-type + size + cache headers. Haberchat URLs
       // resolve to immutable file content so a long private cache is
       // safe and saves repeat round-trips when the user scrolls back up.

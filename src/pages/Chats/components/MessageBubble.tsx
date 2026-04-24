@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import { fetchFileBlob } from '@/lib/haberchat/client';
-import { useAppStore } from '@/stores/appStore';
 import type { ChatMessage } from '@/types';
 
 /**
@@ -91,18 +90,10 @@ function MessageBody({ message, isAr }: { message: ChatMessage; isAr: boolean })
 // ─── Media renderer ─────────────────────────────────────────────────
 
 function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean }) {
-  // Resolve the deviceId this conversation is bound to — the download
-  // endpoint is device-scoped on Haberchat's side.
-  const deviceId = useAppStore((s) => {
-    const chatsModel = s.models.find((m) => m.name === 'chats');
-    if (!chatsModel) return null;
-    const rec = (s.records[chatsModel.id] ?? []).find((r) =>
-      ((r.data as Record<string, unknown>).wid as string | undefined) === message.chat_wid,
-    );
-    return rec ? ((rec.data as Record<string, unknown>).device_id as string | undefined) ?? null : null;
-  });
-
-  const { url, status, error } = useMediaBlob(message.media_file_id, deviceId);
+  // Haberchat's download endpoint is account-scoped, not device-scoped
+  // (confirmed via a direct curl against /v1/files/<id>/download). No
+  // deviceId needed — fileId alone is enough.
+  const { url, status, error } = useMediaBlob(message.media_file_id);
 
   const mime = message.media_mime ?? '';
   const kind = message.kind;
@@ -206,32 +197,32 @@ type MediaState = { url: string | null; status: 'loading' | 'ready' | 'error'; e
 /**
  * Fetch a media blob via the authenticated proxy and expose it as a
  * blob: URL. Revokes the URL on unmount / input change so we don't
- * leak memory. A tiny in-memory cache keyed by (fileId, deviceId)
- * avoids re-fetching when the user scrolls the same message back
- * into view.
+ * leak memory. A tiny in-memory cache keyed by fileId avoids re-fetching
+ * when the user scrolls the same message back into view. No deviceId
+ * needed — Haberchat's download endpoint is account-scoped.
  */
-const mediaCache = new Map<string, string>(); // key = fileId|deviceId, value = blob: URL
+const mediaCache = new Map<string, string>(); // key = fileId, value = blob: URL
 
-function useMediaBlob(fileId: string | null, deviceId: string | null): MediaState {
-  const cacheKey = fileId && deviceId ? `${fileId}|${deviceId}` : null;
+function useMediaBlob(fileId: string | null): MediaState {
+  const cacheKey = fileId || null;
   const initial = useMemo<MediaState>(() => {
-    if (!fileId || !deviceId) {
-      return { url: null, status: 'error', error: 'missing file id or device id' };
+    if (!fileId) {
+      return { url: null, status: 'error', error: 'missing file id' };
     }
     const cached = cacheKey ? mediaCache.get(cacheKey) : null;
     if (cached) return { url: cached, status: 'ready', error: null };
     return { url: null, status: 'loading', error: null };
-  }, [fileId, deviceId, cacheKey]);
+  }, [fileId, cacheKey]);
   const [state, setState] = useState<MediaState>(initial);
 
   useEffect(() => {
     setState(initial);
-    if (initial.status !== 'loading' || !fileId || !deviceId || !cacheKey) return;
+    if (initial.status !== 'loading' || !fileId || !cacheKey) return;
     let cancelled = false;
     let createdUrl: string | null = null;
     void (async () => {
       try {
-        const blob = await fetchFileBlob(fileId, deviceId);
+        const blob = await fetchFileBlob(fileId);
         if (cancelled) return;
         const objectUrl = URL.createObjectURL(blob);
         createdUrl = objectUrl;
@@ -253,7 +244,7 @@ function useMediaBlob(fileId: string | null, deviceId: string | null): MediaStat
       // for avoiding re-fetches while scrolling.
       if (createdUrl && !mediaCache.has(cacheKey)) URL.revokeObjectURL(createdUrl);
     };
-  }, [fileId, deviceId, cacheKey, initial]);
+  }, [fileId, cacheKey, initial]);
 
   return state;
 }

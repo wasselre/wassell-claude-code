@@ -163,10 +163,14 @@ export async function uploadFile(
 /** Fetch a file through the proxy as a blob. The browser creates a
  *  blob: URL to render in <img>/<video>/<audio>/download-link. Using
  *  fetch (not <img src>) lets us attach the Supabase JWT header — the
- *  download endpoint requires auth and <img src> can't send headers. */
-export async function fetchFileBlob(fileId: string, deviceId: string): Promise<Blob> {
-  const qs = new URLSearchParams({ deviceId }).toString();
-  const res = await fetch(`/api/haberchat/files/${encodeURIComponent(fileId)}?${qs}`, {
+ *  download endpoint requires auth and <img src> can't send headers.
+ *
+ *  No deviceId needed — Haberchat uploaded files are account-scoped.
+ *  The argument used to be required; now ignored. Callers migrated to
+ *  the 1-arg form; keeping the old 2-arg signature as a no-op would
+ *  mask usage bugs so it's gone. */
+export async function fetchFileBlob(fileId: string): Promise<Blob> {
+  const res = await fetch(`/api/haberchat/files/${encodeURIComponent(fileId)}`, {
     headers: await authHeader(),
   });
   if (!res.ok) {
