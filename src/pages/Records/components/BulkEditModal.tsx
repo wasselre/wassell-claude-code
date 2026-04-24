@@ -147,10 +147,10 @@ export default function BulkEditModal({
         {sections.map(({ section, fields }) => (
           <div
             key={section.id}
-            className="rounded-xl border border-sand/50 overflow-hidden"
+            className="rounded-xl border border-sand/50"
           >
             <div
-              className="px-4 py-2 border-b border-sand/50"
+              className="px-4 py-2 border-b border-sand/50 rounded-t-xl"
               style={{ backgroundColor: `${section.color ?? '#B8734F'}10` }}
             >
               <h3 className="text-sm font-bold text-charcoal">
