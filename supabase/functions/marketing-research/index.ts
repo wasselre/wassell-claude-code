@@ -20,7 +20,13 @@ import { FETCH_URL_TOOL_SCHEMA, fetchUrl } from "../_shared/web.ts";
 import { loadOperationRecord } from "../_shared/marketingOperation.ts";
 import { postToInbox } from "../_shared/webhookOutbox.ts";
 
-const MAX_AGENT_ITERATIONS = 15;
+// Supabase free-tier edge functions are killed at 150 s of wall clock. A
+// full tool-use loop with web_search + several fetch_url rounds per
+// iteration can blow past that on complex projects, so we cap iterations
+// conservatively. The agent returns early as soon as Claude emits an
+// `end_turn` — this is just the upper bound before we force a JSON
+// submission.
+const MAX_AGENT_ITERATIONS = 6;
 
 // Structured-output tool — used as a forced-tool retry when the model
 // ignores "JSON only" and emits prose on the first pass. Anthropic
@@ -140,8 +146,40 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return json({ ok: false, error: "project record not found" }, 404);
     }
 
-    // Run the tool-use loop. All state mutations happen via webhooks after
-    // this completes — the agent stays pure read-only on Postgres.
+    // Run the tool-use loop in the BACKGROUND and return the HTTP response
+    // immediately. Two reasons:
+    //   1. Research takes 30-120 s for complex projects. Supabase free-tier
+    //      edge functions get 502'd by the gateway at ~150 s of wall clock,
+    //      so we can't afford to hold the response open that long.
+    //   2. The workflow engine's http_request action has a 60 s timeout and
+    //      was marking every research invocation as "failed" even though
+    //      the agent eventually finished and fired webhooks out-of-band.
+    // EdgeRuntime.waitUntil keeps the isolate alive for the background work
+    // so it can finish and POST webhooks after the response has returned.
+    const work = runAndDispatch(operationId, payload);
+    // deno-lint-ignore no-explicit-any
+    const runtime = (globalThis as any).EdgeRuntime;
+    if (runtime && typeof runtime.waitUntil === "function") {
+      runtime.waitUntil(work);
+    } else {
+      // Local dev fallback — no EdgeRuntime, just await inline.
+      await work;
+    }
+
+    return json({ ok: true, status: "queued" });
+  } catch (err) {
+    const msg = (err as Error).message ?? "unknown error";
+    console.error("[marketing-research] failed:", msg);
+    if (operationId) await failOperation(operationId, msg.slice(0, 500));
+    return json({ ok: false, error: msg.slice(0, 500) }, 500);
+  }
+});
+
+async function runAndDispatch(
+  operationId: string,
+  payload: ReturnType<typeof loadProjectPayload> extends Promise<infer T> ? T : never,
+): Promise<void> {
+  try {
     const result = await runResearchLoop(payload);
 
     const contradictions = result.contradictions ?? [];
@@ -161,9 +199,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const notFoundText = (result.notFound ?? []).join("\n");
 
     if (contradictions.length > 0) {
-      // Fan out one webhook per question so the workflow can create N
-      // research_questions records — the engine can't iterate arrays in
-      // a single action, so per-item webhooks are the only clean path.
       for (let i = 0; i < contradictions.length; i++) {
         const c = contradictions[i]!;
         await postToInbox("research-question", {
@@ -174,9 +209,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
           source_conflict: formatContradictionSources(c),
         });
       }
-      // Single summary webhook so a workflow can flip operation status
-      // to research_waiting_answers and also stash the partial facts /
-      // sources that WERE resolved.
       await postToInbox("research-contradictions", {
         record_id: operationId,
         operation_id: operationId,
@@ -187,12 +219,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         confidence: result.confidence ?? "medium",
         research_notes: result.researchNotes ?? "",
       });
-      return json({ ok: true, contradictions: contradictions.length });
+      return;
     }
 
-    // Clean path — single webhook with the full research output. A
-    // workflow writes it back to the operation record and triggers
-    // content generation via a second http_request action.
     await postToInbox("research-complete", {
       record_id: operationId,
       operation_id: operationId,
@@ -202,14 +231,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
       confidence: result.confidence ?? "medium",
       research_notes: result.researchNotes ?? "",
     });
-    return json({ ok: true, contradictions: 0 });
   } catch (err) {
-    const msg = (err as Error).message ?? "unknown error";
-    console.error("[marketing-research] failed:", msg);
-    if (operationId) await failOperation(operationId, msg.slice(0, 500));
-    return json({ ok: false, error: msg.slice(0, 500) }, 500);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[marketing-research] background failed:", msg);
+    await failOperation(operationId, msg.slice(0, 500));
   }
-});
+}
 
 async function runResearchLoop(payload: ReturnType<typeof loadProjectPayload> extends Promise<infer T> ? T : never): Promise<ResearchResult> {
   if (!payload) throw new Error("payload null");
