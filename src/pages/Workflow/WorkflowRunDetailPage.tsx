@@ -522,6 +522,12 @@ function WhatsAppMessageTraceBody({
         label={isAr ? 'الرقم المستقبل' : 'Recipient'}
         value={<span dir="ltr" className="font-mono">{action.resolved_to_number ?? '—'}</span>}
       />
+      {action.destination_description && (
+        <KvRow
+          label={isAr ? 'مصدر الرقم' : 'Source'}
+          value={<code className="text-xs font-mono">{action.destination_description}</code>}
+        />
+      )}
       {action.resolved_body && (
         <KvRow
           label={isAr ? 'نص الرسالة' : 'Message body'}

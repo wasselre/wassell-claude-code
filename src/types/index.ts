@@ -557,8 +557,16 @@ export interface WorkflowActionOutboundIvr {
 export interface WorkflowActionSendWhatsAppMessage {
   id: string;
   type: 'send_whatsapp_message';
-  // Trigger-model field (type=phone) whose value is the recipient's number.
-  to_field_id: string;
+  // Destination resolver — same shape as outbound_ivr so admins get the
+  // same 4-source picker (trigger field / lookup / static / previous
+  // action output). The union lives on outbound_ivr for historical
+  // reasons, but the semantics are "resolve a phone number", not
+  // IVR-specific.
+  to?: OutboundIvrDestination;
+  // Legacy storage from the initial v1 ship — a bare trigger-field slug.
+  // Kept for round-tripping saved workflows; the editor upgrades to `to`
+  // the first time the action is edited + saved.
+  to_field_id?: string;
   // Haberchat device id. Optional — server falls back to
   // HABERCHAT_DEFAULT_DEVICE_ID when empty, then to whichever default the
   // admin marked in /settings/whatsapp-numbers.
@@ -760,8 +768,12 @@ export interface WorkflowActionTraceOutboundIvr extends WorkflowActionTraceBase 
 
 export interface WorkflowActionTraceSendWhatsAppMessage extends WorkflowActionTraceBase {
   type: 'send_whatsapp_message';
-  resolved_to_number?: string;       // E.164 number after phone-field resolution
-  to_field_id?: string;              // phone field the number was pulled from
+  resolved_to_number?: string;       // E.164 number after destination resolution
+  // Which destination source the admin picked — lets the run log show
+  // "trigger field X" / "lookup Y.phone" / "static +966..." without us
+  // re-computing it from the action config.
+  destination_kind?: 'trigger_field' | 'lookup' | 'static' | 'prev_action_output';
+  destination_description?: string;  // e.g. "trigger.phone_number" / "lookup(client).phone_number"
   device_id?: string;                // Haberchat device used (resolved)
   resolved_body?: string;            // body after token substitution (may be truncated)
   // Haberchat returns the new message's wid. Stored so the Realtime row

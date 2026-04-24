@@ -6,6 +6,7 @@ import type {
   FieldMapping,
   WorkflowAction,
   WorkflowActionOutboundIvr,
+  WorkflowActionSendWhatsAppMessage,
   OutboundIvrDestination,
   AppModel,
   User,
@@ -88,6 +89,17 @@ export function resolveIvrDestination(
  * regardless, so callers don't branch on storage format.
  */
 export function getIvrDestination(action: WorkflowActionOutboundIvr): OutboundIvrDestination {
+  if (action.to) return action.to;
+  return { kind: 'trigger_field', field_name: action.to_field_id ?? '' };
+}
+
+/**
+ * Same legacy-bridge as getIvrDestination but for send_whatsapp_message.
+ * The action was originally shipped with a bare `to_field_id`; the v2
+ * editor writes a full `to` destination. Read both so already-saved
+ * workflows keep firing.
+ */
+export function getWhatsAppMessageDestination(action: WorkflowActionSendWhatsAppMessage): OutboundIvrDestination {
   if (action.to) return action.to;
   return { kind: 'trigger_field', field_name: action.to_field_id ?? '' };
 }
@@ -1078,11 +1090,19 @@ async function executeAction(
       }
 
       case 'send_whatsapp_message': {
-        // Resolve the recipient phone from the trigger record's phone field —
-        // same pattern as outbound_ivr above. Empty / malformed numbers skip
+        // Resolve the destination from whichever source the user picked —
+        // same 4-source union as outbound_ivr (trigger_field / lookup /
+        // static / prev_action_output). Missing / malformed numbers skip
         // the action rather than failing the whole workflow run.
-        const rawPhone = triggerRecord.data[action.to_field_id];
-        const normalized = typeof rawPhone === 'string' ? normalizePhone(rawPhone) : null;
+        const destination = getWhatsAppMessageDestination(action);
+        const { number: normalized, description: destDescription } = resolveIvrDestination(
+          destination,
+          triggerRecord,
+          prevActionOutputs,
+          allRecords,
+          allModels,
+        );
+
         if (!normalized) {
           return {
             ...traceBase,
@@ -1090,7 +1110,8 @@ async function executeAction(
             status: 'skipped',
             skip_reason: 'no_destination_number',
             duration_ms: Date.now() - startedAt,
-            to_field_id: action.to_field_id,
+            destination_kind: destination.kind,
+            destination_description: destDescription,
             device_id: action.device_id,
           };
         }
@@ -1103,7 +1124,8 @@ async function executeAction(
             status: 'skipped',
             skip_reason: 'empty_body_after_substitution',
             duration_ms: Date.now() - startedAt,
-            to_field_id: action.to_field_id,
+            destination_kind: destination.kind,
+            destination_description: destDescription,
             resolved_to_number: normalized,
             device_id: action.device_id,
             resolved_body: '',
@@ -1166,7 +1188,8 @@ async function executeAction(
           type: 'send_whatsapp_message' as const,
           duration_ms: Date.now() - startedAt,
           resolved_to_number: normalized,
-          to_field_id: action.to_field_id,
+          destination_kind: destination.kind,
+          destination_description: destDescription,
           device_id: action.device_id,
           resolved_body: resolvedBody.slice(0, 500),
           message_wid: messageWid,
@@ -1192,7 +1215,7 @@ async function executeAction(
       ...(action.type === 'assign_user' ? { assignment_field_id: action.assignment_field_id, mode: action.mode, role_conditions_count: action.role_conditions.length } : {}),
       ...(action.type === 'http_request' ? { method: action.method, resolved_url: action.url, body_mode: action.body_mode } : {}),
       ...(action.type === 'outbound_ivr' ? { destination_kind: getIvrDestination(action).kind, audio_mode: action.audio_mode, options_count: action.options.length } : {}),
-      ...(action.type === 'send_whatsapp_message' ? { to_field_id: action.to_field_id, device_id: action.device_id } : {}),
+      ...(action.type === 'send_whatsapp_message' ? { destination_kind: getWhatsAppMessageDestination(action).kind, device_id: action.device_id } : {}),
     } as WorkflowActionTrace;
   }
 
