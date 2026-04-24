@@ -141,6 +141,11 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
           nodes: state.nodes.map((n) => nextLookup.get(n.id) ?? n),
           nodesInitialized: true,
         });
+        // Nudge xyflow's edge renderer — it subscribes to `updateNodeInternals`
+        // changes, not raw nodeLookup mutations. Without this, freshly-patched
+        // edges remain in the store but never render until a manual pan/zoom
+        // invalidates the edge layer.
+        updateNodeInternals([...nextLookup.keys()]);
       }
       return allHaveBounds;
     };
@@ -363,73 +368,69 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
   }, [workflow.branches, rf]);
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    // Full-height canvas: the wrap fills the parent's flex slot, and the
+    // Add-branch / Add-else buttons float over the top-start corner of the
+    // canvas instead of eating a whole row above it.
+    <div className="workflow-canvas-wrap relative h-full">
+      <ReactFlow
+        nodes={decoratedNodes}
+        edges={graph.edges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onNodeClick={onNodeClick}
+        onPaneClick={() => setSelectedId(null)}
+        onNodeDragStop={() => { /* no-op; positions aren't persisted — layout
+          is derived from the workflow tree. A future enhancement can
+          reorder within a lane by rebuilding the workflow from graph. */ }}
+        nodesConnectable={false}
+        nodesDraggable
+        elementsSelectable
+        selectNodesOnDrag={false}
+        proOptions={{ hideAttribution: true }}
+        minZoom={0.3}
+        maxZoom={1.5}
+        defaultViewport={{ x: 0, y: 0, zoom: 0.85 }}
+      >
+        <Background color="#D4B896" gap={20} size={1} />
+        <Controls position={isAr ? 'bottom-left' : 'bottom-right'} showInteractive={false} />
+        <MiniMap
+          position={isAr ? 'top-left' : 'top-right'}
+          pannable
+          zoomable
+          maskColor="rgba(74, 44, 42, 0.08)"
+          nodeColor={(n) => {
+            if (n.type === 'trigger') return '#F59E0B';
+            if (n.type === 'condition') return '#0EA5E9';
+            if (n.type === 'action') return '#B8734F';
+            if (n.type === 'branchGroup') return 'rgba(184, 115, 79, 0.15)';
+            return '#D4B896';
+          }}
+        />
+      </ReactFlow>
+
+      {/* Floating toolbar — sits over the canvas's top-start corner. Uses
+          `pointer-events-none` on the wrap + `pointer-events-auto` on the
+          buttons so the canvas pane stays pan-draggable everywhere else. */}
+      <div className="absolute top-3 start-3 z-10 flex flex-wrap items-center gap-2 pointer-events-none">
         <button
           onClick={onAddBranch}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-copper/40 text-copper hover:bg-copper/5 transition-colors text-sm font-bold"
+          className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-white/90 backdrop-blur border border-dashed border-copper/40 text-copper hover:bg-copper/5 transition-colors text-sm font-bold shadow-sm"
           title={isAr ? 'أضف فرعًا مشروطًا جديدًا' : 'Add another conditional branch'}
         >
-          <Plus size={16} />
-          <GitBranch size={14} />
-          {isAr ? 'إضافة فرع (وإلا إذا)' : 'Add branch (else if)'}
+          <Plus size={14} />
+          <GitBranch size={12} />
+          {isAr ? 'إضافة فرع' : 'Add branch'}
         </button>
         {!hasElse && (
           <button
             onClick={onAddElse}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-chocolate/30 text-chocolate/70 hover:bg-chocolate/5 transition-colors text-sm font-bold"
+            className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-white/90 backdrop-blur border border-dashed border-chocolate/30 text-chocolate/70 hover:bg-chocolate/5 transition-colors text-sm font-bold shadow-sm"
             title={isAr ? 'أضف حالة افتراضية' : 'Add default case'}
           >
-            <Plus size={16} />
-            {isAr ? 'إضافة حالة افتراضية (وإلا)' : 'Add default case (else)'}
+            <Plus size={14} />
+            {isAr ? 'حالة افتراضية' : 'Else case'}
           </button>
         )}
-      </div>
-
-      <div className="workflow-canvas-wrap">
-        <ReactFlow
-          nodes={decoratedNodes}
-          edges={graph.edges}
-          nodeTypes={nodeTypes}
-          edgeTypes={edgeTypes}
-          onNodeClick={onNodeClick}
-          onPaneClick={() => setSelectedId(null)}
-          onNodeDragStop={() => { /* no-op; positions aren't persisted — layout
-            is derived from the workflow tree. A future enhancement can
-            reorder within a lane by rebuilding the workflow from graph. */ }}
-          nodesConnectable={false}
-          nodesDraggable
-          elementsSelectable
-          selectNodesOnDrag={false}
-          proOptions={{ hideAttribution: true }}
-          minZoom={0.3}
-          maxZoom={1.5}
-          defaultViewport={{ x: 0, y: 0, zoom: 0.85 }}
-        >
-          <Background color="#D4B896" gap={20} size={1} />
-          <Controls position={isAr ? 'bottom-left' : 'bottom-right'} showInteractive={false} />
-          <MiniMap
-            position={isAr ? 'top-left' : 'top-right'}
-            pannable
-            zoomable
-            maskColor="rgba(74, 44, 42, 0.08)"
-            nodeColor={(n) => {
-              if (n.type === 'trigger') return '#F59E0B';
-              if (n.type === 'condition') return '#0EA5E9';
-              if (n.type === 'action') return '#B8734F';
-              if (n.type === 'branchGroup') return 'rgba(184, 115, 79, 0.15)';
-              return '#D4B896';
-            }}
-          />
-        </ReactFlow>
-      </div>
-
-      <div className="p-3 rounded-xl bg-cream-light/60 border border-sand/30 text-xs text-charcoal/55 leading-relaxed">
-        <strong className="text-charcoal/70">{isAr ? 'كيف تعمل الفروع:' : 'How branches work:'}</strong>{' '}
-        {isAr
-          ? 'يتم فحص الفروع بالترتيب. أول فرع تتحقق جميع شروطه يتم تنفيذ إجراءاته. الحالة الافتراضية "وإلا" تعمل فقط إن لم يتطابق أي فرع.'
-          : 'Branches are evaluated in order. The first branch whose conditions all pass runs. The "else" branch runs only when no earlier branch matched.'
-        }
       </div>
 
       <NodeDrawer

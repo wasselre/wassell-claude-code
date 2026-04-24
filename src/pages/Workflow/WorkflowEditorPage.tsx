@@ -114,63 +114,65 @@ export default function WorkflowEditorPage() {
     navigate('/workflow');
   };
 
+  // The editor intentionally escapes the app layout's default padding via
+  // negative margins and then sets its own compact top bar + full-height
+  // canvas below it. Gives the node graph the whole viewport to breathe in,
+  // which matches the n8n / Zapier feel: the canvas IS the page.
   return (
-    <div className="max-w-[1400px] mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/workflow')}
-            className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors"
-          >
-            <ArrowRight size={20} className="rtl:rotate-0 ltr:rotate-180" />
-          </button>
-          <h1 className="text-xl font-bold text-chocolate">
-            {isNew ? t('workflow.new') : (workflow.label_ar || workflow.label_en)}
-          </h1>
+    <div className="workflow-editor-shell -mx-4 md:-mx-8 -my-6 flex flex-col h-[calc(100vh-4rem)]">
+      <div className="shrink-0 px-4 md:px-8 py-3 flex items-center gap-3 border-b border-sand/40 bg-white/70 backdrop-blur-sm">
+        <button
+          onClick={() => navigate('/workflow')}
+          className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors shrink-0"
+          aria-label={t('common.back') ?? 'Back'}
+        >
+          <ArrowRight size={18} className="rtl:rotate-0 ltr:rotate-180" />
+        </button>
+        <h1 className="text-base font-bold text-chocolate shrink-0 hidden sm:block">
+          {isNew ? t('workflow.new') : (workflow.label_ar || workflow.label_en) || t('workflow.new')}
+        </h1>
+        <div className="flex-1 max-w-md">
+          <Input
+            value={isAr ? workflow.label_ar : workflow.label_en}
+            onChange={(e) => {
+              const labels = bilingualFromInput(e.target.value, language);
+              setWorkflow({
+                ...workflow,
+                label_ar: isAr ? e.target.value : labels.label_ar,
+                label_en: isAr ? labels.label_en : e.target.value,
+              });
+            }}
+            required
+            dir={isAr ? 'rtl' : 'ltr'}
+            placeholder={isAr ? 'اسم القاعدة...' : 'Rule name...'}
+          />
         </div>
+        <div className="flex-1" />
         <Button onClick={handleSave}>
           <Save size={16} />
           {t('common.save')}
         </Button>
       </div>
 
-      <div className="mb-6">
-        <Input
-          label={isAr ? 'اسم القاعدة' : 'Rule Name'}
-          value={isAr ? workflow.label_ar : workflow.label_en}
-          onChange={(e) => {
-            const labels = bilingualFromInput(e.target.value, language);
-            setWorkflow({
-              ...workflow,
-              label_ar: isAr ? e.target.value : labels.label_ar,
-              label_en: isAr ? labels.label_en : e.target.value,
-            });
-          }}
-          required
-          dir={isAr ? 'rtl' : 'ltr'}
-          placeholder={isAr ? 'اكتب اسم القاعدة هنا...' : 'Write rule name here...'}
-        />
-      </div>
-
       {isTriggerConfigured ? (
-        <WorkflowCanvas
-          workflow={workflow}
-          setWorkflow={(updater) => setWorkflow(updater)}
-          triggerFields={triggerFields}
-        />
+        <div className="flex-1 min-h-0">
+          <WorkflowCanvas
+            workflow={workflow}
+            setWorkflow={(updater) => setWorkflow(updater)}
+            triggerFields={triggerFields}
+          />
+        </div>
       ) : (
-        <div className="py-16 text-center text-charcoal/40 bg-cream-light/50 rounded-2xl border border-dashed border-sand/40 workflow-canvas-empty">
-          <GitBranch size={36} className="mx-auto mb-3 opacity-50" />
-          <p className="font-bold text-charcoal/70">{isAr ? 'اختر مشغّلًا للبدء' : 'Pick a trigger to get started'}</p>
-          <p className="text-xs mt-1 mb-6">{isAr ? 'اختر النموذج والحدث لبدء بناء القاعدة.' : 'Choose a model and event to begin building this rule.'}</p>
-          <div className="max-w-xl mx-auto">
+        <div className="flex-1 min-h-0 overflow-auto px-4 md:px-8 py-8 flex items-center justify-center">
+          <div className="w-full max-w-xl text-center text-charcoal/40 bg-cream-light/60 rounded-2xl border border-dashed border-sand/40 p-10">
+            <GitBranch size={36} className="mx-auto mb-3 opacity-50" />
+            <p className="font-bold text-charcoal/70">{isAr ? 'اختر مشغّلًا للبدء' : 'Pick a trigger to get started'}</p>
+            <p className="text-xs mt-1 mb-6">{isAr ? 'اختر النموذج والحدث لبدء بناء القاعدة.' : 'Choose a model and event to begin building this rule.'}</p>
             <InlineTriggerPicker
               workflow={workflow}
               onChange={(patch) => setWorkflow((w) => ({
                 ...w,
                 ...patch,
-                // Changing the trigger always resets branch conditions to
-                // avoid stale field references.
                 branches: (w.branches ?? []).map((b) => ({ ...b, conditions: [] })),
               }))}
             />

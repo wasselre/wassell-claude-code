@@ -89,14 +89,17 @@
   to { transform: translateX(0); opacity: 1; }
 }
 
-/* Ensure the xyflow canvas container stretches to its parent's block size. */
+/* The xyflow canvas stretches to fill whatever flex slot its parent gives
+   it — the workflow editor puts the canvas in a flex column that spans the
+   viewport minus the top bar, so this ends up full-page. No fixed height,
+   no top/bottom radius (edges reach the window) so the canvas truly
+   dominates the editor route. */
 .workflow-canvas-wrap {
   position: relative;
   width: 100%;
-  height: 640px;
-  border-radius: 16px;
+  height: 100%;
   overflow: hidden;
-  border: 1px solid rgba(212, 184, 150, 0.5);
+  border-top: 1px solid rgba(212, 184, 150, 0.5);
   background:
     radial-gradient(circle at 1px 1px, rgba(74, 78, 84, 0.08) 1px, transparent 0) 0 0 / 20px 20px,
     #FBF7F0;
