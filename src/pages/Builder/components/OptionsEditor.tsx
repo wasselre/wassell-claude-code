@@ -148,28 +148,34 @@ function OptionRow({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const handleLabelChange = (val: string) => {
-    const labels = bilingualFromInput(val, language);
-    // `value` is the stable API name — workflows, filters, and code compare
-    // records against it as a literal string. We only auto-seed it on the
-    // first non-empty label (when value is still empty from the `addOption`
-    // initializer). After that the user owns it and can edit it explicitly
-    // via the API-name input below; renaming the display label never
-    // rewrites it.
-    const patch: Partial<FieldOption> = labels;
-    if (!option.value) {
-      patch.value = slugify(val);
-    }
+  // When either label is edited and `value` is still empty, seed it from the
+  // first non-empty input — so freshly-created options get a sensible slug
+  // without the user having to type one manually. Once `value` is populated
+  // (either auto-seeded or user-typed), label edits NEVER touch it — the api
+  // name is a stable identifier that workflows + filters compare as a literal
+  // string, so rewriting it on every keystroke silently broke every
+  // downstream reference.
+  const handleLabelArChange = (val: string) => {
+    const patch: Partial<FieldOption> = { label_ar: val };
+    if (!option.value && val.trim()) patch.value = slugify(val);
+    onUpdate(patch);
+  };
+
+  const handleLabelEnChange = (val: string) => {
+    const patch: Partial<FieldOption> = { label_en: val };
+    if (!option.value && val.trim()) patch.value = slugify(val);
     onUpdate(patch);
   };
 
   const handleApiNameChange = (raw: string) => {
+    // slugify normalizes case + strips whitespace so we never store
+    // display-formatted strings as the api name.
     onUpdate({ value: slugify(raw) });
   };
 
   if (locked) {
     return (
-      <div ref={setNodeRef} style={style} className="flex items-center gap-2 py-1.5 opacity-70">
+      <div ref={setNodeRef} style={style} className="flex items-center gap-2 py-1.5 px-2 opacity-70 border-t border-sand/10 first:border-t-0">
         <span className="text-charcoal/25" title={isAr ? 'خيار مربوط بقسم — يُدار تلقائياً' : 'Section-linked option — managed automatically'}>
           <Lock size={13} />
         </span>
@@ -180,7 +186,7 @@ function OptionRow({
           {isAr ? option.label_ar : option.label_en}
         </div>
         <span
-          className="w-7 h-7 rounded-full border border-sand/30"
+          className="w-6 h-6 rounded-full border border-sand/30 shrink-0"
           style={{ backgroundColor: option.color ?? '#6B7280' }}
           title={isAr ? 'لون القسم' : 'Section color'}
         />
@@ -189,21 +195,28 @@ function OptionRow({
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="flex items-center gap-2 py-1.5">
-      <button {...attributes} {...listeners} className="cursor-grab text-charcoal/15 hover:text-charcoal/40">
+    <div ref={setNodeRef} style={style} className="flex items-center gap-1.5 py-1.5 px-2 border-t border-sand/10 first:border-t-0 hover:bg-sand/5">
+      <button {...attributes} {...listeners} className="cursor-grab text-charcoal/15 hover:text-charcoal/40 shrink-0">
         <GripVertical size={14} />
       </button>
       <input
-        value={isAr ? option.label_ar : option.label_en}
-        onChange={(e) => handleLabelChange(e.target.value)}
+        value={option.label_ar}
+        onChange={(e) => handleLabelArChange(e.target.value)}
         className="form-input text-sm py-1.5 flex-1 min-w-0"
-        placeholder={isAr ? 'اسم الخيار' : 'Option name'}
-        dir={isAr ? 'rtl' : 'ltr'}
+        placeholder="عربي"
+        dir="rtl"
+      />
+      <input
+        value={option.label_en}
+        onChange={(e) => handleLabelEnChange(e.target.value)}
+        className="form-input text-sm py-1.5 flex-1 min-w-0"
+        placeholder="English"
+        dir="ltr"
       />
       <input
         value={option.value}
         onChange={(e) => handleApiNameChange(e.target.value)}
-        className="form-input text-xs py-1.5 w-32 min-w-0 font-mono text-charcoal/60"
+        className="form-input text-xs py-1.5 flex-1 min-w-0 font-mono text-charcoal/60"
         placeholder="api_name"
         dir="ltr"
         title={isAr
@@ -217,21 +230,74 @@ function OptionRow({
           onChange={(groupId) => onUpdate({ group_id: groupId })}
         />
       )}
-      <div className="relative">
-        <select
-          value={option.color ?? '#6B7280'}
-          onChange={(e) => onUpdate({ color: e.target.value })}
-          className="w-7 h-7 rounded-full border-0 cursor-pointer appearance-none"
-          style={{ backgroundColor: option.color ?? '#6B7280' }}
-        >
-          {OPTION_COLORS.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-      </div>
-      <button onClick={onDelete} className="p-1 rounded hover:bg-red-50 text-charcoal/20 hover:text-red-500">
-        <Trash2 size={14} />
+      <ColorPickerButton
+        value={option.color ?? '#6B7280'}
+        onChange={(c) => onUpdate({ color: c })}
+      />
+      <button
+        onClick={onDelete}
+        className="p-1 rounded hover:bg-red-50 text-charcoal/25 hover:text-red-500 shrink-0"
+        title={isAr ? 'حذف' : 'Delete'}
+      >
+        <Trash2 size={13} />
       </button>
+    </div>
+  );
+}
+
+/**
+ * Color picker button — renders the selected color as a small circle and
+ * opens a grid of swatches on click. Replaces a native `<select>` whose
+ * selected value bled the hex string ("#6B") through the circle.
+ */
+function ColorPickerButton({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  const { language } = useAppStore();
+  const isAr = language === 'ar';
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="w-6 h-6 rounded-full border border-sand/40 hover:scale-110 transition-transform"
+        style={{ backgroundColor: value }}
+        title={isAr ? 'اللون' : 'Color'}
+      />
+      {open && (
+        <div className="absolute z-30 mt-1 end-0 bg-white rounded-lg border border-sand shadow-lg p-2 grid grid-cols-4 gap-1.5 animate-[fadeIn_0.1s_ease]">
+          {OPTION_COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => { onChange(c); setOpen(false); }}
+              className={`w-5 h-5 rounded-full transition-transform hover:scale-125 ${
+                c === value
+                  ? 'ring-2 ring-copper ring-offset-1'
+                  : 'border border-sand/30'
+              }`}
+              style={{ backgroundColor: c }}
+              aria-label={c}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -413,67 +479,83 @@ export default function OptionsEditor({
     }
   }
 
+  const hasOptions = options.length > 0;
+
   return (
     <div>
       <label className="block text-sm font-bold text-charcoal mb-1">{label ?? t('fields.options')}</label>
       {hint && <p className="text-[11px] text-charcoal/45 mb-2">{hint}</p>}
-      <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={options.map((o) => o.id)} strategy={verticalListSortingStrategy}>
-          {/* Ungrouped options (rendered first so they're easy to find). */}
-          {ungrouped.length > 0 && (
-            <div className="space-y-0.5">
-              {ungrouped.map((opt) => (
-                <OptionRow
-                  key={opt.id}
-                  option={opt}
-                  groups={groups}
-                  onUpdate={(updates) => updateOption(opt.id, updates)}
-                  onDelete={() => deleteOption(opt.id)}
-                  locked={isLocked(opt)}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Grouped options. */}
-          {groups.map((g) => {
-            const groupOptions = byGroup.get(g.id) ?? [];
-            const collapsed = collapsedGroups.has(g.id);
-            return (
-              <div key={g.id}>
-                <GroupHeader
-                  group={g}
-                  collapsed={collapsed}
-                  onToggle={() => toggleCollapsed(g.id)}
-                  onRename={(label) => renameGroup(g.id, label)}
-                  onDelete={() => deleteGroup(g.id)}
-                />
-                {!collapsed && (
-                  <div className="space-y-0.5 ps-4 border-s border-sand/30">
-                    {groupOptions.map((opt) => (
-                      <OptionRow
-                        key={opt.id}
-                        option={opt}
-                        groups={groups}
-                        onUpdate={(updates) => updateOption(opt.id, updates)}
-                        onDelete={() => deleteOption(opt.id)}
-                        locked={isLocked(opt)}
-                      />
-                    ))}
-                    <button
-                      onClick={() => addOption(g.id)}
-                      className="flex items-center gap-1 text-[11px] text-charcoal/40 hover:text-copper ps-1 py-1"
-                    >
-                      <Plus size={11} />
-                      {t('fields.add_option_to_group')}
-                    </button>
-                  </div>
-                )}
+      <div className="rounded-lg border border-sand/30 bg-white/50 overflow-hidden">
+        {/* Column headers — rendered once at the top of the options table. */}
+        {hasOptions && (
+          <div className="flex items-center gap-1.5 py-1.5 px-2 bg-sand/10 text-[10px] font-bold text-charcoal/40 uppercase tracking-wider">
+            <span className="w-[14px] shrink-0" aria-hidden />
+            <span className="flex-1 text-start" dir="rtl">{isAr ? 'عربي' : 'Arabic'}</span>
+            <span className="flex-1 text-start" dir="ltr">{isAr ? 'إنجليزي' : 'English'}</span>
+            <span className="flex-1 text-start font-mono normal-case tracking-normal" dir="ltr">api_name</span>
+            {groups.length > 0 && <span className="w-[22px] shrink-0" aria-hidden />}
+            <span className="w-[24px] shrink-0" aria-hidden />
+            <span className="w-[22px] shrink-0" aria-hidden />
+          </div>
+        )}
+        <DndContext collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={options.map((o) => o.id)} strategy={verticalListSortingStrategy}>
+            {/* Ungrouped options (rendered first so they're easy to find). */}
+            {ungrouped.length > 0 && (
+              <div>
+                {ungrouped.map((opt) => (
+                  <OptionRow
+                    key={opt.id}
+                    option={opt}
+                    groups={groups}
+                    onUpdate={(updates) => updateOption(opt.id, updates)}
+                    onDelete={() => deleteOption(opt.id)}
+                    locked={isLocked(opt)}
+                  />
+                ))}
               </div>
-            );
-          })}
-        </SortableContext>
-      </DndContext>
+            )}
+
+            {/* Grouped options. */}
+            {groups.map((g) => {
+              const groupOptions = byGroup.get(g.id) ?? [];
+              const collapsed = collapsedGroups.has(g.id);
+              return (
+                <div key={g.id} className="border-t border-sand/10">
+                  <GroupHeader
+                    group={g}
+                    collapsed={collapsed}
+                    onToggle={() => toggleCollapsed(g.id)}
+                    onRename={(label) => renameGroup(g.id, label)}
+                    onDelete={() => deleteGroup(g.id)}
+                  />
+                  {!collapsed && (
+                    <div>
+                      {groupOptions.map((opt) => (
+                        <OptionRow
+                          key={opt.id}
+                          option={opt}
+                          groups={groups}
+                          onUpdate={(updates) => updateOption(opt.id, updates)}
+                          onDelete={() => deleteOption(opt.id)}
+                          locked={isLocked(opt)}
+                        />
+                      ))}
+                      <button
+                        onClick={() => addOption(g.id)}
+                        className="flex items-center gap-1 text-[11px] text-charcoal/40 hover:text-copper ps-2 py-1.5 w-full border-t border-sand/10"
+                      >
+                        <Plus size={11} />
+                        {t('fields.add_option_to_group')}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </SortableContext>
+        </DndContext>
+      </div>
       <div className="mt-2 flex items-center gap-2 flex-wrap">
         <button
           onClick={() => addOption()}
