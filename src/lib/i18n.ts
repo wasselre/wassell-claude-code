@@ -10,8 +10,12 @@ const resources = {
       'nav.workflows': 'سير العمل',
       'nav.dashboards': 'لوحات المعلومات',
       'nav.presentations': 'العروض التقديمية',
+      'nav.whiteboard': 'اللوحة البيضاء',
       'nav.new_model': '+ نموذج جديد',
       'nav.builder_tools': 'أدوات البناء',
+
+      // Whiteboard
+      'whiteboard.title': 'اللوحة البيضاء',
 
       // Common actions
       'common.save': 'حفظ',
@@ -538,8 +542,12 @@ const resources = {
       'nav.workflows': 'Workflows',
       'nav.dashboards': 'Dashboards',
       'nav.presentations': 'Presentations',
+      'nav.whiteboard': 'Whiteboard',
       'nav.new_model': '+ New Model',
       'nav.builder_tools': 'Builder Tools',
+
+      // Whiteboard
+      'whiteboard.title': 'Whiteboard',
 
       // Common actions
       'common.save': 'Save',

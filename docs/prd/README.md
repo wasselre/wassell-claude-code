@@ -22,6 +22,7 @@ This folder contains the **living source of truth** for what every section of th
 | 12 | [presentations.md](presentations.md) | Deck generation from Claude Code templates — catalog, jobs, daemon |
 | 13 | [calling.md](calling.md) | Call logging via Hatif — post-call webhook, transcripts, client-record link |
 | 14 | [chats.md](chats.md) | WhatsApp inbox via Haberchat — two-pane list + thread, live webhook updates, media, client auto-link |
+| 15 | [whiteboard.md](whiteboard.md) | Built-in drawing canvas (tldraw) — freeform sketching, annotations, per-browser IndexedDB persistence |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 
