@@ -176,6 +176,14 @@ async function supabaseDelete(table: string, id: string): Promise<void> {
   }
 }
 
+// Webhook-triggered workflows have no source model, which the app represents
+// as `trigger_model_id: ''`. Postgres rejects empty strings on UUID columns,
+// so convert to null before any upsert. Kept near the Supabase helpers so
+// all three call sites go through the same normalizer.
+function workflowToSupabaseRow(w: Workflow): Record<string, unknown> {
+  return { ...w, trigger_model_id: w.trigger_model_id || null };
+}
+
 async function supabaseLoad<T>(table: string): Promise<T[] | null> {
   if (!supabase) return null;
   try {
@@ -743,7 +751,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             workflows = [...workflows, ...toAdd];
             saveLocal('wassell_workflows', workflows);
             await Promise.all(
-              toAdd.map((w) => supabaseUpsert('workflows', w as unknown as Record<string, unknown>)),
+              toAdd.map((w) => supabaseUpsert('workflows', workflowToSupabaseRow(w))),
             );
           }
         }
@@ -1143,8 +1151,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (w) {
           supabaseUpsert(
             'workflows',
-            w as unknown as Record<string, unknown>,
-            { table: 'models', id: w.trigger_model_id },
+            workflowToSupabaseRow(w),
+            { table: 'models', id: w.trigger_model_id || null },
           );
         }
       }
@@ -1427,10 +1435,12 @@ export const useAppStore = create<AppState>((set, get) => ({
         : [...s.workflows, workflow];
       saveLocal('wassell_workflows', workflows);
       // FK: workflows.trigger_model_id → models.id. Gate on the model write.
+      // Webhook-triggered workflows have no model — pass null so the gate
+      // short-circuits instead of waiting on an id that never lands.
       supabaseUpsert(
         'workflows',
-        workflow as unknown as Record<string, unknown>,
-        { table: 'models', id: workflow.trigger_model_id },
+        workflowToSupabaseRow(workflow),
+        { table: 'models', id: workflow.trigger_model_id || null },
       );
       return { workflows };
     });
