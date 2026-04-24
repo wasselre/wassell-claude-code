@@ -46,11 +46,33 @@ export function normalizePhone(raw: string | null | undefined): string | null {
   const digits = digitsOnly(trimmed);
   if (digits.length < 7) return null;
 
-  if (hasPlusPrefix) return `+${digits}`;
-  if (digits.startsWith('00')) return `+${digits.substring(2)}`;
+  if (hasPlusPrefix) return `+${stripTrunkZero(digits)}`;
+  if (digits.startsWith('00')) return `+${stripTrunkZero(digits.substring(2))}`;
   if (digits.startsWith('0')) return `+966${digits.substring(1)}`;
-  if (digits.startsWith('966')) return `+${digits}`;
+  if (digits.startsWith('966')) return `+${stripTrunkZero(digits)}`;
   return `+966${digits}`;
+}
+
+/**
+ * Strip a leading "0" that appears right after a known country code.
+ * Common data-entry bug: users write "+966 05x..." when the 0 is a
+ * local trunk prefix that doesn't belong in E.164. Every country in
+ * COUNTRY_CODES uses 0 as a local trunk prefix, and none has a
+ * national number legitimately starting with 0 in E.164 — safe to
+ * drop unconditionally when we see the pattern.
+ *
+ * Input: digits-only string without the leading '+'.
+ * Output: same string with a stray post-CC 0 removed if present.
+ */
+function stripTrunkZero(digits: string): string {
+  const sorted = [...COUNTRY_CODES].sort((a, b) => b.code.length - a.code.length);
+  for (const c of sorted) {
+    const ccDigits = c.code.substring(1); // drop the '+'
+    if (digits.startsWith(ccDigits + '0')) {
+      return ccDigits + digits.substring(ccDigits.length + 1);
+    }
+  }
+  return digits;
 }
 
 export function telUrl(raw: string | null | undefined): string | null {
