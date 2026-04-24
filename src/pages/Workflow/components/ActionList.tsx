@@ -2,9 +2,10 @@ import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp } from 'lucide-react';
+import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp, Phone, Upload, Loader2 } from 'lucide-react';
 import FieldValueInput from './FieldValueInput';
-import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator } from '@/types';
+import { supabase } from '@/lib/supabase';
+import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowIvrOption, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator } from '@/types';
 
 type DateOffsetUnit = 'min' | 'h' | 'd' | 'w' | 'mo' | 'y';
 interface DateOffsetRow {
@@ -98,6 +99,14 @@ const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     label_ar: 'طلب HTTP',
     label_en: 'HTTP Request',
   },
+  outbound_ivr: {
+    bg: 'bg-copper/5 border-b border-sand/25',
+    hoverBorder: 'hover:border-copper/40',
+    badgeBg: 'bg-copper/15',
+    badgeText: 'text-copper',
+    label_ar: 'مكالمة آلية',
+    label_en: 'Automated Call',
+  },
 };
 
 export default function ActionList({ actions, triggerFields, onChange, embedded = false }: ActionListProps) {
@@ -166,6 +175,17 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                         updateAction(action.id, { id: action.id, type: 'assign_user', assignment_field_id: '', mode: 'role_based', role_conditions: [], selection_strategy: 'least_workload' });
                       } else if (type === 'http_request') {
                         updateAction(action.id, { id: action.id, type: 'http_request', method: 'POST', url: '', headers: [], body_mode: 'json_template', body_template: '{\n  "operation_id": "{id}"\n}', timeout_ms: 30000 });
+                      } else if (type === 'outbound_ivr') {
+                        updateAction(action.id, {
+                          id: action.id,
+                          type: 'outbound_ivr',
+                          to_field_id: '',
+                          audio_mode: 'tts',
+                          tts_text: '',
+                          tts_voice: 'Female',
+                          options: [{ id: uuid(), digit: '1', label_ar: 'تأكيد', label_en: 'Confirm' }],
+                          language: 'ar',
+                        });
                       } else {
                         updateAction(action.id, { id: action.id, type: 'create_record', target_model_id: '', field_mappings: [] });
                       }
@@ -177,6 +197,7 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                     <option value="send_notification">{isAr ? ACTION_STYLE.send_notification.label_ar : ACTION_STYLE.send_notification.label_en}</option>
                     <option value="assign_user">{isAr ? ACTION_STYLE.assign_user.label_ar : ACTION_STYLE.assign_user.label_en}</option>
                     <option value="http_request">{isAr ? ACTION_STYLE.http_request.label_ar : ACTION_STYLE.http_request.label_en}</option>
+                    <option value="outbound_ivr">{isAr ? ACTION_STYLE.outbound_ivr.label_ar : ACTION_STYLE.outbound_ivr.label_en}</option>
                   </select>
                   <button
                     onClick={() => toggleActionCollapsed(action.id)}
@@ -271,6 +292,14 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
 
                   {action.type === 'http_request' && (
                     <HttpRequestConfig
+                      action={action}
+                      triggerFields={triggerFields}
+                      onUpdate={(updated) => updateAction(action.id, updated)}
+                    />
+                  )}
+
+                  {action.type === 'outbound_ivr' && (
+                    <OutboundIvrConfig
                       action={action}
                       triggerFields={triggerFields}
                       onUpdate={(updated) => updateAction(action.id, updated)}
@@ -1517,6 +1546,310 @@ function HttpRequestConfig({
           }}
           className="form-input text-sm w-24"
         />
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// OutboundIvrConfig — editor for the `outbound_ivr` workflow action.
+// Lets the user pick the phone field to dial, choose TTS vs a pre-uploaded
+// audio file, author the script (with `{field_slug}` tokens), and define
+// the DTMF menu options. Audio upload goes through /api/hatif/upload-audio
+// inline — the returned URL is stored in `audio_file_url` on the action.
+// ─────────────────────────────────────────────────────────────────
+function OutboundIvrConfig({
+  action,
+  triggerFields,
+  onUpdate,
+}: {
+  action: WorkflowActionOutboundIvr;
+  triggerFields: ModelField[];
+  onUpdate: (a: WorkflowActionOutboundIvr) => void;
+}) {
+  const { language } = useAppStore();
+  const isAr = language === 'ar';
+  const phoneFields = triggerFields.filter((f) => f.type === 'phone');
+
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
+  async function handleAudioUpload(file: File) {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const form = new FormData();
+      form.append('audioFile', file);
+      // Attach the Supabase JWT — same pattern as the Haberchat client.
+      const authHeaders: Record<string, string> = {};
+      if (supabase) {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        if (token) authHeaders.Authorization = `Bearer ${token}`;
+      }
+      const res = await fetch('/api/hatif/upload-audio', { method: 'POST', body: form, headers: authHeaders });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error ?? `HTTP ${res.status}`);
+      }
+      const parsed = (await res.json()) as { url?: string };
+      const url = parsed.url;
+      if (!url) throw new Error('No URL returned from upload');
+      onUpdate({ ...action, audio_file_url: url, audio_file_label: file.name });
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  function updateOption(id: string, patch: Partial<WorkflowIvrOption>) {
+    onUpdate({ ...action, options: action.options.map((o) => (o.id === id ? { ...o, ...patch } : o)) });
+  }
+  function addOption() {
+    const nextDigit = String(Math.min(9, action.options.length + 1));
+    onUpdate({
+      ...action,
+      options: [...action.options, { id: uuid(), digit: nextDigit, label_ar: '', label_en: '' }],
+    });
+  }
+  function removeOption(id: string) {
+    onUpdate({ ...action, options: action.options.filter((o) => o.id !== id) });
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Destination */}
+      <div>
+        <label className="block text-xs font-bold text-charcoal/40 mb-1">
+          {isAr ? 'رقم الوجهة (حقل الهاتف)' : 'Destination (phone field)'}
+        </label>
+        {phoneFields.length === 0 ? (
+          <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-md px-2 py-1.5">
+            {triggerFields.length === 0
+              ? (isAr
+                  ? 'اختر النموذج المشغّل أولاً من لوحة المُشغّل أعلاه.'
+                  : 'Pick a trigger model first (in the trigger panel above).')
+              : (isAr
+                  ? 'النموذج المشغّل لا يحتوي على حقل هاتف. أضف حقل من نوع "هاتف" في المنشئ أولاً.'
+                  : 'The trigger model has no phone field. Add a "Phone" field in the Builder first.')}
+          </p>
+        ) : (
+          <select
+            value={action.to_field_id}
+            onChange={(e) => onUpdate({ ...action, to_field_id: e.target.value })}
+            className="form-input text-sm w-full"
+          >
+            <option value="">{isAr ? '— اختر حقل —' : '— Pick a field —'}</option>
+            {phoneFields.map((f) => (
+              <option key={f.id} value={f.name}>
+                {isAr ? f.label_ar : f.label_en}
+              </option>
+            ))}
+          </select>
+        )}
+      </div>
+
+      {/* Audio mode */}
+      <div>
+        <label className="block text-xs font-bold text-charcoal/40 mb-1">
+          {isAr ? 'مصدر الصوت' : 'Audio source'}
+        </label>
+        <div className="flex gap-2">
+          {(['tts', 'audio'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => onUpdate({ ...action, audio_mode: mode })}
+              className={`flex-1 text-xs px-3 py-1.5 rounded-md border transition-colors ${
+                action.audio_mode === mode
+                  ? 'bg-copper/10 border-copper/40 text-copper font-bold'
+                  : 'bg-white border-sand/40 text-charcoal/60 hover:bg-sand/10'
+              }`}
+            >
+              {mode === 'tts'
+                ? (isAr ? 'نص إلى كلام (TTS)' : 'Text-to-speech')
+                : (isAr ? 'ملف صوتي' : 'Audio file')}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* TTS text */}
+      {action.audio_mode === 'tts' && (
+        <>
+          <div>
+            <label className="block text-xs font-bold text-charcoal/40 mb-1">
+              {isAr ? 'نص الرسالة' : 'Message text'}
+            </label>
+            <textarea
+              value={action.tts_text ?? ''}
+              onChange={(e) => onUpdate({ ...action, tts_text: e.target.value })}
+              rows={3}
+              dir={isAr ? 'rtl' : 'ltr'}
+              placeholder={
+                isAr
+                  ? 'مثال: مرحباً {client_name}، اضغط 1 للتأكيد أو 2 للإلغاء'
+                  : 'e.g. Hello {client_name}, press 1 to confirm or 2 to cancel'
+              }
+              className="form-input text-sm w-full"
+            />
+            <p className="mt-1 text-[11px] text-charcoal/50">
+              {isAr ? 'استخدم {اسم_الحقل} لإدراج قيم من السجل.' : 'Use {field_slug} to insert record values.'}
+            </p>
+          </div>
+          <div className="flex gap-4">
+            <div>
+              <label className="block text-xs font-bold text-charcoal/40 mb-1">
+                {isAr ? 'الصوت' : 'Voice'}
+              </label>
+              <div className="flex gap-2">
+                {(['Female', 'Male'] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    onClick={() => onUpdate({ ...action, tts_voice: v })}
+                    className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
+                      (action.tts_voice ?? 'Female') === v
+                        ? 'bg-copper/10 border-copper/40 text-copper font-bold'
+                        : 'bg-white border-sand/40 text-charcoal/60 hover:bg-sand/10'
+                    }`}
+                  >
+                    {v === 'Female' ? (isAr ? 'أنثى' : 'Female') : (isAr ? 'ذكر' : 'Male')}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-charcoal/40 mb-1">
+                {isAr ? 'لغة الرسالة' : 'Message language'}
+              </label>
+              <div className="flex gap-2">
+                {(['ar', 'en'] as const).map((l) => (
+                  <button
+                    key={l}
+                    type="button"
+                    onClick={() => onUpdate({ ...action, language: l })}
+                    className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
+                      (action.language ?? 'ar') === l
+                        ? 'bg-copper/10 border-copper/40 text-copper font-bold'
+                        : 'bg-white border-sand/40 text-charcoal/60 hover:bg-sand/10'
+                    }`}
+                  >
+                    {l === 'ar' ? 'العربية' : 'English'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Audio upload */}
+      {action.audio_mode === 'audio' && (
+        <div>
+          <label className="block text-xs font-bold text-charcoal/40 mb-1">
+            {isAr ? 'ملف الصوت' : 'Audio file'}
+          </label>
+          {action.audio_file_url ? (
+            <div className="flex items-center gap-2 text-sm bg-sand/10 border border-sand/30 rounded-md px-3 py-2">
+              <Phone size={14} className="text-copper" />
+              <span className="flex-1 truncate">{action.audio_file_label ?? action.audio_file_url}</span>
+              <button
+                type="button"
+                onClick={() => onUpdate({ ...action, audio_file_url: undefined, audio_file_label: undefined })}
+                className="text-xs text-charcoal/50 hover:text-red-500"
+              >
+                {isAr ? 'إزالة' : 'Remove'}
+              </button>
+            </div>
+          ) : (
+            <label className="inline-flex items-center gap-2 text-sm px-3 py-2 rounded-md border border-dashed border-sand/50 cursor-pointer hover:bg-sand/10">
+              {uploading ? <Loader2 size={14} className="animate-spin text-copper" /> : <Upload size={14} />}
+              <span>{uploading ? (isAr ? 'جارٍ الرفع…' : 'Uploading…') : (isAr ? 'رفع ملف صوتي' : 'Upload audio file')}</span>
+              <input
+                type="file"
+                accept="audio/*"
+                className="sr-only"
+                disabled={uploading}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void handleAudioUpload(file);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+          )}
+          {uploadError && (
+            <p className="mt-1 text-xs text-red-600">{uploadError}</p>
+          )}
+          <p className="mt-1 text-[11px] text-charcoal/50">
+            {isAr
+              ? 'الحد الأقصى 10 ميغابايت. يتم تحويله إلى WAV تلقائياً.'
+              : 'Max 10 MB. Hatif converts it to WAV automatically.'}
+          </p>
+        </div>
+      )}
+
+      {/* Options / DTMF menu */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="block text-xs font-bold text-charcoal/40">
+            {isAr ? 'خيارات القائمة (DTMF)' : 'Menu options (DTMF)'}
+          </label>
+          <button
+            type="button"
+            onClick={addOption}
+            className="text-xs text-copper hover:underline inline-flex items-center gap-1"
+          >
+            <Plus size={12} /> {isAr ? 'خيار' : 'Option'}
+          </button>
+        </div>
+        <div className="space-y-1.5">
+          {action.options.map((opt) => (
+            <div key={opt.id} className="flex items-center gap-2">
+              <select
+                value={opt.digit}
+                onChange={(e) => updateOption(opt.id, { digit: e.target.value })}
+                className="form-input text-sm w-14"
+              >
+                {['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '#'].map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={opt.label_ar}
+                onChange={(e) => updateOption(opt.id, { label_ar: e.target.value })}
+                placeholder={isAr ? 'التسمية بالعربية' : 'Arabic label'}
+                dir="rtl"
+                className="form-input text-sm flex-1"
+              />
+              <input
+                type="text"
+                value={opt.label_en}
+                onChange={(e) => updateOption(opt.id, { label_en: e.target.value })}
+                placeholder="English label"
+                dir="ltr"
+                className="form-input text-sm flex-1"
+              />
+              <button
+                type="button"
+                onClick={() => removeOption(opt.id)}
+                disabled={action.options.length === 1}
+                title={action.options.length === 1 ? (isAr ? 'يجب وجود خيار واحد على الأقل' : 'At least one option required') : undefined}
+                className="p-1.5 rounded-md text-charcoal/25 hover:text-red-500 hover:bg-red-50 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-charcoal/25"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+        {action.options.length === 0 && (
+          <p className="text-xs text-red-600">
+            {isAr ? 'مطلوب خيار واحد على الأقل.' : 'At least one option is required.'}
+          </p>
+        )}
       </div>
     </div>
   );

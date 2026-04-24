@@ -134,6 +134,98 @@ export async function listChannels(): Promise<HatifChannel[]> {
   return Array.isArray(raw) ? raw : (raw.items ?? []);
 }
 
+// ─── Outbound IVR ──────────────────────────────────────────────────
+
+export interface HatifIvrOption {
+  digit: string;
+  label: string;
+}
+
+export interface TriggerIvrInput {
+  channelId: string;
+  destinationNumber: string;
+  webhookUrl: string;
+  options: HatifIvrOption[];
+  ttsText?: string;
+  ttsVoice?: 'Male' | 'Female';
+  audioFileUrl?: string;
+  externalId?: string;
+}
+
+export interface TriggerIvrResult {
+  ivrCallId?: string;
+  raw: Record<string, unknown>;
+}
+
+/**
+ * Trigger an outbound IVR call on Hatif. Exactly one of `ttsText` or
+ * `audioFileUrl` must be supplied; Hatif rejects both / neither.
+ */
+export async function triggerOutboundIvr(input: TriggerIvrInput): Promise<TriggerIvrResult> {
+  if (!input.channelId) throw new HatifError(400, 'channelId is required');
+  if (!input.destinationNumber) throw new HatifError(400, 'destinationNumber is required');
+  if (!input.webhookUrl) throw new HatifError(400, 'webhookUrl is required');
+  if (!input.options || input.options.length === 0) {
+    throw new HatifError(400, 'options must contain at least one entry');
+  }
+  const hasTts = !!input.ttsText;
+  const hasAudio = !!input.audioFileUrl;
+  if (hasTts === hasAudio) {
+    throw new HatifError(400, 'exactly one of ttsText or audioFileUrl is required');
+  }
+
+  const payload: Record<string, unknown> = {
+    channelId: input.channelId,
+    destinationNumber: input.destinationNumber,
+    webhookUrl: input.webhookUrl,
+    options: input.options,
+  };
+  if (hasTts) {
+    payload.ttsText = input.ttsText;
+    payload.ttsVoice = input.ttsVoice ?? 'Female';
+  } else {
+    payload.audioFileUrl = input.audioFileUrl;
+  }
+  if (input.externalId) payload.externalId = input.externalId;
+
+  const raw = await request<Record<string, unknown>>(`/v1/outbound-ivr`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  // Hatif's exact response shape for this endpoint isn't explicitly pinned in
+  // the docs — check every field Hatif has used for call ids elsewhere.
+  const ivrCallId =
+    (raw.id as string | undefined) ??
+    (raw.callId as string | undefined) ??
+    (raw.ivrCallId as string | undefined) ??
+    (raw.outboundIvrId as string | undefined);
+  return { ivrCallId, raw };
+}
+
+// ─── Audio upload (passthrough) ────────────────────────────────────
+
+/**
+ * Upload an audio file to Hatif. The caller supplies the already-built
+ * multipart/form-data FormData — we just attach the bearer token and forward.
+ * Returns whatever Hatif returns (typically { url: "..." } or a plain string).
+ */
+export async function uploadAudioFile(form: FormData): Promise<Record<string, unknown>> {
+  const token = await getAccessToken();
+  const res = await fetch(`${BASE_URL}/v1/support/upload-audio`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },   // DO NOT set Content-Type; fetch handles boundary
+    body: form,
+  });
+  if (!res.ok) {
+    let body: unknown;
+    try { body = await res.json(); } catch { body = await res.text().catch(() => null); }
+    throw new HatifError(res.status, `Hatif /v1/support/upload-audio failed: ${res.status}`, body);
+  }
+  const ct = res.headers.get('content-type') ?? '';
+  if (ct.includes('application/json')) return (await res.json()) as Record<string, unknown>;
+  return { url: (await res.text()).trim() };
+}
+
 // ─── Enum maps shared with the webhook handler ─────────────────────
 // Hatif's webhook payload encodes status/sentiment as integers. Centralize
 // the mapping here so the webhook handler and any future REST consumers can

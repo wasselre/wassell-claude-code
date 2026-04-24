@@ -5,6 +5,7 @@ import { getSession, getSessionEmail, onAuthChange, signOut as authSignOut, isAu
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
 import { SEED_PRESENTATION_TEMPLATES } from '@/data/seedPresentationTemplates';
+import { buildMarketingSeedWorkflows } from '@/data/seedWorkflows';
 import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine';
 import { assignAutoIds } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
@@ -33,12 +34,6 @@ import type {
   PresentationTemplate,
   PresentationJob,
   DaemonStatus,
-  Competitor,
-  MarketingOperation,
-  ResearchQuestion,
-  Reel,
-  Post,
-  MarketingNotification,
   WebhookSlug,
   WebhookPayload,
   WhatsAppNumber,
@@ -386,12 +381,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   presentationTemplates: [],
   presentationJobs: [],
   daemonStatus: null,
-  competitors: [],
-  marketingOperations: [],
-  researchQuestions: [],
-  reels: [],
-  posts: [],
-  marketingNotifications: [],
   webhookSlugs: [],
   webhookPayloads: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
@@ -733,38 +722,33 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
-    // --- Marketing operations (reels + posts content pipeline) ---
-    // All six tables use the same Supabase-first + localStorage-fallback pattern.
-    // The edge functions use the service-role key and bypass RLS, so these
-    // tables stay in sync even while the user isn't on the app.
-    let competitors = await supabaseLoad<Competitor>('competitors');
-    if (!competitors) competitors = loadLocal<Competitor[]>('wassell_competitors') ?? [];
-    saveLocal('wassell_competitors', competitors);
-
-    let marketingOperations = await supabaseLoad<MarketingOperation>('marketing_operations');
-    if (!marketingOperations) marketingOperations = loadLocal<MarketingOperation[]>('wassell_marketing_operations') ?? [];
-    saveLocal('wassell_marketing_operations', marketingOperations);
-
-    let researchQuestions = await supabaseLoad<ResearchQuestion>('research_questions');
-    if (!researchQuestions) researchQuestions = loadLocal<ResearchQuestion[]>('wassell_research_questions') ?? [];
-    saveLocal('wassell_research_questions', researchQuestions);
-
-    let reels = await supabaseLoad<Reel>('reels');
-    if (!reels) reels = loadLocal<Reel[]>('wassell_reels') ?? [];
-    saveLocal('wassell_reels', reels);
-
-    let posts = await supabaseLoad<Post>('posts');
-    if (!posts) posts = loadLocal<Post[]>('wassell_posts') ?? [];
-    saveLocal('wassell_posts', posts);
-
-    let marketingNotifications = await supabaseLoad<MarketingNotification>('marketing_notifications');
-    if (!marketingNotifications) marketingNotifications = loadLocal<MarketingNotification[]>('wassell_marketing_notifications') ?? [];
-    saveLocal('wassell_marketing_notifications', marketingNotifications);
-
     // --- Webhook inbox (user-declared inbound endpoints) ---
     let webhookSlugs = await supabaseLoad<WebhookSlug>('webhook_slugs');
     if (!webhookSlugs) webhookSlugs = loadLocal<WebhookSlug[]>('wassell_webhook_slugs') ?? [];
     saveLocal('wassell_webhook_slugs', webhookSlugs);
+
+    // --- Seed the marketing-pipeline workflows ---
+    // The 11 workflows that glue the edge functions to record writes live
+    // in `src/data/seedWorkflows.ts`. They have stable ids so re-seeding
+    // is idempotent. We only seed the ones missing from the loaded set
+    // so user-edited copies (same id, different content) aren't clobbered.
+    {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? '';
+      if (supabaseUrl) {
+        const seedList = buildMarketingSeedWorkflows(models, webhookSlugs, supabaseUrl);
+        if (seedList.length > 0) {
+          const existingIds = new Set(workflows.map((w) => w.id));
+          const toAdd = seedList.filter((w) => !existingIds.has(w.id));
+          if (toAdd.length > 0) {
+            workflows = [...workflows, ...toAdd];
+            saveLocal('wassell_workflows', workflows);
+            await Promise.all(
+              toAdd.map((w) => supabaseUpsert('workflows', w as unknown as Record<string, unknown>)),
+            );
+          }
+        }
+      }
+    }
 
     // ────────────────────────────────────────────────────────────────────
     // Resolve the current user based on auth state.
@@ -955,20 +939,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       presentationTemplates,
       presentationJobs,
       daemonStatus,
-      competitors,
-      marketingOperations,
-      researchQuestions,
-      reels,
-      posts,
-      marketingNotifications,
       webhookSlugs,
       currentUserId,
       initialized: true,
     });
 
-    // Realtime: subscribe to agent-driven changes so the UI flips from
-    // research_pending → research_waiting_answers → content_generating →
-    // ready_for_review without the user reloading.
+    // Realtime: watch the webhook_payloads table so incoming agent
+    // webhooks fan out to the workflow engine without a page reload.
     get().subscribeMarketingRealtime();
   },
 
@@ -987,107 +964,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       return [...list, row];
     };
 
+    // The webhook_payloads table is the only realtime surface the
+    // workflow-driven marketing pipeline cares about: every edge-function
+    // side-effect arrives here as an INSERT, and the first client to
+    // atomically claim it runs the matching webhook workflows.
     const channel = supabase
       .channel('marketing-pipeline')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'marketing_operations' },
-        (payload) => {
-          const row = (payload.new ?? payload.old) as MarketingOperation;
-          if (!row?.id) return;
-          set((s) => {
-            if (payload.eventType === 'DELETE') {
-              const next = s.marketingOperations.filter((o) => o.id !== row.id);
-              saveLocal('wassell_marketing_operations', next);
-              return { marketingOperations: next };
-            }
-            const next = upsertById(s.marketingOperations, row);
-            saveLocal('wassell_marketing_operations', next);
-            return { marketingOperations: next };
-          });
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'research_questions' },
-        (payload) => {
-          const row = (payload.new ?? payload.old) as ResearchQuestion;
-          if (!row?.id) return;
-          set((s) => {
-            if (payload.eventType === 'DELETE') {
-              const next = s.researchQuestions.filter((q) => q.id !== row.id);
-              saveLocal('wassell_research_questions', next);
-              return { researchQuestions: next };
-            }
-            const next = upsertById(s.researchQuestions, row);
-            saveLocal('wassell_research_questions', next);
-            return { researchQuestions: next };
-          });
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'reels' },
-        (payload) => {
-          const row = (payload.new ?? payload.old) as Reel;
-          if (!row?.id) return;
-          set((s) => {
-            if (payload.eventType === 'DELETE') {
-              const next = s.reels.filter((r) => r.id !== row.id);
-              saveLocal('wassell_reels', next);
-              return { reels: next };
-            }
-            const next = upsertById(s.reels, row);
-            saveLocal('wassell_reels', next);
-            return { reels: next };
-          });
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'posts' },
-        (payload) => {
-          const row = (payload.new ?? payload.old) as Post;
-          if (!row?.id) return;
-          set((s) => {
-            if (payload.eventType === 'DELETE') {
-              const next = s.posts.filter((p) => p.id !== row.id);
-              saveLocal('wassell_posts', next);
-              return { posts: next };
-            }
-            const next = upsertById(s.posts, row);
-            saveLocal('wassell_posts', next);
-            return { posts: next };
-          });
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'marketing_notifications' },
-        (payload) => {
-          const row = (payload.new ?? payload.old) as MarketingNotification;
-          if (!row?.id) return;
-          set((s) => {
-            if (payload.eventType === 'DELETE') {
-              const next = s.marketingNotifications.filter((n) => n.id !== row.id);
-              saveLocal('wassell_marketing_notifications', next);
-              return { marketingNotifications: next };
-            }
-            const next = upsertById(s.marketingNotifications, row);
-            saveLocal('wassell_marketing_notifications', next);
-            return { marketingNotifications: next };
-          });
-        },
-      )
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'webhook_payloads' },
         (payload) => {
           const row = payload.new as WebhookPayload;
           if (!row?.id) return;
-          // Update the local cache so the UI can show recent payloads, then
-          // attempt the atomic claim. If another tab beats us to the claim,
-          // the workflow run happens there instead (no double-fire).
           set((s) => ({ webhookPayloads: upsertById(s.webhookPayloads, row) }));
           void get().claimAndRunWebhookPayload(row.id);
         },
@@ -2002,36 +1890,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     saveLocal('wassell_current_user_id', '');
   },
 
-  // ────────────────────────────────────────────────────────────────────
-  // Marketing operations (reels + posts content pipeline)
-  // ────────────────────────────────────────────────────────────────────
-  // Replaces the old OMA Google Sheets system. Flow:
-  //   createMarketingOperation → INSERT + fire marketing-research fn
-  //   answerResearchQuestion → UPDATE; last answer fires resume fn
-  //   saveReel / savePost → human edits to agent-generated drafts
-  //   approveMarketingOperation → flip operation + all children to approved
-
-  saveCompetitor: async (competitor: Competitor) => {
-    set((s) => {
-      const idx = s.competitors.findIndex((c) => c.id === competitor.id);
-      const competitors = idx >= 0
-        ? s.competitors.map((c) => (c.id === competitor.id ? competitor : c))
-        : [...s.competitors, competitor];
-      saveLocal('wassell_competitors', competitors);
-      return { competitors };
-    });
-    await supabaseUpsert('competitors', competitor as unknown as Record<string, unknown>);
-  },
-
-  deleteCompetitor: async (competitorId: string) => {
-    set((s) => {
-      const competitors = s.competitors.filter((c) => c.id !== competitorId);
-      saveLocal('wassell_competitors', competitors);
-      return { competitors };
-    });
-    await supabaseDelete('competitors', competitorId);
-  },
-
   // ── Chats module: WhatsApp numbers ────────────────────────────────
   // `waDevices` is the local overlay (friendly names + default flag),
   // `waDevicesLive` is the authoritative Haberchat-side state fetched
@@ -2630,192 +2488,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  createMarketingOperation: async (input) => {
-    if (!supabase) throw new Error('Supabase is not configured');
-    if (!input.reelsSettings && !input.postsSettings) {
-      throw new Error('يجب اختيار نوع محتوى واحد على الأقل');
-    }
-
-    // Resolve the current auth user id for the FK.
-    const session = await supabase.auth.getSession();
-    const authUserId = session.data.session?.user.id ?? null;
-
-    const operationId = uuid();
-    const now = new Date().toISOString();
-    const operationRow: MarketingOperation = {
-      id: operationId,
-      project_record_id: input.projectRecordId,
-      status: 'research_pending',
-      reels_settings: input.reelsSettings,
-      posts_settings: input.postsSettings,
-      research_output: null,
-      research_error: null,
-      created_at: now,
-      updated_at: now,
-      created_by: authUserId,
-    };
-
-    // Pre-create empty reels + posts rows so the agent has targets to UPDATE.
-    const newReels: Reel[] = input.reelsSettings
-      ? Array.from({ length: input.reelsSettings.count }, (_, i): Reel => ({
-          id: uuid(),
-          operation_id: operationId,
-          project_record_id: input.projectRecordId,
-          reel_number: i + 1,
-          status: 'pending',
-          type: input.reelsSettings!.type,
-          duration: null,
-          platform: input.reelsSettings!.platform,
-          voiceover: input.reelsSettings!.voiceover,
-          goal: null,
-          scenes: [],
-          created_at: now,
-          updated_at: now,
-        }))
-      : [];
-
-    const newPosts: Post[] = input.postsSettings
-      ? Array.from({ length: input.postsSettings.count }, (_, i): Post => ({
-          id: uuid(),
-          operation_id: operationId,
-          project_record_id: input.projectRecordId,
-          post_number: i + 1,
-          status: 'pending',
-          type: input.postsSettings!.type,
-          components: null,
-          visual: null,
-          usage: input.postsSettings!.usage,
-          title: null,
-          design_text_1: null,
-          design_text_2: null,
-          design_text_3: null,
-          caption: null,
-          created_at: now,
-          updated_at: now,
-        }))
-      : [];
-
-    // Persist parent → children in order (child FKs point at parent).
-    const { error: opErr } = await supabase
-      .from('marketing_operations')
-      .insert(operationRow as unknown as Record<string, unknown>);
-    if (opErr) throw new Error(`Could not create operation: ${opErr.message}`);
-
-    if (newReels.length > 0) {
-      const { error: reelsErr } = await supabase.from('reels').insert(
-        newReels.map((r) => r as unknown as Record<string, unknown>),
-      );
-      if (reelsErr) throw new Error(`Could not create reels: ${reelsErr.message}`);
-    }
-    if (newPosts.length > 0) {
-      const { error: postsErr } = await supabase.from('posts').insert(
-        newPosts.map((p) => p as unknown as Record<string, unknown>),
-      );
-      if (postsErr) throw new Error(`Could not create posts: ${postsErr.message}`);
-    }
-
-    set((s) => ({
-      marketingOperations: [...s.marketingOperations, operationRow],
-      reels: [...s.reels, ...newReels],
-      posts: [...s.posts, ...newPosts],
-    }));
-    saveLocal('wassell_marketing_operations', get().marketingOperations);
-    saveLocal('wassell_reels', get().reels);
-    saveLocal('wassell_posts', get().posts);
-
-    // Fire the research edge function. Fire-and-forget — the agent writes back
-    // to the DB, and the UI picks up the new status on the next refetch.
-    void supabase.functions.invoke('marketing-research', {
-      body: { operationId },
-    }).catch((err: unknown) => {
-      console.error('[createMarketingOperation] research invoke failed:', err);
-    });
-
-    return operationId;
-  },
-
-  answerResearchQuestion: async (questionId, answer) => {
-    if (!supabase) throw new Error('Supabase is not configured');
-    const state = get();
-    const question = state.researchQuestions.find((q) => q.id === questionId);
-    if (!question) throw new Error('Question not found');
-
-    const now = new Date().toISOString();
-    const session = await supabase.auth.getSession();
-    const answeredBy = session.data.session?.user.id ?? null;
-
-    const updated: ResearchQuestion = {
-      ...question,
-      answer,
-      status: 'answered',
-      answered_at: now,
-      answered_by: answeredBy,
-    };
-
-    set((s) => ({
-      researchQuestions: s.researchQuestions.map((q) => (q.id === questionId ? updated : q)),
-    }));
-    saveLocal('wassell_research_questions', get().researchQuestions);
-
-    const { error } = await supabase
-      .from('research_questions')
-      .update({
-        answer,
-        status: 'answered',
-        answered_at: now,
-        answered_by: answeredBy,
-      })
-      .eq('id', questionId);
-    if (error) throw new Error(`Could not save answer: ${error.message}`);
-
-    // If this was the last unanswered question for the operation, fire resume.
-    const operationQuestions = get().researchQuestions.filter(
-      (q) => q.operation_id === question.operation_id,
-    );
-    const stillWaiting = operationQuestions.filter((q) => q.status !== 'answered');
-    if (stillWaiting.length === 0 && operationQuestions.length > 0) {
-      void supabase.functions.invoke('marketing-research-resume', {
-        body: { operationId: question.operation_id },
-      }).catch((err: unknown) => {
-        console.error('[answerResearchQuestion] resume invoke failed:', err);
-      });
-    }
-  },
-
-  saveReel: async (reel: Reel) => {
-    const updated = { ...reel, updated_at: new Date().toISOString() };
-    set((s) => ({
-      reels: s.reels.map((r) => (r.id === reel.id ? updated : r)),
-    }));
-    saveLocal('wassell_reels', get().reels);
-    await supabaseUpsert('reels', updated as unknown as Record<string, unknown>);
-  },
-
-  savePost: async (post: Post) => {
-    const updated = { ...post, updated_at: new Date().toISOString() };
-    set((s) => ({
-      posts: s.posts.map((p) => (p.id === post.id ? updated : p)),
-    }));
-    saveLocal('wassell_posts', get().posts);
-    await supabaseUpsert('posts', updated as unknown as Record<string, unknown>);
-  },
-
-  updateOperationResearch: async (operationId, output) => {
-    const now = new Date().toISOString();
-    set((s) => ({
-      marketingOperations: s.marketingOperations.map((o) =>
-        o.id === operationId ? { ...o, research_output: output, updated_at: now } : o,
-      ),
-    }));
-    saveLocal('wassell_marketing_operations', get().marketingOperations);
-    if (!supabase) return;
-    const { error } = await supabase
-      .from('marketing_operations')
-      .update({ research_output: output, updated_at: now })
-      .eq('id', operationId);
-    if (error) throw new Error(`Could not save research edits: ${error.message}`);
-  },
-
   saveWebhookSlug: async (slug) => {
     const now = new Date().toISOString();
     const updated: WebhookSlug = { ...slug, updated_at: now };
@@ -2903,87 +2575,4 @@ export const useAppStore = create<AppState>((set, get) => ({
     return true;
   },
 
-  approveMarketingOperation: async (operationId: string) => {
-    const state = get();
-    const op = state.marketingOperations.find((o) => o.id === operationId);
-    if (!op) throw new Error('Operation not found');
-
-    const now = new Date().toISOString();
-    const reelsToApprove = state.reels.filter(
-      (r) => r.operation_id === operationId && r.status === 'draft_ready',
-    );
-    const postsToApprove = state.posts.filter(
-      (p) => p.operation_id === operationId && p.status === 'draft_ready',
-    );
-
-    const updatedReels = state.reels.map((r) =>
-      reelsToApprove.some((x) => x.id === r.id)
-        ? { ...r, status: 'approved' as const, updated_at: now }
-        : r,
-    );
-    const updatedPosts = state.posts.map((p) =>
-      postsToApprove.some((x) => x.id === p.id)
-        ? { ...p, status: 'approved' as const, updated_at: now }
-        : p,
-    );
-    const updatedOperation: MarketingOperation = { ...op, status: 'approved', updated_at: now };
-
-    set({
-      marketingOperations: state.marketingOperations.map((o) =>
-        o.id === operationId ? updatedOperation : o,
-      ),
-      reels: updatedReels,
-      posts: updatedPosts,
-    });
-    saveLocal('wassell_marketing_operations', get().marketingOperations);
-    saveLocal('wassell_reels', get().reels);
-    saveLocal('wassell_posts', get().posts);
-
-    if (!supabase) return;
-    await supabase
-      .from('marketing_operations')
-      .update({ status: 'approved', updated_at: now })
-      .eq('id', operationId);
-    for (const r of reelsToApprove) {
-      await supabase.from('reels').update({ status: 'approved', updated_at: now }).eq('id', r.id);
-    }
-    for (const p of postsToApprove) {
-      await supabase.from('posts').update({ status: 'approved', updated_at: now }).eq('id', p.id);
-    }
-  },
-
-  markNotificationRead: async (id: string | null) => {
-    const state = get();
-    const now = new Date().toISOString();
-    if (id === null) {
-      const updated = state.marketingNotifications.map((n) =>
-        n.read_at ? n : { ...n, read_at: now },
-      );
-      set({ marketingNotifications: updated });
-      saveLocal('wassell_marketing_notifications', updated);
-      if (supabase) {
-        await supabase
-          .from('marketing_notifications')
-          .update({ read_at: now })
-          .is('read_at', null);
-      }
-      return;
-    }
-
-    const notification = state.marketingNotifications.find((n) => n.id === id);
-    if (!notification || notification.read_at) return;
-    const updated = { ...notification, read_at: now };
-    set({
-      marketingNotifications: state.marketingNotifications.map((n) =>
-        n.id === id ? updated : n,
-      ),
-    });
-    saveLocal('wassell_marketing_notifications', get().marketingNotifications);
-    if (supabase) {
-      await supabase
-        .from('marketing_notifications')
-        .update({ read_at: now })
-        .eq('id', id);
-    }
-  },
 }));

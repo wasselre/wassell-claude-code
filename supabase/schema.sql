@@ -869,6 +869,13 @@ CREATE TABLE IF NOT EXISTS call_logs (
   updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- DTMF result columns — populated by the IVR-result webhook when an
+-- `outbound_ivr` workflow action was the trigger for the call. Always null
+-- for inbound or manual outbound calls.
+ALTER TABLE call_logs
+  ADD COLUMN IF NOT EXISTS dtmf_digit TEXT,
+  ADD COLUMN IF NOT EXISTS dtmf_label TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_call_logs_contact_phone ON call_logs(contact_phone);
 CREATE INDEX IF NOT EXISTS idx_call_logs_channel       ON call_logs(channel_id);
 CREATE INDEX IF NOT EXISTS idx_call_logs_creation      ON call_logs(creation_time DESC);

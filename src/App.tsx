@@ -23,14 +23,9 @@ import ProfilesPage from '@/pages/Settings/ProfilesPage';
 import RolesPage from '@/pages/Settings/RolesPage';
 import UsersPage from '@/pages/Settings/UsersPage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
-import CompetitorsPage from '@/pages/Settings/CompetitorsPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
-import MarketingListPage from '@/pages/Marketing/MarketingListPage';
-import OperationDetailPage from '@/pages/Marketing/OperationDetailPage';
-import ReelEditor from '@/pages/Marketing/ReelEditor';
-import PostEditor from '@/pages/Marketing/PostEditor';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
@@ -150,10 +145,6 @@ export default function App() {
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
           <Route path="/presentations" element={<PresentationsListPage />} />
           <Route path="/presentations/:jobId" element={<PresentationDetailPage />} />
-          <Route path="/marketing" element={<MarketingListPage />} />
-          <Route path="/marketing/:operationId" element={<OperationDetailPage />} />
-          <Route path="/marketing/:operationId/reels/:reelId" element={<ReelEditor />} />
-          <Route path="/marketing/:operationId/posts/:postId" element={<PostEditor />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/translations" element={<RequireAdmin><TranslationSettingsPage /></RequireAdmin>} />
           <Route path="/settings/profiles" element={<RequireAdmin><ProfilesPage /></RequireAdmin>} />
@@ -162,7 +153,6 @@ export default function App() {
           <Route path="/settings/roles/:roleId" element={<RequireAdmin><RolesPage /></RequireAdmin>} />
           <Route path="/settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
-          <Route path="/settings/competitors" element={<RequireAdmin><CompetitorsPage /></RequireAdmin>} />
           <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />
           <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />
         </Route>

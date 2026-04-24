@@ -16,6 +16,8 @@ import type {
 } from '@/types';
 import { evaluateFormula } from './formulaEngine';
 import { v4 as uuid } from 'uuid';
+import { supabase } from '@/lib/supabase';
+import { normalizePhone } from '@/lib/phone';
 
 // Normalize a workflow into its branch list. Workflows saved by the branched
 // editor always carry `branches`. Older saves are wrapped into a single
@@ -861,6 +863,124 @@ async function executeAction(
           previous_assignee_id: previousAssignee,
         };
       }
+
+      case 'outbound_ivr': {
+        // Resolve the destination phone from the trigger record's phone field.
+        const rawPhone = triggerRecord.data[action.to_field_id];
+        const normalized = typeof rawPhone === 'string' ? normalizePhone(rawPhone) : null;
+        if (!normalized) {
+          return {
+            ...traceBase,
+            type: 'outbound_ivr',
+            status: 'skipped',
+            skip_reason: 'no_destination_number',
+            duration_ms: Date.now() - startedAt,
+            to_field_id: action.to_field_id,
+            audio_mode: action.audio_mode,
+            options_count: action.options.length,
+          };
+        }
+
+        if (action.options.length === 0) {
+          return {
+            ...traceBase,
+            type: 'outbound_ivr',
+            status: 'failed',
+            error: 'outbound_ivr action has no options (Hatif requires at least one)',
+            duration_ms: Date.now() - startedAt,
+            resolved_to_number: normalized,
+            to_field_id: action.to_field_id,
+            audio_mode: action.audio_mode,
+            options_count: 0,
+          };
+        }
+
+        // Resolve TTS tokens + build the proxy payload. The proxy fills in
+        // channelId default + webhookUrl server-side, so we send only what
+        // the user configured.
+        const resolvedTts = action.audio_mode === 'tts' && action.tts_text
+          ? substituteFieldTokens(action.tts_text, triggerRecord)
+          : undefined;
+
+        // Hatif stores one label per option. We send the action's chosen
+        // language so the option text matches the TTS language the customer
+        // hears. Both labels stay on the action config for Run-log rendering.
+        const useAr = action.language === 'ar';
+        const optionsForHatif = action.options.map((o) => ({
+          digit: o.digit,
+          label: (useAr ? o.label_ar : o.label_en) || o.label_en || o.label_ar,
+        }));
+
+        // Attach Supabase JWT so the /api/hatif/outbound-ivr proxy's withAuth
+        // gate lets us through. Workflows run under whichever session the
+        // current user triggered them.
+        let authHeader: Record<string, string> = {};
+        if (supabase) {
+          try {
+            const { data } = await supabase.auth.getSession();
+            const token = data.session?.access_token;
+            if (token) authHeader = { Authorization: `Bearer ${token}` };
+          } catch {
+            /* fall through — the proxy returns 401 and we log it as failed */
+          }
+        }
+
+        let responseStatus: number | undefined;
+        let responseSnippet: string | undefined;
+        let ivrCallId: string | undefined;
+        let errorMsg: string | undefined;
+
+        try {
+          const res = await fetch('/api/hatif/outbound-ivr', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...authHeader },
+            body: JSON.stringify({
+              destinationNumber: normalized,
+              channelId: action.channel_id || undefined,
+              ttsText: resolvedTts,
+              ttsVoice: action.tts_voice,
+              audioFileUrl: action.audio_mode === 'audio' ? action.audio_file_url : undefined,
+              options: optionsForHatif,
+              externalId: traceBase.id,
+            }),
+          });
+          responseStatus = res.status;
+          const text = await res.text().catch(() => '');
+          responseSnippet = text.slice(0, 500);
+          if (res.ok) {
+            try {
+              const parsed = JSON.parse(text) as { ivrCallId?: string | null };
+              ivrCallId = parsed.ivrCallId ?? undefined;
+            } catch {
+              /* non-JSON success body — ignore; ivrCallId stays undefined */
+            }
+          } else {
+            errorMsg = `HTTP ${res.status}`;
+          }
+        } catch (err) {
+          errorMsg = err instanceof Error ? err.message : String(err);
+        }
+
+        const traceCommon = {
+          ...traceBase,
+          type: 'outbound_ivr' as const,
+          duration_ms: Date.now() - startedAt,
+          resolved_to_number: normalized,
+          to_field_id: action.to_field_id,
+          channel_id: action.channel_id,
+          audio_mode: action.audio_mode,
+          resolved_tts_text: resolvedTts?.slice(0, 500),
+          audio_file_url: action.audio_file_url,
+          tts_voice: action.tts_voice,
+          options_count: action.options.length,
+          ivr_call_id: ivrCallId,
+          response_status: responseStatus,
+          response_snippet: responseSnippet,
+        };
+
+        if (errorMsg) return { ...traceCommon, status: 'failed', error: errorMsg };
+        return { ...traceCommon, status: 'executed' };
+      }
     }
   } catch (err) {
     return {
@@ -875,6 +995,7 @@ async function executeAction(
       ...(action.type === 'send_notification' ? { message_ar: action.message_ar, message_en: action.message_en, shown_message: '', shown_language: 'en' } : {}),
       ...(action.type === 'assign_user' ? { assignment_field_id: action.assignment_field_id, mode: action.mode, role_conditions_count: action.role_conditions.length } : {}),
       ...(action.type === 'http_request' ? { method: action.method, resolved_url: action.url, body_mode: action.body_mode } : {}),
+      ...(action.type === 'outbound_ivr' ? { to_field_id: action.to_field_id, audio_mode: action.audio_mode, options_count: action.options.length } : {}),
     } as WorkflowActionTrace;
   }
 

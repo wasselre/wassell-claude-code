@@ -46,7 +46,11 @@ Before this, the phone icon on a record was a plain `tel:` link: the agent's nat
 | [src/lib/hatif/client.ts](../../src/lib/hatif/client.ts) | Browser read helpers + Realtime subscription |
 | [src/pages/Records/components/CallHistoryPanel.tsx](../../src/pages/Records/components/CallHistoryPanel.tsx) | UI on client records |
 | [src/pages/Records/RecordFormPage.tsx](../../src/pages/Records/RecordFormPage.tsx) | Hosts the panel below the form |
-| [src/types/index.ts](../../src/types/index.ts) | `CallLog`, `CallStatus`, `CallSentiment`, `CallTranscription` |
+| [src/types/index.ts](../../src/types/index.ts) | `CallLog`, `CallStatus`, `CallSentiment`, `CallTranscription`, `WorkflowActionOutboundIvr` |
+| [api/hatif/outbound-ivr.ts](../../api/hatif/outbound-ivr.ts) | Proxy that triggers a Hatif outbound IVR call |
+| [api/hatif/upload-audio.ts](../../api/hatif/upload-audio.ts) | Proxy that uploads an audio file to Hatif |
+| [src/pages/Workflow/components/ActionList.tsx](../../src/pages/Workflow/components/ActionList.tsx) | `OutboundIvrConfig` editor for the `outbound_ivr` workflow action |
+| [src/lib/workflowEngine.ts](../../src/lib/workflowEngine.ts) | `case 'outbound_ivr'` — resolves templates + calls the proxy |
 
 ## Environment variables
 | Name | Purpose |
@@ -55,8 +59,13 @@ Before this, the phone icon on a record was a plain `tel:` link: the agent's nat
 | `HATIF_DEFAULT_CHANNEL_ID` | Optional default channel id for future outbound endpoints |
 | `HATIF_WEBHOOK_SECRET` | Shared secret — used for HMAC verify and the `?secret=` fallback |
 
+## Outbound automated calls (IVR via workflow action)
+The `outbound_ivr` workflow action (see [workflow-automation.md](workflow-automation.md)) fires a Hatif IVR call at a phone on the trigger record. The workflow engine resolves `{field_slug}` tokens in the TTS text, picks the channel (falling back to `HATIF_DEFAULT_CHANNEL_ID`), attaches the current user's Supabase JWT, and POSTs to `/api/hatif/outbound-ivr`. The proxy fills in the webhook URL (always our `/api/webhook/hatif-call`), obtains a server-side OAuth token, and forwards to Hatif. When the customer picks a digit, Hatif fires the post-call webhook with `selectedDigit`/`selectedOption` fields; the handler stores them in `call_logs.dtmf_digit` + `call_logs.dtmf_label`, which the Call History panel renders as a badge next to the call row.
+
+Audio source on the action is either **TTS** (with `{field_slug}` tokens + Male/Female voice + ar/en language hint) or a **pre-uploaded audio file**. Uploading happens inline from the action editor — the file goes through `/api/hatif/upload-audio` to Hatif's `POST /v1/support/upload-audio`, and the returned URL is stored on the action config. Hatif auto-converts any format up to 10 MB into WAV 8 kHz mono.
+
 ## Open questions / known limitations
-- **No live-call initiation in v1.** Hatif's documented API does not expose a "ring agent + bridge customer" endpoint or a WebRTC/SIP browser SDK. The only programmatic outbound call is `POST /v1/outbound-ivr` (automated recording/TTS + DTMF) — not a human-to-human call. The "Call" button on records remains a plain `tel:` link until Hatif confirms a click-to-call-bridge exists or we integrate IVR as a separate action.
+- **No live-call initiation in v1.** Hatif's documented API does not expose a "ring agent + bridge customer" endpoint or a WebRTC/SIP browser SDK. The only programmatic outbound call is `POST /v1/outbound-ivr` (automated recording/TTS + DTMF) — available via the `outbound_ivr` workflow action. The "Call" button on records remains a plain `tel:` link until Hatif confirms a click-to-call-bridge exists.
 - **Webhook registration is per-channel.** Admins must set the post-call webhook URL on every new channel in Hatif's dashboard. No automation yet — a workflow that enumerates channels + pushes a known URL could close this gap.
 - **Client-matching is phone-exact.** Two clients with the same phone both see the call. Format drift (spaces, country-code variants) is handled by normalizing to E.164 on both sides.
 - **No retention policy.** Rows accumulate forever; when volume warrants, add a cron that archives rows older than N months to cold storage.

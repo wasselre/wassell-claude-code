@@ -4,7 +4,6 @@ import { useLocation, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
 import { Languages, Menu, User, LogOut, Loader2 } from 'lucide-react';
-import NotificationBell from './NotificationBell';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -125,9 +124,6 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
               </div>
             )
           )}
-
-          {/* ── Notifications bell ─────────────────────────────────── */}
-          <NotificationBell />
 
           {/* ── Sign out (only when auth is available and signed in) ─ */}
           {authOn && authEmail && (
