@@ -301,9 +301,10 @@ export function parseCallLengthSeconds(callLength: string | null | undefined): n
 }
 
 /**
- * Normalize a raw phone value to canonical E.164 without the `+` sign, then
- * add it back. Matches src/lib/phone.ts#normalizePhone — duplicated here
- * because api/* can't import from src/*. Keep in sync.
+ * Normalize a raw phone value to canonical E.164 (e.g. "+966501234567").
+ * Mirrors src/lib/phone.ts#normalizePhone — duplicated because api/* can't
+ * import from src/*. Keep in sync. Also strips the Saudi domestic trunk '0'
+ * when it appears after 966 (a common user typo: "+966 + 0XXXXXXXXX").
  */
 export function normalizePhoneE164(raw: string | null | undefined): string | null {
   if (raw == null) return null;
@@ -312,10 +313,13 @@ export function normalizePhoneE164(raw: string | null | undefined): string | nul
   const hasPlus = trimmed.startsWith('+');
   const digits = trimmed.replace(/\D/g, '');
   if (digits.length < 7) return null;
-  if (hasPlus) return `+${digits}`;
-  if (digits.startsWith('00')) return `+${digits.slice(2)}`;
-  if (digits.startsWith('0')) return `+966${digits.slice(1)}`;
-  if (digits.startsWith('966')) return `+${digits}`;
+  // No other country code starts with "9660", so treating it as Saudi + trunk
+  // zero is unambiguous.
+  const stripKsaTrunk = (d: string) => (d.startsWith('9660') ? `966${d.slice(4)}` : d);
+  if (hasPlus)                   return `+${stripKsaTrunk(digits)}`;
+  if (digits.startsWith('00'))   return `+${stripKsaTrunk(digits.slice(2))}`;
+  if (digits.startsWith('0'))    return `+966${digits.slice(1)}`;
+  if (digits.startsWith('966'))  return `+${stripKsaTrunk(digits)}`;
   return `+966${digits}`;
 }
 

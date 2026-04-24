@@ -53,6 +53,12 @@ export interface FieldOption {
   id: string;
   label_ar: string;
   label_en: string;
+  // The stable API name. Stored on records (`record.data[slug]`) and compared
+  // as a literal string by workflows, filters, and code. Seeded from the
+  // initial label when the option is first created, then NEVER rewritten by
+  // label edits — users can change display labels without breaking anything
+  // downstream. The Builder exposes this as an editable `api_name` input; we
+  // recommend not changing it once records reference the option.
   value: string;
   color?: string;
   // Optional group id this option belongs to. Options with a matching group_id

@@ -150,10 +150,21 @@ function OptionRow({
 
   const handleLabelChange = (val: string) => {
     const labels = bilingualFromInput(val, language);
-    onUpdate({
-      ...labels,
-      value: slugify(val),
-    });
+    // `value` is the stable API name — workflows, filters, and code compare
+    // records against it as a literal string. We only auto-seed it on the
+    // first non-empty label (when value is still empty from the `addOption`
+    // initializer). After that the user owns it and can edit it explicitly
+    // via the API-name input below; renaming the display label never
+    // rewrites it.
+    const patch: Partial<FieldOption> = labels;
+    if (!option.value) {
+      patch.value = slugify(val);
+    }
+    onUpdate(patch);
+  };
+
+  const handleApiNameChange = (raw: string) => {
+    onUpdate({ value: slugify(raw) });
   };
 
   if (locked) {
@@ -188,6 +199,16 @@ function OptionRow({
         className="form-input text-sm py-1.5 flex-1 min-w-0"
         placeholder={isAr ? 'اسم الخيار' : 'Option name'}
         dir={isAr ? 'rtl' : 'ltr'}
+      />
+      <input
+        value={option.value}
+        onChange={(e) => handleApiNameChange(e.target.value)}
+        className="form-input text-xs py-1.5 w-32 min-w-0 font-mono text-charcoal/60"
+        placeholder="api_name"
+        dir="ltr"
+        title={isAr
+          ? 'اسم الخيار داخل النظام — القيمة التي تُحفظ في السجلات ويقارن عليها سير العمل والكود. لا تعدّله بعد إنشاء سجلات تستخدم هذا الخيار إلا إذا كنت تعلم ما تفعل.'
+          : 'API name — the string stored on records and matched by workflows + code. Leave it alone after records use this option unless you know what you are doing.'}
       />
       {groups.length > 0 && (
         <GroupPickerButton
