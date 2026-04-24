@@ -65,14 +65,34 @@ CREATE TABLE IF NOT EXISTS workflows (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   label_ar TEXT NOT NULL,
   label_en TEXT NOT NULL,
-  trigger_model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
-  trigger_event TEXT NOT NULL CHECK (trigger_event IN ('create', 'update', 'delete')),
+  -- Nullable: webhook-triggered workflows have no single source model.
+  -- Record-triggered workflows (create/update/delete) still need a model set,
+  -- but that's enforced in the app, not at the DB level.
+  trigger_model_id UUID REFERENCES models(id) ON DELETE CASCADE,
+  trigger_event TEXT NOT NULL CHECK (trigger_event IN ('create', 'update', 'delete', 'webhook')),
   conditions JSONB NOT NULL DEFAULT '[]'::jsonb,
   actions JSONB NOT NULL DEFAULT '[]'::jsonb,
   is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- For existing installs: relax trigger_model_id to allow webhook-triggered
+-- workflows (no model) and widen the trigger_event CHECK to accept 'webhook'.
+-- Both idempotent.
+ALTER TABLE workflows ALTER COLUMN trigger_model_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_schema = 'public' AND table_name = 'workflows' AND constraint_name = 'workflows_trigger_event_check'
+  ) THEN
+    ALTER TABLE workflows DROP CONSTRAINT workflows_trigger_event_check;
+  END IF;
+  ALTER TABLE workflows ADD CONSTRAINT workflows_trigger_event_check
+    CHECK (trigger_event IN ('create', 'update', 'delete', 'webhook'));
+END $$;
 
 -- Workflow execution log — audit trail of every workflow run.
 -- The row snapshot keeps the entry readable even if the workflow is later edited.

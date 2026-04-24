@@ -1048,7 +1048,11 @@ async function executeAction(
               ttsVoice: action.tts_voice,
               audioFileUrl: action.audio_mode === 'audio' ? action.audio_file_url : undefined,
               options: optionsForHatif,
-              externalId: traceBase.id,
+              // externalId must be unique per *run* — using the action id alone
+              // makes Hatif dedupe every workflow firing as a single call and
+              // return a cached response without actually ringing. Combine the
+              // action id with a fresh uuid so Hatif sees each run as new.
+              externalId: `${traceBase.id}:${uuid()}`,
             }),
           });
           responseStatus = res.status;
