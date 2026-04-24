@@ -1,7 +1,7 @@
 # PRD: Whiteboard
 
 **Status:** Live
-**Last updated:** 2026-04-24
+**Last updated:** 2026-04-24 (**License wired:** `<Tldraw licenseKey>` now reads from `VITE_TLDRAW_LICENSE_KEY` at build time. Running on a 100-day free trial key that expires **2026-08-02** — before that date we need to either switch to a commercial license or fall back to the hobby license with watermark.)
 **Related PRDs:** navigation-layout.md, internationalization.md
 
 ## What it is (in plain English)
@@ -17,7 +17,7 @@ Real-estate teams often plan visually (site boundaries, journey maps, campaign f
 - **Persistence:** the canvas auto-saves to the browser's **IndexedDB** under the `persistenceKey` `wassel-whiteboard-v1`. No Save button — every edit is persisted within milliseconds, and reopening the page restores the last state. Nothing is synced to Supabase yet, so it is per-browser-profile only.
 - **Language/direction:** the tldraw UI chrome (toolbar, menus, handle controls) is English-LTR only. We force `dir="ltr"` on the canvas wrapper regardless of the app's current language so the chrome stays readable. Our own page header (title + subtitle) still follows the app language.
 - **Bundle isolation:** the Whiteboard route is lazy-loaded via `React.lazy`, so tldraw's code and its stylesheet are only downloaded when a user first visits `/whiteboard` — the main bundle stays lean.
-- **License posture:** the tldraw SDK's default terms permit **development use only**. Before shipping to production we must either (a) acquire a commercial license and pass it as `<Tldraw licenseKey=…>`, or (b) fall back to the free hobby license which forces a "Made with tldraw" watermark on the canvas. This decision is currently open — see Limitations.
+- **License posture:** tldraw enforces its license in production by **unmounting the editor after 5 seconds** on any non-localhost hostname when it can't validate a key (see `@tldraw/editor` `LicenseProvider` → `LICENSE_TIMEOUT` + `shouldHideEditorAfterDelay`). We pass the key via `VITE_TLDRAW_LICENSE_KEY` at build time so it gets inlined by Vite and never lives in source. Keys are **domain-bound** — every production hostname (Vercel prod + any custom domain) must be registered when the key is issued. Current key is a 100-day trial expiring 2026-08-02; we need to renew to commercial or fall back to the hobby license (watermark) before then.
 
 ## User flows
 1. **Open the whiteboard:** sidebar → "Whiteboard" → canvas renders with whatever was drawn last time (or a blank board on first visit).
@@ -44,6 +44,6 @@ Real-estate teams often plan visually (site boundaries, journey maps, campaign f
 - **Per-browser only.** Because persistence is IndexedDB and not Supabase, the user loses the board when switching browsers/devices and it isn't shareable with teammates. Next step when the need arises: serialize tldraw's store snapshot to a new `whiteboards` table (one row, JSONB), plus the obvious multi-board list page.
 - **Not multiplayer.** tldraw supports real-time collaboration but it requires running a sync backend. Not set up in v1.
 - **RTL UI.** tldraw's toolbar and menus don't support right-to-left layout; Arabic users see English chrome by design. The user-facing page header (above the canvas) still honors language.
-- **Production license.** We're running under tldraw's development-only default terms. Before this is exposed to paying customers we need to either pay for a commercial license or accept the hobby-license watermark — see CLAUDE.md for the eventual choice.
+- **Trial license clock.** The current `VITE_TLDRAW_LICENSE_KEY` is a 100-day trial that expires **2026-08-02**. When it lapses, tldraw's enforcement re-engages and the editor will again unmount after 5 seconds in production. Renew to a commercial license or switch to the hobby license (adds a "Made with tldraw" watermark on the canvas) before the expiry.
 - **No export / import.** Users can't yet export the canvas as PNG/SVG or import a saved board. tldraw supports both APIs; we just haven't surfaced them.
 - **Single board per browser.** `persistenceKey` is hard-coded. There's no way to have multiple named boards (one per project, one per campaign) without introducing a list page + board-id URL param.
