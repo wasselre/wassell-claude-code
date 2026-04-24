@@ -182,11 +182,26 @@ export async function triggerOutboundIvr(input: TriggerIvrInput): Promise<Trigge
     ? input.destinationNumber.slice(1)
     : input.destinationNumber;
 
+  // Hatif's option schema (discovered empirically via 400 responses — the doc
+  // summary listed only {digit, label}) requires a non-empty `description`
+  // (max 500 chars). Fall back to the label so existing editor UX still works
+  // without adding a new input; callers can override by sending description
+  // explicitly.
+  const optionsForHatif = input.options.map((o) => {
+    const rec = o as unknown as { digit: string; label: string; description?: string };
+    const description = (rec.description ?? rec.label ?? '').trim() || rec.digit;
+    return {
+      digit: rec.digit,
+      label: rec.label,
+      description: description.slice(0, 500),
+    };
+  });
+
   const payload: Record<string, unknown> = {
     channelId: input.channelId,
     destinationNumber: destination,
     webhookUrl: input.webhookUrl,
-    options: input.options,
+    options: optionsForHatif,
   };
   if (hasTts) {
     payload.ttsText = input.ttsText;
