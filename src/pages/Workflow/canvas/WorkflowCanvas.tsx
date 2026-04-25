@@ -20,7 +20,6 @@ import TriggerNode from './nodes/TriggerNode';
 import ActionNode from './nodes/ActionNode';
 import ConditionGroupNode from './nodes/ConditionGroupNode';
 import BranchHeaderNode from './nodes/BranchHeaderNode';
-import TailAddNode from './nodes/TailAddNode';
 import AddableEdge from './edges/AddableEdge';
 import NodeDrawer, { type DrawerNode } from './NodeDrawer';
 import AddNodeMenu, { type AddMenuPayload, type AddableKind } from './AddNodeMenu';
@@ -36,7 +35,6 @@ const nodeTypes = {
   conditionGroup: ConditionGroupNode,
   branchHeader: BranchHeaderNode,
   action: ActionNode,
-  tailAdd: TailAddNode,
 };
 
 const edgeTypes = {
@@ -467,7 +465,6 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
             if (n.type === 'conditionGroup') return '#0EA5E9';
             if (n.type === 'action') return '#B8734F';
             if (n.type === 'branchHeader') return 'rgba(74, 44, 42, 0.4)';
-            if (n.type === 'tailAdd') return 'rgba(184, 115, 79, 0.15)';
             return '#D4B896';
           }}
         />

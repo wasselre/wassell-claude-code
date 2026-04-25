@@ -4,6 +4,7 @@ import { ACTION_STYLE, summarizeAction } from '../../components/ActionList';
 import type { ActionNodeData } from '../workflowToGraph';
 import type { WorkflowAction } from '@/types';
 import type { LucideIcon } from 'lucide-react';
+import TailAddPill from './TailAddPill';
 
 const ICON_BY_TYPE: Record<WorkflowAction['type'], LucideIcon> = {
   create_record: Plus,
@@ -34,7 +35,7 @@ export default function ActionNode({ data, selected, id }: ActionNodeProps) {
 
   return (
     <div
-      className={`group relative h-full w-full rounded-xl bg-white border-2 transition-all cursor-pointer overflow-hidden ${
+      className={`group relative h-full w-full rounded-xl bg-white border-2 transition-all cursor-pointer ${
         selected ? 'border-copper shadow-lg shadow-copper/20 -translate-y-0.5' : `${style.nodeBorder} hover:shadow-md`
       }`}
     >
@@ -71,6 +72,7 @@ export default function ActionNode({ data, selected, id }: ActionNodeProps) {
         isConnectable={false}
         style={{ background: '#B8734F', border: '2px solid white', width: 8, height: 8 }}
       />
+      {data.tailAdd && <TailAddPill spec={data.tailAdd} isAr={isAr} />}
     </div>
   );
 }

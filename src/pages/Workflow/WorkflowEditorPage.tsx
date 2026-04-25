@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { ArrowRight, Save, GitBranch, Plus } from 'lucide-react';
+import { ArrowRight, Save, GitBranch, Plus, Maximize2, Minimize2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { bilingualFromInput } from '@/lib/autoTranslate';
@@ -100,6 +100,25 @@ export default function WorkflowEditorPage() {
   const toolbarRef = useRef<{ addBranch: () => void; addElseBranch: () => void } | null>(null);
   const hasElse = (workflow.branches ?? []).some((b) => b.is_else);
 
+  // Fullscreen mode hides the app's sidebar + global header by mounting the
+  // editor as a fixed-position overlay covering the entire viewport. The
+  // user toggles it with the maximize / minimize button in the top bar.
+  // ESC also exits fullscreen so a stuck modal can never trap the user.
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setIsFullscreen(false); };
+    document.addEventListener('keydown', onKey);
+    // Lock body scroll while fullscreen so background scrolling doesn't
+    // leak through.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isFullscreen]);
+
   const handleSave = () => {
     if (!workflow.label_ar.trim() || !workflow.label_en.trim()) {
       addToast(t('common.required'), 'error');
@@ -126,7 +145,11 @@ export default function WorkflowEditorPage() {
   // canvas below it. Gives the node graph the whole viewport to breathe in,
   // which matches the n8n / Zapier feel: the canvas IS the page.
   return (
-    <div className="workflow-editor-shell -mx-4 md:-mx-8 -my-6 flex flex-col h-[calc(100vh-4rem)]">
+    <div className={
+      isFullscreen
+        ? 'workflow-editor-shell fixed inset-0 z-[60] flex flex-col bg-cream-light'
+        : 'workflow-editor-shell -mx-4 md:-mx-8 -my-6 flex flex-col h-[calc(100vh-4rem)]'
+    }>
       <div className="shrink-0 px-4 md:px-8 py-3 flex items-center gap-3 border-b border-sand/40 bg-white/70 backdrop-blur-sm">
         <button
           onClick={() => navigate('/workflow')}
@@ -178,6 +201,18 @@ export default function WorkflowEditorPage() {
             )}
           </>
         )}
+        <button
+          onClick={() => setIsFullscreen((v) => !v)}
+          className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/60 hover:text-charcoal transition-colors"
+          aria-label={isFullscreen
+            ? (isAr ? 'الخروج من ملء الشاشة' : 'Exit fullscreen')
+            : (isAr ? 'ملء الشاشة' : 'Fullscreen')}
+          title={isFullscreen
+            ? (isAr ? 'الخروج من ملء الشاشة (Esc)' : 'Exit fullscreen (Esc)')
+            : (isAr ? 'ملء الشاشة' : 'Fullscreen')}
+        >
+          {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+        </button>
         <Button onClick={handleSave}>
           <Save size={16} />
           {t('common.save')}

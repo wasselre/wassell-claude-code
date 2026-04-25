@@ -11,7 +11,7 @@ import {
 } from './constants';
 import type { ConditionGroupNodeData } from './nodes/ConditionGroupNode';
 import type { BranchHeaderNodeData } from './nodes/BranchHeaderNode';
-import type { TailAddNodeData } from './nodes/TailAddNode';
+import type { TailAddPillSpec } from './nodes/TailAddPill';
 
 // Node data payloads. Each node's `type` in xyflow matches one of the keys
 // registered in nodeTypes on the canvas, and the data shape is what the
@@ -32,6 +32,9 @@ export interface ActionNodeData extends Record<string, unknown> {
   triggerFields: ModelField[];
   models: AppModel[];
   isAr: boolean;
+  // When this action is the LAST node in its branch we render an attached
+  // "+" pill at its bottom edge for appending another action.
+  tailAdd?: TailAddPillSpec;
 }
 
 // Node ID helpers. The scheme is deterministic so round-tripping is stable:
@@ -41,12 +44,13 @@ export interface ActionNodeData extends Record<string, unknown> {
 //   cg-<branchId>            condition group card (one per non-else branch,
 //                            even when the branch has zero conditions)
 //   act-<branchId>-<actId>   one node per individual action
-//   tail-<branchId>          trailing "+ Add step" affordance per branch
+// The "+ Add step" affordance for the bottom of a branch is no longer a
+// separate node — it's rendered as a pill attached to whichever node is
+// last in the branch, via the `tailAdd` field on that node's data.
 export const TRIGGER_NODE_ID = 'trigger';
 export const branchHeaderNodeId = (branchId: string) => `bh-${branchId}`;
 export const conditionGroupNodeId = (branchId: string) => `cg-${branchId}`;
 export const actionNodeId = (branchId: string, actionId: string) => `act-${branchId}-${actionId}`;
-export const tailAddNodeId = (branchId: string) => `tail-${branchId}`;
 
 export interface WorkflowToGraphInput {
   workflow: Workflow;
@@ -122,7 +126,6 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
   const COND_ROW_HEIGHT = 36;              // each condition row inside the group
   const COND_ADD_BUTTON_HEIGHT = 36;
   const HEADER_NODE_HEIGHT = 96;           // standalone branch header (else)
-  const TAIL_NODE_HEIGHT = 48;
 
   order.forEach((branch, visualIdx) => {
     const dataIdx = branches.findIndex((b) => b.id === branch.id);
@@ -132,6 +135,22 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
       || (isAr ? `فرع ${positionLabel}` : `${positionLabel} branch`);
 
     let yCursor = LANE_ROW_Y;
+
+    // The "+ Add step" affordance is a pill rendered on whichever node
+    // ends up last in the branch — no separate tail-add node, no
+    // connecting edge from the last action down to a "+" element. We
+    // know upfront which node will be last:
+    //   - if there are actions, the last action node
+    //   - else, the entry node (conditionGroup or branchHeader)
+    const lastInsertAfter = branch.actions.length > 0
+      ? actionNodeId(branch.id, branch.actions[branch.actions.length - 1]!.id)
+      : null;
+    const entryIsLast = branch.actions.length === 0;
+    const tailSpec: TailAddPillSpec = {
+      branchId: branch.id,
+      insertAfterId: lastInsertAfter,
+      isElse: !!branch.is_else,
+    };
 
     // Entry node for this branch: a ConditionGroupNode for non-else
     // branches (bundles all conditions + branch header in one card), or a
@@ -153,6 +172,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
           canDelete: true,
           canDuplicate: false,
           isAr,
+          ...(entryIsLast ? { tailAdd: tailSpec } : {}),
         } satisfies BranchHeaderNodeData,
         width: childWidth,
         height: headerHeight,
@@ -186,6 +206,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
           canDelete: nonElseCount > 1,
           canDuplicate: true,
           isAr,
+          ...(entryIsLast ? { tailAdd: tailSpec } : {}),
         } satisfies ConditionGroupNodeData,
         width: childWidth,
         height: groupHeight,
@@ -209,10 +230,12 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
     });
 
     // Action chain. Edge from the entry to the first action gets "+" so
-    // users can insert there too.
+    // users can insert there too. The LAST action gets a `tailAdd` pill
+    // attached at its bottom — no separate tail node, no trailing edge.
     let prevId = entryNodeId;
-    branch.actions.forEach((action) => {
+    branch.actions.forEach((action, idx) => {
       const id = actionNodeId(branch.id, action.id);
+      const isLastAction = idx === branch.actions.length - 1;
       nodes.push({
         id,
         type: 'action',
@@ -224,6 +247,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
           triggerFields,
           models,
           isAr,
+          ...(isLastAction ? { tailAdd: tailSpec } : {}),
         } satisfies ActionNodeData,
         width: childWidth,
         height: NODE_HEIGHT,
@@ -233,10 +257,6 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
         selectable: true,
         zIndex: 10,
       });
-      // Edge from the previous node into this one — addable "+" inserts
-      // a NEW action between them. `insertAfterId` is the previous action
-      // (or null when prev is the entry, which makes the new action land
-      // at the start of the actions array).
       const isPrevAction = prevId.startsWith('act-');
       edges.push({
         id: `e-${prevId}-${id}`,
@@ -253,39 +273,6 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
       });
       prevId = id;
       yCursor += NODE_HEIGHT + NODE_VERTICAL_GAP;
-    });
-
-    // Trailing tail-add node — "+ Add step" affordance below the last
-    // real node. The edge into it is also addable so a "+" appears
-    // between the last action and the tail (functionally the same place).
-    const tailId = tailAddNodeId(branch.id);
-    const tailInsertAfter = branch.actions.length > 0
-      ? actionNodeId(branch.id, branch.actions[branch.actions.length - 1]!.id)
-      : null;
-    nodes.push({
-      id: tailId,
-      type: 'tailAdd',
-      position: { x: colX + (LANE_WIDTH - LANE_WIDTH * 0.62) / 2, y: yCursor },
-      data: {
-        kind: 'tailAdd',
-        branchId: branch.id,
-        insertAfterId: tailInsertAfter,
-        isElse: !!branch.is_else,
-        isAr,
-      } satisfies TailAddNodeData,
-      width: Math.round(LANE_WIDTH * 0.62),
-      height: TAIL_NODE_HEIGHT,
-      measured: { width: Math.round(LANE_WIDTH * 0.62), height: TAIL_NODE_HEIGHT },
-      style: { width: Math.round(LANE_WIDTH * 0.62), height: TAIL_NODE_HEIGHT },
-      draggable: false,
-      selectable: false,
-      zIndex: 10,
-    });
-    edges.push({
-      id: `e-${prevId}-${tailId}`,
-      source: prevId,
-      target: tailId,
-      type: 'default',
     });
   });
 

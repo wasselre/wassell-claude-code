@@ -1,6 +1,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { GitBranch, Copy, Trash2 } from 'lucide-react';
 import type { WorkflowBranch } from '@/types';
+import TailAddPill, { type TailAddPillSpec } from './TailAddPill';
 
 export interface BranchHeaderNodeData extends Record<string, unknown> {
   kind: 'branchHeader';
@@ -11,6 +12,10 @@ export interface BranchHeaderNodeData extends Record<string, unknown> {
   canDelete: boolean;
   canDuplicate: boolean;
   isAr: boolean;
+  // When this branch header is the LAST node in its branch (else branch
+  // with no actions yet) we render an attached "+" pill at its bottom
+  // edge for adding the first action.
+  tailAdd?: TailAddPillSpec;
 }
 
 interface BranchHeaderNodeProps extends NodeProps {
@@ -47,7 +52,7 @@ export default function BranchHeaderNode({ data, selected }: BranchHeaderNodePro
     : 'bg-copper/10 text-copper border-copper/30';
 
   return (
-    <div className={`group relative w-full rounded-2xl bg-white border-2 transition-all cursor-pointer overflow-hidden ${
+    <div className={`group relative w-full rounded-2xl bg-white border-2 transition-all cursor-pointer ${
       selected ? 'border-copper shadow-lg shadow-copper/20' : `${accent} hover:shadow-md`
     }`}>
       <Handle
@@ -99,6 +104,7 @@ export default function BranchHeaderNode({ data, selected }: BranchHeaderNodePro
         isConnectable={false}
         style={{ background: '#B8734F', border: '2px solid white', width: 8, height: 8 }}
       />
+      {data.tailAdd && <TailAddPill spec={data.tailAdd} isAr={isAr} />}
     </div>
   );
 }

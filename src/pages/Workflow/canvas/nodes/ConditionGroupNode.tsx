@@ -2,6 +2,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { CircleDot, Trash2, Plus, Copy, GitBranch } from 'lucide-react';
 import { summarizeCondition } from '../../components/ConditionList';
 import type { WorkflowCondition, ModelField, WorkflowEvent, WorkflowBranch } from '@/types';
+import TailAddPill, { type TailAddPillSpec } from './TailAddPill';
 
 export interface ConditionGroupNodeData extends Record<string, unknown> {
   kind: 'conditionGroup';
@@ -18,6 +19,10 @@ export interface ConditionGroupNodeData extends Record<string, unknown> {
   canDelete: boolean;
   canDuplicate: boolean;
   isAr: boolean;
+  // When this conditionGroup is the LAST node in its branch (no actions
+  // yet) we render an attached "+" pill at its bottom edge for adding the
+  // first action.
+  tailAdd?: TailAddPillSpec;
 }
 
 interface ConditionGroupNodeProps extends NodeProps {
@@ -68,7 +73,7 @@ export default function ConditionGroupNode({ data, selected, id }: ConditionGrou
 
   return (
     <div
-      className={`group relative w-full rounded-2xl bg-white border-2 transition-all cursor-pointer overflow-hidden ${
+      className={`group relative w-full rounded-2xl bg-white border-2 transition-all cursor-pointer ${
         selected ? 'border-copper shadow-lg shadow-copper/20' : 'border-sky-200 hover:border-sky-400 hover:shadow-md'
       }`}
       data-node-id={id}
@@ -183,6 +188,7 @@ export default function ConditionGroupNode({ data, selected, id }: ConditionGrou
         isConnectable={false}
         style={{ background: '#0ea5e9', border: '2px solid white', width: 8, height: 8 }}
       />
+      {data.tailAdd && <TailAddPill spec={data.tailAdd} isAr={isAr} />}
     </div>
   );
 }
