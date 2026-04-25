@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Pencil } from 'lucide-react';
 import {
@@ -11,6 +11,7 @@ import {
 import 'tldraw/tldraw.css';
 import { useAppStore } from '@/stores/appStore';
 import { QuickConnectHandles } from './components/QuickConnectHandles';
+import PromptModal from './components/PromptModal';
 
 /**
  * Whiteboard editor — one tldraw canvas per board.
@@ -42,17 +43,20 @@ export default function WhiteboardEditorPage(): JSX.Element {
 
   const saveTimerRef = useRef<number | null>(null);
   const editorRef = useRef<Editor | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
 
   const components = useMemo<TLComponents>(
     () => ({ InFrontOfTheCanvas: QuickConnectHandles }),
     [],
   );
 
-  const handleRename = () => {
-    if (!board) return;
-    const name = window.prompt(isAr ? 'اسم جديد' : 'New name', board.name);
-    if (!name || !name.trim() || name === board.name) return;
+  const handleRenameSubmit = (name: string) => {
+    if (!board || name === board.name) {
+      setRenameOpen(false);
+      return;
+    }
     renameBoard(board.id, name);
+    setRenameOpen(false);
   };
 
   const onMount = useCallback(
@@ -130,7 +134,7 @@ export default function WhiteboardEditorPage(): JSX.Element {
           {board.name}
           <button
             type="button"
-            onClick={handleRename}
+            onClick={() => setRenameOpen(true)}
             className="p-1.5 rounded-md hover:bg-cream text-charcoal/30 hover:text-charcoal transition-colors"
             aria-label={isAr ? 'إعادة تسمية' : 'Rename'}
             title={isAr ? 'إعادة تسمية' : 'Rename'}
@@ -154,6 +158,17 @@ export default function WhiteboardEditorPage(): JSX.Element {
           onMount={onMount}
         />
       </div>
+
+      <PromptModal
+        open={renameOpen}
+        title={isAr ? 'إعادة تسمية اللوحة' : 'Rename board'}
+        label={isAr ? 'اسم جديد' : 'New name'}
+        initialValue={board.name}
+        submitLabel={isAr ? 'حفظ' : 'Save'}
+        cancelLabel={isAr ? 'إلغاء' : 'Cancel'}
+        onSubmit={handleRenameSubmit}
+        onClose={() => setRenameOpen(false)}
+      />
     </div>
   );
 }

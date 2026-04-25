@@ -5,6 +5,22 @@ import { SquarePen, FolderPlus, Plus, Folder, MoreVertical, Trash2, Pencil, Fold
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import type { Whiteboard, WhiteboardFolder } from '@/types';
+import PromptModal from './components/PromptModal';
+import ConfirmModal from './components/ConfirmModal';
+
+/**
+ * Dialog state machine — kept in a single piece of state instead of N
+ * booleans so it's impossible to have, say, both rename and delete open
+ * at once. Each variant carries the data its modal needs.
+ */
+type Dialog =
+  | null
+  | { kind: 'new-folder' }
+  | { kind: 'new-board'; folderId: string | null }
+  | { kind: 'rename-board'; board: Whiteboard }
+  | { kind: 'rename-folder'; folder: WhiteboardFolder }
+  | { kind: 'delete-board'; board: Whiteboard }
+  | { kind: 'delete-folder'; folder: WhiteboardFolder };
 
 /**
  * Whiteboard hub — flat folder list + boards inside.
@@ -176,44 +192,49 @@ export default function WhiteboardListPage(): JSX.Element {
     [whiteboardFolders],
   );
 
-  const handleNewFolder = () => {
-    const name = window.prompt(isAr ? 'اسم المجلد' : 'Folder name');
-    if (!name || !name.trim()) return;
-    createWhiteboardFolder(name);
+  const [dialog, setDialog] = useState<Dialog>(null);
+  const closeDialog = () => setDialog(null);
+
+  const handleNewFolder = () => setDialog({ kind: 'new-folder' });
+  const handleNewBoard = (folderId: string | null) =>
+    setDialog({ kind: 'new-board', folderId });
+  const handleRenameBoard = (board: Whiteboard) =>
+    setDialog({ kind: 'rename-board', board });
+  const handleDeleteBoard = (board: Whiteboard) =>
+    setDialog({ kind: 'delete-board', board });
+  const handleRenameFolder = (folder: WhiteboardFolder) =>
+    setDialog({ kind: 'rename-folder', folder });
+  const handleDeleteFolder = (folder: WhiteboardFolder) =>
+    setDialog({ kind: 'delete-folder', folder });
+
+  const submitDialog = (value: string) => {
+    if (!dialog) return;
+    if (dialog.kind === 'new-folder') {
+      createWhiteboardFolder(value);
+    } else if (dialog.kind === 'new-board') {
+      const board = createWhiteboard(value, dialog.folderId);
+      closeDialog();
+      navigate(`/whiteboard/${board.id}`);
+      return;
+    } else if (dialog.kind === 'rename-board') {
+      if (value !== dialog.board.name) renameWhiteboard(dialog.board.id, value);
+    } else if (dialog.kind === 'rename-folder') {
+      if (value !== dialog.folder.name) renameWhiteboardFolder(dialog.folder.id, value);
+    }
+    closeDialog();
   };
 
-  const handleNewBoard = (folderId: string | null) => {
-    const name = window.prompt(isAr ? 'اسم اللوحة' : 'Board name');
-    if (!name || !name.trim()) return;
-    const board = createWhiteboard(name, folderId);
-    navigate(`/whiteboard/${board.id}`);
+  const confirmDialog = () => {
+    if (!dialog) return;
+    if (dialog.kind === 'delete-board') {
+      deleteWhiteboard(dialog.board.id);
+    } else if (dialog.kind === 'delete-folder') {
+      deleteWhiteboardFolder(dialog.folder.id);
+    }
+    closeDialog();
   };
 
-  const handleRenameBoard = (board: Whiteboard) => {
-    const name = window.prompt(isAr ? 'اسم جديد' : 'New name', board.name);
-    if (!name || !name.trim() || name === board.name) return;
-    renameWhiteboard(board.id, name);
-  };
-
-  const handleDeleteBoard = (board: Whiteboard) => {
-    if (!window.confirm(isAr ? `حذف "${board.name}"؟` : `Delete "${board.name}"?`)) return;
-    deleteWhiteboard(board.id);
-  };
-
-  const handleRenameFolder = (folder: WhiteboardFolder) => {
-    const name = window.prompt(isAr ? 'اسم جديد للمجلد' : 'New folder name', folder.name);
-    if (!name || !name.trim() || name === folder.name) return;
-    renameWhiteboardFolder(folder.id, name);
-  };
-
-  const handleDeleteFolder = (folder: WhiteboardFolder) => {
-    const inside = grouped.byFolder[folder.id]?.length ?? 0;
-    const msg = isAr
-      ? `حذف المجلد "${folder.name}"؟ ${inside > 0 ? `(اللوحات (${inside}) ستُنقل إلى "بدون مجلد".)` : ''}`
-      : `Delete folder "${folder.name}"?${inside > 0 ? ` (${inside} board${inside === 1 ? '' : 's'} will move to "Unfiled".)` : ''}`;
-    if (!window.confirm(msg)) return;
-    deleteWhiteboardFolder(folder.id);
-  };
+  const folderInsideCount = (folderId: string) => grouped.byFolder[folderId]?.length ?? 0;
 
   const totalCount = whiteboards.length;
   const isEmpty = totalCount === 0 && sortedFolders.length === 0;
@@ -347,6 +368,95 @@ export default function WhiteboardListPage(): JSX.Element {
           )}
         </div>
       )}
+
+      {/* New folder */}
+      <PromptModal
+        open={dialog?.kind === 'new-folder'}
+        title={isAr ? 'مجلد جديد' : 'New folder'}
+        label={isAr ? 'اسم المجلد' : 'Folder name'}
+        placeholder={isAr ? 'مثال: المشاريع' : 'e.g. Marketing plans'}
+        submitLabel={isAr ? 'إنشاء' : 'Create'}
+        cancelLabel={isAr ? 'إلغاء' : 'Cancel'}
+        onSubmit={submitDialog}
+        onClose={closeDialog}
+      />
+
+      {/* New board */}
+      <PromptModal
+        open={dialog?.kind === 'new-board'}
+        title={isAr ? 'لوحة جديدة' : 'New board'}
+        label={isAr ? 'اسم اللوحة' : 'Board name'}
+        placeholder={isAr ? 'مثال: مخطط الموقع' : 'e.g. Site plan'}
+        submitLabel={isAr ? 'إنشاء وفتح' : 'Create & open'}
+        cancelLabel={isAr ? 'إلغاء' : 'Cancel'}
+        onSubmit={submitDialog}
+        onClose={closeDialog}
+      />
+
+      {/* Rename board */}
+      <PromptModal
+        open={dialog?.kind === 'rename-board'}
+        title={isAr ? 'إعادة تسمية اللوحة' : 'Rename board'}
+        label={isAr ? 'اسم جديد' : 'New name'}
+        initialValue={dialog?.kind === 'rename-board' ? dialog.board.name : ''}
+        submitLabel={isAr ? 'حفظ' : 'Save'}
+        cancelLabel={isAr ? 'إلغاء' : 'Cancel'}
+        onSubmit={submitDialog}
+        onClose={closeDialog}
+      />
+
+      {/* Rename folder */}
+      <PromptModal
+        open={dialog?.kind === 'rename-folder'}
+        title={isAr ? 'إعادة تسمية المجلد' : 'Rename folder'}
+        label={isAr ? 'اسم جديد' : 'New name'}
+        initialValue={dialog?.kind === 'rename-folder' ? dialog.folder.name : ''}
+        submitLabel={isAr ? 'حفظ' : 'Save'}
+        cancelLabel={isAr ? 'إلغاء' : 'Cancel'}
+        onSubmit={submitDialog}
+        onClose={closeDialog}
+      />
+
+      {/* Delete board */}
+      <ConfirmModal
+        open={dialog?.kind === 'delete-board'}
+        title={isAr ? 'حذف اللوحة؟' : 'Delete board?'}
+        message={
+          dialog?.kind === 'delete-board'
+            ? isAr
+              ? `سيتم حذف "${dialog.board.name}" نهائياً.`
+              : `"${dialog.board.name}" will be permanently deleted.`
+            : ''
+        }
+        confirmLabel={isAr ? 'حذف' : 'Delete'}
+        cancelLabel={isAr ? 'إلغاء' : 'Cancel'}
+        destructive
+        onConfirm={confirmDialog}
+        onClose={closeDialog}
+      />
+
+      {/* Delete folder */}
+      <ConfirmModal
+        open={dialog?.kind === 'delete-folder'}
+        title={isAr ? 'حذف المجلد؟' : 'Delete folder?'}
+        message={(() => {
+          if (dialog?.kind !== 'delete-folder') return '';
+          const inside = folderInsideCount(dialog.folder.id);
+          if (inside === 0) {
+            return isAr
+              ? `سيتم حذف المجلد "${dialog.folder.name}".`
+              : `Folder "${dialog.folder.name}" will be deleted.`;
+          }
+          return isAr
+            ? `سيتم حذف المجلد "${dialog.folder.name}" ونقل ${inside} ${inside === 1 ? 'لوحة' : 'لوحات'} إلى "بدون مجلد".`
+            : `Folder "${dialog.folder.name}" will be deleted and ${inside} board${inside === 1 ? '' : 's'} will move to "Unfiled".`;
+        })()}
+        confirmLabel={isAr ? 'حذف المجلد' : 'Delete folder'}
+        cancelLabel={isAr ? 'إلغاء' : 'Cancel'}
+        destructive
+        onConfirm={confirmDialog}
+        onClose={closeDialog}
+      />
     </div>
   );
 }
