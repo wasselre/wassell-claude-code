@@ -18,7 +18,11 @@
 
 import type Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { randomUUID } from 'crypto';
+
+// Vercel Edge functions don't ship the Node 'crypto' module — they expose
+// the Web Crypto API as a global instead. `crypto.randomUUID()` is part
+// of that surface and works identically to Node's version.
+const newId = (): string => crypto.randomUUID();
 
 export const WORKFLOW_AGENT_MODEL = 'claude-opus-4-7';
 export const WORKFLOW_AGENT_MAX_TOKENS = 16_000;
@@ -284,18 +288,18 @@ interface CreateWorkflowInput {
 // agent's input clean (it doesn't have to invent UUIDs) while ensuring the
 // saved row has stable identifiers throughout.
 function fillActionIds(action: Record<string, unknown>): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...action, id: (action.id as string | undefined) || randomUUID() };
+  const next: Record<string, unknown> = { ...action, id: (action.id as string | undefined) || newId() };
 
   const mapMappings = (arr: unknown): unknown => {
     if (!Array.isArray(arr)) return arr;
     return arr.map((m) => {
       if (typeof m !== 'object' || m === null) return m;
       const cast = m as Record<string, unknown>;
-      const filled: Record<string, unknown> = { ...cast, id: (cast.id as string | undefined) || randomUUID() };
+      const filled: Record<string, unknown> = { ...cast, id: (cast.id as string | undefined) || newId() };
       if (Array.isArray(cast.role_conditions)) {
         filled.role_conditions = (cast.role_conditions as Array<Record<string, unknown>>).map((rc) => ({
           ...rc,
-          id: (rc.id as string | undefined) || randomUUID(),
+          id: (rc.id as string | undefined) || newId(),
         }));
       }
       return filled;
@@ -306,19 +310,19 @@ function fillActionIds(action: Record<string, unknown>): Record<string, unknown>
   if (Array.isArray(next.role_conditions)) {
     next.role_conditions = (next.role_conditions as Array<Record<string, unknown>>).map((rc) => ({
       ...rc,
-      id: (rc.id as string | undefined) || randomUUID(),
+      id: (rc.id as string | undefined) || newId(),
     }));
   }
   if (Array.isArray(next.options)) {
     next.options = (next.options as Array<Record<string, unknown>>).map((o) => ({
       ...o,
-      id: (o.id as string | undefined) || randomUUID(),
+      id: (o.id as string | undefined) || newId(),
     }));
   }
   if (Array.isArray(next.headers)) {
     next.headers = (next.headers as Array<Record<string, unknown>>).map((h) => ({
       ...h,
-      id: (h.id as string | undefined) || randomUUID(),
+      id: (h.id as string | undefined) || newId(),
     }));
   }
   return next;
@@ -330,15 +334,15 @@ async function createWorkflow(
   input: CreateWorkflowInput,
 ): Promise<string> {
   const now = new Date().toISOString();
-  const id = randomUUID();
+  const id = newId();
 
   const branches = input.branches.map((b) => ({
-    id: randomUUID(),
+    id: newId(),
     label_ar: b.label_ar,
     label_en: b.label_en,
     is_else: !!b.is_else,
     conditions: (b.conditions ?? []).map((c) => ({
-      id: randomUUID(),
+      id: newId(),
       field_id: c.field_id,
       operator: c.operator,
       value: c.value ?? '',
