@@ -196,12 +196,12 @@ export default function WhiteboardEditorPage(): JSX.Element {
           <button
             type="button"
             onClick={() => setIsFullscreen(false)}
-            className="absolute top-3 end-3 z-[61] inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/95 hover:bg-cream border border-sand/40 shadow-md text-sm font-bold text-charcoal transition-colors"
+            className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[61] inline-flex items-center gap-2 px-5 py-3 rounded-full bg-copper hover:bg-terracotta text-white text-sm font-bold shadow-lg shadow-copper/30 transition-colors"
             aria-label={isAr ? 'الخروج من ملء الشاشة' : 'Exit fullscreen'}
-            title={isAr ? 'الخروج (Esc)' : 'Exit (Esc)'}
           >
-            <Minimize2 size={14} />
-            <span>{isAr ? 'خروج' : 'Exit'}</span>
+            <Minimize2 size={16} />
+            <span>{isAr ? 'الخروج من ملء الشاشة' : 'Exit fullscreen'}</span>
+            <span className="hidden sm:inline px-1.5 py-0.5 rounded bg-white/20 text-xs font-bold">Esc</span>
           </button>
         )}
       </div>
