@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Pencil } from 'lucide-react';
+import { ArrowLeft, Pencil, Maximize2, Minimize2 } from 'lucide-react';
 import {
   Tldraw,
   type Editor,
@@ -44,6 +44,26 @@ export default function WhiteboardEditorPage(): JSX.Element {
   const saveTimerRef = useRef<number | null>(null);
   const editorRef = useRef<Editor | null>(null);
   const [renameOpen, setRenameOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  // While in fullscreen, the canvas wrapper becomes a `fixed inset-0`
+  // overlay that paints over the sidebar/header. We keep the same DOM
+  // tree (no portal, no route swap) so tldraw's editor instance survives
+  // the toggle and we don't lose in-memory state. Esc exits fullscreen
+  // — we only register the listener while fullscreen is on, and we use
+  // capture phase so we beat tldraw's own keydown handlers (which would
+  // otherwise eat the Esc for tool cancel).
+  useEffect(() => {
+    if (!isFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        setIsFullscreen(false);
+      }
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [isFullscreen]);
 
   const components = useMemo<TLComponents>(
     () => ({ InFrontOfTheCanvas: QuickConnectHandles }),
@@ -145,11 +165,26 @@ export default function WhiteboardEditorPage(): JSX.Element {
         <span className="text-xs text-charcoal/40">
           {isAr ? 'التغييرات تحفظ تلقائياً' : 'Changes save automatically'}
         </span>
+        <div className="flex-1" />
+        <button
+          type="button"
+          onClick={() => setIsFullscreen(true)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-bold text-charcoal/70 hover:bg-cream hover:text-charcoal transition-colors"
+          aria-label={isAr ? 'وضع ملء الشاشة' : 'Fullscreen mode'}
+          title={isAr ? 'وضع ملء الشاشة' : 'Fullscreen mode'}
+        >
+          <Maximize2 size={14} />
+          <span className="hidden sm:inline">{isAr ? 'ملء الشاشة' : 'Fullscreen'}</span>
+        </button>
       </div>
 
       <div
         dir="ltr"
-        className="relative h-[calc(100vh-10rem)] w-full rounded-2xl overflow-hidden border border-sand/40 bg-white"
+        className={
+          isFullscreen
+            ? 'fixed inset-0 z-[60] bg-white'
+            : 'relative h-[calc(100vh-10rem)] w-full rounded-2xl overflow-hidden border border-sand/40 bg-white'
+        }
       >
         <Tldraw
           key={board.id}
@@ -157,6 +192,18 @@ export default function WhiteboardEditorPage(): JSX.Element {
           components={components}
           onMount={onMount}
         />
+        {isFullscreen && (
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(false)}
+            className="absolute top-3 end-3 z-[61] inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/95 hover:bg-cream border border-sand/40 shadow-md text-sm font-bold text-charcoal transition-colors"
+            aria-label={isAr ? 'الخروج من ملء الشاشة' : 'Exit fullscreen'}
+            title={isAr ? 'الخروج (Esc)' : 'Exit (Esc)'}
+          >
+            <Minimize2 size={14} />
+            <span>{isAr ? 'خروج' : 'Exit'}</span>
+          </button>
+        )}
       </div>
 
       <PromptModal
