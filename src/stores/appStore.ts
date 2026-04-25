@@ -20,6 +20,7 @@ import type {
   ModelGroup,
   AppRecord,
   Workflow,
+  WorkflowGroup,
   WorkflowRun,
   Dashboard,
   ModelView,
@@ -185,7 +186,12 @@ async function supabaseDelete(table: string, id: string): Promise<void> {
 // so convert to null before any upsert. Kept near the Supabase helpers so
 // all three call sites go through the same normalizer.
 function workflowToSupabaseRow(w: Workflow): Record<string, unknown> {
-  return { ...w, trigger_model_id: w.trigger_model_id || null };
+  return {
+    ...w,
+    trigger_model_id: w.trigger_model_id || null,
+    // Postgres has the same empty-string-not-uuid problem for group_id.
+    group_id: w.group_id || null,
+  };
 }
 
 async function supabaseLoad<T>(table: string): Promise<T[] | null> {
@@ -403,6 +409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   groups: [],
   records: {},
   workflows: [],
+  workflowGroups: [],
   workflowRuns: [],
   activityLog: loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [],
   dashboards: [],
@@ -540,6 +547,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     let workflows = await supabaseLoad<Workflow>('workflows');
     if (!workflows) workflows = loadLocal<Workflow[]>('wassell_workflows') ?? [];
     saveLocal('wassell_workflows', workflows);
+
+    // Load workflow folders. Tolerate the table not existing yet on
+    // older installs that haven't run the latest schema migration.
+    let workflowGroups: WorkflowGroup[] = [];
+    try {
+      const loaded = await supabaseLoad<WorkflowGroup>('workflow_groups');
+      workflowGroups = loaded ?? loadLocal<WorkflowGroup[]>('wassell_workflow_groups') ?? [];
+    } catch {
+      workflowGroups = loadLocal<WorkflowGroup[]>('wassell_workflow_groups') ?? [];
+    }
+    saveLocal('wassell_workflow_groups', workflowGroups);
 
     // Load workflow execution logs
     let workflowRuns = await supabaseLoad<WorkflowRun>('workflow_runs');
@@ -994,6 +1012,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       groups,
       records: migratedRecords,
       workflows: migrated.workflows,
+      workflowGroups,
       workflowRuns,
       activityLog,
       dashboards: migrated.dashboards,
@@ -1558,6 +1577,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_workflows', workflows);
       supabaseDelete('workflows', workflowId);
       return { workflows };
+    });
+  },
+
+  // --- Workflow folders (groups) ---
+  saveWorkflowGroup: (group: WorkflowGroup) => {
+    set((s) => {
+      const idx = s.workflowGroups.findIndex((g) => g.id === group.id);
+      const workflowGroups = idx >= 0
+        ? s.workflowGroups.map((g) => (g.id === group.id ? group : g))
+        : [...s.workflowGroups, group];
+      saveLocal('wassell_workflow_groups', workflowGroups);
+      supabaseUpsert('workflow_groups', group as unknown as Record<string, unknown>);
+      return { workflowGroups };
+    });
+  },
+  deleteWorkflowGroup: (groupId: string) => {
+    set((s) => {
+      // Postgres has `ON DELETE SET NULL` on workflows.group_id, so the
+      // server nulls out any referring workflows automatically. Mirror
+      // that in memory + localStorage so the list page doesn't keep
+      // showing workflows nested under a folder that no longer exists.
+      const workflowGroups = s.workflowGroups.filter((g) => g.id !== groupId);
+      const touched: Workflow[] = [];
+      const workflows = s.workflows.map((w) => {
+        if (w.group_id !== groupId) return w;
+        const updated: Workflow = { ...w, group_id: null, updated_at: new Date().toISOString() };
+        touched.push(updated);
+        return updated;
+      });
+      saveLocal('wassell_workflow_groups', workflowGroups);
+      saveLocal('wassell_workflows', workflows);
+      supabaseDelete('workflow_groups', groupId);
+      // Belt-and-suspenders: re-upsert the orphaned workflows in case the
+      // server's ON DELETE SET NULL didn't fire (offline mode).
+      for (const w of touched) {
+        supabaseUpsert('workflows', workflowToSupabaseRow(w));
+      }
+      return { workflowGroups, workflows };
     });
   },
 

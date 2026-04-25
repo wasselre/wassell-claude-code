@@ -62,6 +62,15 @@ CREATE TABLE IF NOT EXISTS records (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Folders for organizing workflows in the editor list. Mirrors model_groups.
+CREATE TABLE IF NOT EXISTS workflow_groups (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  label_ar TEXT NOT NULL,
+  label_en TEXT NOT NULL,
+  "order" INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS workflows (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   label_ar TEXT NOT NULL,
@@ -71,12 +80,20 @@ CREATE TABLE IF NOT EXISTS workflows (
   -- but that's enforced in the app, not at the DB level.
   trigger_model_id UUID REFERENCES models(id) ON DELETE CASCADE,
   trigger_event TEXT NOT NULL CHECK (trigger_event IN ('create', 'update', 'delete', 'webhook')),
+  -- Folder this workflow belongs to (null = ungrouped). Group delete
+  -- nulls this out so workflows survive folder removal.
+  group_id UUID REFERENCES workflow_groups(id) ON DELETE SET NULL,
   conditions JSONB NOT NULL DEFAULT '[]'::jsonb,
   actions JSONB NOT NULL DEFAULT '[]'::jsonb,
   is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- For existing installs: backfill the workflow_groups table + group_id
+-- column on workflows. Both are idempotent.
+ALTER TABLE workflows
+  ADD COLUMN IF NOT EXISTS group_id UUID REFERENCES workflow_groups(id) ON DELETE SET NULL;
 
 -- For existing installs: relax trigger_model_id to allow webhook-triggered
 -- workflows (no model) and widen the trigger_event CHECK to accept 'webhook'.
@@ -332,6 +349,7 @@ ALTER TABLE models          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_groups    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE records         ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflows       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflow_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_runs   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dashboards      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_views     ENABLE ROW LEVEL SECURITY;
@@ -345,6 +363,7 @@ DROP POLICY IF EXISTS "Authenticated full access" ON models;
 DROP POLICY IF EXISTS "Authenticated full access" ON model_groups;
 DROP POLICY IF EXISTS "Authenticated full access" ON records;
 DROP POLICY IF EXISTS "Authenticated full access" ON workflows;
+DROP POLICY IF EXISTS "Authenticated full access" ON workflow_groups;
 DROP POLICY IF EXISTS "Authenticated full access" ON workflow_runs;
 DROP POLICY IF EXISTS "Authenticated full access" ON dashboards;
 DROP POLICY IF EXISTS "Authenticated full access" ON model_views;
@@ -358,6 +377,7 @@ CREATE POLICY "Authenticated full access" ON models          FOR ALL TO authenti
 CREATE POLICY "Authenticated full access" ON model_groups    FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON records         FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON workflows       FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Authenticated full access" ON workflow_groups FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON workflow_runs   FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON dashboards      FOR ALL TO authenticated USING (true) WITH CHECK (true);
 CREATE POLICY "Authenticated full access" ON model_views     FOR ALL TO authenticated USING (true) WITH CHECK (true);

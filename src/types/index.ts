@@ -613,10 +613,21 @@ export interface WorkflowBranch {
   is_else?: boolean;
 }
 
+// Folder for organizing workflows in the editor list. Mirrors `ModelGroup`.
+export interface WorkflowGroup {
+  id: string;
+  label_ar: string;
+  label_en: string;
+  order: number;
+}
+
 export interface Workflow {
   id: string;
   label_ar: string;
   label_en: string;
+  // Folder this workflow lives in. Null / undefined = ungrouped (rendered
+  // at the top of the list).
+  group_id?: string | null;
   // For record-event triggers (create/update/delete): the model whose event
   // fires the workflow. Empty string when `trigger_event === 'webhook'`.
   trigger_model_id: string;
@@ -1416,6 +1427,7 @@ export interface AppState {
   groups: ModelGroup[];
   records: Record<string, AppRecord[]>;
   workflows: Workflow[];
+  workflowGroups: WorkflowGroup[];
   workflowRuns: WorkflowRun[];
   /** Unified activity log — capped at 200 most recent entries in memory + localStorage.
    *  Older entries live in Supabase only and are paged in by the LogsPage. */
@@ -1520,6 +1532,8 @@ export interface AppState {
   // Workflows
   saveWorkflow: (workflow: Workflow) => void;
   deleteWorkflow: (workflowId: string) => void;
+  saveWorkflowGroup: (group: WorkflowGroup) => void;
+  deleteWorkflowGroup: (groupId: string) => void;
 
   // Workflow execution logs (audit trail)
   appendWorkflowRun: (run: WorkflowRun) => void;
