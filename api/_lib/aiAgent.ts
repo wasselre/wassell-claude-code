@@ -194,11 +194,13 @@ async function searchProjects(
   supabase: SupabaseClient,
   input: SearchInput,
 ): Promise<string> {
+  console.log('[search_projects] input', JSON.stringify(input));
   const modelMap = new Map<string, string>(); // model_id → model_name
   for (const name of PROJECT_MODELS) {
     const id = await getModelIdByName(supabase, name);
     if (id) modelMap.set(id, name);
   }
+  console.log('[search_projects] models found', modelMap.size, [...modelMap.values()]);
   if (modelMap.size === 0) {
     return JSON.stringify({ error: 'no project models found', projects: [] });
   }
@@ -209,9 +211,11 @@ async function searchProjects(
     .in('model_id', [...modelMap.keys()])
     .limit(500);
   if (error) {
+    console.log('[search_projects] supabase error', error.message);
     return JSON.stringify({ error: error.message, projects: [] });
   }
   const rows = (data ?? []) as RecordRow[];
+  console.log('[search_projects] rows fetched', rows.length);
   const scored = rows
     .map((r) => ({ row: r, score: scoreMatch(r.data, input) }))
     .filter((x) => x.score > 0 && matchesAllProvided(x.row.data, input))
@@ -222,11 +226,13 @@ async function searchProjects(
       return sourceRank(modelMap.get(a.row.model_id)) - sourceRank(modelMap.get(b.row.model_id));
     })
     .slice(0, 15);
+  console.log('[search_projects] post-filter count', scored.length);
   const summary = scored.map(({ row }) => ({
     id: row.id,
     source: modelMap.get(row.model_id) ?? 'unknown',
     ...cleanRecord(row.data),
   }));
+  console.log('[search_projects] returning', summary.length, 'projects');
   return JSON.stringify({ projects: summary, total: summary.length });
 }
 

@@ -113,10 +113,12 @@ export default async function handler(req: Request): Promise<Response> {
 
             const finalMessage = await turn.finalMessage();
 
+            console.log('[agent] turn stop_reason', finalMessage.stop_reason, 'iter', iteration);
             if (finalMessage.stop_reason === 'tool_use') {
               const toolUses = finalMessage.content.filter(
                 (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
               );
+              console.log('[agent] tool calls', toolUses.map((t) => t.name));
               conversation.push({ role: 'assistant', content: finalMessage.content });
 
               const toolResults: Anthropic.ToolResultBlockParam[] = [];
