@@ -77,17 +77,14 @@ export default function WorkflowAgentPage() {
             setActiveTool(event.name);
           } else if (event.type === 'tool_result') {
             setActiveTool(null);
-            // If this was a successful create_workflow, drop the full
-            // workflow row into our local Zustand store so the editor
-            // page can render it without a round-trip — and show a card
-            // in the chat with an Open-in-editor link.
+            // Sync any tool result that returns a workflow row into our
+            // local Zustand store so the editor page + workflow list pick
+            // up the change without a round-trip reload.
             if (event.name === 'create_workflow') {
               try {
                 const parsed = JSON.parse(event.result);
                 if (parsed && parsed.ok && parsed.workflow_id) {
-                  if (parsed.workflow) {
-                    saveWorkflow(parsed.workflow as Workflow);
-                  }
+                  if (parsed.workflow) saveWorkflow(parsed.workflow as Workflow);
                   const card: CreatedWorkflowCard = {
                     workflow_id: parsed.workflow_id,
                     name: parsed.name,
@@ -97,6 +94,19 @@ export default function WorkflowAgentPage() {
                   };
                   newCards.push(card);
                   setCreated((prev) => [...prev, card]);
+                }
+              } catch { /* ignore parse errors */ }
+            } else if (event.name === 'set_workflow_active') {
+              try {
+                const parsed = JSON.parse(event.result);
+                if (parsed && parsed.ok && parsed.workflow_id) {
+                  if (parsed.workflow) saveWorkflow(parsed.workflow as Workflow);
+                  // Update any matching create-card already in this thread
+                  // so its inline indicator reflects the new state.
+                  setCreated((prev) => prev.map((c) => c.workflow_id === parsed.workflow_id
+                    ? { ...c, is_active: !!parsed.is_active }
+                    : c,
+                  ));
                 }
               } catch { /* ignore parse errors */ }
             }
@@ -208,7 +218,9 @@ export default function WorkflowAgentPage() {
                 ? (isAr ? 'يقرأ بنية التطبيق...' : 'Reading app context...')
                 : activeTool === 'create_workflow'
                   ? (isAr ? 'ينشئ القاعدة...' : 'Creating workflow...')
-                  : activeTool}
+                  : activeTool === 'set_workflow_active'
+                    ? (isAr ? 'يحدّث حالة التفعيل...' : 'Updating activation...')
+                    : activeTool}
             </span>
           </div>
         )}

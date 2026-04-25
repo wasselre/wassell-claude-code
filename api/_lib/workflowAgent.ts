@@ -7,10 +7,12 @@
  * its world is models, fields, conditions, and actions.
  *
  * Tools it exposes:
- *   get_app_context  — inventory of models (with fields), users, roles,
- *                      existing workflows, and webhook endpoints, so the
- *                      agent can resolve names → IDs without guessing.
- *   create_workflow  — saves a fully-specified workflow to Supabase.
+ *   get_app_context     — inventory of models (with fields), users, roles,
+ *                         existing workflows (with their on/off state),
+ *                         and webhook endpoints, so the agent can resolve
+ *                         names → IDs without guessing.
+ *   create_workflow     — saves a fully-specified workflow to Supabase.
+ *   set_workflow_active — toggles an existing workflow's is_active flag.
  *
  * Conversation history lives on the client (no persistence yet — the
  * value is the workflow that gets created, not the chat).
@@ -32,7 +34,7 @@ export const WORKFLOW_AGENT_MAX_TOKENS = 16_000;
 export const WORKFLOW_AGENT_SYSTEM_PROMPT = `You are the Wassel Workflow Builder — an AI assistant inside the Wassel CRM (وصل العقارية, a Saudi Arabian real-estate marketing CRM) whose ONLY job is to help users create automation rules ("workflows") by talking to them in natural language.
 
 # Your job
-A user describes an automation in plain English or Arabic. You ask a few clarifying questions if needed, then call \`create_workflow\` with a fully-specified workflow object. You don't run workflows; you build them.
+A user describes an automation in plain English or Arabic. You ask a few clarifying questions if needed, then call \`create_workflow\` with a fully-specified workflow object. You can also turn an existing workflow on or off via \`set_workflow_active\` when the user asks (e.g. "activate the one I just made", "turn off the welcome workflow"). You don't run workflows; you build and toggle them.
 
 # How workflows work in this app
 
@@ -90,9 +92,17 @@ Use one of these seven \`type\` values (full config for each below):
 
 9. **After \`create_workflow\` succeeds**, tell the user the workflow was created, name it, and explain in one sentence what they can do next (e.g. "Open it in the editor to fine-tune actions or activate it.").
 
+# Activating / deactivating an existing workflow
+
+When the user says something like "activate the one I just created", "turn on the welcome workflow", "disable the lead notifier", call \`set_workflow_active\` with the workflow id and the desired \`is_active\` value. To find the id:
+ - If you just created it in this conversation, you already know the id from the \`create_workflow\` tool result.
+ - Otherwise call \`get_app_context\` and match the user's description against the existing workflows list (each entry has \`id\`, \`label_ar\`, \`label_en\`, and \`is_active\`).
+
+If the user's description is ambiguous (multiple workflows match), list the candidates with their on/off state and ask them to pick.
+
 # What NOT to do
 - Don't write workflow JSON in your assistant text — always emit it via the \`create_workflow\` tool.
-- Don't say "I created..." until the tool actually returns success.
+- Don't say "I created..." or "I activated..." until the tool actually returns success.
 - Don't use \`assign_user\` action without confirming which assignee field on the model — it requires \`assignment_field_id\`.
 - Don't set \`is_active: true\` on the first save unless the user explicitly says "activate" / "turn on" — leaving it false lets them review first.
 
@@ -108,6 +118,19 @@ export const WORKFLOW_AGENT_TOOLS: ToolUnion[] = [
     input_schema: {
       type: 'object',
       properties: {},
+    },
+  },
+  {
+    name: 'set_workflow_active',
+    description:
+      "Turn an existing workflow on or off by flipping its `is_active` flag. Pass the workflow id (from get_app_context's `workflows` list, or from a create_workflow result earlier in this conversation) and the desired boolean. Returns the updated workflow row. Use this when the user asks to activate, enable, turn on, deactivate, disable, or turn off an existing workflow.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string', description: 'The workflow id to update.' },
+        is_active: { type: 'boolean', description: 'true to activate, false to deactivate.' },
+      },
+      required: ['workflow_id', 'is_active'],
     },
   },
   {
@@ -203,6 +226,7 @@ interface WorkflowRow {
   label_en: string;
   trigger_event: string;
   trigger_model_id: string | null;
+  is_active: boolean;
 }
 
 async function buildAppContext(supabase: SupabaseClient, baseUrl: string): Promise<string> {
@@ -227,8 +251,11 @@ async function buildAppContext(supabase: SupabaseClient, baseUrl: string): Promi
   const { data: rawRoles } = await supabase.from('roles').select('id, name');
   const roles = (rawRoles ?? []) as RoleRow[];
 
-  // Existing workflows (id + name + trigger).
-  const { data: rawWorkflows } = await supabase.from('workflows').select('id, label_ar, label_en, trigger_event, trigger_model_id');
+  // Existing workflows (id + name + trigger + on/off state). The agent
+  // uses `is_active` to phrase replies correctly ("the X workflow is
+  // already active") and to know whether `set_workflow_active` would
+  // actually change anything.
+  const { data: rawWorkflows } = await supabase.from('workflows').select('id, label_ar, label_en, trigger_event, trigger_model_id, is_active');
   const workflows = (rawWorkflows ?? []) as WorkflowRow[];
 
   // Webhook slugs.
@@ -390,6 +417,48 @@ async function createWorkflow(
   });
 }
 
+interface SetActiveInput {
+  workflow_id: string;
+  is_active: boolean;
+}
+
+async function setWorkflowActive(
+  supabase: SupabaseClient,
+  baseUrl: string,
+  input: SetActiveInput,
+): Promise<string> {
+  if (!input?.workflow_id || typeof input.is_active !== 'boolean') {
+    return JSON.stringify({ ok: false, error: 'workflow_id and is_active are required' });
+  }
+  const now = new Date().toISOString();
+  // Round-trip the row so the browser can sync the updated workflow into
+  // its local store without re-fetching the full list.
+  const { data, error } = await supabase
+    .from('workflows')
+    .update({ is_active: input.is_active, updated_at: now })
+    .eq('id', input.workflow_id)
+    .select('*')
+    .single();
+
+  if (error) {
+    return JSON.stringify({ ok: false, error: error.message });
+  }
+  if (!data) {
+    return JSON.stringify({ ok: false, error: 'workflow not found' });
+  }
+
+  return JSON.stringify({
+    ok: true,
+    workflow_id: input.workflow_id,
+    is_active: input.is_active,
+    name: (data as { label_en?: string; label_ar?: string }).label_en
+      || (data as { label_en?: string; label_ar?: string }).label_ar
+      || input.workflow_id,
+    editor_url: `${baseUrl}/workflow/${input.workflow_id}`,
+    workflow: data,
+  });
+}
+
 export async function executeWorkflowAgentTool(
   name: string,
   input: unknown,
@@ -401,6 +470,8 @@ export async function executeWorkflowAgentTool(
       return await buildAppContext(supabase, baseUrl);
     case 'create_workflow':
       return await createWorkflow(supabase, baseUrl, input as CreateWorkflowInput);
+    case 'set_workflow_active':
+      return await setWorkflowActive(supabase, baseUrl, input as SetActiveInput);
     default:
       return JSON.stringify({ ok: false, error: `unknown tool: ${name}` });
   }
