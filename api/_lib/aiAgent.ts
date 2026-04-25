@@ -239,11 +239,15 @@ async function searchProjects(
     return JSON.stringify({ error: 'no project models found', projects: [] });
   }
 
+  // Bumped from 500 → 5000 so aggregate counts cover the whole portfolio.
+  // At ~1k records today this is safe; if the portfolio grows past a few
+  // thousand we should switch to server-side aggregation via Postgres
+  // window functions instead of pulling rows into the function.
   const { data, error } = await supabase
     .from('records')
     .select('id, data, model_id')
     .in('model_id', [...modelMap.keys()])
-    .limit(500);
+    .limit(5000);
   if (error) {
     console.log('[search_projects] supabase error', error.message);
     return JSON.stringify({ error: error.message, projects: [] });
