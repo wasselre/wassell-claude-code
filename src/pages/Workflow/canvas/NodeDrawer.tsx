@@ -19,8 +19,12 @@ interface NodeDrawerProps {
   triggerFields: ModelField[];
   onClose: () => void;
   onUpdateTrigger: (patch: { trigger_model_id?: string; trigger_event?: WorkflowEvent; trigger_webhook_slug_id?: string | null }) => void;
-  onUpdateCondition: (branchId: string, next: WorkflowCondition) => void;
-  onUpdateAction: (branchId: string, next: WorkflowAction) => void;
+  // Replace the entire conditions / actions array of a branch. The drawer
+  // hands the embedded ConditionList / ActionList the FULL branch arrays,
+  // so its built-in "+ Add condition" / "+ Add action" buttons stay
+  // functional — they just emit a longer array via these callbacks.
+  onReplaceBranchConditions: (branchId: string, conditions: WorkflowCondition[]) => void;
+  onReplaceBranchActions: (branchId: string, actions: WorkflowAction[]) => void;
 }
 
 // Right-side slide-in panel hosting the existing ConditionList / ActionList /
@@ -34,8 +38,8 @@ export default function NodeDrawer({
   triggerFields,
   onClose,
   onUpdateTrigger,
-  onUpdateCondition,
-  onUpdateAction,
+  onReplaceBranchConditions,
+  onReplaceBranchActions,
 }: NodeDrawerProps) {
   const { language } = useAppStore();
   const isAr = language === 'ar';
@@ -81,11 +85,12 @@ export default function NodeDrawer({
     };
   }
 
-  // Body swaps in the existing embedded editor. All three components receive
-  // array-shaped callbacks; we wrap them to pass single-item lists so the
-  // editor drives updates for just this node. When a user adds or removes
-  // items inside the drawer, we take the first of the resulting array — this
-  // keeps the canvas contract of one editor per node.
+  // Body swaps in the existing embedded editor. Conditions and actions get
+  // the FULL branch array so the embedded list's "+ Add" / delete / reorder
+  // controls all stay functional — the drawer is now a focused view of the
+  // branch, with the originally-clicked node visible at its position in the
+  // list. The canvas's own + button still inserts a NEW node at a specific
+  // edge position; this drawer "+ Add" appends to the same branch arrays.
   let body: ReactNode;
   if (node.kind === 'trigger') {
     body = (
@@ -99,31 +104,26 @@ export default function NodeDrawer({
       />
     );
   } else if (node.kind === 'condition') {
+    const branch = workflow.branches?.find((b) => b.id === node.branchId);
+    const conditions = branch?.conditions ?? [];
     body = (
       <ConditionList
         embedded
-        conditions={[node.condition]}
+        conditions={conditions}
         fields={triggerFields}
         triggerEvent={workflow.trigger_event}
-        onChange={(next) => {
-          // The embedded editor may emit zero or more conditions. We always
-          // take the first — deletion inside the drawer is a no-op (users
-          // delete from the node itself).
-          const first = next[0];
-          if (first) onUpdateCondition(node.branchId, first);
-        }}
+        onChange={(next) => onReplaceBranchConditions(node.branchId, next)}
       />
     );
   } else {
+    const branch = workflow.branches?.find((b) => b.id === node.branchId);
+    const actions = branch?.actions ?? [];
     body = (
       <ActionList
         embedded
-        actions={[node.action]}
+        actions={actions}
         triggerFields={triggerFields}
-        onChange={(next) => {
-          const first = next[0];
-          if (first) onUpdateAction(node.branchId, first);
-        }}
+        onChange={(next) => onReplaceBranchActions(node.branchId, next)}
       />
     );
   }

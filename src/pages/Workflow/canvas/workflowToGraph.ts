@@ -120,6 +120,11 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
     selectable: true,
     width: LANE_WIDTH,
     height: TRIGGER_HEIGHT,
+    // `measured` set up-front signals to xyflow's `adoptUserNodes` that the
+    // node has known dimensions, which causes it to preserve the existing
+    // `handleBounds` rather than wiping them every time the nodes prop
+    // changes (e.g. after a new condition or action is added).
+    measured: { width: LANE_WIDTH, height: TRIGGER_HEIGHT },
     style: { width: LANE_WIDTH, height: TRIGGER_HEIGHT },
   };
   nodes.push(triggerNode);
@@ -153,6 +158,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
       },
       width: LANE_WIDTH,
       height: laneHeight,
+      measured: { width: LANE_WIDTH, height: laneHeight },
       style: { width: LANE_WIDTH, height: laneHeight },
       draggable: true,
       selectable: false,
@@ -211,6 +217,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
         } satisfies ConditionNodeData,
         width: childWidth,
         height: NODE_HEIGHT,
+        measured: { width: childWidth, height: NODE_HEIGHT },
         style: { width: childWidth, height: NODE_HEIGHT },
         draggable: true,
         selectable: true,
@@ -235,6 +242,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
         } satisfies ActionNodeData,
         width: childWidth,
         height: NODE_HEIGHT,
+        measured: { width: childWidth, height: NODE_HEIGHT },
         style: { width: childWidth, height: NODE_HEIGHT },
         draggable: true,
         selectable: true,

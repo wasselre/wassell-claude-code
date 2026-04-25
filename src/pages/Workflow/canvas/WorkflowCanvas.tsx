@@ -8,6 +8,7 @@ import {
   useReactFlow,
   useStoreApi,
   useUpdateNodeInternals,
+  useNodesState,
   type NodeMouseHandler,
   type Node,
 } from '@xyflow/react';
@@ -76,14 +77,27 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
     [workflow, triggerFields, models, isAr],
   );
 
-  // We feed `graph.nodes` straight into ReactFlow as a controlled prop rather
-  // than going through `useNodesState`/`setNodes`. That sync would replace
-  // xyflow's internal node records every workflow change, wiping each node's
-  // measured internals (handleBounds) and forcing a remeasure cycle —
-  // rendering edges only briefly before they disappear again. Letting the
-  // workflow tree be the single source of truth for node data keeps bounds
-  // stable; we only intervene via the fallback below when xyflow's own
-  // measurement can't populate bounds on its own.
+  // We use `useNodesState` so xyflow can manage node drag locally without us
+  // re-deriving positions on every render. When the workflow tree changes
+  // (a node added / removed / edited) we MERGE the new graph with the
+  // existing nodes — keeping the position the user has dragged a node to,
+  // and only adopting the freshly-computed position for nodes that didn't
+  // previously exist. This makes nodes truly draggable without losing the
+  // tree-as-source-of-truth contract.
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(graph.nodes);
+  useEffect(() => {
+    setNodes((prev) => {
+      const prevById = new Map(prev.map((n) => [n.id, n]));
+      return graph.nodes.map((g) => {
+        const old = prevById.get(g.id);
+        if (!old) return g;
+        // Preserve the user's dragged position + selected flag, replace
+        // everything else (data, type, style, etc.) with the fresh graph
+        // values so summary text and styling reflect the latest workflow.
+        return { ...g, position: old.position, selected: old.selected };
+      });
+    });
+  }, [graph.nodes, setNodes]);
   // xyflow relies on a ResizeObserver to measure nodes and populate each
   // node's `handleBounds`; edges refuse to render until bounds are
   // populated. Some environments (headless browsers, certain iframe setups)
@@ -132,19 +146,23 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
           ...n.internals,
           handleBounds: { source: makeBounds(sourceEls, 'source'), target: makeBounds(targetEls, 'target') },
         } as unknown as typeof n.internals;
+        // Preserve everything else on the node (notably `position`, which
+        // may be the user's dragged location) — only swap measured + the
+        // internals.handleBounds we just computed.
         nextLookup.set(n.id, { ...n, measured: { width: (el as HTMLElement).offsetWidth, height: (el as HTMLElement).offsetHeight }, internals: newInternals });
         patched = true;
       }
       if (patched) {
+        // Only update `nodeLookup` (xyflow's derived structure with
+        // internals) — we DON'T overwrite `state.nodes`, because that's the
+        // user-facing array owned by `useNodesState` and writing it here
+        // would clobber any drag positions the user has applied.
         storeApi.setState({
           nodeLookup: nextLookup,
-          nodes: state.nodes.map((n) => nextLookup.get(n.id) ?? n),
           nodesInitialized: true,
         });
-        // Nudge xyflow's edge renderer — it subscribes to `updateNodeInternals`
-        // changes, not raw nodeLookup mutations. Without this, freshly-patched
-        // edges remain in the store but never render until a manual pan/zoom
-        // invalidates the edge layer.
+        // Nudge xyflow's edge renderer — it subscribes to
+        // `updateNodeInternals` changes, not raw nodeLookup mutations.
         updateNodeInternals([...nextLookup.keys()]);
       }
       return allHaveBounds;
@@ -340,12 +358,12 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
     });
   }, [setWorkflow]);
 
-  // Decorate the derived nodes with the current selection flag so the copper
-  // ring on a selected node matches which node's drawer is open.
-  const decoratedNodes = useMemo<Node[]>(
-    () => graph.nodes.map((n) => n.id === selectedId ? { ...n, selected: true } : n),
-    [graph.nodes, selectedId],
-  );
+  // Sync the canvas selection state with our drawer state — clicking a node
+  // both opens the drawer and applies xyflow's `selected` flag for the
+  // copper ring.
+  useEffect(() => {
+    setNodes((prev) => prev.map((n) => n.selected === (n.id === selectedId) ? n : { ...n, selected: n.id === selectedId }));
+  }, [selectedId, setNodes]);
 
   // When the user adds a whole new branch / else via the toolbar, open the
   // drawer on the trigger (there's no empty-branch editor; they immediately
@@ -373,18 +391,19 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
     // canvas instead of eating a whole row above it.
     <div className="workflow-canvas-wrap relative h-full">
       <ReactFlow
-        nodes={decoratedNodes}
+        nodes={nodes}
         edges={graph.edges}
+        onNodesChange={onNodesChange}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}
         onNodeClick={onNodeClick}
         onPaneClick={() => setSelectedId(null)}
-        onNodeDragStop={() => { /* no-op; positions aren't persisted — layout
-          is derived from the workflow tree. A future enhancement can
-          reorder within a lane by rebuilding the workflow from graph. */ }}
         nodesConnectable={false}
         nodesDraggable
         elementsSelectable
+        selectionOnDrag
+        panOnDrag={[1, 2]}
+        multiSelectionKeyCode="Shift"
         selectNodesOnDrag={false}
         proOptions={{ hideAttribution: true }}
         minZoom={0.3}
@@ -440,8 +459,8 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
         triggerFields={triggerFields}
         onClose={() => { setDrawer(null); setSelectedId(null); }}
         onUpdateTrigger={onUpdateTrigger}
-        onUpdateCondition={graphHelpers.updateCondition}
-        onUpdateAction={graphHelpers.updateAction}
+        onReplaceBranchConditions={graphHelpers.replaceBranchConditions}
+        onReplaceBranchActions={graphHelpers.replaceBranchActions}
       />
 
       {addMenu && (

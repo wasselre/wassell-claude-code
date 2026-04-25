@@ -19,12 +19,13 @@ export default function BranchGroupNode({ data }: BranchGroupProps) {
   const tailAfterId = lastAction?.id ?? lastCondition?.id ?? null;
   const tailIsAfterAction = !!lastAction;
 
-  const tint = isElse
-    ? 'bg-gradient-to-b from-chocolate/10 via-chocolate/5 to-transparent border-chocolate/30'
-    : 'bg-gradient-to-b from-copper/10 via-copper/5 to-transparent border-copper/30';
-  const pillTint = isElse
-    ? 'bg-chocolate/15 text-chocolate'
-    : 'bg-copper/15 text-copper';
+  // Lane has no full background or border tint anymore — the user wanted
+  // each node to read as its own thing instead of one big container card.
+  // We keep just a small floating header chip that labels the branch (IF /
+  // ELSE IF / OTHERWISE) and the lane-level controls (duplicate / delete).
+  const headerTint = isElse
+    ? 'bg-chocolate/10 text-chocolate border-chocolate/20'
+    : 'bg-copper/10 text-copper border-copper/20';
 
   const onDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -57,46 +58,55 @@ export default function BranchGroupNode({ data }: BranchGroupProps) {
   };
 
   return (
-    <div className={`h-full w-full rounded-2xl border-2 ${tint} relative`}>
-      <div className="absolute inset-x-0 top-0 h-14 px-3 flex items-center gap-2 border-b border-sand/40 bg-white/60 backdrop-blur rounded-t-2xl">
-        <div className={`w-8 h-8 rounded-lg ${pillTint} flex items-center justify-center shrink-0`}>
-          <GitBranch size={16} />
+    <div className="h-full w-full relative">
+      {/* Floating header chip — labels this branch and hosts the
+          lane-level actions. No background fill or border on the lane
+          body, so each child node reads as a standalone card. */}
+      <div className={`absolute inset-x-2 top-1 h-10 px-3 flex items-center gap-2 rounded-xl border ${headerTint} backdrop-blur-sm bg-white/70`}>
+        <div className="shrink-0">
+          <GitBranch size={14} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className={`text-[10px] font-bold tracking-widest uppercase ${isElse ? 'text-chocolate/70' : 'text-copper'}`}>
-            {positionLabel === 'IF'
-              ? (isAr ? 'إذا' : 'IF')
-              : positionLabel === 'ELSE IF'
-                ? (isAr ? 'وإلا إذا' : 'ELSE IF')
-                : (isAr ? 'خلاف ذلك' : 'OTHERWISE')}
-          </div>
-          <div className="text-sm font-bold text-charcoal truncate leading-tight" dir={isAr ? 'rtl' : 'ltr'}>
-            {name}
+          <div className="flex items-center gap-1.5 leading-none">
+            <span className="text-[10px] font-bold tracking-widest uppercase">
+              {positionLabel === 'IF'
+                ? (isAr ? 'إذا' : 'IF')
+                : positionLabel === 'ELSE IF'
+                  ? (isAr ? 'وإلا إذا' : 'ELSE IF')
+                  : (isAr ? 'خلاف ذلك' : 'OTHERWISE')}
+            </span>
+            {(branch.label_ar || branch.label_en) && (
+              <>
+                <span className="text-[10px] opacity-50">·</span>
+                <span className="text-xs font-bold truncate text-charcoal/80" dir={isAr ? 'rtl' : 'ltr'}>
+                  {name}
+                </span>
+              </>
+            )}
           </div>
         </div>
         {canDuplicate && (
           <button
             onClick={onDuplicate}
-            className="p-1.5 rounded-md text-charcoal/40 hover:text-charcoal hover:bg-sand/30 transition-colors shrink-0"
+            className="p-1 rounded-md text-charcoal/40 hover:text-charcoal hover:bg-sand/30 transition-colors shrink-0"
             aria-label={isAr ? 'تكرار' : 'Duplicate'}
             title={isAr ? 'تكرار' : 'Duplicate'}
           >
-            <Copy size={14} />
+            <Copy size={12} />
           </button>
         )}
         <button
           onClick={onDelete}
           disabled={!canDelete}
-          className="p-1.5 rounded-md text-charcoal/40 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="p-1 rounded-md text-charcoal/40 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
           aria-label={isAr ? 'حذف' : 'Delete'}
           title={canDelete ? (isAr ? 'حذف' : 'Delete') : (isAr ? 'لا يمكن حذف الفرع الوحيد' : 'Cannot delete the only branch')}
         >
-          <Trash2 size={14} />
+          <Trash2 size={12} />
         </button>
       </div>
 
-      {/* Empty-lane empty state: the only way to add the first node. Rendered
-          centered in the lane body. */}
+      {/* Empty-lane empty state. */}
       {isEmpty && (
         <div className="absolute inset-x-0 top-14 bottom-0 flex flex-col items-center justify-center p-6 text-center">
           <div className="text-xs text-charcoal/45 mb-3">
@@ -112,17 +122,16 @@ export default function BranchGroupNode({ data }: BranchGroupProps) {
         </div>
       )}
 
-      {/* Trailing "+ add" at the bottom of non-empty lanes so users can append
-          to a long chain without hunting for the edge. */}
+      {/* Trailing "+ add" at the bottom of non-empty lanes. */}
       {!isEmpty && (
         <div className="absolute inset-x-0 bottom-3 flex items-center justify-center">
           <button
             onClick={onAddAtTail}
-            className="w-7 h-7 rounded-full bg-white border-2 border-copper/40 text-copper hover:bg-copper hover:text-white hover:border-copper transition-all shadow-sm flex items-center justify-center"
+            className="w-8 h-8 rounded-full bg-white border-2 border-copper/40 text-copper hover:bg-copper hover:text-white hover:border-copper transition-all shadow-sm flex items-center justify-center"
             aria-label={isAr ? 'أضف خطوة' : 'Add step'}
             title={isAr ? 'أضف خطوة' : 'Add step'}
           >
-            <Plus size={14} />
+            <Plus size={16} />
           </button>
         </div>
       )}

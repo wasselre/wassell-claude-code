@@ -48,7 +48,12 @@ export default function AddNodeMenu({ payload, onClose, onPick }: AddNodeMenuPro
     };
   }, [onClose]);
 
-  const canAddCondition = !payload.isElse && !payload.isAfterAction;
+  // Conditions can be added on any non-else branch, even after an action.
+  // The branch's underlying conditions array stays the source of truth, so
+  // a condition added past an action still gets evaluated before any
+  // action; the visual order in the lane reflects that (conditions float to
+  // the top of the branch even if you placed them via a "+" past an action).
+  const canAddCondition = !payload.isElse;
 
   const items: Array<{ kind: AddableKind; icon: LucideIcon; label: string; color: string; disabled?: boolean; hint?: string }> = [
     {
@@ -57,9 +62,7 @@ export default function AddNodeMenu({ payload, onClose, onPick }: AddNodeMenuPro
       label: isAr ? 'شرط' : 'Condition',
       color: 'text-sky-600 bg-sky-50',
       disabled: !canAddCondition,
-      hint: payload.isElse ? (isAr ? 'الحالة الافتراضية بلا شروط' : 'Else branches have no conditions')
-        : payload.isAfterAction ? (isAr ? 'الشروط قبل الإجراءات' : 'Conditions come before actions')
-        : undefined,
+      hint: payload.isElse ? (isAr ? 'الحالة الافتراضية بلا شروط' : 'Else branches have no conditions') : undefined,
     },
     { kind: 'create_record', icon: Plus, label: isAr ? 'إنشاء سجل' : 'Create Record', color: 'text-emerald-600 bg-emerald-50' },
     { kind: 'update_record', icon: Pencil, label: isAr ? 'تحديث سجل' : 'Update Record', color: 'text-sky-600 bg-sky-50' },

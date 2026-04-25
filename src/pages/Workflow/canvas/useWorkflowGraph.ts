@@ -116,6 +116,28 @@ export function useWorkflowGraph(
     }));
   }, [setWorkflow]);
 
+  // Replace the full conditions / actions array of a branch. Used by the
+  // drawer when the embedded ConditionList / ActionList grows or shrinks
+  // (e.g. user clicks "+ Add condition" inside the drawer) so those builtin
+  // controls stay functional.
+  const replaceBranchConditions = useCallback((branchId: string, conditions: WorkflowCondition[]) => {
+    setWorkflow((w) => ({
+      ...w,
+      branches: (w.branches ?? []).map((b) =>
+        b.id === branchId ? { ...b, conditions } : b,
+      ),
+    }));
+  }, [setWorkflow]);
+
+  const replaceBranchActions = useCallback((branchId: string, actions: WorkflowAction[]) => {
+    setWorkflow((w) => ({
+      ...w,
+      branches: (w.branches ?? []).map((b) =>
+        b.id === branchId ? { ...b, actions } : b,
+      ),
+    }));
+  }, [setWorkflow]);
+
   // Add a new conditional branch right before the else branch (if any).
   const addBranch = useCallback(() => {
     const id = uuid();
@@ -177,6 +199,8 @@ export function useWorkflowGraph(
     deleteNode,
     updateCondition,
     updateAction,
+    replaceBranchConditions,
+    replaceBranchActions,
     addBranch,
     addElseBranch,
     deleteBranch,
