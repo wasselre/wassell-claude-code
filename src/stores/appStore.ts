@@ -190,13 +190,30 @@ function workflowToSupabaseRow(w: Workflow): Record<string, unknown> {
 
 async function supabaseLoad<T>(table: string): Promise<T[] | null> {
   if (!supabase) return null;
+  // Paginate via .range() in 1000-row pages. Supabase/PostgREST silently
+  // caps a bare .select('*') at db-max-rows=1000 — no error, just truncated
+  // data — which manifests downstream as missing records, "deleted but not
+  // really" rows, dashboard miscounts, and AI-agent / UI count drift. The
+  // loop walks pages until a short batch (< pageSize) comes back, meaning
+  // we've hit the end. Stops cleanly on error and surfaces via the same
+  // toast path the original code used.
+  const pageSize = 1000;
+  const all: T[] = [];
   try {
-    const { data, error } = await supabase.from(table).select('*');
-    if (error) {
-      reportSupabaseError(table, 'load', error.message ?? String(error));
-      return null;
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .range(from, from + pageSize - 1);
+      if (error) {
+        reportSupabaseError(table, 'load', error.message ?? String(error));
+        return null;
+      }
+      const batch = (data ?? []) as T[];
+      all.push(...batch);
+      if (batch.length < pageSize) break;
     }
-    return data as T[];
+    return all;
   } catch (err) {
     reportSupabaseError(table, 'load', err instanceof Error ? err.message : String(err));
     return null;
