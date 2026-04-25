@@ -13,7 +13,7 @@
  * the store's `reorderMenu` action writes the final shape to both
  * localStorage and Supabase in one atomic pass.
  */
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import {
@@ -55,15 +55,6 @@ export default function MenuArrangementPage() {
   const [editingLabelAr, setEditingLabelAr] = useState('');
   const [editingLabelEn, setEditingLabelEn] = useState('');
   const [saving, setSaving] = useState(false);
-
-  // Re-sync staged copies when the underlying store changes from outside
-  // (e.g. another browser saved first). Safe because this page is a pure
-  // staging area — any unsaved local edits are lost on external change,
-  // which is the right behavior for a settings screen.
-  useEffect(() => {
-    setStagedGroups(sortGroups([...groups]));
-    setStagedModels(sortModels([...models]));
-  }, [groups, models]);
 
   // Group models by their bucket id (real group id or the ungrouped sentinel).
   const modelsByBucket = useMemo(() => {
