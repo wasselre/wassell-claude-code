@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { Plus, Pencil, Trash2, Zap, ScrollText } from 'lucide-react';
+import { Plus, Pencil, Trash2, Zap, ScrollText, Sparkles } from 'lucide-react';
 import Button from '@/components/ui/Button';
 
 export default function WorkflowListPage() {
@@ -36,6 +36,14 @@ export default function WorkflowListPage() {
           >
             <ScrollText size={14} />
             {isAr ? 'السجلات' : 'Logs'}
+          </button>
+          <button
+            onClick={() => navigate('/workflow/agent')}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-br from-amber-400 to-copper text-white hover:shadow-lg hover:shadow-copper/30 transition-all text-sm font-bold"
+            title={isAr ? 'أنشئ قاعدة بمحادثة طبيعية' : 'Build a workflow by chatting in natural language'}
+          >
+            <Sparkles size={14} />
+            {isAr ? 'مساعد ذكي' : 'AI Builder'}
           </button>
           <Button onClick={() => navigate('/workflow/new')}>
             <Plus size={16} />

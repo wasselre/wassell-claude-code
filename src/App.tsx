@@ -10,6 +10,7 @@ import RecordListPage from '@/pages/Records/RecordListPage';
 import RecordFormPage from '@/pages/Records/RecordFormPage';
 import WorkflowListPage from '@/pages/Workflow/WorkflowListPage';
 import WorkflowEditorPage from '@/pages/Workflow/WorkflowEditorPage';
+import WorkflowAgentPage from '@/pages/Workflow/WorkflowAgentPage';
 import WorkflowLogsPage from '@/pages/Workflow/WorkflowLogsPage';
 import WorkflowRunDetailPage from '@/pages/Workflow/WorkflowRunDetailPage';
 import DashboardListPage from '@/pages/Dashboard/DashboardListPage';
@@ -170,6 +171,7 @@ export default function App() {
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/builder/:modelId" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/workflow" element={<RequireAdmin><WorkflowListPage /></RequireAdmin>} />
+          <Route path="/workflow/agent" element={<RequireAdmin><WorkflowAgentPage /></RequireAdmin>} />
           <Route path="/workflow/logs" element={<RequireAdmin><WorkflowLogsPage /></RequireAdmin>} />
           <Route path="/workflow/logs/:runId" element={<RequireAdmin><WorkflowRunDetailPage /></RequireAdmin>} />
           <Route path="/workflow/:workflowId" element={<RequireAdmin><WorkflowEditorPage /></RequireAdmin>} />
