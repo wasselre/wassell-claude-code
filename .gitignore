@@ -28,6 +28,9 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 logs/
+# Exception: the activity-log source directory (case-insensitive matches `logs/`
+# on Windows / macOS and was being ignored).
+!src/pages/Logs/
 *.log
 
 # Editor / IDE

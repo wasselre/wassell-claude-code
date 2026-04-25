@@ -1016,3 +1016,58 @@ CREATE POLICY "Authenticated full access" ON whiteboard_folders FOR ALL TO authe
 
 DROP POLICY IF EXISTS "Authenticated full access" ON whiteboards;
 CREATE POLICY "Authenticated full access" ON whiteboards FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ============================================================
+-- ACTIVITY LOG — unified audit trail for everything in the app
+-- ============================================================
+-- Aggregates: auth events, record CRUD, record opens, workflow run summaries,
+-- AI agent turns + tool calls (full payload), API hits, webhook receipts.
+-- The /logs page reads this table; rich workflow detail still lives in
+-- `workflow_runs` and is linked via `workflow_run_id`.
+--
+-- target_record_id is intentionally NOT a foreign key — the whole point of an
+-- audit trail is "what was there before it got deleted".
+-- See docs/prd/logs.md for the full spec.
+
+CREATE TABLE IF NOT EXISTS activity_log (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  category TEXT NOT NULL CHECK (category IN ('auth','record','workflow','ai_agent','api','webhook','system')),
+  -- Sub-type within the category — free-form so new subtypes don't need a migration.
+  --   auth:     sign_in | sign_out
+  --   record:   create | update | delete | open
+  --   workflow: run
+  --   ai_agent: turn | tool_call
+  --   api:      request
+  --   webhook:  receipt
+  --   system:   initialize | migration | error
+  event_type TEXT NOT NULL,
+  -- Actor — who caused the event. Both nullable for webhook/system events.
+  actor_user_id UUID,
+  actor_email TEXT,
+  -- Target — what the event acted on. Not a real FK so deletes don't erase the trail.
+  target_model_id UUID,
+  target_record_id UUID,
+  target_label TEXT,
+  -- Bilingual one-line summary shown in the timeline list view.
+  summary_ar TEXT NOT NULL,
+  summary_en TEXT NOT NULL,
+  -- Full detail payload — shape depends on category/event_type. UI pretty-prints.
+  details JSONB NOT NULL DEFAULT '{}'::jsonb,
+  duration_ms INT,
+  status TEXT, -- success | error | warning | info
+  error TEXT,
+  -- Deep-link to the rich workflow_runs row when category='workflow'.
+  workflow_run_id UUID
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_log_created_at ON activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activity_log_category ON activity_log(category);
+CREATE INDEX IF NOT EXISTS idx_activity_log_actor ON activity_log(actor_user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_target ON activity_log(target_model_id, target_record_id);
+CREATE INDEX IF NOT EXISTS idx_activity_log_event_type ON activity_log(event_type);
+
+ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Authenticated full access" ON activity_log;
+CREATE POLICY "Authenticated full access" ON activity_log FOR ALL TO authenticated USING (true) WITH CHECK (true);

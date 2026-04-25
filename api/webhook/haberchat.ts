@@ -23,6 +23,7 @@
  */
 
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
+import { logWebhookReceipt } from '../_lib/activityLogger.js';
 
 export const config = {
   runtime: 'edge',
@@ -73,6 +74,7 @@ export default async function handler(req: Request): Promise<Response> {
     (event.data?.device as string | undefined) ??
     '';
 
+  let handlerError: string | undefined;
   try {
     if (type === 'message:in:new' || type === 'message:out:new') {
       await handleNewMessage(event, deviceId, type === 'message:in:new' ? 'in' : 'out');
@@ -89,7 +91,19 @@ export default async function handler(req: Request): Promise<Response> {
     // Swallow per-event errors so one bad payload doesn't cause Haberchat
     // to retry indefinitely. Still visible in the Vercel function log.
     console.error('[webhook] handler error:', err);
+    handlerError = err instanceof Error ? err.message : String(err);
   }
+
+  // Fire-and-forget audit-log insert. We always return 200 to Haberchat so
+  // they don't retry; the activity row preserves any per-event error in its
+  // `error` column for forensics on the /logs page.
+  void logWebhookReceipt({
+    source: 'haberchat',
+    eventType: type || '(unknown)',
+    payload: event,
+    status: handlerError ? 'error' : 'success',
+    error: handlerError,
+  });
 
   return json({ ok: true });
 }

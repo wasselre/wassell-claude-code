@@ -41,6 +41,7 @@ import {
   MessageSquare,
   SquarePen,
   Sparkles,
+  ScrollText,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
@@ -99,6 +100,8 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   const location = useLocation();
   const { models, groups, language, currentUserId, users, profiles } = useAppStore();
   const currentUser = users.find((u) => u.id === currentUserId);
+  const currentProfile = currentUser?.profile_id ? profiles.find((p) => p.id === currentUser.profile_id) : null;
+  const isAdmin = !!currentProfile?.is_admin;
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -371,6 +374,24 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
                   <Settings size={16} className="text-charcoal/60" />
                 </div>
                 {!railCollapsed && <span>{settingsLabel}</span>}
+              </NavLink>
+            );
+          })()}
+
+          {/* Activity log — admin-only. The /logs route itself is also gated
+              by RequireAdmin, but hiding the link too saves the click + 403. */}
+          {isAdmin && (() => {
+            const logsLabel = isAr ? 'سجل النشاط' : 'Activity Log';
+            return (
+              <NavLink
+                to="/logs"
+                className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                title={railCollapsed ? logsLabel : undefined}
+              >
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 bg-charcoal/5">
+                  <ScrollText size={16} className="text-charcoal/60" />
+                </div>
+                {!railCollapsed && <span>{logsLabel}</span>}
               </NavLink>
             );
           })()}

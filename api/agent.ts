@@ -30,6 +30,7 @@ import {
   AGENT_TOOLS,
   executeAgentTool,
 } from './_lib/aiAgent.js';
+import { logAiAgentTurn } from './_lib/activityLogger.js';
 
 export const config = { runtime: 'edge' };
 
@@ -86,6 +87,7 @@ export default async function handler(req: Request): Promise<Response> {
           const conversation: Anthropic.MessageParam[] = [...body.messages];
 
           for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+            const turnStartedAt = Date.now();
             const turn = client.messages.stream({
               model: AGENT_MODEL,
               max_tokens: AGENT_MAX_TOKENS,
@@ -122,37 +124,93 @@ export default async function handler(req: Request): Promise<Response> {
               conversation.push({ role: 'assistant', content: finalMessage.content });
 
               const toolResults: Anthropic.ToolResultBlockParam[] = [];
+              // Capture the full payload of every tool call this turn so the
+              // unified /logs page can show inputs + results verbatim. Per the
+              // user's "full depth" requirement we do NOT truncate — admins want
+              // to see exactly what the agent searched for and what came back.
+              const turnToolCalls: Array<{
+                name: string;
+                input: unknown;
+                result: string;
+                duration_ms: number;
+                error?: string;
+              }> = [];
               for (const toolUse of toolUses) {
                 send({
                   type: 'tool_use',
                   name: toolUse.name,
                   input: toolUse.input,
                 });
-                const result = await executeAgentTool(
-                  toolUse.name,
-                  toolUse.input,
-                  supabase,
-                  user.userId,
-                );
-                send({ type: 'tool_result', name: toolUse.name, result });
+                const toolStartedAt = Date.now();
+                let toolResult = '';
+                let toolError: string | undefined;
+                try {
+                  toolResult = await executeAgentTool(
+                    toolUse.name,
+                    toolUse.input,
+                    supabase,
+                    user.userId,
+                  );
+                } catch (err) {
+                  toolError = err instanceof Error ? err.message : String(err);
+                  toolResult = `Error: ${toolError}`;
+                }
+                const toolDuration = Date.now() - toolStartedAt;
+                send({ type: 'tool_result', name: toolUse.name, result: toolResult });
                 toolResults.push({
                   type: 'tool_result',
                   tool_use_id: toolUse.id,
-                  content: result,
+                  content: toolResult,
+                });
+                turnToolCalls.push({
+                  name: toolUse.name,
+                  input: toolUse.input,
+                  result: toolResult,
+                  duration_ms: toolDuration,
+                  ...(toolError ? { error: toolError } : {}),
                 });
               }
+
+              // Persist this turn (including every tool call's full input +
+              // result) to the activity log. waitUntil-style fire-and-forget
+              // so the SSE stream isn't blocked on the insert.
+              void logAiAgentTurn({
+                user: { userId: user.userId, email: user.email },
+                iteration,
+                stop_reason: 'tool_use',
+                duration_ms: Date.now() - turnStartedAt,
+                tool_calls: turnToolCalls,
+                message_count: conversation.length,
+              });
 
               conversation.push({ role: 'user', content: toolResults });
               continue;
             }
 
             // end_turn, max_tokens, stop_sequence, refusal, etc. — terminal.
+            void logAiAgentTurn({
+              user: { userId: user.userId, email: user.email },
+              iteration,
+              stop_reason: finalMessage.stop_reason ?? 'end_turn',
+              duration_ms: Date.now() - turnStartedAt,
+              tool_calls: [],
+              message_count: conversation.length,
+            });
             send({ type: 'done', stop_reason: finalMessage.stop_reason ?? 'end_turn' });
             controller.close();
             return;
           }
 
           // Hit the iteration cap without Claude ever saying end_turn.
+          void logAiAgentTurn({
+            user: { userId: user.userId, email: user.email },
+            iteration: MAX_TOOL_ITERATIONS,
+            stop_reason: 'iteration_limit',
+            duration_ms: 0,
+            tool_calls: [],
+            message_count: conversation.length,
+            error: 'tool iteration limit reached',
+          });
           send({ type: 'error', message: 'tool iteration limit reached' });
           controller.close();
         } catch (err) {

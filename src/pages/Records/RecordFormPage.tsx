@@ -8,6 +8,7 @@ import { ArrowRight, Save, Trash2, FileDown, Presentation, ChevronLeft, ChevronR
 import { generateResearchPDF } from '@/lib/pdfGenerator';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
+import { activityLogger } from '@/lib/activityLogger';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
@@ -140,6 +141,16 @@ export default function RecordFormPage() {
     setShowDelete(false);
     setIsDirty(false);
   }, [recordId, modelName, existingRecord?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Activity log — fire one "record opened" event per record-mount. The
+  // RecordFormPageRoute wrapper in App.tsx remounts on recordId change, so
+  // this useEffect runs once per record visit. We only fire for existing
+  // records (skip the "new record" form) and only after the record + model
+  // have hydrated.
+  useEffect(() => {
+    if (isNew || !model || !existingRecord) return;
+    activityLogger.recordOpened(existingRecord.id, model.id, model, existingRecord);
+  }, [model?.id, existingRecord?.id, isNew]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Every phone-type value currently on the record. Passed to CallHistoryPanel
   // so we load call_logs rows keyed on any phone on the record (main +

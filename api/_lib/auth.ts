@@ -12,6 +12,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { logApiRequest } from './activityLogger.js';
 
 export class AuthError extends Error {
   constructor(public status: number, message: string) {
@@ -64,6 +65,13 @@ export async function verifySupabaseJWT(req: Request): Promise<AuthenticatedUser
  * Convenience wrapper: run `handler` only if the request has a valid Supabase
  * JWT. On auth failure, respond with a plain JSON error.
  *
+ * Also writes one row into `activity_log` (category='api') per request so the
+ * unified /logs timeline shows method, path, status code, duration, and the
+ * actor. Logging is fire-and-forget — the response is returned to the caller
+ * without waiting for the insert. Streaming responses (SSE) are logged with
+ * status 200 at handler-return time; the underlying stream may continue
+ * after this point.
+ *
  * Usage at the top of each api/haberchat/*.ts file:
  *   export default async function (req: Request) {
  *     return withAuth(req, async (_user) => { ...real work... });
@@ -73,16 +81,31 @@ export async function withAuth(
   req: Request,
   handler: (user: AuthenticatedUser) => Promise<Response>,
 ): Promise<Response> {
+  const startedAt = Date.now();
+  let user: AuthenticatedUser | null = null;
+  let response: Response;
+  let errorMessage: string | undefined;
   try {
-    const user = await verifySupabaseJWT(req);
-    return await handler(user);
+    user = await verifySupabaseJWT(req);
+    response = await handler(user);
   } catch (err) {
     if (err instanceof AuthError) {
-      return jsonError(err.status, err.message);
+      response = jsonError(err.status, err.message);
+      errorMessage = err.message;
+    } else {
+      errorMessage = err instanceof Error ? err.message : String(err);
+      response = jsonError(500, errorMessage);
     }
-    const msg = err instanceof Error ? err.message : String(err);
-    return jsonError(500, msg);
   }
+  // Fire-and-forget — never block the response on the audit-log insert.
+  void logApiRequest({
+    req,
+    user,
+    status: response.status,
+    duration_ms: Date.now() - startedAt,
+    error: errorMessage,
+  });
+  return response;
 }
 
 export function jsonError(status: number, message: string): Response {

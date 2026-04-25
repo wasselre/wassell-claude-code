@@ -1,8 +1,8 @@
 # PRD: AI Agent
 
 **Status:** Live (v1 — internal testing)
-**Last updated:** 2026-04-24
-**Related PRDs:** [navigation-layout.md](navigation-layout.md), [data-storage.md](data-storage.md), [record-management.md](record-management.md), [chats.md](chats.md)
+**Last updated:** 2026-04-26
+**Related PRDs:** [navigation-layout.md](navigation-layout.md), [data-storage.md](data-storage.md), [record-management.md](record-management.md), [chats.md](chats.md), [logs.md](logs.md)
 
 ## What it is (in plain English)
 A chat-with-an-AI page inside the Wassell app. The AI plays the role of a Wassel sales assistant: it answers customer-style questions about the projects Wassel is marketing, asks clarifying questions, and — when the conversation is ripe — captures a lead into the `clients` model. Staff use this page to test and tune the agent today; the same brain will later be exposed to customers via Haberchat or ManyChat, unchanged.
@@ -16,7 +16,8 @@ Wassel's sales pipeline runs on WhatsApp. Reps spend a lot of time answering the
 - **Sidebar entry** `المساعد الذكي / AI Agent` is a top-level item (no group), driven by a system model `name: 'ai_chats'`. The record-list dispatcher in `App.tsx` swaps the generic list view for a purpose-built split-pane layout.
 - **Split layout.** Left pane (~320px) = list of past conversations sorted by `last_message_at` desc. Right pane = the active chat thread, or a welcome card when no conversation is selected. Mobile collapses to whichever pane the URL indicates (list when no recordId, thread otherwise).
 - **Conversations as records.** Each chat is one `ai_chats` record. Messages live inline on `record.data.messages` as a JSONB array of `{role, content, timestamp}` — no separate messages table. Keeps storage dead simple and reuses the existing records sync.
-- **Message format stored** is text-only (role + content). Tool-use and tool-result blocks are never persisted — they're ephemeral to a single turn.
+- **Message format stored on `ai_chats` records** is text-only (role + content). Tool-use and tool-result blocks are not stored on the chat record — they're stripped before saving.
+- **Tool calls ARE persisted** to `public.activity_log` for the unified Activity Log page. Every agent turn writes one `category='ai_agent', event_type='turn'` row whose `details.tool_calls` array contains the full input args, full result text, duration, and any error for every tool the agent invoked that turn. Admins use this on `/logs` to debug what the agent searched for and what came back. (This supersedes the v1 rule "tool blocks are never persisted" — they're not on the chat record, but they ARE in the activity log.)
 - **Claude Opus 4.7** with adaptive thinking is the model. The system prompt is cached via `cache_control: ephemeral` so repeat turns skip re-processing the prompt (~90% cheaper after the first turn).
 - **Tools the agent can call:**
   - `search_projects({city?, district?, property_type?, min_price?, max_price?, bedrooms?, query?})` — scans the `our_projects` model, scores each record against the filters, returns up to 15 matches as JSON.

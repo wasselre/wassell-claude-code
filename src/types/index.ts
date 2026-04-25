@@ -817,6 +817,46 @@ export interface WorkflowBranchTrace {
   was_selected: boolean;
 }
 
+// --- Unified activity log (auth, records, workflows, AI agent, API, webhooks) ---
+
+export type ActivityLogCategory =
+  | 'auth'      // sign-in, sign-out
+  | 'record'    // create, update, delete, open
+  | 'workflow'  // workflow run summary (full detail in workflow_runs)
+  | 'ai_agent'  // every Claude turn + every tool call
+  | 'api'       // every server-side API hit
+  | 'webhook'   // incoming webhook receipt
+  | 'system';   // initialize, migrations, fatal errors
+
+export type ActivityLogStatus = 'success' | 'error' | 'warning' | 'info';
+
+export interface ActivityLogEntry {
+  id: string;
+  created_at: string; // ISO
+  category: ActivityLogCategory;
+  /** Sub-type within the category — free-form, e.g. 'sign_in', 'create',
+   *  'turn', 'tool_call', 'request', 'receipt'. */
+  event_type: string;
+  /** Who caused the event. Null for webhook / system events. */
+  actor_user_id: string | null;
+  /** Denormalized email so the row stays readable after a user is deleted. */
+  actor_email: string | null;
+  /** Target model — null when the event isn't about a specific record. */
+  target_model_id: string | null;
+  target_record_id: string | null;
+  /** Human-readable label of the target (record title, model label, etc). */
+  target_label: string | null;
+  summary_ar: string;
+  summary_en: string;
+  /** Full detail payload — shape varies by category/event_type. UI pretty-prints. */
+  details: Record<string, unknown>;
+  duration_ms: number | null;
+  status: ActivityLogStatus | null;
+  error: string | null;
+  /** Deep-link target for category='workflow' rows. */
+  workflow_run_id: string | null;
+}
+
 export interface WorkflowRun {
   id: string;
   workflow_id: string;
@@ -1377,6 +1417,9 @@ export interface AppState {
   records: Record<string, AppRecord[]>;
   workflows: Workflow[];
   workflowRuns: WorkflowRun[];
+  /** Unified activity log — capped at 200 most recent entries in memory + localStorage.
+   *  Older entries live in Supabase only and are paged in by the LogsPage. */
+  activityLog: ActivityLogEntry[];
   dashboards: Dashboard[];
   views: ModelView[];
   users: User[];
@@ -1482,6 +1525,19 @@ export interface AppState {
   appendWorkflowRun: (run: WorkflowRun) => void;
   deleteWorkflowRun: (runId: string) => void;
   clearWorkflowRuns: (workflowId?: string) => void;
+
+  // Unified activity log
+  /** Append one entry to the in-memory + localStorage cap (200 most recent)
+   *  and async-write to Supabase. Caller passes a partial — id and created_at
+   *  default to a fresh uuid + now(). */
+  appendActivityLog: (entry: Omit<ActivityLogEntry, 'id' | 'created_at'> & Partial<Pick<ActivityLogEntry, 'id' | 'created_at'>>) => void;
+  /** Page in the most recent N entries from Supabase (typically 500). Used by
+   *  the LogsPage on mount so admins can see beyond the in-memory cap of 200. */
+  loadActivityLog: (limit?: number) => Promise<void>;
+  /** Delete a single log entry. */
+  deleteActivityLog: (id: string) => void;
+  /** Clear the entire log (admin-only — UI gates this). */
+  clearActivityLog: () => void;
 
   // Dashboards
   saveDashboard: (dashboard: Dashboard) => void;

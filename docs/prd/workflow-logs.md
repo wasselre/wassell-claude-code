@@ -1,11 +1,13 @@
 # PRD: Workflow Execution Logs
 
 **Status:** Live
-**Last updated:** 2026-04-20
-**Related PRDs:** workflow-automation.md
+**Last updated:** 2026-04-26
+**Related PRDs:** workflow-automation.md, [logs.md](logs.md)
 
 ## What it is (in plain English)
 Every time a workflow fires — successful, skipped, or failed — the system writes a detailed log entry. The Workflow Logs page shows all those entries, and clicking one opens a page that explains step-by-step what the workflow actually did: which conditions it checked (what it expected vs. what it actually read), which actions it ran, what values were resolved for each action, which records were touched, and a before/after diff of changed fields. Designed to answer "why did this happen?" (or "why didn't it happen?") without digging through code.
+
+> **Now also surfaced in the unified Activity Log (`/logs`)** — every workflow firing also produces a one-line summary row in `activity_log` so workflow events appear in the same timeline as user CRUD, AI agent turns, and webhooks. The summary row carries `workflow_run_id`; clicking the deep-link in the Logs detail panel navigates to the rich `/workflow/logs/:runId` trace described below. The rich trace itself still lives only in `workflow_runs` — `activity_log` does not duplicate the conditions/actions JSON.
 
 ## Why it exists
 Workflows mutate data silently in the background. When something surprising shows up in a record, users had no way to trace it back to the workflow that caused it — short of reading source code or guessing. Logs turn the engine into a white box: exact inputs, exact outputs, exact reasons for every skip.

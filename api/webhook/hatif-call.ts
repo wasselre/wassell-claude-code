@@ -30,6 +30,7 @@ import {
   normalizePhoneE164,
   verifyHatifSignature,
 } from '../_lib/hatif.js';
+import { logWebhookReceipt } from '../_lib/activityLogger.js';
 
 export const config = {
   runtime: 'edge',
@@ -118,6 +119,7 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: 'missing required fields callId/channelId' }, 400);
   }
 
+  let handlerError: string | undefined;
   try {
     await upsertCallLog(event, rawBody);
   } catch (err) {
@@ -125,6 +127,7 @@ export default async function handler(req: Request): Promise<Response> {
     // is malformed every retry will fail the same way. Better to alert via
     // the Vercel function log than burn the retry budget.
     console.error('[hatif-webhook] upsert failed:', err);
+    handlerError = err instanceof Error ? err.message : String(err);
   }
 
   // Mirror a lightweight "header" into the phone_calls records table so the
@@ -135,6 +138,15 @@ export default async function handler(req: Request): Promise<Response> {
   } catch (err) {
     console.error('[hatif-webhook] phone_calls record upsert failed:', err);
   }
+
+  // Audit log — every Hatif post-call event lands on /logs.
+  void logWebhookReceipt({
+    source: 'hatif-call',
+    eventType: `${mapCallDirection(event.type)}/${mapCallStatus(event.status)}`,
+    payload: event,
+    status: handlerError ? 'error' : 'success',
+    error: handlerError,
+  });
 
   return json({ ok: true });
 }

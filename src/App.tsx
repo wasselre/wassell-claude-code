@@ -19,6 +19,7 @@ import PublicDashboardPage from '@/pages/Dashboard/PublicDashboardPage';
 import PresentationsListPage from '@/pages/Presentations/PresentationsListPage';
 import PresentationDetailPage from '@/pages/Presentations/PresentationDetailPage';
 import SettingsPage from '@/pages/Settings/SettingsPage';
+import LogsPage from '@/pages/Logs/LogsPage';
 import TranslationSettingsPage from '@/pages/Settings/TranslationSettingsPage';
 import ProfilesPage from '@/pages/Settings/ProfilesPage';
 import RolesPage from '@/pages/Settings/RolesPage';
@@ -205,6 +206,7 @@ export default function App() {
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
           <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />
           <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />
+          <Route path="/logs" element={<RequireAdmin><LogsPage /></RequireAdmin>} />
         </Route>
       </Routes>
       <ToastContainer />

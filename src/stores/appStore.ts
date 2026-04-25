@@ -40,7 +40,9 @@ import type {
   ChatMessage,
   Whiteboard,
   WhiteboardFolder,
+  ActivityLogEntry,
 } from '@/types';
+import { activityLogger } from '@/lib/activityLogger';
 
 // --- localStorage helpers ---
 
@@ -385,6 +387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   records: {},
   workflows: [],
   workflowRuns: [],
+  activityLog: loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [],
   dashboards: [],
   views: [],
   users: [],
@@ -525,6 +528,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     let workflowRuns = await supabaseLoad<WorkflowRun>('workflow_runs');
     if (!workflowRuns) workflowRuns = loadLocal<WorkflowRun[]>('wassell_workflow_runs') ?? [];
     saveLocal('wassell_workflow_runs', workflowRuns);
+
+    // Load unified activity log — fetch the most recent 500 from Supabase, or
+    // fall back to the localStorage cap of 200. The LogsPage can request more
+    // via `loadActivityLog(limit)` if the admin scrolls past the cached set.
+    let activityLog: ActivityLogEntry[] = [];
+    if (supabase) {
+      const { data, error } = await supabase
+        .from('activity_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      if (!error && data) {
+        activityLog = data as ActivityLogEntry[];
+      }
+    }
+    if (activityLog.length === 0) {
+      activityLog = loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [];
+    }
+    saveLocal('wassell_activity_log', activityLog.slice(0, 200));
 
     // Load dashboards
     let dashboards = await supabaseLoad<Dashboard>('dashboards');
@@ -956,6 +978,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       records: migratedRecords,
       workflows: migrated.workflows,
       workflowRuns,
+      activityLog,
       dashboards: migrated.dashboards,
       views: migrated.views,
       profiles,
@@ -1419,6 +1442,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
     });
 
+    // Activity log — fires after the state mutation so the unified /logs
+    // timeline picks up every record write. recordUpdated is a no-op when
+    // there are no field-level diffs (auto_id-only writes, formula re-runs).
+    if (isNew) {
+      activityLogger.recordCreated(finalRecord, origModel);
+    } else if (previousRecord) {
+      activityLogger.recordUpdated(finalRecord, previousRecord, origModel);
+    }
+
     // New Targeted Projects record → open the research-prompt modal on the next tick.
     // Fires regardless of how the record was created (manual entry, workflow, import)
     // so the user always gets the "link to research?" opportunity.
@@ -1443,6 +1475,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
   deleteRecord: (modelId: string, recordId: string) => {
+    // Capture the model + last snapshot BEFORE the state mutation so the
+    // activity log can record what was deleted.
+    const stateBefore = get();
+    const model = stateBefore.models.find((m) => m.id === modelId);
+    const previous = (stateBefore.records[modelId] ?? []).find((r) => r.id === recordId);
     set((s) => {
       const modelRecords = (s.records[modelId] ?? []).filter((r) => r.id !== recordId);
       const records = { ...s.records, [modelId]: modelRecords };
@@ -1451,6 +1488,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       supabaseDelete('records', recordId);
       return { records };
     });
+    if (previous) {
+      activityLogger.recordDeleted(previous, model);
+    }
   },
   // Bulk-apply the fallback configured on `targetFieldId` to every existing
   // record on `modelId` whose target value is empty. Re-saves each via
@@ -1515,6 +1555,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       supabaseUpsert('workflow_runs', run as unknown as Record<string, unknown>);
       return { workflowRuns: next };
     });
+    // Mirror a one-line summary into the unified activity log so workflow
+    // runs show up in the same timeline as user CRUD, AI agent turns, etc.
+    // The rich trace stays in `workflow_runs` and the LogsPage deep-links to
+    // it via workflow_run_id.
+    activityLogger.workflowRunSummary({
+      runId: run.id,
+      workflowId: run.workflow_id,
+      workflowLabelAr: run.workflow_label_ar,
+      workflowLabelEn: run.workflow_label_en,
+      triggerEvent: run.trigger_event,
+      triggerModelId: run.trigger_model_id ?? null,
+      triggerRecordId: run.trigger_record_id ?? null,
+      status: run.status,
+      durationMs: run.duration_ms,
+      actorUserId: run.triggered_by_user_id ?? null,
+      error: run.error,
+      actionsCount: run.actions_trace?.length ?? 0,
+      conditionsPassed: run.conditions_passed,
+    });
   },
   deleteWorkflowRun: (runId: string) => {
     set((s) => {
@@ -1531,6 +1590,74 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_workflow_runs', next);
       for (const r of toDelete) supabaseDelete('workflow_runs', r.id);
       return { workflowRuns: next };
+    });
+  },
+
+  // --- Unified activity log ---
+  appendActivityLog: (input) => {
+    const entry: ActivityLogEntry = {
+      id: input.id ?? uuid(),
+      created_at: input.created_at ?? new Date().toISOString(),
+      category: input.category,
+      event_type: input.event_type,
+      actor_user_id: input.actor_user_id,
+      actor_email: input.actor_email,
+      target_model_id: input.target_model_id,
+      target_record_id: input.target_record_id,
+      target_label: input.target_label,
+      summary_ar: input.summary_ar,
+      summary_en: input.summary_en,
+      details: input.details ?? {},
+      duration_ms: input.duration_ms ?? null,
+      status: input.status ?? null,
+      error: input.error ?? null,
+      workflow_run_id: input.workflow_run_id ?? null,
+    };
+    set((s) => {
+      // Cap in-memory + localStorage at 200 so busy projects don't balloon
+      // localStorage. Older entries live in Supabase and are paged in by
+      // loadActivityLog when the admin opens /logs.
+      const MAX_ENTRIES = 200;
+      const next = [entry, ...s.activityLog].slice(0, MAX_ENTRIES);
+      saveLocal('wassell_activity_log', next);
+      supabaseUpsert('activity_log', entry as unknown as Record<string, unknown>);
+      return { activityLog: next };
+    });
+  },
+  loadActivityLog: async (limit = 500) => {
+    if (!supabase) return;
+    const { data, error } = await supabase
+      .from('activity_log')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (error) {
+      reportSupabaseError('activity_log', 'load', error.message ?? String(error));
+      return;
+    }
+    if (data) {
+      const entries = data as ActivityLogEntry[];
+      saveLocal('wassell_activity_log', entries.slice(0, 200));
+      set({ activityLog: entries });
+    }
+  },
+  deleteActivityLog: (id: string) => {
+    set((s) => {
+      const next = s.activityLog.filter((e) => e.id !== id);
+      saveLocal('wassell_activity_log', next.slice(0, 200));
+      supabaseDelete('activity_log', id);
+      return { activityLog: next };
+    });
+  },
+  clearActivityLog: () => {
+    set((s) => {
+      const toDelete = s.activityLog;
+      saveLocal('wassell_activity_log', []);
+      // Best-effort: delete every visible entry. Older Supabase rows beyond
+      // the in-memory cap are NOT cleared by this — admins can run a SQL
+      // delete from Supabase Studio if a full purge is needed.
+      for (const e of toDelete) supabaseDelete('activity_log', e.id);
+      return { activityLog: [] };
     });
   },
 
@@ -2029,11 +2156,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (email && get().initialized) {
         // Reset the `initialized` flag so initialize runs fresh.
         set({ initialized: false });
-        void get().initialize();
+        void get().initialize().then(() => {
+          // Activity log — fire AFTER initialize so currentUserId is wired.
+          // Skip when prev was already non-null (token refresh that hit a new
+          // email — extremely rare; we'd rather miss the log than spam).
+          if (!prev) {
+            const userId = useAppStore.getState().currentUserId;
+            activityLogger.signIn(email, userId);
+          }
+        });
+      } else if (email && !prev) {
+        // First-load case: bindAuth hasn't run initialize yet (App.tsx awaits
+        // initialize separately). Defer one tick so currentUserId resolves.
+        setTimeout(() => {
+          const userId = useAppStore.getState().currentUserId;
+          activityLogger.signIn(email, userId);
+        }, 100);
       }
       // If the user just signed out, wipe in-memory state. We keep
       // localStorage intact — the next sign-in will re-hydrate instantly.
       if (!email) {
+        // Activity log — capture who was signed out before we clear state.
+        const prevUserId = get().currentUserId;
+        activityLogger.signOut(prev, prevUserId);
         set({
           currentUserId: null,
           // Keep the data arrays intact; clearing them would cause a flash of
@@ -2049,12 +2194,21 @@ export const useAppStore = create<AppState>((set, get) => ({
    * call even when auth isn't configured (no-op in that case).
    */
   signOutAndClear: async () => {
+    // Capture identity BEFORE we clear it so the activity log records who
+    // signed out. The onAuthChange callback in bindAuth also fires its own
+    // sign_out log; both go through the dedupe-by-id path on the server,
+    // so the worst case is one row instead of two.
+    const prevEmail = get().authEmail;
+    const prevUserId = get().currentUserId;
     await authSignOut();
     // authEmail is cleared by the onAuthChange callback in bindAuth, but we
     // also do it synchronously here so the UI updates without waiting for the
     // subscription round-trip.
     set({ authEmail: null, currentUserId: null });
     saveLocal('wassell_current_user_id', '');
+    if (prevEmail) {
+      activityLogger.signOut(prevEmail, prevUserId);
+    }
   },
 
   // ── Chats module: WhatsApp numbers ────────────────────────────────
