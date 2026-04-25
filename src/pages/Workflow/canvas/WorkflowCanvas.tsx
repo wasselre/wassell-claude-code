@@ -12,29 +12,31 @@ import {
   type NodeMouseHandler,
   type Node,
 } from '@xyflow/react';
-import { Plus, GitBranch } from 'lucide-react';
 import '@xyflow/react/dist/style.css';
 import './canvasStyles.css';
 import { useAppStore } from '@/stores/appStore';
 import type { Workflow, ModelField, WorkflowEvent } from '@/types';
 import TriggerNode from './nodes/TriggerNode';
-import ConditionNode from './nodes/ConditionNode';
 import ActionNode from './nodes/ActionNode';
-import BranchGroupNode from './nodes/BranchGroupNode';
+import ConditionGroupNode from './nodes/ConditionGroupNode';
+import BranchHeaderNode from './nodes/BranchHeaderNode';
+import TailAddNode from './nodes/TailAddNode';
 import AddableEdge from './edges/AddableEdge';
 import NodeDrawer, { type DrawerNode } from './NodeDrawer';
 import AddNodeMenu, { type AddMenuPayload, type AddableKind } from './AddNodeMenu';
-import { workflowToGraph, TRIGGER_NODE_ID, conditionNodeId, actionNodeId } from './workflowToGraph';
+import { workflowToGraph, TRIGGER_NODE_ID, conditionGroupNodeId, actionNodeId } from './workflowToGraph';
 import { useWorkflowGraph } from './useWorkflowGraph';
+import { v4 as uuid } from 'uuid';
 
 // nodeTypes and edgeTypes are registered module-scope. React Flow treats a
 // new object reference as a change and warns loudly — keeping them stable
 // avoids the "new nodeTypes / edgeTypes" console warning on every render.
 const nodeTypes = {
   trigger: TriggerNode,
-  condition: ConditionNode,
+  conditionGroup: ConditionGroupNode,
+  branchHeader: BranchHeaderNode,
   action: ActionNode,
-  branchGroup: BranchGroupNode,
+  tailAdd: TailAddNode,
 };
 
 const edgeTypes = {
@@ -45,6 +47,11 @@ interface WorkflowCanvasProps {
   workflow: Workflow;
   setWorkflow: (updater: (w: Workflow) => Workflow) => void;
   triggerFields: ModelField[];
+  // The host page exposes its own Add Branch / Add Else buttons in the top
+  // bar (so they're always reachable, not tucked over the canvas). It hands
+  // a ref-shaped action object back to the canvas for the canvas's own
+  // empty-state CTAs.
+  toolbarRef?: React.MutableRefObject<{ addBranch: () => void; addElseBranch: () => void } | null>;
 }
 
 // Wrapper that provides the React Flow context. The actual canvas body needs
@@ -57,7 +64,7 @@ export default function WorkflowCanvas(props: WorkflowCanvasProps) {
   );
 }
 
-function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowCanvasProps) {
+function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef }: WorkflowCanvasProps) {
   const { models, language } = useAppStore();
   const isAr = language === 'ar';
   const rf = useReactFlow();
@@ -153,16 +160,29 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
         patched = true;
       }
       if (patched) {
-        // Only update `nodeLookup` (xyflow's derived structure with
-        // internals) — we DON'T overwrite `state.nodes`, because that's the
-        // user-facing array owned by `useNodesState` and writing it here
-        // would clobber any drag positions the user has applied.
+        // Update both `nodeLookup` (the internals structure xyflow's edge
+        // renderer reads from) AND `state.nodes` so the EdgeWrapper's
+        // shallow-equality subscription picks up the new positions and
+        // re-renders. We rebuild `state.nodes` from the freshly-patched
+        // lookup so each node carries its updated `measured` + internals;
+        // dragged positions are preserved because `nextLookup`'s entries
+        // were spread from the existing nodes (which already had the
+        // user-dragged position).
+        const nextNodes = state.nodes.map((un) => {
+          const patched = nextLookup.get(un.id);
+          // The user-facing node object only needs to gain `measured`
+          // here — the deep `internals` field is a private structure
+          // that lives only in the lookup.
+          return patched ? { ...un, measured: patched.measured } : un;
+        });
         storeApi.setState({
           nodeLookup: nextLookup,
+          nodes: nextNodes,
           nodesInitialized: true,
         });
-        // Nudge xyflow's edge renderer — it subscribes to
-        // `updateNodeInternals` changes, not raw nodeLookup mutations.
+        // Force the EdgeWrapper subscription to re-fire — without this
+        // the edges keep their cached null source/target positions until
+        // a manual pan/zoom invalidates the edge layer.
         updateNodeInternals([...nextLookup.keys()]);
       }
       return allHaveBounds;
@@ -206,18 +226,22 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
   useEffect(() => { workflowRef.current = workflow; }, [workflow]);
 
   // Selecting a node from the canvas opens the drawer with the right editor.
+  // The conditionGroup card is the entry point for editing the WHOLE
+  // branch's conditions, so we open the drawer in 'conditionGroup' mode and
+  // let the embedded ConditionList own the full-branch array.
   const onNodeClick: NodeMouseHandler = useCallback((_e, node) => {
     setSelectedId(node.id);
     if (node.id === TRIGGER_NODE_ID) {
       setDrawer({ kind: 'trigger' });
       return;
     }
-    if (node.type === 'condition') {
+    if (node.type === 'conditionGroup') {
       const data = node.data as { branchId: string };
-      const branch = workflowRef.current.branches?.find((b) => b.id === data.branchId);
-      const conditionId = node.id.slice(`cond-${data.branchId}-`.length);
-      const condition = branch?.conditions.find((c) => c.id === conditionId);
-      if (condition) setDrawer({ kind: 'condition', branchId: data.branchId, condition });
+      setDrawer({ kind: 'conditionGroup', branchId: data.branchId });
+      return;
+    }
+    if (node.type === 'branchHeader') {
+      // Else branches don't carry conditions; clicking just selects.
       return;
     }
     if (node.type === 'action') {
@@ -234,13 +258,7 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
   // first change because it holds a stale object.
   useEffect(() => {
     if (!drawer) return;
-    if (drawer.kind === 'condition') {
-      const branch = workflow.branches?.find((b) => b.id === drawer.branchId);
-      const updated = branch?.conditions.find((c) => c.id === drawer.condition.id);
-      if (updated && updated !== drawer.condition) {
-        setDrawer({ kind: 'condition', branchId: drawer.branchId, condition: updated });
-      }
-    } else if (drawer.kind === 'action') {
+    if (drawer.kind === 'action') {
       const branch = workflow.branches?.find((b) => b.id === drawer.branchId);
       const updated = branch?.actions.find((a) => a.id === drawer.action.id);
       if (updated && updated !== drawer.action) {
@@ -249,17 +267,16 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
     }
   }, [workflow, drawer]);
 
-  // Listen for the custom events dispatched from nodes / edges. Keeping these
-  // as DOM events instead of prop drilling means the node components don't
-  // need to know about the canvas, keeping them independently composable.
+  // Listen for the custom events dispatched from nodes / edges. Keeping
+  // these as DOM events instead of prop drilling means the node components
+  // don't need to know about the canvas, keeping them independently
+  // composable.
   useEffect(() => {
     const onDelete = (e: Event) => {
       const { id } = (e as CustomEvent).detail as { id: string };
       graphHelpers.deleteNode(id);
-      // If the deleted node is open in the drawer, close it.
       setDrawer((d) => {
         if (!d) return d;
-        if (d.kind === 'condition' && conditionNodeId(d.branchId, d.condition.id) === id) return null;
         if (d.kind === 'action' && actionNodeId(d.branchId, d.action.id) === id) return null;
         return d;
       });
@@ -273,11 +290,31 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
       const { id } = (e as CustomEvent).detail as { id: string };
       graphHelpers.duplicateBranch(id, isAr);
     };
+    const onDeleteCondition = (e: Event) => {
+      const { branchId, conditionId } = (e as CustomEvent).detail as { branchId: string; conditionId: string };
+      const branch = workflowRef.current.branches?.find((b) => b.id === branchId);
+      if (!branch) return;
+      graphHelpers.replaceBranchConditions(
+        branchId,
+        branch.conditions.filter((c) => c.id !== conditionId),
+      );
+    };
+    const onAddCondition = (e: Event) => {
+      const { branchId } = (e as CustomEvent).detail as { branchId: string };
+      const branch = workflowRef.current.branches?.find((b) => b.id === branchId);
+      if (!branch) return;
+      graphHelpers.replaceBranchConditions(branchId, [
+        ...branch.conditions,
+        { id: uuid(), field_id: '', operator: 'equals', value: '' },
+      ]);
+      // Auto-open the conditionGroup drawer so the new row is editable.
+      setSelectedId(conditionGroupNodeId(branchId));
+      setDrawer({ kind: 'conditionGroup', branchId });
+    };
     const onOpenAddMenu = (e: Event) => {
       const { flowX, flowY, branchId, insertAfterId, isEntry, isElse, isAfterAction } = (e as CustomEvent).detail as {
         flowX: number; flowY: number; branchId: string; insertAfterId: string | null; isEntry: boolean; isElse: boolean; isAfterAction: boolean;
       };
-      // Translate flow-space to screen-space using xyflow's viewport.
       const screen = rf.flowToScreenPosition({ x: flowX, y: flowY });
       setAddMenu({
         branchId,
@@ -293,25 +330,29 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
     window.addEventListener('workflow-canvas:delete-node', onDelete);
     window.addEventListener('workflow-canvas:delete-branch', onDeleteBranch);
     window.addEventListener('workflow-canvas:duplicate-branch', onDuplicateBranch);
+    window.addEventListener('workflow-canvas:delete-condition', onDeleteCondition);
+    window.addEventListener('workflow-canvas:add-condition', onAddCondition);
     window.addEventListener('workflow-canvas:open-add-menu', onOpenAddMenu);
     return () => {
       window.removeEventListener('workflow-canvas:delete-node', onDelete);
       window.removeEventListener('workflow-canvas:delete-branch', onDeleteBranch);
       window.removeEventListener('workflow-canvas:duplicate-branch', onDuplicateBranch);
+      window.removeEventListener('workflow-canvas:delete-condition', onDeleteCondition);
+      window.removeEventListener('workflow-canvas:add-condition', onAddCondition);
       window.removeEventListener('workflow-canvas:open-add-menu', onOpenAddMenu);
     };
   }, [graphHelpers, rf, isAr]);
 
-  // Keyboard delete. xyflow has its own Delete handler; we intercept to pass
-  // through our own deletion logic and to guard the "only non-else branch"
-  // invariant. Ignored when the drawer holds focus.
+  // Keyboard delete — only acts on action nodes. Branch / conditionGroup
+  // / header nodes are deleted via their explicit buttons so an accidental
+  // Delete keystroke can't wipe out a whole branch.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
-      if (!selectedId || selectedId === TRIGGER_NODE_ID) return;
-      if (selectedId.startsWith('branch-')) return; // branch deletion via lane button only
+      if (!selectedId) return;
+      if (!selectedId.startsWith('act-')) return;
       e.preventDefault();
       graphHelpers.deleteNode(selectedId);
       setSelectedId(null);
@@ -325,16 +366,16 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
     if (!addMenu) return;
     const newId = graphHelpers.insertNode(kind, addMenu.branchId, addMenu.insertAfterId);
     setAddMenu(null);
-    // Auto-select the new node and open its drawer so the user can configure
-    // it without an extra click. For conditions the newId matches the
-    // conditionId; for actions it matches the actionId.
-    const nodeId = kind === 'condition' ? conditionNodeId(addMenu.branchId, newId) : actionNodeId(addMenu.branchId, newId);
-    setSelectedId(nodeId);
     if (kind === 'condition') {
-      setDrawer({ kind: 'condition', branchId: addMenu.branchId, condition: { id: newId, field_id: '', operator: 'equals', value: '' } });
+      // Conditions belong to the branch's condition group — open that
+      // node's drawer so the user can configure the new row.
+      setSelectedId(conditionGroupNodeId(addMenu.branchId));
+      setDrawer({ kind: 'conditionGroup', branchId: addMenu.branchId });
     } else {
-      // The action itself will be synced via the effect above once workflow
-      // updates; for now seed the drawer with a minimal shape.
+      const nodeId = actionNodeId(addMenu.branchId, newId);
+      setSelectedId(nodeId);
+      // The action itself will be synced via the effect above once
+      // workflow updates; for now seed the drawer with a minimal shape.
       setTimeout(() => {
         const branch = workflowRef.current.branches?.find((b) => b.id === addMenu.branchId);
         const action = branch?.actions.find((a) => a.id === newId);
@@ -365,13 +406,17 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
     setNodes((prev) => prev.map((n) => n.selected === (n.id === selectedId) ? n : { ...n, selected: n.id === selectedId }));
   }, [selectedId, setNodes]);
 
-  // When the user adds a whole new branch / else via the toolbar, open the
-  // drawer on the trigger (there's no empty-branch editor; they immediately
-  // see the new lane appear and can click "+").
-  const onAddBranch = () => { graphHelpers.addBranch(); };
-  const onAddElse = () => { graphHelpers.addElseBranch(); };
-
-  const hasElse = (workflow.branches ?? []).some((b) => b.is_else);
+  // Expose Add Branch / Add Else as imperative actions to the host page so
+  // it can render the buttons in its own top bar — the floating canvas
+  // toolbar approach was getting covered by node cards in dense graphs.
+  useEffect(() => {
+    if (!toolbarRef) return;
+    toolbarRef.current = {
+      addBranch: () => { graphHelpers.addBranch(); },
+      addElseBranch: () => { graphHelpers.addElseBranch(); },
+    };
+    return () => { if (toolbarRef) toolbarRef.current = null; };
+  }, [toolbarRef, graphHelpers]);
 
   // Fit the view once after the first render with branches. Subsequent fits
   // are handled by xyflow's Controls panel.
@@ -419,38 +464,14 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields }: WorkflowC
           maskColor="rgba(74, 44, 42, 0.08)"
           nodeColor={(n) => {
             if (n.type === 'trigger') return '#F59E0B';
-            if (n.type === 'condition') return '#0EA5E9';
+            if (n.type === 'conditionGroup') return '#0EA5E9';
             if (n.type === 'action') return '#B8734F';
-            if (n.type === 'branchGroup') return 'rgba(184, 115, 79, 0.15)';
+            if (n.type === 'branchHeader') return 'rgba(74, 44, 42, 0.4)';
+            if (n.type === 'tailAdd') return 'rgba(184, 115, 79, 0.15)';
             return '#D4B896';
           }}
         />
       </ReactFlow>
-
-      {/* Floating toolbar — sits over the canvas's top-start corner. Uses
-          `pointer-events-none` on the wrap + `pointer-events-auto` on the
-          buttons so the canvas pane stays pan-draggable everywhere else. */}
-      <div className="absolute top-3 start-3 z-10 flex flex-wrap items-center gap-2 pointer-events-none">
-        <button
-          onClick={onAddBranch}
-          className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-white/90 backdrop-blur border border-dashed border-copper/40 text-copper hover:bg-copper/5 transition-colors text-sm font-bold shadow-sm"
-          title={isAr ? 'أضف فرعًا مشروطًا جديدًا' : 'Add another conditional branch'}
-        >
-          <Plus size={14} />
-          <GitBranch size={12} />
-          {isAr ? 'إضافة فرع' : 'Add branch'}
-        </button>
-        {!hasElse && (
-          <button
-            onClick={onAddElse}
-            className="pointer-events-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-white/90 backdrop-blur border border-dashed border-chocolate/30 text-chocolate/70 hover:bg-chocolate/5 transition-colors text-sm font-bold shadow-sm"
-            title={isAr ? 'أضف حالة افتراضية' : 'Add default case'}
-          >
-            <Plus size={14} />
-            {isAr ? 'حالة افتراضية' : 'Else case'}
-          </button>
-        )}
-      </div>
 
       <NodeDrawer
         open={!!drawer}

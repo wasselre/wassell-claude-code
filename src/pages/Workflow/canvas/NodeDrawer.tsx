@@ -9,7 +9,7 @@ import type { WorkflowCondition, WorkflowAction, ModelField, Workflow, WorkflowE
 
 export type DrawerNode =
   | { kind: 'trigger' }
-  | { kind: 'condition'; branchId: string; condition: WorkflowCondition }
+  | { kind: 'conditionGroup'; branchId: string }
   | { kind: 'action'; branchId: string; action: WorkflowAction };
 
 interface NodeDrawerProps {
@@ -69,11 +69,11 @@ export default function NodeDrawer({
       subtitle: isAr ? 'متى تبدأ هذه القاعدة؟' : 'When does this rule start?',
       accent: 'bg-amber-500',
     };
-  } else if (node.kind === 'condition') {
+  } else if (node.kind === 'conditionGroup') {
     header = {
       icon: <CircleDot size={18} className="text-white" />,
-      title: isAr ? 'تحرير الشرط' : 'Edit Condition',
-      subtitle: isAr ? 'ما الذي يجب أن يكون صحيحًا لهذا الفرع؟' : 'What must be true for this branch?',
+      title: isAr ? 'تحرير الشروط' : 'Edit Conditions',
+      subtitle: isAr ? 'كل الشروط لهذا الفرع' : 'All conditions for this branch',
       accent: 'bg-sky-500',
     };
   } else {
@@ -103,7 +103,7 @@ export default function NodeDrawer({
         onWebhookSlugChange={(slugId) => onUpdateTrigger({ trigger_webhook_slug_id: slugId })}
       />
     );
-  } else if (node.kind === 'condition') {
+  } else if (node.kind === 'conditionGroup') {
     const branch = workflow.branches?.find((b) => b.id === node.branchId);
     const conditions = branch?.conditions ?? [];
     body = (

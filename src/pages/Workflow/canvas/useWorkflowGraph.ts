@@ -41,34 +41,42 @@ export function useWorkflowGraph(
     }
   }, []);
 
-  // Insert a new condition or action into a branch, either at the start
-  // (insertAfterId === null) or after a given sibling. The caller guarantees
-  // conditions are only inserted before actions.
+  // Insert a new condition or action into a branch. `insertAfterId` is the
+  // full canvas-node id (`act-<branchId>-<actionId>` etc.) — not the bare
+  // entity id — so we have to strip the type prefix before looking it up
+  // inside the branch's arrays.
+  const stripNodePrefix = (nodeId: string, branchId: string): string => {
+    if (nodeId.startsWith(`act-${branchId}-`)) return nodeId.slice(`act-${branchId}-`.length);
+    if (nodeId.startsWith(`cond-${branchId}-`)) return nodeId.slice(`cond-${branchId}-`.length);
+    return nodeId;
+  };
+
   const insertNode = useCallback((kind: AddableKind, branchId: string, insertAfterId: string | null): string => {
     const newId = uuid();
+    const bareAfterId = insertAfterId ? stripNodePrefix(insertAfterId, branchId) : null;
     setWorkflow((w) => {
       const branches = (w.branches ?? []).map((b): WorkflowBranch => {
         if (b.id !== branchId) return b;
         if (kind === 'condition') {
           const newCond: WorkflowCondition = { id: newId, field_id: '', operator: 'equals', value: '' };
-          if (!insertAfterId) return { ...b, conditions: [newCond, ...b.conditions] };
-          const idx = b.conditions.findIndex((c) => c.id === insertAfterId);
+          if (!bareAfterId) return { ...b, conditions: [...b.conditions, newCond] };
+          const idx = b.conditions.findIndex((c) => c.id === bareAfterId);
           if (idx === -1) return { ...b, conditions: [...b.conditions, newCond] };
           const next = [...b.conditions];
           next.splice(idx + 1, 0, newCond);
           return { ...b, conditions: next };
         }
-        // Action insertion. If insertAfterId references a condition, that means
-        // the caller wants to add a fresh action right after all conditions.
+        // Action insertion.
         const action = makeAction(kind);
-        // Override the generated id with our deterministic `newId` so callers
-        // can select the new node immediately after insertion.
+        // Override the generated id with our deterministic `newId` so
+        // callers can select the new node immediately after insertion.
         const actionWithId = { ...action, id: newId } as WorkflowAction;
-        if (!insertAfterId) return { ...b, actions: [actionWithId, ...b.actions] };
-        const actIdx = b.actions.findIndex((a) => a.id === insertAfterId);
+        if (!bareAfterId) return { ...b, actions: [actionWithId, ...b.actions] };
+        const actIdx = b.actions.findIndex((a) => a.id === bareAfterId);
         if (actIdx === -1) {
-          // Not an action — must be a condition (entry insertion past conditions)
-          // or unknown. In either case append to the actions list.
+          // The id refers to something that isn't in the actions array
+          // (e.g. a condition id) — append to the end so the new action
+          // lands after every existing action.
           return { ...b, actions: [...b.actions, actionWithId] };
         }
         const next = [...b.actions];

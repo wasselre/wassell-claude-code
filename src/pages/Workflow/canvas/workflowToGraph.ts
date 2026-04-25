@@ -1,16 +1,17 @@
 import type { Node, Edge } from '@xyflow/react';
-import type { Workflow, WorkflowBranch, WorkflowCondition, WorkflowAction, ModelField, AppModel } from '@/types';
+import type { Workflow, WorkflowBranch, WorkflowAction, ModelField, AppModel } from '@/types';
 import {
   LANE_WIDTH,
   LANE_GAP,
   LANE_PADDING_X,
-  LANE_HEADER_HEIGHT,
   TRIGGER_HEIGHT,
-  LANE_MIN_HEIGHT,
   NODE_HEIGHT,
   NODE_VERTICAL_GAP,
   LANE_ROW_Y,
 } from './constants';
+import type { ConditionGroupNodeData } from './nodes/ConditionGroupNode';
+import type { BranchHeaderNodeData } from './nodes/BranchHeaderNode';
+import type { TailAddNodeData } from './nodes/TailAddNode';
 
 // Node data payloads. Each node's `type` in xyflow matches one of the keys
 // registered in nodeTypes on the canvas, and the data shape is what the
@@ -24,15 +25,6 @@ export interface TriggerNodeData extends Record<string, unknown> {
   isAr: boolean;
 }
 
-export interface ConditionNodeData extends Record<string, unknown> {
-  kind: 'condition';
-  branchId: string;
-  condition: WorkflowCondition;
-  fields: ModelField[];
-  triggerEvent: Workflow['trigger_event'];
-  isAr: boolean;
-}
-
 export interface ActionNodeData extends Record<string, unknown> {
   kind: 'action';
   branchId: string;
@@ -42,25 +34,19 @@ export interface ActionNodeData extends Record<string, unknown> {
   isAr: boolean;
 }
 
-export interface BranchGroupNodeData extends Record<string, unknown> {
-  kind: 'branch';
-  branch: WorkflowBranch;
-  index: number;           // visual index in the current (possibly RTL-reversed) order
-  dataIndex: number;       // original index in workflow.branches
-  positionLabel: 'IF' | 'ELSE IF' | 'OTHERWISE';
-  isElse: boolean;
-  canDelete: boolean;
-  canDuplicate: boolean;
-  isAr: boolean;
-}
-
-// Node ID helpers. The scheme is deterministic so round-tripping through
-// graphToWorkflow is stable: edges and layout never need to carry metadata
-// beyond what the IDs already encode.
+// Node ID helpers. The scheme is deterministic so round-tripping is stable:
+// edges and layout never need to carry metadata beyond what the IDs encode.
+//   trigger                  the single trigger node
+//   bh-<branchId>            branch header card (only on else branches)
+//   cg-<branchId>            condition group card (one per non-else branch,
+//                            even when the branch has zero conditions)
+//   act-<branchId>-<actId>   one node per individual action
+//   tail-<branchId>          trailing "+ Add step" affordance per branch
 export const TRIGGER_NODE_ID = 'trigger';
-export const branchNodeId = (branchId: string) => `branch-${branchId}`;
-export const conditionNodeId = (branchId: string, conditionId: string) => `cond-${branchId}-${conditionId}`;
+export const branchHeaderNodeId = (branchId: string) => `bh-${branchId}`;
+export const conditionGroupNodeId = (branchId: string) => `cg-${branchId}`;
 export const actionNodeId = (branchId: string, actionId: string) => `act-${branchId}-${actionId}`;
+export const tailAddNodeId = (branchId: string) => `tail-${branchId}`;
 
 export interface WorkflowToGraphInput {
   workflow: Workflow;
@@ -129,109 +115,108 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
   };
   nodes.push(triggerNode);
 
+  // Each branch is its own vertical column. Width matches the trigger so
+  // every chain reads as a parallel arm of the if/else-if/else tree.
+  const childWidth = LANE_WIDTH;
+  const COND_GROUP_BASE_HEIGHT = 60;       // header + body padding
+  const COND_ROW_HEIGHT = 36;              // each condition row inside the group
+  const COND_ADD_BUTTON_HEIGHT = 36;
+  const HEADER_NODE_HEIGHT = 96;           // standalone branch header (else)
+  const TAIL_NODE_HEIGHT = 48;
+
   order.forEach((branch, visualIdx) => {
     const dataIdx = branches.findIndex((b) => b.id === branch.id);
-    const laneId = branchNodeId(branch.id);
     const positionLabel = positionLabelFor(branch, dataIdx, nonElseCount);
-    const laneX = LANE_PADDING_X + visualIdx * (LANE_WIDTH + LANE_GAP);
+    const colX = LANE_PADDING_X + visualIdx * (LANE_WIDTH + LANE_GAP);
+    const branchName = (isAr ? branch.label_ar : branch.label_en)
+      || (isAr ? `فرع ${positionLabel}` : `${positionLabel} branch`);
 
-    const childCount = branch.conditions.length + branch.actions.length;
-    const childrenHeight = childCount === 0
-      ? 120
-      : childCount * NODE_HEIGHT + (childCount - 1) * NODE_VERTICAL_GAP;
-    const laneHeight = Math.max(LANE_MIN_HEIGHT, LANE_HEADER_HEIGHT + 48 + childrenHeight + 48);
+    let yCursor = LANE_ROW_Y;
 
-    const groupNode: Node<BranchGroupNodeData> = {
-      id: laneId,
-      type: 'branchGroup',
-      position: { x: laneX, y: LANE_ROW_Y },
-      data: {
-        kind: 'branch',
-        branch,
-        index: visualIdx,
-        dataIndex: dataIdx,
-        positionLabel,
-        isElse: !!branch.is_else,
-        canDelete: branch.is_else ? true : nonElseCount > 1,
-        canDuplicate: !branch.is_else,
-        isAr,
-      },
-      width: LANE_WIDTH,
-      height: laneHeight,
-      measured: { width: LANE_WIDTH, height: laneHeight },
-      style: { width: LANE_WIDTH, height: laneHeight },
-      draggable: true,
-      selectable: false,
-      zIndex: 0,
-    };
-    nodes.push(groupNode);
-
-    // Trigger → first child connector. Empty lanes don't get an edge — the
-    // BranchGroupNode renders an in-lane "Add first step" button instead,
-    // since xyflow won't draw edges that terminate on a handle-less group.
-    const firstChildId = branch.conditions[0]
-      ? conditionNodeId(branch.id, branch.conditions[0].id)
-      : branch.actions[0]
-        ? actionNodeId(branch.id, branch.actions[0].id)
-        : null;
-    if (firstChildId) {
-      edges.push({
-        id: `e-trigger-${laneId}-${firstChildId}`,
-        source: TRIGGER_NODE_ID,
-        target: firstChildId,
-        type: 'addable',
-        data: { branchId: branch.id, insertAfterId: null, isEntry: true, isElse: !!branch.is_else, isAfterAction: false },
-      });
-    }
-
-    // Position conditions then actions top-to-bottom. We DON'T use xyflow's
-    // group-node `parentId` relationship for children — it subtly breaks
-    // edge rendering in v12 (edges silently skip children of group nodes
-    // when the group's dimensions haven't been measured yet). Instead we
-    // compute absolute flow-space coordinates directly. The lane node is
-    // still rendered as a background rectangle at the same coords; it just
-    // doesn't own the children as React Flow parents.
-    const xInsideLane = (LANE_WIDTH - LANE_WIDTH * 0.82) / 2;
-    const childWidth = Math.round(LANE_WIDTH * 0.82);
-    let yCursor = LANE_ROW_Y + LANE_HEADER_HEIGHT + 48;
-    const childStartX = laneX + xInsideLane;
-
-    const childOrder: Array<{ id: string; kind: 'condition' | 'action' }> = [
-      ...branch.conditions.map((c) => ({ id: conditionNodeId(branch.id, c.id), kind: 'condition' as const })),
-      ...branch.actions.map((a) => ({ id: actionNodeId(branch.id, a.id), kind: 'action' as const })),
-    ];
-
-    branch.conditions.forEach((cond) => {
-      const id = conditionNodeId(branch.id, cond.id);
+    // Entry node for this branch: a ConditionGroupNode for non-else
+    // branches (bundles all conditions + branch header in one card), or a
+    // small BranchHeaderNode for else branches (no conditions).
+    let entryNodeId: string;
+    if (branch.is_else) {
+      entryNodeId = branchHeaderNodeId(branch.id);
+      const headerHeight = HEADER_NODE_HEIGHT;
       nodes.push({
-        id,
-        type: 'condition',
-        position: { x: childStartX, y: yCursor },
+        id: entryNodeId,
+        type: 'branchHeader',
+        position: { x: colX, y: yCursor },
         data: {
-          kind: 'condition',
-          branchId: branch.id,
-          condition: cond,
-          fields: triggerFields,
-          triggerEvent: workflow.trigger_event,
+          kind: 'branchHeader',
+          branch,
+          positionLabel,
+          branchName,
+          isElse: true,
+          canDelete: true,
+          canDuplicate: false,
           isAr,
-        } satisfies ConditionNodeData,
+        } satisfies BranchHeaderNodeData,
         width: childWidth,
-        height: NODE_HEIGHT,
-        measured: { width: childWidth, height: NODE_HEIGHT },
-        style: { width: childWidth, height: NODE_HEIGHT },
+        height: headerHeight,
+        measured: { width: childWidth, height: headerHeight },
+        style: { width: childWidth, height: headerHeight },
         draggable: true,
         selectable: true,
         zIndex: 10,
       });
-      yCursor += NODE_HEIGHT + NODE_VERTICAL_GAP;
+      yCursor += headerHeight + NODE_VERTICAL_GAP;
+    } else {
+      entryNodeId = conditionGroupNodeId(branch.id);
+      const condCount = branch.conditions.length;
+      const groupHeight = COND_GROUP_BASE_HEIGHT
+        + Math.max(1, condCount) * COND_ROW_HEIGHT
+        + (condCount > 1 ? (condCount - 1) * 18 : 0)
+        + COND_ADD_BUTTON_HEIGHT;
+      nodes.push({
+        id: entryNodeId,
+        type: 'conditionGroup',
+        position: { x: colX, y: yCursor },
+        data: {
+          kind: 'conditionGroup',
+          branch,
+          conditions: branch.conditions,
+          fields: triggerFields,
+          triggerEvent: workflow.trigger_event,
+          positionLabel,
+          branchName,
+          isElse: false,
+          canDelete: nonElseCount > 1,
+          canDuplicate: true,
+          isAr,
+        } satisfies ConditionGroupNodeData,
+        width: childWidth,
+        height: groupHeight,
+        measured: { width: childWidth, height: groupHeight },
+        style: { width: childWidth, height: groupHeight },
+        draggable: true,
+        selectable: true,
+        zIndex: 10,
+      });
+      yCursor += groupHeight + NODE_VERTICAL_GAP;
+    }
+
+    // Trigger → entry edge. Plain edge (no "+"): adding "before" the
+    // entry doesn't make sense — conditions belong inside the entry, and
+    // actions live below it.
+    edges.push({
+      id: `e-trigger-${entryNodeId}`,
+      source: TRIGGER_NODE_ID,
+      target: entryNodeId,
+      type: 'default',
     });
 
+    // Action chain. Edge from the entry to the first action gets "+" so
+    // users can insert there too.
+    let prevId = entryNodeId;
     branch.actions.forEach((action) => {
       const id = actionNodeId(branch.id, action.id);
       nodes.push({
         id,
         type: 'action',
-        position: { x: childStartX, y: yCursor },
+        position: { x: colX, y: yCursor },
         data: {
           kind: 'action',
           branchId: branch.id,
@@ -248,135 +233,67 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
         selectable: true,
         zIndex: 10,
       });
-      yCursor += NODE_HEIGHT + NODE_VERTICAL_GAP;
-    });
-
-    // Chain edges between successive children inside the lane, each carrying
-    // `insertAfterId` so the "+" button on the edge knows where to inject.
-    for (let i = 0; i < childOrder.length - 1; i++) {
-      const from = childOrder[i]!;
-      const to = childOrder[i + 1]!;
+      // Edge from the previous node into this one — addable "+" inserts
+      // a NEW action between them. `insertAfterId` is the previous action
+      // (or null when prev is the entry, which makes the new action land
+      // at the start of the actions array).
+      const isPrevAction = prevId.startsWith('act-');
       edges.push({
-        id: `e-${from.id}-${to.id}`,
-        source: from.id,
-        target: to.id,
+        id: `e-${prevId}-${id}`,
+        source: prevId,
+        target: id,
         type: 'addable',
         data: {
           branchId: branch.id,
-          insertAfterId: from.id,
-          isEntry: false,
+          insertAfterId: isPrevAction ? prevId : null,
+          isEntry: !isPrevAction,
           isElse: !!branch.is_else,
-          // Once we're past a condition, only actions can be inserted — the
-          // engine expects all conditions to come before all actions within a
-          // branch. We expose both kinds on the menu; the menu itself disables
-          // conditions when isAfterAction is true.
-          isAfterAction: from.kind === 'action',
+          isAfterAction: isPrevAction,
         },
       });
-    }
+      prevId = id;
+      yCursor += NODE_HEIGHT + NODE_VERTICAL_GAP;
+    });
 
-    // Trailing "+ add at end" lives inside the BranchGroupNode as an in-lane
-    // button (see BranchGroupNode.tsx) instead of as an edge targeting the
-    // handle-less lane, so xyflow doesn't silently drop it.
+    // Trailing tail-add node — "+ Add step" affordance below the last
+    // real node. The edge into it is also addable so a "+" appears
+    // between the last action and the tail (functionally the same place).
+    const tailId = tailAddNodeId(branch.id);
+    const tailInsertAfter = branch.actions.length > 0
+      ? actionNodeId(branch.id, branch.actions[branch.actions.length - 1]!.id)
+      : null;
+    nodes.push({
+      id: tailId,
+      type: 'tailAdd',
+      position: { x: colX + (LANE_WIDTH - LANE_WIDTH * 0.62) / 2, y: yCursor },
+      data: {
+        kind: 'tailAdd',
+        branchId: branch.id,
+        insertAfterId: tailInsertAfter,
+        isElse: !!branch.is_else,
+        isAr,
+      } satisfies TailAddNodeData,
+      width: Math.round(LANE_WIDTH * 0.62),
+      height: TAIL_NODE_HEIGHT,
+      measured: { width: Math.round(LANE_WIDTH * 0.62), height: TAIL_NODE_HEIGHT },
+      style: { width: Math.round(LANE_WIDTH * 0.62), height: TAIL_NODE_HEIGHT },
+      draggable: false,
+      selectable: false,
+      zIndex: 10,
+    });
+    edges.push({
+      id: `e-${prevId}-${tailId}`,
+      source: prevId,
+      target: tailId,
+      type: 'default',
+    });
   });
 
   return { nodes, edges };
 }
 
-// Rebuild a workflow from the current graph state. Invoked after drag-reorder
-// inside a lane, or after lane drag-reorder. Node IDs alone are enough to
-// recover branch membership (prefixes) and item IDs — positions give us the
-// sort order within each bucket.
-export interface GraphToWorkflowInput {
-  nodes: Node[];
-  baseWorkflow: Workflow;
-  isAr: boolean;
-}
-
-export function graphToWorkflow({ nodes, baseWorkflow, isAr }: GraphToWorkflowInput): Workflow {
-  const existingBranches = baseWorkflow.branches ?? [];
-  // Index branches by id for O(1) lookup when rebuilding children.
-  const branchById = new Map(existingBranches.map((b) => [b.id, b]));
-  const conditionById = new Map<string, { branchId: string; cond: WorkflowCondition }>();
-  const actionById = new Map<string, { branchId: string; action: WorkflowAction }>();
-  existingBranches.forEach((b) => {
-    b.conditions.forEach((c) => conditionById.set(c.id, { branchId: b.id, cond: c }));
-    b.actions.forEach((a) => actionById.set(a.id, { branchId: b.id, action: a }));
-  });
-
-  // Group child nodes by the branch prefix in their ID (`cond-{bid}-...` or
-  // `act-{bid}-...`). Children are no longer parented via React Flow's
-  // group mechanism — they live in absolute flow space — so we recover
-  // lane membership from the ID, not from `parentId`.
-  const childrenByLane = new Map<string, Node[]>();
-  const laneNodes: Node[] = [];
-  for (const n of nodes) {
-    if (n.type === 'branchGroup') {
-      laneNodes.push(n);
-      continue;
-    }
-    if (n.type !== 'condition' && n.type !== 'action') continue;
-    const m = n.id.match(/^(?:cond|act)-([^-]+(?:-[^-]+){4})-/);
-    if (!m) continue;
-    const laneKey = `branch-${m[1]}`;
-    const list = childrenByLane.get(laneKey) ?? [];
-    list.push(n);
-    childrenByLane.set(laneKey, list);
-  }
-
-  // Lane order from x position. In RTL we invert — the visual right-to-left
-  // layout should still produce the same data-order the user sees.
-  const sortedLanes = [...laneNodes].sort((a, b) => a.position.x - b.position.x);
-  const visualOrder = sortedLanes.map((n) => n.id.replace(/^branch-/, ''));
-  const dataOrderIds = isAr ? [...visualOrder].reverse() : visualOrder;
-
-  // Reconstruct branches in the canonical (non-visual) order, pulling children
-  // from the graph. Children are assigned to whatever lane they currently
-  // belong to (parentId), which may differ from where they started if we ever
-  // allow cross-lane drag. We preserve the condition-then-action invariant by
-  // sorting by node type first, then by y. That means a user dragging an
-  // action above a condition in the same lane cannot violate the invariant.
-  const rebuiltBranches: WorkflowBranch[] = dataOrderIds.map((branchId): WorkflowBranch => {
-    const base = branchById.get(branchId);
-    const laneChildren = (childrenByLane.get(`branch-${branchId}`) ?? [])
-      .slice()
-      .sort((a, b) => {
-        const typeRank = a.type === b.type ? 0 : a.type === 'condition' ? -1 : 1;
-        return typeRank !== 0 ? typeRank : a.position.y - b.position.y;
-      });
-
-    const nextConditions: WorkflowCondition[] = [];
-    const nextActions: WorkflowAction[] = [];
-    for (const child of laneChildren) {
-      if (child.type === 'condition') {
-        const conditionId = child.id.slice(`cond-${branchId}-`.length);
-        const hit = conditionById.get(conditionId);
-        if (hit) nextConditions.push(hit.cond);
-      } else if (child.type === 'action') {
-        const actionId = child.id.slice(`act-${branchId}-`.length);
-        const hit = actionById.get(actionId);
-        if (hit) nextActions.push(hit.action);
-      }
-    }
-
-    // Spread `base` first so optional label fields remain optional (not
-    // explicit undefined) in the resulting shape — that matches
-    // WorkflowBranch's optional-property contract under strict TS.
-    return {
-      ...(base ?? {}),
-      id: branchId,
-      conditions: nextConditions,
-      actions: nextActions,
-    };
-  });
-
-  // Else branch must remain pinned to the end of the array. If the user
-  // dragged it somewhere else, clamp it back to the last slot.
-  const elseIdx = rebuiltBranches.findIndex((b) => b.is_else);
-  if (elseIdx !== -1 && elseIdx !== rebuiltBranches.length - 1) {
-    const [elseBranch] = rebuiltBranches.splice(elseIdx, 1);
-    rebuiltBranches.push(elseBranch!);
-  }
-
-  return { ...baseWorkflow, branches: rebuiltBranches };
-}
+// (graphToWorkflow used to round-trip drag-reordered children back into the
+// workflow tree under the old per-condition node model. With conditions now
+// grouped in a single ConditionGroupNode and actions edited via the workflow
+// store directly, the workflow tree IS the source of truth — no graph→tree
+// reconstruction is needed. Removed to keep the surface area small.)

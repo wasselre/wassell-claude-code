@@ -1,9 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { ArrowRight, Save, GitBranch } from 'lucide-react';
+import { ArrowRight, Save, GitBranch, Plus } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { bilingualFromInput } from '@/lib/autoTranslate';
@@ -93,6 +93,13 @@ export default function WorkflowEditorPage() {
   // triggers need a model; webhook triggers need a slug.
   const isTriggerConfigured = isWebhookTrigger ? !!workflow.trigger_webhook_slug_id : !!workflow.trigger_model_id;
 
+  // The canvas exposes its Add Branch / Add Else actions through this ref so
+  // the editor's top bar can fire them — keeps those buttons reliably
+  // clickable instead of floating over the canvas where they might collide
+  // with nodes.
+  const toolbarRef = useRef<{ addBranch: () => void; addElseBranch: () => void } | null>(null);
+  const hasElse = (workflow.branches ?? []).some((b) => b.is_else);
+
   const handleSave = () => {
     if (!workflow.label_ar.trim() || !workflow.label_en.trim()) {
       addToast(t('common.required'), 'error');
@@ -148,6 +155,29 @@ export default function WorkflowEditorPage() {
           />
         </div>
         <div className="flex-1" />
+        {isTriggerConfigured && (
+          <>
+            <button
+              onClick={() => toolbarRef.current?.addBranch()}
+              className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-copper/40 text-copper hover:bg-copper/5 transition-colors text-sm font-bold"
+              title={isAr ? 'أضف فرعًا مشروطًا جديدًا' : 'Add another conditional branch'}
+            >
+              <Plus size={14} />
+              <GitBranch size={12} />
+              {isAr ? 'فرع' : 'Branch'}
+            </button>
+            {!hasElse && (
+              <button
+                onClick={() => toolbarRef.current?.addElseBranch()}
+                className="hidden md:flex items-center gap-1.5 px-3 py-2 rounded-lg border border-dashed border-chocolate/30 text-chocolate/70 hover:bg-chocolate/5 transition-colors text-sm font-bold"
+                title={isAr ? 'أضف حالة افتراضية' : 'Add default case'}
+              >
+                <Plus size={14} />
+                {isAr ? 'وإلا' : 'Else'}
+              </button>
+            )}
+          </>
+        )}
         <Button onClick={handleSave}>
           <Save size={16} />
           {t('common.save')}
@@ -160,6 +190,7 @@ export default function WorkflowEditorPage() {
             workflow={workflow}
             setWorkflow={(updater) => setWorkflow(updater)}
             triggerFields={triggerFields}
+            toolbarRef={toolbarRef}
           />
         </div>
       ) : (
