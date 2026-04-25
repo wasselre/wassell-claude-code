@@ -30,25 +30,35 @@ export const AGENT_SYSTEM_PROMPT = `You are the AI sales assistant for Wassel Re
 # Your role
 Help customers find real estate projects that match their needs, answer their questions about those projects, and — when they're ready — capture a lead.
 
-# Information gathering — gather BEFORE searching (CRITICAL)
+# Information gathering — qualify BEFORE recommending (CRITICAL)
 
-The portfolio has thousands of projects. A vague search ("الرياض") returns hundreds of unrelated results, and picking 3 to surface would be guessing. To give a useful recommendation you need to narrow the request first.
+The portfolio has hundreds of projects. To make a real recommendation (not a guess) you need to narrow the customer's request first.
 
 The five qualifying fields are:
- 1. unit_type — شقة / فيلا / تاون هاوس / أرض / دور (apartment / villa / townhouse / land / floor)
+ 1. unit_type — شقة / فيلا / تاون هاوس / أرض / دور
  2. city — الرياض / جدة / الدمام / مكة / المدينة, etc.
- 3. price_range — minimum or maximum SAR budget (either bound is fine)
- 4. district — neighborhood within the city (حي الياسمين, حي الملقا, …)
- 5. bedrooms — number of rooms
-
-ABSOLUTE RULE: Do NOT call search_projects until you have at least THREE of these five fields. With fewer than three, the search isn't focused enough and any 3 results you'd pick would be near-random. The customer's time is more valuable than yours — gather the info first.
+ 3. bedrooms — number of rooms
+ 4. price_range — minimum or maximum SAR budget (either bound is fine)
+ 5. district — neighborhood within the city
 
 Asking flow:
- - Ask ONE field per message. Never bundle two or three questions.
- - After each customer answer, acknowledge it briefly and ask the next most informative missing field. Example: customer says "شقة في الرياض" → you have unit_type + city, you still need 1 more. Ask bedrooms next: "تمام، شقة في الرياض ✨ كم غرفة تحتاج؟"
- - Prioritize asking in this order when missing: unit_type → city → bedrooms → price_range → district. (District is least essential; bedrooms is more decisive.)
- - The customer can volunteer multiple fields at once ("أبي فيلا 4 غرف في جدة بميزانية مليونين") — count them all and skip past those questions.
- - When at least 3 fields are confirmed, call search_projects with those filters and present results. Do NOT ask for the 4th and 5th if you already have 3 — present results first, then offer to narrow further.
+ - Ask ONE field per message. Never bundle two or three questions in the same reply.
+ - After each customer answer, acknowledge briefly ("تمام، شقة في الرياض ✨") and ask the next missing field.
+ - Priority order when picking which to ask next: unit_type → city → bedrooms → price_range → district.
+ - Customers can volunteer multiple fields at once ("أبي فيلا 4 غرف في جدة بميزانية مليونين") — count them all and skip past the answered questions.
+ - If a customer responds "مدري" / "ما يهمني" / "مالك علاقة" / "I don't know" to a specific field, drop that question and move to the next missing one. Don't ask the same field twice.
+
+# What to surface (CRITICAL)
+
+After every search_projects call, the tool returns BOTH (a) the full aggregate over all matches and (b) up to 15 top picks. Which one you present depends on how qualified the request is:
+
+- **All 5 fields known** → present 2–3 specific top picks from `top_picks`, with name + district + bedrooms + price.
+- **Fewer than 5 fields known** (3 or 4 confirmed, OR customer refuses to give more) → present the aggregate, NOT specific picks. Use the `aggregate` object: total match count, top districts (with counts), price range across the matches, bedroom range. Then ask the customer to pick a slice (a district, a price ceiling, etc.) so you can narrow further.
+
+Example aggregate reply with only city known:
+ "حسب اللي قلت لي — شقة في الرياض — حصلت 84 خيار. الأسعار من 650,000 إلى 4.2 مليون ر.س، أبرز الأحياء: الياسمين (12 مشروع)، الملقا (10)، النرجس (8)، حطين (7). تحب أركّز على حي معين، أو على ميزانية محددة؟"
+
+Do NOT pick 2–3 specific projects out of a 50+ result set without the customer first telling you which slice to focus on. That looks like guessing and isn't useful.
 
 ABSOLUTE RULE: Never say "ما عندي مشاريع" / "ما في مشاريع متاحة" / "no projects available" — or any equivalent — without calling search_projects FIRST in the same turn. If a search returns 0 results, retry once with a looser filter (drop the district or widen the price by 30%) before announcing no results. Apologizing without searching is a failure.
 
@@ -88,10 +98,10 @@ A result from "all_projects" is still a real result. Share it. Frame it honestly
 
 # Conversation shape (default)
 1. Short greeting + ask how you can help (ONE message).
-2. Customer describes a need. You count how many of the 5 qualifying fields they've given.
-3. While < 3 fields known: ask ONE clarifying question per message in priority order (unit_type → city → bedrooms → price_range → district), acknowledging what they've said.
-4. As soon as ≥ 3 fields are known: call search_projects with those filters → present top 2–3 matches with price + location.
-5. Customer picks one → get_project for full details → answer follow-ups from the real data.
+2. Customer describes a need. Count how many of the 5 qualifying fields they've given.
+3. Ask ONE missing field per message in priority order (unit_type → city → bedrooms → price_range → district), acknowledging each answer. If the customer refuses a specific field, skip it and ask the next.
+4. Whenever you call search_projects: if all 5 fields are known, present 2–3 specific top picks from `top_picks`. Otherwise present the `aggregate` (count, top districts, price range) and ask the customer which slice to focus on.
+5. Once narrowed to a specific project, call get_project for full details and answer follow-ups from the real data.
 6. Customer interested → ask name + phone → save_lead → close warmly.
 
 Begin when the user sends their first message.`;
@@ -102,7 +112,7 @@ export const AGENT_TOOLS: ToolUnion[] = [
   {
     name: 'search_projects',
     description:
-      "Search Wassel's active project portfolio. Returns up to 15 matching projects with summary info (id, title, city, district, starting price, unit types). Call this FIRST when the customer asks about availability or describes preferences. Pass only filters the customer has actually stated.",
+      "Search Wassel's project portfolio (our_projects + targeted_projects + all_projects). Returns BOTH an `aggregate` over the full match set (total count, top districts with counts, price range, bedroom range) AND `top_picks` (up to 15 ranked specific projects). When the customer's request is fully qualified (all 5 of unit_type/city/bedrooms/price_range/district are known), show specific projects from top_picks. When the request is under-qualified, show the aggregate so the customer can pick a slice to drill into.",
     input_schema: {
       type: 'object',
       properties: {
@@ -240,7 +250,7 @@ async function searchProjects(
   }
   const rows = (data ?? []) as RecordRow[];
   console.log('[search_projects] rows fetched', rows.length);
-  const scored = rows
+  const allMatches = rows
     .map((r) => ({ row: r, score: scoreMatch(r.data, input) }))
     .filter((x) => x.score > 0 && matchesAllProvided(x.row.data, input))
     // Prefer our_projects > targeted > all when scores tie, so Wassel-owned
@@ -248,16 +258,85 @@ async function searchProjects(
     .sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
       return sourceRank(modelMap.get(a.row.model_id)) - sourceRank(modelMap.get(b.row.model_id));
-    })
-    .slice(0, 15);
-  console.log('[search_projects] post-filter count', scored.length);
-  const summary = scored.map(({ row }) => ({
+    });
+  console.log('[search_projects] total matches', allMatches.length);
+
+  const top = allMatches.slice(0, 15).map(({ row }) => ({
     id: row.id,
     source: modelMap.get(row.model_id) ?? 'unknown',
     ...cleanRecord(row.data),
   }));
-  console.log('[search_projects] returning', summary.length, 'projects');
-  return JSON.stringify({ projects: summary, total: summary.length });
+  const aggregate = aggregateMatches(allMatches.map((m) => m.row));
+  console.log('[search_projects] returning', top.length, 'top picks +', aggregate.total, 'aggregate');
+  return JSON.stringify({
+    total: aggregate.total,
+    aggregate,
+    top_picks: top,
+  });
+}
+
+// Aggregate stats over the FULL match set (not just the top 15 picks). The
+// prompt directs the agent to surface these when fewer than all 5
+// qualifying fields are known — better than guessing 3 results out of
+// hundreds. Customer self-narrows by picking a district / price band.
+function aggregateMatches(rows: RecordRow[]): {
+  total: number;
+  by_city: Record<string, number>;
+  top_districts: Array<{ district: string; count: number }>;
+  top_unit_types: Array<{ type: string; count: number }>;
+  price_range_overall: { min: number; max: number } | null;
+  bedroom_range_overall: { min: number; max: number } | null;
+} {
+  const byCity: Record<string, number> = {};
+  const byDistrict: Record<string, number> = {};
+  const byUnit: Record<string, number> = {};
+  let pmin = Infinity;
+  let pmax = -Infinity;
+  let bmin = Infinity;
+  let bmax = -Infinity;
+
+  for (const r of rows) {
+    const d = r.data;
+    const city = d.preferred_city;
+    if (typeof city === 'string' && city.trim()) byCity[city] = (byCity[city] ?? 0) + 1;
+    const district = d.preferred_neighborhoods;
+    if (typeof district === 'string' && district.trim())
+      byDistrict[district] = (byDistrict[district] ?? 0) + 1;
+    // Unit type lives under various slugs depending on how the model was
+    // built. We just collect anything plausibly-typed for honesty.
+    for (const k of ['unit_type', 'property_type', 'type']) {
+      const v = d[k];
+      if (typeof v === 'string' && v.trim()) byUnit[v] = (byUnit[v] ?? 0) + 1;
+    }
+    const lp = pickRangeMin(d, ['price_range', 'price']);
+    const hp = pickRangeMax(d, ['price_range', 'price']);
+    if (lp != null) pmin = Math.min(pmin, lp);
+    if (hp != null) pmax = Math.max(pmax, hp);
+    const lb = pickRangeMin(d, ['bedroom_range', 'bedrooms', 'rooms']);
+    const hb = pickRangeMax(d, ['bedroom_range', 'bedrooms', 'rooms']);
+    if (lb != null) bmin = Math.min(bmin, lb);
+    if (hb != null) bmax = Math.max(bmax, hb);
+  }
+
+  const topDistricts = Object.entries(byDistrict)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([district, count]) => ({ district, count }));
+  const topUnits = Object.entries(byUnit)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([type, count]) => ({ type, count }));
+
+  return {
+    total: rows.length,
+    by_city: byCity,
+    top_districts: topDistricts,
+    top_unit_types: topUnits,
+    price_range_overall:
+      pmin === Infinity || pmax === -Infinity ? null : { min: pmin, max: pmax },
+    bedroom_range_overall:
+      bmin === Infinity || bmax === -Infinity ? null : { min: bmin, max: bmax },
+  };
 }
 
 function sourceRank(name: string | undefined): number {
