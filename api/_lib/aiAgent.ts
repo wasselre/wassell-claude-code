@@ -241,6 +241,36 @@ interface UnitTypeMatcher {
   fieldType: 'dropdown' | 'multiselect';
 }
 
+// Property-type synonyms. Different schemas list singular and plural forms
+// as separate options (شقة + شقق, فيلا + فلل, دور + أدوار). When the agent
+// asks for one form we want to also match the other — otherwise we miss
+// half the inventory. Each row is a synonym group; any term in the group
+// resolves to the whole group when used as a needle.
+const PROPERTY_TYPE_SYNONYMS: ReadonlyArray<readonly string[]> = [
+  ['apartment', 'apartments', 'apt', 'flat', 'flats', 'شقة', 'شقق'],
+  ['villa', 'villas', 'فيلا', 'فلل'],
+  ['townhouse', 'townhouses', 'تاون هاوس', 'تاون-هاوس', 'تاون'],
+  ['studio', 'studios', 'استوديو', 'ستوديو'],
+  ['duplex', 'duplexes', 'دبلكس', 'دوبلكس'],
+  ['floor', 'floors', 'دور', 'أدوار', 'ادوار'],
+  ['land', 'lands', 'plot', 'plots', 'أرض', 'ارض', 'اراضي', 'أراضي'],
+  ['house', 'houses', 'بيت', 'بيوت', 'منزل', 'منازل'],
+  ['building', 'buildings', 'عمارة', 'عمائر', 'مبنى', 'مباني'],
+];
+
+/** Given an agent-supplied property_type, return all synonymous strings to
+ *  test against schema options. If the input isn't in the synonym table the
+ *  caller still gets back a 1-element array with the original needle. */
+function expandPropertyType(needle: string): string[] {
+  const lower = needle.toLowerCase().trim();
+  for (const group of PROPERTY_TYPE_SYNONYMS) {
+    if (group.some((s) => s.toLowerCase() === lower)) {
+      return group.map((s) => s.toLowerCase());
+    }
+  }
+  return [lower];
+}
+
 async function searchProjects(
   supabase: SupabaseClient,
   input: SearchInput,
@@ -265,11 +295,13 @@ async function searchProjects(
   console.log('[search_projects] models found', modelMap.size, [...modelMap.values()]);
 
   // Resolve the requested property_type (free-text label) to concrete option
-  // matchers across the project models' schemas. Bidirectional substring
-  // match catches "شقة" against an option labeled "شقق" and vice versa.
+  // matchers across the project models' schemas. Use the synonym table so
+  // singular/plural pairs (شقة + شقق, فيلا + فلل, دور + أدوار) resolve to
+  // the whole group — schemas list them as separate options and matching
+  // only one form misses ~half the inventory.
   const unitTypeMatchers: UnitTypeMatcher[] = [];
   if (input.property_type) {
-    const needle = input.property_type.toLowerCase().trim();
+    const needles = expandPropertyType(input.property_type);
     for (const m of modelsData) {
       const schema = m.schema as { sections?: Array<{ fields?: Array<Record<string, unknown>> }> } | undefined;
       for (const sec of schema?.sections ?? []) {
@@ -284,9 +316,13 @@ async function searchProjects(
           for (const opt of opts) {
             const ar = (opt.label_ar ?? '').toLowerCase().trim();
             const en = (opt.label_en ?? '').toLowerCase().trim();
-            const matches =
-              (ar && (ar.includes(needle) || needle.includes(ar))) ||
-              (en && (en.includes(needle) || needle.includes(en)));
+            // Bidirectional substring match against EVERY synonym so
+            // "شقة" pulls in records tagged with شقق as well, and
+            // "apartment" pulls in both Arabic forms.
+            const matches = needles.some((n) =>
+              (ar && (ar.includes(n) || n.includes(ar))) ||
+              (en && (en.includes(n) || n.includes(en))),
+            );
             if (matches && typeof opt.value === 'string') {
               unitTypeMatchers.push({
                 modelId: m.id as string,
