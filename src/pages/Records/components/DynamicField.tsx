@@ -22,6 +22,52 @@ const INLINE_OPTION_COLORS = [
   '#06B6D4', '#84CC16', '#F97316', '#6366F1',
 ];
 
+/**
+ * Stable slug from a user-typed option label. Replaces the previous
+ * `value: uuid()` so that re-typing the same label (e.g. "الرياض") produces
+ * the same `value` instead of a fresh UUID — old code caused filter
+ * localStorage / record values / option list to drift apart whenever an
+ * option got re-created after a schema regression.
+ *
+ * Unicode-aware: keeps Arabic/Latin letters and digits, strips diacritics
+ * and punctuation, lowercases, replaces whitespace runs with hyphens.
+ */
+function slugifyOptionLabel(label: string): string {
+  const base = label
+    .trim()
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '') // strip Latin diacritics
+    .replace(/[^\p{L}\p{N}\s-]/gu, '') // keep letters/digits/space/hyphen
+    .trim()
+    .replace(/\s+/g, '-');
+  return base || 'option';
+}
+
+/**
+ * Find an existing option on this field that matches the typed label.
+ * Compares against label_ar AND label_en (case- and whitespace-insensitive)
+ * AND against the slugified value, so re-typing the same label — even with
+ * different casing/spacing — surfaces the existing option instead of
+ * creating a duplicate. Critical: this also rescues UUID-valued options
+ * that pre-date the slug-value change. If a user previously inline-created
+ * "الرياض" (got UUID-A) and types "الرياض" again, we return UUID-A and
+ * don't create a new entry.
+ */
+function findExistingOption(
+  options: readonly FieldOption[],
+  label: string,
+): FieldOption | undefined {
+  const norm = label.trim().toLowerCase();
+  const slug = slugifyOptionLabel(label);
+  return options.find(
+    (o) =>
+      (o.label_ar ?? '').trim().toLowerCase() === norm ||
+      (o.label_en ?? '').trim().toLowerCase() === norm ||
+      o.value === slug,
+  );
+}
+
 interface DynamicFieldProps {
   field: ModelField;
   value: unknown;
@@ -53,11 +99,32 @@ export default function DynamicField({ field, value, onChange, recordData, compa
     );
     if (!owningModel) return '';
     const existing = field.options ?? [];
+
+    // Dedupe: if an option with this label (or matching slug) already exists,
+    // return its value instead of creating a duplicate. Prevents the UUID-
+    // drift bug where re-typing "الرياض" produced a new UUID each time and
+    // broke filters that referenced the older one.
+    const existingMatch = findExistingOption(existing, label);
+    if (existingMatch) return existingMatch.value;
+
+    // Stable, deterministic value from the label so re-creates produce the
+    // same value. Append a numeric suffix on the rare case where two
+    // distinct labels slugify to the same string (e.g. "الرياض!" and
+    // "الرياض?" both → "الرياض").
+    const baseSlug = slugifyOptionLabel(label);
+    const usedValues = new Set(existing.map((o) => o.value));
+    let value = baseSlug;
+    let suffix = 2;
+    while (usedValues.has(value)) {
+      value = `${baseSlug}-${suffix}`;
+      suffix++;
+    }
+
     const newOption: FieldOption = {
       id: uuid(),
       label_ar: label,
       label_en: label,
-      value: uuid(),
+      value,
       color: INLINE_OPTION_COLORS[existing.length % INLINE_OPTION_COLORS.length],
     };
     const updatedModel = {
