@@ -1119,3 +1119,148 @@ ALTER TABLE activity_log ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "Authenticated full access" ON activity_log;
 CREATE POLICY "Authenticated full access" ON activity_log FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- ============================================================
+-- Auto-generated per-model views (added 2026-04-26)
+-- ============================================================
+-- Each model in the `models` table gets a `v_<name>` view that materializes
+-- its schema fields as proper columns over the unified `records` JSONB. The
+-- AFTER INSERT/UPDATE/DELETE trigger keeps views in sync — saving a model
+-- in the Builder regenerates its view atomically. Views are read-only by
+-- design; the app keeps writing to `records`.
+--
+-- Why: makes `records` browsable in the Supabase Table Editor like a normal
+-- per-model table, lets external BI tools (Metabase, etc.) connect without
+-- learning JSONB tricks, and makes ad-hoc SQL reports human-readable. No
+-- schema migration, no app changes — JSONB stays the source of truth.
+
+-- Safe-cast helpers — return NULL on parse failure rather than erroring out
+-- the whole view when one row has bad data.
+CREATE OR REPLACE FUNCTION public.try_numeric(t text)
+RETURNS numeric LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+BEGIN
+  IF t IS NULL OR t = '' THEN RETURN NULL; END IF;
+  RETURN t::numeric;
+EXCEPTION WHEN others THEN RETURN NULL;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.try_timestamptz(t text)
+RETURNS timestamptz LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+BEGIN
+  IF t IS NULL OR t = '' THEN RETURN NULL; END IF;
+  RETURN t::timestamptz;
+EXCEPTION WHEN others THEN RETURN NULL;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.try_boolean(t text)
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+BEGIN
+  IF t IS NULL OR t = '' THEN RETURN NULL; END IF;
+  RETURN t::boolean;
+EXCEPTION WHEN others THEN RETURN NULL;
+END;
+$fn$;
+
+-- Build + execute "CREATE OR REPLACE VIEW v_<model>" from a single model's schema.
+-- WITH (security_invoker = true) so the view honors the caller's RLS, not the
+-- function-owner's privileges — necessary for future per-tenant isolation.
+CREATE OR REPLACE FUNCTION public.regenerate_model_view(p_model_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model       record;
+  v_view_name   text;
+  v_field       jsonb;
+  v_fname       text;
+  v_ftype       text;
+  v_parts       text[] := ARRAY['id', 'created_at', 'updated_at', 'model_id'];
+  v_sql         text;
+BEGIN
+  SELECT id, name, schema INTO v_model FROM public.models WHERE id = p_model_id;
+  IF NOT FOUND THEN RETURN; END IF;
+  v_view_name := 'v_' || v_model.name;
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    IF v_ftype = 'range' THEN
+      v_parts := v_parts || format('public.try_numeric(data->%L->>''min'') AS %I', v_fname, v_fname || '_min');
+      v_parts := v_parts || format('public.try_numeric(data->%L->>''max'') AS %I', v_fname, v_fname || '_max');
+    ELSIF v_ftype IN ('number', 'currency', 'formula') THEN
+      v_parts := v_parts || format('public.try_numeric(data->>%L) AS %I', v_fname, v_fname);
+    ELSIF v_ftype IN ('date', 'datetime') THEN
+      v_parts := v_parts || format('public.try_timestamptz(data->>%L) AS %I', v_fname, v_fname);
+    ELSIF v_ftype = 'checkbox' THEN
+      v_parts := v_parts || format('public.try_boolean(data->>%L) AS %I', v_fname, v_fname);
+    ELSIF v_ftype IN ('multiselect', 'table', 'notes') THEN
+      v_parts := v_parts || format('(data->%L) AS %I', v_fname, v_fname);
+    ELSE
+      v_parts := v_parts || format('(data->>%L) AS %I', v_fname, v_fname);
+    END IF;
+  END LOOP;
+  v_sql := format(
+    'CREATE OR REPLACE VIEW public.%I WITH (security_invoker = true) AS SELECT %s FROM public.records WHERE model_id = %L',
+    v_view_name, array_to_string(v_parts, ', '), v_model.id
+  );
+  EXECUTE v_sql;
+  EXECUTE format('GRANT SELECT ON public.%I TO authenticated, anon, service_role', v_view_name);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.drop_model_view(p_model_name text)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE v_view_name text;
+BEGIN
+  IF p_model_name IS NULL OR p_model_name = '' THEN RETURN; END IF;
+  v_view_name := 'v_' || p_model_name;
+  EXECUTE format('DROP VIEW IF EXISTS public.%I', v_view_name);
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION public.regenerate_all_model_views()
+RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE v_count integer := 0; v_id uuid;
+BEGIN
+  FOR v_id IN SELECT id FROM public.models LOOP
+    PERFORM public.regenerate_model_view(v_id);
+    v_count := v_count + 1;
+  END LOOP;
+  RETURN v_count;
+END;
+$fn$;
+
+-- Trigger: keeps views in sync with model edits. Wraps in EXCEPTION so a
+-- view-sync failure never breaks the underlying model save.
+CREATE OR REPLACE FUNCTION public.models_view_sync_trigger()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM public.drop_model_view(OLD.name);
+    RETURN OLD;
+  END IF;
+  IF TG_OP = 'UPDATE' AND OLD.name IS DISTINCT FROM NEW.name THEN
+    PERFORM public.drop_model_view(OLD.name);
+  END IF;
+  PERFORM public.regenerate_model_view(NEW.id);
+  RETURN NEW;
+EXCEPTION WHEN others THEN
+  RAISE WARNING '[models_view_sync] % on model %: %', TG_OP, COALESCE(NEW.id, OLD.id), SQLERRM;
+  RETURN COALESCE(NEW, OLD);
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS models_view_sync ON public.models;
+CREATE TRIGGER models_view_sync
+AFTER INSERT OR UPDATE OF name, schema OR DELETE
+ON public.models
+FOR EACH ROW
+EXECUTE FUNCTION public.models_view_sync_trigger();
+
+-- One-time seed for fresh installs: regenerate every view from current models.
+-- Idempotent — running on an existing install is a no-op via CREATE OR REPLACE.
+SELECT public.regenerate_all_model_views();

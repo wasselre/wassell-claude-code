@@ -118,6 +118,24 @@ chat_messages     — WhatsApp messages per conversation (Realtime-enabled)
 whatsapp_numbers  — local overlay on Haberchat devices: friendly name + default flag
 ```
 
+## Auto-generated per-model views (added 2026-04-26)
+
+Every model in `models` has a corresponding `v_<name>` view in the `public` schema (e.g. `v_all_projects`, `v_clients`, `v_competitors`). Views materialize each model's schema fields as **proper typed columns** over the unified `records` JSONB table, so the Supabase Table Editor / SQL Editor / external BI tools see one clean per-model table instead of opaque JSON blobs.
+
+- **Always in sync.** A trigger on the `models` table (`models_view_sync`) regenerates the view on every INSERT/UPDATE of `name` or `schema`, and drops it on DELETE. Adding a field in the Builder → it appears as a column ~immediately. Renaming a model → old view dropped, new one created.
+- **Read-only by design.** The app keeps writing to `records`. Views are for inspection, reporting, and external integrations. There's no scenario where the app should write to a `v_*` view.
+- **Type mapping** (in `regenerate_model_view`):
+  - `number` / `currency` / `formula` → `numeric` (via `try_numeric`)
+  - `date` / `datetime` → `timestamptz` (via `try_timestamptz`)
+  - `checkbox` → `boolean`
+  - `range` → expanded into `<name>_min` and `<name>_max`
+  - `multiselect` / `table` / `notes` → `jsonb` (kept structured)
+  - everything else → `text`
+- **Safe casts.** `try_numeric` / `try_timestamptz` / `try_boolean` return `NULL` on parse failure rather than erroring out the whole view query — protects against the "one row has bad data, the view is unusable" failure mode.
+- **Where defined:** `supabase/schema.sql`, last block ("Auto-generated per-model views"). Idempotent re-run.
+
+If you add a new field type to the codebase, update the type mapping in `regenerate_model_view` so the new type lands in views with an appropriate column type. Otherwise it falls through to `text` (still works, just not natively typed).
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline
