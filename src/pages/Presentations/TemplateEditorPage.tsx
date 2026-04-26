@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowRight, Save, Lock } from 'lucide-react';
+import { ArrowRight, Save, Lock, Sparkles } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import type { PresentationTemplate, PresentationToolName } from '@/types';
 import InputsEditor from './components/template/InputsEditor';
 import ToolsEditor from './components/template/ToolsEditor';
 import StepsEditor from './components/template/StepsEditor';
+import TemplateAssistantPanel from './components/template/TemplateAssistantPanel';
 
 /**
  * `/presentations/templates/:id` — edit a user-authored template.
@@ -39,6 +40,7 @@ export default function TemplateEditorPage(): JSX.Element {
   // builder/editor pattern (e.g. WorkflowEditorPage).
   const [draft, setDraft] = useState<PresentationTemplate | null>(template);
   const [dirty, setDirty] = useState(false);
+  const [assistantOpen, setAssistantOpen] = useState(false);
 
   useEffect(() => {
     setDraft(template);
@@ -131,12 +133,20 @@ export default function TemplateEditorPage(): JSX.Element {
           </h1>
           <p className="text-sm text-charcoal/50 mt-1 font-mono">{draft.slug}</p>
         </div>
-        {!readonly && (
-          <Button onClick={handleSave} disabled={!dirty || validationError !== null}>
-            <Save size={14} />
-            {isAr ? 'حفظ' : 'Save'}
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {!readonly && (
+            <Button variant="ghost" onClick={() => setAssistantOpen((v) => !v)}>
+              <Sparkles size={14} />
+              {isAr ? 'مساعد ذكي' : 'AI helper'}
+            </Button>
+          )}
+          {!readonly && (
+            <Button onClick={handleSave} disabled={!dirty || validationError !== null}>
+              <Save size={14} />
+              {isAr ? 'حفظ' : 'Save'}
+            </Button>
+          )}
+        </div>
       </div>
 
       {readonly && (
@@ -371,6 +381,14 @@ export default function TemplateEditorPage(): JSX.Element {
           onChange={(steps) => patch({ steps })}
         />
       </Section>
+
+      {/* AI helper panel — fixed-position drawer; controlled by the
+          "AI helper" toggle in the page header. */}
+      <TemplateAssistantPanel
+        open={assistantOpen && !readonly}
+        onClose={() => setAssistantOpen(false)}
+        template={draft}
+      />
     </div>
   );
 }
