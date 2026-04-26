@@ -98,7 +98,10 @@ export default function FieldFilterPopover({
         <ValuesPicker
           field={field}
           value={value?.kind === 'values' ? value.values : []}
-          onChange={(values) => onChange(values.length ? { kind: 'values', values } : undefined)}
+          mode={value?.kind === 'values' ? (value.mode ?? 'is') : 'is'}
+          onChange={(values, mode) =>
+            onChange(values.length ? { kind: 'values', values, mode } : undefined)
+          }
           isAr={isAr}
           recordsByModel={records}
           users={users}
@@ -143,6 +146,7 @@ export default function FieldFilterPopover({
 function ValuesPicker({
   field,
   value,
+  mode,
   onChange,
   isAr,
   recordsByModel,
@@ -150,7 +154,8 @@ function ValuesPicker({
 }: {
   field: ModelField;
   value: string[];
-  onChange: (values: string[]) => void;
+  mode: 'is' | 'is_not';
+  onChange: (values: string[], mode: 'is' | 'is_not') => void;
   isAr: boolean;
   recordsByModel: Record<string, import('@/types').AppRecord[]>;
   users: import('@/types').User[];
@@ -188,11 +193,26 @@ function ValuesPicker({
   }, [options, query]);
 
   const toggle = (v: string) => {
-    onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
+    onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v], mode);
   };
 
   return (
     <div>
+      <div className="flex gap-1 mb-2 p-0.5 bg-cream/60 rounded-lg">
+        {(['is', 'is_not'] as const).map((m) => (
+          <button
+            key={m}
+            onClick={() => onChange(value, m)}
+            className={`flex-1 px-2 py-1 rounded-md text-[11px] font-bold transition-colors ${
+              mode === m
+                ? 'bg-white text-copper shadow-sm'
+                : 'text-charcoal/50 hover:text-charcoal'
+            }`}
+          >
+            {t(m === 'is' ? 'adhoc.is' : 'adhoc.is_not')}
+          </button>
+        ))}
+      </div>
       {options.length > 6 && (
         <div className="relative mb-2">
           <Search size={12} className="absolute start-2 top-1/2 -translate-y-1/2 text-charcoal/30" />

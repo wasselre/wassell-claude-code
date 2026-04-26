@@ -13,7 +13,11 @@ import type { AppRecord, ModelField } from '@/types';
  * The two layer together: view conditions apply first, then ad-hoc on top.
  */
 export type AdhocFieldFilter =
-  | { kind: 'values'; values: string[] } // dropdown, multiselect, lookup, assignee, section_selector
+  // dropdown, multiselect, lookup, assignee, section_selector
+  // mode 'is' (default): record passes if ANY picked value is in the field.
+  // mode 'is_not': record passes if NONE of the picked values is in the field
+  // (records with no value for the field also pass — they have none of the picked values).
+  | { kind: 'values'; values: string[]; mode?: 'is' | 'is_not' }
   | { kind: 'checkbox'; value: 'true' | 'false' }
   | { kind: 'date_range'; from?: string; to?: string }
   | { kind: 'number_range'; min?: number; max?: number }
@@ -75,12 +79,18 @@ function evaluateAdhoc(recordValue: unknown, filter: AdhocFieldFilter): boolean 
   switch (filter.kind) {
     case 'values': {
       if (filter.values.length === 0) return true;
+      const isNot = filter.mode === 'is_not';
+      let matched: boolean;
       if (Array.isArray(recordValue)) {
-        // multiselect / section_selector — record passes if ANY picked value is in the record array
-        return (recordValue as unknown[]).some((v) => filter.values.includes(String(v)));
+        // multiselect / section_selector — "is" passes when ANY picked value is in the array
+        matched = (recordValue as unknown[]).some((v) => filter.values.includes(String(v)));
+      } else if (recordValue === undefined || recordValue === null) {
+        // no value: doesn't match any picked value → fail under "is", pass under "is_not"
+        matched = false;
+      } else {
+        matched = filter.values.includes(String(recordValue));
       }
-      if (recordValue === undefined || recordValue === null) return false;
-      return filter.values.includes(String(recordValue));
+      return isNot ? !matched : matched;
     }
     case 'checkbox':
       return String(!!recordValue) === filter.value;
@@ -192,8 +202,10 @@ export function summarizeAdhoc(
         if (opt) return isAr ? opt.label_ar : opt.label_en;
         return v;
       });
-      if (labels.length <= 2) return labels.join(isAr ? '، ' : ', ');
-      return `${labels.slice(0, 2).join(isAr ? '، ' : ', ')} +${labels.length - 2}`;
+      const joined = labels.length <= 2
+        ? labels.join(isAr ? '، ' : ', ')
+        : `${labels.slice(0, 2).join(isAr ? '، ' : ', ')} +${labels.length - 2}`;
+      return filter.mode === 'is_not' ? `≠ ${joined}` : joined;
     }
     case 'checkbox':
       return filter.value === 'true' ? (isAr ? 'نعم' : 'Yes') : (isAr ? 'لا' : 'No');

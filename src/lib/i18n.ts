@@ -435,6 +435,8 @@ const resources = {
       'adhoc.min': 'الأدنى',
       'adhoc.max': 'الأعلى',
       'adhoc.contains': 'يحتوي على',
+      'adhoc.is': 'هو',
+      'adhoc.is_not': 'ليس',
       'adhoc.no_filterable_fields': 'لا توجد حقول قابلة للتصفية في هذا النموذج',
 
       // Workflows
@@ -979,6 +981,8 @@ const resources = {
       'adhoc.min': 'Min',
       'adhoc.max': 'Max',
       'adhoc.contains': 'Contains',
+      'adhoc.is': 'Is',
+      'adhoc.is_not': 'Is not',
       'adhoc.no_filterable_fields': 'No filterable fields in this model',
 
       // Workflows
