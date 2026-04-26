@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.ts';
 import type {
+  PresentationBrand,
   PresentationJobRow,
   PresentationStep,
   PresentationStepOutput,
@@ -97,6 +98,13 @@ export async function runJob(
   // a placeholder-substitution language.
   const inputsBlock = formatInputs(job.inputs);
 
+  // Build the standing brand block once. When the template has a brand
+  // attached, every step's user message carries this block so the agent
+  // knows the colors, typography, and design rules without the author
+  // repeating them in each step's prompt. Null brand = empty string =
+  // no injection (no extra section header rendered).
+  const brandBlock = formatBrand(tpl.brand);
+
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i]!;
 
@@ -137,7 +145,13 @@ export async function runJob(
       ? step.tools.filter((t) => tpl.tools.includes(t))
       : [...tpl.tools];
 
-    const userMessage = buildStepUserMessage(step, job.inputs, inputsBlock, stepOutputs.slice(0, i));
+    const userMessage = buildStepUserMessage(
+      step,
+      job.inputs,
+      inputsBlock,
+      brandBlock,
+      stepOutputs.slice(0, i),
+    );
 
     let stepResult: AgentLoopResult;
     try {
@@ -225,11 +239,19 @@ function buildStepUserMessage(
   step: PresentationStep,
   inputs: Record<string, unknown>,
   inputsBlock: string,
+  brandBlock: string,
   priorOutputs: PresentationStepOutput[],
 ): string {
   const parts: string[] = [];
   parts.push(`# ${step.kind.toUpperCase()} STEP`);
   parts.push('');
+  // Brand goes BEFORE user inputs because it sets the visual / textual
+  // ground rules the agent should apply to whatever comes next. When the
+  // template has no brand, brandBlock is empty and renders as nothing.
+  if (brandBlock) {
+    parts.push(brandBlock);
+    parts.push('');
+  }
   parts.push('## User inputs');
   parts.push(inputsBlock);
   parts.push('');
@@ -250,6 +272,83 @@ function buildStepUserMessage(
     ),
   );
   return parts.join('\n');
+}
+
+/** Renders the template's brand spec as a markdown block suitable for the
+ *  agent's user prompt. Returns an empty string when the template has no
+ *  brand attached, so the caller can drop it in unconditionally. */
+function formatBrand(brand: PresentationBrand | null): string {
+  if (!brand) return '';
+  const isMeaningful =
+    brand.colors.length > 0 ||
+    brand.font_family.trim() !== '' ||
+    brand.font_notes.trim() !== '' ||
+    brand.design_rules.trim() !== '' ||
+    brand.text_rules.trim() !== '' ||
+    brand.forbidden_phrases.length > 0 ||
+    brand.required_phrases.length > 0;
+  if (!isMeaningful) return '';
+
+  const parts: string[] = ['## Brand & design rules'];
+  parts.push('Apply these to everything you produce in this step. They were');
+  parts.push('configured at the template level and override any conflicting');
+  parts.push('default behavior.');
+  parts.push('');
+
+  if (brand.colors.length > 0) {
+    parts.push('### Color palette');
+    for (const c of brand.colors) {
+      const hex = c.hex.startsWith('#') ? c.hex : `#${c.hex}`;
+      const role = c.role_en || c.role_ar || '(unlabeled)';
+      const note = c.notes ? ` — ${c.notes}` : '';
+      parts.push(`- \`${hex}\` ${role}${note}`);
+    }
+    parts.push('');
+  }
+
+  if (brand.font_family.trim() !== '' || brand.font_notes.trim() !== '') {
+    parts.push('### Typography');
+    if (brand.font_family.trim() !== '') {
+      parts.push(`- Font family: **${brand.font_family.trim()}**`);
+    }
+    if (brand.font_notes.trim() !== '') {
+      parts.push(brand.font_notes.trim());
+    }
+    parts.push('');
+  }
+
+  if (brand.design_rules.trim() !== '') {
+    parts.push('### Design & layout rules');
+    parts.push(brand.design_rules.trim());
+    parts.push('');
+  }
+
+  if (brand.text_rules.trim() !== '') {
+    parts.push('### Text & content rules');
+    parts.push(brand.text_rules.trim());
+    parts.push('');
+  }
+
+  if (brand.forbidden_phrases.length > 0) {
+    parts.push('### Forbidden vocabulary');
+    for (const p of brand.forbidden_phrases) {
+      const replacement = p.right ? ` → use **${p.right}**` : '';
+      const note = p.note ? ` (${p.note})` : '';
+      parts.push(`- Never write **${p.wrong}**${replacement}${note}`);
+    }
+    parts.push('');
+  }
+
+  if (brand.required_phrases.length > 0) {
+    parts.push('### Required exact phrases');
+    for (const p of brand.required_phrases) {
+      const note = p.note ? ` — ${p.note}` : '';
+      parts.push(`- ${p.context}: **${p.phrase}**${note}`);
+    }
+    parts.push('');
+  }
+
+  return parts.join('\n').trim();
 }
 
 /** `{{ input_name }}` → the value of that input. Whitespace inside the

@@ -1100,6 +1100,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       ...tpl,
       tools: tpl.tools ?? [],
       steps: tpl.steps ?? [],
+      brand: tpl.brand ?? null,
       is_user_authored: tpl.is_user_authored ?? false,
       created_by: tpl.created_by ?? null,
     }));
@@ -2616,6 +2617,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       is_available: input.is_available,
       tools: input.tools,
       steps: input.steps,
+      brand: input.brand ?? null,
       // Cloud-worker era — `command` is a marker, not a slash command.
       // The worker reads `tools` + `steps` and ignores this field.
       command: 'cloud:agent',
@@ -2712,6 +2714,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       is_available: source.is_available,
       tools: source.tools,
       steps: source.steps,
+      brand: source.brand,
     });
   },
 

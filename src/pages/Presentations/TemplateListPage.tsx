@@ -70,6 +70,7 @@ export default function TemplateListPage(): JSX.Element {
       is_available: true,
       tools: [],
       steps: [],
+      brand: null,
     });
     navigate(`/presentations/templates/${tpl.id}`);
   };

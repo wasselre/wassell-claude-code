@@ -36,6 +36,38 @@ export interface PresentationStep {
   tools: PresentationToolName[];
 }
 
+export interface PresentationBrandColor {
+  id: string;
+  role_en: string;
+  role_ar: string;
+  hex: string;
+  notes?: string;
+}
+
+export interface PresentationBrandPhrase {
+  id: string;
+  wrong: string;
+  right?: string;
+  note?: string;
+}
+
+export interface PresentationBrandRequiredPhrase {
+  id: string;
+  context: string;
+  phrase: string;
+  note?: string;
+}
+
+export interface PresentationBrand {
+  colors: PresentationBrandColor[];
+  font_family: string;
+  font_notes: string;
+  design_rules: string;
+  text_rules: string;
+  forbidden_phrases: PresentationBrandPhrase[];
+  required_phrases: PresentationBrandRequiredPhrase[];
+}
+
 export interface PresentationTemplateRow {
   id: string;
   slug: string;
@@ -43,6 +75,7 @@ export interface PresentationTemplateRow {
   label_en: string;
   tools: PresentationToolName[];
   steps: PresentationStep[];
+  brand: PresentationBrand | null;
   is_user_authored: boolean;
 }
 

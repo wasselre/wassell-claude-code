@@ -36,6 +36,15 @@ export function buildTemplateContext(template: PresentationTemplate): {
   tools: string[];
   inputs: Array<{ name: string; label_en?: string; type?: string; required?: boolean }>;
   steps: Array<{ kind: string; prompt?: string; tools?: string[]; label_en?: string }>;
+  brand: {
+    colors?: Array<{ role_en?: string; role_ar?: string; hex?: string; notes?: string }>;
+    font_family?: string;
+    font_notes?: string;
+    design_rules?: string;
+    text_rules?: string;
+    forbidden_phrases?: Array<{ wrong: string; right?: string; note?: string }>;
+    required_phrases?: Array<{ context: string; phrase: string; note?: string }>;
+  } | null;
 } {
   return {
     label_en: template.label_en,
@@ -56,6 +65,30 @@ export function buildTemplateContext(template: PresentationTemplate): {
       tools: s.tools,
       label_en: s.label_en,
     })),
+    brand: template.brand
+      ? {
+          colors: template.brand.colors.map((c) => ({
+            role_en: c.role_en,
+            role_ar: c.role_ar,
+            hex: c.hex,
+            notes: c.notes,
+          })),
+          font_family: template.brand.font_family,
+          font_notes: template.brand.font_notes,
+          design_rules: template.brand.design_rules,
+          text_rules: template.brand.text_rules,
+          forbidden_phrases: template.brand.forbidden_phrases.map((p) => ({
+            wrong: p.wrong,
+            right: p.right,
+            note: p.note,
+          })),
+          required_phrases: template.brand.required_phrases.map((p) => ({
+            context: p.context,
+            phrase: p.phrase,
+            note: p.note,
+          })),
+        }
+      : null,
   };
 }
 

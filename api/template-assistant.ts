@@ -46,6 +46,15 @@ interface TemplateContext {
   tools?: string[];
   inputs?: Array<{ name: string; label_en?: string; type?: string; required?: boolean }>;
   steps?: Array<{ kind: string; prompt?: string; tools?: string[]; label_en?: string }>;
+  brand?: {
+    colors?: Array<{ role_en?: string; role_ar?: string; hex?: string; notes?: string }>;
+    font_family?: string;
+    font_notes?: string;
+    design_rules?: string;
+    text_rules?: string;
+    forbidden_phrases?: Array<{ wrong: string; right?: string; note?: string }>;
+    required_phrases?: Array<{ context: string; phrase: string; note?: string }>;
+  } | null;
 }
 
 interface RequestBody {
@@ -98,6 +107,20 @@ A presentation template is an ordered list of "steps". Each step is one turn of 
 - **For market analysis decks** (the Wassel default use case): research finds prices/transactions/competitors, outline organizes findings, build assembles the deck, review checks for brand violations, upload pushes to Drive.
 - **For client proposals**: tweak research to focus on the client's location and budget, build slides with property recommendations, upload.
 
+## Brand & design rules — separately configured on the template
+
+The template editor has a "Brand & design" section where the user defines a color palette, typography, design/layout rules, text rules, and banned/required vocabulary. The cloud worker injects the entire brand block into every step's user message at runtime, so step prompts DON'T need to repeat brand instructions. When you draft a step prompt, focus on what the step does (research X, build Y) — leave brand enforcement to the brand block.
+
+When the user is editing the brand section itself, you can help them:
+- Suggest standard color roles (Primary, Secondary, Accent, Background, Body text, etc.)
+- Suggest typography enforcement notes (e.g. for Arabic decks: "Set Amiri on all OOXML font slots: latin, ea, cs — Arabic falls back to theme font otherwise")
+- Suggest design rules (slide aspect, fixed sequence, footer placement, divider conventions)
+- Suggest text rules (RTL, Arabic-Indic digits ٠-٩, decimal separators ٫, hyperlink styling)
+- Suggest banned vocabulary entries with the right replacements
+- Suggest required exact phrases for specific slides
+
+If the user describes their brand verbally, structure their input into the right buckets and produce concrete entries they can copy.
+
 ## Your output style
 
 - The user is iterating on prompts. When they ask "help me write the research step," output a complete prompt they can paste into the textarea.
@@ -119,6 +142,33 @@ function formatTemplateContext(t: TemplateContext): string {
   parts.push(`- Inputs: ${t.inputs && t.inputs.length > 0
     ? t.inputs.map((i) => `${i.name} (${i.type}${i.required ? ', required' : ''})`).join(', ')
     : '(none yet)'}`);
+  parts.push('');
+  parts.push('### Brand spec');
+  if (!t.brand) {
+    parts.push('(none yet — the user can add brand colors / typography / design rules in the Brand & design section)');
+  } else {
+    const b = t.brand;
+    if (b.colors && b.colors.length > 0) {
+      parts.push(`- Colors: ${b.colors.map((c) => `${c.hex ?? '?'} ${c.role_en ?? c.role_ar ?? ''}`.trim()).join('; ')}`);
+    } else {
+      parts.push('- Colors: (none)');
+    }
+    parts.push(`- Font: ${b.font_family ? `**${b.font_family}**` : '(none)'}${b.font_notes ? ` — ${b.font_notes}` : ''}`);
+    if (b.design_rules) {
+      parts.push('- Design rules:');
+      parts.push(b.design_rules.split('\n').map((l) => '  > ' + l).join('\n'));
+    }
+    if (b.text_rules) {
+      parts.push('- Text rules:');
+      parts.push(b.text_rules.split('\n').map((l) => '  > ' + l).join('\n'));
+    }
+    if (b.forbidden_phrases && b.forbidden_phrases.length > 0) {
+      parts.push(`- Forbidden phrases: ${b.forbidden_phrases.map((p) => `"${p.wrong}"${p.right ? ` → "${p.right}"` : ''}`).join('; ')}`);
+    }
+    if (b.required_phrases && b.required_phrases.length > 0) {
+      parts.push(`- Required phrases: ${b.required_phrases.map((p) => `${p.context}: "${p.phrase}"`).join('; ')}`);
+    }
+  }
   parts.push('');
   parts.push('### Steps so far');
   if (!t.steps || t.steps.length === 0) {

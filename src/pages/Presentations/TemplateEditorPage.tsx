@@ -7,6 +7,7 @@ import type { PresentationTemplate, PresentationToolName } from '@/types';
 import InputsEditor from './components/template/InputsEditor';
 import ToolsEditor from './components/template/ToolsEditor';
 import StepsEditor from './components/template/StepsEditor';
+import BrandEditor from './components/template/BrandEditor';
 import TemplateAssistantPanel from './components/template/TemplateAssistantPanel';
 
 /**
@@ -362,6 +363,26 @@ export default function TemplateEditorPage(): JSX.Element {
             }));
             patch({ tools, steps: cleanedSteps });
           }}
+        />
+      </Section>
+
+      {/* Brand section — design rules injected into every step prompt */}
+      <Section
+        title={isAr ? 'الهوية والتصميم' : 'Brand & design'}
+        subtitle={
+          isAr
+            ? draft.brand
+              ? 'القواعد التي يحقنها الوكيل في كل خطوة'
+              : 'إضافة لوحة الألوان والخطوط وقواعد التصميم'
+            : draft.brand
+              ? 'Rules injected into every step prompt at runtime'
+              : 'Add palette, typography, and design rules'
+        }
+      >
+        <BrandEditor
+          brand={draft.brand}
+          readonly={readonly}
+          onChange={(brand) => patch({ brand })}
         />
       </Section>
 

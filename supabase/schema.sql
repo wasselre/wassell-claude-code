@@ -825,7 +825,12 @@ ALTER TABLE presentation_templates
   ADD COLUMN IF NOT EXISTS tools JSONB NOT NULL DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS is_user_authored BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  -- Phase 3.2 — per-template brand & design rules. Worker injects this
+  -- block into every step's prompt so the agent always has the brand
+  -- spec without the author repeating it in each step's instructions.
+  -- Nullable because most templates won't need it.
+  ADD COLUMN IF NOT EXISTS brand JSONB DEFAULT NULL;
 
 CREATE TABLE IF NOT EXISTS presentation_jobs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

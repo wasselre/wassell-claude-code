@@ -1174,6 +1174,62 @@ export interface PresentationStep {
   tools: PresentationToolName[];
 }
 
+/** A single named color in a template's brand palette. Free-form `role`
+ *  (e.g. "Primary", "Headers", "Body text") so users can describe how the
+ *  color is used in their brand without us imposing a fixed taxonomy. */
+export interface PresentationBrandColor {
+  /** Stable client-generated id — survives reorders. */
+  id: string;
+  /** Bilingual short label for the color's role. */
+  role_en: string;
+  role_ar: string;
+  /** Hex value (UI normalizes leading "#"). */
+  hex: string;
+  /** Optional usage note (e.g. "headers + footer band only"). */
+  notes?: string;
+}
+
+/** Vocabulary rule a template wants the agent to enforce. */
+export interface PresentationBrandPhrase {
+  id: string;
+  /** What NOT to say (or a phrase the agent should rephrase). */
+  wrong: string;
+  /** What to say instead. Optional — when blank, "wrong" is just forbidden. */
+  right?: string;
+  /** Free-form context note (e.g. "title slide subtitle only"). */
+  note?: string;
+}
+
+/** Required exact phrase tied to a context (e.g. "Slide 4 subtitle"). */
+export interface PresentationBrandRequiredPhrase {
+  id: string;
+  /** Where this must appear, e.g. "Slide 4 subtitle". */
+  context: string;
+  /** The exact text. */
+  phrase: string;
+  note?: string;
+}
+
+/** Brand & design rules attached to a presentation template. The cloud
+ *  worker injects this into every step's prompt so the agent always has
+ *  the brand spec without the author repeating it in each step. All
+ *  fields optional — null brand = no injection. */
+export interface PresentationBrand {
+  colors: PresentationBrandColor[];
+  /** Primary font family (e.g. "Amiri"). */
+  font_family: string;
+  /** Free-form typography notes (e.g. "Set on all OOXML slots: latin, ea, cs"). */
+  font_notes: string;
+  /** Free-form design / layout rules — slide aspect, count, structure,
+   *  footer placement, divider conventions. Markdown OK. */
+  design_rules: string;
+  /** Free-form text / content rules — RTL, digits, separators, hyperlink
+   *  styling, content guidelines ("don't invent numbers"). Markdown OK. */
+  text_rules: string;
+  forbidden_phrases: PresentationBrandPhrase[];
+  required_phrases: PresentationBrandRequiredPhrase[];
+}
+
 /** Per-step state written by the cloud worker as it walks `template.steps`.
  *  Lives on `presentation_jobs.step_outputs`. One entry per step. */
 export type PresentationStepOutputStatus =
@@ -1232,6 +1288,9 @@ export interface PresentationTemplate {
    *  empty and use `command` instead. */
   tools: PresentationToolName[];
   steps: PresentationStep[];
+  /** Phase 3.2 — brand & design rules, injected by the worker into every
+   *  step's prompt. Null = no injection. */
+  brand: PresentationBrand | null;
   /** True when authored via /presentations/templates in the app; false for
    *  daemon-synced templates (read-only in the UI) and bundled seeds. */
   is_user_authored: boolean;
