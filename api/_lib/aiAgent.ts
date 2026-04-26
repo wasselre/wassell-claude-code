@@ -239,20 +239,35 @@ async function searchProjects(
     return JSON.stringify({ error: 'no project models found', projects: [] });
   }
 
-  // Bumped from 500 → 5000 so aggregate counts cover the whole portfolio.
-  // At ~1k records today this is safe; if the portfolio grows past a few
-  // thousand we should switch to server-side aggregation via Postgres
-  // window functions instead of pulling rows into the function.
-  const { data, error } = await supabase
-    .from('records')
-    .select('id, data, model_id')
-    .in('model_id', [...modelMap.keys()])
-    .limit(5000);
-  if (error) {
-    console.log('[search_projects] supabase error', error.message);
-    return JSON.stringify({ error: error.message, projects: [] });
+  // Paginate via .range() in 1000-row pages. PostgREST caps a bare
+  // .select('*') at db-max-rows=1000 silently, regardless of what .limit()
+  // asks for — same root cause as the original `supabaseLoad` truncation
+  // bug. Without this loop the agent under-reports counts (e.g. النرجس
+  // shows 108 instead of the true 162) and the user catches it as
+  // hallucination, but it's actually data starvation. The loop walks
+  // pages until a short batch (< pageSize) comes back, meaning we've
+  // hit the end. Hard ceiling of MAX_PAGES protects against an infinite
+  // loop in the unlikely case PostgREST stops returning data short of
+  // the expected end.
+  const pageSize = 1000;
+  const MAX_PAGES = 20; // 20 × 1000 = 20k records — plenty of headroom
+  const modelIds = [...modelMap.keys()];
+  const rows: RecordRow[] = [];
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * pageSize;
+    const { data, error } = await supabase
+      .from('records')
+      .select('id, data, model_id')
+      .in('model_id', modelIds)
+      .range(from, from + pageSize - 1);
+    if (error) {
+      console.log('[search_projects] supabase error on page', page, error.message);
+      return JSON.stringify({ error: error.message, projects: [] });
+    }
+    const batch = (data ?? []) as RecordRow[];
+    rows.push(...batch);
+    if (batch.length < pageSize) break; // last page
   }
-  const rows = (data ?? []) as RecordRow[];
   console.log('[search_projects] rows fetched', rows.length);
   const allMatches = rows
     .map((r) => ({ row: r, score: scoreMatch(r.data, input) }))
