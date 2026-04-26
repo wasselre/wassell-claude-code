@@ -251,12 +251,190 @@ function canWriteToSupabase(): boolean {
   }
 }
 
+// ─── Pending sync queue ──────────────────────────────────────────────
+// Persists Supabase writes that failed (or that the user wasn't signed in
+// to attempt) so they can be replayed on the next page load BEFORE
+// supabaseLoad pulls fresh state. Without this, the classic silent-loss
+// flow was: localStorage gets the change → Supabase upsert fails / user
+// signed out / network blip → next reload pulls Supabase (stale) and
+// clobbers localStorage (which still had the unsynced change). The user's
+// edit silently disappears.
+//
+// Storage shape: a JSON array under `wassell_pending_sync`, each entry
+// carrying enough info to retry (op, table, row OR rowId, optional
+// FK parent). Dedupes by row id within table — the latest version of a
+// given row replaces any older queued version (last-write-wins).
+const PENDING_QUEUE_KEY = 'wassell_pending_sync';
+const MAX_REPLAY_ATTEMPTS = 5;
+
+interface PendingWrite {
+  id: string;
+  op: 'upsert' | 'delete';
+  table: string;
+  row?: Record<string, unknown>;
+  rowId?: string;
+  parent?: { table: string; id: string | null | undefined };
+  enqueuedAt: string;
+  attempts: number;
+}
+
+function loadPendingQueue(): PendingWrite[] {
+  try {
+    const raw = localStorage.getItem(PENDING_QUEUE_KEY);
+    return raw ? (JSON.parse(raw) as PendingWrite[]) : [];
+  } catch (err) {
+    console.error('[pendingQueue] read failed:', err);
+    return [];
+  }
+}
+
+function savePendingQueue(queue: PendingWrite[]): void {
+  try {
+    if (queue.length === 0) localStorage.removeItem(PENDING_QUEUE_KEY);
+    else localStorage.setItem(PENDING_QUEUE_KEY, JSON.stringify(queue));
+  } catch (err) {
+    // Surfaced loudly — losing the pending queue means losing unsynced edits.
+    console.error('[pendingQueue] persist failed:', err);
+    try {
+      useAppStore.getState().addToast(
+        'فشل حفظ قائمة المزامنة المعلّقة — قد تضيع تعديلات غير محفوظة.',
+        'error',
+      );
+    } catch {
+      // Store not yet ready; console message above is enough.
+    }
+  }
+}
+
+function enqueuePendingWrite(entry: Omit<PendingWrite, 'id' | 'enqueuedAt' | 'attempts'>): void {
+  const queue = loadPendingQueue();
+  // Dedupe: if a write for this row is already queued, replace it (last
+  // write wins). Keeps the queue from ballooning when the user edits the
+  // same record repeatedly while offline.
+  const rowId = (entry.row?.id as string | undefined) ?? entry.rowId;
+  if (typeof rowId === 'string') {
+    const idx = queue.findIndex(
+      (w) =>
+        w.table === entry.table &&
+        ((w.row?.id as string | undefined) === rowId || w.rowId === rowId),
+    );
+    if (idx >= 0) {
+      queue[idx] = {
+        ...queue[idx]!,
+        ...entry,
+        enqueuedAt: new Date().toISOString(),
+      };
+      savePendingQueue(queue);
+      return;
+    }
+  }
+  queue.push({
+    ...entry,
+    id:
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    enqueuedAt: new Date().toISOString(),
+    attempts: 0,
+  });
+  savePendingQueue(queue);
+}
+
+/**
+ * Drain the pending queue against Supabase. Called from `initialize()` after
+ * auth is wired but before any `supabaseLoad`, so unsynced writes from a
+ * previous session land before we'd otherwise overwrite them with stale
+ * Supabase state. Writes that fail again get their attempt count bumped and
+ * stay queued; entries that fail MAX_REPLAY_ATTEMPTS times are dropped with
+ * a loud console warning (and a toast — losing data is an admin-visible
+ * event, not a silent one).
+ */
+async function replayPendingWrites(): Promise<{
+  replayed: number;
+  stillQueued: number;
+  dropped: number;
+}> {
+  if (!supabase) return { replayed: 0, stillQueued: 0, dropped: 0 };
+  if (!canWriteToSupabase()) {
+    // Not signed in — leave the queue intact for a later session.
+    const stillQueued = loadPendingQueue().length;
+    return { replayed: 0, stillQueued, dropped: 0 };
+  }
+  const queue = loadPendingQueue();
+  if (queue.length === 0) return { replayed: 0, stillQueued: 0, dropped: 0 };
+
+  const remaining: PendingWrite[] = [];
+  let replayed = 0;
+  let dropped = 0;
+
+  for (const w of queue) {
+    let ok = false;
+    try {
+      if (w.op === 'upsert' && w.row) {
+        const { error } = await supabase.from(w.table).upsert(w.row);
+        if (!error) ok = true;
+        else console.error(`[pendingQueue] replay upsert ${w.table} failed:`, error.message);
+      } else if (w.op === 'delete' && w.rowId) {
+        const { error } = await supabase.from(w.table).delete().eq('id', w.rowId);
+        if (!error) ok = true;
+        else console.error(`[pendingQueue] replay delete ${w.table} failed:`, error.message);
+      }
+    } catch (err) {
+      console.error(`[pendingQueue] replay ${w.op} ${w.table} threw:`, err);
+    }
+
+    if (ok) {
+      replayed++;
+    } else {
+      const next = { ...w, attempts: w.attempts + 1 };
+      if (next.attempts >= MAX_REPLAY_ATTEMPTS) {
+        dropped++;
+        const idShort = (next.row?.id as string | undefined)?.slice(0, 8) ?? next.rowId?.slice(0, 8) ?? '?';
+        console.error(
+          `[pendingQueue] DROPPING ${next.op} on ${next.table}#${idShort} after ${MAX_REPLAY_ATTEMPTS} attempts.`,
+          next,
+        );
+      } else {
+        remaining.push(next);
+      }
+    }
+  }
+
+  savePendingQueue(remaining);
+
+  if (replayed > 0) {
+    console.log(`[pendingQueue] replayed ${replayed} write(s).`);
+  }
+  if (dropped > 0) {
+    try {
+      useAppStore
+        .getState()
+        .addToast(
+          `تم إسقاط ${dropped} تعديل غير متزامن بعد محاولات متكررة. راجع وحدة التحكم.`,
+          'error',
+        );
+    } catch {
+      // Store not ready; the console.error above carries the detail.
+    }
+  }
+  return { replayed, stillQueued: remaining.length, dropped };
+}
+
 async function supabaseUpsert(
   table: string,
   row: Record<string, unknown>,
   parent?: { table: string; id: string | null | undefined },
 ): Promise<void> {
-  if (!canWriteToSupabase() || !supabase) return;
+  // No Supabase client at all (env not configured) → pure offline-only mode.
+  // Nothing to queue, nothing to retry.
+  if (!supabase) return;
+  // Signed out / mid-bootstrap → can't write to Supabase right now, but the
+  // change must not be lost. Queue it; replayPendingWrites picks it up next
+  // initialize() once auth is restored.
+  if (!canWriteToSupabase()) {
+    enqueuePendingWrite({ op: 'upsert', table, row, parent });
+    return;
+  }
   // Block on any in-flight parent write so the FK exists when we land.
   // `parent.id` can be null/undefined for optional FKs (e.g. `group_id`).
   if (parent && parent.id) {
@@ -270,9 +448,15 @@ async function supabaseUpsert(
   const op = (async () => {
     try {
       const { error } = await supabase!.from(table).upsert(row);
-      if (error) reportSupabaseError(table, 'upsert', error.message ?? String(error));
+      if (error) {
+        reportSupabaseError(table, 'upsert', error.message ?? String(error));
+        // Queue for retry on next initialize so the local edit isn't lost
+        // when Supabase load runs and overwrites localStorage.
+        enqueuePendingWrite({ op: 'upsert', table, row, parent });
+      }
     } catch (err) {
       reportSupabaseError(table, 'upsert', err instanceof Error ? err.message : String(err));
+      enqueuePendingWrite({ op: 'upsert', table, row, parent });
     }
   })();
   if (key) pendingWrites.set(key, op);
@@ -284,7 +468,11 @@ async function supabaseUpsert(
 }
 
 async function supabaseDelete(table: string, id: string): Promise<void> {
-  if (!canWriteToSupabase() || !supabase) return;
+  if (!supabase) return;
+  if (!canWriteToSupabase()) {
+    enqueuePendingWrite({ op: 'delete', table, rowId: id });
+    return;
+  }
   // Wait for any in-flight upsert to this row first — otherwise the
   // delete can race past it and leave the row orphaned in the DB.
   const prior = pendingWrites.get(writeKey(table, id));
@@ -293,9 +481,13 @@ async function supabaseDelete(table: string, id: string): Promise<void> {
   }
   try {
     const { error } = await supabase.from(table).delete().eq('id', id);
-    if (error) reportSupabaseError(table, 'delete', error.message ?? String(error));
+    if (error) {
+      reportSupabaseError(table, 'delete', error.message ?? String(error));
+      enqueuePendingWrite({ op: 'delete', table, rowId: id });
+    }
   } catch (err) {
     reportSupabaseError(table, 'delete', err instanceof Error ? err.message : String(err));
+    enqueuePendingWrite({ op: 'delete', table, rowId: id });
   }
 }
 
@@ -573,6 +765,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         // addToast unavailable — already logged to console above.
       }
     };
+
+    // Drain the pending-writes queue BEFORE any supabaseLoad. If we read
+    // from Supabase first, those reads would clobber localStorage with state
+    // that's missing the unsynced edits the user made in the previous
+    // session. Replaying first lets every queued write land before we trust
+    // Supabase as the source of truth. No-op when the queue is empty or
+    // the user isn't signed in yet.
+    await replayPendingWrites();
 
     // ORDER MATTERS: groups must be persisted to Supabase BEFORE models,
     // because `models.group_id` is a foreign key to `model_groups.id`. If we

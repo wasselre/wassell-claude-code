@@ -190,7 +190,7 @@ The same "strict schema, not validated by `npm run build`" principle applies to 
 - **localStorage 5–10 MB cliff** — `saveLocal`'s `try { ... } catch { /* silently ignore */ }` swallowed `QuotaExceededError`. Users hit the cap and their offline cache stopped saving with zero feedback. Fix landed 2026-04-26.
 - **Inline-create UUID drift** — `value: uuid()` on every dropdown option re-create produced different UUIDs each time, silently breaking filters that referenced the older value. Fix landed 2026-04-26 in `e0a6d3b`.
 - **Auto-ID race condition** — read-modify-write of `auto_id_counters` on the client; two concurrent saves silently produce duplicate IDs. Still unfixed.
-- **Fire-and-forget Supabase upserts in `saveModel`/`saveRecord`** — if the upsert fails (RLS, network, FK violation), the local store keeps the change but Supabase rolls back. Next page load wipes the local copy. Still unfixed.
+- **Fire-and-forget Supabase upserts in `saveModel`/`saveRecord`** — if the upsert failed (RLS, network, FK violation), the local store kept the change but Supabase rolled back; next page load wiped the local copy. **Fixed 2026-04-26.** Failed writes now persist to a localStorage-backed queue (`wassell_pending_sync`) and `initialize()` drains it before any `supabaseLoad`. Writes that fail 5 times in a row are dropped with a toast + `console.error`. See `enqueuePendingWrite` / `replayPendingWrites` / the modified `supabaseUpsert` + `supabaseDelete` in `appStore.ts`.
 
 **Hard rules — never violate:**
 
@@ -198,13 +198,14 @@ The same "strict schema, not validated by `npm run build`" principle applies to 
 
 2. **Never wrap `reportSupabaseError`, `addToast`, or other error-surfacing paths in conditional skips.** When a toast is "annoying," the right answer is *fix the root cause* or *scope the silence narrowly with documented evidence*. The wrong answer — and we've been burned by it three times — is `if (someCondition) return; // skip the toast`. Every conditional silencer in this repo has a story; the story is always "we added it because the toast was annoying" and the punchline is always "we lost data because nobody knew the operation failed."
 
-3. **Never add a fire-and-forget Supabase write without surfacing failures.** `supabaseUpsert` already calls `reportSupabaseError` on failure — do not bypass that. If you're calling `.upsert()` directly, you must `await` it and `await` the error path.
+3. **Never add a fire-and-forget Supabase write that doesn't both surface AND persist failures.** Use `supabaseUpsert` / `supabaseDelete` from the store — they (a) call `reportSupabaseError` on failure to toast the user AND (b) enqueue the write to the persistent retry queue so it isn't lost when the next page load reads from Supabase. If you're calling `.upsert()` directly anywhere outside those helpers, you've reintroduced the bug — go through the helpers.
 
 4. **When in doubt, fail loudly.** A red toast that the user sees and reports is infinitely better than a silent corruption they discover three months later. We have already lost weeks of trust to silent-failure bugs.
 
 **Reference good examples:**
 - `saveLocal` (post-2026-04-26 in `appStore.ts`) — surfaces `QuotaExceededError` once per key per session via toast + `console.error`.
 - `supabaseLoad` (post-2026-04-26) — paginates and reports errors via `reportSupabaseError`.
+- `supabaseUpsert` / `supabaseDelete` + the `wassell_pending_sync` queue (post-2026-04-26) — surface failures via `reportSupabaseError`, persist them to localStorage, and replay on next `initialize()` so unsynced edits survive a reload. Drops with a loud toast after `MAX_REPLAY_ATTEMPTS` (5) attempts.
 - `findExistingOption` + `slugifyOptionLabel` in `DynamicField.tsx` — deterministic, no silent failure modes.
 
 **If another agent (or you in a future session) proposes a fix that adds `if (!isSupabaseConfigured()) return;` or any conditional that skips an error-surfacing path:** push back. Verify against `git log` and `git diff origin/main` before merging — a fix that exists only in chat is not a fix.
