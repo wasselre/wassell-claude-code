@@ -157,6 +157,15 @@ function saveLocalRecordsMap(records: Record<string, AppRecord[]>): void {
       }
     }
   }
+  // Sweep the legacy single-blob 'wassell_records' key — never written by
+  // current code, only accumulating ~1 MB of dead weight on returning users.
+  // The migration in loadLocalRecordsMap only fires when Supabase load fails;
+  // doing it here makes cleanup self-healing on every persist.
+  try {
+    localStorage.removeItem(RECORDS_LEGACY_KEY);
+  } catch {
+    // ignore
+  }
 }
 
 /** Persist a single model's records bucket. Used by saveRecord — the hot path
