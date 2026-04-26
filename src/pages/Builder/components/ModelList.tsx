@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { Plus, Folder, Lock } from 'lucide-react';
+import { Plus, Folder, Lock, Wand2 } from 'lucide-react';
 import CreateModelModal from './CreateModelModal';
 
 interface ModelListProps {
@@ -36,6 +36,14 @@ export default function ModelList({ selectedModelId, onSelect }: ModelListProps)
         >
           <Plus size={16} />
           {t('builder.new_model')}
+        </button>
+        <button
+          onClick={() => navigate('/builder/agent')}
+          className="mt-2 w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-gradient-to-br from-amber-400 to-copper text-white hover:shadow-lg hover:shadow-copper/30 transition-all text-sm font-bold"
+          title={isAr ? 'ابنِ نموذجًا بمحادثة طبيعية' : 'Build a model by chatting in natural language'}
+        >
+          <Wand2 size={14} />
+          {isAr ? 'مساعد ذكي' : 'AI Builder'}
         </button>
       </div>
 

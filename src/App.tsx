@@ -6,6 +6,7 @@ import AppLayout from '@/components/layout/AppLayout';
 import ToastContainer from '@/components/ui/Toast';
 import HomePage from '@/pages/Home/HomePage';
 import ModelBuilderPage from '@/pages/Builder/ModelBuilderPage';
+import BuilderAgentPage from '@/pages/Builder/BuilderAgentPage';
 import RecordListPage from '@/pages/Records/RecordListPage';
 import RecordFormPage from '@/pages/Records/RecordFormPage';
 import WorkflowListPage from '@/pages/Workflow/WorkflowListPage';
@@ -170,6 +171,7 @@ export default function App() {
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
+          <Route path="/builder/agent" element={<RequireAdmin><BuilderAgentPage /></RequireAdmin>} />
           <Route path="/builder/:modelId" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/workflow" element={<RequireAdmin><WorkflowListPage /></RequireAdmin>} />
           <Route path="/workflow/agent" element={<RequireAdmin><WorkflowAgentPage /></RequireAdmin>} />
