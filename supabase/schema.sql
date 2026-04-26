@@ -221,8 +221,13 @@ ALTER TABLE model_views
 
 -- maps_config: JSONB column added for the Maps view (third view type alongside
 -- Table and Cards). Default object matches MAPS_CONFIG_DEFAULT in src/types/index.ts.
+-- "order": integer column for sidebar ordering. Was added to the CREATE TABLE
+-- block above but never to an ALTER for existing installs — without this line,
+-- re-running schema.sql against an older DB leaves the column missing and every
+-- model save errors out. Mirrors the maps_config pattern.
 ALTER TABLE models
-  ADD COLUMN IF NOT EXISTS maps_config JSONB NOT NULL DEFAULT '{"location_url_field_id":null,"manual_lat_field_id":null,"manual_lng_field_id":null,"pin_color_field_id":null,"pin_label_field_id":null,"click_action":"popup","popup_title_field_id":null,"popup_subtitle_field_id":null,"popup_badge_field_id":null,"popup_shown_field_ids":[],"map_style_json":null,"default_center_lat":null,"default_center_lng":null,"default_zoom":null}'::jsonb;
+  ADD COLUMN IF NOT EXISTS maps_config JSONB NOT NULL DEFAULT '{"location_url_field_id":null,"manual_lat_field_id":null,"manual_lng_field_id":null,"pin_color_field_id":null,"pin_label_field_id":null,"click_action":"popup","popup_title_field_id":null,"popup_subtitle_field_id":null,"popup_badge_field_id":null,"popup_shown_field_ids":[],"map_style_json":null,"default_center_lat":null,"default_center_lng":null,"default_zoom":null}'::jsonb,
+  ADD COLUMN IF NOT EXISTS "order" INT NOT NULL DEFAULT 0;
 
 -- Users / profiles / roles — the app's own role-and-permission model. These
 -- live alongside Supabase Auth's built-in `auth.users`; the app matches them

@@ -56,12 +56,121 @@ function loadLocal<T>(key: string): T | null {
   }
 }
 
+// Track which keys have already shouted about a quota error this session so we
+// don't toast on every keystroke once the cliff hits.
+const localStorageWarned = new Set<string>();
+
 function saveLocal<T>(key: string, data: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(data));
-  } catch {
-    // localStorage full or unavailable — silently ignore
+  } catch (err) {
+    // Surface the failure — silent catches here historically hid the
+    // 1000-row pagination bug and the localStorage 5–10 MB cliff. The
+    // in-memory store and the Supabase write path are independent of this
+    // cache; the only thing that breaks when this throws is offline mode.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[localStorage] write to "${key}" failed: ${msg}`);
+    if (!localStorageWarned.has(key)) {
+      localStorageWarned.add(key);
+      try {
+        useAppStore.getState().addToast(
+          'تجاوز الذاكرة المؤقتة — وضع عدم الاتصال معطل. حدّث الصفحة عند توفر اتصال.',
+          'error',
+        );
+      } catch {
+        // Store not yet initialized; the console.error above is enough.
+      }
+    }
   }
+}
+
+// ─── Per-model records cache ──────────────────────────────────────────
+// Records used to live under a single `wassell_records` key — a flat array
+// re-stringified on every save. With ~1000 records of ~5KB each this hit the
+// browser's 5–10 MB localStorage cap, plus blocked the main thread for
+// 100–500 ms per save. Now each model's records live under
+// `wassell_records:<modelId>`, so a saveRecord rewrites only that bucket.
+// On first load we migrate from the legacy single key.
+const RECORDS_KEY_PREFIX = 'wassell_records:';
+const RECORDS_LEGACY_KEY = 'wassell_records';
+
+function recordsKeyFor(modelId: string): string {
+  return `${RECORDS_KEY_PREFIX}${modelId}`;
+}
+
+/** Load every per-model bucket; on first run, migrates from the legacy single
+ *  key and deletes it. Returns a `model_id → records` map ready for the store. */
+function loadLocalRecordsMap(): Record<string, AppRecord[]> {
+  const out: Record<string, AppRecord[]> = {};
+  let foundPerModel = false;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(RECORDS_KEY_PREFIX)) continue;
+    foundPerModel = true;
+    const modelId = key.slice(RECORDS_KEY_PREFIX.length);
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) out[modelId] = JSON.parse(raw) as AppRecord[];
+    } catch {
+      // Skip a bucket that's gone bad — the next save will repopulate it.
+    }
+  }
+  if (foundPerModel) return out;
+
+  // First run with the new layout: pull from the legacy key, split by model_id,
+  // re-write per-model, and remove the legacy key.
+  const legacy = loadLocal<AppRecord[]>(RECORDS_LEGACY_KEY) ?? [];
+  for (const rec of legacy) {
+    if (!rec.model_id) continue;
+    if (!out[rec.model_id]) out[rec.model_id] = [];
+    out[rec.model_id]!.push(rec);
+  }
+  if (Object.keys(out).length > 0) saveLocalRecordsMap(out);
+  try {
+    localStorage.removeItem(RECORDS_LEGACY_KEY);
+  } catch {
+    // ignore
+  }
+  return out;
+}
+
+/** Persist the full records map, one bucket per model. Sweeps stale buckets
+ *  for models that no longer have any records (e.g. a model that was just
+ *  deleted, or whose records were all removed). */
+function saveLocalRecordsMap(records: Record<string, AppRecord[]>): void {
+  const liveModelIds = new Set<string>();
+  for (const [modelId, rows] of Object.entries(records)) {
+    if (!rows || rows.length === 0) continue;
+    saveLocal(recordsKeyFor(modelId), rows);
+    liveModelIds.add(modelId);
+  }
+  // Sweep stale buckets so deleted models / emptied models don't pile up.
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (!key || !key.startsWith(RECORDS_KEY_PREFIX)) continue;
+    const modelId = key.slice(RECORDS_KEY_PREFIX.length);
+    if (!liveModelIds.has(modelId)) {
+      try {
+        localStorage.removeItem(key);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+/** Persist a single model's records bucket. Used by saveRecord — the hot path
+ *  now writes O(records-in-this-model) bytes instead of O(all-records). */
+function saveLocalRecordsForModel(modelId: string, rows: AppRecord[]): void {
+  if (!rows || rows.length === 0) {
+    try {
+      localStorage.removeItem(recordsKeyFor(modelId));
+    } catch {
+      // ignore
+    }
+    return;
+  }
+  saveLocal(recordsKeyFor(modelId), rows);
 }
 
 /** Browser-side SHA-256 → lowercase hex. Used for presentation-job dedup keys
@@ -388,8 +497,7 @@ function relinkChatsAgainstClients(): void {
 
   useAppStore.setState((s) => {
     const records = { ...s.records, [chatsModel.id]: next };
-    const allRecords = Object.values(records).flat();
-    saveLocal('wassell_records', allRecords);
+    saveLocalRecordsForModel(chatsModel.id, next);
     return { records };
   });
 
@@ -533,15 +641,21 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     saveLocal('wassell_models', models);
 
-    // Load records
-    const records: Record<string, AppRecord[]> = {};
-    let allRecords = await supabaseLoad<AppRecord>('records');
-    if (!allRecords) allRecords = loadLocal<AppRecord[]>('wassell_records') ?? [];
-    saveLocal('wassell_records', allRecords);
-    for (const rec of allRecords) {
-      if (!records[rec.model_id]) records[rec.model_id] = [];
-      records[rec.model_id]!.push(rec);
+    // Load records — Supabase first, per-model localStorage buckets as fallback
+    // (loadLocalRecordsMap also migrates from the legacy single 'wassell_records'
+    // key on first run with the new layout).
+    let records: Record<string, AppRecord[]>;
+    const supabaseRecords = await supabaseLoad<AppRecord>('records');
+    if (supabaseRecords) {
+      records = {};
+      for (const rec of supabaseRecords) {
+        if (!records[rec.model_id]) records[rec.model_id] = [];
+        records[rec.model_id]!.push(rec);
+      }
+    } else {
+      records = loadLocalRecordsMap();
     }
+    saveLocalRecordsMap(records);
 
     // Load workflows
     let workflows = await supabaseLoad<Workflow>('workflows');
@@ -945,10 +1059,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const healedMaps = healMapsConfigForModels(models);
     if (healedMaps.changed) models = healedMaps.models;
 
-    // Always-run system-model refresh — re-apply seed schema/card_config/labels
-    // for every `is_system` model on every load. Makes `seedModels.ts` the live
-    // source of truth; seed edits always show up on next reload. Builder edits
-    // to system models are transient by design.
+    // Always-run heal — backfills any `is_system` model from SEED_MODELS that's
+    // MISSING from this install (e.g. a returning user whose stored models
+    // predate a newly-added system model like `ai_chats`). Despite the name, it
+    // does NOT overwrite existing system models — Builder edits to existing
+    // is_system models persist across reloads. To push a structural change to
+    // existing installs, add a versioned migration in schemaMigrations.ts.
     const refreshed = refreshSystemModels({
       models,
       records: migratedRecords,
@@ -960,8 +1076,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     models = refreshed.models;
 
     saveLocal('wassell_models', models);
-    const flatRecords = Object.values(migratedRecords).flat();
-    saveLocal('wassell_records', flatRecords);
+    saveLocalRecordsMap(migratedRecords);
 
     // --- Admin profile normalization ---
     // Every profile flagged `is_admin: true` should have ALL permissions for
@@ -1178,7 +1293,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // doesn't show runs for a model that no longer exists.
       const workflowRuns = s.workflowRuns.filter((r) => r.trigger_model_id !== modelId);
       saveLocal('wassell_models', models);
-      saveLocal('wassell_records', Object.values(records).flat());
+      saveLocalRecordsMap(records);
       saveLocal('wassell_workflows', workflows);
       saveLocal('wassell_views', views);
       saveLocal('wassell_workflow_runs', workflowRuns);
@@ -1229,7 +1344,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       result.changedModelIds.add(modelId);
       // Persist locally
       saveLocal('wassell_models', finalModels);
-      saveLocal('wassell_records', Object.values(result.records).flat());
+      saveLocalRecordsMap(result.records);
       saveLocal('wassell_workflows', result.workflows);
       saveLocal('wassell_views', result.views);
       // Fire-and-forget Supabase upserts for only the rows that changed.
@@ -1436,8 +1551,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? modelRecords.map((r) => (r.id === record.id ? finalRecord : r))
         : [...modelRecords, finalRecord];
       const records = { ...s.records, [record.model_id]: updated };
-      const allRecords = Object.values(records).flat();
-      saveLocal('wassell_records', allRecords);
+      // Per-model bucket write: O(records-in-this-model) instead of O(all).
+      saveLocalRecordsForModel(record.model_id, updated);
       // FK: records.model_id → models.id. Gate on the model write so a record
       // created immediately after a new model doesn't hit an FK violation.
       supabaseUpsert(
@@ -1519,8 +1634,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const modelRecords = (s.records[modelId] ?? []).filter((r) => r.id !== recordId);
       const records = { ...s.records, [modelId]: modelRecords };
-      const allRecords = Object.values(records).flat();
-      saveLocal('wassell_records', allRecords);
+      saveLocalRecordsForModel(modelId, modelRecords);
       supabaseDelete('records', recordId);
       return { records };
     });
@@ -2391,10 +2505,9 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     set((s) => {
       const nextRecords = { ...s.records, [chatsModel.id]: merged };
-      // Persist the flat records array to localStorage so a refresh keeps
-      // the list even if Haberchat is offline on next load.
-      const allRecords = Object.values(nextRecords).flat();
-      saveLocal('wassell_records', allRecords);
+      // Persist the chats bucket so a refresh keeps the list even if Haberchat
+      // is offline on next load.
+      saveLocalRecordsForModel(chatsModel.id, merged);
       return { records: nextRecords };
     });
 
@@ -2661,7 +2774,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? list.map((r) => (r.id === record.id ? record : r))
         : [...list, record];
       const nextRecords = { ...s.records, [chatsModel.id]: nextList };
-      saveLocal('wassell_records', Object.values(nextRecords).flat());
+      saveLocalRecordsForModel(chatsModel.id, nextList);
       return { records: nextRecords };
     });
     void supabaseUpsert('records', record as unknown as Record<string, unknown>, {
