@@ -10,11 +10,24 @@ import {
   X,
   ExternalLink,
   RefreshCw,
+  SkipForward,
+  Search,
+  List as ListIcon,
+  Hammer,
+  CheckCheck,
+  Sparkles,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { usePresentationJobsPolling } from './hooks/usePresentationJobsPolling';
-import type { PresentationJob, PresentationJobStatus, PresentationErrorCode } from '@/types';
+import type {
+  PresentationJob,
+  PresentationJobStatus,
+  PresentationErrorCode,
+  PresentationStepOutput,
+  PresentationStepOutputStatus,
+  PresentationStepKind,
+} from '@/types';
 
 function statusConfig(
   status: PresentationJobStatus,
@@ -89,6 +102,7 @@ export default function PresentationDetailPage(): JSX.Element {
     language,
     cancelPresentationJob,
     retryPresentationJob,
+    retryPresentationStep,
     addToast,
   } = useAppStore();
   const isAr = language === 'ar';
@@ -323,6 +337,42 @@ export default function PresentationDetailPage(): JSX.Element {
         </div>
       )}
 
+      {/* Steps — Phase 3 per-step state. Renders only when the cloud
+          worker has actually populated step_outputs (legacy daemon jobs
+          carry an empty array). */}
+      {job.step_outputs && job.step_outputs.length > 0 && (
+        <div className="card p-5 mb-6">
+          <h3 className="text-sm font-bold text-charcoal mb-3">
+            {isAr ? 'الخطوات' : 'Steps'}
+          </h3>
+          <div className="space-y-2">
+            {job.step_outputs.map((output, idx) => (
+              <StepCard
+                key={output.step_id}
+                output={output}
+                idx={idx}
+                isAr={isAr}
+                jobIsTerminal={
+                  job.status === 'completed' ||
+                  job.status === 'failed' ||
+                  job.status === 'canceled'
+                }
+                onRetry={() => {
+                  if (retryPresentationStep(job.id, output.step_id)) {
+                    addToast(
+                      isAr
+                        ? `إعادة تشغيل الخطوة ${idx + 1}…`
+                        : `Re-running step ${idx + 1}…`,
+                      'success',
+                    );
+                  }
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Inputs */}
       <div className="card p-5">
         <h3 className="text-sm font-bold text-charcoal mb-3">
@@ -350,6 +400,192 @@ export default function PresentationDetailPage(): JSX.Element {
           })}
         </dl>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Per-step UI helpers (Phase 3). One card per step in the template's
+// pipeline, color-coded by status. Output preview is collapsed behind a
+// <details> so a long agent response doesn't crowd the page.
+// ────────────────────────────────────────────────────────────────────
+
+const STEP_KIND_ICON: Record<PresentationStepKind, typeof Search> = {
+  research: Search,
+  outline: ListIcon,
+  build: Hammer,
+  review: CheckCheck,
+  custom: Sparkles,
+};
+
+const STEP_KIND_LABEL: Record<PresentationStepKind, { en: string; ar: string }> = {
+  research: { en: 'Research', ar: 'بحث' },
+  outline: { en: 'Outline', ar: 'هيكلة' },
+  build: { en: 'Build', ar: 'بناء' },
+  review: { en: 'Review', ar: 'مراجعة' },
+  custom: { en: 'Custom', ar: 'مخصص' },
+};
+
+function stepStatusConfig(
+  status: PresentationStepOutputStatus,
+  isAr: boolean,
+): { label: string; className: string; Icon: typeof CircleDashed; spin?: boolean } {
+  switch (status) {
+    case 'pending':
+      return {
+        label: isAr ? 'في الانتظار' : 'Pending',
+        className: 'bg-sand/30 text-charcoal/60',
+        Icon: CircleDashed,
+      };
+    case 'running':
+      return {
+        label: isAr ? 'قيد التشغيل' : 'Running',
+        className: 'bg-gold/30 text-chocolate',
+        Icon: Loader2,
+        spin: true,
+      };
+    case 'completed':
+      return {
+        label: isAr ? 'مكتمل' : 'Done',
+        className: 'bg-green-100 text-green-700',
+        Icon: CheckCircle2,
+      };
+    case 'failed':
+      return {
+        label: isAr ? 'فشل' : 'Failed',
+        className: 'bg-red-100 text-red-700',
+        Icon: XCircle,
+      };
+    case 'skipped':
+      return {
+        label: isAr ? 'مُتجاوز' : 'Skipped',
+        className: 'bg-charcoal/5 text-charcoal/40',
+        Icon: SkipForward,
+      };
+  }
+}
+
+function formatDuration(ms: number | undefined): string | null {
+  if (ms === undefined) return null;
+  if (ms < 1000) return `${ms} ms`;
+  const s = Math.round(ms / 100) / 10; // one decimal
+  if (s < 60) return `${s.toFixed(1)} s`;
+  const m = Math.floor(s / 60);
+  const sr = Math.round(s - m * 60);
+  return `${m} min ${sr}s`;
+}
+
+function StepCard({
+  output,
+  idx,
+  isAr,
+  jobIsTerminal,
+  onRetry,
+}: {
+  output: PresentationStepOutput;
+  idx: number;
+  isAr: boolean;
+  /** Show the Retry button only when the parent job has settled. Re-running
+   *  while the worker is mid-job would race against its writes. */
+  jobIsTerminal: boolean;
+  onRetry: () => void;
+}): JSX.Element {
+  const Icon = STEP_KIND_ICON[output.kind];
+  const labels = STEP_KIND_LABEL[output.kind];
+  const cfg = stepStatusConfig(output.status, isAr);
+  const duration = formatDuration(output.duration_ms);
+  // Retry available when the parent job is settled AND this step has actually
+  // run (or was skipped because an earlier step blew up). 'pending' means we
+  // never got there — let the user retry the upstream blocker instead.
+  const canRetry = jobIsTerminal && (
+    output.status === 'completed' ||
+    output.status === 'failed' ||
+    output.status === 'skipped'
+  );
+
+  return (
+    <div className="rounded-xl border border-sand/40 bg-white p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-copper/10 text-copper text-xs font-bold shrink-0">
+            {idx + 1}
+          </span>
+          <Icon size={14} className="text-charcoal/60 shrink-0" />
+          <span className="text-sm font-bold text-charcoal truncate">
+            {isAr ? labels.ar : labels.en}
+          </span>
+          <span
+            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${cfg.className}`}
+          >
+            <cfg.Icon size={10} className={cfg.spin ? 'animate-spin' : ''} />
+            {cfg.label}
+          </span>
+          {duration && (
+            <span className="text-[10px] text-charcoal/40 font-mono">{duration}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {output.drive_url && (
+            <a
+              href={output.drive_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-copper hover:text-terracotta inline-flex items-center gap-1"
+            >
+              <ExternalLink size={12} />
+              {isAr ? 'افتح' : 'Open'}
+            </a>
+          )}
+          {canRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-charcoal/70 hover:text-copper hover:bg-cream/40"
+              title={
+                isAr
+                  ? 'إعادة تشغيل هذه الخطوة وكل ما يليها'
+                  : 'Re-run this step and everything after it'
+              }
+            >
+              <RefreshCw size={12} />
+              {isAr ? 'إعادة' : 'Retry'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {output.tool_calls && output.tool_calls.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {output.tool_calls.map((tc, i) => (
+            <span
+              key={i}
+              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono ${
+                tc.ok ? 'bg-charcoal/5 text-charcoal/60' : 'bg-red-50 text-red-600'
+              }`}
+            >
+              {tc.name}
+              {!tc.ok && '✗'}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {output.error && (
+        <p className="mt-2 text-xs text-red-700 bg-red-50 rounded p-2">
+          {output.error}
+        </p>
+      )}
+
+      {output.output_text && (
+        <details className="mt-2">
+          <summary className="text-[10px] text-charcoal/50 cursor-pointer uppercase tracking-wide font-bold">
+            {isAr ? 'النص الناتج' : 'Output'}
+          </summary>
+          <pre className="mt-1 text-xs font-mono text-charcoal/70 bg-cream/30 p-2 rounded whitespace-pre-wrap break-words max-h-48 overflow-auto">
+            {output.output_text}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }

@@ -1093,6 +1093,72 @@ export interface PresentationRecordBinding {
   optional: boolean;
 }
 
+/** A tool the cloud worker exposes to the agent. The frontend hard-codes the
+ *  list (TEMPLATE_TOOL_REGISTRY in src/data/templateToolRegistry.ts) — adding
+ *  a new tool is a worker code change first, then a registry update. */
+export type PresentationToolName =
+  | 'web_search'
+  | 'web_fetch'
+  | 'code_execution'
+  | 'record_lookup'
+  | 'drive_upload';
+
+/** One step in a template's pipeline. The cloud worker walks `steps` in order
+ *  and runs each as a single agent turn (or chain of turns) with the chosen
+ *  subset of tools. Phase 3 wires the runner to read these. */
+export type PresentationStepKind = 'research' | 'outline' | 'build' | 'review' | 'custom';
+
+export interface PresentationStep {
+  /** Stable id, generated client-side. Survives re-ordering. */
+  id: string;
+  kind: PresentationStepKind;
+  /** Optional bilingual labels — when blank, the UI falls back to a default
+   *  per `kind` (e.g. "Research" / "البحث"). */
+  label_ar?: string;
+  label_en?: string;
+  /** Free-form instructions the agent gets for this step. */
+  prompt: string;
+  /** Subset of the template's `tools` available to this step. When empty,
+   *  the step inherits the full template tool set. */
+  tools: PresentationToolName[];
+}
+
+/** Per-step state written by the cloud worker as it walks `template.steps`.
+ *  Lives on `presentation_jobs.step_outputs`. One entry per step. */
+export type PresentationStepOutputStatus =
+  | 'pending'      // not yet started
+  | 'running'      // worker is currently executing this step
+  | 'completed'    // step finished cleanly
+  | 'failed'       // step threw / agent could not complete it
+  | 'skipped';     // step intentionally skipped (Phase 3.1+)
+
+export interface PresentationStepOutput {
+  step_id: string;
+  kind: PresentationStepKind;
+  status: PresentationStepOutputStatus;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms?: number;
+  /** Compact summary — usually the agent's final-text output for this step. */
+  output_text?: string;
+  /** What the agent called during this step. `name` is the tool slug, `ok`
+   *  flips false when the tool reported an error. Server-side tools (web_
+   *  search, web_fetch, code_execution) don't appear here — only the
+   *  client-side ones we dispatch. */
+  tool_calls?: Array<{ name: string; ok: boolean }>;
+  /** When the step uploaded a file to Drive (e.g. drive_upload), the URL
+   *  lands here for the detail page to render as a link. */
+  drive_url?: string;
+  /** Step-level token usage. Useful for cost reporting per step. */
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+  };
+  /** When status='failed', the error message the agent or our dispatcher
+   *  surfaced. */
+  error?: string;
+}
+
 export interface PresentationTemplate {
   id: string;
   slug: string;                                  // e.g. 'wassel'
@@ -1100,15 +1166,26 @@ export interface PresentationTemplate {
   label_en: string;
   description_ar?: string;
   description_en?: string;
-  /** Slash command the daemon runs, e.g. '/wassel'. */
+  /** Legacy: slash command the local daemon ran. User-authored templates use
+   *  the literal string 'cloud:agent' — the cloud worker ignores this field
+   *  entirely and reads `tools` + `steps` instead. */
   command: string;
   icon: string;                                  // Lucide icon name
   input_schema: PresentationInput[];
   record_binding: PresentationRecordBinding | null;
   estimated_duration_seconds: number | null;
   is_available: boolean;
-  manifest_path: string | null;                  // daemon-only; null on seeded rows
+  manifest_path: string | null;                  // daemon-only; null on seeded + user-authored rows
   manifest_synced_at: string;
+  /** Phase 2 — tool-using cloud worker. Daemon-synced templates leave both
+   *  empty and use `command` instead. */
+  tools: PresentationToolName[];
+  steps: PresentationStep[];
+  /** True when authored via /presentations/templates in the app; false for
+   *  daemon-synced templates (read-only in the UI) and bundled seeds. */
+  is_user_authored: boolean;
+  /** User who authored the template. Null for daemon-synced + seed rows. */
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1168,6 +1245,9 @@ export interface PresentationJob {
   result: PresentationJobResult | null;
   drive_folder_url: string | null;
   drive_deck_url: string | null;
+  /** Phase 3 — per-step state, populated by the cloud worker as it walks
+   *  `template.steps`. Empty array for legacy daemon-run jobs. */
+  step_outputs: PresentationStepOutput[];
   error_code: PresentationErrorCode | null;
   error_message: string | null;
   error_detail: string | null;
@@ -1651,6 +1731,48 @@ export interface AppState {
    * the given job. Used as "retry" for failed jobs.
    */
   retryPresentationJob: (jobId: string) => Promise<PresentationJob | null>;
+  /**
+   * Phase 3.1 — re-run a SINGLE step (and every step after it, since they
+   * consumed the target step's output) on the SAME job row. Resets that
+   * step + downstream steps to status='pending' in `step_outputs`, flips
+   * the job back to 'queued', clears finalize fields, and the cloud
+   * worker's resume path picks it up. Earlier steps stay completed and
+   * their `output_text` feeds forward as before — no extra Anthropic
+   * tokens spent re-doing work that already worked.
+   *
+   * Returns false if the target step or job isn't found.
+   */
+  retryPresentationStep: (jobId: string, stepId: string) => boolean;
+  /**
+   * Phase 2 — Template Builder. Insert a new user-authored template (sets
+   * `is_user_authored: true`, `command: 'cloud:agent'`, `created_by`).
+   * Optimistic local update + Supabase upsert. Returns the inserted template.
+   */
+  createPresentationTemplate: (
+    template: Omit<
+      PresentationTemplate,
+      'id' | 'is_user_authored' | 'command' | 'manifest_path' | 'manifest_synced_at' | 'created_at' | 'updated_at' | 'created_by'
+    >,
+  ) => PresentationTemplate;
+  /**
+   * Update fields on an existing template. Allowed only when
+   * `is_user_authored` is true; daemon-synced rows are read-only in the UI.
+   */
+  updatePresentationTemplate: (
+    templateId: string,
+    patch: Partial<PresentationTemplate>,
+  ) => void;
+  /**
+   * Delete a user-authored template. Daemon-synced templates can't be
+   * deleted from the app — they'll come back on the next manifest sync.
+   */
+  deletePresentationTemplate: (templateId: string) => void;
+  /**
+   * Duplicate any template (user-authored OR daemon-synced) into a new
+   * user-authored row with a unique slug (`<slug>-copy`, `<slug>-copy-2`…).
+   * Useful for forking the bundled `wassel` template as a starting point.
+   */
+  duplicatePresentationTemplate: (templateId: string) => PresentationTemplate | null;
 
   // ── Marketing pipeline — workflow-driven ───────────────────────────
   // Every marketing record (marketing_operations / reels / posts /
