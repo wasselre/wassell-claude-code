@@ -224,19 +224,86 @@ interface SearchInput {
 // multiple models have matches.
 const PROJECT_MODELS = ['our_projects', 'targeted_projects', 'all_projects'] as const;
 
+// One match between the agent's free-text property_type ("شقة" / "apartment"
+// / "شقق") and an actual option in some model's schema. We walk every
+// dropdown / multiselect field in every project model's schema and find
+// options whose label_ar OR label_en matches the requested type. The
+// stored record then needs `data[fieldSlug]` to either equal the option
+// value (dropdown) or include it (multiselect).
+//
+// Without this, "property_type" was just a substring score boost over the
+// JSON text — which never worked because unit-type options are stored as
+// opaque slugs (item_*) in records, not as their human labels.
+interface UnitTypeMatcher {
+  modelId: string;
+  fieldSlug: string;
+  optionValue: string;
+  fieldType: 'dropdown' | 'multiselect';
+}
+
 async function searchProjects(
   supabase: SupabaseClient,
   input: SearchInput,
 ): Promise<string> {
   console.log('[search_projects] input', JSON.stringify(input));
-  const modelMap = new Map<string, string>(); // model_id → model_name
-  for (const name of PROJECT_MODELS) {
-    const id = await getModelIdByName(supabase, name);
-    if (id) modelMap.set(id, name);
+
+  // Fetch the three project models with their FULL schemas in one query.
+  // We need the schemas to resolve property_type labels to option IDs.
+  const { data: modelsData, error: modelsError } = await supabase
+    .from('models')
+    .select('id, name, schema')
+    .in('name', [...PROJECT_MODELS]);
+  if (modelsError) {
+    console.log('[search_projects] models fetch error:', modelsError.message);
+    return JSON.stringify({ error: modelsError.message, projects: [] });
   }
-  console.log('[search_projects] models found', modelMap.size, [...modelMap.values()]);
-  if (modelMap.size === 0) {
+  if (!modelsData || modelsData.length === 0) {
     return JSON.stringify({ error: 'no project models found', projects: [] });
+  }
+  const modelMap = new Map<string, string>(); // model_id → model_name
+  for (const m of modelsData) modelMap.set(m.id as string, m.name as string);
+  console.log('[search_projects] models found', modelMap.size, [...modelMap.values()]);
+
+  // Resolve the requested property_type (free-text label) to concrete option
+  // matchers across the project models' schemas. Bidirectional substring
+  // match catches "شقة" against an option labeled "شقق" and vice versa.
+  const unitTypeMatchers: UnitTypeMatcher[] = [];
+  if (input.property_type) {
+    const needle = input.property_type.toLowerCase().trim();
+    for (const m of modelsData) {
+      const schema = m.schema as { sections?: Array<{ fields?: Array<Record<string, unknown>> }> } | undefined;
+      for (const sec of schema?.sections ?? []) {
+        for (const f of sec.fields ?? []) {
+          const ftype = f.type as string;
+          if (ftype !== 'dropdown' && ftype !== 'multiselect') continue;
+          const opts = (f.options ?? []) as Array<{
+            label_ar?: string;
+            label_en?: string;
+            value?: string;
+          }>;
+          for (const opt of opts) {
+            const ar = (opt.label_ar ?? '').toLowerCase().trim();
+            const en = (opt.label_en ?? '').toLowerCase().trim();
+            const matches =
+              (ar && (ar.includes(needle) || needle.includes(ar))) ||
+              (en && (en.includes(needle) || needle.includes(en)));
+            if (matches && typeof opt.value === 'string') {
+              unitTypeMatchers.push({
+                modelId: m.id as string,
+                fieldSlug: f.name as string,
+                optionValue: opt.value,
+                fieldType: ftype as 'dropdown' | 'multiselect',
+              });
+            }
+          }
+        }
+      }
+    }
+    console.log(
+      '[search_projects] unit type matchers built:',
+      unitTypeMatchers.length,
+      unitTypeMatchers.map((m) => `${modelMap.get(m.modelId)}.${m.fieldSlug}=${m.optionValue}`),
+    );
   }
 
   // Paginate via .range() in 1000-row pages. PostgREST caps a bare
@@ -271,7 +338,7 @@ async function searchProjects(
   console.log('[search_projects] rows fetched', rows.length);
   const allMatches = rows
     .map((r) => ({ row: r, score: scoreMatch(r.data, input) }))
-    .filter((x) => x.score > 0 && matchesAllProvided(x.row.data, input))
+    .filter((x) => x.score > 0 && matchesAllProvided(x.row.data, input, x.row.model_id, unitTypeMatchers))
     // Prefer our_projects > targeted > all when scores tie, so Wassel-owned
     // inventory surfaces first.
     .sort((a, b) => {
@@ -396,6 +463,8 @@ function scoreMatch(data: Record<string, unknown>, input: SearchInput): number {
 function matchesAllProvided(
   data: Record<string, unknown>,
   input: SearchInput,
+  modelId: string,
+  unitTypeMatchers: UnitTypeMatcher[],
 ): boolean {
   const priceMin = pickRangeMin(data, ['price_range', 'price']);
   const priceMax = pickRangeMax(data, ['price_range', 'price']);
@@ -407,6 +476,24 @@ function matchesAllProvided(
   if (input.bedrooms != null) {
     if (bedroomMin != null && input.bedrooms < bedroomMin) return false;
     if (bedroomMax != null && input.bedrooms > bedroomMax) return false;
+  }
+
+  // Property-type filter: strict membership check via the resolved option
+  // matchers. If matchers exist for this model, the record's relevant field
+  // must contain at least one matched option value. If no matchers exist
+  // for this model (the model has no field whose option labels match the
+  // requested type), don't false-negative — let the record through, since
+  // the agent + user may still want to know about it.
+  if (input.property_type && unitTypeMatchers.length > 0) {
+    const localMatchers = unitTypeMatchers.filter((m) => m.modelId === modelId);
+    if (localMatchers.length > 0) {
+      const ok = localMatchers.some((m) => {
+        const v = data[m.fieldSlug];
+        if (Array.isArray(v)) return (v as unknown[]).includes(m.optionValue);
+        return v === m.optionValue;
+      });
+      if (!ok) return false;
+    }
   }
   return true;
 }
