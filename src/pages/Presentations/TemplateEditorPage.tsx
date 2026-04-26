@@ -7,7 +7,7 @@ import type { PresentationTemplate, PresentationToolName } from '@/types';
 import InputsEditor from './components/template/InputsEditor';
 import ToolsEditor from './components/template/ToolsEditor';
 import StepsEditor from './components/template/StepsEditor';
-import BrandEditor from './components/template/BrandEditor';
+import BrandSelector from './components/template/BrandSelector';
 import TemplateAssistantPanel from './components/template/TemplateAssistantPanel';
 
 /**
@@ -366,24 +366,20 @@ export default function TemplateEditorPage(): JSX.Element {
         />
       </Section>
 
-      {/* Brand section — design rules injected into every step prompt */}
+      {/* Brand section — references a brand record from the brand library.
+          Editing the brand updates every template that references it. */}
       <Section
         title={isAr ? 'الهوية والتصميم' : 'Brand & design'}
         subtitle={
           isAr
-            ? draft.brand
-              ? 'القواعد التي يحقنها الوكيل في كل خطوة'
-              : 'إضافة لوحة الألوان والخطوط وقواعد التصميم'
-            : draft.brand
-              ? 'Rules injected into every step prompt at runtime'
-              : 'Add palette, typography, and design rules'
+            ? 'اختر هوية من المكتبة. يحقنها الوكيل في كل خطوة.'
+            : 'Pick a brand from the library. The worker injects it into every step.'
         }
       >
-        <BrandEditor
-          brand={draft.brand}
+        <BrandSelector
+          brandId={draft.brand_id}
           readonly={readonly}
-          currentTemplateId={draft.id}
-          onChange={(brand) => patch({ brand })}
+          onChange={(brand_id) => patch({ brand_id })}
         />
       </Section>
 

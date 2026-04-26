@@ -5,6 +5,7 @@ import { getSession, getSessionEmail, onAuthChange, signOut as authSignOut, isAu
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
 import { SEED_PRESENTATION_TEMPLATES } from '@/data/seedPresentationTemplates';
+import { SEED_PRESENTATION_BRANDS } from '@/data/seedPresentationBrands';
 import { buildMarketingSeedWorkflows } from '@/data/seedWorkflows';
 import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine';
 import { assignAutoIds } from '@/lib/autoIdAssigner';
@@ -33,6 +34,7 @@ import type {
   ModelPermission,
   StoreMutationResult,
   PresentationTemplate,
+  PresentationBrandRecord,
   PresentationJob,
   DaemonStatus,
   WebhookSlug,
@@ -731,6 +733,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   waDevicesLive: [],
   chatMessages: {},
   presentationTemplates: [],
+  presentationBrands: [],
   presentationJobs: [],
   daemonStatus: null,
   webhookSlugs: [],
@@ -1078,6 +1081,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!fieldTemplates) fieldTemplates = loadLocal<FieldTemplate[]>('wassell_field_templates') ?? [];
     saveLocal('wassell_field_templates', fieldTemplates);
 
+    // --- Presentation brands (Phase 3.3 — first-class entities) ---
+    // Loaded BEFORE templates because templates have a brand_id FK pointing
+    // here. Same cascade pattern as everything else: Supabase → localStorage
+    // → bundled seed.
+    const supabaseBrands = await supabaseLoad<PresentationBrandRecord>('presentation_brands');
+    let presentationBrands: PresentationBrandRecord[];
+    if (supabaseBrands && supabaseBrands.length > 0) {
+      presentationBrands = supabaseBrands;
+    } else {
+      const localBrands = loadLocal<PresentationBrandRecord[]>('wassell_presentation_brands');
+      presentationBrands =
+        localBrands && localBrands.length > 0
+          ? localBrands
+          : SEED_PRESENTATION_BRANDS;
+    }
+    saveLocal('wassell_presentation_brands', presentationBrands);
+    // Backfill seed brands to Supabase so user-authored templates can FK to them.
+    if (supabaseBrands !== null) {
+      const existingIds = new Set(supabaseBrands.map((b) => b.id));
+      for (const b of presentationBrands) {
+        if (!existingIds.has(b.id)) {
+          supabaseUpsert('presentation_brands', b as unknown as Record<string, unknown>);
+        }
+      }
+    }
+
     // --- Presentation templates (daemon-synced catalog + seed fallback) ---
     // The daemon (daemon/) syncs manifests from ~/.claude/ppt/templates/ into
     // this table. Until it runs, fall through to localStorage, then to the
@@ -1101,6 +1130,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       tools: tpl.tools ?? [],
       steps: tpl.steps ?? [],
       brand: tpl.brand ?? null,
+      brand_id: tpl.brand_id ?? null,
       is_user_authored: tpl.is_user_authored ?? false,
       created_by: tpl.created_by ?? null,
     }));
@@ -1364,6 +1394,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       users,
       fieldTemplates,
       presentationTemplates,
+      presentationBrands,
       presentationJobs,
       daemonStatus,
       webhookSlugs,
@@ -2459,11 +2490,34 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (existing) return existing;
 
     const nowIso = new Date().toISOString();
+    // Phase 3.3: resolve brand_id → brand body and freeze it onto the
+    // snapshot. This way the worker reads `template_snapshot.brand`
+    // (already a fully-populated brand body) and doesn't need to look
+    // up presentation_brands separately. Editing the brand row after
+    // queue time won't disturb in-flight jobs.
+    const resolvedBrand = template.brand_id
+      ? s.presentationBrands.find((b) => b.id === template.brand_id)
+      : null;
+    const templateSnapshot: PresentationTemplate = {
+      ...template,
+      brand: resolvedBrand
+        ? {
+            colors: resolvedBrand.colors,
+            font_family: resolvedBrand.font_family,
+            font_notes: resolvedBrand.font_notes,
+            design_rules: resolvedBrand.design_rules,
+            text_rules: resolvedBrand.text_rules,
+            forbidden_phrases: resolvedBrand.forbidden_phrases,
+            required_phrases: resolvedBrand.required_phrases,
+          }
+        : template.brand,
+    };
+
     const job: PresentationJob = {
       id: uuid(),
       template_id: templateId,
       template_slug: template.slug,
-      template_snapshot: template,
+      template_snapshot: templateSnapshot,
       record_id: resolvedRecordId,
       record_model_id: recordModelId,
       record_snapshot: recordSnapshot,
@@ -2618,6 +2672,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       tools: input.tools,
       steps: input.steps,
       brand: input.brand ?? null,
+      brand_id: input.brand_id ?? null,
       // Cloud-worker era — `command` is a marker, not a slash command.
       // The worker reads `tools` + `steps` and ignores this field.
       command: 'cloud:agent',
@@ -2715,6 +2770,119 @@ export const useAppStore = create<AppState>((set, get) => ({
       tools: source.tools,
       steps: source.steps,
       brand: source.brand,
+      brand_id: source.brand_id,
+    });
+  },
+
+  // ────────────────────────────────────────────────────────────────────
+  // Phase 3.3 — brands as first-class entities
+  // ────────────────────────────────────────────────────────────────────
+
+  createPresentationBrand: (input) => {
+    const nowIso = new Date().toISOString();
+    const brand: PresentationBrandRecord = {
+      id: uuid(),
+      slug: input.slug,
+      label_ar: input.label_ar,
+      label_en: input.label_en,
+      description_ar: input.description_ar,
+      description_en: input.description_en,
+      colors: input.colors,
+      font_family: input.font_family,
+      font_notes: input.font_notes,
+      design_rules: input.design_rules,
+      text_rules: input.text_rules,
+      forbidden_phrases: input.forbidden_phrases,
+      required_phrases: input.required_phrases,
+      is_system: false,
+      created_by: get().currentUserId,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    set((s) => {
+      const presentationBrands = [...s.presentationBrands, brand];
+      saveLocal('wassell_presentation_brands', presentationBrands);
+      void supabaseUpsert(
+        'presentation_brands',
+        brand as unknown as Record<string, unknown>,
+      );
+      return { presentationBrands };
+    });
+    return brand;
+  },
+
+  updatePresentationBrand: (brandId, patch) => {
+    set((s) => {
+      const idx = s.presentationBrands.findIndex((b) => b.id === brandId);
+      if (idx === -1) return {};
+      const existing = s.presentationBrands[idx]!;
+      // System brands (Wassel) are managed in the seed file. Refuse the
+      // patch silently so the UI's read-only banner is the only signal.
+      if (existing.is_system) return {};
+      const merged: PresentationBrandRecord = {
+        ...existing,
+        ...patch,
+        id: existing.id,
+        is_system: existing.is_system,
+        created_by: existing.created_by,
+        created_at: existing.created_at,
+        updated_at: new Date().toISOString(),
+      };
+      const presentationBrands = [...s.presentationBrands];
+      presentationBrands[idx] = merged;
+      saveLocal('wassell_presentation_brands', presentationBrands);
+      void supabaseUpsert(
+        'presentation_brands',
+        merged as unknown as Record<string, unknown>,
+      );
+      return { presentationBrands };
+    });
+  },
+
+  deletePresentationBrand: (brandId) => {
+    set((s) => {
+      const brand = s.presentationBrands.find((b) => b.id === brandId);
+      if (!brand || brand.is_system) return {};
+      const presentationBrands = s.presentationBrands.filter((b) => b.id !== brandId);
+      // Also clear brand_id from any local templates that referenced it —
+      // the FK ON DELETE rule does this server-side, but the local store
+      // needs to mirror to keep the UI in sync without a refresh.
+      const presentationTemplates = s.presentationTemplates.map((t) =>
+        t.brand_id === brandId ? { ...t, brand_id: null } : t,
+      );
+      saveLocal('wassell_presentation_brands', presentationBrands);
+      saveLocal('wassell_presentation_templates', presentationTemplates);
+      void supabaseDelete('presentation_brands', brandId);
+      return { presentationBrands, presentationTemplates };
+    });
+  },
+
+  duplicatePresentationBrand: (brandId) => {
+    const s = get();
+    const source = s.presentationBrands.find((b) => b.id === brandId);
+    if (!source) return null;
+    const existingSlugs = new Set(s.presentationBrands.map((b) => b.slug));
+    let candidate = `${source.slug}-copy`;
+    let n = 2;
+    while (existingSlugs.has(candidate)) {
+      candidate = `${source.slug}-copy-${n}`;
+      n += 1;
+    }
+    return get().createPresentationBrand({
+      slug: candidate,
+      label_ar: source.label_ar + ' (نسخة)',
+      label_en: source.label_en + ' (copy)',
+      description_ar: source.description_ar,
+      description_en: source.description_en,
+      // Deep-copy nested arrays with fresh ids on each item so dnd-kit
+      // keys stay unique across brand records.
+      colors: source.colors.map((c) => ({ ...c, id: uuid() })),
+      font_family: source.font_family,
+      font_notes: source.font_notes,
+      design_rules: source.design_rules,
+      text_rules: source.text_rules,
+      forbidden_phrases: source.forbidden_phrases.map((p) => ({ ...p, id: uuid() })),
+      required_phrases: source.required_phrases.map((p) => ({ ...p, id: uuid() })),
     });
   },
 

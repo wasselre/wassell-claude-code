@@ -1230,6 +1230,24 @@ export interface PresentationBrand {
   required_phrases: PresentationBrandRequiredPhrase[];
 }
 
+/** First-class brand row — managed at /presentations/brands. Multiple
+ *  templates can reference the same brand by id; editing a brand row
+ *  updates every template that references it. */
+export interface PresentationBrandRecord extends PresentationBrand {
+  id: string;
+  slug: string;
+  label_ar: string;
+  label_en: string;
+  description_ar?: string;
+  description_en?: string;
+  /** True for bundled brands (e.g. Wassel). UI hides delete + makes some
+   *  fields read-only. */
+  is_system: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 /** Per-step state written by the cloud worker as it walks `template.steps`.
  *  Lives on `presentation_jobs.step_outputs`. One entry per step. */
 export type PresentationStepOutputStatus =
@@ -1288,8 +1306,17 @@ export interface PresentationTemplate {
    *  empty and use `command` instead. */
   tools: PresentationToolName[];
   steps: PresentationStep[];
-  /** Phase 3.2 — brand & design rules, injected by the worker into every
-   *  step's prompt. Null = no injection. */
+  /** Phase 3.3 — reference to a `presentation_brands` row. The worker
+   *  resolves this at queue time (snapshots the current brand body into
+   *  the job) so in-flight jobs aren't disturbed by brand edits. Null =
+   *  no brand attached, no design-rule injection. */
+  brand_id: string | null;
+  /** Phase 3.2 — frozen brand body. Lives on the template ONLY for
+   *  backwards-compat with rows authored before brands became a separate
+   *  entity. New code path: brand_id is the source of truth and this
+   *  field is null. The job-snapshot copy still uses this field, populated
+   *  at queue time from the resolved brand row.
+   *  @deprecated since 3.3 — read brand_id and look up the brand row. */
   brand: PresentationBrand | null;
   /** True when authored via /presentations/templates in the app; false for
    *  daemon-synced templates (read-only in the UI) and bundled seeds. */
@@ -1902,6 +1929,30 @@ export interface AppState {
    * Useful for forking the bundled `wassel` template as a starting point.
    */
   duplicatePresentationTemplate: (templateId: string) => PresentationTemplate | null;
+
+  // ── Phase 3.3: brands as first-class entities ─────────────────────
+  // A brand is a named bundle of design rules (palette, typography,
+  // banned/required vocab, etc.). Templates reference a brand by id;
+  // editing the brand updates every template using it. The seeded
+  // `wassel` brand ships with the full Wassel real-estate spec.
+  presentationBrands: PresentationBrandRecord[];
+  /** Insert a new user-authored brand. */
+  createPresentationBrand: (
+    input: Omit<
+      PresentationBrandRecord,
+      'id' | 'is_system' | 'created_by' | 'created_at' | 'updated_at'
+    >,
+  ) => PresentationBrandRecord;
+  /** Patch an existing brand. System brands (Wassel) refuse the patch. */
+  updatePresentationBrand: (
+    brandId: string,
+    patch: Partial<PresentationBrandRecord>,
+  ) => void;
+  /** Delete a user-authored brand. Templates referencing it have their
+   *  `brand_id` set to null by the FK ON DELETE rule. */
+  deletePresentationBrand: (brandId: string) => void;
+  /** Clone any brand (system or not) into a fresh user-authored row. */
+  duplicatePresentationBrand: (brandId: string) => PresentationBrandRecord | null;
 
   // ── Marketing pipeline — workflow-driven ───────────────────────────
   // Every marketing record (marketing_operations / reels / posts /

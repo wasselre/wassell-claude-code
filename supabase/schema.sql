@@ -826,11 +826,51 @@ ALTER TABLE presentation_templates
   ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS is_user_authored BOOLEAN NOT NULL DEFAULT false,
   ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-  -- Phase 3.2 — per-template brand & design rules. Worker injects this
-  -- block into every step's prompt so the agent always has the brand
-  -- spec without the author repeating it in each step's instructions.
-  -- Nullable because most templates won't need it.
+  -- Phase 3.2 — per-template brand & design rules embedded as JSONB.
+  -- Phase 3.3 promotes brands to a first-class table; this column
+  -- is kept for back-compat (queue snapshots still use it) but new
+  -- code reads brand_id and looks up the brand row.
   ADD COLUMN IF NOT EXISTS brand JSONB DEFAULT NULL;
+
+-- Phase 3.3 — brands as first-class entities. Templates reference a brand
+-- by id; editing the brand updates every template that references it.
+CREATE TABLE IF NOT EXISTS presentation_brands (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  slug TEXT UNIQUE NOT NULL,
+  label_ar TEXT NOT NULL,
+  label_en TEXT NOT NULL,
+  description_ar TEXT,
+  description_en TEXT,
+  colors JSONB NOT NULL DEFAULT '[]'::jsonb,
+  font_family TEXT NOT NULL DEFAULT '',
+  font_notes TEXT NOT NULL DEFAULT '',
+  design_rules TEXT NOT NULL DEFAULT '',
+  text_rules TEXT NOT NULL DEFAULT '',
+  forbidden_phrases JSONB NOT NULL DEFAULT '[]'::jsonb,
+  required_phrases JSONB NOT NULL DEFAULT '[]'::jsonb,
+  is_system BOOLEAN NOT NULL DEFAULT false,
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_pres_brands_slug ON presentation_brands(slug);
+
+DROP TRIGGER IF EXISTS set_updated_at_presentation_brands ON presentation_brands;
+CREATE TRIGGER set_updated_at_presentation_brands BEFORE UPDATE ON presentation_brands
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+ALTER TABLE presentation_brands ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Authenticated full access" ON presentation_brands;
+CREATE POLICY "Authenticated full access" ON presentation_brands FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- Templates reference a brand by id. Setting null = no brand. Deleting a
+-- brand sets all referencing templates' brand_id to NULL (templates stay,
+-- they just lose the brand link).
+ALTER TABLE presentation_templates
+  ADD COLUMN IF NOT EXISTS brand_id UUID REFERENCES presentation_brands(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_pres_templates_brand_id ON presentation_templates(brand_id);
 
 CREATE TABLE IF NOT EXISTS presentation_jobs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

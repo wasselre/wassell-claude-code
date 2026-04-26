@@ -71,6 +71,7 @@ export default function TemplateListPage(): JSX.Element {
       tools: [],
       steps: [],
       brand: null,
+      brand_id: null,
     });
     navigate(`/presentations/templates/${tpl.id}`);
   };

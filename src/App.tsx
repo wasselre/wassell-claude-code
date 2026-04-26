@@ -21,6 +21,8 @@ import PresentationsListPage from '@/pages/Presentations/PresentationsListPage';
 import PresentationDetailPage from '@/pages/Presentations/PresentationDetailPage';
 import TemplateListPage from '@/pages/Presentations/TemplateListPage';
 import TemplateEditorPage from '@/pages/Presentations/TemplateEditorPage';
+import BrandsListPage from '@/pages/Presentations/BrandsListPage';
+import BrandEditPage from '@/pages/Presentations/BrandEditPage';
 import SettingsPage from '@/pages/Settings/SettingsPage';
 import LogsPage from '@/pages/Logs/LogsPage';
 import TranslationSettingsPage from '@/pages/Settings/TranslationSettingsPage';
@@ -187,6 +189,8 @@ export default function App() {
               a literal segment, not a job id. */}
           <Route path="/presentations/templates" element={<TemplateListPage />} />
           <Route path="/presentations/templates/:templateId" element={<TemplateEditorPage />} />
+          <Route path="/presentations/brands" element={<BrandsListPage />} />
+          <Route path="/presentations/brands/:brandId" element={<BrandEditPage />} />
           <Route path="/presentations/:jobId" element={<PresentationDetailPage />} />
           <Route
             path="/whiteboard"
