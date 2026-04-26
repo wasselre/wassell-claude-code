@@ -382,6 +382,7 @@ export default function TemplateEditorPage(): JSX.Element {
         <BrandEditor
           brand={draft.brand}
           readonly={readonly}
+          currentTemplateId={draft.id}
           onChange={(brand) => patch({ brand })}
         />
       </Section>

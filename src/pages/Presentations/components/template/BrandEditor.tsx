@@ -1,4 +1,5 @@
-import { Plus, Trash2, Sparkles, Palette } from 'lucide-react';
+import { useMemo } from 'react';
+import { Plus, Trash2, Sparkles, Palette, Copy } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -29,6 +30,9 @@ interface BrandEditorProps {
   brand: PresentationBrand | null;
   onChange: (brand: PresentationBrand | null) => void;
   readonly?: boolean;
+  /** Current template id — excluded from the "copy brand from another
+   *  template" picker so the user can't self-reference. */
+  currentTemplateId: string;
 }
 
 const EMPTY_BRAND: PresentationBrand = {
@@ -41,31 +45,101 @@ const EMPTY_BRAND: PresentationBrand = {
   required_phrases: [],
 };
 
+/** Deep clone a brand so applying a preset doesn't share array refs with
+ *  the source template. New uuids on every nested item with an `id` so
+ *  React keys + dnd-kit ids stay unique across templates. */
+function cloneBrand(source: PresentationBrand): PresentationBrand {
+  return {
+    colors: source.colors.map((c) => ({ ...c, id: uuid() })),
+    font_family: source.font_family,
+    font_notes: source.font_notes,
+    design_rules: source.design_rules,
+    text_rules: source.text_rules,
+    forbidden_phrases: source.forbidden_phrases.map((p) => ({ ...p, id: uuid() })),
+    required_phrases: source.required_phrases.map((p) => ({ ...p, id: uuid() })),
+  };
+}
+
 export default function BrandEditor({
   brand,
   onChange,
   readonly,
+  currentTemplateId,
 }: BrandEditorProps): JSX.Element {
   const isAr = useAppStore((s) => s.language === 'ar');
+  const allTemplates = useAppStore((s) => s.presentationTemplates);
+
+  // Other templates that have a brand attached. The user can clone any of
+  // them as a starting point — including the seeded Wassel template, which
+  // ships with the full brand spec from the wassel-presentation skill.
+  const brandSources = useMemo(
+    () =>
+      allTemplates
+        .filter((t) => t.id !== currentTemplateId && t.brand !== null)
+        .map((t) => ({
+          id: t.id,
+          label: isAr ? t.label_ar : t.label_en,
+          slug: t.slug,
+          brand: t.brand!,
+        })),
+    [allTemplates, currentTemplateId, isAr],
+  );
+
+  const applyFromTemplate = (templateId: string): void => {
+    const source = brandSources.find((s) => s.id === templateId);
+    if (!source) return;
+    if (
+      brand !== null &&
+      !confirm(
+        isAr
+          ? `هل تستبدل الإعدادات الحالية بإعدادات "${source.label}"؟`
+          : `Replace current brand with "${source.label}"?`,
+      )
+    ) {
+      return;
+    }
+    onChange(cloneBrand(source.brand));
+  };
 
   if (brand === null) {
     return (
-      <div className="rounded-xl border border-dashed border-sand/60 bg-cream/20 p-6 text-center">
-        <Palette size={28} className="mx-auto text-charcoal/30 mb-2" />
-        <p className="text-sm text-charcoal/70 mb-1">
-          {isAr ? 'لا توجد إعدادات هوية بعد' : 'No brand spec yet'}
-        </p>
-        <p className="text-xs text-charcoal/50 mb-4 max-w-md mx-auto">
-          {isAr
-            ? 'أضِف ألوان العلامة، الخطوط، وقواعد التصميم. سيقوم وكيل السحابة بحقن هذه الإرشادات في كل خطوة، فلا تحتاج لتكرارها في تعليمات الخطوات.'
-            : 'Add brand colors, fonts, and design rules. The cloud agent will inject these into every step\'s prompt automatically, so you don\'t have to repeat them in each step\'s instructions.'}
-        </p>
-        {!readonly && (
-          <Button variant="ghost" onClick={() => onChange(EMPTY_BRAND)}>
-            <Plus size={14} />
-            {isAr ? 'إضافة هوية' : 'Add brand'}
-          </Button>
-        )}
+      <div className="rounded-xl border border-dashed border-sand/60 bg-cream/20 p-6">
+        <div className="text-center">
+          <Palette size={28} className="mx-auto text-charcoal/30 mb-2" />
+          <p className="text-sm text-charcoal/70 mb-1">
+            {isAr ? 'لا توجد إعدادات هوية بعد' : 'No brand spec yet'}
+          </p>
+          <p className="text-xs text-charcoal/50 mb-4 max-w-md mx-auto">
+            {isAr
+              ? 'أضِف ألوان العلامة، الخطوط، وقواعد التصميم. سيقوم وكيل السحابة بحقن هذه الإرشادات في كل خطوة، فلا تحتاج لتكرارها في تعليمات الخطوات.'
+              : 'Add brand colors, fonts, and design rules. The cloud agent will inject these into every step\'s prompt automatically, so you don\'t have to repeat them in each step\'s instructions.'}
+          </p>
+          {!readonly && (
+            <div className="flex flex-col items-center gap-3">
+              {brandSources.length > 0 && (
+                <BrandSourcePicker
+                  sources={brandSources}
+                  isAr={isAr}
+                  primary
+                  onPick={applyFromTemplate}
+                />
+              )}
+              <div className="flex items-center gap-2 text-xs text-charcoal/40">
+                {brandSources.length > 0 && (
+                  <span>{isAr ? 'أو' : 'or'}</span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onChange(EMPTY_BRAND)}
+                  className="inline-flex items-center gap-1 text-charcoal/60 hover:text-copper"
+                >
+                  <Plus size={12} />
+                  {isAr ? 'ابدأ من فارغ' : 'Start empty'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -76,7 +150,7 @@ export default function BrandEditor({
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 text-xs text-charcoal/50">
           <Sparkles size={12} className="text-copper" />
           {isAr
@@ -84,19 +158,28 @@ export default function BrandEditor({
             : 'The cloud agent injects this into every step'}
         </div>
         {!readonly && (
-          <button
-            type="button"
-            onClick={() => {
-              if (confirm(isAr
-                ? 'إزالة جميع إعدادات الهوية من هذا القالب؟'
-                : 'Remove all brand settings from this template?')) {
-                onChange(null);
-              }
-            }}
-            className="text-xs text-red-600 hover:text-red-700"
-          >
-            {isAr ? 'إزالة الهوية' : 'Remove brand'}
-          </button>
+          <div className="flex items-center gap-3">
+            {brandSources.length > 0 && (
+              <BrandSourcePicker
+                sources={brandSources}
+                isAr={isAr}
+                onPick={applyFromTemplate}
+              />
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (confirm(isAr
+                  ? 'إزالة جميع إعدادات الهوية من هذا القالب؟'
+                  : 'Remove all brand settings from this template?')) {
+                  onChange(null);
+                }
+              }}
+              className="text-xs text-red-600 hover:text-red-700"
+            >
+              {isAr ? 'إزالة الهوية' : 'Remove brand'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -208,6 +291,61 @@ export default function BrandEditor({
 // ────────────────────────────────────────────────────────────────────
 // Subcomponents
 // ────────────────────────────────────────────────────────────────────
+
+interface BrandSource {
+  id: string;
+  label: string;
+  slug: string;
+  brand: PresentationBrand;
+}
+
+/** Native <select> wrapped to feel like a button. We use a select rather
+ *  than a custom dropdown so a/r reading order, keyboard nav, and mobile
+ *  picker UI all work for free. The on-change reset to "" lets the user
+ *  pick the same source twice in a row (otherwise React skips the
+ *  redundant change). */
+function BrandSourcePicker({
+  sources,
+  isAr,
+  primary,
+  onPick,
+}: {
+  sources: BrandSource[];
+  isAr: boolean;
+  /** When true, render with Button-styled primary look (used in the
+   *  empty state where this is the recommended action). */
+  primary?: boolean;
+  onPick: (templateId: string) => void;
+}): JSX.Element {
+  const placeholder = isAr ? 'نسخ الهوية من…' : 'Copy brand from…';
+  const className = primary
+    ? 'inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white text-sm font-bold hover:bg-terracotta cursor-pointer'
+    : 'inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs text-charcoal/70 hover:text-copper hover:bg-cream/40 border border-sand/40 bg-white cursor-pointer';
+  return (
+    <label className={className}>
+      <Copy size={primary ? 14 : 12} />
+      <span>{placeholder}</span>
+      <select
+        value=""
+        onChange={(e) => {
+          if (e.target.value) onPick(e.target.value);
+          // Reset so picking the same source twice still fires onChange.
+          e.target.value = '';
+        }}
+        className="appearance-none bg-transparent border-0 outline-none text-current cursor-pointer"
+      >
+        <option value="" disabled>
+          {placeholder}
+        </option>
+        {sources.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.label} ({s.slug})
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 function Subsection({
   title,
