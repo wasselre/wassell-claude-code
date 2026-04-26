@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { ArrowRight, Sparkles, Send, Loader2, Database, FilePlus2, ExternalLink } from 'lucide-react';
 import { streamWorkflowAgentTurn, type AgentApiMessage } from '@/lib/workflowAgent/client';
-import type { Workflow } from '@/types';
+import type { Workflow, WorkflowGroup } from '@/types';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
@@ -26,6 +26,8 @@ export default function WorkflowAgentPage() {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
   const saveWorkflow = useAppStore((s) => s.saveWorkflow);
+  const saveWorkflowGroup = useAppStore((s) => s.saveWorkflowGroup);
+  const deleteWorkflowGroup = useAppStore((s) => s.deleteWorkflowGroup);
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -107,6 +109,27 @@ export default function WorkflowAgentPage() {
                     ? { ...c, is_active: !!parsed.is_active }
                     : c,
                   ));
+                }
+              } catch { /* ignore parse errors */ }
+            } else if (event.name === 'set_workflow_folder') {
+              try {
+                const parsed = JSON.parse(event.result);
+                if (parsed && parsed.ok && parsed.workflow) {
+                  saveWorkflow(parsed.workflow as Workflow);
+                }
+              } catch { /* ignore parse errors */ }
+            } else if (event.name === 'create_workflow_folder' || event.name === 'rename_workflow_folder') {
+              try {
+                const parsed = JSON.parse(event.result);
+                if (parsed && parsed.ok && parsed.folder) {
+                  saveWorkflowGroup(parsed.folder as WorkflowGroup);
+                }
+              } catch { /* ignore parse errors */ }
+            } else if (event.name === 'delete_workflow_folder') {
+              try {
+                const parsed = JSON.parse(event.result);
+                if (parsed && parsed.ok && parsed.folder_id) {
+                  deleteWorkflowGroup(parsed.folder_id as string);
                 }
               } catch { /* ignore parse errors */ }
             }
@@ -220,7 +243,15 @@ export default function WorkflowAgentPage() {
                   ? (isAr ? 'ينشئ القاعدة...' : 'Creating workflow...')
                   : activeTool === 'set_workflow_active'
                     ? (isAr ? 'يحدّث حالة التفعيل...' : 'Updating activation...')
-                    : activeTool}
+                    : activeTool === 'create_workflow_folder'
+                      ? (isAr ? 'ينشئ مجلدًا...' : 'Creating folder...')
+                      : activeTool === 'rename_workflow_folder'
+                        ? (isAr ? 'يعيد تسمية المجلد...' : 'Renaming folder...')
+                        : activeTool === 'delete_workflow_folder'
+                          ? (isAr ? 'يحذف المجلد...' : 'Deleting folder...')
+                          : activeTool === 'set_workflow_folder'
+                            ? (isAr ? 'ينقل القاعدة إلى المجلد...' : 'Moving workflow to folder...')
+                            : activeTool}
             </span>
           </div>
         )}

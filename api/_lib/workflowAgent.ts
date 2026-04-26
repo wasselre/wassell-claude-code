@@ -7,12 +7,19 @@
  * its world is models, fields, conditions, and actions.
  *
  * Tools it exposes:
- *   get_app_context     — inventory of models (with fields), users, roles,
- *                         existing workflows (with their on/off state),
- *                         and webhook endpoints, so the agent can resolve
- *                         names → IDs without guessing.
- *   create_workflow     — saves a fully-specified workflow to Supabase.
- *   set_workflow_active — toggles an existing workflow's is_active flag.
+ *   get_app_context        — inventory of models (with fields), users,
+ *                            roles, existing workflows (with their on/off
+ *                            state and folder), workflow folders, and
+ *                            webhook endpoints, so the agent can resolve
+ *                            names → IDs without guessing.
+ *   create_workflow        — saves a fully-specified workflow to Supabase.
+ *   set_workflow_active    — toggles an existing workflow's is_active flag.
+ *   create_workflow_folder — adds a new folder for organizing workflows.
+ *   rename_workflow_folder — updates a folder's bilingual labels.
+ *   delete_workflow_folder — deletes a folder; its workflows become
+ *                            ungrouped via the schema's ON DELETE SET NULL.
+ *   set_workflow_folder    — moves an existing workflow into / out of a
+ *                            folder.
  *
  * Conversation history lives on the client (no persistence yet — the
  * value is the workflow that gets created, not the chat).
@@ -34,7 +41,11 @@ export const WORKFLOW_AGENT_MAX_TOKENS = 16_000;
 export const WORKFLOW_AGENT_SYSTEM_PROMPT = `You are the Wassel Workflow Builder — an AI assistant inside the Wassel CRM (وصل العقارية, a Saudi Arabian real-estate marketing CRM) whose ONLY job is to help users create automation rules ("workflows") by talking to them in natural language.
 
 # Your job
-A user describes an automation in plain English or Arabic. You ask a few clarifying questions if needed, then call \`create_workflow\` with a fully-specified workflow object. You can also turn an existing workflow on or off via \`set_workflow_active\` when the user asks (e.g. "activate the one I just made", "turn off the welcome workflow"). You don't run workflows; you build and toggle them.
+A user describes an automation in plain English or Arabic. You ask a few clarifying questions if needed, then call \`create_workflow\` with a fully-specified workflow object. You can also:
+ - Turn workflows on/off (\`set_workflow_active\`).
+ - Manage **folders** that organize workflows: \`create_workflow_folder\`, \`rename_workflow_folder\`, \`delete_workflow_folder\`, \`set_workflow_folder\` (moves a workflow into / out of a folder, or assigns one when creating).
+
+You don't run workflows; you build, toggle, organize them.
 
 # How workflows work in this app
 
@@ -96,9 +107,22 @@ Use one of these seven \`type\` values (full config for each below):
 
 When the user says something like "activate the one I just created", "turn on the welcome workflow", "disable the lead notifier", call \`set_workflow_active\` with the workflow id and the desired \`is_active\` value. To find the id:
  - If you just created it in this conversation, you already know the id from the \`create_workflow\` tool result.
- - Otherwise call \`get_app_context\` and match the user's description against the existing workflows list (each entry has \`id\`, \`label_ar\`, \`label_en\`, and \`is_active\`).
+ - Otherwise call \`get_app_context\` and match the user's description against the existing workflows list (each entry has \`id\`, \`label_ar\`, \`label_en\`, \`is_active\`, and \`group_id\`).
 
 If the user's description is ambiguous (multiple workflows match), list the candidates with their on/off state and ask them to pick.
+
+# Managing folders
+
+Folders are organizational only — they don't affect what a workflow does. Each workflow has a nullable \`group_id\` referencing a folder; null means "ungrouped" (the default).
+
+When to use:
+ - "Create a folder called Onboarding" → \`create_workflow_folder\`. Always set BOTH label_ar and label_en (write a sensible translation if the user only gave one).
+ - "Rename the Onboarding folder to Welcome" → \`rename_workflow_folder\`. Pass only the languages the user wants changed.
+ - "Delete the Welcome folder" → \`delete_workflow_folder\`. WARN the user first if the folder still has workflows in it (they'll become ungrouped, not deleted) and confirm before calling.
+ - "Move the welcome workflow into the Onboarding folder" → \`set_workflow_folder\` with the workflow_id and target folder_id. Pass \`folder_id: null\` to move a workflow OUT of any folder back to ungrouped.
+ - When creating a new workflow into an existing folder, you can either pass \`group_id\` directly to \`create_workflow\` or call \`set_workflow_folder\` after.
+
+Folder discovery: \`get_app_context\` returns a \`workflow_folders\` array (id + bilingual labels + order) and each workflow's \`group_id\`. If the user mentions a folder by name, match against that list; if no folder matches, offer to create it.
 
 # What NOT to do
 - Don't write workflow JSON in your assistant text — always emit it via the \`create_workflow\` tool.
@@ -150,6 +174,7 @@ export const WORKFLOW_AGENT_TOOLS: ToolUnion[] = [
         },
         trigger_webhook_slug_id: { type: 'string', description: 'Webhook slug id when trigger_event is "webhook".' },
         is_active: { type: 'boolean', description: 'Whether the workflow runs on save. Default false unless the user says to activate.' },
+        group_id: { type: 'string', description: 'Optional folder (workflow_groups.id) to drop the new workflow into. Omit for ungrouped.' },
         branches: {
           type: 'array',
           description: 'Ordered list of if/else-if/else arms. The first arm whose conditions all pass runs.',
@@ -191,6 +216,58 @@ export const WORKFLOW_AGENT_TOOLS: ToolUnion[] = [
       required: ['label_ar', 'label_en', 'trigger_event', 'branches'],
     },
   },
+  {
+    name: 'create_workflow_folder',
+    description:
+      'Create a new folder for organizing workflows in the workflows list. Folders are organizational only — they do not change what a workflow does. Always provide BOTH `label_ar` and `label_en`; if the user only gave one, write a sensible translation for the other. Returns the folder id you can pass into `set_workflow_folder` or `create_workflow`.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        label_ar: { type: 'string', description: 'Folder name in Arabic.' },
+        label_en: { type: 'string', description: 'Folder name in English.' },
+      },
+      required: ['label_ar', 'label_en'],
+    },
+  },
+  {
+    name: 'rename_workflow_folder',
+    description:
+      "Update one or both labels of an existing folder. Pass only the languages you want changed — omitted ones stay as they were. Use this when the user says things like 'rename the Welcome folder to Onboarding'.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        folder_id: { type: 'string', description: 'Folder id from get_app_context.' },
+        label_ar: { type: 'string', description: 'New Arabic label (omit to keep current).' },
+        label_en: { type: 'string', description: 'New English label (omit to keep current).' },
+      },
+      required: ['folder_id'],
+    },
+  },
+  {
+    name: 'delete_workflow_folder',
+    description:
+      "Delete a folder. Workflows inside it become ungrouped (their group_id is set to null) — they are NOT deleted. ALWAYS warn the user first if the folder still has workflows in it (look at workflows.group_id in get_app_context to count them) and confirm before calling.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        folder_id: { type: 'string', description: 'Folder id to delete.' },
+      },
+      required: ['folder_id'],
+    },
+  },
+  {
+    name: 'set_workflow_folder',
+    description:
+      "Move a workflow into a folder, between folders, or out of any folder back to ungrouped. Pass the workflow id and a target folder_id. To move OUT of a folder, omit folder_id (or pass an empty string) — the workflow becomes ungrouped. Use when the user says things like 'put the welcome workflow in Onboarding' or 'remove the lead notifier from any folder'.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        workflow_id: { type: 'string', description: 'Workflow id to move.' },
+        folder_id: { type: 'string', description: 'Target folder id. Omit or pass an empty string to ungroup.' },
+      },
+      required: ['workflow_id'],
+    },
+  },
 ];
 
 // ─── Tool execution ───────────────────────────────────────────────────────
@@ -227,6 +304,14 @@ interface WorkflowRow {
   trigger_event: string;
   trigger_model_id: string | null;
   is_active: boolean;
+  group_id: string | null;
+}
+
+interface WorkflowFolderRow {
+  id: string;
+  label_ar: string;
+  label_en: string;
+  order: number;
 }
 
 async function buildAppContext(supabase: SupabaseClient, baseUrl: string): Promise<string> {
@@ -251,12 +336,20 @@ async function buildAppContext(supabase: SupabaseClient, baseUrl: string): Promi
   const { data: rawRoles } = await supabase.from('roles').select('id, name');
   const roles = (rawRoles ?? []) as RoleRow[];
 
-  // Existing workflows (id + name + trigger + on/off state). The agent
-  // uses `is_active` to phrase replies correctly ("the X workflow is
-  // already active") and to know whether `set_workflow_active` would
-  // actually change anything.
-  const { data: rawWorkflows } = await supabase.from('workflows').select('id, label_ar, label_en, trigger_event, trigger_model_id, is_active');
+  // Existing workflows (id + name + trigger + on/off state + folder).
+  // The agent uses `is_active` to phrase replies correctly ("already
+  // active") and `group_id` to know which folder a workflow lives in
+  // when the user says things like "the welcome workflow in Onboarding".
+  const { data: rawWorkflows } = await supabase.from('workflows').select('id, label_ar, label_en, trigger_event, trigger_model_id, is_active, group_id');
   const workflows = (rawWorkflows ?? []) as WorkflowRow[];
+
+  // Workflow folders. Tolerate the table not existing on installs that
+  // haven't run the latest migration yet.
+  let workflowFolders: WorkflowFolderRow[] = [];
+  try {
+    const { data: rawFolders } = await supabase.from('workflow_groups').select('id, label_ar, label_en, "order"');
+    workflowFolders = (rawFolders ?? []) as WorkflowFolderRow[];
+  } catch { /* table missing on older installs */ }
 
   // Webhook slugs.
   const { data: rawSlugs } = await supabase.from('webhook_slugs').select('id, slug, name, payload_schema');
@@ -271,6 +364,7 @@ async function buildAppContext(supabase: SupabaseClient, baseUrl: string): Promi
     users,
     roles,
     workflows,
+    workflow_folders: workflowFolders,
     webhook_slugs: webhookSlugs,
     available_action_types: [
       'create_record',
@@ -301,6 +395,7 @@ interface CreateWorkflowInput {
   trigger_event: 'create' | 'update' | 'delete' | 'webhook';
   trigger_webhook_slug_id?: string;
   is_active?: boolean;
+  group_id?: string;
   branches: Array<{
     label_ar?: string;
     label_en?: string;
@@ -390,6 +485,8 @@ async function createWorkflow(
     trigger_model_id: input.trigger_model_id ?? null,
     trigger_event: input.trigger_event,
     trigger_webhook_slug_id: input.trigger_webhook_slug_id ?? null,
+    // Empty string → null (Postgres rejects '' on UUID columns).
+    group_id: input.group_id || null,
     branches,
     conditions: primary?.conditions ?? [],
     actions: primary?.actions ?? [],
@@ -416,6 +513,135 @@ async function createWorkflow(
     workflow: row,
   });
 }
+
+// ─── Folder management ────────────────────────────────────────────────────
+
+interface CreateFolderInput {
+  label_ar: string;
+  label_en: string;
+}
+
+async function createWorkflowFolder(
+  supabase: SupabaseClient,
+  input: CreateFolderInput,
+): Promise<string> {
+  if (!input?.label_ar || !input?.label_en) {
+    return JSON.stringify({ ok: false, error: 'label_ar and label_en are required' });
+  }
+  const id = newId();
+  // Order: append to the end. Read current max so the new folder doesn't
+  // jump above existing ones.
+  const { data: existing } = await supabase
+    .from('workflow_groups')
+    .select('"order"')
+    .order('"order"', { ascending: false })
+    .limit(1);
+  const nextOrder = ((existing as Array<{ order?: number }> | null)?.[0]?.order ?? -1) + 1;
+
+  const row = {
+    id,
+    label_ar: input.label_ar,
+    label_en: input.label_en,
+    order: nextOrder,
+  };
+  const { error } = await supabase.from('workflow_groups').insert(row);
+  if (error) return JSON.stringify({ ok: false, error: error.message });
+  return JSON.stringify({ ok: true, folder_id: id, folder: row });
+}
+
+interface RenameFolderInput {
+  folder_id: string;
+  label_ar?: string;
+  label_en?: string;
+}
+
+async function renameWorkflowFolder(
+  supabase: SupabaseClient,
+  input: RenameFolderInput,
+): Promise<string> {
+  if (!input?.folder_id) {
+    return JSON.stringify({ ok: false, error: 'folder_id is required' });
+  }
+  const patch: Record<string, unknown> = {};
+  if (input.label_ar) patch.label_ar = input.label_ar;
+  if (input.label_en) patch.label_en = input.label_en;
+  if (Object.keys(patch).length === 0) {
+    return JSON.stringify({ ok: false, error: 'pass at least one of label_ar or label_en' });
+  }
+  const { data, error } = await supabase
+    .from('workflow_groups')
+    .update(patch)
+    .eq('id', input.folder_id)
+    .select('*')
+    .single();
+  if (error) return JSON.stringify({ ok: false, error: error.message });
+  if (!data) return JSON.stringify({ ok: false, error: 'folder not found' });
+  return JSON.stringify({ ok: true, folder_id: input.folder_id, folder: data });
+}
+
+interface DeleteFolderInput {
+  folder_id: string;
+}
+
+async function deleteWorkflowFolder(
+  supabase: SupabaseClient,
+  input: DeleteFolderInput,
+): Promise<string> {
+  if (!input?.folder_id) {
+    return JSON.stringify({ ok: false, error: 'folder_id is required' });
+  }
+  // Count the workflows that will get un-grouped so the agent can phrase
+  // its confirmation message correctly. The schema's ON DELETE SET NULL
+  // does the actual orphaning automatically.
+  const { data: orphans } = await supabase
+    .from('workflows')
+    .select('id')
+    .eq('group_id', input.folder_id);
+  const orphanCount = (orphans as Array<{ id: string }> | null)?.length ?? 0;
+
+  const { error } = await supabase.from('workflow_groups').delete().eq('id', input.folder_id);
+  if (error) return JSON.stringify({ ok: false, error: error.message });
+  return JSON.stringify({
+    ok: true,
+    folder_id: input.folder_id,
+    workflows_unfiled: orphanCount,
+  });
+}
+
+interface SetWorkflowFolderInput {
+  workflow_id: string;
+  folder_id?: string;
+}
+
+async function setWorkflowFolder(
+  supabase: SupabaseClient,
+  baseUrl: string,
+  input: SetWorkflowFolderInput,
+): Promise<string> {
+  if (!input?.workflow_id) {
+    return JSON.stringify({ ok: false, error: 'workflow_id is required' });
+  }
+  // Empty string or missing → ungroup. Anything else → folder id.
+  const target = input.folder_id ? input.folder_id : null;
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('workflows')
+    .update({ group_id: target, updated_at: now })
+    .eq('id', input.workflow_id)
+    .select('*')
+    .single();
+  if (error) return JSON.stringify({ ok: false, error: error.message });
+  if (!data) return JSON.stringify({ ok: false, error: 'workflow not found' });
+  return JSON.stringify({
+    ok: true,
+    workflow_id: input.workflow_id,
+    group_id: target,
+    editor_url: `${baseUrl}/workflow/${input.workflow_id}`,
+    workflow: data,
+  });
+}
+
+// ─── Activation ───────────────────────────────────────────────────────────
 
 interface SetActiveInput {
   workflow_id: string;
@@ -472,6 +698,14 @@ export async function executeWorkflowAgentTool(
       return await createWorkflow(supabase, baseUrl, input as CreateWorkflowInput);
     case 'set_workflow_active':
       return await setWorkflowActive(supabase, baseUrl, input as SetActiveInput);
+    case 'create_workflow_folder':
+      return await createWorkflowFolder(supabase, input as CreateFolderInput);
+    case 'rename_workflow_folder':
+      return await renameWorkflowFolder(supabase, input as RenameFolderInput);
+    case 'delete_workflow_folder':
+      return await deleteWorkflowFolder(supabase, input as DeleteFolderInput);
+    case 'set_workflow_folder':
+      return await setWorkflowFolder(supabase, baseUrl, input as SetWorkflowFolderInput);
     default:
       return JSON.stringify({ ok: false, error: `unknown tool: ${name}` });
   }
