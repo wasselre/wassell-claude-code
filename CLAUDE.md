@@ -182,6 +182,44 @@ The app deploys to Vercel. Its config (`vercel.json`) is validated against a **s
 
 The same "strict schema, not validated by `npm run build`" principle applies to any other deploy-layer config we add later (e.g. `netlify.toml`, GitHub Actions workflows, Supabase `config.toml`).
 
+## Silent Failures (CRITICAL — read before adding any try/catch or skip)
+
+**This codebase has been bitten repeatedly by silent error catches.** All of the following bugs were hidden for weeks-to-months by silent swallowed errors:
+
+- **1,000-row PostgREST truncation** — `supabaseLoad` called `.select('*')` with no pagination and no error surfacing. Counts under-reported across the entire app (706 vs 1,041 projects, 30 vs 636 competitors). Fix landed 2026-04-26 in `de997c0`.
+- **localStorage 5–10 MB cliff** — `saveLocal`'s `try { ... } catch { /* silently ignore */ }` swallowed `QuotaExceededError`. Users hit the cap and their offline cache stopped saving with zero feedback. Fix landed 2026-04-26.
+- **Inline-create UUID drift** — `value: uuid()` on every dropdown option re-create produced different UUIDs each time, silently breaking filters that referenced the older value. Fix landed 2026-04-26 in `e0a6d3b`.
+- **Auto-ID race condition** — read-modify-write of `auto_id_counters` on the client; two concurrent saves silently produce duplicate IDs. Still unfixed.
+- **Fire-and-forget Supabase upserts in `saveModel`/`saveRecord`** — if the upsert fails (RLS, network, FK violation), the local store keeps the change but Supabase rolls back. Next page load wipes the local copy. Still unfixed.
+
+**Hard rules — never violate:**
+
+1. **Never write `try { ... } catch { /* ignore */ }`.** If you genuinely need to swallow an exception, scope it: catch the *specific* error class you're handling, AND write a comment naming the exact case it covers AND log via `console.error` at minimum. The reviewer should be able to read your catch and understand why every other failure mode would still propagate.
+
+2. **Never wrap `reportSupabaseError`, `addToast`, or other error-surfacing paths in conditional skips.** When a toast is "annoying," the right answer is *fix the root cause* or *scope the silence narrowly with documented evidence*. The wrong answer — and we've been burned by it three times — is `if (someCondition) return; // skip the toast`. Every conditional silencer in this repo has a story; the story is always "we added it because the toast was annoying" and the punchline is always "we lost data because nobody knew the operation failed."
+
+3. **Never add a fire-and-forget Supabase write without surfacing failures.** `supabaseUpsert` already calls `reportSupabaseError` on failure — do not bypass that. If you're calling `.upsert()` directly, you must `await` it and `await` the error path.
+
+4. **When in doubt, fail loudly.** A red toast that the user sees and reports is infinitely better than a silent corruption they discover three months later. We have already lost weeks of trust to silent-failure bugs.
+
+**Reference good examples:**
+- `saveLocal` (post-2026-04-26 in `appStore.ts`) — surfaces `QuotaExceededError` once per key per session via toast + `console.error`.
+- `supabaseLoad` (post-2026-04-26) — paginates and reports errors via `reportSupabaseError`.
+- `findExistingOption` + `slugifyOptionLabel` in `DynamicField.tsx` — deterministic, no silent failure modes.
+
+**If another agent (or you in a future session) proposes a fix that adds `if (!isSupabaseConfigured()) return;` or any conditional that skips an error-surfacing path:** push back. Verify against `git log` and `git diff origin/main` before merging — a fix that exists only in chat is not a fix.
+
+## Verifying agent-claimed fixes (CRITICAL)
+
+When any agent (including future Claude sessions) claims to have shipped a fix, verify before believing:
+
+1. **`git log --oneline -10`** — is there a commit that matches?
+2. **`git diff origin/main <file>`** — is the change actually in the working tree, or just staged, or only in chat?
+3. **`grep -n <function-name> <file>`** — does the function the agent referenced even exist? (We've seen agents reference `isSupabaseConfigured()` which has never existed in this repo.)
+4. **For deploy-affecting changes:** `vercel ls --scope wassel1 | head -3` — is the latest deploy `Ready` and from a SHA newer than the claimed fix?
+
+A fix that exists only in an agent's chat output is not deployed and not real. Trust the SHA, not the prose.
+
 ## Do Not
 - Do not use `any` TypeScript type
 - Do not hardcode Arabic or English strings in JSX
@@ -189,3 +227,4 @@ The same "strict schema, not validated by `npm run build`" principle applies to 
 - Do not delete system models (is_system: true) — disable the delete button instead
 - Do not break RTL layout — always test both directions when adding UI
 - Do not add non-schema keys (`_comment`, etc.) to `vercel.json` — see "Deployment Config" above
+- Do not silently swallow errors — see "Silent Failures" above
