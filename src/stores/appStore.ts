@@ -1093,6 +1093,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           ? localPresTemplates
           : SEED_PRESENTATION_TEMPLATES;
     }
+    // Phase 2 migration: rows persisted before the schema migration are
+    // missing `tools` / `steps` / `is_user_authored` / `created_by`. Default
+    // them so the rest of the codebase can assume the fields exist.
+    presentationTemplates = presentationTemplates.map((tpl) => ({
+      ...tpl,
+      tools: tpl.tools ?? [],
+      steps: tpl.steps ?? [],
+      is_user_authored: tpl.is_user_authored ?? false,
+      created_by: tpl.created_by ?? null,
+    }));
     saveLocal('wassell_presentation_templates', presentationTemplates);
     // Backfill seed rows to Supabase so the daemon has a real id to sync against.
     // No FK dependents on this table.
@@ -1109,6 +1119,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     // User-created; no seed. Local mirror for offline.
     let presentationJobs = await supabaseLoad<PresentationJob>('presentation_jobs');
     if (!presentationJobs) presentationJobs = loadLocal<PresentationJob[]>('wassell_presentation_jobs') ?? [];
+    // Phase 3 migration — backfill step_outputs on rows that predate the
+    // column rollout so the detail page can read it without optional-chain
+    // gymnastics. Same idempotent default-fill pattern as templates above.
+    presentationJobs = presentationJobs.map((j) => ({
+      ...j,
+      step_outputs: j.step_outputs ?? [],
+    }));
     saveLocal('wassell_presentation_jobs', presentationJobs);
 
     // --- Daemon status (singleton heartbeat) ---
@@ -2463,6 +2480,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       result: null,
       drive_folder_url: null,
       drive_deck_url: null,
+      step_outputs: [],
       error_code: null,
       error_message: null,
       error_detail: null,
@@ -2519,6 +2537,181 @@ export const useAppStore = create<AppState>((set, get) => ({
       templateId: source.template_id,
       recordId: source.record_id,
       inputs: source.inputs,
+    });
+  },
+
+  retryPresentationStep: (jobId: string, stepId: string) => {
+    let result = false;
+    set((s) => {
+      const idx = s.presentationJobs.findIndex((j) => j.id === jobId);
+      if (idx === -1) return {};
+      const job = s.presentationJobs[idx]!;
+      const stepIdx = job.step_outputs.findIndex((o) => o.step_id === stepId);
+      if (stepIdx === -1) return {};
+      // Reset the target step + everything downstream to 'pending' so the
+      // worker resumes from there. Earlier steps stay completed.
+      const newStepOutputs = job.step_outputs.map((o, i) =>
+        i < stepIdx
+          ? o
+          : {
+              step_id: o.step_id,
+              kind: o.kind,
+              status: 'pending' as const,
+            },
+      );
+      const updated: PresentationJob = {
+        ...job,
+        // Re-queue. Worker's `claim_next_presentation_job` RPC picks up
+        // 'queued' rows; once it does, claimed_by + started_at + ... are
+        // re-set by the RPC itself. We just clear the prior run's finals
+        // so stale data doesn't show in the UI between re-queue and claim.
+        status: 'queued',
+        step_outputs: newStepOutputs,
+        claimed_by: null,
+        started_at: null,
+        finished_at: null,
+        duration_ms: null,
+        result: null,
+        drive_deck_url: null,
+        drive_folder_url: null,
+        error_code: null,
+        error_message: null,
+        error_detail: null,
+        progress_stage: null,
+        progress_message_ar: null,
+        progress_message_en: null,
+        updated_at: new Date().toISOString(),
+      };
+      const next = [...s.presentationJobs];
+      next[idx] = updated;
+      saveLocal('wassell_presentation_jobs', next);
+      void supabaseUpsert(
+        'presentation_jobs',
+        updated as unknown as Record<string, unknown>,
+        { table: 'presentation_templates', id: updated.template_id },
+      );
+      result = true;
+      return { presentationJobs: next };
+    });
+    return result;
+  },
+
+  // ────────────────────────────────────────────────────────────────────
+  // Phase 2 — in-app Template Builder (cloud worker era)
+  // ────────────────────────────────────────────────────────────────────
+
+  createPresentationTemplate: (input) => {
+    const nowIso = new Date().toISOString();
+    const template: PresentationTemplate = {
+      id: uuid(),
+      slug: input.slug,
+      label_ar: input.label_ar,
+      label_en: input.label_en,
+      description_ar: input.description_ar,
+      description_en: input.description_en,
+      icon: input.icon,
+      input_schema: input.input_schema,
+      record_binding: input.record_binding,
+      estimated_duration_seconds: input.estimated_duration_seconds,
+      is_available: input.is_available,
+      tools: input.tools,
+      steps: input.steps,
+      // Cloud-worker era — `command` is a marker, not a slash command.
+      // The worker reads `tools` + `steps` and ignores this field.
+      command: 'cloud:agent',
+      // Daemon-only fields — null for in-app authored.
+      manifest_path: null,
+      manifest_synced_at: nowIso,
+      // Phase 2 markers.
+      is_user_authored: true,
+      created_by: get().currentUserId,
+      created_at: nowIso,
+      updated_at: nowIso,
+    };
+    set((s) => {
+      const presentationTemplates = [...s.presentationTemplates, template];
+      saveLocal('wassell_presentation_templates', presentationTemplates);
+      void supabaseUpsert(
+        'presentation_templates',
+        template as unknown as Record<string, unknown>,
+      );
+      return { presentationTemplates };
+    });
+    return template;
+  },
+
+  updatePresentationTemplate: (templateId, patch) => {
+    set((s) => {
+      const idx = s.presentationTemplates.findIndex((t) => t.id === templateId);
+      if (idx === -1) return {};
+      const existing = s.presentationTemplates[idx]!;
+      // Daemon-synced templates are read-only in the UI; refuse silently
+      // (the list page hides the Edit button anyway, so this is defense
+      // in depth, not a user-visible code path).
+      if (!existing.is_user_authored) return {};
+      const merged: PresentationTemplate = {
+        ...existing,
+        ...patch,
+        // Server-controlled fields can't be patched.
+        id: existing.id,
+        is_user_authored: true,
+        created_by: existing.created_by,
+        created_at: existing.created_at,
+        updated_at: new Date().toISOString(),
+      };
+      const presentationTemplates = [...s.presentationTemplates];
+      presentationTemplates[idx] = merged;
+      saveLocal('wassell_presentation_templates', presentationTemplates);
+      void supabaseUpsert(
+        'presentation_templates',
+        merged as unknown as Record<string, unknown>,
+      );
+      return { presentationTemplates };
+    });
+  },
+
+  deletePresentationTemplate: (templateId) => {
+    set((s) => {
+      const tpl = s.presentationTemplates.find((t) => t.id === templateId);
+      if (!tpl) return {};
+      // Daemon-synced templates would just resync next manifest pass — refuse.
+      if (!tpl.is_user_authored) return {};
+      const presentationTemplates = s.presentationTemplates.filter(
+        (t) => t.id !== templateId,
+      );
+      saveLocal('wassell_presentation_templates', presentationTemplates);
+      void supabaseDelete('presentation_templates', templateId);
+      return { presentationTemplates };
+    });
+  },
+
+  duplicatePresentationTemplate: (templateId) => {
+    const s = get();
+    const source = s.presentationTemplates.find((t) => t.id === templateId);
+    if (!source) return null;
+    // Pick a unique slug — `<slug>-copy`, then `-copy-2`, `-copy-3`…
+    const existingSlugs = new Set(s.presentationTemplates.map((t) => t.slug));
+    let candidate = `${source.slug}-copy`;
+    let n = 2;
+    while (existingSlugs.has(candidate)) {
+      candidate = `${source.slug}-copy-${n}`;
+      n += 1;
+    }
+    const labelSuffixEn = ' (copy)';
+    const labelSuffixAr = ' (نسخة)';
+    return get().createPresentationTemplate({
+      slug: candidate,
+      label_ar: source.label_ar + labelSuffixAr,
+      label_en: source.label_en + labelSuffixEn,
+      description_ar: source.description_ar,
+      description_en: source.description_en,
+      icon: source.icon,
+      input_schema: source.input_schema,
+      record_binding: source.record_binding,
+      estimated_duration_seconds: source.estimated_duration_seconds,
+      is_available: source.is_available,
+      tools: source.tools,
+      steps: source.steps,
     });
   },
 

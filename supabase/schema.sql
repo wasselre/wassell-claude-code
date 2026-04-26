@@ -802,17 +802,30 @@ CREATE TABLE IF NOT EXISTS presentation_templates (
   label_en TEXT NOT NULL,
   description_ar TEXT,
   description_en TEXT,
-  command TEXT NOT NULL,                                    -- e.g. '/wassel'
+  command TEXT NOT NULL,                                    -- legacy: slash command for the local daemon. user-authored templates use 'cloud:agent'.
   icon TEXT NOT NULL DEFAULT 'file-text',
   input_schema JSONB NOT NULL DEFAULT '[]'::jsonb,          -- PresentationInput[]
   record_binding JSONB,                                     -- { model_slug, optional } or NULL
   estimated_duration_seconds INT,
   is_available BOOLEAN NOT NULL DEFAULT true,               -- daemon flips false when manifest deleted
-  manifest_path TEXT,                                       -- filesystem path on the daemon host (nullable for seeds)
+  manifest_path TEXT,                                       -- legacy daemon: filesystem path on the daemon host. NULL for seed + user-authored templates.
   manifest_synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Phase 2 (cloud worker era) — authored in-app via /presentations/templates.
+  tools JSONB NOT NULL DEFAULT '[]'::jsonb,                 -- string[] of tool names (web_search, web_fetch, code_execution, record_lookup, drive_upload)
+  steps JSONB NOT NULL DEFAULT '[]'::jsonb,                 -- TemplateStep[] — ordered pipeline (research → outline → build → review)
+  is_user_authored BOOLEAN NOT NULL DEFAULT false,          -- true for templates created via the in-app builder; false for daemon-synced + seed
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,  -- user who created the template (null for daemon-synced + seed)
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Idempotent ALTER for existing prod DBs (Phase 2 columns added 2026-04-26).
+-- Postgres 9.6+ supports ADD COLUMN IF NOT EXISTS.
+ALTER TABLE presentation_templates
+  ADD COLUMN IF NOT EXISTS tools JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS is_user_authored BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS created_by UUID REFERENCES users(id) ON DELETE SET NULL;
 
 CREATE TABLE IF NOT EXISTS presentation_jobs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -838,6 +851,11 @@ CREATE TABLE IF NOT EXISTS presentation_jobs (
   result JSONB,
   drive_folder_url TEXT,                                    -- extracted from result for fast list queries
   drive_deck_url TEXT,                                      -- ditto
+  -- Phase 3 — per-step state populated by the cloud worker as it walks
+  -- `template.steps`. One entry per step in the template's pipeline; status
+  -- progresses pending → running → completed/failed. Empty array for legacy
+  -- jobs run by the local daemon.
+  step_outputs JSONB NOT NULL DEFAULT '[]'::jsonb,
   -- Error info
   error_code TEXT,                                          -- 'chrome_session_expired' | 'drive_upload_failed' | 'claude_error' | 'timeout' | 'daemon_restarted' | 'validation_failed' | 'unknown'
   error_message TEXT,
@@ -855,6 +873,10 @@ CREATE INDEX IF NOT EXISTS idx_pjobs_created_at ON presentation_jobs(created_at 
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_pjobs_dedup
   ON presentation_jobs(template_id, client_dedup_key)
   WHERE client_dedup_key IS NOT NULL AND status IN ('queued','running');
+
+-- Idempotent ALTER for existing prod DBs (Phase 3 column).
+ALTER TABLE presentation_jobs
+  ADD COLUMN IF NOT EXISTS step_outputs JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 -- Singleton heartbeat row written by the local daemon every ~15s. Presence
 -- with a recent `last_heartbeat_at` = daemon healthy. Missing or stale =

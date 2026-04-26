@@ -238,11 +238,26 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           {/* Presentations (catalog of decks fired from the app) */}
           <NavLink
             to="/presentations"
+            end
             className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
             title={railCollapsed ? t('nav.presentations') : undefined}
           >
             <Presentation size={20} />
             {!railCollapsed && <span>{t('nav.presentations')}</span>}
+          </NavLink>
+          {/* Phase 2: Templates editor — sub-link under Presentations.
+              Indented when the rail is expanded; renders as a normal-sized
+              icon-only link when collapsed (matching other top-level entries
+              so the icon size doesn't shrink in the rail). */}
+          <NavLink
+            to="/presentations/templates"
+            className={({ isActive }) =>
+              `nav-item ${railCollapsed ? '' : 'nav-item-sub'} ${isActive ? 'active' : ''}`
+            }
+            title={railCollapsed ? (isAr ? 'قوالب العروض' : 'Presentation templates') : undefined}
+          >
+            <FileText size={railCollapsed ? 20 : 16} />
+            {!railCollapsed && <span>{isAr ? 'القوالب' : 'Templates'}</span>}
           </NavLink>
 
           {/* Whiteboard (tldraw freeform canvas — annotations, planning) */}

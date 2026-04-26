@@ -125,6 +125,15 @@
     font-weight: 700;
   }
 
+  /* Sub-nav under a parent (e.g. Templates under Presentations).
+   * Indented + smaller font + tighter padding so it reads as a child link. */
+  .nav-item-sub {
+    padding-inline-start: 2.5rem;
+    padding-block: 0.4rem;
+    font-size: 0.84375rem;
+    gap: 0.5rem;
+  }
+
   /* ======= CARDS ======= */
   .card {
     background: white;

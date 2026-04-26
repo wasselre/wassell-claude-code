@@ -49,6 +49,14 @@ export const SEED_PRESENTATION_TEMPLATES: PresentationTemplate[] = [
     is_available: true,
     manifest_path: null,
     manifest_synced_at: NOW,
+    // Phase 2 fields. The seed is daemon-shaped (uses `command`), so tools
+    // and steps are empty — the local daemon doesn't read them. Once a user
+    // duplicates this template via the in-app builder, the duplicate will
+    // be flagged user-authored and the cloud worker will read tools+steps.
+    tools: [],
+    steps: [],
+    is_user_authored: false,
+    created_by: null,
     created_at: NOW,
     updated_at: NOW,
   },
