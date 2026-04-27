@@ -83,6 +83,14 @@ export default function WhiteboardEditorPage(): JSX.Element {
     (editor: Editor) => {
       editorRef.current = editor;
 
+      // Always-on alignment snapping — shows the Figma-style blue guide
+      // lines whenever a shape's edge/center aligns with another shape
+      // while the user drags or resizes. Default tldraw behavior gates
+      // this behind holding Ctrl/Cmd; that's a hidden affordance most
+      // users never discover, so we flip it to on-by-default. Users
+      // can still hold Ctrl to temporarily disable if they want.
+      editor.user.updateUserPreferences({ isSnapMode: true });
+
       // Load existing snapshot (if any) into the fresh store.
       if (board?.snapshot) {
         try {
