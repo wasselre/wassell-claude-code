@@ -60,6 +60,58 @@ export const SEED_PRESENTATION_TEMPLATES: PresentationTemplate[] = [
     // is null (its data lives in `presentation_brands` keyed by WASSEL_BRAND_ID).
     brand_id: WASSEL_BRAND_ID,
     brand: null,
+    // Phase 3.4 — what THIS deck's slides are. Brand carries visual
+    // identity that applies to any Wassel deck; this carries the 15-slide
+    // sequence specific to the Wassel real-estate market-analysis deck.
+    output_structure: `- Slide count: exactly 15 slides
+- Format: 16:9
+- Sequence (fixed):
+  1. Cover (brown bg, logo, title, subtitle, project tag, year)
+  2. About Wassel (3 KPI cards + 3 value cards)
+  3. DIVIDER — تحليل مربع المشروع
+  4. Market analysis (3 stat cards + insight strip + price range card)
+  5. Competitor comparison (table)
+  6. Project & opportunity (dark opportunity card + revenue card + specs)
+  7. DIVIDER — الخطة التسويقية
+  8. Marketing I — Opening event (audience bar + 3 equal element cards)
+  9. Marketing II — Content & digital platforms (6 tiles + 4 platform cards)
+ 10. Marketing III — Measured outcomes (formula funnel + "why this works")
+ 11. DIVIDER — الخطة البيعية
+ 12. Sales journey — 10-stage serpent, 2 rows × 5 cards
+ 13. Detailed sales journey — 10 numbered step cards in 2 columns
+ 14. Sales plan by the numbers — formula-driven monthly table
+ 15. Closing — "شراكة تسويقية متكاملة" + 3 cream cards + wassel.re
+
+- Divider slides: 1, 3, 7, 11 (use the brand's DIVIDER layout — no footer)
+- All other slides: use the brand's CONTENT layout (with footer)
+
+Slide-specific required phrases:
+- Slide 4 subtitle MUST contain "تحليل مربع مشروع <project> <district> — <city>". Never shorten.
+- Slide 7 subtitle is exactly: "الهدف: صناعة الطلب، وجلب المهتمين"
+- Slide 11 subtitle is exactly: "تحويل الطلب والاهتمام إلى مبيعات"
+
+Cover-slide tag pill: \`<project_name> — <city>، <district>\` (city before district, Arabic comma). Reversing is a violation.
+
+Slide 4 KPI tiles are content-driven (3 picked from evidence) — no fixed labels. Pick the 3 most presentable, story-supporting metrics for THIS project. Each label states its scope unambiguously (e.g. "...في الحي" for district, "...للمشروع" for project).
+
+Slide 6 opportunity bullets follow this order:
+  1. Demand indicator (units sold per month in the square)
+  2. What drives sales in this square + whether our project has it
+  3. Our project's sales rate vs square average
+  4. Remaining inventory and its total value
+
+Slide 10 funnel constants (formula-driven, do NOT override):
+  - View → Lead = 1%
+  - Lead → Sale = 0.6%
+
+Slide 14 sales-plan constants (formula-driven):
+  - Appointment booking: 6%
+  - Appointment attendance: 40%
+  - Natural walk-in visits: 2× appointment visits
+  - Interested from total visits: 20%
+  - Booking rate: 60%
+  - Sale from booking: 80%
+- Two presentation modes (chosen automatically): monthly-distribute when natural funnel ≥ 4 sales/month AND project has ≥ 3 units; collapse-to-campaign otherwise.`,
     is_user_authored: false,
     created_by: null,
     created_at: NOW,

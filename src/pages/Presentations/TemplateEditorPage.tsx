@@ -383,6 +383,29 @@ export default function TemplateEditorPage(): JSX.Element {
         />
       </Section>
 
+      {/* Output structure section — what THIS deck's slides are. Distinct
+          from brand (which is across-templates visual identity). */}
+      <Section
+        title={isAr ? 'هيكل الإخراج' : 'Output structure'}
+        subtitle={
+          isAr
+            ? 'عدد الشرائح، تسلسلها، وقواعد كل شريحة. مختلف عن الهوية: الهوية تنطبق على كل العروض، الهيكل يصف هذا العرض تحديداً.'
+            : 'Slide count, sequence, per-slide rules. Distinct from brand: brand is across-decks visual identity; this is what THIS deck contains.'
+        }
+      >
+        <textarea
+          value={draft.output_structure}
+          onChange={(e) => patch({ output_structure: e.target.value })}
+          disabled={readonly}
+          rows={10}
+          placeholder={isAr
+            ? 'مثال:\n- عدد الشرائح: ١٥\n- التسلسل:\n  ١. شريحة الغلاف\n  ٢. عن وصل\n  ٣. فاصل تحليل السوق\n  ٤. تحليل السوق\n  ...'
+            : 'e.g.\n- Slide count: 15\n- Sequence:\n  1. Cover\n  2. About Us\n  3. DIVIDER — Market\n  4. Market analysis\n  ...'}
+          dir={isAr ? 'rtl' : 'ltr'}
+          className="form-input text-sm w-full font-mono"
+        />
+      </Section>
+
       {/* Steps section — ordered pipeline */}
       <Section
         title={isAr ? 'الخطوات' : 'Steps'}

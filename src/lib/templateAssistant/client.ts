@@ -36,6 +36,7 @@ export function buildTemplateContext(template: PresentationTemplate): {
   tools: string[];
   inputs: Array<{ name: string; label_en?: string; type?: string; required?: boolean }>;
   steps: Array<{ kind: string; prompt?: string; tools?: string[]; label_en?: string }>;
+  output_structure: string;
   brand: {
     colors?: Array<{ role_en?: string; role_ar?: string; hex?: string; notes?: string }>;
     font_family?: string;
@@ -65,6 +66,7 @@ export function buildTemplateContext(template: PresentationTemplate): {
       tools: s.tools,
       label_en: s.label_en,
     })),
+    output_structure: template.output_structure,
     brand: template.brand
       ? {
           colors: template.brand.colors.map((c) => ({

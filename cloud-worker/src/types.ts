@@ -76,6 +76,10 @@ export interface PresentationTemplateRow {
   tools: PresentationToolName[];
   steps: PresentationStep[];
   brand: PresentationBrand | null;
+  /** Phase 3.4 — what THIS deck's slides are (count, sequence, footer
+   *  rules per slide, slide-specific required phrases). Distinct from
+   *  brand. Free-form markdown injected into every step's prompt. */
+  output_structure: string;
   is_user_authored: boolean;
 }
 

@@ -46,6 +46,7 @@ interface TemplateContext {
   tools?: string[];
   inputs?: Array<{ name: string; label_en?: string; type?: string; required?: boolean }>;
   steps?: Array<{ kind: string; prompt?: string; tools?: string[]; label_en?: string }>;
+  output_structure?: string;
   brand?: {
     colors?: Array<{ role_en?: string; role_ar?: string; hex?: string; notes?: string }>;
     font_family?: string;
@@ -107,9 +108,17 @@ A presentation template is an ordered list of "steps". Each step is one turn of 
 - **For market analysis decks** (the Wassel default use case): research finds prices/transactions/competitors, outline organizes findings, build assembles the deck, review checks for brand violations, upload pushes to Drive.
 - **For client proposals**: tweak research to focus on the client's location and budget, build slides with property recommendations, upload.
 
-## Brand & design rules — separately configured on the template
+## Brand vs Output structure — two separate template sections
 
-The template editor has a "Brand & design" section where the user defines a color palette, typography, design/layout rules, text rules, and banned/required vocabulary. The cloud worker injects the entire brand block into every step's user message at runtime, so step prompts DON'T need to repeat brand instructions. When you draft a step prompt, focus on what the step does (research X, build Y) — leave brand enforcement to the brand block.
+The template editor has TWO design-related sections that play different roles:
+
+**Brand & design** — references a brand row from the brand library. A brand carries cross-template visual identity: colors, typography, RTL / digit / punctuation rules, hyperlink styling, banned vocabulary. Multiple templates share the same brand. When you suggest brand entries, you're suggesting things that apply to EVERY deck under that brand.
+
+**Output structure** — per-template free-form text describing what THIS deck's slides are: slide count, sequence (cover / dividers / content slides in order), per-slide layout notes, slide-specific required phrases, formula-driven content rules. A "Wassel pitch deck" and a "Wassel monthly report" share the Wassel brand but have completely different output structures. When you suggest output-structure entries, you're suggesting deck-specific layout — what each slide contains, what order they go in, footer rules per slide, slide-specific required exact phrases.
+
+The cloud worker injects both blocks (brand block + output-structure block) into every step's user message at runtime. So step prompts focus on what the step does (research X, build Y) — they don't need to repeat brand or layout details.
+
+When the user asks for help on slide layout or "what slides should this deck have", they're asking about output_structure. When they ask for help on colors, fonts, banned phrases, or "how should it look", they're asking about brand.
 
 When the user is editing the brand section itself, you can help them:
 - Suggest standard color roles (Primary, Secondary, Accent, Background, Body text, etc.)
@@ -142,6 +151,13 @@ function formatTemplateContext(t: TemplateContext): string {
   parts.push(`- Inputs: ${t.inputs && t.inputs.length > 0
     ? t.inputs.map((i) => `${i.name} (${i.type}${i.required ? ', required' : ''})`).join(', ')
     : '(none yet)'}`);
+  parts.push('');
+  parts.push('### Output structure');
+  if (!t.output_structure || t.output_structure.trim() === '') {
+    parts.push('(none yet — user can describe slide count / sequence / per-slide rules in the Output structure section)');
+  } else {
+    parts.push(t.output_structure.split('\n').map((l) => '> ' + l).join('\n'));
+  }
   parts.push('');
   parts.push('### Brand spec');
   if (!t.brand) {

@@ -105,6 +105,11 @@ export async function runJob(
   // no injection (no extra section header rendered).
   const brandBlock = formatBrand(tpl.brand);
 
+  // Phase 3.4 — separate from brand. Output structure is per-template
+  // (what THIS deck's slides are). Brand is across-templates (visual
+  // identity). Both get injected into every step's prompt.
+  const structureBlock = formatOutputStructure(tpl.output_structure);
+
   for (let i = 0; i < steps.length; i++) {
     const step = steps[i]!;
 
@@ -150,6 +155,7 @@ export async function runJob(
       job.inputs,
       inputsBlock,
       brandBlock,
+      structureBlock,
       stepOutputs.slice(0, i),
     );
 
@@ -240,6 +246,7 @@ function buildStepUserMessage(
   inputs: Record<string, unknown>,
   inputsBlock: string,
   brandBlock: string,
+  structureBlock: string,
   priorOutputs: PresentationStepOutput[],
 ): string {
   const parts: string[] = [];
@@ -250,6 +257,12 @@ function buildStepUserMessage(
   // template has no brand, brandBlock is empty and renders as nothing.
   if (brandBlock) {
     parts.push(brandBlock);
+    parts.push('');
+  }
+  // Output structure right after brand: brand says how it looks, structure
+  // says what's in it. Both apply to the whole deck regardless of step.
+  if (structureBlock) {
+    parts.push(structureBlock);
     parts.push('');
   }
   parts.push('## User inputs');
@@ -272,6 +285,14 @@ function buildStepUserMessage(
     ),
   );
   return parts.join('\n');
+}
+
+/** Renders the template's output structure as a markdown block. Returns
+ *  empty string when the template hasn't defined one, so the caller can
+ *  drop it in unconditionally. */
+function formatOutputStructure(structure: string | undefined): string {
+  if (!structure || structure.trim() === '') return '';
+  return `## Output structure\nWhat this specific deck must contain — the slide count, sequence, and per-slide rules below are non-negotiable for THIS template.\n\n${structure.trim()}`;
 }
 
 /** Renders the template's brand spec as a markdown block suitable for the

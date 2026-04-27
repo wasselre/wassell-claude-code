@@ -1311,6 +1311,13 @@ export interface PresentationTemplate {
    *  the job) so in-flight jobs aren't disturbed by brand edits. Null =
    *  no brand attached, no design-rule injection. */
   brand_id: string | null;
+  /** Phase 3.4 — what the deliverable looks like (slide count, slide
+   *  sequence, footer rules per slide, cover format, slide-specific
+   *  required phrases). Distinct from brand: brand is "how we look across
+   *  ALL decks", output_structure is "what THIS deck's slides are".
+   *  Free-form markdown. The worker injects it into every step's prompt
+   *  alongside the brand block. */
+  output_structure: string;
   /** Phase 3.2 — frozen brand body. Lives on the template ONLY for
    *  backwards-compat with rows authored before brands became a separate
    *  entity. New code path: brand_id is the source of truth and this

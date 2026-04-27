@@ -872,6 +872,14 @@ ALTER TABLE presentation_templates
 
 CREATE INDEX IF NOT EXISTS idx_pres_templates_brand_id ON presentation_templates(brand_id);
 
+-- Phase 3.4 — slide structure (count, sequence, footer rules per slide,
+-- slide-specific required phrases) lives on the TEMPLATE, not on the brand.
+-- Brand carries cross-template visual identity (colors, typography, RTL/
+-- punctuation rules, banned vocabulary); output_structure carries the
+-- per-deck slide layout. Free-form markdown injected into every step's prompt.
+ALTER TABLE presentation_templates
+  ADD COLUMN IF NOT EXISTS output_structure TEXT NOT NULL DEFAULT '';
+
 CREATE TABLE IF NOT EXISTS presentation_jobs (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   template_id UUID NOT NULL REFERENCES presentation_templates(id) ON DELETE RESTRICT,

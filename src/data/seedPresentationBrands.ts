@@ -35,32 +35,24 @@ export const SEED_PRESENTATION_BRANDS: PresentationBrandRecord[] = [
     font_family: 'Amiri',
     font_notes:
       'Used on EVERY text run, no exceptions. Set Amiri across all three OOXML font slots: <a:latin>, <a:ea>, AND <a:cs> (complex script). PowerPoint renders Arabic from the cs slot — if it\'s empty, Arabic silently falls back to the theme default even though the dropdown says "Amiri".',
-    design_rules: `- Format: 16:9 (10" × 5.625")
-- Slide count: exactly 15 slides
-- Slide sequence (fixed):
-  1. Cover (brown bg, logo, title, subtitle, project tag, year)
-  2. About Wassel (3 KPI cards + 3 value cards)
-  3. DIVIDER — تحليل مربع المشروع
-  4. Market analysis (3 stat cards + insight strip + price range card)
-  5. Competitor comparison (table)
-  6. Project & opportunity (dark opportunity card + revenue card + specs)
-  7. DIVIDER — الخطة التسويقية
-  8. Marketing I — Opening event (audience bar + 3 equal element cards)
-  9. Marketing II — Content & digital platforms (6 tiles + 4 platform cards)
- 10. Marketing III — Measured outcomes (formula funnel + "why this works")
- 11. DIVIDER — الخطة البيعية
- 12. Sales journey — 10-stage serpent, 2 rows × 5 cards
- 13. Detailed sales journey — 10 numbered step cards in 2 columns
- 14. Sales plan by the numbers — formula-driven monthly table
- 15. Closing — "شراكة تسويقية متكاملة" + 3 cream cards + wassel.re
-- Slides 1, 3, 7, 11 are DIVIDERS: brown background, no footer, copper Najdi/Diriyah triangular-notch accent strip on the left edge
-- All other slides use the CONTENT layout: sand left strip, brown header band with gold underline, cream background, sand footer with copper top-border and wassel.re left-aligned
-- Footer on every CONTENT slide:
-  - Left: \`wassel.re\` in copper, no underline, shape-level hyperlink (NOT run-level)
+    design_rules: `Visual identity rules that apply to ANY Wassel deck (per-deck slide
+structure lives on the template's output_structure, not here).
+
+- Content slides use the CONTENT layout: sand left strip, brown header band
+  with gold underline, cream background, sand footer with copper top-border
+  and wassel.re left-aligned.
+- Divider slides use the DIVIDER layout: brown background, copper Najdi /
+  Diriyah triangular-notch accent strip on the left edge, no footer.
+- Footer on content slides:
+  - Left: \`wassel.re\` in copper, no underline, shape-level hyperlink (NOT
+    run-level)
   - Right: project context, e.g. \`وصل العقارية  |  مقام كورتيارد ١٧\`
   - Sand (#E8D9C0) band with copper (#B8734F) 2px top border
-- Dividers (slides 1, 3, 7, 11) MUST NOT have a footer
-- Cover-slide tag pill format: \`<project_name> — <city>، <district>\` (city before district, Arabic comma). Reversing is a brand violation.`,
+- Card icons: typographic Unicode symbols (♪ ◆ ✦ ★ ■ ● ♯ ≋ ▶ ◐ ✈ ❐) which
+  inherit the font's color. NOT emoji (they render in their own colors).
+  Exception: branded platform logos (Snapchat, TikTok, Instagram, LinkedIn)
+  on platform tiles.
+- Format: 16:9 (10" × 5.625").`,
     text_rules: `- Arabic-Indic digits (٠-٩) everywhere — every Western digit converts to Arabic-Indic before rendering. Project numbers, years, prices, percentages — all Arabic-Indic. Latin letters and building codes (A/B/C/D) stay untouched.
 - Arabic decimal/thousands separators inside Arabic numbers: a "." between two Arabic-Indic digits becomes "٫" (U+066B); a "," becomes "٬" (U+066C). Standalone commas in sentences (e.g. "حي النرجس، الرياض") stay as-is.
 - RLM marks around em-dash / hyphen / underscore in Arabic context. Any separator (em-dash, en-dash, hyphen, underscore, pipe) with whitespace on at least one side gets wrapped with RLM (U+200F) and balanced spacing.
@@ -78,11 +70,10 @@ export const SEED_PRESENTATION_BRANDS: PresentationBrandRecord[] = [
       { id: 'wassel-fb-2', wrong: 'CRM وصل', right: 'نظام وصل' },
       { id: 'wassel-fb-3', wrong: 'نادٍ', right: 'نادي', note: 'No kasra' },
     ],
-    required_phrases: [
-      { id: 'wassel-rq-1', context: 'Slide 4 subtitle', phrase: 'تحليل مربع مشروع <project> <district> — <city>', note: 'Must contain "مربع مشروع" — never shorten' },
-      { id: 'wassel-rq-2', context: 'Slide 7 subtitle', phrase: 'الهدف: صناعة الطلب، وجلب المهتمين', note: 'Exact text — do not edit' },
-      { id: 'wassel-rq-3', context: 'Slide 11 subtitle', phrase: 'تحويل الطلب والاهتمام إلى مبيعات', note: 'Exact text — do not edit' },
-    ],
+    // Brand-level required phrases are vocabulary that applies to ANY
+    // Wassel deck. Slide-specific exact phrases (slide 4/7/11 subtitles)
+    // belong on the template's output_structure, not here.
+    required_phrases: [],
     is_system: true,
     created_by: null,
     created_at: NOW,
