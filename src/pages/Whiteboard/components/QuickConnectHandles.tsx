@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   useEditor,
   useValue,
@@ -6,37 +6,35 @@ import {
   type TLArrowBinding,
   type TLArrowShape,
   type TLGeoShape,
-  type TLShape,
   type TLShapeId,
 } from 'tldraw';
 
 /**
  * Canva-style quick-connect handles.
  *
- * When the user hovers a geo shape (rectangle, ellipse, etc.), four small "+"
- * buttons appear just outside its top / right / bottom / left edges. Two
- * affordances on each handle:
+ * When the user **selects** a single geo shape (rectangle, ellipse, etc.) by
+ * clicking it, four small "+" buttons appear just outside its top / right /
+ * bottom / left edges. Hover does NOT trigger them — too noisy when the user
+ * is just moving the cursor across the canvas — and they're hidden while the
+ * shape is being text-edited so they don't sit on top of the user's typing.
  *
- *   - **Click** (no drag): create a new same-type shape 80px away in that
- *     direction and connect it to the source with an elbow arrow.
+ * Two affordances on each handle:
+ *
+ *   - **Click** (no drag): create a new same-type shape 80 px away in that
+ *     direction and connect it to the source with an elbow arrow whose start
+ *     is bound to the source's edge **on that side** and end is bound to the
+ *     new shape's opposite edge.
  *   - **Drag onto another shape**: connect source → target with an elbow
- *     arrow (no new shape created). Drop on empty space → falls back to the
- *     click behavior (new shape at the drop point).
- *
- * Arrows use `kind: 'elbow'` with `snap: 'edge'` on both bindings, which
- * gives them right-angle, flowchart-style routing that auto-anchors to the
- * nearest edge of each shape — symmetrical and clean even when shapes move.
+ *     arrow. Source anchor is the side of the handle the user pulled from;
+ *     target anchor is the edge of the target nearest to the cursor at drop
+ *     time. Both endpoints are pinned with `isPrecise: true` and
+ *     `snap: 'edge-point'`, so they don't drift to a different edge when
+ *     either shape later moves — the user's chosen sides stay put.
  *
  * Rendered via tldraw's `components.InFrontOfTheCanvas` slot so it sits
  * above the canvas but inherits its camera transform via
  * `editor.pageToViewport` / `editor.screenToPage`. Only geo shapes trigger
  * handles — arrows, text, images, etc. are skipped.
- *
- * Hover retention: tldraw's `getHoveredShapeId()` goes null the moment the
- * cursor leaves the shape, which would hide our buttons before the user
- * could click them. We pin the last-hovered geo shape in local state and
- * only unpin when the cursor is also off every handle button (tracked via
- * an enter/leave counter) and not actively dragging a connector.
  */
 
 type Dir = 'top' | 'right' | 'bottom' | 'left';
@@ -47,6 +45,28 @@ const DIR_VECTORS: Record<Dir, { dx: number; dy: number }> = {
   right: { dx: 1, dy: 0 },
   bottom: { dx: 0, dy: 1 },
   left: { dx: -1, dy: 0 },
+};
+
+// The exact edge-center anchor for each side, in shape-normalized coords.
+// `isPrecise: true` + `snap: 'edge-point'` together tell tldraw to bind
+// the arrow terminal to *this* point and not slide to a different edge
+// when the other shape moves.
+const DIR_ANCHOR: Record<Dir, { x: number; y: number }> = {
+  top: { x: 0.5, y: 0 },
+  right: { x: 1, y: 0.5 },
+  bottom: { x: 0.5, y: 1 },
+  left: { x: 0, y: 0.5 },
+};
+
+// When the user drags from a "+" on the source's bottom and drops on the
+// target's top, we want the arrow to attach to the corresponding side of
+// each shape. The opposite side is the natural target side for the
+// click-to-create path (e.g. source-bottom → new-shape-top).
+const OPPOSITE_DIR: Record<Dir, Dir> = {
+  top: 'bottom',
+  right: 'left',
+  bottom: 'top',
+  left: 'right',
 };
 
 const GAP_PX = 80;
@@ -67,44 +87,52 @@ interface DragState {
   passedThreshold: boolean;
 }
 
+/** Pick the closest cardinal edge of a shape to a given page point. */
+function nearestEdgeDir(
+  bounds: { x: number; y: number; w: number; h: number },
+  pagePoint: { x: number; y: number },
+): Dir {
+  const cx = bounds.x + bounds.w / 2;
+  const cy = bounds.y + bounds.h / 2;
+  const dx = pagePoint.x - cx;
+  const dy = pagePoint.y - cy;
+  // Normalize by half-width / half-height so a point near the long edge
+  // of a wide shape is correctly classified.
+  const nx = dx / (bounds.w / 2);
+  const ny = dy / (bounds.h / 2);
+  if (Math.abs(nx) > Math.abs(ny)) return nx > 0 ? 'right' : 'left';
+  return ny > 0 ? 'bottom' : 'top';
+}
+
 export function QuickConnectHandles(): JSX.Element | null {
   const editor = useEditor();
 
-  const hoveredShapeId = useValue(
-    'quick-connect hovered id',
-    () => editor.getHoveredShapeId(),
+  // Reactive single-selection lookup. Returns the shape only if exactly
+  // one is selected — multi-select / marquee don't surface handles.
+  // Hidden while the shape is being text-edited so we don't sit on top
+  // of the user's typing.
+  const target = useValue(
+    'quick-connect target',
+    () => {
+      const ids = editor.getSelectedShapeIds();
+      if (ids.length !== 1) return null;
+      const id = ids[0];
+      if (!id) return null;
+      const editingId = editor.getEditingShapeId();
+      if (editingId === id) return null;
+      const shape = editor.getShape(id);
+      if (!shape || shape.type !== 'geo') return null;
+      return shape;
+    },
     [editor],
   );
-
-  const [pinnedId, setPinnedId] = useState<TLShapeId | null>(null);
-  const hoverCountRef = useRef(0);
-  const [isOverHandle, setIsOverHandle] = useState(false);
-  const [drag, setDrag] = useState<DragState | null>(null);
-
-  useEffect(() => {
-    // Don't unpin while actively dragging — the source must stay alive
-    // until the drop, even if hover wanders.
-    if (drag) return;
-    if (hoveredShapeId) {
-      const shape = editor.getShape(hoveredShapeId);
-      if (shape && shape.type === 'geo') {
-        setPinnedId(hoveredShapeId);
-        return;
-      }
-    }
-    if (!isOverHandle) setPinnedId(null);
-  }, [hoveredShapeId, isOverHandle, editor, drag]);
 
   // Subscribe to camera changes so the handles reposition when the user
   // pans or zooms. pageToViewport() reads the current camera directly;
   // this subscription just triggers a re-render on camera updates.
   useValue('quick-connect camera', () => editor.getCamera(), [editor]);
 
-  // The container we live in is positioned at the same origin as the
-  // tldraw canvas (we're inside InFrontOfTheCanvas). Container-relative
-  // coords therefore equal viewport coords minus container.left/top.
-  // We capture the container ref once so screen → viewport conversions
-  // are stable across renders.
+  const [drag, setDrag] = useState<DragState | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const screenToContainer = (clientX: number, clientY: number) => {
@@ -114,13 +142,16 @@ export function QuickConnectHandles(): JSX.Element | null {
   };
 
   // ---------------------------------------------------------------------
-  // Connection action — creates an elbow arrow, optionally also creates
-  // a target shape if no `targetId` is provided (the click case).
+  // Connection action — creates an elbow arrow with explicit anchor
+  // points on both ends so neither end drifts when shapes move.
   // ---------------------------------------------------------------------
 
   const createElbowConnection = (
     sourceId: TLShapeId,
-    target: { kind: 'existing'; shape: TLShape } | { kind: 'new'; dir: Dir },
+    sourceDir: Dir,
+    spec:
+      | { kind: 'new'; dir: Dir }
+      | { kind: 'existing'; targetId: TLShapeId; targetDir: Dir },
   ) => {
     const src = editor.getShape(sourceId) as TLGeoShape | undefined;
     if (!src) return;
@@ -128,15 +159,14 @@ export function QuickConnectHandles(): JSX.Element | null {
     if (!srcBounds) return;
 
     const arrowId = createShapeId();
-    // Decide the target shape id BEFORE entering editor.run so it's
-    // unambiguous to the type checker (and so subsequent calls can
-    // reference it freely).
     const targetId: TLShapeId =
-      target.kind === 'existing' ? target.shape.id : createShapeId();
+      spec.kind === 'existing' ? spec.targetId : createShapeId();
+    const targetDir: Dir =
+      spec.kind === 'existing' ? spec.targetDir : OPPOSITE_DIR[sourceDir];
 
     editor.run(() => {
-      if (target.kind === 'new') {
-        const { dx, dy } = DIR_VECTORS[target.dir];
+      if (spec.kind === 'new') {
+        const { dx, dy } = DIR_VECTORS[spec.dir];
         const newX = src.x + dx * (srcBounds.w + GAP_PX);
         const newY = src.y + dy * (srcBounds.h + GAP_PX);
         editor.createShape<TLGeoShape>({
@@ -164,13 +194,14 @@ export function QuickConnectHandles(): JSX.Element | null {
           toId: sourceId,
           props: {
             terminal: 'start',
-            normalizedAnchor: { x: 0.5, y: 0.5 },
+            normalizedAnchor: DIR_ANCHOR[sourceDir],
             isExact: false,
-            isPrecise: false,
-            // 'edge' makes the arrow auto-attach to the nearest edge of
-            // the source shape, keeping the connector clean as shapes
-            // move around.
-            snap: 'edge',
+            // isPrecise: true tells tldraw to bind to *this exact* anchor
+            // instead of the shape's center; combined with `edge-point`
+            // snap mode it pins the terminal to the chosen edge so it
+            // doesn't slide to a different edge when shapes move.
+            isPrecise: true,
+            snap: 'edge-point',
           },
         },
         {
@@ -179,16 +210,16 @@ export function QuickConnectHandles(): JSX.Element | null {
           toId: targetId,
           props: {
             terminal: 'end',
-            normalizedAnchor: { x: 0.5, y: 0.5 },
+            normalizedAnchor: DIR_ANCHOR[targetDir],
             isExact: false,
-            isPrecise: false,
-            snap: 'edge',
+            isPrecise: true,
+            snap: 'edge-point',
           },
         },
       ]);
     });
 
-    if (target.kind === 'new') {
+    if (spec.kind === 'new') {
       editor.select(targetId);
     }
   };
@@ -201,22 +232,20 @@ export function QuickConnectHandles(): JSX.Element | null {
     e: React.PointerEvent<HTMLButtonElement>,
     dir: Dir,
   ) => {
-    if (!pinnedId) return;
+    if (!target) return;
     e.stopPropagation();
     e.preventDefault();
 
     const startVp = positions[dir];
     setDrag({
       dir,
-      sourceId: pinnedId,
+      sourceId: target.id,
       startVp,
       currentVp: { x: startVp.x, y: startVp.y },
       hoverTargetId: null,
       passedThreshold: false,
     });
 
-    // Capture so we keep getting move/up events even if the cursor leaves
-    // the small button area.
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
@@ -230,52 +259,64 @@ export function QuickConnectHandles(): JSX.Element | null {
     let hoverTargetId: TLShapeId | null = null;
     if (passed) {
       const pagePoint = editor.screenToPage({ x: e.clientX, y: e.clientY });
-      const targetShape = editor.getShapeAtPoint(pagePoint, { hitInside: true });
+      const candidate = editor.getShapeAtPoint(pagePoint, { hitInside: true });
       if (
-        targetShape &&
-        targetShape.id !== drag.sourceId &&
-        targetShape.type === 'geo'
+        candidate &&
+        candidate.id !== drag.sourceId &&
+        candidate.type === 'geo'
       ) {
-        hoverTargetId = targetShape.id;
+        hoverTargetId = candidate.id;
       }
     }
 
     setDrag({ ...drag, currentVp: vp, hoverTargetId, passedThreshold: passed });
   };
 
-  const onHandlePointerUp = (
-    e: React.PointerEvent<HTMLButtonElement>,
-  ) => {
+  const onHandlePointerUp = (e: React.PointerEvent<HTMLButtonElement>) => {
     if (!drag) return;
     e.stopPropagation();
 
     if (!drag.passedThreshold) {
-      // Treated as a click — current behavior: spawn new shape.
-      createElbowConnection(drag.sourceId, { kind: 'new', dir: drag.dir });
+      // Click: spawn a new shape on the chosen side.
+      createElbowConnection(drag.sourceId, drag.dir, {
+        kind: 'new',
+        dir: drag.dir,
+      });
     } else if (drag.hoverTargetId) {
-      const targetShape = editor.getShape(drag.hoverTargetId);
-      if (targetShape) {
-        createElbowConnection(drag.sourceId, { kind: 'existing', shape: targetShape });
+      // Drag onto a shape: pick the target's closest edge to the drop
+      // point so the arrow lands where the user actually let go.
+      const targetBounds = editor.getShapePageBounds(drag.hoverTargetId);
+      if (targetBounds) {
+        const dropPagePoint = editor.screenToPage({
+          x: e.clientX,
+          y: e.clientY,
+        });
+        const targetDir = nearestEdgeDir(targetBounds, dropPagePoint);
+        createElbowConnection(drag.sourceId, drag.dir, {
+          kind: 'existing',
+          targetId: drag.hoverTargetId,
+          targetDir,
+        });
       }
     } else {
-      // Dropped on empty space — fall back to creating a new shape at the
-      // drop direction (same direction as the original handle for
-      // simplicity). Could be smarter and place at the cursor, but this
-      // matches the click-to-create behavior the user already knows.
-      createElbowConnection(drag.sourceId, { kind: 'new', dir: drag.dir });
+      // Dropped on empty space — fall back to spawning a new shape on
+      // the chosen side. (Could place at the drop point instead, but
+      // keeping the handle direction makes the result predictable.)
+      createElbowConnection(drag.sourceId, drag.dir, {
+        kind: 'new',
+        dir: drag.dir,
+      });
     }
 
     setDrag(null);
   };
 
   // ---------------------------------------------------------------------
-  // Geometry
+  // Geometry — runs after target/drag short-circuits below
   // ---------------------------------------------------------------------
 
-  if (!pinnedId) return null;
-  const source = editor.getShape(pinnedId) as TLGeoShape | undefined;
-  if (!source || source.type !== 'geo') return null;
-  const bounds = editor.getShapePageBounds(pinnedId);
+  if (!target) return null;
+  const bounds = editor.getShapePageBounds(target.id);
   if (!bounds) return null;
 
   const centers = {
@@ -290,15 +331,6 @@ export function QuickConnectHandles(): JSX.Element | null {
     right: { x: centers.right.x + HANDLE_OFFSET, y: centers.right.y },
     bottom: { x: centers.bottom.x, y: centers.bottom.y + HANDLE_OFFSET },
     left: { x: centers.left.x - HANDLE_OFFSET, y: centers.left.y },
-  };
-
-  const handlePointerEnter = () => {
-    hoverCountRef.current += 1;
-    setIsOverHandle(true);
-  };
-  const handlePointerLeave = () => {
-    hoverCountRef.current = Math.max(0, hoverCountRef.current - 1);
-    if (hoverCountRef.current === 0) setIsOverHandle(false);
   };
 
   // Highlight rectangle for the drag-target shape (if any).
@@ -324,7 +356,6 @@ export function QuickConnectHandles(): JSX.Element | null {
       ref={containerRef}
       style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
     >
-      {/* Ghost line from handle to cursor while dragging */}
       {drag && drag.passedThreshold && (
         <svg
           style={{
@@ -348,7 +379,6 @@ export function QuickConnectHandles(): JSX.Element | null {
         </svg>
       )}
 
-      {/* Highlight ring on the shape being targeted */}
       {targetHighlight && (
         <div
           style={{
@@ -365,7 +395,6 @@ export function QuickConnectHandles(): JSX.Element | null {
         />
       )}
 
-      {/* The four "+" handles */}
       {DIRS.map((dir) => (
         <button
           key={dir}
@@ -373,9 +402,7 @@ export function QuickConnectHandles(): JSX.Element | null {
           onPointerDown={(e) => onHandlePointerDown(e, dir)}
           onPointerMove={onHandlePointerMove}
           onPointerUp={onHandlePointerUp}
-          onPointerEnter={handlePointerEnter}
-          onPointerLeave={handlePointerLeave}
-          title={`Click to add a connected shape, drag to connect to an existing shape`}
+          title="Click to add a connected shape, drag to connect to an existing shape"
           aria-label={`Connect from ${dir}`}
           style={{
             position: 'absolute',
@@ -399,8 +426,6 @@ export function QuickConnectHandles(): JSX.Element | null {
             pointerEvents: 'auto',
             boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
             fontFamily: 'system-ui, sans-serif',
-            // Prevent the OS from interpreting the drag as a text-selection
-            // gesture, which can interrupt the pointer-capture flow.
             touchAction: 'none',
             userSelect: 'none',
           }}
