@@ -62,6 +62,26 @@ const MAX_TOKENS = 4000;
  *  per change) but we don't want a runaway loop. */
 const MAX_TOOL_ROUNDS = 4;
 
+/** When the user's most recent message is action-shaped ("fix X", "write
+ *  Y", "fill Z"), we force the model to actually call the tool on the
+ *  first round of the turn. Without this, the model frequently lists
+ *  problems as prose and ends the turn without producing an Apply card.
+ *  After round 1, tool_choice goes back to 'auto' so the model can wrap
+ *  up with a short prose sentence. */
+const ACTION_VERBS_EN = /\b(fix|fill|write|draft|generate|update|clean|improve|add|build|create|audit|review|replace|change|set|make|propose|suggest|rewrite|restructure|organize|configure|insert|append|do it|just do|go ahead|apply|please)\b/i;
+// Arabic action stems — covers أصلح / املأ / اكتب / أنشئ / أضف / حدّث /
+// نظّف / حسّن / اقترح / عدّل / غيّر / اجعل / راجع. Word boundaries don't
+// exist the same way in Arabic, so we match raw substrings of stems.
+const ACTION_VERBS_AR = /(أصلح|املأ|املا|اكتب|أنشئ|انشئ|أضف|اضف|حدّث|حدث|نظّف|نظف|حسّن|حسن|اقترح|عدّل|عدل|غيّر|غير|اجعل|راجع|طبّق|طبق|بنا |ابني)/;
+
+function looksActionShaped(text: string): boolean {
+  if (!text) return false;
+  // Look at the first ~200 chars — action verbs in real action requests
+  // are always at the start, not buried in a paragraph.
+  const head = text.slice(0, 200);
+  return ACTION_VERBS_EN.test(head) || ACTION_VERBS_AR.test(head);
+}
+
 /**
  * Static portion of the system prompt — describes the runtime architecture,
  * the tool surface, the brand/structure split, and how to write good step
@@ -394,9 +414,22 @@ export default async function handler(req: Request): Promise<Response> {
             content: m.content,
           }));
 
+          // Action-shaping detection — if the latest user message reads
+          // like a request for action, force tool_choice on round 1 so
+          // the model can't stall on "let me list what's broken".
+          const latestUser = [...body.messages].reverse().find((m) => m.role === 'user');
+          const forceTool = !!latestUser && looksActionShaped(latestUser.content);
+
           let stopReason: string | null = null;
 
           for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            // Round 0 + action-shaped → force a tool call. Subsequent
+            // rounds use auto so the model can write a short follow-up
+            // sentence and end the turn naturally.
+            const toolChoice: Anthropic.ToolChoice = forceTool && round === 0
+              ? { type: 'any', disable_parallel_tool_use: false }
+              : { type: 'auto' };
+
             const turn = client.messages.stream({
               model: MODEL,
               max_tokens: MAX_TOKENS,
@@ -412,6 +445,7 @@ export default async function handler(req: Request): Promise<Response> {
                 },
               ],
               tools: [PROPOSE_PATCH_TOOL],
+              tool_choice: toolChoice,
               messages: conversation,
             });
 
