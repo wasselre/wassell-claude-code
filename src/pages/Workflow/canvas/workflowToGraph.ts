@@ -197,6 +197,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
         data: {
           kind: 'conditionGroup',
           branch,
+          branchId: branch.id,
           conditions: branch.conditions,
           fields: triggerFields,
           triggerEvent: workflow.trigger_event,

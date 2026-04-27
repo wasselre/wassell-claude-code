@@ -7,6 +7,7 @@ import TailAddPill, { type TailAddPillSpec } from './TailAddPill';
 export interface ConditionGroupNodeData extends Record<string, unknown> {
   kind: 'conditionGroup';
   branch: WorkflowBranch;
+  branchId: string;
   conditions: WorkflowCondition[];
   fields: ModelField[];
   triggerEvent: WorkflowEvent;
