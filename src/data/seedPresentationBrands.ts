@@ -48,11 +48,14 @@ structure lives on the template's output_structure, not here).
     run-level)
   - Right: project context, e.g. \`وصل العقارية  |  مقام كورتيارد ١٧\`
   - Sand (#E8D9C0) band with copper (#B8734F) 2px top border
-- Card icons: typographic Unicode symbols (♪ ◆ ✦ ★ ■ ● ♯ ≋ ▶ ◐ ✈ ❐) which
-  inherit the font's color. NOT emoji (they render in their own colors).
-  Exception: branded platform logos (Snapchat, TikTok, Instagram, LinkedIn)
-  on platform tiles.
-- Format: 16:9 (10" × 5.625").`,
+- Card icons: Lucide icons (https://lucide.dev) embedded as line-art SVG in
+  the slide's accent color — copper (#B8734F) on white/cream cards, gold
+  (#D9B57F) on brown/dark cards. Stroke-based, monochrome, stroke-width
+  ~1.5, sized ~32–40 px in card layouts. NOT emoji (they render in their
+  own multi-colored fonts). NOT typographic Unicode glyphs (♪ ◆ ✦ etc —
+  they read as text, not iconography). Exception: branded platform logos
+  (Snapchat, TikTok, Instagram, LinkedIn) keep their official multi-color
+  brand marks on platform tiles — never replace those with Lucide.`,
     text_rules: `- Arabic-Indic digits (٠-٩) everywhere — every Western digit converts to Arabic-Indic before rendering. Project numbers, years, prices, percentages — all Arabic-Indic. Latin letters and building codes (A/B/C/D) stay untouched.
 - Arabic decimal/thousands separators inside Arabic numbers: a "." between two Arabic-Indic digits becomes "٫" (U+066B); a "," becomes "٬" (U+066C). Standalone commas in sentences (e.g. "حي النرجس، الرياض") stay as-is.
 - RLM marks around em-dash / hyphen / underscore in Arabic context. Any separator (em-dash, en-dash, hyphen, underscore, pipe) with whitespace on at least one side gets wrapped with RLM (U+200F) and balanced spacing.
@@ -62,7 +65,7 @@ structure lives on the template's output_structure, not here).
 - Auto-fit: every textbox gets <a:normAutofit/> by default (text shrinks to fit shape). Opt-outs: \`grow_to_fit=True\` (shape grows to text) or \`auto_fit=False\` (no fitting).
 - Hyperlink styling: copper, NO underline. Use shape-level hyperlinks (NOT run-level) — run-level hyperlinks trigger PowerPoint's theme to override the run color.
 - RTL tables: PowerPoint has no true RTL flag on tables. To get the first logical column on the physical right, feed the columns reversed.
-- Icons in cards: typographic Unicode symbols (♪ ◆ ✦ ★ ■ ● ♯ ≋ ▶ ◐ ✈ ❐) which inherit the font's color, NOT emoji (which render with their own colors). Exception: branded platform logos on slide 9.
+- Icons in cards: Lucide icons (lucide.dev) embedded as line-art SVG in the slide's accent color (copper #B8734F on white/cream cards, gold #D9B57F on brown/dark cards). Stroke-based, monochrome, stroke-width ~1.5. NOT emoji (multi-color font glyphs). NOT typographic Unicode glyphs. Exception: branded platform logos (Snapchat, TikTok, Instagram, LinkedIn) keep their official multi-color marks on platform tiles.
 - NO parentheses in body / callout copy. Replace \`(text)\` with \`— text —\` (em-dashes with spaces). Allowed exceptions: URLs, the builder's intentional \`\\u200E(A/B/C/D)\\u200E\` building-code wrap, numeric-range content like \`(1,490,000 - 2,090,000)\`.
 - NEVER invent numbers. If the evidence is missing for a metric, omit the card or render the builder's "—" placeholder. Fabricating a "reasonable" number is the single failure mode that disqualifies a Wassel deck.`,
     forbidden_phrases: [

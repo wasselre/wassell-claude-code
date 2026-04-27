@@ -64,7 +64,7 @@ export const SEED_PRESENTATION_TEMPLATES: PresentationTemplate[] = [
     // identity that applies to any Wassel deck; this carries the 15-slide
     // sequence specific to the Wassel real-estate market-analysis deck.
     output_structure: `- Slide count: exactly 15 slides
-- Format: 16:9
+- Format: 16:9 (10" × 5.625")
 - Sequence (fixed):
   1. Cover (brown bg, logo, title, subtitle, project tag, year)
   2. About Wassel (3 KPI cards + 3 value cards)
