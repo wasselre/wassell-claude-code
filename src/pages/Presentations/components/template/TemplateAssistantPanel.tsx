@@ -1,26 +1,28 @@
 import { useEffect, useRef, useState } from 'react';
-import { Sparkles, Send, X, Copy, Loader2 } from 'lucide-react';
+import { Sparkles, Send, X, Copy, Loader2, Check, Wand2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import {
   streamTemplateAssistant,
   type TemplateAssistantMessage,
+  type TemplateProposal,
+  type TemplateProposalChanges,
 } from '@/lib/templateAssistant/client';
 import type { PresentationTemplate } from '@/types';
 
 /**
  * Right-side drawer with a streaming chat thread. The assistant has full
- * context (Wassel architecture, the 5 tools, and the user's current
- * template draft) and helps the user draft step prompts.
+ * context (Wassel architecture, the 5 tools, brand vs output_structure
+ * split, recent platform updates, and the user's current draft).
  *
- * Pattern:
- *   - User describes what they want a step to do (e.g. "research recent
- *     Riyadh apartment prices")
- *   - Assistant returns a complete prompt inside a code fence
- *   - User clicks the copy button on the code block, pastes into the
- *     step's prompt textarea
- *
- * Open/close is controlled by the parent. Closed = `open: false` and the
- * panel is hidden but its chat state persists for the session.
+ * The assistant communicates two ways:
+ *   - **Plain text** — explanations, questions, follow-ups, suggested
+ *     prompts inside ```` code fences (still supported for free-form text).
+ *   - **Structured proposals** — when the assistant wants to FILL a
+ *     template field, it calls the `propose_template_patch` tool. Each
+ *     call streams as a `proposal` event and shows up inline as an
+ *     "Apply" card. The user clicks Apply and the patch merges into the
+ *     template draft (the parent's `onApply` callback handles validation
+ *     + id generation + the actual mutation).
  */
 interface TemplateAssistantPanelProps {
   open: boolean;
@@ -28,16 +30,32 @@ interface TemplateAssistantPanelProps {
   /** The current draft, sent to the server on every turn so the assistant
    *  always sees the latest tools/steps/inputs the user has set. */
   template: PresentationTemplate;
+  /** Apply a proposed patch to the parent's draft. Parent is responsible
+   *  for id generation, tool-subset validation, and dispatching the
+   *  store-level setDraft. Returns true if applied, false if rejected. */
+  onApply: (changes: TemplateProposalChanges) => boolean;
+}
+
+/** Local chat-message shape — extends the wire shape with an array of
+ *  proposals attached to whichever message the assistant emitted them in. */
+interface UiMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  proposals?: TemplateProposal[];
+  /** Set of proposal ids the user has acted on (Apply or Discard). The
+   *  card renders as disabled with the chosen state. */
+  proposalState?: Record<string, 'applied' | 'discarded'>;
 }
 
 export default function TemplateAssistantPanel({
   open,
   onClose,
   template,
+  onApply,
 }: TemplateAssistantPanelProps): JSX.Element | null {
   const isAr = useAppStore((s) => s.language === 'ar');
 
-  const [messages, setMessages] = useState<TemplateAssistantMessage[]>([]);
+  const [messages, setMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -66,10 +84,10 @@ export default function TemplateAssistantPanel({
     if (!trimmed || streaming) return;
     setError(null);
 
-    const nextMessages: TemplateAssistantMessage[] = [
+    const nextMessages: UiMessage[] = [
       ...messages,
       { role: 'user', content: trimmed },
-      { role: 'assistant', content: '' },
+      { role: 'assistant', content: '', proposals: [], proposalState: {} },
     ];
     setMessages(nextMessages);
     setInput('');
@@ -81,7 +99,12 @@ export default function TemplateAssistantPanel({
     try {
       // The history we send to the server excludes the empty assistant
       // placeholder we just pushed (that's our local "in-flight" marker).
-      const apiMessages = nextMessages.slice(0, -1);
+      // Strip proposals from the wire history — they aren't text the
+      // server needs to replay as conversation context.
+      const apiMessages: TemplateAssistantMessage[] = nextMessages
+        .slice(0, -1)
+        .map(({ role, content }) => ({ role, content }));
+
       await streamTemplateAssistant(
         apiMessages,
         template,
@@ -93,6 +116,20 @@ export default function TemplateAssistantPanel({
               updated[updated.length - 1] = {
                 ...last,
                 content: last.content + event.delta,
+              };
+              return updated;
+            });
+          } else if (event.type === 'proposal') {
+            setMessages((prev) => {
+              const updated = [...prev];
+              const last = updated[updated.length - 1]!;
+              const existing = last.proposals ?? [];
+              updated[updated.length - 1] = {
+                ...last,
+                proposals: [
+                  ...existing,
+                  { id: event.id, summary: event.summary, changes: event.changes },
+                ],
               };
               return updated;
             });
@@ -113,8 +150,6 @@ export default function TemplateAssistantPanel({
   };
 
   const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>): void => {
-    // Cmd/Ctrl+Enter sends; plain Enter keeps a newline so users can write
-    // multi-line questions naturally.
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       e.preventDefault();
       void send();
@@ -126,6 +161,39 @@ export default function TemplateAssistantPanel({
     setMessages([]);
     setInput('');
     setError(null);
+  };
+
+  const handleApply = (msgIdx: number, proposal: TemplateProposal): void => {
+    const ok = onApply(proposal.changes);
+    setMessages((prev) => {
+      const updated = [...prev];
+      const m = updated[msgIdx];
+      if (!m) return prev;
+      updated[msgIdx] = {
+        ...m,
+        proposalState: {
+          ...(m.proposalState ?? {}),
+          [proposal.id]: ok ? 'applied' : 'discarded',
+        },
+      };
+      return updated;
+    });
+  };
+
+  const handleDiscard = (msgIdx: number, proposal: TemplateProposal): void => {
+    setMessages((prev) => {
+      const updated = [...prev];
+      const m = updated[msgIdx];
+      if (!m) return prev;
+      updated[msgIdx] = {
+        ...m,
+        proposalState: {
+          ...(m.proposalState ?? {}),
+          [proposal.id]: 'discarded',
+        },
+      };
+      return updated;
+    });
   };
 
   if (!open) return null;
@@ -172,8 +240,12 @@ export default function TemplateAssistantPanel({
               key={i}
               role={m.role}
               content={m.content}
+              proposals={m.proposals ?? []}
+              proposalState={m.proposalState ?? {}}
               isStreaming={streaming && i === messages.length - 1 && m.role === 'assistant'}
               isAr={isAr}
+              onApply={(p) => handleApply(i, p)}
+              onDiscard={(p) => handleDiscard(i, p)}
             />
           ))
         )}
@@ -193,8 +265,8 @@ export default function TemplateAssistantPanel({
             disabled={streaming}
             placeholder={
               isAr
-                ? 'مثال: اكتب لي خطوة بحث عن أسعار الشقق في الرياض ٢٠٢٦…  (Ctrl+Enter للإرسال)'
-                : 'e.g. Draft a research step for Riyadh apartment prices in 2026…  (Ctrl+Enter to send)'
+                ? 'مثال: اكتب لي خطوة بحث ثم خطوة بناء — املأ القالب بالكامل  (Ctrl+Enter للإرسال)'
+                : 'e.g. Draft a research step, then a build step — fill the template  (Ctrl+Enter to send)'
             }
             rows={3}
             dir={isAr ? 'rtl' : 'ltr'}
@@ -212,8 +284,8 @@ export default function TemplateAssistantPanel({
         </div>
         <p className="text-[10px] text-charcoal/40 mt-1.5 text-center">
           {isAr
-            ? 'يستخدم Claude Opus 4.7 ويعرف القوالب وأدواتها'
-            : 'Powered by Claude Opus 4.7 — knows your template + the 5 worker tools'}
+            ? 'Claude Opus 4.7 — يعرف بنية وصل، الأدوات، وآخر التحديثات. يستطيع ملء حقول القالب مباشرة.'
+            : 'Claude Opus 4.7 — knows Wassel architecture, tools, recent updates. Can fill template fields directly.'}
         </p>
       </div>
     </aside>
@@ -222,24 +294,24 @@ export default function TemplateAssistantPanel({
 
 function EmptyState({ isAr }: { isAr: boolean }): JSX.Element {
   const examplesEn = [
-    'Draft a research step prompt for Riyadh apartment prices.',
-    'My build step needs to make a 3-slide deck — write the prompt.',
-    'Write a step that pulls 5 clients from CRM and lists their preferences.',
-    'I want to add an outline step — what should it say?',
+    'Fill the basics for a Riyadh apartment market deck.',
+    'Draft a research step + a build step that uses code_execution.',
+    'Add an input for project_brief (textarea, required).',
+    'Generate the output structure for a 10-slide monthly report.',
   ];
   const examplesAr = [
-    'اكتب لي خطوة بحث عن أسعار الشقق في الرياض.',
-    'خطوة البناء تحتاج عمل عرض من 3 شرائح — اكتب التعليمات.',
-    'اكتب خطوة تجلب 5 عملاء من النظام وتعرض تفضيلاتهم.',
-    'أريد إضافة خطوة هيكلة — ماذا أكتب فيها؟',
+    'املأ المعلومات الأساسية لعرض شقق الرياض.',
+    'اكتب خطوة بحث ثم خطوة بناء تستخدم code_execution.',
+    'أضف مدخلاً اسمه project_brief — نصي طويل، إلزامي.',
+    'اكتب هيكل إخراج لتقرير شهري من ١٠ شرائح.',
   ];
   const examples = isAr ? examplesAr : examplesEn;
   return (
     <div className="text-sm text-charcoal/60 space-y-3">
       <p>
         {isAr
-          ? 'اشرح ما تريد أن تفعله الخطوة. أنا أعرف بنية وصل العقارية، الأدوات الخمس، وتفاصيل قالبك الحالي. سأكتب لك التعليمات الصحيحة.'
-          : 'Describe what you want the step to do. I know the Wassel architecture, the 5 worker tools, and your current template state. I\'ll draft the right prompt.'}
+          ? 'اشرح ما تريد. أنا أعرف بنية وصل، الأدوات الخمس، تفاصيل قالبك الحالي، وآخر تحديثات المنصة. أستطيع كتابة التعليمات وملء الحقول مباشرة عبر بطاقات "تطبيق".'
+          : 'Tell me what you want. I know the Wassel architecture, the 5 worker tools, your current draft, and the recent platform updates. I can write prompts AND fill template fields directly via Apply cards.'}
       </p>
       <div className="space-y-2">
         <p className="text-xs font-bold uppercase tracking-wide text-charcoal/40">
@@ -270,13 +342,21 @@ function EmptyState({ isAr }: { isAr: boolean }): JSX.Element {
 function ChatBubble({
   role,
   content,
+  proposals,
+  proposalState,
   isStreaming,
   isAr,
+  onApply,
+  onDiscard,
 }: {
   role: 'user' | 'assistant';
   content: string;
+  proposals: TemplateProposal[];
+  proposalState: Record<string, 'applied' | 'discarded'>;
   isStreaming: boolean;
   isAr: boolean;
+  onApply: (p: TemplateProposal) => void;
+  onDiscard: (p: TemplateProposal) => void;
 }): JSX.Element {
   const isUser = role === 'user';
   return (
@@ -291,17 +371,141 @@ function ChatBubble({
         {isUser ? (
           content
         ) : (
-          <AssistantContent content={content} isStreaming={isStreaming} isAr={isAr} />
+          <>
+            <AssistantContent content={content} isStreaming={isStreaming} isAr={isAr} />
+            {proposals.length > 0 && (
+              <div className="mt-2 space-y-2">
+                {proposals.map((p) => (
+                  <ProposalCard
+                    key={p.id}
+                    proposal={p}
+                    state={proposalState[p.id]}
+                    isAr={isAr}
+                    onApply={() => onApply(p)}
+                    onDiscard={() => onDiscard(p)}
+                  />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
   );
 }
 
+/** A bordered card showing the assistant's proposed patch with Apply /
+ *  Discard buttons. Once acted on, the buttons collapse into a status
+ *  chip ("Applied" / "Discarded"). */
+function ProposalCard({
+  proposal,
+  state,
+  isAr,
+  onApply,
+  onDiscard,
+}: {
+  proposal: TemplateProposal;
+  state: 'applied' | 'discarded' | undefined;
+  isAr: boolean;
+  onApply: () => void;
+  onDiscard: () => void;
+}): JSX.Element {
+  const fieldChips = describeChanges(proposal.changes, isAr);
+  return (
+    <div
+      className={`rounded-lg border overflow-hidden ${
+        state === 'applied'
+          ? 'border-green-300 bg-green-50'
+          : state === 'discarded'
+            ? 'border-charcoal/15 bg-cream/60 opacity-70'
+            : 'border-copper/40 bg-cream/40'
+      }`}
+    >
+      <div className="px-3 py-2 border-b border-sand/30 flex items-start gap-2">
+        <Wand2 size={14} className="text-copper shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <p className="text-xs font-bold uppercase tracking-wide text-charcoal/60">
+            {isAr ? 'تعديل مقتَرَح' : 'Proposed change'}
+          </p>
+          <p className="text-sm text-charcoal mt-0.5 whitespace-normal break-words">
+            {proposal.summary}
+          </p>
+        </div>
+      </div>
+      {fieldChips.length > 0 && (
+        <div className="px-3 py-2 border-b border-sand/30 flex flex-wrap gap-1">
+          {fieldChips.map((c, i) => (
+            <span
+              key={i}
+              className="inline-flex items-center text-[10px] font-mono px-1.5 py-0.5 rounded bg-white border border-sand/50 text-charcoal/70"
+            >
+              {c}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="px-3 py-2 flex items-center justify-end gap-2">
+        {state === 'applied' ? (
+          <span className="inline-flex items-center gap-1 text-xs font-bold text-green-700">
+            <Check size={12} />
+            {isAr ? 'تم التطبيق' : 'Applied'}
+          </span>
+        ) : state === 'discarded' ? (
+          <span className="text-xs text-charcoal/50">{isAr ? 'تم التجاهل' : 'Discarded'}</span>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={onDiscard}
+              className="text-xs text-charcoal/60 hover:text-charcoal px-2 py-1"
+            >
+              {isAr ? 'تجاهل' : 'Discard'}
+            </button>
+            <button
+              type="button"
+              onClick={onApply}
+              className="inline-flex items-center gap-1 text-xs font-bold text-white bg-copper hover:bg-terracotta rounded px-3 py-1"
+            >
+              <Check size={12} />
+              {isAr ? 'تطبيق' : 'Apply'}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** Build a list of compact field chips (e.g. ["steps (3)", "tools (2)",
+ *  "output_structure"]) summarizing what the patch touches. Used on the
+ *  proposal card so the user can see at a glance which fields would
+ *  change. */
+function describeChanges(changes: TemplateProposalChanges, isAr: boolean): string[] {
+  const chips: string[] = [];
+  const t = (en: string, ar: string): string => (isAr ? ar : en);
+  if (changes.label_en !== undefined) chips.push(t('label_en', 'الاسم EN'));
+  if (changes.label_ar !== undefined) chips.push(t('label_ar', 'الاسم AR'));
+  if (changes.slug !== undefined) chips.push(t('slug', 'الرمز'));
+  if (changes.description_en !== undefined) chips.push(t('description_en', 'الوصف EN'));
+  if (changes.description_ar !== undefined) chips.push(t('description_ar', 'الوصف AR'));
+  if (changes.icon !== undefined) chips.push(t('icon', 'الأيقونة'));
+  if (Array.isArray(changes.tools)) {
+    chips.push(t(`tools (${changes.tools.length})`, `أدوات (${changes.tools.length})`));
+  }
+  if (Array.isArray(changes.input_schema)) {
+    chips.push(t(`inputs (${changes.input_schema.length})`, `مدخلات (${changes.input_schema.length})`));
+  }
+  if (Array.isArray(changes.steps)) {
+    chips.push(t(`steps (${changes.steps.length})`, `خطوات (${changes.steps.length})`));
+  }
+  if (changes.output_structure !== undefined) chips.push(t('output_structure', 'هيكل الإخراج'));
+  return chips;
+}
+
 /**
  * Renders assistant text with code-fence detection. Anything inside
- * triple-backtick fences becomes a copyable code block — the user clicks
- * Copy and pastes into the step's prompt textarea.
+ * triple-backtick fences becomes a copyable code block — kept around for
+ * free-form text the assistant emits without using the patch tool.
  */
 function AssistantContent({
   content,
@@ -321,9 +525,6 @@ function AssistantContent({
     );
   }
 
-  // Split on ``` fences. Even-indexed segments are prose; odd-indexed are
-  // code (the inside of a fence). Strip an optional language tag from the
-  // first line of code segments.
   const segments = content.split(/```/g);
   return (
     <>
@@ -331,7 +532,6 @@ function AssistantContent({
         if (i % 2 === 0) {
           return seg ? <span key={i}>{seg}</span> : null;
         }
-        // Code block. Strip leading "lang" line if present.
         const lines = seg.split('\n');
         const firstLine = lines[0]?.trim() ?? '';
         const isLangTag = /^[a-zA-Z0-9_+-]{1,20}$/.test(firstLine);

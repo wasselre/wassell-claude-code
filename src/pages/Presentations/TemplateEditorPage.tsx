@@ -1,14 +1,47 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { v4 as uuid } from 'uuid';
 import { ArrowRight, Save, Lock, Sparkles } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
-import type { PresentationTemplate, PresentationToolName } from '@/types';
+import type {
+  PresentationInput,
+  PresentationInputSource,
+  PresentationInputType,
+  PresentationStep,
+  PresentationStepKind,
+  PresentationTemplate,
+  PresentationToolName,
+} from '@/types';
+import type { TemplateProposalChanges } from '@/lib/templateAssistant/client';
 import InputsEditor from './components/template/InputsEditor';
 import ToolsEditor from './components/template/ToolsEditor';
 import StepsEditor from './components/template/StepsEditor';
 import BrandSelector from './components/template/BrandSelector';
 import TemplateAssistantPanel from './components/template/TemplateAssistantPanel';
+
+const VALID_TOOLS: ReadonlySet<PresentationToolName> = new Set([
+  'web_search',
+  'web_fetch',
+  'code_execution',
+  'record_lookup',
+  'drive_upload',
+]);
+const VALID_STEP_KINDS: ReadonlySet<PresentationStepKind> = new Set([
+  'research',
+  'outline',
+  'build',
+  'review',
+  'custom',
+]);
+const VALID_INPUT_TYPES: ReadonlySet<PresentationInputType> = new Set([
+  'text',
+  'textarea',
+  'number',
+  'date',
+  'dropdown',
+]);
+const VALID_INPUT_SOURCES: ReadonlySet<PresentationInputSource> = new Set(['user', 'record_field']);
 
 /**
  * `/presentations/templates/:id` — edit a user-authored template.
@@ -115,6 +148,166 @@ export default function TemplateEditorPage(): JSX.Element {
     updatePresentationTemplate(draft.id, draft);
     addToast(isAr ? 'تم الحفظ' : 'Saved', 'success');
     setDirty(false);
+  };
+
+  /**
+   * Apply a proposal from the AI assistant to the draft. Returns true if
+   * applied (and the assistant card flips to "Applied"), false if rejected.
+   *
+   * Validation rules:
+   *  - Unknown tool names → drop them, don't fail the whole patch
+   *  - Step / input objects missing required fields → reject the proposal
+   *    entirely (the assistant should re-emit a valid one)
+   *  - Generate stable ids for new steps / inputs / dropdown options so
+   *    the editors' react-key + reorder logic keep working
+   *  - When `tools` is patched, scope each step's `tools` to the new set
+   */
+  const applyAssistantPatch = (changes: TemplateProposalChanges): boolean => {
+    if (readonly) {
+      addToast(
+        isAr ? 'هذا القالب للقراءة فقط' : 'This template is read-only',
+        'error',
+      );
+      return false;
+    }
+
+    const next: Partial<PresentationTemplate> = {};
+
+    // Scalars — pass through if present.
+    if (typeof changes.label_en === 'string') next.label_en = changes.label_en;
+    if (typeof changes.label_ar === 'string') next.label_ar = changes.label_ar;
+    if (typeof changes.slug === 'string') next.slug = changes.slug;
+    if (typeof changes.description_en === 'string') next.description_en = changes.description_en;
+    if (typeof changes.description_ar === 'string') next.description_ar = changes.description_ar;
+    if (typeof changes.icon === 'string') next.icon = changes.icon;
+    if (typeof changes.output_structure === 'string') next.output_structure = changes.output_structure;
+
+    // Tools — filter to known names; preserve order.
+    let nextTools: PresentationToolName[] | null = null;
+    if (Array.isArray(changes.tools)) {
+      nextTools = (changes.tools as string[])
+        .filter((t): t is PresentationToolName => VALID_TOOLS.has(t as PresentationToolName));
+      next.tools = nextTools;
+    }
+    const effectiveTools = new Set<PresentationToolName>(nextTools ?? draft.tools);
+
+    // Steps — validate each, generate ids, scope tools to effective set.
+    if (Array.isArray(changes.steps)) {
+      const validated: PresentationStep[] = [];
+      for (const raw of changes.steps) {
+        if (typeof raw !== 'object' || raw === null) continue;
+        const r = raw as Record<string, unknown>;
+        const kind = r.kind;
+        const prompt = r.prompt;
+        const toolsList = r.tools;
+        if (typeof kind !== 'string' || !VALID_STEP_KINDS.has(kind as PresentationStepKind)) {
+          addToast(
+            isAr ? `خطوة بنوع غير صالح: ${String(kind)}` : `Invalid step kind: ${String(kind)}`,
+            'error',
+          );
+          return false;
+        }
+        if (typeof prompt !== 'string') {
+          addToast(isAr ? 'تعليمات الخطوة مطلوبة' : 'Step prompt is required', 'error');
+          return false;
+        }
+        if (!Array.isArray(toolsList)) {
+          addToast(isAr ? 'أدوات الخطوة مطلوبة (قائمة)' : 'Step tools must be an array', 'error');
+          return false;
+        }
+        const stepTools = (toolsList as string[])
+          .filter((t): t is PresentationToolName => VALID_TOOLS.has(t as PresentationToolName))
+          .filter((t) => effectiveTools.has(t));
+        const id = typeof r.id === 'string' && r.id.length > 0 ? (r.id as string) : uuid();
+        const step: PresentationStep = {
+          id,
+          kind: kind as PresentationStepKind,
+          prompt,
+          tools: stepTools,
+        };
+        if (typeof r.label_en === 'string') step.label_en = r.label_en;
+        if (typeof r.label_ar === 'string') step.label_ar = r.label_ar;
+        validated.push(step);
+      }
+      next.steps = validated;
+    } else if (nextTools) {
+      // Tools changed but no steps patch — clean each existing step's
+      // tool subset against the new template tools.
+      next.steps = draft.steps.map((s) => ({
+        ...s,
+        tools: s.tools.filter((t) => effectiveTools.has(t)),
+      }));
+    }
+
+    // Input schema — validate, generate ids, dropdown option ids if any.
+    if (Array.isArray(changes.input_schema)) {
+      const validated: PresentationInput[] = [];
+      for (const raw of changes.input_schema) {
+        if (typeof raw !== 'object' || raw === null) continue;
+        const r = raw as Record<string, unknown>;
+        const name = r.name;
+        const labelEn = r.label_en;
+        const labelAr = r.label_ar;
+        const type = r.type;
+        const required = r.required;
+        const source = r.source;
+        if (
+          typeof name !== 'string' ||
+          name.length === 0 ||
+          typeof labelEn !== 'string' ||
+          typeof labelAr !== 'string' ||
+          typeof type !== 'string' ||
+          !VALID_INPUT_TYPES.has(type as PresentationInputType) ||
+          typeof required !== 'boolean' ||
+          typeof source !== 'string' ||
+          !VALID_INPUT_SOURCES.has(source as PresentationInputSource)
+        ) {
+          addToast(
+            isAr ? `مدخل غير صالح: ${String(name ?? '?')}` : `Invalid input: ${String(name ?? '?')}`,
+            'error',
+          );
+          return false;
+        }
+        const input: PresentationInput = {
+          name,
+          label_en: labelEn,
+          label_ar: labelAr,
+          type: type as PresentationInputType,
+          required,
+          source: source as PresentationInputSource,
+        };
+        if (typeof r.record_field === 'string') input.record_field = r.record_field;
+        if (typeof r.placeholder_en === 'string') input.placeholder_en = r.placeholder_en;
+        if (typeof r.placeholder_ar === 'string') input.placeholder_ar = r.placeholder_ar;
+        if (typeof r.default_value === 'string' || typeof r.default_value === 'number') {
+          input.default_value = r.default_value as string | number;
+        }
+        // Dropdown options — generate ids if missing so the editor's
+        // option list stays stable across reorders.
+        if (input.type === 'dropdown' && Array.isArray(r.options)) {
+          input.options = (r.options as Array<Record<string, unknown>>).map((opt) => ({
+            id: typeof opt.id === 'string' && opt.id.length > 0 ? (opt.id as string) : uuid(),
+            value: typeof opt.value === 'string' ? opt.value : '',
+            label_en: typeof opt.label_en === 'string' ? opt.label_en : '',
+            label_ar: typeof opt.label_ar === 'string' ? opt.label_ar : '',
+          }));
+        }
+        validated.push(input);
+      }
+      next.input_schema = validated;
+    }
+
+    if (Object.keys(next).length === 0) {
+      addToast(
+        isAr ? 'لا يوجد تغيير قابل للتطبيق' : 'No applicable changes in this proposal',
+        'error',
+      );
+      return false;
+    }
+
+    patch(next);
+    addToast(isAr ? 'تم تطبيق المقترح' : 'Proposal applied', 'success');
+    return true;
   };
 
   return (
@@ -424,11 +617,13 @@ export default function TemplateEditorPage(): JSX.Element {
       </Section>
 
       {/* AI helper panel — fixed-position drawer; controlled by the
-          "AI helper" toggle in the page header. */}
+          "AI helper" toggle in the page header. The panel can call back
+          via `onApply` to merge a proposed patch into the draft. */}
       <TemplateAssistantPanel
         open={assistantOpen && !readonly}
         onClose={() => setAssistantOpen(false)}
         template={draft}
+        onApply={applyAssistantPatch}
       />
     </div>
   );

@@ -1,14 +1,50 @@
 /**
  * Browser-side helper for streaming chat turns from `/api/template-assistant`.
- * Same SSE wire format as `/api/agent`, but no tool events — this assistant
- * is pure chat (it drafts step prompts, doesn't execute anything).
+ *
+ * Two channels in the SSE stream:
+ *   - `text`     — token deltas of assistant prose (rendered in chat bubble)
+ *   - `proposal` — a structured patch the assistant wants to apply to the
+ *                  template draft. Each proposal renders as an Apply card.
+ *
+ * The server runs a small agent loop so the assistant can call
+ * `propose_template_patch` multiple times within one user turn, optionally
+ * with prose between calls. The browser stitches everything onto the
+ * single in-flight assistant message.
  */
 
 import { supabase } from '@/lib/supabase';
 import type { PresentationTemplate } from '@/types';
 
+/** A patch the assistant wants to apply to the user's template draft.
+ *  The shape mirrors the `propose_template_patch` JSON-schema on the
+ *  server (without `summary`, which is metadata). All fields optional —
+ *  the assistant patches only what it wants to change. */
+export interface TemplateProposalChanges {
+  label_en?: string;
+  label_ar?: string;
+  slug?: string;
+  description_en?: string;
+  description_ar?: string;
+  icon?: string;
+  tools?: string[];
+  input_schema?: Array<Record<string, unknown>>;
+  steps?: Array<Record<string, unknown>>;
+  output_structure?: string;
+}
+
+export interface TemplateProposal {
+  /** Server-side tool_use id — stable for this proposal across the SSE
+   *  stream. The UI uses it to dedupe and to mark cards as applied. */
+  id: string;
+  /** One-sentence description shown on the Apply card. */
+  summary: string;
+  /** The patch the user can apply. */
+  changes: TemplateProposalChanges;
+}
+
 export type TemplateAssistantEvent =
   | { type: 'text'; delta: string }
+  | { type: 'proposal'; id: string; summary: string; changes: TemplateProposalChanges }
   | { type: 'done'; stop_reason: string }
   | { type: 'error'; message: string };
 
