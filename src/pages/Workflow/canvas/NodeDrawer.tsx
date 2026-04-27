@@ -25,6 +25,8 @@ interface NodeDrawerProps {
   // functional — they just emit a longer array via these callbacks.
   onReplaceBranchConditions: (branchId: string, conditions: WorkflowCondition[]) => void;
   onReplaceBranchActions: (branchId: string, actions: WorkflowAction[]) => void;
+  // Toggle the join mode of a branch (AND vs OR over its conditions).
+  onSetBranchConditionMode: (branchId: string, mode: 'all' | 'any') => void;
 }
 
 // Right-side slide-in panel hosting the existing ConditionList / ActionList /
@@ -40,6 +42,7 @@ export default function NodeDrawer({
   onUpdateTrigger,
   onReplaceBranchConditions,
   onReplaceBranchActions,
+  onSetBranchConditionMode,
 }: NodeDrawerProps) {
   const { language } = useAppStore();
   const isAr = language === 'ar';
@@ -106,12 +109,15 @@ export default function NodeDrawer({
   } else if (node.kind === 'conditionGroup') {
     const branch = workflow.branches?.find((b) => b.id === node.branchId);
     const conditions = branch?.conditions ?? [];
+    const mode = branch?.condition_mode ?? 'all';
     body = (
       <ConditionList
         embedded
         conditions={conditions}
         fields={triggerFields}
         triggerEvent={workflow.trigger_event}
+        mode={mode}
+        onModeChange={(next) => onSetBranchConditionMode(node.branchId, next)}
         onChange={(next) => onReplaceBranchConditions(node.branchId, next)}
       />
     );

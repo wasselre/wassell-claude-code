@@ -10,6 +10,12 @@ interface ConditionListProps {
   fields: ModelField[];
   triggerEvent: WorkflowEvent;
   onChange: (conditions: WorkflowCondition[]) => void;
+  // 'all' = AND (default), 'any' = OR. When `onModeChange` is provided the
+  // toggle is rendered above the list. Both must be provided together for the
+  // toggle to appear; otherwise the list silently honours the mode for
+  // labelling without offering the switch.
+  mode?: 'all' | 'any';
+  onModeChange?: (mode: 'all' | 'any') => void;
   // When true, render without the outer card / icon chrome so the component
   // nests cleanly inside a branch card. The branch card provides its own
   // container styling.
@@ -55,11 +61,16 @@ export function summarizeCondition(cond: WorkflowCondition, fields: ModelField[]
   return `${name} ${sym} ${trimmed}`;
 }
 
-export default function ConditionList({ conditions, fields, triggerEvent, onChange, embedded = false }: ConditionListProps) {
+export default function ConditionList({ conditions, fields, triggerEvent, onChange, mode = 'all', onModeChange, embedded = false }: ConditionListProps) {
   const { t } = useTranslation();
   const { language } = useAppStore();
   const isAr = language === 'ar';
   const showTransitionToggle = triggerEvent === 'update';
+  const isOr = mode === 'any';
+  const connectorLabel = isOr ? (isAr ? 'أو' : 'OR') : (isAr ? 'و' : 'AND');
+  const connectorChipClasses = isOr
+    ? 'text-amber-700/80 bg-amber-500/10'
+    : 'text-blue-600/70 bg-blue-500/10';
 
   const addCondition = () => {
     onChange([...conditions, { id: uuid(), field_id: '', operator: 'equals', value: '' }]);
@@ -98,8 +109,47 @@ export default function ConditionList({ conditions, fields, triggerEvent, onChan
     }
   };
 
+  // Match-mode toggle — only shown when the host wired `onModeChange` AND
+  // there are at least two conditions (toggle has no semantic effect with 0
+  // or 1 conditions, so hiding it keeps the empty/just-added state quiet).
+  const showModeToggle = !!onModeChange && conditions.length >= 2;
+  const matchAllLabel = isAr ? 'مطابقة كل الشروط' : 'Match ALL conditions';
+  const matchAnyLabel = isAr ? 'مطابقة أي شرط' : 'Match ANY condition';
+  const matchAllShort = isAr ? 'الكل (و)' : 'ALL (AND)';
+  const matchAnyShort = isAr ? 'أي (أو)' : 'ANY (OR)';
+
   const body = (
     <>
+      {showModeToggle && (
+        <div className="mb-3 flex items-center gap-2 p-2 rounded-xl bg-cream-light/80 border border-sand/40">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-charcoal/50 ps-1 shrink-0">
+            {isAr ? 'الربط' : 'Match'}
+          </span>
+          <div className="flex-1" />
+          <div className="inline-flex rounded-lg border border-sand/50 bg-white overflow-hidden">
+            <button
+              type="button"
+              onClick={() => onModeChange?.('all')}
+              className={`px-3 py-1.5 text-xs font-bold transition-colors ${
+                !isOr ? 'bg-blue-500 text-white' : 'text-charcoal/60 hover:bg-sand/20'
+              }`}
+              title={matchAllLabel}
+            >
+              {matchAllShort}
+            </button>
+            <button
+              type="button"
+              onClick={() => onModeChange?.('any')}
+              className={`px-3 py-1.5 text-xs font-bold transition-colors border-s border-sand/50 ${
+                isOr ? 'bg-amber-500 text-white' : 'text-charcoal/60 hover:bg-sand/20'
+              }`}
+              title={matchAnyLabel}
+            >
+              {matchAnyShort}
+            </button>
+          </div>
+        </div>
+      )}
       <div className="space-y-2.5">
         {conditions.length === 0 && (
           <div className="text-center py-6 text-charcoal/35 text-sm bg-cream-light/60 rounded-xl border border-dashed border-sand/40">
@@ -114,8 +164,8 @@ export default function ConditionList({ conditions, fields, triggerEvent, onChan
             <div key={cond.id}>
               {idx > 0 && (
                 <div className="flex items-center gap-2 my-1.5 ms-2">
-                  <span className="text-[10px] font-bold tracking-wider uppercase text-blue-600/70 bg-blue-500/10 px-2 py-0.5 rounded">
-                    {isAr ? 'و' : 'AND'}
+                  <span className={`text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded ${connectorChipClasses}`}>
+                    {connectorLabel}
                   </span>
                   <div className="flex-1 h-px bg-sand/30" />
                 </div>

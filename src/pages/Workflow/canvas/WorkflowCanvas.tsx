@@ -479,6 +479,7 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
         onUpdateTrigger={onUpdateTrigger}
         onReplaceBranchConditions={graphHelpers.replaceBranchConditions}
         onReplaceBranchActions={graphHelpers.replaceBranchActions}
+        onSetBranchConditionMode={graphHelpers.setBranchConditionMode}
       />
 
       {addMenu && (

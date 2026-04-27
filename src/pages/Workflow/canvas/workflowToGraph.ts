@@ -199,6 +199,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
           branch,
           branchId: branch.id,
           conditions: branch.conditions,
+          conditionMode: branch.condition_mode ?? 'all',
           fields: triggerFields,
           triggerEvent: workflow.trigger_event,
           positionLabel,

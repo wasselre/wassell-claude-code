@@ -146,6 +146,16 @@ export function useWorkflowGraph(
     }));
   }, [setWorkflow]);
 
+  // Toggle a branch between AND ('all') and OR ('any') condition joining.
+  const setBranchConditionMode = useCallback((branchId: string, mode: 'all' | 'any') => {
+    setWorkflow((w) => ({
+      ...w,
+      branches: (w.branches ?? []).map((b) =>
+        b.id === branchId ? { ...b, condition_mode: mode } : b,
+      ),
+    }));
+  }, [setWorkflow]);
+
   // Add a new conditional branch right before the else branch (if any).
   const addBranch = useCallback(() => {
     const id = uuid();
@@ -209,6 +219,7 @@ export function useWorkflowGraph(
     updateAction,
     replaceBranchConditions,
     replaceBranchActions,
+    setBranchConditionMode,
     addBranch,
     addElseBranch,
     deleteBranch,

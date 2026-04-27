@@ -602,9 +602,14 @@ export interface WorkflowBranch {
   // Optional human label so the tree stays readable ("Hot lead", "Cold lead").
   label_ar?: string;
   label_en?: string;
-  // AND-joined conditions. Empty = always true (useful for the winning arm of
-  // an if/else when the author wants a catch-all without using `is_else`).
+  // Conditions for this branch. Joined by `condition_mode` (default 'all' =
+  // AND). Empty = always true (useful for the winning arm of an if/else when
+  // the author wants a catch-all without using `is_else`).
   conditions: WorkflowCondition[];
+  // How to join the conditions: 'all' = every condition must pass (AND, the
+  // default and pre-existing behavior), 'any' = at least one must pass (OR).
+  // Optional for back-compat with saves predating this field.
+  condition_mode?: 'all' | 'any';
   // Actions run sequentially if this branch wins.
   actions: WorkflowAction[];
   // Marks this branch as the fallback / else arm. Evaluated only if no earlier

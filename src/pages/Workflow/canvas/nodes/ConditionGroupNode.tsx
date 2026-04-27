@@ -9,6 +9,9 @@ export interface ConditionGroupNodeData extends Record<string, unknown> {
   branch: WorkflowBranch;
   branchId: string;
   conditions: WorkflowCondition[];
+  // 'all' = AND-join (default), 'any' = OR-join. Drives the connector chip
+  // rendered between condition rows on the card.
+  conditionMode: 'all' | 'any';
   fields: ModelField[];
   triggerEvent: WorkflowEvent;
   // Branch header info — rendered as the top section of this card so the
@@ -36,7 +39,12 @@ interface ConditionGroupNodeProps extends NodeProps {
 // look like one card. The branch's header (IF / ELSE IF + name + duplicate /
 // delete buttons) is the top of this card so the relationship is obvious.
 export default function ConditionGroupNode({ data, selected, id }: ConditionGroupNodeProps) {
-  const { branch, conditions, fields, isAr, positionLabel, branchName, isElse, canDelete, canDuplicate } = data;
+  const { branch, conditions, conditionMode, fields, isAr, positionLabel, branchName, isElse, canDelete, canDuplicate } = data;
+  const isOr = conditionMode === 'any';
+  const connectorLabel = isOr ? (isAr ? 'أو' : 'OR') : (isAr ? 'و' : 'AND');
+  const connectorChipClasses = isOr
+    ? 'text-amber-700/80 bg-amber-500/10'
+    : 'text-sky-700/70 bg-sky-500/10';
 
   const onDeleteCondition = (conditionId: string) => (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -142,8 +150,8 @@ export default function ConditionGroupNode({ data, selected, id }: ConditionGrou
             <div key={cond.id}>
               {idx > 0 && (
                 <div className="flex items-center gap-2 my-1.5 ms-1">
-                  <span className="text-[9px] font-bold tracking-wider uppercase text-sky-700/70 bg-sky-500/10 px-1.5 py-0.5 rounded">
-                    {isAr ? 'و' : 'AND'}
+                  <span className={`text-[9px] font-bold tracking-wider uppercase px-1.5 py-0.5 rounded ${connectorChipClasses}`}>
+                    {connectorLabel}
                   </span>
                   <div className="flex-1 h-px bg-sky-100" />
                 </div>

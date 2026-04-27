@@ -260,7 +260,10 @@ export async function executeWorkflows(
       }
 
       const conditionsTrace: WorkflowConditionTrace[] = [];
-      const conditionsPassed = branch.conditions.every((c) => {
+      // Evaluate every condition (no short-circuit) so the trace is complete
+      // even in 'any' mode — users want to see what each condition resolved
+      // to regardless of the join mode.
+      const perResults = branch.conditions.map((c) => {
         const passesNow = evaluateCondition(c, triggerRecord.data);
         const passedBefore = (c.only_on_change && event === 'update' && previousRecord)
           ? evaluateCondition(c, previousRecord.data)
@@ -281,6 +284,13 @@ export async function executeWorkflows(
         });
         return result;
       });
+      const mode = branch.condition_mode ?? 'all';
+      // Empty conditions stays "true" under both modes — matches prior
+      // behavior of `[].every(...) === true` and avoids surprising users who
+      // intentionally left a branch unconditional.
+      const conditionsPassed = perResults.length === 0
+        ? true
+        : (mode === 'any' ? perResults.some(Boolean) : perResults.every(Boolean));
 
       if (conditionsPassed) winner = branch;
 
@@ -421,7 +431,12 @@ export async function executeWebhookWorkflows(
     for (const branch of branches) {
       if (winner) continue;
       if (branch.is_else) { winner = branch; continue; }
-      const ok = branch.conditions.every((c) => evaluateCondition(c, triggerRecord.data));
+      const mode = branch.condition_mode ?? 'all';
+      const ok = branch.conditions.length === 0
+        ? true
+        : (mode === 'any'
+          ? branch.conditions.some((c) => evaluateCondition(c, triggerRecord.data))
+          : branch.conditions.every((c) => evaluateCondition(c, triggerRecord.data)));
       if (ok) winner = branch;
     }
     if (!winner) continue;
