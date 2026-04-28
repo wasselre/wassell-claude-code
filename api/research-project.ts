@@ -25,6 +25,7 @@
  *                                                  caller's JWT (RLS-scoped).
  */
 
+import type { IncomingMessage, ServerResponse } from 'http';
 import { chromium, type Page } from 'playwright-core';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
@@ -251,7 +252,72 @@ function log(...parts: unknown[]): void {
   process.stderr.write(`${parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ')}\n`);
 }
 
-export default async function handler(req: Request): Promise<Response> {
+/* ─── Node ↔ Web Request/Response adapter ────────────────────────────────
+ *
+ * Vercel's Node runtime hands functions a Node `IncomingMessage` (where
+ * `headers` is a plain object) and expects a Node `ServerResponse` (call
+ * `res.end()`), even when the function signature is typed as
+ * `(req: Request) => Response`. The TypeScript annotation is a fiction at
+ * runtime — calling `req.headers.get('Authorization')` throws.
+ *
+ * This wrapper bridges the gap: it converts the IncomingMessage into a
+ * Web `Request`, runs the existing Web-Request-style handler (which uses
+ * `withAuth` and other helpers that assume Web standards), then writes
+ * the resulting Web `Response` back to the Node `ServerResponse`.
+ * ──────────────────────────────────────────────────────────────────── */
+
+async function readNodeBody(req: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(Buffer.from(chunk));
+  return Buffer.concat(chunks);
+}
+
+async function nodeToWebRequest(nodeReq: IncomingMessage): Promise<Request> {
+  const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
+  const url = new URL(nodeReq.url ?? '/', `https://${host}`);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(nodeReq.headers)) {
+    if (typeof v === 'string') headers.set(k, v);
+    else if (Array.isArray(v)) headers.set(k, v.join(', '));
+  }
+  const method = nodeReq.method ?? 'GET';
+  const body = method === 'GET' || method === 'HEAD' ? undefined : await readNodeBody(nodeReq);
+  return new Request(url.toString(), { method, headers, body });
+}
+
+async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse): Promise<void> {
+  nodeRes.statusCode = webResp.status;
+  for (const [k, v] of webResp.headers) nodeRes.setHeader(k, v);
+  const buf = Buffer.from(await webResp.arrayBuffer());
+  nodeRes.end(buf);
+}
+
+export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
+  log('[research-project] L0 wrapper entered, method=', nodeReq.method ?? '?', 'url=', nodeReq.url ?? '?');
+  let webReq: Request;
+  try {
+    webReq = await nodeToWebRequest(nodeReq);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log('[research-project] L0! adapter failure:', msg);
+    nodeRes.statusCode = 500;
+    nodeRes.setHeader('Content-Type', 'application/json');
+    nodeRes.end(JSON.stringify({ error: `request adapter failed: ${msg}` }));
+    return;
+  }
+  log('[research-project] L0a adapted to web request');
+  let webResp: Response;
+  try {
+    webResp = await mainHandler(webReq);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log('[research-project] L0! handler threw:', msg);
+    webResp = jsonError(500, `unhandled: ${msg}`);
+  }
+  await writeWebResponseToNode(webResp, nodeRes);
+}
+
+async function mainHandler(req: Request): Promise<Response> {
   log('[research-project] L1 handler entered, method=', req.method);
   log('[research-project] L2 url=', req.url);
   log('[research-project] L3 has-supabase-url=', !!process.env.SUPABASE_URL, 'has-anon=', !!process.env.SUPABASE_ANON_KEY);
