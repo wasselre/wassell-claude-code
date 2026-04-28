@@ -83,29 +83,18 @@ async function createBrowserbaseSession(
   apiKey: string,
   projectId: string,
 ): Promise<{ id: string; connectUrl: string }> {
-  // Paseet's login form sits behind reCAPTCHA. From a residential IP the
-  // challenge usually solves silently (v3 score), but from Vercel's
-  // datacenter IPs it triggers a hard challenge that blocks login. Two
-  // Browserbase features fix this together:
-  //   - `proxies: true`       → routes the session through a residential
-  //                             IP, which keeps reCAPTCHA scores high
-  //                             enough that no challenge is shown.
-  //   - `solveCaptchas: true` → backstop in case a challenge does appear,
-  //                             Browserbase's solver handles it.
+  // Basic session — no proxies, no CAPTCHA solver, no advancedStealth.
+  // Those are Hobby+/Scale-tier paid features and Browserbase 403s the
+  // request when the project's plan doesn't include them. We log the
+  // response body on failure so a future 403 tells us exactly why.
   const res = await fetch('https://api.browserbase.com/v1/sessions', {
     method: 'POST',
     headers: { 'X-BB-API-Key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      projectId,
-      proxies: true,
-      browserSettings: {
-        solveCaptchas: true,
-        advancedStealth: true,
-      },
-    }),
+    body: JSON.stringify({ projectId }),
   });
   if (!res.ok) {
-    throw new Error(`Browserbase session create failed: ${res.status} ${await res.text()}`);
+    const body = await res.text().catch(() => '');
+    throw new Error(`Browserbase session create failed: ${res.status} ${body.slice(0, 300)}`);
   }
   return (await res.json()) as { id: string; connectUrl: string };
 }
