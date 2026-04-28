@@ -125,8 +125,10 @@
     font-weight: 700;
   }
 
-  /* Sub-nav under a parent (e.g. Templates under Presentations).
-   * Indented + smaller font + tighter padding so it reads as a child link. */
+  /* Sub-nav under a parent. Indented + smaller font + tighter padding
+   * so it reads as a child link. (Currently unused after the
+   * Presentations feature was removed; kept for future parent/child
+   * sidebar entries.) */
   .nav-item-sub {
     padding-inline-start: 2.5rem;
     padding-block: 0.4rem;

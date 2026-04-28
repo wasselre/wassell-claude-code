@@ -106,55 +106,6 @@ Because CLAUDE.md contains the full architecture, Claude Code will make changes 
 
 ---
 
-## Running the Presentations daemon
+## Removed feature: Presentations
 
-The Presentations feature (deck generation from the `/presentations` page) needs a small background process running on your machine to actually produce decks. The web app only queues jobs; the daemon spawns Claude Code for each one.
-
-### First-time setup
-
-```bash
-cd daemon
-cp .env.example .env
-# Edit daemon/.env — fill in SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY
-# (find them in the Supabase dashboard → Project Settings → API)
-npm install
-npm run smoke    # sanity-check env + Supabase + templates
-```
-
-### Daily use
-
-```bash
-cd daemon
-npm start
-```
-
-Leave that terminal open. The "daemon not running" banner in the app disappears within 15 seconds of the daemon starting. Queued jobs are picked up within 5 seconds of being inserted. Stop with `Ctrl+C`.
-
-### Adding a new deck template
-
-The fastest path is the `template-scaffolder` skill — ask Claude Code:
-
-> Scaffold a template called `monthly-report` for monthly market reports.
-
-It generates the command file, the manifest, and a skill stub with the sentinel contract pre-wired. Fill in the TODOs, and the daemon syncs the new template into the app within a second — no app redeploy.
-
-If you prefer to author by hand:
-
-1. In Claude Code, author a new slash command + skill + build script for the new deck type (same pattern as `~/.claude/commands/wassel.md` + `~/.claude/skills/wassel-presentation/`).
-2. Drop a manifest file at `~/.claude/ppt/templates/<slug>/template.json` (copy `wassel/template.json` as a starting point and change `id` to a fresh UUID, `slug`, `command`, etc.).
-3. End the command with a `###PRESENTATION-RESULT###{...}` line (see `~/.claude/commands/wassel.md` § 5 for the exact contract).
-4. The file watcher syncs within a second — the new template shows up in the app picker without a redeploy.
-
-### Optional: daemon as a Windows service
-
-If you'd rather not keep a terminal open running `npm start`, the daemon can register as a Windows service:
-
-```bash
-cd daemon
-npm install node-windows
-node scripts/install-service.mjs
-```
-
-Important: the default LocalSystem account can't see your Chrome profile (which Paseetah needs). Edit `scripts/install-service.mjs` to set `svc.user` + `svc.password` to your Windows account before installing. To remove: `node scripts/uninstall-service.mjs`.
-
-More detail in `daemon/README.md`.
+The Presentations feature (deck generation, templates, brands, the cloud-worker process, and the legacy local daemon) was removed. Any external instructions referring to a `/presentations` page, the `daemon/` directory, or the `cloud-worker/` directory no longer apply.

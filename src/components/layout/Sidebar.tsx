@@ -15,7 +15,6 @@ import {
   Star,
   FileSearch,
   FileText,
-  Palette,
   Database,
   Globe,
   Folder,
@@ -234,42 +233,6 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           >
             <Home size={20} />
             {!railCollapsed && <span>{t('nav.home')}</span>}
-          </NavLink>
-
-          {/* Presentations (catalog of decks fired from the app) */}
-          <NavLink
-            to="/presentations"
-            end
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-            title={railCollapsed ? t('nav.presentations') : undefined}
-          >
-            <Presentation size={20} />
-            {!railCollapsed && <span>{t('nav.presentations')}</span>}
-          </NavLink>
-          {/* Phase 2: Templates editor — sub-link under Presentations.
-              Indented when the rail is expanded; renders as a normal-sized
-              icon-only link when collapsed (matching other top-level entries
-              so the icon size doesn't shrink in the rail). */}
-          <NavLink
-            to="/presentations/templates"
-            className={({ isActive }) =>
-              `nav-item ${railCollapsed ? '' : 'nav-item-sub'} ${isActive ? 'active' : ''}`
-            }
-            title={railCollapsed ? (isAr ? 'قوالب العروض' : 'Presentation templates') : undefined}
-          >
-            <FileText size={railCollapsed ? 20 : 16} />
-            {!railCollapsed && <span>{isAr ? 'القوالب' : 'Templates'}</span>}
-          </NavLink>
-          {/* Phase 3.3: Brands library — sister sub-link to Templates. */}
-          <NavLink
-            to="/presentations/brands"
-            className={({ isActive }) =>
-              `nav-item ${railCollapsed ? '' : 'nav-item-sub'} ${isActive ? 'active' : ''}`
-            }
-            title={railCollapsed ? (isAr ? 'الهويات والتصاميم' : 'Brand library') : undefined}
-          >
-            <Palette size={railCollapsed ? 20 : 16} />
-            {!railCollapsed && <span>{isAr ? 'الهويات' : 'Brands'}</span>}
           </NavLink>
 
           {/* Whiteboard (tldraw freeform canvas — annotations, planning) */}
