@@ -200,18 +200,65 @@ async function askPaseet(page: Page, prompt: string): Promise<ParsedRow[]> {
   log('[paseet] table settled in', Date.now() - t0, 'ms; tableLen=', lastTableLen);
 
   // Grab the last `<table>` on the page — that's the one Paseet just rendered
-  // for the prompt we sent. Pagination ("صفحة 1 من 1") sits next to it; if
-  // multi-page we'd click "تحميل المزيد" but for the 2km study the result is
-  // typically one page.
-  const rows = await page.evaluate(() => {
+  // for the prompt we sent. If the table is virtualized (only visible cells
+  // in the DOM), we scroll the table's parent horizontally to force every
+  // column into the DOM before reading.
+  const tableInfo = await page.evaluate(async () => {
     const tables = Array.from(document.querySelectorAll('table'));
-    if (tables.length === 0) return [];
+    if (tables.length === 0) return { tableCount: 0, rows: [] as string[][], headers: [] as string[], scrollContainer: 'none' };
     const lastTable = tables[tables.length - 1]!;
-    const trs = Array.from(lastTable.querySelectorAll('tr'));
-    return trs.map((tr) =>
+
+    // Find the closest horizontally-scrollable ancestor and scroll it to
+    // the right so virtualized columns mount. Repeat in steps with a tiny
+    // wait between so React's virtualizer has time to mount each chunk.
+    let scrollEl: HTMLElement | null = lastTable.parentElement;
+    while (scrollEl && scrollEl !== document.body) {
+      const style = getComputedStyle(scrollEl);
+      const overflowX = style.overflowX;
+      if ((overflowX === 'auto' || overflowX === 'scroll') && scrollEl.scrollWidth > scrollEl.clientWidth) break;
+      scrollEl = scrollEl.parentElement;
+    }
+    let scrollContainer = 'none';
+    if (scrollEl && scrollEl !== document.body) {
+      scrollContainer = `${scrollEl.tagName}.${(scrollEl.className || '').slice(0, 40)} sw=${scrollEl.scrollWidth} cw=${scrollEl.clientWidth}`;
+      const max = scrollEl.scrollWidth - scrollEl.clientWidth;
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      // Walk left→right (LTR scroll) and right→left (RTL scroll), 10 steps each.
+      for (let i = 0; i <= 10; i++) {
+        scrollEl.scrollLeft = (max * i) / 10;
+        await sleep(80);
+      }
+      for (let i = 0; i <= 10; i++) {
+        scrollEl.scrollLeft = -(max * i) / 10;
+        await sleep(80);
+      }
+      scrollEl.scrollLeft = 0;
+    }
+
+    // Re-find the last table after scroll (DOM may have shifted) and read
+    // every row's cells.
+    const finalTables = Array.from(document.querySelectorAll('table'));
+    const finalLast = finalTables[finalTables.length - 1]!;
+    const trs = Array.from(finalLast.querySelectorAll('tr'));
+    const rows = trs.map((tr) =>
       Array.from(tr.querySelectorAll('th, td')).map((c) => (c.textContent || '').trim()),
     );
+    const headers = rows[0] ?? [];
+    return { tableCount: finalTables.length, rows, headers, scrollContainer };
   });
+
+  log(
+    '[paseet] table extraction:',
+    'tables=', tableInfo.tableCount,
+    'rowCount=', tableInfo.rows.length,
+    'headerCount=', tableInfo.headers.length,
+    'scrollContainer=', tableInfo.scrollContainer,
+  );
+  log('[paseet] table headers:', tableInfo.headers);
+  if (tableInfo.rows.length > 1) {
+    log('[paseet] first data row:', tableInfo.rows[1]);
+  }
+  const rows = tableInfo.rows;
 
   if (rows.length === 0) {
     throw new Error('Paseet returned no table for the prompt');
