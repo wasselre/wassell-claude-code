@@ -4,11 +4,12 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { ArrowRight, Save, Trash2, FileDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowRight, Save, Trash2, FileDown, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
 import { generateResearchPDF } from '@/lib/pdfGenerator';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
 import { activityLogger } from '@/lib/activityLogger';
+import { supabase } from '@/lib/supabase';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
@@ -53,6 +54,9 @@ export default function RecordFormPage() {
   // Tracks whether the form has unsaved user edits. Used to guard prev/next
   // navigation with a confirm prompt.
   const [isDirty, setIsDirty] = useState(false);
+  // True while the All Projects "Research project" button is firing the
+  // Claude Code routine via /api/research-project.
+  const [isResearching, setIsResearching] = useState(false);
 
   // Prev/next navigation uses the filtered+sorted list published by
   // RecordListPage. If no nav context is available (e.g. deep-linked into a
@@ -190,6 +194,69 @@ export default function RecordFormPage() {
   const goToRecord = (targetId: string) => {
     if (isDirty && !window.confirm(t('records.discard_changes_confirm'))) return;
     navigate(`/model/${model!.name}/${targetId}`);
+  };
+
+  // Fires the Claude Code "Research Project" routine for an All Projects
+  // record. Sends the live form values for `project_name` + `location` (so
+  // the user can edit + click without saving first). The OAuth token never
+  // reaches the browser — /api/research-project forwards with the bearer
+  // header from server-side env vars.
+  const handleResearchProject = async () => {
+    if (!model || !existingRecord) return;
+    const projectName = String(formData.project_name ?? '').trim();
+    const location = String(formData.location ?? '').trim();
+    if (!projectName) {
+      addToast(
+        isAr ? 'اسم المشروع مطلوب لبدء البحث' : 'Project name is required to start research',
+        'error',
+      );
+      return;
+    }
+    if (!location) {
+      addToast(
+        isAr ? 'رابط الموقع مطلوب لبدء البحث' : 'Location URL is required to start research',
+        'error',
+      );
+      return;
+    }
+
+    setIsResearching(true);
+    try {
+      const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+      const authHeader: Record<string, string> = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {};
+      const res = await fetch('/api/research-project', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader },
+        body: JSON.stringify({
+          project_name: projectName,
+          location,
+          record_id: existingRecord.id,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: res.statusText }));
+        const message = errBody?.error ?? `Request failed (${res.status})`;
+        addToast(
+          isAr ? `فشل بدء البحث: ${message}` : `Research failed: ${message}`,
+          'error',
+        );
+        return;
+      }
+      addToast(
+        isAr ? 'تم بدء البحث — الروتين يعمل الآن' : 'Research started — the routine is running',
+        'success',
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(
+        isAr ? `فشل بدء البحث: ${msg}` : `Research failed: ${msg}`,
+        'error',
+      );
+    } finally {
+      setIsResearching(false);
+    }
   };
 
   const handleSave = () => {
@@ -367,6 +434,16 @@ export default function RecordFormPage() {
                 <ChevronRight size={20} className="rtl:rotate-180" />
               </button>
             </>
+          )}
+          {model.name === 'all_projects' && existingRecord && (
+            <Button
+              variant="secondary"
+              onClick={() => void handleResearchProject()}
+              disabled={isResearching}
+            >
+              <Sparkles size={16} />
+              {isResearching ? t('records.research_project_running') : t('records.research_project')}
+            </Button>
           )}
           {model.name === 'projects_research' && existingRecord && (
             <Button
