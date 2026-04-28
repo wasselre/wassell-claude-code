@@ -56,8 +56,14 @@ export default async function handler(req: Request): Promise<Response> {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
+          // Required by the Claude Code routines API. Probed against
+          // /fire on 2026-04-28 — the endpoint validates body keys
+          // strictly (only `text` is accepted) and gates non-beta
+          // callers with "this API is in beta".
+          'anthropic-beta': 'experimental-cc-routine-2026-04-01',
+          'anthropic-version': '2023-06-01',
         },
-        body: JSON.stringify({ message: triggerMessage }),
+        body: JSON.stringify({ text: triggerMessage }),
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
