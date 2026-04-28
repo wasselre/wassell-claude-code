@@ -82,19 +82,26 @@ function buildPaseetPrompt(locationUrl: string): string {
 async function createBrowserbaseSession(
   apiKey: string,
   projectId: string,
+  contextId: string | null,
 ): Promise<{ id: string; connectUrl: string }> {
-  // Basic session — no proxies, no CAPTCHA solver, no advancedStealth.
-  // Those are Hobby+/Scale-tier paid features and Browserbase 403s the
-  // request when the project's plan doesn't include them. We log the
-  // response body on failure so a future 403 tells us exactly why.
+  // When `contextId` is set, attach the session to that persistent context.
+  // The context already has Paseet auth cookies baked in from a one-time
+  // manual login (see scripts/paseet-context-setup.mjs); `persist: true`
+  // means any updates during this session are saved back so refreshed auth
+  // tokens survive too. With cookies present, the route skips the whole
+  // login flow and lands logged-in on /ar/chat directly — bypassing the
+  // reCAPTCHA gate that blocks datacenter IPs from passing the form.
+  const body = contextId
+    ? { projectId, browserSettings: { context: { id: contextId, persist: true } } }
+    : { projectId };
   const res = await fetch('https://api.browserbase.com/v1/sessions', {
     method: 'POST',
     headers: { 'X-BB-API-Key': apiKey, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ projectId }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Browserbase session create failed: ${res.status} ${body.slice(0, 300)}`);
+    const respBody = await res.text().catch(() => '');
+    throw new Error(`Browserbase session create failed: ${res.status} ${respBody.slice(0, 300)}`);
   }
   return (await res.json()) as { id: string; connectUrl: string };
 }
@@ -378,12 +385,17 @@ async function mainHandler(req: Request): Promise<Response> {
 
     const bbApiKey = process.env.BROWSERBASE_API_KEY;
     const bbProjectId = process.env.BROWSERBASE_PROJECT_ID;
-    const paseetEmail = process.env.PASEET_EMAIL;
-    const paseetPassword = process.env.PASEET_PASSWORD;
+    const paseetEmail = process.env.PASEET_EMAIL ?? '';
+    const paseetPassword = process.env.PASEET_PASSWORD ?? '';
+    const paseetContextHint = process.env.PASEET_CONTEXT_ID ?? '';
     const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
     const supabaseAnonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
     if (!bbApiKey || !bbProjectId) return jsonError(500, 'Browserbase env vars missing');
-    if (!paseetEmail || !paseetPassword) return jsonError(500, 'Paseet env vars missing');
+    // Either path is acceptable: the context path (preferred — bypasses
+    // reCAPTCHA via pre-saved cookies), or the email+password legacy path.
+    if (!paseetContextHint && (!paseetEmail || !paseetPassword)) {
+      return jsonError(500, 'Paseet auth not configured: set PASEET_CONTEXT_ID, or PASEET_EMAIL + PASEET_PASSWORD');
+    }
     if (!supabaseUrl || !supabaseAnonKey) return jsonError(500, 'Supabase env vars missing');
 
     // Caller's JWT — used so RLS scopes our reads/writes to their permissions.
@@ -460,9 +472,17 @@ async function mainHandler(req: Request): Promise<Response> {
     log('[research-project] targeted_projects search', Date.now() - tDb3, 'ms; existing=', !!existingTp, 'existingRows=', existingTableRows.length);
 
     // 4. Drive Paseet via Browserbase.
-    log('[research-project] creating Browserbase session');
+    //    With PASEET_CONTEXT_ID set, the BB session inherits Paseet's auth
+    //    cookies from the persistent context (one-time login was solved
+    //    manually by a human via Live View). We can navigate straight to
+    //    /ar/chat and skip the login flow entirely. Without a context, we
+    //    fall back to the email+password flow — which currently fails on
+    //    Vercel datacenter IPs because Paseet's reCAPTCHA gates the form,
+    //    so this branch is really just a diagnostic path.
+    const paseetContextId = process.env.PASEET_CONTEXT_ID ?? null;
+    log('[research-project] creating Browserbase session', paseetContextId ? '(with context)' : '(no context — login flow)');
     const tBb = Date.now();
-    const session = await createBrowserbaseSession(bbApiKey, bbProjectId);
+    const session = await createBrowserbaseSession(bbApiKey, bbProjectId, paseetContextId);
     log('[research-project] BB session', session.id, 'in', Date.now() - tBb, 'ms');
     const browser = await chromium.connectOverCDP(session.connectUrl);
     log('[research-project] CDP connected in', Date.now() - tBb, 'ms');
@@ -470,9 +490,30 @@ async function mainHandler(req: Request): Promise<Response> {
     try {
       const ctx = browser.contexts()[0]!;
       const page = ctx.pages()[0] ?? (await ctx.newPage());
-      const tLogin = Date.now();
-      await loginToPaseet(page, paseetEmail, paseetPassword);
-      log('[research-project] login took', Date.now() - tLogin, 'ms');
+
+      if (!paseetContextId) {
+        // Legacy path — fails on datacenter IPs due to reCAPTCHA, but kept
+        // so the route still works in environments where someone has done
+        // CAPTCHA-bypass setup themselves.
+        const tLogin = Date.now();
+        await loginToPaseet(page, paseetEmail, paseetPassword);
+        log('[research-project] login took', Date.now() - tLogin, 'ms');
+      } else {
+        // Context path — verify cookies actually got us logged in. If
+        // Paseet 302s us back to /ar/login, the context's cookies expired
+        // (or were never saved) and the user needs to redo the manual
+        // login step in Browserbase Live View.
+        log('[research-project] context attached — verifying auth by visiting /ar/chat');
+        await page.goto('https://paseet.ai/ar/chat', { waitUntil: 'domcontentloaded', timeout: 20000 });
+        const landed = page.url();
+        if (landed.includes('/login') || landed.includes('/signin')) {
+          throw new Error(
+            `Paseet context cookies expired — landed on ${landed}. Redo the manual login: open the BB Live View for context ${paseetContextId} and sign in again.`,
+          );
+        }
+        log('[research-project] context auth ok, landed on', landed);
+      }
+
       const tAsk = Date.now();
       parsed = await askPaseet(page, buildPaseetPrompt(locationUrl));
       log('[research-project] askPaseet took', Date.now() - tAsk, 'ms; rows=', parsed.length);
