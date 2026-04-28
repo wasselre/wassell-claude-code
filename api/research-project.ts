@@ -94,11 +94,18 @@ async function createBrowserbaseSession(
 }
 
 async function loginToPaseet(page: Page, email: string, password: string): Promise<void> {
-  await page.goto('https://paseet.ai/ar/login', { waitUntil: 'networkidle', timeout: 30000 });
+  console.log('[paseet] navigating to login');
+  // Use 'domcontentloaded', NOT 'networkidle' — Paseet keeps long-polling
+  // connections open for chat, so 'networkidle' waits the full timeout doing
+  // nothing. We block on the actual selectors we need instead.
+  await page.goto('https://paseet.ai/ar/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
+  await page.waitForSelector('input[type="email"]', { timeout: 15000 });
+  console.log('[paseet] login form ready, filling');
   await page.fill('input[type="email"]', email);
   await page.fill('input[type="password"]', password);
   await page.click('button[type="submit"]');
   await page.waitForURL((url) => !url.toString().includes('/login'), { timeout: 30000 });
+  console.log('[paseet] logged in, url:', page.url());
 }
 
 /**
@@ -110,33 +117,43 @@ async function loginToPaseet(page: Page, email: string, password: string): Promi
  * table — it appears partially-rendered partway through the response.
  */
 async function askPaseet(page: Page, prompt: string): Promise<ParsedRow[]> {
-  await page.goto('https://paseet.ai/ar/chat', { waitUntil: 'networkidle', timeout: 30000 });
+  console.log('[paseet] navigating to chat');
+  await page.goto('https://paseet.ai/ar/chat', { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForSelector('textarea', { timeout: 15000 });
-
-  const beforeLen = await page.evaluate(() => document.body.innerText.length);
+  console.log('[paseet] chat ready, sending prompt');
 
   const textarea = await page.$('textarea');
   if (!textarea) throw new Error('Paseet chat textarea not found');
   await textarea.click();
   await textarea.type(prompt, { delay: 5 });
   await page.keyboard.press('Enter');
+  console.log('[paseet] prompt sent, waiting for table to render');
 
-  // Wait for streaming to finish. Sample length every 1s; if it hasn't grown
-  // for 3 consecutive samples, assume done. Cap at 120s.
-  let lastLen = beforeLen;
-  let stableCount = 0;
-  const maxIters = 120;
-  for (let i = 0; i < maxIters; i++) {
-    await page.waitForTimeout(1000);
-    const len = await page.evaluate(() => document.body.innerText.length);
-    if (len === lastLen && len > beforeLen) {
-      stableCount += 1;
-      if (stableCount >= 3) break;
+  // Wait until a `<table>` appears AND stops growing for ~2 seconds.
+  // Polling on table presence is a much sharper signal than polling
+  // body innerText length (which fluctuates from layout shifts and
+  // animations regardless of streaming progress).
+  const t0 = Date.now();
+  let lastTableLen = -1;
+  let stableSince: number | null = null;
+  const maxMs = 90_000; // hard cap
+  const stableMs = 2000;
+  while (Date.now() - t0 < maxMs) {
+    await page.waitForTimeout(750);
+    const tableLen = await page.evaluate(() => {
+      const tables = document.querySelectorAll('table');
+      const last = tables[tables.length - 1];
+      return last ? (last.textContent || '').length : 0;
+    });
+    if (tableLen > 0 && tableLen === lastTableLen) {
+      if (stableSince === null) stableSince = Date.now();
+      if (Date.now() - stableSince >= stableMs) break;
     } else {
-      stableCount = 0;
-      lastLen = len;
+      stableSince = null;
+      lastTableLen = tableLen;
     }
   }
+  console.log('[paseet] table settled in', Date.now() - t0, 'ms; tableLen=', lastTableLen);
 
   // Grab the last `<table>` on the page — that's the one Paseet just rendered
   // for the prompt we sent. Pagination ("صفحة 1 من 1") sits next to it; if
@@ -331,14 +348,22 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     // 4. Drive Paseet via Browserbase.
+    console.log('[research-project] creating Browserbase session');
+    const tBb = Date.now();
     const session = await createBrowserbaseSession(bbApiKey, bbProjectId);
+    console.log('[research-project] BB session', session.id, 'in', Date.now() - tBb, 'ms');
     const browser = await chromium.connectOverCDP(session.connectUrl);
+    console.log('[research-project] CDP connected in', Date.now() - tBb, 'ms');
     let parsed: ParsedRow[] = [];
     try {
       const ctx = browser.contexts()[0]!;
       const page = ctx.pages()[0] ?? (await ctx.newPage());
+      const tLogin = Date.now();
       await loginToPaseet(page, paseetEmail, paseetPassword);
+      console.log('[research-project] login took', Date.now() - tLogin, 'ms');
+      const tAsk = Date.now();
       parsed = await askPaseet(page, buildPaseetPrompt(locationUrl));
+      console.log('[research-project] askPaseet took', Date.now() - tAsk, 'ms; rows=', parsed.length);
     } finally {
       await browser.close().catch(() => {});
     }

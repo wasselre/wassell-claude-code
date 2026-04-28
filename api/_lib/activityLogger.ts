@@ -70,7 +70,12 @@ export async function logApiRequest(args: {
   error?: string;
   details?: Record<string, unknown>;
 }) {
-  const url = new URL(args.req.url);
+  // Edge runtime hands us a full URL ("https://app.wassel.re/api/..."), but
+  // Node serverless functions hand us a path-only URL ("/api/..."), and
+  // `new URL("/api/...")` throws "Invalid URL". Pass a placeholder base so
+  // the constructor accepts either shape — the base is ignored when the
+  // input is already absolute.
+  const url = new URL(args.req.url, 'http://placeholder');
   const path = url.pathname;
   const method = args.req.method;
   const status: ServerActivityStatus =
