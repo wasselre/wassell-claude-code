@@ -96,16 +96,42 @@ async function createBrowserbaseSession(
 
 async function loginToPaseet(page: Page, email: string, password: string): Promise<void> {
   log('[paseet] navigating to login');
-  // Use 'domcontentloaded', NOT 'networkidle' — Paseet keeps long-polling
-  // connections open for chat, so 'networkidle' waits the full timeout doing
-  // nothing. We block on the actual selectors we need instead.
   await page.goto('https://paseet.ai/ar/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForSelector('input[type="email"]', { timeout: 15000 });
-  log('[paseet] login form ready, filling');
+  log('[paseet] login form ready at', page.url(), '— filling email');
   await page.fill('input[type="email"]', email);
+  log('[paseet] email filled — filling password');
   await page.fill('input[type="password"]', password);
-  await page.click('button[type="submit"]');
-  await page.waitForURL((url) => !url.toString().includes('/login'), { timeout: 30000 });
+  log('[paseet] password filled — looking for submit button');
+
+  // Inspect the submit button before clicking — verifies the selector,
+  // catches "still disabled because validation hasn't fired" cases.
+  const submitInfo = await page.evaluate(() => {
+    const btn = document.querySelector('button[type="submit"]') as HTMLButtonElement | null;
+    return btn
+      ? { found: true, text: (btn.textContent ?? '').trim().slice(0, 40), disabled: btn.disabled }
+      : { found: false, text: '', disabled: false };
+  });
+  log('[paseet] submit-button probe:', submitInfo);
+
+  await page.click('button[type="submit"]', { timeout: 10000 });
+  log('[paseet] clicked submit — waiting for navigation away from /login');
+
+  try {
+    await page.waitForURL((url) => !url.toString().includes('/login'), { timeout: 25000 });
+  } catch (err) {
+    // Capture page state to see WHY login didn't navigate (CAPTCHA? error
+    // toast? still on /login with the form rejecting?).
+    const after = await page.evaluate(() => ({
+      url: window.location.href,
+      bodyHead: document.body.innerText.slice(0, 600),
+      hasError: /خطأ|incorrect|invalid|wrong|بيانات/i.test(document.body.innerText),
+    })).catch(() => ({ url: 'eval-failed', bodyHead: '', hasError: false }));
+    log('[paseet] login navigation never fired. Page state:', after);
+    throw new Error(
+      `Paseet login did not navigate away from /login. URL: ${after.url}. Body excerpt: ${after.bodyHead.slice(0, 200)}`,
+    );
+  }
   log('[paseet] logged in, url:', page.url());
 }
 
