@@ -123,10 +123,15 @@ async function askPaseet(page: Page, prompt: string): Promise<ParsedRow[]> {
   await page.waitForSelector('textarea', { timeout: 15000 });
   log('[paseet] chat ready, sending prompt');
 
-  const textarea = await page.$('textarea');
-  if (!textarea) throw new Error('Paseet chat textarea not found');
-  await textarea.click();
-  await textarea.type(prompt, { delay: 5 });
+  // Use `fill` (single CDP call to set value) rather than `type` (one CDP
+  // call per keystroke). With Vercel→Browserbase cross-region latency at
+  // ~150ms per round-trip, a 300-char prompt typed char-by-char would burn
+  // ~45 seconds. `fill` does the whole string in one round-trip.
+  const textarea = page.locator('textarea').first();
+  await textarea.click({ timeout: 10000 });
+  log('[paseet] textarea clicked, filling');
+  await textarea.fill(prompt, { timeout: 10000 });
+  log('[paseet] filled, pressing Enter');
   await page.keyboard.press('Enter');
   log('[paseet] prompt sent, waiting for table to render');
 
