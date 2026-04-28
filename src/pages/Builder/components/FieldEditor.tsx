@@ -8,6 +8,7 @@ import Modal from '@/components/ui/Modal';
 import FieldPicker from '@/components/ui/FieldPicker';
 import OptionsEditor from './OptionsEditor';
 import SaveAsTemplateModal from './SaveAsTemplateModal';
+import { formatNumberWithCommas, parseFormattedNumber } from '@/pages/Records/components/RangeField';
 import { Info, Layers, Bookmark, RotateCcw, AlertTriangle } from 'lucide-react';
 import { COUNTRY_CODES, DEFAULT_COUNTRY_CODE } from '@/lib/phone';
 import { formatAutoId, resetAutoIdCounters, renumberAutoIdField } from '@/lib/autoIdAssigner';
@@ -109,6 +110,12 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [rangeStep, setRangeStep] = useState<number | undefined>(undefined);
   const [rangeUnitAr, setRangeUnitAr] = useState<string>('');
   const [rangeUnitEn, setRangeUnitEn] = useState<string>('');
+  // Drafts for the three range bound inputs — non-null while the user is
+  // typing, so the displayed text matches their keystrokes; flipped back to
+  // null on blur so the canonical formatted value is shown.
+  const [rangeMinDraft, setRangeMinDraft] = useState<string | null>(null);
+  const [rangeMaxDraft, setRangeMaxDraft] = useState<string | null>(null);
+  const [rangeStepDraft, setRangeStepDraft] = useState<string | null>(null);
   // Section mirror config
   const [smViaLookupFieldId, setSmViaLookupFieldId] = useState<string | null>(null);
   const [smSourceSectionId, setSmSourceSectionId] = useState<string | null>(null);
@@ -1169,9 +1176,14 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                     {t('fields.range_min')}
                   </label>
                   <input
-                    type="number"
-                    value={rangeMin ?? ''}
-                    onChange={(e) => setRangeMin(e.target.value === '' ? undefined : Number(e.target.value))}
+                    type="text"
+                    inputMode="decimal"
+                    value={rangeMinDraft !== null ? rangeMinDraft : formatNumberWithCommas(rangeMin, isAr)}
+                    onChange={(e) => {
+                      setRangeMinDraft(e.target.value);
+                      setRangeMin(parseFormattedNumber(e.target.value));
+                    }}
+                    onBlur={() => setRangeMinDraft(null)}
                     className="form-input text-sm"
                     placeholder="0"
                   />
@@ -1181,9 +1193,14 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                     {t('fields.range_max')}
                   </label>
                   <input
-                    type="number"
-                    value={rangeMax ?? ''}
-                    onChange={(e) => setRangeMax(e.target.value === '' ? undefined : Number(e.target.value))}
+                    type="text"
+                    inputMode="decimal"
+                    value={rangeMaxDraft !== null ? rangeMaxDraft : formatNumberWithCommas(rangeMax, isAr)}
+                    onChange={(e) => {
+                      setRangeMaxDraft(e.target.value);
+                      setRangeMax(parseFormattedNumber(e.target.value));
+                    }}
+                    onBlur={() => setRangeMaxDraft(null)}
                     className="form-input text-sm"
                     placeholder="1000"
                   />
@@ -1193,9 +1210,14 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                     {t('fields.range_step')}
                   </label>
                   <input
-                    type="number"
-                    value={rangeStep ?? ''}
-                    onChange={(e) => setRangeStep(e.target.value === '' ? undefined : Number(e.target.value))}
+                    type="text"
+                    inputMode="decimal"
+                    value={rangeStepDraft !== null ? rangeStepDraft : formatNumberWithCommas(rangeStep, isAr)}
+                    onChange={(e) => {
+                      setRangeStepDraft(e.target.value);
+                      setRangeStep(parseFormattedNumber(e.target.value));
+                    }}
+                    onBlur={() => setRangeStepDraft(null)}
                     className="form-input text-sm"
                     placeholder="1"
                   />
