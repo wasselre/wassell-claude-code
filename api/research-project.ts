@@ -94,18 +94,18 @@ async function createBrowserbaseSession(
 }
 
 async function loginToPaseet(page: Page, email: string, password: string): Promise<void> {
-  console.log('[paseet] navigating to login');
+  log('[paseet] navigating to login');
   // Use 'domcontentloaded', NOT 'networkidle' — Paseet keeps long-polling
   // connections open for chat, so 'networkidle' waits the full timeout doing
   // nothing. We block on the actual selectors we need instead.
   await page.goto('https://paseet.ai/ar/login', { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForSelector('input[type="email"]', { timeout: 15000 });
-  console.log('[paseet] login form ready, filling');
+  log('[paseet] login form ready, filling');
   await page.fill('input[type="email"]', email);
   await page.fill('input[type="password"]', password);
   await page.click('button[type="submit"]');
   await page.waitForURL((url) => !url.toString().includes('/login'), { timeout: 30000 });
-  console.log('[paseet] logged in, url:', page.url());
+  log('[paseet] logged in, url:', page.url());
 }
 
 /**
@@ -117,17 +117,17 @@ async function loginToPaseet(page: Page, email: string, password: string): Promi
  * table — it appears partially-rendered partway through the response.
  */
 async function askPaseet(page: Page, prompt: string): Promise<ParsedRow[]> {
-  console.log('[paseet] navigating to chat');
+  log('[paseet] navigating to chat');
   await page.goto('https://paseet.ai/ar/chat', { waitUntil: 'domcontentloaded', timeout: 20000 });
   await page.waitForSelector('textarea', { timeout: 15000 });
-  console.log('[paseet] chat ready, sending prompt');
+  log('[paseet] chat ready, sending prompt');
 
   const textarea = await page.$('textarea');
   if (!textarea) throw new Error('Paseet chat textarea not found');
   await textarea.click();
   await textarea.type(prompt, { delay: 5 });
   await page.keyboard.press('Enter');
-  console.log('[paseet] prompt sent, waiting for table to render');
+  log('[paseet] prompt sent, waiting for table to render');
 
   // Wait until a `<table>` appears AND stops growing for ~2 seconds.
   // Polling on table presence is a much sharper signal than polling
@@ -153,7 +153,7 @@ async function askPaseet(page: Page, prompt: string): Promise<ParsedRow[]> {
       lastTableLen = tableLen;
     }
   }
-  console.log('[paseet] table settled in', Date.now() - t0, 'ms; tableLen=', lastTableLen);
+  log('[paseet] table settled in', Date.now() - t0, 'ms; tableLen=', lastTableLen);
 
   // Grab the last `<table>` on the page — that's the one Paseet just rendered
   // for the prompt we sent. Pagination ("صفحة 1 من 1") sits next to it; if
@@ -243,10 +243,20 @@ function rowToCrmCells(row: ParsedRow): Record<string, unknown> {
   };
 }
 
+// `process.stderr.write` flushes immediately, unlike `console.log` which
+// Vercel buffers and emits on response — when the function is killed by
+// maxDuration the buffer is dropped and we lose all visibility. stderr lines
+// land in Vercel's runtime logs as they're written.
+function log(...parts: unknown[]): void {
+  process.stderr.write(`${parts.map((p) => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ')}\n`);
+}
+
 export default async function handler(req: Request): Promise<Response> {
+  log('[research-project] handler entered, method=', req.method);
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
 
   return withAuth(req, async (_user) => {
+    log('[research-project] auth ok, parsing body');
     let body: RequestBody;
     try {
       body = (await req.json()) as RequestBody;
@@ -255,8 +265,11 @@ export default async function handler(req: Request): Promise<Response> {
     }
     const projectName = (body.project_name ?? '').trim();
     const locationUrl = (body.location ?? '').trim();
+    const recordId = (body.record_id ?? '').trim();
     if (!projectName) return jsonError(400, 'project_name is required');
     if (!locationUrl) return jsonError(400, 'location is required');
+    if (!recordId) return jsonError(400, 'record_id is required');
+    log('[research-project] inputs:', { projectName, locationUrl, recordId });
 
     const bbApiKey = process.env.BROWSERBASE_API_KEY;
     const bbProjectId = process.env.BROWSERBASE_PROJECT_ID;
@@ -275,32 +288,25 @@ export default async function handler(req: Request): Promise<Response> {
       global: { headers: { Authorization: `Bearer ${jwt}` } },
     });
 
-    // 1. Resolve which All Projects record this corresponds to. We match by
-    //    the `project_name` field (text-equal, case-insensitive).
-    const { data: allProjectsModel, error: apModelErr } = await supabase
-      .from('models')
-      .select('id, schema')
-      .eq('name', ALL_PROJECTS_MODEL_NAME)
-      .single();
-    if (apModelErr || !allProjectsModel) {
-      return jsonError(500, `Could not load all_projects model: ${apModelErr?.message ?? 'not found'}`);
-    }
-
-    const { data: candidateRecords, error: apRecsErr } = await supabase
+    // 1. The All Projects record we're researching is identified by record_id
+    //    coming from the button — direct ID lookup, not a full-table scan.
+    log('[research-project] loading all_projects record', recordId);
+    const tDb1 = Date.now();
+    const { data: matched, error: apRecErr } = await supabase
       .from('records')
-      .select('id, data')
-      .eq('model_id', allProjectsModel.id);
-    if (apRecsErr) return jsonError(500, `records query failed: ${apRecsErr.message}`);
-
-    const matched = (candidateRecords ?? []).find((r) => {
-      const name = String((r.data as Record<string, unknown>)?.project_name ?? '').trim().toLowerCase();
-      return name === projectName.toLowerCase();
-    });
-    if (!matched) {
-      return jsonError(404, `Project '${projectName}' not found in All Projects`);
+      .select('id, model_id')
+      .eq('id', recordId)
+      .single();
+    if (apRecErr || !matched) {
+      return jsonError(404, `All Projects record ${recordId} not found: ${apRecErr?.message ?? ''}`);
     }
+    log('[research-project] all_projects record found in', Date.now() - tDb1, 'ms; model_id=', matched.model_id);
 
-    // 2. Resolve the Targeted Projects model + the lookup/table field slugs.
+    // 2. Load the Targeted Projects model schema so we know the lookup + table
+    //    field slugs (the Builder lets users rename slugs, so we resolve by
+    //    structural role rather than hardcoding names).
+    log('[research-project] loading targeted_projects model');
+    const tDb2 = Date.now();
     const { data: tpModel, error: tpModelErr } = await supabase
       .from('models')
       .select('id, schema')
@@ -318,52 +324,53 @@ export default async function handler(req: Request): Promise<Response> {
     const tpSchema = tpModel.schema as { sections: { fields: Field[] }[] };
     const allTpFields: Field[] = tpSchema.sections.flatMap((s) => s.fields);
     const lookupField = allTpFields.find(
-      (f) => f.type === 'lookup' && f.lookup_model_id === allProjectsModel.id,
+      (f) => f.type === 'lookup' && f.lookup_model_id === matched.model_id,
     );
     const tableField = allTpFields.find(
       (f) => f.type === 'table' && (f.label_ar ?? '').includes('2 كيلو'),
     );
     if (!lookupField) return jsonError(500, 'Targeted Projects has no lookup pointing at All Projects');
     if (!tableField) return jsonError(500, 'Targeted Projects has no "2 كيلو" table field');
+    log('[research-project] targeted_projects schema loaded in', Date.now() - tDb2, 'ms; lookup=', lookupField.name, 'table=', tableField.name);
 
-    // 3. Find the existing Targeted Projects record for this all_projects id,
-    //    or create one. The lookup field's stored value is a string (single-
-    //    select lookup, is_multi=false).
-    const { data: tpRecords, error: tpRecsErr } = await supabase
+    // 3. Find an existing Targeted Projects record for this project via
+    //    server-side JSONB filter — `data->>{lookup_slug} == recordId`.
+    //    Avoids pulling every targeted_projects row for client-side scanning.
+    log('[research-project] searching targeted_projects for existing record');
+    const tDb3 = Date.now();
+    const { data: existingTpRows, error: tpFindErr } = await supabase
       .from('records')
       .select('id, data')
-      .eq('model_id', tpModel.id);
-    if (tpRecsErr) return jsonError(500, `targeted records query failed: ${tpRecsErr.message}`);
-
-    let targetedRecordId = (tpRecords ?? []).find((r) => {
-      const v = (r.data as Record<string, unknown>)?.[lookupField.name];
-      return typeof v === 'string' && v === matched.id;
-    })?.id;
-
+      .eq('model_id', tpModel.id)
+      .eq(`data->>${lookupField.name}`, recordId)
+      .limit(1);
+    if (tpFindErr) return jsonError(500, `targeted records query failed: ${tpFindErr.message}`);
+    const existingTp = existingTpRows?.[0] ?? null;
+    let targetedRecordId: string | undefined = existingTp?.id;
     let existingTableRows: Record<string, unknown>[] = [];
-    if (targetedRecordId) {
-      const existing = (tpRecords ?? []).find((r) => r.id === targetedRecordId);
-      const cur = (existing?.data as Record<string, unknown> | undefined)?.[tableField.name];
+    if (existingTp) {
+      const cur = (existingTp.data as Record<string, unknown> | undefined)?.[tableField.name];
       if (Array.isArray(cur)) existingTableRows = cur as Record<string, unknown>[];
     }
+    log('[research-project] targeted_projects search', Date.now() - tDb3, 'ms; existing=', !!existingTp, 'existingRows=', existingTableRows.length);
 
     // 4. Drive Paseet via Browserbase.
-    console.log('[research-project] creating Browserbase session');
+    log('[research-project] creating Browserbase session');
     const tBb = Date.now();
     const session = await createBrowserbaseSession(bbApiKey, bbProjectId);
-    console.log('[research-project] BB session', session.id, 'in', Date.now() - tBb, 'ms');
+    log('[research-project] BB session', session.id, 'in', Date.now() - tBb, 'ms');
     const browser = await chromium.connectOverCDP(session.connectUrl);
-    console.log('[research-project] CDP connected in', Date.now() - tBb, 'ms');
+    log('[research-project] CDP connected in', Date.now() - tBb, 'ms');
     let parsed: ParsedRow[] = [];
     try {
       const ctx = browser.contexts()[0]!;
       const page = ctx.pages()[0] ?? (await ctx.newPage());
       const tLogin = Date.now();
       await loginToPaseet(page, paseetEmail, paseetPassword);
-      console.log('[research-project] login took', Date.now() - tLogin, 'ms');
+      log('[research-project] login took', Date.now() - tLogin, 'ms');
       const tAsk = Date.now();
       parsed = await askPaseet(page, buildPaseetPrompt(locationUrl));
-      console.log('[research-project] askPaseet took', Date.now() - tAsk, 'ms; rows=', parsed.length);
+      log('[research-project] askPaseet took', Date.now() - tAsk, 'ms; rows=', parsed.length);
     } finally {
       await browser.close().catch(() => {});
     }
@@ -378,29 +385,32 @@ export default async function handler(req: Request): Promise<Response> {
     const mergedRows = [...existingTableRows, ...newCells];
 
     if (targetedRecordId) {
+      log('[research-project] updating existing targeted record', targetedRecordId, 'with', mergedRows.length, 'rows');
       const { error: upErr } = await supabase
         .from('records')
         .update({
           data: {
-            ...((tpRecords ?? []).find((r) => r.id === targetedRecordId)?.data as Record<string, unknown>),
+            ...((existingTp?.data as Record<string, unknown> | undefined) ?? {}),
             [tableField.name]: mergedRows,
           },
         })
         .eq('id', targetedRecordId);
       if (upErr) return jsonError(500, `Targeted Projects record update failed: ${upErr.message}`);
     } else {
+      log('[research-project] inserting new targeted record with', newCells.length, 'rows');
       const newId = crypto.randomUUID();
       const { error: insErr } = await supabase.from('records').insert({
         id: newId,
         model_id: tpModel.id,
         data: {
-          [lookupField.name]: matched.id,
+          [lookupField.name]: recordId,
           [tableField.name]: newCells,
         },
       });
       if (insErr) return jsonError(500, `Targeted Projects record create failed: ${insErr.message}`);
       targetedRecordId = newId;
     }
+    log('[research-project] done; rows_added=', parsed.length);
 
     return jsonOk({
       ok: true,
