@@ -270,13 +270,34 @@ async function askPaseet(page: Page, prompt: string): Promise<ParsedRow[]> {
   const header = rows[0]!;
   const dataRows = rows.slice(1);
 
-  const idx = (...labels: string[]) => {
-    for (const lbl of labels) {
-      const i = header.findIndex((h) => h.includes(lbl));
-      if (i >= 0) return i;
-    }
-    return -1;
-  };
+  // Normalize a header cell: collapse underscores → spaces (Paseet uses
+  // both "متوسط_سعر" and "متوسط سعر" depending on context) and trim.
+  const norm = (s: string) => s.replace(/_/g, ' ').trim();
+
+  /**
+   * Find a column whose header contains every word in `include`,
+   * at least one word in `oneOf` (if given), and none of the words
+   * in `exclude` (if given). All checks happen on the underscore-
+   * normalized header text so spaces and underscores are interchangeable.
+   *
+   * Designed to be robust against Paseet's two competing header styles
+   * (formal "الحد الأدنى للمساحة" vs colloquial "أقل_مساحة") and the
+   * substring-overlap problems that come with Arabic price/area
+   * columns sharing words like "سعر", "متوسط", and "مساحة".
+   */
+  const findCol = (
+    include: string[],
+    oneOf: string[] | null = null,
+    exclude: string[] = [],
+  ): number =>
+    header.findIndex((h) => {
+      const n = norm(h);
+      if (!include.every((s) => n.includes(s))) return false;
+      if (oneOf && !oneOf.some((s) => n.includes(s))) return false;
+      if (exclude.some((s) => n.includes(s))) return false;
+      return true;
+    });
+
   const numCol = (row: string[], i: number): number | null => {
     if (i < 0) return null;
     const raw = row[i];
@@ -290,15 +311,20 @@ async function askPaseet(page: Page, prompt: string): Promise<ParsedRow[]> {
   };
   const txtCol = (row: string[], i: number): string => (i >= 0 ? row[i] || '' : '');
 
-  const iSource = idx('المصدر', 'مصدر');
-  const iUse = idx('الاستخدام', 'استخدام');
-  const iDeals = idx('عدد الصفقات', 'الصفقات');
-  const iAvgDealPrice = idx('متوسط سعر الصفقة');
-  const iMinArea = idx('الحد الأدنى للمساحة', 'أدنى للمساحة');
-  const iMaxArea = idx('الحد الأقصى للمساحة', 'أقصى للمساحة');
-  const iAvgArea = idx('متوسط المساحة');
-  const iMinPrice = idx('الحد الأدنى للسعر', 'أدنى للسعر');
-  const iMaxPrice = idx('الحد الأقصى للسعر', 'أقصى للسعر');
+  const iSource = findCol(['مصدر']);
+  const iUse = findCol(['استخدام']);
+  const iDeals = findCol(['صفقات']); // unique — only "عدد_الصفقات" has "صفقات" (plural).
+  const iAvgDealPrice = findCol(['متوسط', 'سعر', 'صفقة']);
+  const iMinArea = findCol(['مساحة'], ['أقل', 'أدنى'], ['متوسط']);
+  const iMaxArea = findCol(['مساحة'], ['أعلى', 'أقصى'], ['متوسط']);
+  const iAvgArea = findCol(['متوسط', 'مساحة']);
+  const iMinPrice = findCol(['سعر'], ['أقل', 'أدنى'], ['متوسط', 'مساحة', 'صفقة']);
+  const iMaxPrice = findCol(['سعر'], ['أعلى', 'أقصى'], ['متوسط', 'مساحة', 'صفقة']);
+
+  log(
+    '[paseet] resolved column indices:',
+    { iSource, iUse, iDeals, iAvgDealPrice, iMinArea, iMaxArea, iAvgArea, iMinPrice, iMaxPrice },
+  );
 
   const parsed: ParsedRow[] = dataRows
     .filter((r) => r.some((c) => c.length > 0))
