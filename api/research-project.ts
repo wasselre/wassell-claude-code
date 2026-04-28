@@ -252,11 +252,14 @@ function log(...parts: unknown[]): void {
 }
 
 export default async function handler(req: Request): Promise<Response> {
-  log('[research-project] handler entered, method=', req.method);
+  log('[research-project] L1 handler entered, method=', req.method);
+  log('[research-project] L2 url=', req.url);
+  log('[research-project] L3 has-supabase-url=', !!process.env.SUPABASE_URL, 'has-anon=', !!process.env.SUPABASE_ANON_KEY);
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
+  log('[research-project] L4 about to call withAuth');
 
   return withAuth(req, async (_user) => {
-    log('[research-project] auth ok, parsing body');
+    log('[research-project] L5 inside withAuth callback (auth verified)');
     let body: RequestBody;
     try {
       body = (await req.json()) as RequestBody;
