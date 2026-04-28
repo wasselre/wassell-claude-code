@@ -197,14 +197,28 @@ export default function RecordFormPage() {
   };
 
   // Fires the Claude Code "Research Project" routine for an All Projects
-  // record. Sends the live form values for `project_name` + `location` (so
+  // record. Sends the live form values for project name + location URL (so
   // the user can edit + click without saving first). The OAuth token never
   // reaches the browser — /api/research-project forwards with the bearer
   // header from server-side env vars.
+  //
+  // Field resolution: the All Projects model's schema is user-customizable
+  // in the Builder (slugs change, fields get added/removed). We read the
+  // location URL via the canonical per-model pointer used by the Maps view —
+  // `model.maps_config.location_url_field_id` — and fall back to the seed
+  // default `location` slug only when no Maps location field is configured.
   const handleResearchProject = async () => {
     if (!model || !existingRecord) return;
+    const allFields = model.schema.sections.flatMap((s) => s.fields);
+    const locationFieldId = model.maps_config?.location_url_field_id ?? null;
+    const locationField = locationFieldId
+      ? allFields.find((f) => f.id === locationFieldId) ?? null
+      : null;
+    const locationValue = locationField
+      ? formData[locationField.name]
+      : formData.location;
     const projectName = String(formData.project_name ?? '').trim();
-    const location = String(formData.location ?? '').trim();
+    const location = String(locationValue ?? '').trim();
     if (!projectName) {
       addToast(
         isAr ? 'اسم المشروع مطلوب لبدء البحث' : 'Project name is required to start research',
@@ -214,7 +228,9 @@ export default function RecordFormPage() {
     }
     if (!location) {
       addToast(
-        isAr ? 'رابط الموقع مطلوب لبدء البحث' : 'Location URL is required to start research',
+        isAr
+          ? 'رابط الموقع مطلوب لبدء البحث — اضبط حقل رابط الموقع في إعدادات الخريطة بالنموذج'
+          : 'Location URL is required — set the location URL field in the Maps Builder',
         'error',
       );
       return;
