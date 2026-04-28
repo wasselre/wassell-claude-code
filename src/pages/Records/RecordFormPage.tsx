@@ -260,8 +260,14 @@ export default function RecordFormPage() {
         );
         return;
       }
+      const okBody = (await res.json().catch(() => null)) as
+        | { rows_added?: number; project_name?: string; sources?: string[] }
+        | null;
+      const rowCount = okBody?.rows_added ?? 0;
       addToast(
-        isAr ? 'تم بدء البحث — الروتين يعمل الآن' : 'Research started — the routine is running',
+        isAr
+          ? `تم بحث "${projectName}" — أضيفت ${rowCount} صف لجدول دراسة 2 كيلو`
+          : `Researched "${projectName}" — added ${rowCount} rows to the 2 km study`,
         'success',
       );
     } catch (err) {
