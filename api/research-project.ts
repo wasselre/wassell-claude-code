@@ -32,8 +32,11 @@ import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 // Use the Node runtime — Edge can't ship playwright-core.
 // maxDuration: 240s — Paseet's chat response can take 30–90s and we want
 // headroom for login + parse + Supabase write. Pro plan supports up to 300s.
+// (The Node major version is set by the Vercel project settings; here we
+// only declare the runtime family. "nodejs20.x" is rejected by Vercel — only
+// "nodejs" / "edge" / "experimental-edge" are accepted in this field.)
 export const config = {
-  runtime: 'nodejs20.x',
+  runtime: 'nodejs',
   maxDuration: 240,
 };
 
