@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState, type InputHTMLAttributes } from 'react';
 import { v4 as uuid } from 'uuid';
 import { Plus, Trash2, Edit2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -8,6 +8,36 @@ import type { AppModel, CustomButton, CustomButtonLocation } from '@/types';
 interface CustomButtonsTabProps {
   model: AppModel;
   onChange: (next: AppModel) => void;
+}
+
+/**
+ * Lightweight controlled input that holds the current text in local state
+ * while the user types and only fires `onCommit` on blur. Without this the
+ * Builder re-saves the entire model (localStorage + Supabase upsert) on
+ * every keystroke, which makes typing visibly lag in the form below.
+ *
+ * `value` is treated as the canonical source — when it changes externally
+ * (e.g. switching between buttons) the local state re-syncs.
+ */
+type LocalInputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'value' | 'onBlur'> & {
+  value: string;
+  onCommit: (next: string) => void;
+};
+function LocalInput({ value, onCommit, ...rest }: LocalInputProps) {
+  const [local, setLocal] = useState(value);
+  useEffect(() => {
+    setLocal(value);
+  }, [value]);
+  return (
+    <input
+      {...rest}
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={() => {
+        if (local !== value) onCommit(local);
+      }}
+    />
+  );
 }
 
 /**
@@ -147,20 +177,20 @@ export default function CustomButtonsTab({ model, onChange }: CustomButtonsTabPr
                     <label className="block text-xs font-bold text-charcoal/60 mb-1">
                       {isAr ? 'الاسم (عربي)' : 'Label (Arabic)'}
                     </label>
-                    <input
+                    <LocalInput
                       className="form-input w-full"
                       value={btn.label_ar}
-                      onChange={(e) => patchButton(btn.id, { label_ar: e.target.value })}
+                      onCommit={(v) => patchButton(btn.id, { label_ar: v })}
                     />
                   </div>
                   <div>
                     <label className="block text-xs font-bold text-charcoal/60 mb-1">
                       {isAr ? 'الاسم (إنجليزي)' : 'Label (English)'}
                     </label>
-                    <input
+                    <LocalInput
                       className="form-input w-full"
                       value={btn.label_en}
-                      onChange={(e) => patchButton(btn.id, { label_en: e.target.value })}
+                      onCommit={(v) => patchButton(btn.id, { label_en: v })}
                     />
                   </div>
                 </div>
@@ -170,11 +200,11 @@ export default function CustomButtonsTab({ model, onChange }: CustomButtonsTabPr
                     <label className="block text-xs font-bold text-charcoal/60 mb-1">
                       {isAr ? 'الأيقونة (اسم Lucide)' : 'Icon (Lucide name)'}
                     </label>
-                    <input
+                    <LocalInput
                       className="form-input w-full"
                       placeholder="sparkles"
                       value={btn.icon ?? ''}
-                      onChange={(e) => patchButton(btn.id, { icon: e.target.value })}
+                      onCommit={(v) => patchButton(btn.id, { icon: v })}
                     />
                     <p className="text-xs text-charcoal/40 mt-1">
                       {isAr
