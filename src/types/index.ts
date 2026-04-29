@@ -26,7 +26,7 @@ export type FieldType =
 // array of row objects keyed by `name` (slug). Phase-1 storage mode is
 // always 'inline' (JSONB on the parent record). A future `child_model`
 // mode can add relational storage without a breaking change.
-export type TableColumnType = 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'url' | 'dropdown';
+export type TableColumnType = 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'url' | 'dropdown' | 'formula';
 
 export interface TableColumn {
   id: string;
@@ -36,6 +36,14 @@ export interface TableColumn {
   type: TableColumnType;
   required?: boolean;
   options?: FieldOption[]; // dropdown columns only
+  // Formula config (formula columns only). The expression is evaluated per row
+  // against the row's data — `{column_slug}` references resolve to that row's
+  // cells. Re-uses the standard formulaEngine. The cell renders read-only.
+  formula_expression?: string;
+  formula_output_type?: 'number' | 'currency' | 'percentage' | 'text';
+  formula_decimals?: number; // 0..6, default 2
+  formula_currency?: string; // e.g. 'SAR'. Only when output_type is 'currency'.
+  formula_thousands_separator?: boolean; // default true
 }
 
 // Tri-state control used by `section_mirror` for edit permissions and sync-back.

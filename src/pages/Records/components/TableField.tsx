@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { ModelField, TableColumn } from '@/types';
+import { evaluateFormula, isFormulaErrorValue } from '@/lib/formulaEngine';
+import { formatNumberWithCommas, parseFormattedNumber } from './RangeField';
 
 type Row = Record<string, unknown>;
 
@@ -80,6 +82,7 @@ export default function TableField({
                     <CellInput
                       column={col}
                       value={row[col.name]}
+                      row={row}
                       onChange={(v) => updateCell(idx, col.name, v)}
                       isAr={isAr}
                     />
@@ -122,11 +125,13 @@ export default function TableField({
 function CellInput({
   column,
   value,
+  row,
   onChange,
   isAr,
 }: {
   column: TableColumn;
   value: unknown;
+  row: Row;
   onChange: (v: unknown) => void;
   isAr: boolean;
 }) {
@@ -142,24 +147,8 @@ function CellInput({
         />
       );
     case 'number':
-      return (
-        <input
-          type="number"
-          value={(value as number | string) ?? ''}
-          onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
-          className={commonClass}
-        />
-      );
     case 'currency':
-      return (
-        <input
-          type="number"
-          value={(value as number | string) ?? ''}
-          onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
-          className={commonClass}
-          step="0.01"
-        />
-      );
+      return <NumericCellInput value={value} onChange={onChange} isAr={isAr} className={commonClass} />;
     case 'date':
       return (
         <input
@@ -192,6 +181,8 @@ function CellInput({
           ))}
         </select>
       );
+    case 'formula':
+      return <FormulaCell column={column} row={row} isAr={isAr} />;
     default:
       return (
         <input
@@ -202,4 +193,119 @@ function CellInput({
         />
       );
   }
+}
+
+/**
+ * Numeric cell input that displays values with locale-aware thousands separators
+ * (e.g. 1,000,000 / 1،000،000) while still storing a raw number.
+ * Uses a draft string while focused so commas don't fight typing.
+ */
+function NumericCellInput({
+  value,
+  onChange,
+  isAr,
+  className,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+  isAr: boolean;
+  className: string;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const numeric = typeof value === 'number'
+    ? value
+    : (value === null || value === undefined || value === '' ? undefined : Number(value));
+  const display = draft !== null
+    ? draft
+    : (numeric === undefined || Number.isNaN(numeric) ? '' : formatNumberWithCommas(numeric, isAr));
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={display}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const parsed = parseFormattedNumber(e.target.value);
+        onChange(parsed === undefined ? null : parsed);
+      }}
+      onBlur={() => setDraft(null)}
+      className={className}
+      dir="ltr"
+    />
+  );
+}
+
+/**
+ * Read-only cell that renders a per-row formula. References inside `{...}`
+ * resolve against the row's other columns (e.g. `{max_price} - {min_price}`).
+ * Falls through error sentinels (#DIV0, #REF, …) untouched so the user can
+ * see why a cell isn't computing.
+ */
+function FormulaCell({
+  column,
+  row,
+  isAr,
+}: {
+  column: TableColumn;
+  row: Row;
+  isAr: boolean;
+}) {
+  const expression = column.formula_expression?.trim();
+  if (!expression) {
+    return <span className="text-xs text-charcoal/30 italic">{isAr ? '— لا توجد صيغة —' : '— no formula —'}</span>;
+  }
+  const result = evaluateFormula(expression, row);
+  const text = formatTableFormulaValue(result, column, isAr ? 'ar-SA' : 'en-US');
+  const isError = isFormulaErrorValue(result);
+  return (
+    <span
+      className={`block w-full px-2 py-1 text-sm ${isError ? 'text-red-600 font-mono text-xs' : 'text-charcoal/80'}`}
+      title={isError ? expression : undefined}
+    >
+      {text}
+    </span>
+  );
+}
+
+function formatTableFormulaValue(
+  value: ReturnType<typeof evaluateFormula>,
+  column: TableColumn,
+  locale: string,
+): string {
+  if (isFormulaErrorValue(value)) return value;
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'boolean') return String(value);
+  const outputType = column.formula_output_type ?? 'number';
+  if (outputType === 'text') return String(value);
+  const num = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(num)) return String(value);
+  const decimals = clampDecimals(column.formula_decimals);
+  const useGrouping = column.formula_thousands_separator !== false;
+  if (outputType === 'percentage') {
+    const body = (num * 100).toLocaleString(locale, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+      useGrouping,
+    });
+    return `${body}%`;
+  }
+  const body = num.toLocaleString(locale, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+    useGrouping,
+  });
+  if (outputType === 'currency') {
+    const code = (column.formula_currency ?? 'SAR').trim() || 'SAR';
+    if (code.toUpperCase() === 'SAR') {
+      return `${body} ${locale.startsWith('ar') ? 'ر.س' : 'SAR'}`;
+    }
+    return `${body} ${code}`;
+  }
+  return body;
+}
+
+function clampDecimals(d: number | undefined): number {
+  if (d === undefined || d === null || !Number.isFinite(d)) return 2;
+  const r = Math.round(d);
+  return Math.max(0, Math.min(6, r));
 }

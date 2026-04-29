@@ -145,6 +145,9 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [fallbackSourceFieldId, setFallbackSourceFieldId] = useState<string | null>(null);
   // Table field — inline JSONB row schema. Each entry defines one column.
   const [tableColumns, setTableColumns] = useState<TableColumn[]>([]);
+  // Whether the popup column-editor modal is open. Keeps the FieldEditor's
+  // main form uncluttered — the dense column grid lives behind a button.
+  const [showTableColumnsModal, setShowTableColumnsModal] = useState(false);
   // Ref to the formula textarea so operator/function buttons can insert at the caret.
   const formulaTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   // API name (slug). Initialised from field.name for existing fields; for new
@@ -1258,15 +1261,36 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
           </>
         )}
 
-        {/* Table columns config */}
+        {/* Table columns config — opens a popup with a visual table editor */}
         {type === 'table' && (
           <>
             <div className="border-t border-sand/10" />
-            <TableColumnsEditor
-              columns={tableColumns}
-              onChange={setTableColumns}
-              isAr={isAr}
-            />
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-charcoal/60">
+                {isAr ? 'أعمدة الجدول' : 'Table columns'}
+              </label>
+              <div className="flex items-center justify-between gap-3 p-3 rounded-lg border border-sand/40 bg-cream/20">
+                <div className="text-xs text-charcoal/60">
+                  {tableColumns.length === 0
+                    ? (isAr ? 'لم يتم إضافة أعمدة بعد.' : 'No columns added yet.')
+                    : (isAr
+                      ? `${tableColumns.length} ${tableColumns.length === 1 ? 'عمود' : 'أعمدة'} محدد${tableColumns.length === 1 ? '' : 'ة'}`
+                      : `${tableColumns.length} column${tableColumns.length === 1 ? '' : 's'} configured`)}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTableColumnsModal(true)}
+                  className="text-xs font-bold text-copper hover:text-terracotta px-3 py-1.5 rounded-lg border border-copper/40 bg-white"
+                >
+                  {isAr ? 'تعديل الأعمدة' : 'Edit columns'}
+                </button>
+              </div>
+              <p className="text-[11px] text-charcoal/40 leading-relaxed">
+                {isAr
+                  ? 'افتح المحرر لتحديد أعمدة الجدول، أنواعها، وصيغ الأعمدة المحسوبة.'
+                  : 'Open the editor to define table columns, their types, and computed column formulas.'}
+              </p>
+            </div>
           </>
         )}
 
@@ -1891,6 +1915,25 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
           ))}
         </div>
       </Modal>
+
+      {/* Table columns popup — clean visual editor for the table field's columns */}
+      <Modal
+        open={showTableColumnsModal}
+        onClose={() => setShowTableColumnsModal(false)}
+        title={isAr ? 'تعديل أعمدة الجدول' : 'Edit table columns'}
+        maxWidth="max-w-5xl"
+        footer={
+          <Button onClick={() => setShowTableColumnsModal(false)}>
+            {isAr ? 'تم' : 'Done'}
+          </Button>
+        }
+      >
+        <TableColumnsEditor
+          columns={tableColumns}
+          onChange={setTableColumns}
+          isAr={isAr}
+        />
+      </Modal>
     </div>
   );
 }
@@ -1930,7 +1973,20 @@ export function FieldEditorEmpty() {
 
 // Sub-editor for the `table` field type. Lets the user define columns — each
 // column becomes a cell input when the field is rendered in the record form.
-const TABLE_COLUMN_TYPES: TableColumnType[] = ['text', 'textarea', 'number', 'currency', 'date', 'url', 'dropdown'];
+// Rendered inside a popup modal (see FieldEditor's showTableColumnsModal) so
+// the layout can spread out into a real visual table grid.
+const TABLE_COLUMN_TYPES: TableColumnType[] = ['text', 'textarea', 'number', 'currency', 'date', 'url', 'dropdown', 'formula'];
+
+const COLUMN_TYPE_LABELS: Record<TableColumnType, { ar: string; en: string }> = {
+  text:     { ar: 'نص',          en: 'Text' },
+  textarea: { ar: 'نص طويل',     en: 'Long text' },
+  number:   { ar: 'رقم',          en: 'Number' },
+  currency: { ar: 'عملة',         en: 'Currency' },
+  date:     { ar: 'تاريخ',        en: 'Date' },
+  url:      { ar: 'رابط',         en: 'URL' },
+  dropdown: { ar: 'قائمة منسدلة', en: 'Dropdown' },
+  formula:  { ar: 'صيغة محسوبة',  en: 'Formula' },
+};
 
 function TableColumnsEditor({
   columns,
@@ -1957,78 +2013,393 @@ function TableColumnsEditor({
     onChange(columns.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   };
   const removeColumn = (id: string) => onChange(columns.filter((c) => c.id !== id));
+  const moveColumn = (id: string, dir: -1 | 1) => {
+    const idx = columns.findIndex((c) => c.id === id);
+    if (idx < 0) return;
+    const target = idx + dir;
+    if (target < 0 || target >= columns.length) return;
+    const next = [...columns];
+    [next[idx], next[target]] = [next[target]!, next[idx]!];
+    onChange(next);
+  };
+
+  // Slugs that formula columns can reference. Excludes formula columns
+  // themselves to avoid (a) self-references and (b) cross-formula cycles
+  // inside one row — keeps evaluation order trivial (formulas only depend on
+  // raw inputs, not on each other).
+  const referenceableSlugs = columns.filter((c) => c.type !== 'formula').map((c) => c.name);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-charcoal/55 leading-relaxed">
+        {isAr
+          ? 'كل صف هنا يمثل عمودًا في الجدول. اختر النوع، وأضف صيغة للأعمدة المحسوبة (يمكنها الإشارة إلى أعمدة أخرى عبر {اسم_العمود}).'
+          : 'Each row below is one column in the table. Pick a type, and add a formula for computed columns (it can reference other columns with {column_slug}).'}
+      </p>
+      <div className="border border-sand/40 rounded-xl overflow-hidden bg-white">
+        <table className="w-full text-sm">
+          <thead className="bg-cream/40 border-b border-sand/40">
+            <tr className="text-xs font-bold text-charcoal/60">
+              <th className="text-start px-2 py-2 w-8" aria-label="reorder" />
+              <th className="text-start px-2 py-2">{isAr ? 'العنوان (عربي)' : 'Label (AR)'}</th>
+              <th className="text-start px-2 py-2">{isAr ? 'العنوان (إنجليزي)' : 'Label (EN)'}</th>
+              <th className="text-start px-2 py-2">{isAr ? 'المعرّف' : 'Slug'}</th>
+              <th className="text-start px-2 py-2">{isAr ? 'النوع' : 'Type'}</th>
+              <th className="text-start px-2 py-2 w-16">{isAr ? 'إلزامي' : 'Required'}</th>
+              <th className="w-10" aria-label="delete" />
+            </tr>
+          </thead>
+          <tbody>
+            {columns.length === 0 && (
+              <tr>
+                <td colSpan={7} className="text-center py-6 text-charcoal/40 text-xs">
+                  {isAr ? 'لم يتم إضافة أعمدة بعد — اضغط "إضافة عمود".' : 'No columns yet — click "Add column".'}
+                </td>
+              </tr>
+            )}
+            {columns.map((col, idx) => (
+              <ColumnRow
+                key={col.id}
+                col={col}
+                idx={idx}
+                total={columns.length}
+                referenceableSlugs={referenceableSlugs}
+                onUpdate={(patch) => updateColumn(col.id, patch)}
+                onRemove={() => removeColumn(col.id)}
+                onMove={(dir) => moveColumn(col.id, dir)}
+                isAr={isAr}
+              />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={addColumn}
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-copper hover:text-terracotta px-3 py-1.5 rounded-lg border border-copper/40 bg-white"
+        >
+          + {isAr ? 'إضافة عمود' : 'Add column'}
+        </button>
+        <span className="text-[11px] text-charcoal/40">
+          {columns.length} {isAr ? (columns.length === 1 ? 'عمود' : 'أعمدة') : (columns.length === 1 ? 'column' : 'columns')}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function ColumnRow({
+  col,
+  idx,
+  total,
+  referenceableSlugs,
+  onUpdate,
+  onRemove,
+  onMove,
+  isAr,
+}: {
+  col: TableColumn;
+  idx: number;
+  total: number;
+  referenceableSlugs: string[];
+  onUpdate: (patch: Partial<TableColumn>) => void;
+  onRemove: () => void;
+  onMove: (dir: -1 | 1) => void;
+  isAr: boolean;
+}) {
+  // Formula validation — surfaced inline below the expression input.
+  const formulaError = col.type === 'formula' && col.formula_expression
+    ? validateFormula(col.formula_expression)
+    : null;
+
+  return (
+    <>
+      <tr className="border-b border-sand/25 last:border-0 align-top">
+        <td className="px-1 py-1.5">
+          <div className="flex flex-col gap-0.5">
+            <button
+              type="button"
+              onClick={() => onMove(-1)}
+              disabled={idx === 0}
+              className="text-charcoal/40 hover:text-charcoal disabled:opacity-20 disabled:cursor-not-allowed text-xs"
+              aria-label={isAr ? 'لأعلى' : 'Move up'}
+            >
+              ▲
+            </button>
+            <button
+              type="button"
+              onClick={() => onMove(1)}
+              disabled={idx === total - 1}
+              className="text-charcoal/40 hover:text-charcoal disabled:opacity-20 disabled:cursor-not-allowed text-xs"
+              aria-label={isAr ? 'لأسفل' : 'Move down'}
+            >
+              ▼
+            </button>
+          </div>
+        </td>
+        <td className="px-2 py-1.5">
+          <input
+            type="text"
+            value={col.label_ar}
+            onChange={(e) => onUpdate({ label_ar: e.target.value })}
+            placeholder={isAr ? 'عنوان العمود' : 'Arabic label'}
+            className="form-input text-xs w-full"
+            dir="rtl"
+          />
+        </td>
+        <td className="px-2 py-1.5">
+          <input
+            type="text"
+            value={col.label_en}
+            onChange={(e) => onUpdate({ label_en: e.target.value })}
+            placeholder="English label"
+            className="form-input text-xs w-full"
+            dir="ltr"
+          />
+        </td>
+        <td className="px-2 py-1.5">
+          <input
+            type="text"
+            value={col.name}
+            onChange={(e) =>
+              onUpdate({ name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })
+            }
+            placeholder="slug_name"
+            className="form-input text-xs font-mono w-full"
+            dir="ltr"
+          />
+        </td>
+        <td className="px-2 py-1.5">
+          <select
+            value={col.type}
+            onChange={(e) => onUpdate({ type: e.target.value as TableColumnType })}
+            className="form-input text-xs w-full"
+          >
+            {TABLE_COLUMN_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {isAr ? COLUMN_TYPE_LABELS[t].ar : COLUMN_TYPE_LABELS[t].en}
+              </option>
+            ))}
+          </select>
+        </td>
+        <td className="px-2 py-1.5 text-center">
+          <input
+            type="checkbox"
+            checked={!!col.required}
+            onChange={(e) => onUpdate({ required: e.target.checked })}
+            className="w-4 h-4 accent-copper"
+            disabled={col.type === 'formula'}
+          />
+        </td>
+        <td className="px-2 py-1.5">
+          <button
+            type="button"
+            onClick={onRemove}
+            className="p-1.5 rounded text-red-600/60 hover:text-red-700 hover:bg-red-50"
+            aria-label={isAr ? 'حذف' : 'Remove'}
+          >
+            <Trash2Icon />
+          </button>
+        </td>
+      </tr>
+
+      {/* Formula configuration row — only for formula columns */}
+      {col.type === 'formula' && (
+        <tr className="border-b border-sand/25 bg-cream/[0.15]">
+          <td />
+          <td colSpan={6} className="px-2 pb-3 pt-1">
+            <div className="space-y-2">
+              <label className="block text-[11px] font-bold text-charcoal/55">
+                {isAr ? 'الصيغة' : 'Formula'}
+              </label>
+              <textarea
+                value={col.formula_expression ?? ''}
+                onChange={(e) => onUpdate({ formula_expression: e.target.value })}
+                rows={2}
+                dir="ltr"
+                placeholder="{max_price} - {min_price}"
+                className="form-input text-xs font-mono w-full resize-y"
+              />
+              {referenceableSlugs.length > 0 && (
+                <p className="text-[10px] text-charcoal/40 leading-relaxed" dir="ltr">
+                  {isAr ? 'الأعمدة المتاحة: ' : 'Available columns: '}
+                  {referenceableSlugs.map((s, i) => (
+                    <span key={s} className="font-mono">
+                      {`{${s}}`}{i < referenceableSlugs.length - 1 ? ', ' : ''}
+                    </span>
+                  ))}
+                </p>
+              )}
+              {formulaError && (
+                <p className="text-[11px] text-red-600 font-mono">
+                  {formulaError}
+                </p>
+              )}
+              <div className="grid grid-cols-3 gap-2 mt-2">
+                <div>
+                  <label className="block text-[10px] font-bold text-charcoal/50 mb-1">
+                    {isAr ? 'نوع الإخراج' : 'Output'}
+                  </label>
+                  <select
+                    value={col.formula_output_type ?? 'number'}
+                    onChange={(e) => onUpdate({ formula_output_type: e.target.value as 'number' | 'currency' | 'percentage' | 'text' })}
+                    className="form-input text-xs w-full"
+                  >
+                    <option value="number">{isAr ? 'رقم' : 'Number'}</option>
+                    <option value="currency">{isAr ? 'عملة' : 'Currency'}</option>
+                    <option value="percentage">{isAr ? 'نسبة' : 'Percentage'}</option>
+                    <option value="text">{isAr ? 'نص' : 'Text'}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-charcoal/50 mb-1">
+                    {isAr ? 'منازل عشرية' : 'Decimals'}
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={6}
+                    value={col.formula_decimals ?? 2}
+                    onChange={(e) =>
+                      onUpdate({ formula_decimals: Math.max(0, Math.min(6, Number(e.target.value) || 0)) })
+                    }
+                    className="form-input text-xs w-full"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <label className="inline-flex items-center gap-2 text-xs text-charcoal/70 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={col.formula_thousands_separator !== false}
+                      onChange={(e) => onUpdate({ formula_thousands_separator: e.target.checked })}
+                      className="w-4 h-4 accent-copper"
+                    />
+                    {isAr ? 'فواصل آلاف' : 'Thousands separator'}
+                  </label>
+                </div>
+              </div>
+              {col.formula_output_type === 'currency' && (
+                <div>
+                  <label className="block text-[10px] font-bold text-charcoal/50 mb-1">
+                    {isAr ? 'العملة' : 'Currency'}
+                  </label>
+                  <input
+                    type="text"
+                    value={col.formula_currency ?? 'SAR'}
+                    onChange={(e) => onUpdate({ formula_currency: e.target.value.toUpperCase() })}
+                    className="form-input text-xs w-32"
+                    dir="ltr"
+                    placeholder="SAR"
+                  />
+                </div>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+
+      {/* Dropdown options config — small inline editor for dropdown columns */}
+      {col.type === 'dropdown' && (
+        <tr className="border-b border-sand/25 bg-cream/[0.15]">
+          <td />
+          <td colSpan={6} className="px-2 pb-3 pt-1">
+            <DropdownColumnOptionsEditor
+              options={col.options ?? []}
+              onChange={(options) => onUpdate({ options })}
+              isAr={isAr}
+            />
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+/**
+ * Compact options editor used for dropdown table columns. Intentionally
+ * lightweight — no groups, no drag-drop, no color pickers — because the
+ * surrounding modal is already wide and dense. For the heavyweight editor
+ * see `OptionsEditor` (used for normal dropdown fields on the model).
+ */
+function DropdownColumnOptionsEditor({
+  options,
+  onChange,
+  isAr,
+}: {
+  options: FieldOption[];
+  onChange: (next: FieldOption[]) => void;
+  isAr: boolean;
+}) {
+  const add = () => {
+    onChange([
+      ...options,
+      { id: uuid(), label_ar: '', label_en: '', value: `option_${options.length + 1}` },
+    ]);
+  };
+  const update = (id: string, patch: Partial<FieldOption>) => {
+    onChange(options.map((o) => (o.id === id ? { ...o, ...patch } : o)));
+  };
+  const remove = (id: string) => onChange(options.filter((o) => o.id !== id));
 
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <label className="text-xs font-bold text-charcoal/60">
-          {isAr ? 'أعمدة الجدول' : 'Table columns'}
+        <label className="block text-[11px] font-bold text-charcoal/55">
+          {isAr ? 'خيارات القائمة' : 'Dropdown options'}
         </label>
         <button
           type="button"
-          onClick={addColumn}
-          className="text-xs text-copper hover:text-terracotta font-bold"
+          onClick={add}
+          className="text-[11px] text-copper hover:text-terracotta font-bold"
         >
-          + {isAr ? 'إضافة عمود' : 'Add column'}
+          + {isAr ? 'إضافة خيار' : 'Add option'}
         </button>
       </div>
-      {columns.length === 0 && (
-        <div className="text-xs text-charcoal/35 py-2">
-          {isAr ? 'لم يتم إضافة أعمدة بعد.' : 'No columns added yet.'}
-        </div>
+      {options.length === 0 && (
+        <p className="text-[11px] text-charcoal/35">
+          {isAr ? 'لا توجد خيارات بعد.' : 'No options yet.'}
+        </p>
       )}
-      <div className="space-y-2">
-        {columns.map((col) => (
-          <div key={col.id} className="border border-sand/40 rounded-lg p-2 bg-cream/10">
-            <div className="grid grid-cols-2 gap-2 mb-2">
-              <input
-                type="text"
-                value={col.label_ar}
-                onChange={(e) => updateColumn(col.id, { label_ar: e.target.value })}
-                placeholder={isAr ? 'عنوان العمود (عربي)' : 'Label (Arabic)'}
-                className="form-input text-xs"
-                dir="rtl"
-              />
-              <input
-                type="text"
-                value={col.label_en}
-                onChange={(e) => updateColumn(col.id, { label_en: e.target.value })}
-                placeholder="Label (English)"
-                className="form-input text-xs"
-                dir="ltr"
-              />
-            </div>
-            <div className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
-              <input
-                type="text"
-                value={col.name}
-                onChange={(e) =>
-                  updateColumn(col.id, {
-                    name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
-                  })
-                }
-                placeholder="slug_name"
-                className="form-input text-xs font-mono"
-                dir="ltr"
-              />
-              <select
-                value={col.type}
-                onChange={(e) => updateColumn(col.id, { type: e.target.value as TableColumnType })}
-                className="form-input text-xs"
-              >
-                {TABLE_COLUMN_TYPES.map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => removeColumn(col.id)}
-                className="p-1.5 rounded text-red-600/60 hover:text-red-700 hover:bg-red-50"
-                aria-label={isAr ? 'حذف' : 'Remove'}
-              >
-                <Trash2Icon />
-              </button>
-            </div>
+      <div className="space-y-1.5">
+        {options.map((opt) => (
+          <div key={opt.id} className="grid grid-cols-[1fr_1fr_1fr_auto] gap-2 items-center">
+            <input
+              type="text"
+              value={opt.label_ar}
+              onChange={(e) => update(opt.id, { label_ar: e.target.value })}
+              placeholder={isAr ? 'العنوان (عربي)' : 'Label (AR)'}
+              className="form-input text-xs"
+              dir="rtl"
+            />
+            <input
+              type="text"
+              value={opt.label_en}
+              onChange={(e) => update(opt.id, { label_en: e.target.value })}
+              placeholder="Label (EN)"
+              className="form-input text-xs"
+              dir="ltr"
+            />
+            <input
+              type="text"
+              value={opt.value}
+              onChange={(e) =>
+                update(opt.id, {
+                  value: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'),
+                })
+              }
+              placeholder="value_slug"
+              className="form-input text-xs font-mono"
+              dir="ltr"
+            />
+            <button
+              type="button"
+              onClick={() => remove(opt.id)}
+              className="p-1 rounded text-red-600/60 hover:text-red-700 hover:bg-red-50"
+              aria-label={isAr ? 'حذف' : 'Remove'}
+            >
+              <Trash2Icon />
+            </button>
           </div>
         ))}
       </div>
