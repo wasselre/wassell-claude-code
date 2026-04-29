@@ -4,8 +4,9 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp, Phone, Upload, Loader2 } from 'lucide-react';
 import FieldValueInput from './FieldValueInput';
+import PaseetQueryConfig from './PaseetQueryConfig';
 import { supabase } from '@/lib/supabase';
-import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowIvrOption, OutboundIvrDestination, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator, AppModel } from '@/types';
+import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowActionPaseetQuery, WorkflowIvrOption, OutboundIvrDestination, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator, AppModel } from '@/types';
 
 type DateOffsetUnit = 'min' | 'h' | 'd' | 'w' | 'mo' | 'y';
 interface DateOffsetRow {
@@ -420,6 +421,14 @@ export default function ActionList({ actions, triggerFields, onChange, embedded 
                       allModels={models}
                       priorActions={actions.slice(0, idx)}
                       onUpdate={(updated) => updateAction(action.id, updated)}
+                    />
+                  )}
+
+                  {action.type === 'paseet_query' && (
+                    <PaseetQueryConfig
+                      action={action}
+                      triggerFields={triggerFields}
+                      onUpdate={(updated: WorkflowActionPaseetQuery) => updateAction(action.id, updated)}
                     />
                   )}
                 </div>
