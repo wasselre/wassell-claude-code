@@ -4,12 +4,28 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { ArrowRight, Save, Trash2, FileDown, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react';
+import * as lucideIcons from 'lucide-react';
+import { ArrowRight, Save, Trash2, FileDown, ChevronLeft, ChevronRight, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
 import { generateResearchPDF } from '@/lib/pdfGenerator';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
 import { activityLogger } from '@/lib/activityLogger';
 import { supabase } from '@/lib/supabase';
+import type { CustomButton } from '@/types';
+
+/**
+ * Resolve a lucide-react icon by name. Names are kebab-case in the Builder
+ * input ('wand-2', 'file-down') because that's how Lucide documents them;
+ * the ESM exports are PascalCase ('Wand2', 'FileDown'), so we normalize.
+ * Falls back to Sparkles when the name doesn't resolve.
+ */
+function resolveLucideIcon(name?: string): LucideIcon {
+  const pascal = (name ?? 'sparkles')
+    .trim()
+    .replace(/(^|-)(\w)/g, (_, _dash, c: string) => c.toUpperCase());
+  const Icon = (lucideIcons as unknown as Record<string, LucideIcon>)[pascal];
+  return Icon ?? Sparkles;
+}
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
@@ -57,6 +73,9 @@ export default function RecordFormPage() {
   // True while the All Projects "Research project" button is firing the
   // Claude Code routine via /api/research-project.
   const [isResearching, setIsResearching] = useState(false);
+  // ID of the currently-running custom button (if any). Used to render a
+  // spinner on the active button and disable other buttons while it runs.
+  const [runningButtonId, setRunningButtonId] = useState<string | null>(null);
 
   // Prev/next navigation uses the filtered+sorted list published by
   // RecordListPage. If no nav context is available (e.g. deep-linked into a
@@ -281,6 +300,83 @@ export default function RecordFormPage() {
     }
   };
 
+  /**
+   * Fire one of the model's user-configured custom buttons. Sends
+   * { record_id, button_id } to /api/run-button-workflow. The server-side
+   * runner loads the workflow, executes its paseet_query actions against
+   * the current record, and applies the response mappings back onto the
+   * record. On success we surface what the runner did (rows added, fields
+   * touched) and refresh the form's local state by re-reading the record
+   * from Supabase — so the UI shows the new values without a hard reload.
+   */
+  const handleCustomButtonClick = async (button: CustomButton): Promise<void> => {
+    if (!model || !existingRecord) return;
+    if (button.action.type !== 'trigger_workflow') return;
+    if (!button.action.workflow_id) {
+      addToast(
+        isAr ? 'هذا الزر لم يربط بأي سير عمل بعد' : 'This button is not connected to any workflow yet',
+        'error',
+      );
+      return;
+    }
+    setRunningButtonId(button.id);
+    try {
+      const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+      const authHeader: Record<string, string> = session?.access_token
+        ? { Authorization: `Bearer ${session.access_token}` }
+        : {};
+      const res = await fetch('/api/run-button-workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader },
+        body: JSON.stringify({
+          record_id: existingRecord.id,
+          button_id: button.id,
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({ error: res.statusText }));
+        addToast(
+          isAr
+            ? `فشل تنفيذ الزر: ${errBody?.error ?? `(${res.status})`}`
+            : `Button failed: ${errBody?.error ?? `(${res.status})`}`,
+          'error',
+        );
+        return;
+      }
+      const okBody = (await res.json().catch(() => null)) as
+        | { ran?: number; mappings_applied?: number; skipped?: number }
+        | null;
+      const updated = okBody?.mappings_applied ?? 0;
+      addToast(
+        isAr
+          ? updated > 0
+            ? `تم — تم تحديث ${updated} حقل من رد بسيط`
+            : 'تم تنفيذ الزر بدون تغييرات على السجل'
+          : updated > 0
+            ? `Done — ${updated} field${updated === 1 ? '' : 's'} updated from Paseet`
+            : 'Button ran with no record changes',
+        'success',
+      );
+      // Refresh the record's data from Supabase so the form picks up
+      // anything the workflow wrote — without a full page reload.
+      if (supabase) {
+        const { data: fresh } = await supabase
+          .from('records')
+          .select('data')
+          .eq('id', existingRecord.id)
+          .single();
+        if (fresh && fresh.data) {
+          setFormData(fresh.data as Record<string, unknown>);
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(isAr ? `فشل تنفيذ الزر: ${msg}` : `Button failed: ${msg}`, 'error');
+    } finally {
+      setRunningButtonId(null);
+    }
+  };
+
   const handleSave = () => {
     // 1. Validate required fields on this record (skip derived mirror fields).
     const allFields = model.schema.sections
@@ -467,6 +563,29 @@ export default function RecordFormPage() {
               {isResearching ? t('records.research_project_running') : t('records.research_project')}
             </Button>
           )}
+          {/* User-configured custom buttons attached to this model. Filtered
+           *  to those that opted into the record_form location and aren't
+           *  disabled. Hidden on /new (no existingRecord to act on). */}
+          {existingRecord && (model.schema.custom_buttons ?? [])
+            .filter((b: CustomButton) => b.enabled !== false && b.locations.includes('record_form'))
+            .map((btn: CustomButton) => {
+              const Icon = resolveLucideIcon(btn.icon);
+              const running = runningButtonId === btn.id;
+              const someoneRunning = runningButtonId !== null;
+              const label = (isAr ? btn.label_ar : btn.label_en) || btn.id;
+              return (
+                <Button
+                  key={btn.id}
+                  variant="secondary"
+                  onClick={() => void handleCustomButtonClick(btn)}
+                  disabled={someoneRunning}
+                  style={btn.color ? { color: btn.color, borderColor: `${btn.color}40` } : undefined}
+                >
+                  {running ? <Loader2 size={16} className="animate-spin" /> : <Icon size={16} />}
+                  {label}
+                </Button>
+              );
+            })}
           {model.name === 'projects_research' && existingRecord && (
             <Button
               variant="secondary"
