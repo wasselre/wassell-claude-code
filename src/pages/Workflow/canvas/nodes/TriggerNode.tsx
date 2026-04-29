@@ -14,6 +14,7 @@ export default function TriggerNode({ data, selected }: NodeProps & { data: Trig
     if (trigger_event === 'create') return isAr ? 'إنشاء' : 'Create';
     if (trigger_event === 'update') return isAr ? 'تحديث' : 'Update';
     if (trigger_event === 'delete') return isAr ? 'حذف' : 'Delete';
+    if (trigger_event === 'button_click') return isAr ? 'ضغطة زر' : 'Button';
     return isAr ? 'خطاف' : 'Webhook';
   })();
 
