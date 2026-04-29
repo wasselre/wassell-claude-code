@@ -8,6 +8,7 @@ import Modal from '@/components/ui/Modal';
 import SectionManager from './SectionManager';
 import CardBuilder from './CardBuilder';
 import MapsBuilder from './MapsBuilder';
+import CustomButtonsTab from './CustomButtonsTab';
 import type { AppModel } from '@/types';
 
 interface ModelEditorProps {
@@ -18,7 +19,7 @@ export default function ModelEditor({ model }: ModelEditorProps) {
   const { t } = useTranslation();
   const { saveModel, deleteModel, language, addToast } = useAppStore();
   const isAr = language === 'ar';
-  const [activeTab, setActiveTab] = useState<'fields' | 'card' | 'maps'>('fields');
+  const [activeTab, setActiveTab] = useState<'fields' | 'card' | 'maps' | 'buttons'>('fields');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [showDelete, setShowDelete] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -124,6 +125,16 @@ export default function ModelEditor({ model }: ModelEditorProps) {
         >
           {t('builder.maps_builder')}
         </button>
+        <button
+          onClick={() => setActiveTab('buttons')}
+          className={`px-4 py-2 rounded-md text-sm font-bold transition-colors ${
+            activeTab === 'buttons'
+              ? 'bg-white text-copper shadow-sm'
+              : 'text-charcoal/50 hover:text-charcoal'
+          }`}
+        >
+          {t('builder.custom_buttons')}
+        </button>
       </div>
 
       {/* Tab Content */}
@@ -140,6 +151,11 @@ export default function ModelEditor({ model }: ModelEditorProps) {
       {activeTab === 'maps' && (
         <div className="flex-1 overflow-y-auto">
           <MapsBuilder model={model} onChange={handleModelChange} />
+        </div>
+      )}
+      {activeTab === 'buttons' && (
+        <div className="flex-1 overflow-y-auto">
+          <CustomButtonsTab model={model} onChange={handleModelChange} />
         </div>
       )}
 
