@@ -89,11 +89,14 @@ export default function CustomButtonsTab({ model, onChange }: CustomButtonsTabPr
     if (expandedId === id) setExpandedId(null);
   };
 
-  // Workflows are filtered to ones that fire on the `button_click` event.
-  // Workflows on other events (create / update / etc.) won't be triggered
-  // by a button click anyway, so we don't list them here.
+  // Buttons can trigger ANY workflow associated with this model — the
+  // workflow's own trigger event (create / update / button_click / etc.)
+  // doesn't have to match. A button click forwards the current record as
+  // the trigger context regardless. The `button_click` event type stays
+  // available for workflows that only want to fire from buttons (no
+  // auto-trigger on create/update), but it's optional.
   const triggerableWorkflows = workflows.filter(
-    (wf) => wf.trigger_event === 'button_click' && wf.trigger_model_id === model.id,
+    (wf) => wf.trigger_model_id === model.id,
   );
 
   return (
@@ -288,8 +291,8 @@ export default function CustomButtonsTab({ model, onChange }: CustomButtonsTabPr
                   {triggerableWorkflows.length === 0 && (
                     <p className="text-xs text-amber-700 mt-1">
                       {isAr
-                        ? 'لا توجد سير عمل بحدث "ضغطة زر" مرتبط بهذا النموذج. أضف سير عمل من صفحة أتمتة.'
-                        : 'No workflows on this model with event "Button click" yet. Create one from the Workflows page first.'}
+                        ? 'لا توجد أي سير عمل مرتبط بهذا النموذج. أنشئ سير عمل من صفحة الأتمتة أولًا.'
+                        : 'No workflows on this model yet. Create one from the Workflows page first.'}
                     </p>
                   )}
                 </div>
