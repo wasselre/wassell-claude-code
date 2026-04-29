@@ -38,6 +38,15 @@ export function useWorkflowGraph(
         };
       case 'send_whatsapp_message':
         return { id, type: 'send_whatsapp_message', to_field_id: '', body_template: '' };
+      case 'paseet_query':
+        return {
+          id,
+          type: 'paseet_query',
+          prompt_template: '',
+          response_shape: 'text',
+          response_mappings: [],
+          timeout_ms: 90000,
+        };
     }
   }, []);
 

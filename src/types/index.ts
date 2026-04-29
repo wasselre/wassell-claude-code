@@ -271,6 +271,47 @@ export interface ModelSchema {
   // existing record's value for the same field (case-insensitive, trimmed).
   // Lookup fields compare by resolved id; everything else compares by string.
   duplicate_check_field_id?: string | null;
+  // User-defined custom buttons that render in the record form / list view
+  // and trigger workflows on click. Optional for back-compat — older models
+  // simply have none.
+  custom_buttons?: CustomButton[];
+}
+
+// ── Custom buttons ────────────────────────────────────────────────────
+// User-configurable buttons attached to a model. Each renders in the
+// record form, the list-view toolbar, or both, and fires a workflow when
+// clicked. The workflow is run server-side with the current record as the
+// trigger context, so any `trigger_field` references in the workflow's
+// actions resolve against fields on the clicked record.
+export type CustomButtonLocation = 'record_form' | 'record_list';
+
+// For now buttons can only trigger a workflow. Future actions (direct
+// HTTP request, in-app navigation, etc.) extend this discriminated union.
+export type CustomButtonActionType = 'trigger_workflow';
+
+export interface CustomButtonActionTriggerWorkflow {
+  type: 'trigger_workflow';
+  workflow_id: string;
+}
+
+export type CustomButtonAction = CustomButtonActionTriggerWorkflow;
+
+export interface CustomButton {
+  id: string;
+  label_ar: string;
+  label_en: string;
+  // Lucide icon name (e.g. 'sparkles', 'play', 'wand-2'). Defaults to
+  // 'sparkles' on the consumer side when undefined.
+  icon?: string;
+  // Hex; falls back to `model.color` at render time when undefined.
+  color?: string;
+  // Where the button appears in the UI. At least one location must be
+  // selected — we hide buttons with an empty `locations` array.
+  locations: CustomButtonLocation[];
+  action: CustomButtonAction;
+  // Allows the button to be disabled without deleting it (so its
+  // workflow / mappings are preserved).
+  enabled?: boolean;
 }
 
 export interface AppModel {
@@ -326,7 +367,7 @@ export interface FieldTemplate {
 
 // Workflow types
 
-export type WorkflowEvent = 'create' | 'update' | 'delete' | 'webhook';
+export type WorkflowEvent = 'create' | 'update' | 'delete' | 'webhook' | 'button_click';
 
 // A declared inbound-webhook endpoint. External systems POST JSON to
 // /functions/v1/inbox/<slug> and the workflow engine fires any workflow
@@ -409,7 +450,7 @@ export interface FieldMapping {
   formula_expression?: string;
 }
 
-export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user' | 'http_request' | 'outbound_ivr' | 'send_whatsapp_message';
+export type WorkflowActionType = 'create_record' | 'update_record' | 'send_notification' | 'assign_user' | 'http_request' | 'outbound_ivr' | 'send_whatsapp_message' | 'paseet_query';
 
 // HTTP method for the outbound `http_request` workflow action.
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -582,6 +623,80 @@ export interface WorkflowActionSendWhatsAppMessage {
   body_template: string;
 }
 
+// Paseet AI query — sends a free-form Arabic prompt to paseet.ai over a
+// Browserbase session bound to a persistent context (so the cookies for
+// auth are reused — no login during the workflow), waits for the chat
+// response to render, and applies one or more `response_mappings` that
+// write parsed pieces of the answer back onto the trigger record.
+//
+// The prompt template supports `{field_slug}` tokens against the trigger
+// record (same shape as http_request body templates). The response_shape
+// tells the parser what to extract; the mappings tell it where to put it.
+export type PaseetResponseShape =
+  // The full settled assistant text after the response stops streaming.
+  | 'text'
+  // A single scalar value parsed from the answer (e.g. an average price).
+  // Use a regex/keyword inside the mapping if you need to pluck one value
+  // out of a longer answer.
+  | 'single_value'
+  // A markdown / HTML table rendered by Paseet, broken into rows of cells.
+  // Most common case for the 2 km market study.
+  | 'table_rows';
+
+export type PaseetResponseMappingKind =
+  // Set one field on the trigger record to the parsed response.
+  | 'set_field'
+  // Append rows into a `table` type field on the trigger record. Each
+  // table_column_mapping resolves a Paseet header keyword to a CRM
+  // table column id.
+  | 'append_table_rows'
+  // Replace the rows of a `table` field instead of appending.
+  | 'replace_table_rows';
+
+// Maps a single column inside a Paseet response table → a column inside
+// a CRM `table` field. Matched case-insensitively after underscore→space
+// normalization, so "متوسط_السعر" matches "متوسط السعر".
+export interface PaseetTableColumnMapping {
+  id: string;
+  // Column id on the target CRM table field (e.g. 'col_1').
+  target_column_id: string;
+  // Header keyword(s) the Paseet column must contain. Multiple values are
+  // OR'd, so "أقل" / "أدنى" both map to the same min column.
+  source_header_keywords: string[];
+  // For numeric columns: how to coerce the cell text.
+  parse_as?: 'text' | 'number' | 'currency';
+}
+
+export interface PaseetResponseMapping {
+  id: string;
+  kind: PaseetResponseMappingKind;
+  // Target field slug on the trigger record's model.
+  target_field_id: string;
+  // For 'set_field' on a single value: how to coerce the parsed value.
+  parse_as?: 'text' | 'number' | 'currency';
+  // For 'append_table_rows' / 'replace_table_rows': how the Paseet
+  // table's columns map onto the CRM table field's columns.
+  table_column_mappings?: PaseetTableColumnMapping[];
+  // Optional regex applied to the response *before* mapping. Used to
+  // pluck a single value out of a longer text answer when
+  // response_shape === 'single_value'.
+  extract_regex?: string;
+}
+
+export interface WorkflowActionPaseetQuery {
+  id: string;
+  type: 'paseet_query';
+  // Arabic (or any language) prompt sent to Paseet's chat. Supports
+  // `{field_slug}` tokens that resolve against the trigger record.
+  prompt_template: string;
+  response_shape: PaseetResponseShape;
+  response_mappings: PaseetResponseMapping[];
+  // Hard cap on the BB session + Paseet response wait. Default 90000
+  // (90s). Cap at 180000 (3 min) — Paseet's complex queries occasionally
+  // run that long.
+  timeout_ms?: number;
+}
+
 export type WorkflowAction =
   | WorkflowActionCreateRecord
   | WorkflowActionUpdateRecord
@@ -589,7 +704,8 @@ export type WorkflowAction =
   | WorkflowActionAssignUser
   | WorkflowActionHttpRequest
   | WorkflowActionOutboundIvr
-  | WorkflowActionSendWhatsAppMessage;
+  | WorkflowActionSendWhatsAppMessage
+  | WorkflowActionPaseetQuery;
 
 // A workflow branch — an if / else-if / else arm. Evaluated top-to-bottom; the
 // first non-else branch whose conditions all pass is the winner and its actions

@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Play, Plus, Pencil, UserCheck, MessageSquare, Send, Phone, Globe, Trash2 } from 'lucide-react';
+import { Play, Plus, Pencil, UserCheck, MessageSquare, Send, Phone, Globe, Sparkles, Trash2 } from 'lucide-react';
 import { ACTION_STYLE, summarizeAction } from '../../components/ActionList';
 import type { ActionNodeData } from '../workflowToGraph';
 import type { WorkflowAction } from '@/types';
@@ -14,6 +14,7 @@ const ICON_BY_TYPE: Record<WorkflowAction['type'], LucideIcon> = {
   http_request: Globe,
   outbound_ivr: Phone,
   send_whatsapp_message: Send,
+  paseet_query: Sparkles,
 };
 
 interface ActionNodeProps extends NodeProps {

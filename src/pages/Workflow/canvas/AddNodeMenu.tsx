@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { CircleDot, Plus, Pencil, MessageSquare, UserCheck, Globe, Phone, Send, type LucideIcon } from 'lucide-react';
+import { CircleDot, Plus, Pencil, MessageSquare, UserCheck, Globe, Phone, Send, Sparkles, type LucideIcon } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { WorkflowAction } from '@/types';
 
@@ -71,6 +71,7 @@ export default function AddNodeMenu({ payload, onClose, onPick }: AddNodeMenuPro
     { kind: 'http_request', icon: Globe, label: isAr ? 'طلب HTTP' : 'HTTP Request', color: 'text-rose-600 bg-rose-50' },
     { kind: 'outbound_ivr', icon: Phone, label: isAr ? 'مكالمة آلية' : 'Automated Call', color: 'text-copper bg-copper/10' },
     { kind: 'send_whatsapp_message', icon: Send, label: isAr ? 'واتساب' : 'WhatsApp', color: 'text-green-600 bg-green-50' },
+    { kind: 'paseet_query', icon: Sparkles, label: isAr ? 'استعلام بسيط' : 'Paseet Query', color: 'text-copper bg-copper/10' },
   ];
 
   // Position: the dropdown anchors its top-start to (screenX, screenY) so it

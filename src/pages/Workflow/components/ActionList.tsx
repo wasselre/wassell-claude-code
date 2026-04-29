@@ -132,6 +132,16 @@ export const ACTION_STYLE: Record<WorkflowAction['type'], ActionStyle> = {
     label_ar: 'إرسال واتساب',
     label_en: 'Send WhatsApp',
   },
+  paseet_query: {
+    bg: 'bg-copper/5 border-b border-sand/25',
+    hoverBorder: 'hover:border-copper/40',
+    badgeBg: 'bg-copper/15',
+    badgeText: 'text-copper',
+    nodeBg: 'bg-copper',
+    nodeBorder: 'border-copper/50',
+    label_ar: 'استعلام بسيط',
+    label_en: 'Paseet Query',
+  },
 };
 
 // Plain-English one-liner for canvas nodes. Intentionally short — node cards
@@ -181,6 +191,17 @@ export function summarizeAction(action: WorkflowAction, models: AppModel[], isAr
       const body = action.body_template?.split('\n')[0] ?? '';
       const first = body || (isAr ? '(بدون نص)' : '(empty)');
       return first.length > 48 ? first.slice(0, 45) + '…' : first;
+    }
+    case 'paseet_query': {
+      const first = (action.prompt_template ?? '').split('\n')[0] ?? '';
+      const promptPreview = first || (isAr ? '(بدون نص)' : '(empty prompt)');
+      const shapeLabel = isAr
+        ? action.response_shape === 'table_rows' ? 'جدول'
+          : action.response_shape === 'single_value' ? 'قيمة'
+          : 'نص'
+        : action.response_shape;
+      const trimmed = promptPreview.length > 30 ? promptPreview.slice(0, 27) + '…' : promptPreview;
+      return `${shapeLabel} · ${trimmed}`;
     }
   }
 }
