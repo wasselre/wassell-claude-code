@@ -29,11 +29,20 @@ export default function TriggerPanel({
     { value: 'update', label: t('workflow.event_update') },
     { value: 'delete', label: t('workflow.event_delete') },
     { value: 'webhook', label: isAr ? 'خطاف وارد' : 'Webhook' },
+    { value: 'button_click', label: isAr ? 'ضغطة زر مخصص' : 'Custom button click' },
   ];
 
   const selectedModel = models.find((m) => m.id === triggerModelId);
   const selectedSlug = webhookSlugs.find((s) => s.id === triggerWebhookSlugId);
   const isWebhook = triggerEvent === 'webhook';
+  const isButtonClick = triggerEvent === 'button_click';
+  // Buttons configured on the selected model (any button can target any
+  // workflow on the model — the linkage is stored on the button via its
+  // action.workflow_id; this list is informational so the user knows which
+  // buttons exist and are candidates).
+  const modelButtons = (selectedModel?.schema.custom_buttons ?? []).filter(
+    (b) => b.enabled !== false,
+  );
 
   return (
     <div className="rounded-2xl bg-gradient-to-br from-amber-500/5 via-amber-500/[0.03] to-transparent border border-amber-400/30 p-5">
@@ -115,7 +124,30 @@ export default function TriggerPanel({
         </div>
       )}
 
-      {!isWebhook && selectedModel && (
+      {isButtonClick && selectedModel && (
+        <div className="mt-3 text-xs text-amber-800/80 bg-amber-100/40 border border-amber-300/40 rounded-lg px-3 py-2 leading-relaxed">
+          {isAr
+            ? 'يربط هذا السير بأزرار النموذج عبر تبويب "الأزرار المخصصة" في مُنشئ النموذج. أي زر يُختار هذا السير سيشغّله عند الضغط.'
+            : 'This workflow becomes triggerable from a button. Connect it to a button via the model\'s "Buttons" tab — any button that selects this workflow will fire it on click.'}
+          {modelButtons.length > 0 && (
+            <div className="mt-1.5 text-charcoal/70">
+              {isAr ? 'الأزرار الحالية على هذا النموذج: ' : 'Existing buttons on this model: '}
+              <span className="font-bold">
+                {modelButtons.map((b) => (isAr ? b.label_ar : b.label_en) || b.id).join(' · ')}
+              </span>
+            </div>
+          )}
+          {modelButtons.length === 0 && (
+            <div className="mt-1.5 text-charcoal/60">
+              {isAr
+                ? 'لا توجد أزرار على هذا النموذج بعد. أضف زرًا من مُنشئ النموذج → الأزرار المخصصة.'
+                : 'No buttons on this model yet. Add one from the Builder → Buttons tab.'}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!isWebhook && !isButtonClick && selectedModel && (
         <div className="mt-3 text-sm text-charcoal/60 leading-relaxed">
           <span className="text-charcoal/40">{isAr ? 'سيتم التشغيل' : 'Will fire'} </span>
           <span className="font-bold text-amber-700">{events.find((e) => e.value === triggerEvent)?.label}</span>
