@@ -15,13 +15,14 @@
 import { useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { ChevronDown, Eye, EyeOff, Lock, Pencil } from 'lucide-react';
+import { ChevronDown, Eye, EyeOff, Lock, Pencil, MousePointerClick, Layers } from 'lucide-react';
 import ScopeConditionEditor from './ScopeConditionEditor';
 import type {
   AppModel,
   FieldPermission,
   ModelField,
   ModelPermission,
+  ModelView,
   ProfileModelPermissions,
   ScopeRule,
 } from '@/types';
@@ -58,6 +59,20 @@ const COMPUTED_FIELD_TYPES: ReadonlySet<ModelField['type']> = new Set([
 interface Props {
   modelPermissions: ProfileModelPermissions[];
   onChange: (permissions: ProfileModelPermissions[]) => void;
+  /**
+   * IDs of `ModelView` rows hidden from this profile (deny-list). The
+   * matrix surfaces a per-model "Saved views" section that toggles
+   * entries in this list. Optional — caller passes an empty array if
+   * unset on the profile being edited.
+   */
+  hiddenViewIds?: string[];
+  onHiddenViewIdsChange?: (next: string[]) => void;
+  /**
+   * IDs of `CustomButton` entries hidden from this profile. Same
+   * deny-list semantics as views.
+   */
+  hiddenButtonIds?: string[];
+  onHiddenButtonIdsChange?: (next: string[]) => void;
 }
 
 const DEFAULT_SCOPE: ScopeRule = { mode: 'all' };
@@ -88,10 +103,35 @@ function upsertEntry(
   return [...list, next];
 }
 
-export default function PermissionMatrix({ modelPermissions, onChange }: Props) {
-  const { models, language } = useAppStore();
+export default function PermissionMatrix({
+  modelPermissions,
+  onChange,
+  hiddenViewIds,
+  onHiddenViewIdsChange,
+  hiddenButtonIds,
+  onHiddenButtonIdsChange,
+}: Props) {
+  const { models, views, language } = useAppStore();
   const isAr = language === 'ar';
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const hiddenViewSet = new Set(hiddenViewIds ?? []);
+  const hiddenButtonSet = new Set(hiddenButtonIds ?? []);
+
+  const toggleHiddenView = (viewId: string) => {
+    if (!onHiddenViewIdsChange) return;
+    const next = new Set(hiddenViewSet);
+    if (next.has(viewId)) next.delete(viewId);
+    else next.add(viewId);
+    onHiddenViewIdsChange(Array.from(next));
+  };
+  const toggleHiddenButton = (buttonId: string) => {
+    if (!onHiddenButtonIdsChange) return;
+    const next = new Set(hiddenButtonSet);
+    if (next.has(buttonId)) next.delete(buttonId);
+    else next.add(buttonId);
+    onHiddenButtonIdsChange(Array.from(next));
+  };
 
   const toggleExpanded = (id: string) => {
     setExpanded((prev) => {
@@ -107,6 +147,8 @@ export default function PermissionMatrix({ modelPermissions, onChange }: Props) 
       {models.map((model) => {
         const entry = findEntry(modelPermissions, model.id);
         const isExpanded = expanded.has(model.id);
+        const modelViews = views.filter((v) => v.model_id === model.id);
+        const modelButtons = model.schema.custom_buttons ?? [];
         return (
           <ModelCard
             key={model.id}
@@ -114,6 +156,12 @@ export default function PermissionMatrix({ modelPermissions, onChange }: Props) 
             entry={entry}
             isExpanded={isExpanded}
             isAr={isAr}
+            modelViews={modelViews}
+            hiddenViewSet={hiddenViewSet}
+            onToggleHiddenView={toggleHiddenView}
+            modelButtons={modelButtons}
+            hiddenButtonSet={hiddenButtonSet}
+            onToggleHiddenButton={toggleHiddenButton}
             onToggleExpand={() => toggleExpanded(model.id)}
             onChange={(updater) =>
               onChange(upsertEntry(modelPermissions, model.id, updater))
@@ -135,13 +183,32 @@ interface CardProps {
   entry: ProfileModelPermissions | undefined;
   isExpanded: boolean;
   isAr: boolean;
+  modelViews: ModelView[];
+  hiddenViewSet: Set<string>;
+  onToggleHiddenView: (viewId: string) => void;
+  modelButtons: NonNullable<AppModel['schema']['custom_buttons']>;
+  hiddenButtonSet: Set<string>;
+  onToggleHiddenButton: (buttonId: string) => void;
   onToggleExpand: () => void;
   onChange: (
     updater: (current: ProfileModelPermissions) => ProfileModelPermissions | null,
   ) => void;
 }
 
-function ModelCard({ model, entry, isExpanded, isAr, onToggleExpand, onChange }: CardProps) {
+function ModelCard({
+  model,
+  entry,
+  isExpanded,
+  isAr,
+  modelViews,
+  hiddenViewSet,
+  onToggleHiddenView,
+  modelButtons,
+  hiddenButtonSet,
+  onToggleHiddenButton,
+  onToggleExpand,
+  onChange,
+}: CardProps) {
   const Icon = getIconComponent(model.icon);
   const perms = entry?.permissions ?? [];
   const labels = isAr ? PERM_LABELS_AR : PERM_LABELS_EN;
@@ -312,8 +379,116 @@ function ModelCard({ model, entry, isExpanded, isAr, onToggleExpand, onChange }:
               onChange={setFieldRule}
             />
           </section>
+
+          {/* Saved views — toggle visibility per shared view. The user's
+              own personal views always show in their selector regardless
+              of profile config (see permissions.isViewVisible). */}
+          <section>
+            <h4 className="text-[11px] font-bold uppercase tracking-wider text-charcoal/60 mb-2 inline-flex items-center gap-1.5">
+              <Layers size={11} />
+              {isAr ? 'العروض المحفوظة' : 'Saved views'}
+            </h4>
+            <p className="text-[11px] text-charcoal/50 mb-2">
+              {isAr
+                ? 'افتراضياً كل العروض ظاهرة. أصحاب العرض يرونه دائماً بغض النظر عن هذه القاعدة.'
+                : 'All views are visible by default. Authors always see their own views regardless of this rule.'}
+            </p>
+            <ToggleList
+              items={modelViews.map((v) => ({
+                id: v.id,
+                label: isAr ? v.label_ar : v.label_en,
+                badge: v.is_shared ? (isAr ? 'مشترك' : 'shared') : (isAr ? 'خاص' : 'private'),
+              }))}
+              hiddenSet={hiddenViewSet}
+              onToggle={onToggleHiddenView}
+              isAr={isAr}
+              emptyLabel={isAr ? 'لا توجد عروض' : 'No views yet'}
+            />
+          </section>
+
+          {/* Custom buttons — toggle visibility per button defined on the
+              model. Hidden buttons disappear from the record form / list
+              toolbar for users with this profile. */}
+          <section>
+            <h4 className="text-[11px] font-bold uppercase tracking-wider text-charcoal/60 mb-2 inline-flex items-center gap-1.5">
+              <MousePointerClick size={11} />
+              {isAr ? 'الأزرار المخصصة' : 'Custom buttons'}
+            </h4>
+            <p className="text-[11px] text-charcoal/50 mb-2">
+              {isAr
+                ? 'افتراضياً كل الأزرار ظاهرة. ألغِ التحديد لإخفاء الزر عن هذا الملف.'
+                : 'All buttons are visible by default. Uncheck to hide a button from this profile.'}
+            </p>
+            <ToggleList
+              items={modelButtons.map((b) => ({
+                id: b.id,
+                label: (isAr ? b.label_ar : b.label_en) || b.id,
+                badge: b.enabled === false ? (isAr ? 'معطل' : 'disabled') : null,
+              }))}
+              hiddenSet={hiddenButtonSet}
+              onToggle={onToggleHiddenButton}
+              isAr={isAr}
+              emptyLabel={isAr ? 'لا توجد أزرار مخصصة' : 'No custom buttons'}
+            />
+          </section>
         </div>
       )}
+    </div>
+  );
+}
+
+interface ToggleItem {
+  id: string;
+  label: string;
+  badge?: string | null;
+}
+
+function ToggleList({
+  items,
+  hiddenSet,
+  onToggle,
+  isAr,
+  emptyLabel,
+}: {
+  items: ToggleItem[];
+  hiddenSet: Set<string>;
+  onToggle: (id: string) => void;
+  isAr: boolean;
+  emptyLabel: string;
+}) {
+  if (items.length === 0) {
+    return <p className="text-xs text-charcoal/40 italic">{emptyLabel}</p>;
+  }
+  return (
+    <div className="grid gap-1.5 grid-cols-1 sm:grid-cols-2">
+      {items.map((item) => {
+        const visible = !hiddenSet.has(item.id);
+        return (
+          <label
+            key={item.id}
+            className="flex items-center gap-2 px-2 py-1.5 rounded bg-white/60 border border-sand/20 cursor-pointer"
+          >
+            <input
+              type="checkbox"
+              checked={visible}
+              onChange={() => onToggle(item.id)}
+              className="w-4 h-4 rounded border-sand text-copper focus:ring-copper/30"
+            />
+            <span className="text-xs text-charcoal flex-1 truncate">{item.label}</span>
+            {item.badge && (
+              <span className="text-[9px] text-charcoal/40 italic shrink-0">
+                {item.badge}
+              </span>
+            )}
+            {!visible && (
+              <span className="text-[10px] text-charcoal/50 inline-flex items-center gap-1 shrink-0">
+                <EyeOff size={10} />
+                {isAr ? 'مخفي' : 'hidden'}
+              </span>
+            )}
+          </label>
+        );
+      })}
     </div>
   );
 }

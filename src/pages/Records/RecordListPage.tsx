@@ -24,7 +24,7 @@ import {
   saveAdhocFilters,
   type AdhocFilterState,
 } from '@/lib/adhocFilterUtils';
-import { useModelPermissions, useApplyViewScope } from '@/hooks/usePermission';
+import { useApplyViewScope, useApplyVisibleViews, useModelPermissions } from '@/hooks/usePermission';
 import type { AppRecord, ModelView } from '@/types';
 
 // Stable empty array reference. Returned when a model has no records yet
@@ -82,11 +82,25 @@ export default function RecordListPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingView, setEditingView] = useState<ModelView | null>(null);
 
-  const modelViews = useMemo(
+  const rawModelViews = useMemo(
     () => (model ? views.filter((v) => v.model_id === model.id && (v.user_id === currentUserId || v.is_shared)) : []),
     [views, model, currentUserId],
   );
+  // Apply per-profile view-visibility (deny-list). Author always sees their
+  // own views; admins see everything; otherwise filter by hidden_view_ids.
+  const modelViews = useApplyVisibleViews(rawModelViews);
   const activeView = modelViews.find((v) => v.id === activeViewId) ?? null;
+
+  // If the previously-active view becomes hidden after a permission change,
+  // reset to the Default view so the table doesn't render against a view
+  // the user can no longer pick. activeViewId still resolves to "no active
+  // view" via the find above, but cleaning up the state keeps subsequent
+  // localStorage writes consistent.
+  useEffect(() => {
+    if (activeViewId && !modelViews.find((v) => v.id === activeViewId)) {
+      setActiveViewId(null);
+    }
+  }, [activeViewId, modelViews]);
   const lastUsedKey = model && currentUserId ? `wassell_view_last_${model.id}_${currentUserId}` : null;
 
   // On mount / model switch: pick last-used view, then user's default, else "Default".

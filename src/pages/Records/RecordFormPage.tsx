@@ -31,6 +31,7 @@ import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
 import CallHistoryPanel from './components/CallHistoryPanel';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
+import { isButtonVisible } from '@/lib/permissions';
 import type { ModelView } from '@/types';
 
 export default function RecordFormPage() {
@@ -46,6 +47,8 @@ export default function RecordFormPage() {
     addToast,
     views,
     currentUserId,
+    users,
+    profiles,
     recordNavContext,
   } = useAppStore();
   const isAr = language === 'ar';
@@ -585,10 +588,13 @@ export default function RecordFormPage() {
             </Button>
           )}
           {/* User-configured custom buttons attached to this model. Filtered
-           *  to those that opted into the record_form location and aren't
-           *  disabled. Hidden on /new (no existingRecord to act on). */}
+           *  to those that opted into the record_form location, aren't
+           *  disabled, AND aren't hidden by the active profile's
+           *  hidden_button_ids deny-list. Hidden on /new (no existingRecord
+           *  to act on). */}
           {existingRecord && (model.schema.custom_buttons ?? [])
             .filter((b: CustomButton) => b.enabled !== false && b.locations.includes('record_form'))
+            .filter((b: CustomButton) => isButtonVisible(currentUserId, users, profiles, b.id))
             .map((btn: CustomButton) => {
               const Icon = resolveLucideIcon(btn.icon);
               const running = runningButtonId === btn.id;

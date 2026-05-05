@@ -4,6 +4,15 @@
 **Last updated:** 2026-05-05
 **Related PRDs:** model-builder.md, record-management.md, workflow-automation.md
 
+> **2026-05-05 (2nd update):** PermissionMatrix gained two more sections per
+> model — **Saved views** and **Custom buttons** — both as deny-list toggles
+> on the profile (`hidden_view_ids` / `hidden_button_ids`). Default is
+> visible; admins explicitly hide. View visibility additionally exempts the
+> author of a view (you can't hide a user's personal view from themselves).
+> Wired into `ViewSelector` (via `RecordListPage`'s filter) and the custom-
+> button render path in `RecordFormPage`. When an active view becomes hidden
+> after a permission change, the list page resets to the Default view.
+
 > **2026-05-05 update:** Profile permissions now have THREE composable layers
 > per model — actions (the existing 6-toggle matrix), **record scopes** (which
 > records this profile can see/edit, expressed as filter rules), and **field
@@ -61,6 +70,7 @@ Real-estate offices have clear hierarchies (researchers, salespeople, managers, 
 - **Record stamping:** On first `saveRecord`, `created_by_user_id` is set to `currentUserId`. Preserved across edits — it's "who created" not "who last touched." Records saved without an active session (offline / pre-auth) stay null and are treated as "no known creator" by scope filters.
 - **Form integration:** `RecordFormPage` uses `useCanViewRecord` to gate access entirely (failing → render the same 404 state as a missing record so the URL never confirms existence) and `useCanEditRecord` to flip into read-only mode (Save button hidden, fields rendered as `DynamicCell` inside a disabled-input shell). `SectionBlock` accepts `formReadOnly` + `getFieldPermission`; hidden fields are removed from layout, readonly fields render as DynamicCell inside the same disabled shell the mirror system already uses for non-editable mirror fields.
 - **Lookup pickers respect view-scope.** `LookupCombobox` filters its candidate list through `useApplyViewScope`. Already-selected records resolve from the unfiltered list so a previously-saved selection still displays after view-scope tightens — only the dropdown's *candidate* list is gated.
+- **Saved views + custom buttons** are filtered per profile via the deny-lists `hidden_view_ids` and `hidden_button_ids`. Defaults are visible; admins explicitly hide. The view filter exempts the author of each view (`isViewVisible` returns true when `view.user_id === currentUserId`) so a personal saved view is never hidden from its owner. When the active view in `RecordListPage` becomes hidden after a permission change, the page resets to the Default view automatically. Custom buttons on the record form check `isButtonVisible` before rendering.
 - **Route guards:** `<RequireAdmin>` wraps admin-only routes (Builder, Workflows, Dashboards, Translations, Profiles, Roles, Users settings). Non-admins are redirected to `/` with an access-denied toast.
 - **Sidebar filter:** models a user lacks `view` on are hidden from the nav; groups with zero visible models are hidden too.
 - **Workflow assignment via role field:** a workflow action can say "assign this record to the user who holds role *Regional Manager* where *Region = record.region*". If the referenced role is later deleted, the Workflow editor surfaces a red warning next to the role picker.

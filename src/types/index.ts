@@ -1260,6 +1260,19 @@ export interface Profile {
   is_system: boolean;
   // Semantic: gates admin-only routes (Builder, Workflows, Dashboards, Settings/*).
   is_admin: boolean;
+  /**
+   * IDs of `ModelView` rows hidden from this profile. Deny-list shape (not
+   * an allow-list) so adding a new shared view is visible by default and
+   * doesn't require touching every profile. A user's OWN views never appear
+   * here at evaluation time — the author always sees their own views.
+   */
+  hidden_view_ids?: string[];
+  /**
+   * IDs of `CustomButton` entries hidden from this profile. Same deny-list
+   * shape as `hidden_view_ids`. Buttons live on `model.schema.custom_buttons`;
+   * the id matches the `CustomButton.id` field.
+   */
+  hidden_button_ids?: string[];
   created_at: string;
   updated_at: string;
 }

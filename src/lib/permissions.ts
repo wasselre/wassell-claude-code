@@ -4,6 +4,7 @@ import type {
   FieldPermission,
   ModelField,
   ModelPermission,
+  ModelView,
   Profile,
   ProfileModelPermissions,
   Role,
@@ -271,4 +272,75 @@ export function getFieldPermissionByIds(
   const field = modelFieldsFor(model).find((f) => f.id === fieldId);
   if (!field) return 'hidden';
   return getFieldPermission(currentUserId, users, profiles, model.id, field);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Saved-view + custom-button visibility.
+//
+// Both use a deny-list shape on the profile (`hidden_view_ids` /
+// `hidden_button_ids`). Default is visible; adding a new shared view
+// or button is visible to everyone until an admin explicitly hides it
+// for a profile. Admin profiles always see everything. For views, the
+// author always sees their own views (we don't want a profile rule to
+// hide a user's personal saved view from themselves).
+// ────────────────────────────────────────────────────────────────────
+
+/**
+ * Whether the current user can see and select a specific saved view.
+ * The author of a view always sees their own views regardless of profile
+ * config — hiding personal views from their author would be confusing
+ * and the user could just save a fresh copy anyway. Profile-level rules
+ * only meaningfully affect SHARED views.
+ */
+export function isViewVisible(
+  currentUserId: string | null,
+  users: User[],
+  profiles: Profile[],
+  view: ModelView,
+): boolean {
+  if (currentUserId === null) return true;
+  // Author always sees their own views.
+  if (view.user_id === currentUserId) return true;
+  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  if (!resolved) return false;
+  if (resolved.profile.is_admin) return true;
+  const hidden = resolved.profile.hidden_view_ids ?? [];
+  return !hidden.includes(view.id);
+}
+
+/**
+ * Filter a list of views to those the current user can see. Used by the
+ * sidebar `ViewSelector` and any other surface that lists saved views.
+ */
+export function applyVisibleViews(
+  currentUserId: string | null,
+  users: User[],
+  profiles: Profile[],
+  views: ModelView[],
+): ModelView[] {
+  if (currentUserId === null) return views;
+  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  if (!resolved) return [];
+  if (resolved.profile.is_admin) return views;
+  const hidden = new Set(resolved.profile.hidden_view_ids ?? []);
+  return views.filter((v) => v.user_id === currentUserId || !hidden.has(v.id));
+}
+
+/**
+ * Whether the current user can see and click a specific custom button.
+ * Buttons are always model-wide (no scope/field-style nuance) — either
+ * the profile is allowed to invoke the button or it isn't.
+ */
+export function isButtonVisible(
+  currentUserId: string | null,
+  users: User[],
+  profiles: Profile[],
+  buttonId: string,
+): boolean {
+  if (currentUserId === null) return true;
+  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  if (!resolved) return false;
+  if (resolved.profile.is_admin) return true;
+  const hidden = resolved.profile.hidden_button_ids ?? [];
+  return !hidden.includes(buttonId);
 }

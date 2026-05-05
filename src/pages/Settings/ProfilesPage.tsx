@@ -124,6 +124,8 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
 
   const [name, setName] = useState(isAr ? profile.label_ar : profile.label_en);
   const [perms, setPerms] = useState<ProfileModelPermissions[]>([...profile.model_permissions]);
+  const [hiddenViewIds, setHiddenViewIds] = useState<string[]>([...(profile.hidden_view_ids ?? [])]);
+  const [hiddenButtonIds, setHiddenButtonIds] = useState<string[]>([...(profile.hidden_button_ids ?? [])]);
   const [showDelete, setShowDelete] = useState(false);
 
   const userCount = users.filter((u) => u.profile_id === profile.id).length;
@@ -131,7 +133,16 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
 
   const handleSave = () => {
     const labels = { label_ar: isAr ? name : profile.label_ar, label_en: isAr ? profile.label_en : name };
-    saveProfile({ ...profile, ...labels, model_permissions: perms, updated_at: new Date().toISOString() });
+    saveProfile({
+      ...profile,
+      ...labels,
+      model_permissions: perms,
+      // Persist deny-lists only when non-empty so unaffected profiles keep
+      // a clean shape (matches the field_permissions / scope conventions).
+      hidden_view_ids: hiddenViewIds.length > 0 ? hiddenViewIds : undefined,
+      hidden_button_ids: hiddenButtonIds.length > 0 ? hiddenButtonIds : undefined,
+      updated_at: new Date().toISOString(),
+    });
     addToast(t('toast.saved'), 'success');
   };
 
@@ -193,7 +204,14 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
       {/* Permission Matrix */}
       <div className="card p-6">
         <h2 className="font-bold text-chocolate mb-4">{isAr ? 'صلاحيات النماذج' : 'Model Permissions'}</h2>
-        <PermissionMatrix modelPermissions={perms} onChange={setPerms} />
+        <PermissionMatrix
+          modelPermissions={perms}
+          onChange={setPerms}
+          hiddenViewIds={hiddenViewIds}
+          onHiddenViewIdsChange={setHiddenViewIds}
+          hiddenButtonIds={hiddenButtonIds}
+          onHiddenButtonIdsChange={setHiddenButtonIds}
+        />
       </div>
 
       {/* Delete confirmation */}

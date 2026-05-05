@@ -2,12 +2,14 @@ import { useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import {
   applyViewScopeToRecords,
+  applyVisibleViews,
   canEditRecord,
   canViewRecord,
   getFieldPermission,
   getModelPermissions,
   hasPermission,
   isAdmin,
+  isButtonVisible,
 } from '@/lib/permissions';
 import type {
   AppModel,
@@ -15,6 +17,7 @@ import type {
   FieldPermission,
   ModelField,
   ModelPermission,
+  ModelView,
 } from '@/types';
 
 export function usePermission(modelId: string, permission: ModelPermission): boolean {
@@ -95,4 +98,23 @@ export function useApplyViewScope(
     if (!model) return records;
     return applyViewScopeToRecords(currentUserId, users, profiles, roles, model, records);
   }, [currentUserId, users, profiles, roles, model, records]);
+}
+
+/**
+ * Filter a list of saved views to those the current user can see. Used
+ * by ViewSelector + RecordListPage. The author of a view always sees
+ * their own; profile rules only affect shared views from other authors.
+ */
+export function useApplyVisibleViews(views: ModelView[]): ModelView[] {
+  const { currentUserId, users, profiles } = useAppStore();
+  return useMemo(
+    () => applyVisibleViews(currentUserId, users, profiles, views),
+    [currentUserId, users, profiles, views],
+  );
+}
+
+/** Whether the current user can see / click a specific custom button. */
+export function useIsButtonVisible(buttonId: string): boolean {
+  const { currentUserId, users, profiles } = useAppStore();
+  return isButtonVisible(currentUserId, users, profiles, buttonId);
 }
