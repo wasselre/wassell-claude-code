@@ -74,10 +74,14 @@ function resolveSource(source: ScopeValueSource, ctx: ScopeUserContext): unknown
 }
 
 /**
- * Evaluate one operator. Mirrors `dashboardUtils.evaluateCondition` so the
- * two filter pipelines stay semantically aligned. `is_empty` /
+ * Evaluate one operator. Diverges from `dashboardUtils.evaluateCondition` in
+ * one important place: when the record value is an array (multiselect,
+ * lookup with `is_multi`, section_selector, multi-assignee, …), `equals`
+ * means "the picked value is IN the array" rather than scalar equality —
+ * otherwise no multiselect rule could ever match. `not_equals` is the
+ * inverse. `contains` walks the array element-wise too. `is_empty` /
  * `is_not_empty` ignore the source value entirely; everything else returns
- * false the moment the source is unresolved.
+ * false the moment the source is unresolved (closes user-context rules).
  */
 function evaluateOperator(
   recordValue: unknown,
@@ -85,22 +89,36 @@ function evaluateOperator(
   rhs: unknown,
 ): boolean {
   if (operator === 'is_empty') {
-    return recordValue === undefined || recordValue === null || recordValue === '';
+    if (recordValue === undefined || recordValue === null || recordValue === '') return true;
+    if (Array.isArray(recordValue)) return recordValue.length === 0;
+    return false;
   }
   if (operator === 'is_not_empty') {
-    return recordValue !== undefined && recordValue !== null && recordValue !== '';
+    if (recordValue === undefined || recordValue === null || recordValue === '') return false;
+    if (Array.isArray(recordValue)) return recordValue.length > 0;
+    return true;
   }
   if (rhs === UNRESOLVED) return false;
+  const recordIsArray = Array.isArray(recordValue);
   switch (operator) {
     case 'equals':
-      // `==` (not `===`) so number→string coercion matches dashboard behavior.
+      // Array semantics: the picked literal must be one of the elements.
+      // Scalar semantics: `==` (not `===`) so number→string coercion still
+      // matches the dashboard pipeline's behavior.
+      if (recordIsArray) return (recordValue as unknown[]).some((v) => v == rhs);
       return recordValue == rhs;
     case 'not_equals':
+      if (recordIsArray) return !(recordValue as unknown[]).some((v) => v == rhs);
       return recordValue != rhs;
-    case 'contains':
-      return String(recordValue ?? '')
-        .toLowerCase()
-        .includes(String(rhs ?? '').toLowerCase());
+    case 'contains': {
+      const needle = String(rhs ?? '').toLowerCase();
+      if (recordIsArray) {
+        return (recordValue as unknown[]).some((v) =>
+          String(v ?? '').toLowerCase().includes(needle),
+        );
+      }
+      return String(recordValue ?? '').toLowerCase().includes(needle);
+    }
     case 'greater_than':
       return Number(recordValue) > Number(rhs);
     case 'less_than':

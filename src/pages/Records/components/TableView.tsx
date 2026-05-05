@@ -9,6 +9,7 @@ import LookupCombobox from './LookupCombobox';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
+import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import type { AppModel, AppRecord, ModelField, ModelView } from '@/types';
 
 interface TableViewProps {
@@ -29,8 +30,14 @@ interface TableViewProps {
 
 export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll }: TableViewProps) {
   const { t } = useTranslation();
-  const { language, records: allRecords, saveRecord, addToast, models } = useAppStore();
+  const { language, records: allRecords, saveRecord, addToast, models, currentUserId, users, profiles, roles } = useAppStore();
   const isAr = language === 'ar';
+  // Edit eligibility per row (canEditRecord = model.edit perm AND view_scope AND
+  // edit_scope). Per-field permission for each cell. Both bypass for admins.
+  const canEditFor = (record: AppRecord): boolean =>
+    canEditRecord(currentUserId, users, profiles, roles, model, record);
+  const fieldPermFor = (field: ModelField) =>
+    getFieldPermission(currentUserId, users, profiles, model.id, field);
 
   // Build column list from the expanded field set (local + virtual mirrored children).
   // With view: use view.field_ids in order (skipping any fields removed from the model).
@@ -80,6 +87,13 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
       if (!columns.find((c) => c.id === ef.id)) columns.push(ef);
     }
   }
+  // Drop columns the current profile is not allowed to see. Only filter
+  // local (non-mirrored) fields — mirrored children belong to a different
+  // model with its own permission rules.
+  columns = columns.filter((ef) => {
+    if (ef.kind !== 'local') return true;
+    return fieldPermFor(ef.field) !== 'hidden';
+  });
 
   const toggleSort = (fieldName: string) => {
     if (sortField === fieldName) {
@@ -112,6 +126,14 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
   });
 
   const startEdit = (record: AppRecord) => {
+    // Inline-edit is gated by the same edit-scope check the form page uses.
+    // When the user can't edit this record (no edit perm, or the row fails
+    // edit_scope), fall through to opening the form so they at least get a
+    // read-only view instead of a click that silently does nothing.
+    if (!canEditFor(record)) {
+      onRowClick(record);
+      return;
+    }
     setEditingId(record.id);
     setEditData({ ...record.data });
   };
@@ -275,8 +297,12 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                     : readExpandedValue(ef, record, allRecords, model);
                   const effectiveData = ef.kind === 'local' ? (isEditing ? editData : record.data) : record.data;
                   // Inline-edit is disabled for virtual mirrored columns (wiring edits
-                  // back to the source record from a table row is v2 work).
-                  const canInlineEdit = ef.kind === 'local' && field.type !== 'mirror';
+                  // back to the source record from a table row is v2 work) AND for
+                  // fields the profile has marked read-only — the cell renders as
+                  // DynamicCell instead so the value is visible but not writable.
+                  const fieldPerm = ef.kind === 'local' ? fieldPermFor(field) : 'editable';
+                  const canInlineEdit =
+                    ef.kind === 'local' && field.type !== 'mirror' && fieldPerm === 'editable';
                   return (
                     <td key={ef.id}>
                       {isEditing && canInlineEdit ? (
@@ -324,12 +350,14 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                         >
                           <Pencil size={14} />
                         </button>
-                        <button
-                          onClick={() => onDelete(record)}
-                          className="p-1.5 rounded-lg hover:bg-red-50 text-charcoal/40 hover:text-red-500 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        {canEditFor(record) && (
+                          <button
+                            onClick={() => onDelete(record)}
+                            className="p-1.5 rounded-lg hover:bg-red-50 text-charcoal/40 hover:text-red-500 transition-colors"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
