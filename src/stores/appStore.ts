@@ -1680,7 +1680,19 @@ export const useAppStore = create<AppState>((set, get) => ({
         enrichedData = { ...enrichedData, ...formulaValues };
       }
     }
-    const finalRecord: AppRecord = { ...record, data: enrichedData };
+    // Stamp `created_by_user_id` on first save. Preserved across edits so the
+    // value reflects who CREATED the record, not who last touched it. Records
+    // saved without an active session (offline / pre-auth) stay null and are
+    // treated as "no known creator" by scope filters that reference `created_by`.
+    const stampedCreatedBy =
+      isNew && record.created_by_user_id == null && state.currentUserId
+        ? state.currentUserId
+        : record.created_by_user_id ?? previousRecord?.created_by_user_id ?? null;
+    const finalRecord: AppRecord = {
+      ...record,
+      data: enrichedData,
+      created_by_user_id: stampedCreatedBy,
+    };
     const modelChanged = !!enrichedModel && enrichedModel !== origModel;
 
     set((s) => {

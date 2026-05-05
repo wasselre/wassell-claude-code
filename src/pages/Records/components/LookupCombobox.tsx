@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
+import { useApplyViewScope } from '@/hooks/usePermission';
 import { Search, X, Plus } from 'lucide-react';
 
 interface LookupComboboxProps {
@@ -27,7 +28,14 @@ export default function LookupCombobox({
   const ref = useRef<HTMLDivElement>(null);
 
   const linkedModel = models.find((m) => m.id === lookupModelId);
-  const linkedRecords = records[lookupModelId] ?? [];
+  // Pickers respect the user's view scope on the target model — admins see
+  // every record, but a Sales rep with a "records I created" view scope on
+  // Clients only sees their clients in the picker. Records selected before
+  // the scope tightened still display correctly because the resolution by
+  // id below reads from the unfiltered store; the dropdown list is what's
+  // gated.
+  const allLinkedRecords = records[lookupModelId] ?? [];
+  const linkedRecords = useApplyViewScope(linkedModel, allLinkedRecords);
 
   // Resolve a record's display label. Primary source is the configured display
   // field; if that's empty (record was created before the field existed, or the
@@ -58,7 +66,11 @@ export default function LookupCombobox({
     return typeof value === 'string' && value ? [value] : [];
   }, [value, isMulti]);
 
-  const singleSelectedRecord = !isMulti ? linkedRecords.find((r) => r.id === selectedIds[0]) : undefined;
+  // Resolve the currently-selected record from the UNFILTERED list so a
+  // previously-saved selection still displays after view-scope tightens.
+  // Only the dropdown's candidate list is scoped — once an id is picked,
+  // it stays bound until the user changes it.
+  const singleSelectedRecord = !isMulti ? allLinkedRecords.find((r) => r.id === selectedIds[0]) : undefined;
   const singleDisplayValue = singleSelectedRecord ? labelFor(singleSelectedRecord) : '';
 
   const limit = maxRecords && maxRecords > 0 ? maxRecords : 20;
@@ -130,8 +142,10 @@ export default function LookupCombobox({
 
   // ── Multi-select mode ──
   if (isMulti) {
+    // Resolve from the unfiltered list so existing selections survive a
+    // view-scope tightening (same rationale as singleSelectedRecord above).
     const selectedRecords = selectedIds
-      .map((id) => linkedRecords.find((r) => r.id === id))
+      .map((id) => allLinkedRecords.find((r) => r.id === id))
       .filter((r): r is NonNullable<typeof r> => !!r);
     return (
       <div ref={ref} className="relative">

@@ -58,9 +58,21 @@ CREATE TABLE IF NOT EXISTS records (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   model_id UUID NOT NULL REFERENCES models(id) ON DELETE CASCADE,
   data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Set on first save when a user is signed in; null for legacy rows + records
+  -- created without an active session. Read by per-profile view/edit scopes that
+  -- reference the synthetic `created_by` target. Nullable + ON DELETE SET NULL
+  -- so deleting a user does not cascade-delete every record they ever touched
+  -- (the records belong to the workspace, not the user).
+  created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Existing installs: backfill the column. The FK is intentionally added in
+-- the same statement so re-running this script is idempotent. Old rows
+-- stay null and are treated as "no known creator" by scope filters.
+ALTER TABLE records
+  ADD COLUMN IF NOT EXISTS created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
 
 -- Folders for organizing workflows in the editor list. Mirrors model_groups.
 CREATE TABLE IF NOT EXISTS workflow_groups (

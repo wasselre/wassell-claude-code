@@ -7,7 +7,7 @@ import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorField } from '@/lib/sectionMirrorFieldResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
 import SectionMirrorComparison from './SectionMirrorComparison';
-import type { AppModel, ModelField, ModelSection, ModelView } from '@/types';
+import type { AppModel, FieldPermission, ModelField, ModelSection, ModelView } from '@/types';
 
 interface SectionBlockProps {
   section: ModelSection;
@@ -27,6 +27,21 @@ interface SectionBlockProps {
   activeResearchView?: ModelView | null;
   /** Handler for switching the active research view. */
   onSelectResearchView?: (viewId: string | null) => void;
+  /**
+   * Whole-form read-only override. Set when the user lacks the model `edit`
+   * permission, the record fails the profile's edit-scope, or `useCanEditRecord`
+   * returns false. Forces every field on the section to render as DynamicCell
+   * (display-only) regardless of its individual `field_permissions` entry.
+   * Defaults to false (no override).
+   */
+  formReadOnly?: boolean;
+  /**
+   * Per-field permission resolver. Called once per native field at render
+   * time. Mirrored / inline-mirror children are NOT routed through this —
+   * they belong to a different model and have their own editable/sync rules
+   * that compose with mirror semantics. Defaults to `() => 'editable'`.
+   */
+  getFieldPermission?: (field: ModelField) => FieldPermission;
 }
 
 function widthClass(width: ModelField['width']): string {
@@ -67,6 +82,8 @@ export default function SectionBlock({
   onMirrorFieldChange,
   activeResearchView,
   onSelectResearchView,
+  formReadOnly,
+  getFieldPermission,
 }: SectionBlockProps) {
   const { language, records, models } = useAppStore();
   const isAr = language === 'ar';
@@ -204,14 +221,37 @@ export default function SectionBlock({
   const renderFieldNodes = (fieldsToRender: ModelField[]) =>
     fieldsToRender.flatMap((field) => {
           if (field.type !== 'section_mirror') {
+            // Resolve the effective per-field rule. `hidden` removes the field
+            // from layout entirely; `readonly` (or whole-form read-only) renders
+            // a display-only DynamicCell wrapped in the same disabled-input shell
+            // the mirror system uses for non-editable mirror fields.
+            const fieldPerm = getFieldPermission ? getFieldPermission(field) : 'editable';
+            if (fieldPerm === 'hidden') return [];
+            const renderReadOnly = !!formReadOnly || fieldPerm === 'readonly';
             return [(
               <div key={field.id} className={widthClass(field.width)}>
-                <DynamicField
-                  field={field}
-                  value={formData[field.name]}
-                  onChange={(val) => onChange(field.name, val)}
-                  recordData={formData}
-                />
+                {renderReadOnly ? (
+                  <div>
+                    <label className="text-[11px] font-bold text-charcoal/60 mb-1 block">
+                      {isAr ? field.label_ar : field.label_en}
+                    </label>
+                    <div className="form-input bg-sand/5 cursor-default opacity-80 [&_*]:pointer-events-none">
+                      <DynamicCell
+                        field={field}
+                        value={formData[field.name]}
+                        allRecords={records}
+                        recordData={formData}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <DynamicField
+                    field={field}
+                    value={formData[field.name]}
+                    onChange={(val) => onChange(field.name, val)}
+                    recordData={formData}
+                  />
+                )}
               </div>
             )];
           }

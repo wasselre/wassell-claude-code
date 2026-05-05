@@ -1,8 +1,22 @@
 # PRD: Access Control (Users, Roles, Profiles)
 
 **Status:** Live
-**Last updated:** 2026-04-22
+**Last updated:** 2026-05-05
 **Related PRDs:** model-builder.md, record-management.md, workflow-automation.md
+
+> **2026-05-05 update:** Profile permissions now have THREE composable layers
+> per model — actions (the existing 6-toggle matrix), **record scopes** (which
+> records this profile can see/edit, expressed as filter rules), and **field
+> rules** (per-field hidden / read-only / editable). The PermissionMatrix UI
+> was rewritten as a per-model expandable card surfacing all three layers.
+> Records gained a `created_by_user_id` column (set on first save) so admins
+> can express "records I created" without forcing every model to expose a
+> creator field. Filter rules can reference user-context value sources —
+> `current_user` (the signed-in user's id) and `role_field` (a value on the
+> user's role assignment) — so a single rule like "Region = my Region"
+> applies per-user without per-user customization. Scope and field-rule
+> enforcement is currently APP-LAYER only; RLS remains `USING (true)` and is
+> the next milestone (see "Open questions / known limitations").
 
 > **2026-04-22 update:** Sign-in identity is now bound to the in-app `users`
 > row automatically. When a user signs in through Supabase Auth, the store's
@@ -25,8 +39,12 @@
 ## What it is (in plain English)
 Three layers decide who can see and do what:
 1. **Users** — the actual people logging into the app.
-2. **Profiles** — the *permission bundle*. Each profile defines, per model, which of six actions (View, Create, Edit, Delete, Import, Export) the profile's users can perform. One profile also carries an `is_admin` flag that gates the admin-only areas of the app (Builder, Workflows, Dashboards, Settings).
-3. **Roles** — a *relationship with structured data*. A role is itself a mini-schema: it has its own custom fields (e.g. "Region" dropdown, "Task Count" number, "Manager" lookup). Users hold zero or more roles, and each role-assignment has its own field values. Workflows use these role fields to find the right assignee at run-time (e.g. "assign to the Sales Rep where Region = record.region").
+2. **Profiles** — the *permission bundle*. Per model, a profile expresses three things:
+   - **Actions** — six toggles (View, Create, Edit, Delete, Import, Export) gating the model-wide capability.
+   - **Scopes** — *which records* the profile can see (`view_scope`) and edit (`edit_scope`). Each is either `all` or a list of filter conditions AND'd together. Conditions can target either a model field or the synthetic `created_by_user_id` column, and compare against a literal, the current signed-in user, or a value from the user's role assignment. Edit-scope is always narrowed by view-scope at evaluation — a record the user can't see is never editable.
+   - **Field rules** — per-field overrides (`hidden` / `readonly` / `editable`). Computed field types (formula, auto_id, mirror, section_mirror) are forced to `readonly` regardless of config.
+   One profile also carries an `is_admin` flag that gates the admin-only areas of the app (Builder, Workflows, Dashboards, Settings) AND bypasses scopes + field rules entirely.
+3. **Roles** — a *relationship with structured data*. A role is itself a mini-schema: it has its own custom fields (e.g. "Region" dropdown, "Task Count" number, "Manager" lookup). Users hold zero or more roles, and each role-assignment has its own field values. Workflows use these role fields to find the right assignee at run-time (e.g. "assign to the Sales Rep where Region = record.region"). Profile scopes use them in the inverse direction (e.g. "show records where record.region = my role's Region").
 
 ## Why it exists
 Real-estate offices have clear hierarchies (researchers, salespeople, managers, owners) and territorial splits (by city or neighborhood). Rather than hard-coding roles, admins define custom roles with their own fields, and bind profile-based permissions per model. The admin flag keeps the power-user areas of the app out of the hands of daily sales staff.
@@ -38,7 +56,11 @@ Real-estate offices have clear hierarchies (researchers, salespeople, managers, 
 - **Users** (`/settings/users`) — list, create, edit, delete users. Each user has email, bilingual name, an `is_active` flag, a single profile, and zero or more role assignments. Role checkboxes AND their field values are edited together in one modal.
 - **Profiles** (`/settings/profiles`, `/settings/profiles/:profileId`) — manage the 6-action × N-models permission matrix. Two seeded profiles: `Administrator` (full access, `is_admin: true`, `is_system: true`) and `Sales` (client-facing models only). The `is_admin` and `is_system` flags are displayed as badges — they are read-only in the UI.
 - **Roles** (`/settings/roles`, `/settings/roles/:roleId`) — define role schemas with **sections + all 21 field types** (text, textarea, number, email, phone, date, datetime, currency, url, checkbox, dropdown, multiselect, lookup, mirror, section_mirror, section_selector, assignee, notes, range, auto_id, formula). Same builder UX as models: drag-and-drop sections, per-field options (required, width, show-in-table, API name, color-coded dropdown options, lookup source + display field, formula expressions, etc.), plus the field template catalog. The Members tab is a read-only directory showing who holds the role and the current values of their role-fields. Field types that don't operate on records (auto_id, mirror, section_mirror, assignee, section_selector) render a disabled "not applicable in role context" placeholder in the user editor.
-- **Permission checks:** `usePermission(modelId, action)` and `useIsAdmin()` hooks. Pure functions live in `src/lib/permissions.ts`.
+- **Permission checks:** `usePermission(modelId, action)` and `useIsAdmin()` for the action layer; `useCanViewRecord(model, record)` and `useCanEditRecord(model, record)` for record-level checks composing view_scope + edit_scope; `useFieldPermission(modelId, field)` (single-field) and `useFieldPermissionResolver(modelId)` (callback for parent components walking field lists) for field rules; `useApplyViewScope(model, records)` to filter a list down to visible records. Pure functions live in `src/lib/permissions.ts`; the scope condition evaluator lives in `src/lib/scopeFilters.ts`.
+- **Scope evaluation:** A condition AND'd into a filter compares the record's value (`record.data[field.name]` or `record.created_by_user_id` for the synthetic `created_by` target) against the resolved source. Sources: `literal` (hardcoded value), `current_user` (signed-in user's id, used with `created_by` or `assignee` targets), `role_field` (`user.role_assignments[role_id].field_values[field_slug]`). When a user-context source can't resolve (user holds no such role, no value set), the condition fails closed — no record matches. Empty conditions arrays pass everything (so a half-built rule doesn't lock the user out mid-edit). Operators mirror dashboard filters: `equals` / `not_equals` / `contains` / `greater_than` / `less_than` / `is_empty` / `is_not_empty`.
+- **Record stamping:** On first `saveRecord`, `created_by_user_id` is set to `currentUserId`. Preserved across edits — it's "who created" not "who last touched." Records saved without an active session (offline / pre-auth) stay null and are treated as "no known creator" by scope filters.
+- **Form integration:** `RecordFormPage` uses `useCanViewRecord` to gate access entirely (failing → render the same 404 state as a missing record so the URL never confirms existence) and `useCanEditRecord` to flip into read-only mode (Save button hidden, fields rendered as `DynamicCell` inside a disabled-input shell). `SectionBlock` accepts `formReadOnly` + `getFieldPermission`; hidden fields are removed from layout, readonly fields render as DynamicCell inside the same disabled shell the mirror system already uses for non-editable mirror fields.
+- **Lookup pickers respect view-scope.** `LookupCombobox` filters its candidate list through `useApplyViewScope`. Already-selected records resolve from the unfiltered list so a previously-saved selection still displays after view-scope tightens — only the dropdown's *candidate* list is gated.
 - **Route guards:** `<RequireAdmin>` wraps admin-only routes (Builder, Workflows, Dashboards, Translations, Profiles, Roles, Users settings). Non-admins are redirected to `/` with an access-denied toast.
 - **Sidebar filter:** models a user lacks `view` on are hidden from the nav; groups with zero visible models are hidden too.
 - **Workflow assignment via role field:** a workflow action can say "assign this record to the user who holds role *Regional Manager* where *Region = record.region*". If the referenced role is later deleted, the Workflow editor surfaces a red warning next to the role picker.
@@ -85,7 +107,9 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | `src/lib/auth.ts` | Supabase Auth wrapper — `signIn`, `signOut`, `getSession`, `onAuthChange`, `sendPasswordResetEmail`, `updatePassword`, `inviteUser` (magic-link invite via `signInWithOtp`) |
 | `src/pages/Login.tsx`, `src/pages/auth/ResetPassword.tsx` | Sign-in page and password-recovery landing page |
 | `src/pages/Settings/ProfilesPage.tsx` | Profile list and editor; system badge; delete guard UI |
-| `src/pages/Settings/components/PermissionMatrix.tsx` | Model × 6-action toggle grid |
+| `src/pages/Settings/components/PermissionMatrix.tsx` | Per-model expandable card: 6 action toggles + view/edit scope editors + per-field hidden/readonly/editable rules |
+| `src/pages/Settings/components/ScopeConditionEditor.tsx` | Filter-condition row builder used inside both the view-scope and edit-scope sections of `PermissionMatrix` — picks target (model field or `created_by`), operator, and value source (literal / current user / role field) |
+| `src/lib/scopeFilters.ts` | Scope evaluator: resolves user-context value sources, walks conditions, returns boolean per record. Evaluator + `applyScope` filter helper |
 | `src/pages/Settings/RolesPage.tsx` | Role list + editor. Wraps each role as an `AppModel`-shaped object and delegates to `SectionManager` with `ownerKind='role'` for the full builder UX. Read-only Members table supports all field-type displays. |
 | `src/pages/Builder/components/SectionManager.tsx` | Shared builder (used by both models and roles). `ownerKind` prop gates rename propagation. |
 | `src/pages/Builder/components/FieldEditor.tsx` | Shared field editor. `ownerKind='role'` skips `renameField` propagation (role-field slugs aren't referenced in records/workflows/views). |
@@ -103,11 +127,13 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | `src/stores/appStore.ts` | `users`, `profiles`, `roles` state; invariant enforcement; migration/heal |
 
 ## Open questions / known limitations
+- **Enforcement is APP-LAYER only.** `is_admin` bypass, action checks, view/edit scopes, field rules — all evaluated in React. Postgres RLS on every business table is still `USING (true) WITH CHECK (true)` for authenticated users. A user who bypasses the React layer (DevTools, direct Supabase query with the anon key) can read and write any record in the workspace. The next milestone is to migrate scope rules into RLS policies — the condition shape in `scopeFilters.ts` was designed to translate 1:1 to SQL. **Until that ships, treat scope/field rules as UX guardrails, not security controls.**
 - **Invite requires Supabase "Allow new users to sign up" ON.** The magic-link invite uses `signInWithOtp({ shouldCreateUser: true })`, which Supabase blocks when sign-ups are disabled. If stricter control is required, the invite call should be moved to an Edge Function using `auth.admin.inviteUserByEmail` with the service-role key.
-- **No row-level permissions** — can't say "user X can only see records they own". RLS is currently "any authenticated user sees everything"; `schema.sql` has a v2 plan for `owner_user_id` columns but it is not implemented.
-- **No field-level permissions** — access is per-model only.
-- **No audit log** of permission or role-assignment changes.
+- **No audit log** of permission, scope, field-rule, or role-assignment changes.
 - **No bulk reassignment** UI when deleting a profile. Admin must manually reassign each user first.
 - **Role lookup fields are single-select only** (`is_multi` on role fields is not yet supported).
 - **Workflows referencing a deleted role** show a warning but no auto-suggestion for a replacement.
 - **No deactivation enforcement at sign-in.** A user flipped to `is_active: false` can still receive a magic link and sign in; access-denied only kicks in once the app evaluates permissions. True lockout needs either an Edge Function check or RLS gating by `is_active`.
+- **Scope conditions on structured fields are limited.** `range`-type fields can be compared via `field_path: 'min' | 'max'` (mirroring dashboard filter behavior), but `multiselect` / `lookup is_multi` fields use scalar comparison — equality against an array always fails. Use `contains` for substring matches against the JSON serialization or split into multiple OR conditions (not yet supported — filters are AND-only).
+- **Read-only fields are skipped during create.** When a profile marks a field `readonly`, that field doesn't appear in the create form — the value is populated by defaults / workflows / formulas, never by the creator. ("Create-only" semantics — set on insert, locked after — is not supported. Add a 4th state if real-world demand emerges.)
+- **`current_user` against a free-text field doesn't work usefully.** It compares the raw user UUID against the field value, which is almost never what an admin wants. Use it with `created_by` or `assignee`-typed fields where the value is also a user id.

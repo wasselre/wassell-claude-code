@@ -30,7 +30,7 @@ import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
 import CallHistoryPanel from './components/CallHistoryPanel';
-import { usePermission } from '@/hooks/usePermission';
+import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
 import type { ModelView } from '@/types';
 
 export default function RecordFormPage() {
@@ -52,13 +52,22 @@ export default function RecordFormPage() {
 
   const model = models.find((m) => m.name === modelName);
   const canCreate = usePermission(model?.id ?? '', 'create');
-  const canEdit = usePermission(model?.id ?? '', 'edit');
   const canDelete = usePermission(model?.id ?? '', 'delete');
   const isNew = !recordId || recordId === 'new';
-  const readOnly = isNew ? !canCreate : !canEdit;
   const existingRecord = model && !isNew
     ? (records[model.id] ?? []).find((r) => r.id === recordId)
     : null;
+  // For existing records, view/edit eligibility threads through view_scope and
+  // edit_scope (canViewRecord/canEditRecord compose both with the model-level
+  // perms). For new records, we still gate on the create permission only —
+  // there's no record to scope yet.
+  const canViewExisting = useCanViewRecord(model, existingRecord);
+  const canEditExisting = useCanEditRecord(model, existingRecord);
+  const readOnly = isNew ? !canCreate : !canEditExisting;
+  // Per-field hidden/readonly/editable resolver. Computed fields are forced
+  // to readonly inside the helper, so the form never offers an editable
+  // formula even if the matrix says so.
+  const resolveFieldPermission = useFieldPermissionResolver(model?.id ?? '');
 
   const [formData, setFormData] = useState<Record<string, unknown>>(
     existingRecord?.data ?? {},
@@ -188,6 +197,18 @@ export default function RecordFormPage() {
   }, [model, formData]);
 
   if (!model) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-charcoal/40">
+        <p className="text-lg font-bold">404</p>
+      </div>
+    );
+  }
+
+  // View-scope gate. A record that fails the profile's view_scope is invisible
+  // — render the same 404 state as a missing record so the URL never confirms
+  // existence. Skip the check while existingRecord is still resolving (e.g.
+  // first paint before initialize() drains pending writes) to avoid flicker.
+  if (!isNew && existingRecord && !canViewExisting) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-charcoal/40">
         <p className="text-lg font-bold">404</p>
@@ -623,6 +644,8 @@ export default function RecordFormPage() {
             onMirrorFieldChange={handleMirrorFieldChange}
             activeResearchView={activeResearchView}
             onSelectResearchView={setActiveResearchViewId}
+            formReadOnly={readOnly}
+            getFieldPermission={resolveFieldPermission}
           />
         ))}
       </div>

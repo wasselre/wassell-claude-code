@@ -356,6 +356,16 @@ export interface AppRecord {
   id: string;
   model_id: string;
   data: Record<string, unknown>;
+  /**
+   * The in-app `users.id` of whoever first saved this record. Set on first
+   * `saveRecord` when a user is signed in; preserved across edits. Older
+   * records imported before this column existed will have `null` and are
+   * treated as "no known creator" by scope filters.
+   *
+   * Filter-based view/edit scopes can reference this via the `created_by`
+   * target — the canonical "records I created" rule. See ScopeFilterCondition.
+   */
+  created_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1156,9 +1166,89 @@ export interface ModelView {
 
 export type ModelPermission = 'view' | 'create' | 'edit' | 'delete' | 'import' | 'export';
 
+/**
+ * Per-field rule on the form/table. Default (when unset for a field) is
+ * `editable`. Computed fields (formula, auto_id, mirror, section_mirror) are
+ * always `readonly` regardless of what the matrix says — the renderer enforces
+ * this so admins can't accidentally make a derived field writable.
+ */
+export type FieldPermission = 'hidden' | 'readonly' | 'editable';
+
+/**
+ * What a scope condition compares against on the target record.
+ *  - `field`  → a regular field on the record's model schema (by field id)
+ *  - `created_by` → the synthetic `record.created_by_user_id` column (set on
+ *                   first save). Lets admins write "records I created" rules
+ *                   without forcing every model to define a creator field.
+ */
+export type ScopeFieldRef =
+  | { kind: 'field'; field_id: string; field_path?: string }
+  | { kind: 'created_by' };
+
+/**
+ * Where a scope condition's right-hand value comes from. Plain literals look
+ * just like dashboard filter conditions. The two user-context kinds resolve
+ * at evaluation time against the signed-in user — that's what makes a single
+ * profile rule like "Region = my Region" work for every Sales rep.
+ *  - `literal`      → hardcoded value (string, number, boolean, …)
+ *  - `current_user` → resolves to the signed-in user's id (used with `created_by`)
+ *  - `role_field`   → resolves to the value of `field_slug` on the user's
+ *                     assignment for `role_id`. If the user doesn't hold the
+ *                     role (or the field is empty), the comparison fails.
+ */
+export type ScopeValueSource =
+  | { kind: 'literal'; value: unknown }
+  | { kind: 'current_user' }
+  | { kind: 'role_field'; role_id: string; field_slug: string };
+
+export type ScopeOperator =
+  | 'equals'
+  | 'not_equals'
+  | 'contains'
+  | 'greater_than'
+  | 'less_than'
+  | 'is_empty'
+  | 'is_not_empty';
+
+export interface ScopeFilterCondition {
+  id: string;
+  field: ScopeFieldRef;
+  operator: ScopeOperator;
+  source: ScopeValueSource;
+}
+
+/**
+ * One scope (view or edit). `mode: 'all'` is the default and means "no row
+ * filter" — every record the user can otherwise reach is included. Switching
+ * to `mode: 'filtered'` activates the conditions (AND-only across rows).
+ */
+export type ScopeRule =
+  | { mode: 'all' }
+  | { mode: 'filtered'; conditions: ScopeFilterCondition[] };
+
 export interface ProfileModelPermissions {
   model_id: string;
   permissions: ModelPermission[];
+  /**
+   * Which records of this model the profile can SEE (in lists, lookups,
+   * search, the form). Optional for backward compatibility — a profile
+   * without `view_scope` defaults to `{ mode: 'all' }`.
+   */
+  view_scope?: ScopeRule;
+  /**
+   * Which records of this model the profile can EDIT or DELETE. A record
+   * that fails `view_scope` automatically fails `edit_scope` too — edits
+   * can never reach what the user can't see. Default `{ mode: 'all' }`.
+   */
+  edit_scope?: ScopeRule;
+  /**
+   * Per-field overrides keyed by field id. Unset entries default to
+   * `editable`. `hidden` fields don't render at all (form, table column,
+   * card label). `readonly` fields render but disabled — the renderer
+   * shows the value but rejects writes. Computed field types are forced
+   * to `readonly` regardless of the configured value.
+   */
+  field_permissions?: Record<string, FieldPermission>;
 }
 
 export interface Profile {
