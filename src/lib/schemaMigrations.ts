@@ -11,7 +11,6 @@ const PROJECTS_SYSTEM_NAMES = new Set([
   'all_projects',
   'targeted_projects',
   'our_projects',
-  'projects_research',
   'developers',
   'units',
 ]);
@@ -539,18 +538,13 @@ const migration_7_to_8: Migration = (state) => {
 };
 
 /**
- * Migration 8 → 9: Insert the `project_comparison` section_mirror container into
- * projects_research's Project Info section. This is the field that surfaces the
- * editable, saved-view-aware comparison table when 2+ projects are linked. Keyed
- * by slug so user-renamed or reordered schemas still pick it up; idempotent when
- * a field with the same slug already exists.
+ * Migration 8 → 9: Was inserting the `project_comparison` section_mirror
+ * container into projects_research. The projects_research model + its
+ * associated UI was removed in 2026-05-06; this migration is now a no-op
+ * but kept so the version chain stays unbroken for any user whose stored
+ * `wassell_schema_version` is still below 10.
  */
-const migration_8_to_9: Migration = (state) => {
-  const result = insertResearchComparisonContainer(state.models);
-  if (!result.changed) return state;
-  console.warn('[schemaMigrations v9] Inserted project_comparison container on projects_research.');
-  return { ...state, models: result.models };
-};
+const migration_8_to_9: Migration = (state) => state;
 
 /**
  * Migration 9 → 10: Add the default `maps_config` object to every model that
@@ -596,82 +590,6 @@ const MIGRATIONS: Record<number, Migration> = {
   9: migration_8_to_9,
   10: migration_9_to_10,
 };
-
-/**
- * Pure helper used by both the versioned migration and the always-run heal.
- * Walks projects_research and ensures the Project Info section contains a
- * `project_comparison` section_mirror field pointing at all_projects' base
- * section. No-op when the field already exists (match by slug).
- */
-function insertResearchComparisonContainer(models: AppModel[]): { models: AppModel[]; changed: boolean } {
-  const researchIdx = models.findIndex((m) => m.name === 'projects_research');
-  const allProjectsModel = models.find((m) => m.name === 'all_projects');
-  if (researchIdx === -1 || !allProjectsModel) return { models, changed: false };
-  const research = models[researchIdx]!;
-
-  // Find the Project Info section — the one that carries the project_name lookup.
-  const infoSection = research.schema.sections.find((s) =>
-    s.fields.some((f) => f.name === 'project_name' && f.type === 'lookup'),
-  );
-  if (!infoSection) return { models, changed: false };
-
-  // Skip if already present.
-  if (infoSection.fields.some((f) => f.name === 'project_comparison')) {
-    return { models, changed: false };
-  }
-
-  const projectNameField = infoSection.fields.find((f) => f.name === 'project_name' && f.type === 'lookup');
-  if (!projectNameField) return { models, changed: false };
-
-  const sourceSection =
-    allProjectsModel.schema.sections.find((s) => s.is_base) ??
-    allProjectsModel.schema.sections[0] ??
-    null;
-  if (!sourceSection) return { models, changed: false };
-
-  const maxOrder = infoSection.fields.reduce((acc, f) => Math.max(acc, f.order), -1);
-  const newField = {
-    id: uuid(),
-    name: 'project_comparison',
-    label_ar: 'مقارنة المشاريع',
-    label_en: 'Project Comparison',
-    type: 'section_mirror' as const,
-    required: false,
-    order: maxOrder + 1,
-    section_id: infoSection.id,
-    width: 'full' as const,
-    show_in_table: false,
-    section_mirror_via_lookup_field_id: projectNameField.id,
-    section_mirror_source_section_id: sourceSection.id,
-    section_mirror_field_mode: 'all' as const,
-    section_mirror_edit_mode: 'all' as const,
-    section_mirror_sync_mode: 'all' as const,
-  };
-
-  const nextSections = research.schema.sections.map((s) =>
-    s.id === infoSection.id ? { ...s, fields: [...s.fields, newField] } : s,
-  );
-  const nextModels = models.slice();
-  nextModels[researchIdx] = {
-    ...research,
-    schema: { ...research.schema, sections: nextSections },
-    updated_at: new Date().toISOString(),
-  };
-  return { models: nextModels, changed: true };
-}
-
-/**
- * Always-run, idempotent heal. Ensures projects_research has the
- * `project_comparison` section_mirror container even for users whose version
- * marker advanced past 9 before migration_8_to_9 landed in their build.
- * No-op once the field is present.
- */
-export function healResearchComparisonContainer(state: HealSchemaInput): HealSchemaOutput {
-  const result = insertResearchComparisonContainer(state.models);
-  if (!result.changed) return { models: state.models, records: state.records, changed: false };
-  console.warn('[healResearchComparisonContainer] Inserted project_comparison container on projects_research.');
-  return { models: result.models, records: state.records, changed: true };
-}
 
 /**
  * Run any pending migrations up to SCHEMA_VERSION. Persists the new version on success.
@@ -736,65 +654,6 @@ export function refreshSystemModels(state: MigrationInput): MigrationOutput {
   }
 
   return { ...state, models: finalModels };
-}
-
-/**
- * Always-run, idempotent heal that ensures `projects_research.project_name` is a
- * multi-select lookup and that its record values are arrays. Sister to
- * `healClientsSchema`: migration_7_to_8 runs only when the version marker sits
- * strictly below 8, so a user whose version was bumped past 8 before this code
- * landed would be stuck. This heal runs on every initialize() and is a no-op
- * once the schema + records are already in the target shape.
- */
-export function healResearchMultiProject(state: HealSchemaInput): HealSchemaOutput {
-  const researchIdx = state.models.findIndex((m) => m.name === 'projects_research');
-  if (researchIdx === -1) return { models: state.models, records: state.records, changed: false };
-
-  const research = state.models[researchIdx]!;
-  let modelChanged = false;
-  const nextSections = research.schema.sections.map((section) => {
-    const nextFields = section.fields.map((field) => {
-      if (field.name === 'project_name' && field.type === 'lookup' && !field.is_multi) {
-        modelChanged = true;
-        return { ...field, is_multi: true as const };
-      }
-      return field;
-    });
-    return { ...section, fields: nextFields };
-  });
-
-  let models = state.models;
-  if (modelChanged) {
-    models = state.models.slice();
-    models[researchIdx] = {
-      ...research,
-      schema: { ...research.schema, sections: nextSections },
-      updated_at: new Date().toISOString(),
-    };
-    console.warn('[healResearchMultiProject] Flipped project_name.is_multi on projects_research.');
-  }
-
-  const records = { ...state.records };
-  const researchRecords = records[research.id] ?? [];
-  let recordsChanged = false;
-  if (researchRecords.length) {
-    let wrapped = 0;
-    const next = researchRecords.map((rec) => {
-      const v = rec.data.project_name;
-      if (typeof v === 'string' && v) {
-        wrapped++;
-        return { ...rec, data: { ...rec.data, project_name: [v] }, updated_at: new Date().toISOString() };
-      }
-      return rec;
-    });
-    if (wrapped) {
-      records[research.id] = next;
-      recordsChanged = true;
-      console.warn(`[healResearchMultiProject] Wrapped ${wrapped} research record(s) project_name into arrays.`);
-    }
-  }
-
-  return { models, records, changed: modelChanged || recordsChanged };
 }
 
 export interface HealInput {

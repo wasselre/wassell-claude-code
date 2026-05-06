@@ -9,7 +9,7 @@ import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine'
 import { assignAutoIds } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
-import { runMigrations, healSystemModelGroups, healClientsSchema, healResearchMultiProject, healResearchComparisonContainer, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
+import { runMigrations, healSystemModelGroups, healClientsSchema, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -964,7 +964,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   authReady: false,
   language: (loadLocal<Language>('wassell_language') ?? 'ar'),
   toasts: [],
-  pendingResearchPromptTargetedIds: [],
   recordNavContext: null,
   initialized: false,
 
@@ -1479,22 +1478,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       migratedRecords = healedClients.records;
     }
 
-    // Always-run heal for Projects Research multi-project support. Idempotent:
-    // no-op once the project_name lookup is already multi and records are arrays.
-    const healedResearch = healResearchMultiProject({ models, records: migratedRecords });
-    if (healedResearch.changed) {
-      models = healedResearch.models;
-      migratedRecords = healedResearch.records;
-    }
-
-    // Always-run heal for the research comparison container. Idempotent:
-    // no-op once the project_comparison section_mirror field is present.
-    const healedComparison = healResearchComparisonContainer({ models, records: migratedRecords });
-    if (healedComparison.changed) {
-      models = healedComparison.models;
-      migratedRecords = healedComparison.records;
-    }
-
     // Always-run heal for maps_config. Backfills default on any model missing
     // it (covers version-drift past 10 without running migration_9_to_10).
     const healedMaps = healMapsConfigForModels(models);
@@ -1677,25 +1660,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   removeToast: (id: string) => {
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
-  },
-
-  // --- Research prompt ---
-  // Queue-based: bulk-edit / bulk-import can create many targeted_projects
-  // records in a tight loop, and every new id should accumulate into a single
-  // modal rather than clobber the previous one.
-  queueResearchPromptTargetedId: (id: string) => {
-    set((s) => (
-      s.pendingResearchPromptTargetedIds.includes(id)
-        ? s
-        : { pendingResearchPromptTargetedIds: [...s.pendingResearchPromptTargetedIds, id] }
-    ));
-  },
-  dismissResearchPrompts: (ids?: string[]) => {
-    set((s) => ({
-      pendingResearchPromptTargetedIds: ids
-        ? s.pendingResearchPromptTargetedIds.filter((x) => !ids.includes(x))
-        : [],
-    }));
   },
 
   // --- Models ---
@@ -2047,19 +2011,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       activityLogger.recordCreated(finalRecord, origModel);
     } else if (previousRecord) {
       activityLogger.recordUpdated(finalRecord, previousRecord, origModel);
-    }
-
-    // New Targeted Projects record → open the research-prompt modal on the next tick.
-    // Fires regardless of how the record was created (manual entry, workflow, import)
-    // so the user always gets the "link to research?" opportunity.
-    if (isNew && origModel && origModel.name === 'targeted_projects') {
-      queueMicrotask(() => {
-        set((s) => (
-          s.pendingResearchPromptTargetedIds.includes(finalRecord.id)
-            ? s
-            : { pendingResearchPromptTargetedIds: [...s.pendingResearchPromptTargetedIds, finalRecord.id] }
-        ));
-      });
     }
 
     // When a clients record is saved, sweep every unlinked chat and try

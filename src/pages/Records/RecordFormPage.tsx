@@ -5,8 +5,7 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
 import * as lucideIcons from 'lucide-react';
-import { ArrowRight, Save, Trash2, FileDown, ChevronLeft, ChevronRight, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
-import { generateResearchPDF } from '@/lib/pdfGenerator';
+import { ArrowRight, Save, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
 import { activityLogger } from '@/lib/activityLogger';
@@ -32,7 +31,6 @@ import SectionBlock from './components/SectionBlock';
 import CallHistoryPanel from './components/CallHistoryPanel';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
 import { isButtonVisible } from '@/lib/permissions';
-import type { ModelView } from '@/types';
 
 export default function RecordFormPage() {
   const { modelName, recordId } = useParams();
@@ -45,7 +43,6 @@ export default function RecordFormPage() {
     saveRecord,
     deleteRecord,
     addToast,
-    views,
     currentUserId,
     users,
     profiles,
@@ -104,48 +101,6 @@ export default function RecordFormPage() {
     currentIndex >= 0 && currentIndex < orderedIds.length - 1
       ? orderedIds[currentIndex + 1] ?? null
       : null;
-
-  // Active research comparison view — per research record, persisted to localStorage.
-  const researchViewKey = useMemo(
-    () =>
-      model && model.name === 'projects_research'
-        ? `wassell_research_view_last_${recordId ?? 'new'}_${currentUserId ?? 'anon'}`
-        : null,
-    [model, recordId, currentUserId],
-  );
-  const [activeResearchViewId, setActiveResearchViewIdState] = useState<string | null>(() => {
-    if (!researchViewKey) return null;
-    try {
-      const raw = localStorage.getItem(researchViewKey);
-      return raw ? (JSON.parse(raw) as string | null) : null;
-    } catch {
-      return null;
-    }
-  });
-  const setActiveResearchViewId = (id: string | null) => {
-    setActiveResearchViewIdState(id);
-    if (researchViewKey) {
-      try {
-        localStorage.setItem(researchViewKey, JSON.stringify(id));
-      } catch {
-        // ignore
-      }
-    }
-  };
-  const activeResearchView: ModelView | null = useMemo(() => {
-    if (!model || !activeResearchViewId) return null;
-    return views.find((v) => v.id === activeResearchViewId && v.model_id === model.id) ?? null;
-  }, [views, model, activeResearchViewId]);
-
-  // Auto-apply the default research view on first load if the user hasn't chosen one.
-  useEffect(() => {
-    if (!model || model.name !== 'projects_research') return;
-    if (activeResearchViewId !== null) return;
-    const defaultView = views.find(
-      (v) => v.model_id === model.id && v.is_default && (v.user_id === currentUserId || v.is_shared),
-    );
-    if (defaultView) setActiveResearchViewId(defaultView.id);
-  }, [model, views, currentUserId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset form when navigating between records. Also re-initialize when the
   // record first becomes available after store hydration — on hard reloads
@@ -617,15 +572,6 @@ export default function RecordFormPage() {
                 </Button>
               );
             })}
-          {model.name === 'projects_research' && existingRecord && (
-            <Button
-              variant="secondary"
-              onClick={() => void generateResearchPDF(existingRecord, records, models, activeResearchView)}
-            >
-              <FileDown size={16} />
-              {t('records.generate_pdf')}
-            </Button>
-          )}
           {!isNew && canDelete && (
             <Button variant="danger" onClick={() => setShowDelete(true)}>
               <Trash2 size={16} />
@@ -652,8 +598,6 @@ export default function RecordFormPage() {
             currentModel={model}
             mirrorEdits={mirrorEdits}
             onMirrorFieldChange={handleMirrorFieldChange}
-            activeResearchView={activeResearchView}
-            onSelectResearchView={setActiveResearchViewId}
             formReadOnly={readOnly}
             getFieldPermission={resolveFieldPermission}
           />

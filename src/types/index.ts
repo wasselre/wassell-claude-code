@@ -1612,15 +1612,6 @@ export interface AppState {
   // UI
   language: Language;
   toasts: Toast[];
-  /**
-   * Queue of `targeted_projects` record ids awaiting a research-linking
-   * prompt. When a new targeted project is saved (single form, bulk edit,
-   * bulk import, workflow fan-out) its id is appended here. A global modal
-   * shows every queued project at once and lets the user decide per-project:
-   * create a new research study, append to an existing study, or skip.
-   * Empty array when nothing is pending.
-   */
-  pendingResearchPromptTargetedIds: string[];
 
   // Init
   initialized: boolean;
@@ -1646,10 +1637,6 @@ export interface AppState {
   // Toasts
   addToast: (message: string, type: ToastType) => void;
   removeToast: (id: string) => void;
-
-  // Research prompt (fired after Targeted Projects record creation — queued)
-  queueResearchPromptTargetedId: (id: string) => void;
-  dismissResearchPrompts: (ids?: string[]) => void;
 
   // Models
   saveModel: (model: AppModel) => void;

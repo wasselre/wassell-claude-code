@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
-import ResearchPromptModal from '@/components/ResearchPromptModal';
 
 export default function AppLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -31,7 +30,6 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
-      <ResearchPromptModal />
     </div>
   );
 }

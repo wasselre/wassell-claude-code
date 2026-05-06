@@ -249,11 +249,10 @@ They are editable in the Builder but cannot be deleted (is_system: true).
 3. `all_projects` — All Projects (group: Projects)
 4. `targeted_projects` — Targeted Projects (group: Projects)
 5. `our_projects` — Our Projects (group: Projects)
-6. `projects_research` — Research with PDF generation (group: Projects)
-7. `chats` — WhatsApp conversations via Haberchat. Top-level (no group).
+6. `chats` — WhatsApp conversations via Haberchat. Top-level (no group).
    Renders a custom two-pane UI (list + thread) instead of the generic
    record table/form. See `docs/prd/chats.md`.
-8. `ai_chats` — Internal Claude-powered AI sales agent. Top-level
+7. `ai_chats` — Internal Claude-powered AI sales agent. Top-level
    (no group). Each record is one conversation; messages live inline in
    `record.data.messages` as a JSON array. Renders a custom split-pane
    UI. Backed by `api/agent.ts` + `api/_lib/aiAgent.ts`. Requires
