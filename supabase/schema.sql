@@ -251,9 +251,21 @@ CREATE TABLE IF NOT EXISTS profiles (
   model_permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
   is_system BOOLEAN NOT NULL DEFAULT false,
   is_admin BOOLEAN NOT NULL DEFAULT false,
+  -- Deny-lists for per-profile saved-view + custom-button visibility. Default
+  -- empty so existing profiles (and freshly-created ones) see everything until
+  -- an admin explicitly hides entries. See docs/prd/access-control.md.
+  hidden_view_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  hidden_button_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Existing installs: idempotent backfill so the saveProfile path doesn't fail
+-- with "Could not find the column in schema cache" on workspaces that
+-- predate the view/button-permission rollout.
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS hidden_view_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS hidden_button_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS roles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
