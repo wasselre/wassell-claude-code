@@ -8,6 +8,8 @@ import type { AppModel, CustomButton, CustomButtonLocation } from '@/types';
 interface CustomButtonsTabProps {
   model: AppModel;
   onChange: (next: AppModel) => void;
+  /** Block edits when the model is frozen — see ModelEditor. */
+  readOnly?: boolean;
 }
 
 /**
@@ -52,7 +54,7 @@ function LocalInput({ value, onCommit, ...rest }: LocalInputProps) {
  * The actual rendering of buttons in record form / list view is wired up
  * separately — this tab only owns the configuration.
  */
-export default function CustomButtonsTab({ model, onChange }: CustomButtonsTabProps) {
+export default function CustomButtonsTab({ model, onChange, readOnly = false }: CustomButtonsTabProps) {
   const { workflows, language } = useAppStore();
   const isAr = language === 'ar';
 
@@ -100,7 +102,12 @@ export default function CustomButtonsTab({ model, onChange }: CustomButtonsTabPr
   );
 
   return (
-    <div className="space-y-4 max-w-3xl">
+    <div
+      className={`space-y-4 max-w-3xl ${
+        readOnly ? 'pointer-events-none select-none opacity-75' : ''
+      }`}
+      aria-disabled={readOnly || undefined}
+    >
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold text-charcoal">

@@ -261,8 +261,9 @@ async function findClientRecordIdByPhone(contactPhone: string): Promise<string |
   // JSONB text-extract filter: `data->>phone_number` = contactPhone.
   // Supabase-js uses `.eq('column', value)` — for JSONB paths it's the
   // identical string form, column-name side.
+  // unified_records — works whether the clients model is frozen or not.
   const { data } = await supa
-    .from('records')
+    .from('unified_records')
     .select('id')
     .eq('model_id', clientsModelId)
     .eq('data->>phone_number', contactPhone)
@@ -339,16 +340,15 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
   };
 
   const supa = getServiceSupabase();
-  const { error } = await supa.from('records').upsert(
-    {
-      id: event.callId,
-      model_id: modelId,
-      data,
-    },
-    { onConflict: 'id' },
-  );
+  // record_save dispatches to the dedicated `phone_calls` table when the
+  // model is frozen, falls through to .from('records') when it isn't.
+  const { error } = await supa.rpc('record_save', {
+    p_model_id: modelId,
+    p_id: event.callId,
+    p_data: data,
+  });
   if (error) {
-    throw new Error(`phone_calls records upsert: ${error.message}`);
+    throw new Error(`phone_calls record_save: ${error.message}`);
   }
 }
 

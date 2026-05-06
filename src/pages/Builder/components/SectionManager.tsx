@@ -27,11 +27,18 @@ interface SectionManagerProps {
    *   component by wrapping their schema in an AppModel-shaped object.
    */
   ownerKind?: 'model' | 'role';
+  /**
+   * When true, every editing affordance is suppressed and pointer events
+   * are blocked on the rendered schema. Used by the Builder for frozen
+   * (hardcoded) models — see ModelEditor's read-only banner. Defaults to
+   * false; the role-schema variant never sets it.
+   */
+  readOnly?: boolean;
 }
 
 const SECTION_COLORS = ['#B8734F', '#C09B5F', '#8E4E3A', '#4A2C2A', '#4A4E54', '#3B82F6'];
 
-export default function SectionManager({ model, onChange, ownerKind = 'model' }: SectionManagerProps) {
+export default function SectionManager({ model, onChange, ownerKind = 'model', readOnly = false }: SectionManagerProps) {
   const { t } = useTranslation();
   const { language, records } = useAppStore();
   const [showAddSection, setShowAddSection] = useState(false);
@@ -293,7 +300,16 @@ export default function SectionManager({ model, onChange, ownerKind = 'model' }:
   const selectedFieldId = activeField?.field?.id ?? null;
 
   return (
-    <div className="flex flex-col md:flex-row gap-4 h-full">
+    <div
+      className={`flex flex-col md:flex-row gap-4 h-full ${
+        readOnly ? 'pointer-events-none select-none opacity-75' : ''
+      }`}
+      // For frozen models: aria-disabled hint for assistive tech; the
+      // pointer-events-none class blocks every click, drag, and input
+      // inside this subtree without removing the schema from the DOM
+      // (the user can still read it).
+      aria-disabled={readOnly || undefined}
+    >
       {/* Left Panel — Field Properties. Desktop: 260px fixed rail.
           Mobile: full-width card above the sections, capped to 60vh so it
           doesn't push the rest of the page offscreen when a field is open. */}

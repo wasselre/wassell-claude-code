@@ -27,8 +27,10 @@ export async function loadCompetitors(type: CompetitorType): Promise<CompetitorR
     return [];
   }
   const sb = getServiceClient();
+  // unified_records UNIONs JSONB records + frozen models' <name>_v views,
+  // so this read keeps working whether `competitors` has been frozen or not.
   const { data, error } = await sb
-    .from("records")
+    .from("unified_records")
     .select("id, data")
     .eq("model_id", modelId)
     .order("created_at", { ascending: true });

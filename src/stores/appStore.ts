@@ -38,6 +38,8 @@ import type {
   Whiteboard,
   WhiteboardFolder,
   ActivityLogEntry,
+  FreezeCoercionFailure,
+  FreezeResult,
 } from '@/types';
 import { activityLogger } from '@/lib/activityLogger';
 
@@ -255,10 +257,18 @@ const MAX_REPLAY_ATTEMPTS = 5;
 
 interface PendingWrite {
   id: string;
-  op: 'upsert' | 'delete';
+  // 'upsert' / 'delete' — direct .from(table) ops; same shape as before.
+  // 'record_upsert' / 'record_delete' — records-table ops that branch on
+  //   the model's `is_hardcoded` flag at replay time. Frozen models route
+  //   through the `record_save` / `record_delete` SQL RPCs instead of
+  //   .from('records'), which the records-block-frozen-writes trigger
+  //   would otherwise reject. modelId is required on record_delete so
+  //   replay can look up whether the model is frozen without scanning.
+  op: 'upsert' | 'delete' | 'record_upsert' | 'record_delete';
   table: string;
   row?: Record<string, unknown>;
   rowId?: string;
+  modelId?: string;
   parent?: { table: string; id: string | null | undefined };
   enqueuedAt: string;
   attempts: number;
@@ -364,6 +374,42 @@ async function replayPendingWrites(): Promise<{
         const { error } = await supabase.from(w.table).delete().eq('id', w.rowId);
         if (!error) ok = true;
         else console.error(`[pendingQueue] replay delete ${w.table} failed:`, error.message);
+      } else if (w.op === 'record_upsert' && w.row) {
+        // Records-table write — branch on the (now-current) is_hardcoded
+        // flag for the row's model. The model may have been frozen between
+        // when this entry was queued and now; the dispatcher RPC handles
+        // both paths uniformly.
+        const modelId = (w.row as { model_id?: string }).model_id;
+        const id = (w.row as { id?: string }).id;
+        const data = (w.row as { data?: unknown }).data;
+        const createdBy = (w.row as { created_by_user_id?: string | null }).created_by_user_id ?? null;
+        if (modelId && id && isModelHardcoded(modelId)) {
+          const { error } = await supabase.rpc('record_save', {
+            p_model_id: modelId,
+            p_id: id,
+            p_data: data ?? {},
+            p_created_by: createdBy,
+          });
+          if (!error) ok = true;
+          else console.error(`[pendingQueue] replay record_save (frozen) failed:`, error.message);
+        } else {
+          const { error } = await supabase.from('records').upsert(w.row);
+          if (!error) ok = true;
+          else console.error(`[pendingQueue] replay record_upsert failed:`, error.message);
+        }
+      } else if (w.op === 'record_delete' && w.rowId && w.modelId) {
+        if (isModelHardcoded(w.modelId)) {
+          const { error } = await supabase.rpc('record_delete', {
+            p_model_id: w.modelId,
+            p_id: w.rowId,
+          });
+          if (!error) ok = true;
+          else console.error(`[pendingQueue] replay record_delete (frozen) failed:`, error.message);
+        } else {
+          const { error } = await supabase.from('records').delete().eq('id', w.rowId);
+          if (!error) ok = true;
+          else console.error(`[pendingQueue] replay record_delete failed:`, error.message);
+        }
       }
     } catch (err) {
       console.error(`[pendingQueue] replay ${w.op} ${w.table} threw:`, err);
@@ -523,6 +569,149 @@ async function writeAuditLog(args: {
     }
   } catch (err) {
     console.error('[audit_log] insert failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ─── Frozen-model record helpers ─────────────────────────────────────
+// Wraps Supabase record writes so frozen models route through the
+// `record_save` / `record_delete` SQL RPCs instead of .from('records'),
+// which the records-block-frozen-writes trigger would reject. Surfacing
+// + queueing on failure mirror the regular supabaseUpsert/Delete path.
+//
+// The store actions saveRecord / deleteRecord call these instead of
+// supabaseUpsert / supabaseDelete on 'records'. Server-side consumers
+// (api/, supabase/functions/) can call the RPCs directly via PostgREST.
+//
+// `created_by_user_id` (Phase 1 RLS column on records) is threaded
+// through via the same record shape the upstream `saveRecord` builds.
+// For unfrozen models, .from('records').upsert(record) sends it as a
+// column. For frozen models, the record_save RPC takes it as an
+// explicit p_created_by parameter so the dedicated table can stamp it
+// without losing the value (the JSONB `data` payload doesn't carry it).
+
+function isModelHardcoded(modelId: string): boolean {
+  try {
+    const m = useAppStore.getState().models.find((x) => x.id === modelId);
+    return !!m?.is_hardcoded;
+  } catch {
+    return false;
+  }
+}
+
+async function supabaseRecordUpsert(record: AppRecord): Promise<void> {
+  if (!supabase) return;
+  if (!canWriteToSupabase()) {
+    enqueuePendingWrite({
+      op: 'record_upsert',
+      table: 'records',
+      row: record as unknown as Record<string, unknown>,
+    });
+    return;
+  }
+  const frozen = isModelHardcoded(record.model_id);
+  const id = record.id;
+  const key = writeKey('records', id);
+  const op = (async () => {
+    try {
+      if (frozen) {
+        // Pass `created_by_user_id` through to the RPC so the dedicated
+        // table stamps it on first save (the RPC's freeze_apply_row
+        // preserves any existing value on update — never overwrites).
+        const { error } = await supabase!.rpc('record_save', {
+          p_model_id: record.model_id,
+          p_id: record.id,
+          p_data: record.data,
+          p_created_by: record.created_by_user_id ?? null,
+        });
+        if (error) {
+          reportSupabaseError('records', 'upsert', error.message ?? String(error));
+          enqueuePendingWrite({
+            op: 'record_upsert',
+            table: 'records',
+            row: record as unknown as Record<string, unknown>,
+          });
+        }
+      } else {
+        // Block on any in-flight model write so the FK exists when we land.
+        const prior = pendingWrites.get(writeKey('models', record.model_id));
+        if (prior) { try { await prior; } catch { /* parent error */ } }
+        const { error } = await supabase!.from('records').upsert(record as unknown as Record<string, unknown>);
+        if (error) {
+          reportSupabaseError('records', 'upsert', error.message ?? String(error));
+          enqueuePendingWrite({
+            op: 'record_upsert',
+            table: 'records',
+            row: record as unknown as Record<string, unknown>,
+          });
+        }
+      }
+    } catch (err) {
+      reportSupabaseError('records', 'upsert', err instanceof Error ? err.message : String(err));
+      enqueuePendingWrite({
+        op: 'record_upsert',
+        table: 'records',
+        row: record as unknown as Record<string, unknown>,
+      });
+    }
+  })();
+  pendingWrites.set(key, op);
+  try {
+    await op;
+  } finally {
+    if (pendingWrites.get(key) === op) pendingWrites.delete(key);
+  }
+}
+
+async function supabaseRecordDelete(modelId: string, recordId: string): Promise<void> {
+  if (!supabase) return;
+  if (!canWriteToSupabase()) {
+    enqueuePendingWrite({
+      op: 'record_delete',
+      table: 'records',
+      rowId: recordId,
+      modelId,
+    });
+    return;
+  }
+  // Wait for any in-flight upsert to this row first.
+  const prior = pendingWrites.get(writeKey('records', recordId));
+  if (prior) { try { await prior; } catch { /* ignore */ } }
+  const frozen = isModelHardcoded(modelId);
+  try {
+    if (frozen) {
+      const { error } = await supabase.rpc('record_delete', {
+        p_model_id: modelId,
+        p_id: recordId,
+      });
+      if (error) {
+        reportSupabaseError('records', 'delete', error.message ?? String(error));
+        enqueuePendingWrite({
+          op: 'record_delete',
+          table: 'records',
+          rowId: recordId,
+          modelId,
+        });
+      }
+    } else {
+      const { error } = await supabase.from('records').delete().eq('id', recordId);
+      if (error) {
+        reportSupabaseError('records', 'delete', error.message ?? String(error));
+        enqueuePendingWrite({
+          op: 'record_delete',
+          table: 'records',
+          rowId: recordId,
+          modelId,
+        });
+      }
+    }
+  } catch (err) {
+    reportSupabaseError('records', 'delete', err instanceof Error ? err.message : String(err));
+    enqueuePendingWrite({
+      op: 'record_delete',
+      table: 'records',
+      rowId: recordId,
+      modelId,
+    });
   }
 }
 
@@ -883,11 +1072,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     saveLocal('wassell_models', models);
 
-    // Load records — Supabase first, per-model localStorage buckets as fallback
-    // (loadLocalRecordsMap also migrates from the legacy single 'wassell_records'
-    // key on first run with the new layout).
+    // Load records — Supabase first via the `unified_records` view (UNION
+    // of the JSONB `records` table for unfrozen models + each frozen
+    // model's `<name>_v` JSONB-shape view). Per-model localStorage
+    // buckets as fallback when offline. Same row shape as the records
+    // table — id, model_id, data, created_at, updated_at — so the rest
+    // of the app needs no changes.
     let records: Record<string, AppRecord[]>;
-    const supabaseRecords = await supabaseLoad<AppRecord>('records');
+    const supabaseRecords = await supabaseLoad<AppRecord>('unified_records');
     if (supabaseRecords) {
       records = {};
       for (const rec of supabaseRecords) {
@@ -1811,13 +2003,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const records = { ...s.records, [record.model_id]: updated };
       // Per-model bucket write: O(records-in-this-model) instead of O(all).
       saveLocalRecordsForModel(record.model_id, updated);
-      // FK: records.model_id → models.id. Gate on the model write so a record
-      // created immediately after a new model doesn't hit an FK violation.
-      supabaseUpsert(
-        'records',
-        finalRecord as unknown as Record<string, unknown>,
-        { table: 'models', id: finalRecord.model_id },
-      );
+      // Records writes go through supabaseRecordUpsert so frozen models
+      // dispatch to the record_save RPC; unfrozen models still hit
+      // .from('records') with the same FK gate as before.
+      void supabaseRecordUpsert(finalRecord);
 
       if (modelChanged && enrichedModel) {
         const models = s.models.map((m) => (m.id === enrichedModel!.id ? enrichedModel! : m));
@@ -1893,7 +2082,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const modelRecords = (s.records[modelId] ?? []).filter((r) => r.id !== recordId);
       const records = { ...s.records, [modelId]: modelRecords };
       saveLocalRecordsForModel(modelId, modelRecords);
-      supabaseDelete('records', recordId);
+      void supabaseRecordDelete(modelId, recordId);
       return { records };
     });
     if (previous) {
@@ -1922,6 +2111,75 @@ export const useAppStore = create<AppState>((set, get) => ({
       get().saveRecord(rec);
     }
     return { count: pending.length };
+  },
+
+  // ── Freeze (model promotion) ─────────────────────────────────────────
+  checkFreezeCoercion: async (modelId: string) => {
+    if (!supabase) return null;
+    const { data, error } = await supabase.rpc('freeze_check_coercion', {
+      p_model_id: modelId,
+    });
+    if (error) {
+      reportSupabaseError('freeze_check_coercion', 'load', error.message ?? String(error));
+      return null;
+    }
+    return (data ?? []) as FreezeCoercionFailure[];
+  },
+
+  freezeModel: async (modelId: string): Promise<FreezeResult> => {
+    if (!supabase) {
+      return {
+        ok: false,
+        modelId,
+        modelName: '',
+        tableName: '',
+        rowsCopied: 0,
+        frozenAt: '',
+        error: 'Supabase not configured — Freeze is unavailable in offline-only mode',
+      };
+    }
+    const { data, error } = await supabase.rpc('freeze_model', {
+      p_model_id: modelId,
+    });
+    if (error) {
+      reportSupabaseError('freeze_model', 'upsert', error.message ?? String(error));
+      return {
+        ok: false,
+        modelId,
+        modelName: '',
+        tableName: '',
+        rowsCopied: 0,
+        frozenAt: '',
+        error: error.message ?? String(error),
+      };
+    }
+    const payload = (data ?? {}) as {
+      model_id?: string;
+      model_name?: string;
+      table_name?: string;
+      rows_copied?: number;
+      frozen_at?: string;
+    };
+    // Update local model: flip is_hardcoded + set table_name. Don't refetch
+    // from Supabase — the RPC has already committed; the local state just
+    // needs the two new flags so subsequent saves dispatch correctly.
+    set((s) => {
+      const models = s.models.map((m) =>
+        m.id === modelId
+          ? { ...m, is_hardcoded: true, table_name: payload.table_name ?? m.name }
+          : m,
+      );
+      saveLocal('wassell_models', models);
+      return { models };
+    });
+    return {
+      ok: true,
+      modelId: payload.model_id ?? modelId,
+      modelName: payload.model_name ?? '',
+      tableName: payload.table_name ?? '',
+      rowsCopied: payload.rows_copied ?? 0,
+      frozenAt: payload.frozen_at ?? new Date().toISOString(),
+    };
   },
 
   // --- Workflows ---

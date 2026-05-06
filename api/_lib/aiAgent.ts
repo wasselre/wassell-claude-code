@@ -358,8 +358,9 @@ async function searchProjects(
   const rows: RecordRow[] = [];
   for (let page = 0; page < MAX_PAGES; page++) {
     const from = page * pageSize;
+    // unified_records — works for both unfrozen and frozen models.
     const { data, error } = await supabase
-      .from('records')
+      .from('unified_records')
       .select('id, data, model_id')
       .in('model_id', modelIds)
       .range(from, from + pageSize - 1);
@@ -565,8 +566,9 @@ async function getProject(
   supabase: SupabaseClient,
   input: { project_id: string },
 ): Promise<string> {
+  // unified_records — works for both unfrozen and frozen project models.
   const { data, error } = await supabase
-    .from('records')
+    .from('unified_records')
     .select('id, data, model_id')
     .eq('id', input.project_id)
     .maybeSingle();
@@ -606,21 +608,20 @@ async function saveLead(
   if (input.interested_project_id) leadData.interested_project_id = input.interested_project_id;
   if (input.notes) leadData.notes = input.notes;
 
-  const { data, error } = await supabase
-    .from('records')
-    .insert({
-      model_id: clientsModelId,
-      data: leadData,
-      created_by: userId,
-    })
-    .select('id')
-    .single();
-  if (error || !data) {
-    return JSON.stringify({ error: error?.message ?? 'failed to create lead' });
+  // record_save dispatches to the dedicated `clients` table when the model
+  // has been frozen, falls through to .from('records') when it hasn't.
+  const newId = crypto.randomUUID();
+  const { error } = await supabase.rpc('record_save', {
+    p_model_id: clientsModelId,
+    p_id: newId,
+    p_data: leadData,
+  });
+  if (error) {
+    return JSON.stringify({ error: error.message ?? 'failed to create lead' });
   }
   return JSON.stringify({
     ok: true,
-    lead_id: data.id,
+    lead_id: newId,
     message: 'Lead saved. A Wassel advisor will follow up.',
   });
 }

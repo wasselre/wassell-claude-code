@@ -482,8 +482,9 @@ async function mainHandler(req: Request): Promise<Response> {
     //    coming from the button — direct ID lookup, not a full-table scan.
     log('[research-project] loading all_projects record', recordId);
     const tDb1 = Date.now();
+    // unified_records — works whether all_projects is JSONB-backed or frozen.
     const { data: matched, error: apRecErr } = await supabase
-      .from('records')
+      .from('unified_records')
       .select('id, model_id')
       .eq('id', recordId)
       .single();
@@ -528,8 +529,11 @@ async function mainHandler(req: Request): Promise<Response> {
     //    Avoids pulling every targeted_projects row for client-side scanning.
     log('[research-project] searching targeted_projects for existing record');
     const tDb3 = Date.now();
+    // unified_records — same query shape works for both unfrozen records (raw
+    // jsonb) and frozen models (the per-model view re-emits `data` as jsonb so
+    // `data->>slug` keeps working).
     const { data: existingTpRows, error: tpFindErr } = await supabase
-      .from('records')
+      .from('unified_records')
       .select('id, data')
       .eq('model_id', tpModel.id)
       .eq(`data->>${lookupField.name}`, recordId)
@@ -603,25 +607,28 @@ async function mainHandler(req: Request): Promise<Response> {
     const newCells = parsed.map(rowToCrmCells);
     const mergedRows = [...existingTableRows, ...newCells];
 
+    // Both update and insert go through the `record_save` SQL RPC instead of
+    // .from('records') — the RPC dispatches to the dedicated table when
+    // `targeted_projects` is frozen and falls through to the JSONB records
+    // table when it isn't. Same call shape either way.
     if (targetedRecordId) {
       log('[research-project] updating existing targeted record', targetedRecordId, 'with', mergedRows.length, 'rows');
-      const { error: upErr } = await supabase
-        .from('records')
-        .update({
-          data: {
-            ...((existingTp?.data as Record<string, unknown> | undefined) ?? {}),
-            [tableField.name]: mergedRows,
-          },
-        })
-        .eq('id', targetedRecordId);
+      const { error: upErr } = await supabase.rpc('record_save', {
+        p_model_id: tpModel.id,
+        p_id: targetedRecordId,
+        p_data: {
+          ...((existingTp?.data as Record<string, unknown> | undefined) ?? {}),
+          [tableField.name]: mergedRows,
+        },
+      });
       if (upErr) return jsonError(500, `Targeted Projects record update failed: ${upErr.message}`);
     } else {
       log('[research-project] inserting new targeted record with', newCells.length, 'rows');
       const newId = crypto.randomUUID();
-      const { error: insErr } = await supabase.from('records').insert({
-        id: newId,
-        model_id: tpModel.id,
-        data: {
+      const { error: insErr } = await supabase.rpc('record_save', {
+        p_model_id: tpModel.id,
+        p_id: newId,
+        p_data: {
           [lookupField.name]: recordId,
           [tableField.name]: newCells,
         },

@@ -6,9 +6,11 @@ import type { AppModel, ModelField } from '@/types';
 interface CardBuilderProps {
   model: AppModel;
   onChange: (model: AppModel) => void;
+  /** Block edits when the model is frozen — see ModelEditor. */
+  readOnly?: boolean;
 }
 
-export default function CardBuilder({ model, onChange }: CardBuilderProps) {
+export default function CardBuilder({ model, onChange, readOnly = false }: CardBuilderProps) {
   const { t } = useTranslation();
   const { language } = useAppStore();
   const isAr = language === 'ar';
@@ -42,7 +44,12 @@ export default function CardBuilder({ model, onChange }: CardBuilderProps) {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <div
+      className={`grid grid-cols-1 lg:grid-cols-2 gap-8 ${
+        readOnly ? 'pointer-events-none select-none opacity-75' : ''
+      }`}
+      aria-disabled={readOnly || undefined}
+    >
       {/* Config */}
       <div className="space-y-5">
         <div>

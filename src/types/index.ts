@@ -341,6 +341,24 @@ export interface AppModel {
    */
   order?: number;
   is_system: boolean;
+  /**
+   * Frozen ("hardcoded") flag. When true, this model has been promoted
+   * from a JSONB row in the unified `records` table to its own physical
+   * Postgres table named `table_name`. Reads/writes go through the
+   * record_save / unified_records SQL paths instead of `records` directly.
+   * Schema edits via the Builder UI are disabled for frozen models —
+   * future changes happen via Claude writing a migration. Custom-UI
+   * models (`chats`, `ai_chats`) cannot be frozen.
+   * See `freeze_model()` in supabase/schema.sql.
+   */
+  is_hardcoded?: boolean;
+  /**
+   * Physical table name when `is_hardcoded` is true. Equals `name` for
+   * every model frozen through the standard pipeline; kept as a separate
+   * field so a future rename-physical-table operation doesn't have to
+   * walk every consumer. Null/undefined for unfrozen models.
+   */
+  table_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -368,6 +386,36 @@ export interface AppRecord {
   created_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Freeze types — see `freeze_model()` in supabase/schema.sql.
+
+/**
+ * One row that would fail JSONB → typed-column coercion if the model were
+ * frozen now. Returned by `checkFreezeCoercion` so the Freeze modal can
+ * point the user at exactly which records to fix before promoting the
+ * model.
+ */
+export interface FreezeCoercionFailure {
+  record_id: string;
+  field_name: string;
+  field_type: string;
+  raw_value: string | null;
+  reason: string;
+}
+
+/**
+ * Result of a successful `freezeModel` call. Errors throw — the caller is
+ * expected to surface them via toast.
+ */
+export interface FreezeResult {
+  ok: boolean;
+  modelId: string;
+  modelName: string;
+  tableName: string;
+  rowsCopied: number;
+  frozenAt: string; // ISO timestamp
+  error?: string; // populated when ok=false
 }
 
 // Field template — a reusable snapshot of a ModelField (options, type, width, etc.).
@@ -1636,6 +1684,27 @@ export interface AppState {
   // causing the save-time fallback resolver to fill it. Used by the Builder's
   // "Apply to existing records" button. Returns the count of records touched.
   applyFallbackToExistingRecords: (modelId: string, targetFieldId: string) => { count: number };
+
+  // ── Freeze (model promotion to dedicated Postgres table) ──────────────
+  /**
+   * Preview-mode coercion check for a model. Returns the rows that would
+   * fail to coerce if `freezeModel` were called now — empty array means
+   * the model is ready to freeze. Called by the Freeze modal in the
+   * Builder before the user confirms; freeze itself runs the same check
+   * inside the SQL transaction so a successful preview doesn't bypass
+   * the safety net. Returns null when Supabase is unavailable.
+   */
+  checkFreezeCoercion: (modelId: string) => Promise<FreezeCoercionFailure[] | null>;
+  /**
+   * Promote a JSONB-backed model into a dedicated Postgres table with
+   * proper typed columns + junction tables for multi-value fields. Calls
+   * the `freeze_model` SQL RPC, which runs everything in a single
+   * transaction (validate → coercion check → CREATE → copy → mark frozen
+   * → delete from records → rebuild unified view). On success, refreshes
+   * the model's `is_hardcoded` flag in local state. One-way; there is
+   * no Unfreeze. See supabase/schema.sql.
+   */
+  freezeModel: (modelId: string) => Promise<FreezeResult>;
 
   // Prev/next navigation context published by RecordListPage so RecordFormPage
   // can step through the list in the order the user was viewing (filtered +

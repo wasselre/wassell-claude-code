@@ -28,8 +28,10 @@ export interface ProjectPayload {
 
 export async function loadProjectPayload(recordId: string): Promise<ProjectPayload | null> {
   const sb = getServiceClient();
+  // unified_records — works whether the project lives in JSONB records or in
+  // a frozen all_projects table.
   const { data, error } = await sb
-    .from("records")
+    .from("unified_records")
     .select("id, data")
     .eq("id", recordId)
     .single();

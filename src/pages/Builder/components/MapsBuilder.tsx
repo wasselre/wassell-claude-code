@@ -15,11 +15,13 @@ import type { AppModel, MapsConfig, ModelField } from '@/types';
 interface MapsBuilderProps {
   model: AppModel;
   onChange: (model: AppModel) => void;
+  /** Block edits when the model is frozen — see ModelEditor. */
+  readOnly?: boolean;
 }
 
 const mapContainerStyle = { width: '100%', height: '400px', borderRadius: '12px' };
 
-export default function MapsBuilder({ model, onChange }: MapsBuilderProps) {
+export default function MapsBuilder({ model, onChange, readOnly = false }: MapsBuilderProps) {
   const { t } = useTranslation();
   const { language, records } = useAppStore();
   const isAr = language === 'ar';
@@ -80,7 +82,12 @@ export default function MapsBuilder({ model, onChange }: MapsBuilderProps) {
   const styles = parseMapStyleJson(cfg.map_style_json) ?? undefined;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+    <div
+      className={`grid grid-cols-1 lg:grid-cols-2 gap-8 ${
+        readOnly ? 'pointer-events-none select-none opacity-75' : ''
+      }`}
+      aria-disabled={readOnly || undefined}
+    >
       <div className="space-y-5">
         <Select label={t('maps.location_field')} hint={t('maps.location_field_hint')} value={cfg.location_url_field_id ?? ''} onChange={(v) => update({ location_url_field_id: v || null })} fields={urlFields} isAr={isAr} />
         <div className="grid grid-cols-2 gap-3">

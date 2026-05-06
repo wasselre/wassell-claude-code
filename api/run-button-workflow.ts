@@ -166,8 +166,9 @@ async function mainHandler(req: Request): Promise<Response> {
     });
 
     // 1. Load the record + figure out which model it belongs to.
+    // unified_records — works whether the model has been frozen or not.
     const { data: record, error: recErr } = await supabase
-      .from('records')
+      .from('unified_records')
       .select('id, model_id, data')
       .eq('id', recordId)
       .single();
@@ -260,12 +261,14 @@ async function mainHandler(req: Request): Promise<Response> {
       }
     }
 
-    // 5. Persist merged data back to the record.
+    // 5. Persist merged data back to the record. record_save dispatches to
+    // the dedicated table when the model is frozen.
     if (totalMappingsApplied > 0) {
-      const { error: upErr } = await supabase
-        .from('records')
-        .update({ data: mergedData })
-        .eq('id', recordId);
+      const { error: upErr } = await supabase.rpc('record_save', {
+        p_model_id: record.model_id,
+        p_id: recordId,
+        p_data: mergedData,
+      });
       if (upErr) return jsonError(500, `Failed to persist record: ${upErr.message}`);
     }
     log('[run-button-workflow] done, mappings applied=', totalMappingsApplied);

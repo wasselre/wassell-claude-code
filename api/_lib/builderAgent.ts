@@ -589,6 +589,11 @@ interface ModelRow {
   group_id: string | null;
   order: number;
   is_system: boolean;
+  /** True when the model has been promoted to a dedicated Postgres table.
+   *  Schema mutations through this agent are refused — the user is sent
+   *  to a regular Claude Code chat to write a migration. */
+  is_hardcoded?: boolean;
+  table_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -655,6 +660,24 @@ async function readModel(supabase: SupabaseClient, modelId: string): Promise<Mod
   const { data, error } = await supabase.from('models').select('*').eq('id', modelId).single();
   if (error || !data) return null;
   return data as ModelRow;
+}
+
+/**
+ * Frozen models can't have their schema mutated through the Builder Agent —
+ * doing so would leave the JSONB schema and the dedicated Postgres table out
+ * of sync. The user is supposed to ask Claude (in a regular Claude Code
+ * session) to write a migration that ALTERs the table AND updates the JSONB
+ * schema in one transaction.
+ *
+ * Returns null when the model is editable; returns an error JSON string ready
+ * to short-circuit out of the calling tool when frozen.
+ */
+function refuseIfFrozen(model: ModelRow): string | null {
+  if (!model.is_hardcoded) return null;
+  return JSON.stringify({
+    ok: false,
+    error: `Model "${model.label_en || model.name}" is frozen — its schema lives in a dedicated Postgres table and cannot be mutated via the Builder Agent. To add/modify/remove fields or sections, ask Claude (in a regular Claude Code chat, not this Builder Agent) to write a migration that ALTERs the table and updates the model's schema JSONB atomically.`,
+  });
 }
 
 // Persist an updated model row. Updates `updated_at`. Returns a plain
@@ -905,6 +928,8 @@ async function deleteModel(supabase: SupabaseClient, input: DeleteModelInput): P
   if (m.is_system) {
     return JSON.stringify({ ok: false, error: `"${m.label_en || m.name}" is a system model and cannot be deleted. You can edit its sections / fields, but the model itself is protected.` });
   }
+  const frozen = refuseIfFrozen(m);
+  if (frozen) return frozen;
   const { error } = await supabase.from('models').delete().eq('id', input.model_id);
   if (error) return JSON.stringify({ ok: false, error: error.message });
   return JSON.stringify({ ok: true, deleted_model_id: input.model_id, name: m.label_en || m.name });
@@ -928,6 +953,8 @@ async function addSection(supabase: SupabaseClient, input: AddSectionInput): Pro
   }
   const m = await readModel(supabase, input.model_id);
   if (!m) return JSON.stringify({ ok: false, error: 'model not found' });
+  const frozen = refuseIfFrozen(m);
+  if (frozen) return frozen;
 
   const sectionId = newId();
   const order = (m.schema?.sections ?? []).length;
@@ -971,6 +998,8 @@ async function updateSection(supabase: SupabaseClient, input: UpdateSectionInput
   if (!input?.model_id || !input?.section_id) return JSON.stringify({ ok: false, error: 'model_id and section_id are required' });
   const m = await readModel(supabase, input.model_id);
   if (!m) return JSON.stringify({ ok: false, error: 'model not found' });
+  const frozen = refuseIfFrozen(m);
+  if (frozen) return frozen;
   const sections = m.schema?.sections ?? [];
   const idx = sections.findIndex((s) => s.id === input.section_id);
   if (idx < 0) return JSON.stringify({ ok: false, error: 'section not found' });
@@ -1001,6 +1030,8 @@ async function deleteSection(supabase: SupabaseClient, input: DeleteSectionInput
   if (!input?.model_id || !input?.section_id) return JSON.stringify({ ok: false, error: 'model_id and section_id are required' });
   const m = await readModel(supabase, input.model_id);
   if (!m) return JSON.stringify({ ok: false, error: 'model not found' });
+  const frozen = refuseIfFrozen(m);
+  if (frozen) return frozen;
   const sections = m.schema?.sections ?? [];
   const target = sections.find((s) => s.id === input.section_id);
   if (!target) return JSON.stringify({ ok: false, error: 'section not found' });
@@ -1063,6 +1094,8 @@ async function addField(supabase: SupabaseClient, input: AddFieldInput): Promise
 
   const m = await readModel(supabase, input.model_id);
   if (!m) return JSON.stringify({ ok: false, error: 'model not found' });
+  const frozen = refuseIfFrozen(m);
+  if (frozen) return frozen;
   const sections = m.schema?.sections ?? [];
   const sectionIdx = sections.findIndex((s) => s.id === input.section_id);
   if (sectionIdx < 0) return JSON.stringify({ ok: false, error: 'section not found' });
@@ -1118,6 +1151,8 @@ async function updateField(supabase: SupabaseClient, input: UpdateFieldInput): P
   }
   const m = await readModel(supabase, input.model_id);
   if (!m) return JSON.stringify({ ok: false, error: 'model not found' });
+  const frozen = refuseIfFrozen(m);
+  if (frozen) return frozen;
   const sections = m.schema?.sections ?? [];
 
   // Locate the field and its current section.
@@ -1211,6 +1246,8 @@ async function deleteFieldOp(supabase: SupabaseClient, input: DeleteFieldInput):
   if (!input?.model_id || !input?.field_id) return JSON.stringify({ ok: false, error: 'model_id and field_id are required' });
   const m = await readModel(supabase, input.model_id);
   if (!m) return JSON.stringify({ ok: false, error: 'model not found' });
+  const frozen = refuseIfFrozen(m);
+  if (frozen) return frozen;
   const sections = m.schema?.sections ?? [];
 
   let foundField: FieldShape | null = null;

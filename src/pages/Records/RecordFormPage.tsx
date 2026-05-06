@@ -383,9 +383,13 @@ export default function RecordFormPage() {
       );
       // Refresh the record's data from Supabase so the form picks up
       // anything the workflow wrote — without a full page reload.
+      // Reads go through `unified_records`, the UNION of the JSONB
+      // `records` table and each frozen model's `<name>_v` view, so
+      // the right data is fetched whether the model has been frozen or
+      // not.
       if (supabase) {
         const { data: fresh } = await supabase
-          .from('records')
+          .from('unified_records')
           .select('data')
           .eq('id', existingRecord.id)
           .single();

@@ -31,8 +31,10 @@ export interface OperationRecord {
 
 export async function loadOperationRecord(operationId: string): Promise<OperationRecord | null> {
   const sb = getServiceClient();
+  // unified_records — works whether the marketing-operations model has been
+  // frozen or not.
   const { data, error } = await sb
-    .from("records")
+    .from("unified_records")
     .select("id, model_id, data")
     .eq("id", operationId)
     .single();
@@ -92,8 +94,9 @@ export async function getModelIdBySlug(slug: string): Promise<string | null> {
  */
 export async function countChildRecords(modelId: string, operationId: string): Promise<number> {
   const sb = getServiceClient();
+  // unified_records — works for frozen + unfrozen child models alike.
   const { count, error } = await sb
-    .from("records")
+    .from("unified_records")
     .select("id", { count: "exact", head: true })
     .eq("model_id", modelId)
     .contains("data", { operation: operationId });

@@ -1198,3 +1198,1071 @@ EXECUTE FUNCTION public.models_view_sync_trigger();
 -- One-time seed for fresh installs: regenerate every view from current models.
 -- Idempotent — running on an existing install is a no-op via CREATE OR REPLACE.
 SELECT public.regenerate_all_model_views();
+
+-- ============================================================
+-- FREEZE INFRASTRUCTURE (added 2026-05-05)
+-- ============================================================
+-- "Freezing" a model promotes it from a JSONB row in the unified `records`
+-- table to a real Postgres table with proper typed columns, junction tables
+-- for multi-value fields (multiselect, multi-lookup), and subtables for
+-- `table` fields. After freeze, the app reads/writes the frozen model
+-- through dedicated paths; the old JSONB row is deleted from `records`.
+--
+-- One-way, per-model. User clicks "Freeze" in the Builder once they're done
+-- iterating on a model's schema; future schema changes happen via Claude
+-- writing a migration. Custom-UI models (`chats`, `ai_chats`) are excluded.
+--
+-- Field-type → physical mapping:
+--   text/textarea/email/phone/url/dropdown/auto_id/lookup(single)  → text
+--   number/currency/formula                                         → numeric
+--   date/datetime                                                   → timestamptz
+--   checkbox                                                        → boolean
+--   range                                                           → <name>_min, <name>_max numeric
+--   notes/section_mirror/section_selector/assignee                  → jsonb
+--   multiselect                                                     → junction <model>__<field> (record_id, value)
+--   lookup is_multi=true                                            → junction <model>__<field> (record_id, target_record_id)
+--   table                                                           → subtable <model>__<field> with row columns
+--   mirror                                                          → SKIPPED (computed at runtime from sibling lookup)
+--
+-- Coercion failures abort the freeze and are reported back to the caller —
+-- never silently NULL'd. Auto-IDs switch from JSONB-counter to a Postgres
+-- sequence per (model, field), eliminating the read-modify-write race.
+
+-- ────────────────────────────────────────────────────────────────────
+-- Schema columns + index
+-- ────────────────────────────────────────────────────────────────────
+
+ALTER TABLE models
+  ADD COLUMN IF NOT EXISTS is_hardcoded boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS table_name text;
+
+CREATE INDEX IF NOT EXISTS idx_models_is_hardcoded ON models(is_hardcoded) WHERE is_hardcoded = true;
+
+-- ────────────────────────────────────────────────────────────────────
+-- Helpers
+-- ────────────────────────────────────────────────────────────────────
+
+-- Defensive identifier sanitizer — slugs from the app are already
+-- snake_case but verifying here means a malicious schema row can't
+-- inject SQL via dynamic table/column names.
+CREATE OR REPLACE FUNCTION public.freeze_safe_ident(p text)
+RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+BEGIN
+  IF p IS NULL OR p = '' THEN
+    RAISE EXCEPTION 'identifier may not be empty';
+  END IF;
+  IF p !~ '^[a-z_][a-z0-9_]*$' THEN
+    RAISE EXCEPTION 'invalid identifier: %', p;
+  END IF;
+  IF length(p) > 50 THEN
+    RAISE EXCEPTION 'identifier too long (>50 chars): %', p;
+  END IF;
+  RETURN p;
+END;
+$fn$;
+
+-- Models excluded from freeze because they have custom UIs that don't fit
+-- the generic record/form pattern.
+CREATE OR REPLACE FUNCTION public.is_freezable_model(p_model_name text)
+RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
+  SELECT p_model_name IS NOT NULL
+     AND p_model_name NOT IN ('chats', 'ai_chats');
+$fn$;
+
+-- Multi-value field types that need junction/subtables.
+CREATE OR REPLACE FUNCTION public.freeze_is_multi_value(p_ftype text, p_is_multi boolean)
+RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
+  SELECT p_ftype = 'multiselect'
+      OR p_ftype = 'table'
+      OR (p_ftype = 'lookup' AND COALESCE(p_is_multi, false));
+$fn$;
+
+-- Field types that get NO physical column (computed at runtime).
+CREATE OR REPLACE FUNCTION public.freeze_is_virtual(p_ftype text)
+RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
+  SELECT p_ftype = 'mirror';
+$fn$;
+
+-- ────────────────────────────────────────────────────────────────────
+-- Coercion check
+-- ────────────────────────────────────────────────────────────────────
+-- Walks every record for the model and every typed field; reports rows
+-- that fail to coerce so the user can fix them before freezing. Returns
+-- empty when the model is freezable as-is.
+
+CREATE OR REPLACE FUNCTION public.freeze_check_coercion(p_model_id uuid)
+RETURNS TABLE (
+  record_id uuid,
+  field_name text,
+  field_type text,
+  raw_value text,
+  reason text
+)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_field jsonb;
+  v_fname text;
+  v_ftype text;
+  v_schema jsonb;
+BEGIN
+  SELECT schema INTO v_schema FROM models WHERE id = p_model_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'model % not found', p_model_id;
+  END IF;
+
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+
+    -- numeric types
+    IF v_ftype IN ('number', 'currency', 'formula') THEN
+      RETURN QUERY
+        SELECT r.id, v_fname, v_ftype, r.data->>v_fname,
+               'cannot coerce to numeric'::text
+        FROM records r
+        WHERE r.model_id = p_model_id
+          AND r.data ? v_fname
+          AND r.data->>v_fname IS NOT NULL
+          AND r.data->>v_fname <> ''
+          AND public.try_numeric(r.data->>v_fname) IS NULL;
+
+    -- timestamptz
+    ELSIF v_ftype IN ('date', 'datetime') THEN
+      RETURN QUERY
+        SELECT r.id, v_fname, v_ftype, r.data->>v_fname,
+               'cannot coerce to timestamptz'::text
+        FROM records r
+        WHERE r.model_id = p_model_id
+          AND r.data ? v_fname
+          AND r.data->>v_fname IS NOT NULL
+          AND r.data->>v_fname <> ''
+          AND public.try_timestamptz(r.data->>v_fname) IS NULL;
+
+    -- boolean
+    ELSIF v_ftype = 'checkbox' THEN
+      RETURN QUERY
+        SELECT r.id, v_fname, v_ftype, r.data->>v_fname,
+               'cannot coerce to boolean'::text
+        FROM records r
+        WHERE r.model_id = p_model_id
+          AND r.data ? v_fname
+          AND r.data->>v_fname IS NOT NULL
+          AND r.data->>v_fname <> ''
+          AND public.try_boolean(r.data->>v_fname) IS NULL;
+
+    -- range — both halves
+    ELSIF v_ftype = 'range' THEN
+      RETURN QUERY
+        SELECT r.id, v_fname || '.min', v_ftype, r.data->v_fname->>'min',
+               'cannot coerce range min to numeric'::text
+        FROM records r
+        WHERE r.model_id = p_model_id
+          AND r.data ? v_fname
+          AND r.data->v_fname->>'min' IS NOT NULL
+          AND r.data->v_fname->>'min' <> ''
+          AND public.try_numeric(r.data->v_fname->>'min') IS NULL;
+      RETURN QUERY
+        SELECT r.id, v_fname || '.max', v_ftype, r.data->v_fname->>'max',
+               'cannot coerce range max to numeric'::text
+        FROM records r
+        WHERE r.model_id = p_model_id
+          AND r.data ? v_fname
+          AND r.data->v_fname->>'max' IS NOT NULL
+          AND r.data->v_fname->>'max' <> ''
+          AND public.try_numeric(r.data->v_fname->>'max') IS NULL;
+
+    -- multiselect must be a JSON array (or scalar/null which we tolerate)
+    ELSIF v_ftype = 'multiselect' THEN
+      RETURN QUERY
+        SELECT r.id, v_fname, v_ftype, r.data->>v_fname,
+               'multiselect value must be a JSON array'::text
+        FROM records r
+        WHERE r.model_id = p_model_id
+          AND r.data ? v_fname
+          AND r.data->v_fname IS NOT NULL
+          AND jsonb_typeof(r.data->v_fname) NOT IN ('array', 'null');
+
+    -- multi-lookup must be array; single lookup must be scalar
+    ELSIF v_ftype = 'lookup' THEN
+      IF COALESCE((v_field->>'is_multi')::boolean, false) THEN
+        RETURN QUERY
+          SELECT r.id, v_fname, v_ftype, r.data->>v_fname,
+                 'multi-lookup value must be a JSON array'::text
+          FROM records r
+          WHERE r.model_id = p_model_id
+            AND r.data ? v_fname
+            AND r.data->v_fname IS NOT NULL
+            AND jsonb_typeof(r.data->v_fname) NOT IN ('array', 'null');
+      END IF;
+
+    -- table fields must be array of row objects
+    ELSIF v_ftype = 'table' THEN
+      RETURN QUERY
+        SELECT r.id, v_fname, v_ftype, r.data->>v_fname,
+               'table value must be a JSON array of rows'::text
+        FROM records r
+        WHERE r.model_id = p_model_id
+          AND r.data ? v_fname
+          AND r.data->v_fname IS NOT NULL
+          AND jsonb_typeof(r.data->v_fname) NOT IN ('array', 'null');
+    END IF;
+  END LOOP;
+END;
+$fn$;
+
+GRANT EXECUTE ON FUNCTION public.freeze_check_coercion(uuid) TO authenticated;
+
+-- ────────────────────────────────────────────────────────────────────
+-- regenerate_frozen_model_artifacts: rebuild view + save RPC for one
+-- frozen model, idempotent. Called by freeze_model on first run and by
+-- future schema migrations after column DDL.
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.regenerate_frozen_model_artifacts(p_model_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model        record;
+  v_table        text;
+  v_view_name    text;
+  v_field        jsonb;
+  v_fname        text;
+  v_ftype        text;
+  v_is_multi     boolean;
+  v_view_keys    text := '';
+  v_data_json    text := '';   -- jsonb_build_object(...) expression for RLS policies
+BEGIN
+  SELECT * INTO v_model FROM models WHERE id = p_model_id;
+  IF NOT FOUND OR NOT v_model.is_hardcoded THEN RETURN; END IF;
+
+  v_table     := public.freeze_safe_ident(v_model.name);
+  v_view_name := v_table || '_v';
+
+  -- Build the JSONB-shape view: re-emits each frozen row as a `data` jsonb
+  -- in the same shape the app/store expects. Junction-backed fields are
+  -- aggregated back into JSON arrays. Writes go through public.record_save
+  -- which dispatches to public.freeze_apply_row — no per-model save RPC,
+  -- since freeze_apply_row already handles every field type generically.
+  --
+  -- We also accumulate a `jsonb_build_object(...)` expression that the
+  -- RLS policies below use to re-build the same JSONB shape inline from
+  -- the frozen-table columns, so `wassell_record_passes_scope` can
+  -- evaluate field-based scope rules against frozen rows. Multi-value
+  -- fields (junctions / subtables) are intentionally OMITTED from the
+  -- policy expression — including them would join per-row in the policy
+  -- and tank performance, and scope rules typically address scalar
+  -- fields anyway. Scope conditions referencing multi-value fields fail
+  -- closed on frozen tables in v1; this is documented in CLAUDE.md.
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    v_is_multi := COALESCE((v_field->>'is_multi')::boolean, false);
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    IF public.freeze_is_virtual(v_ftype) THEN CONTINUE; END IF;
+
+    IF v_view_keys <> '' THEN v_view_keys := v_view_keys || ', '; END IF;
+
+    IF v_ftype = 'range' THEN
+      v_view_keys := v_view_keys || format(
+        '%L, jsonb_build_object(''min'', t.%I, ''max'', t.%I)',
+        v_fname, v_fname || '_min', v_fname || '_max'
+      );
+      IF v_data_json <> '' THEN v_data_json := v_data_json || ', '; END IF;
+      v_data_json := v_data_json || format(
+        '%L, jsonb_build_object(''min'', %I, ''max'', %I)',
+        v_fname, v_fname || '_min', v_fname || '_max'
+      );
+    ELSIF v_ftype = 'multiselect' THEN
+      v_view_keys := v_view_keys || format(
+        '%L, COALESCE((SELECT jsonb_agg(value ORDER BY value) FROM public.%I WHERE record_id = t.id), ''[]''::jsonb)',
+        v_fname, v_table || '__' || v_fname
+      );
+      -- Skip in policy expression (multi-value, see comment above).
+    ELSIF v_ftype = 'lookup' AND v_is_multi THEN
+      v_view_keys := v_view_keys || format(
+        '%L, COALESCE((SELECT jsonb_agg(target_record_id ORDER BY target_record_id) FROM public.%I WHERE record_id = t.id), ''[]''::jsonb)',
+        v_fname, v_table || '__' || v_fname
+      );
+      -- Skip in policy expression.
+    ELSIF v_ftype = 'table' THEN
+      -- Subtable: re-aggregate row objects in row_index order.
+      v_view_keys := v_view_keys || format(
+        '%L, COALESCE((SELECT jsonb_agg(to_jsonb(s) - ''id'' - ''record_id'' - ''row_index'' ORDER BY row_index) FROM public.%I s WHERE record_id = t.id), ''[]''::jsonb)',
+        v_fname, v_table || '__' || v_fname
+      );
+      -- Skip in policy expression.
+    ELSE
+      v_view_keys := v_view_keys || format('%L, t.%I', v_fname, v_fname);
+      IF v_data_json <> '' THEN v_data_json := v_data_json || ', '; END IF;
+      v_data_json := v_data_json || format('%L, %I::text', v_fname, v_fname);
+    END IF;
+  END LOOP;
+
+  -- Empty-fields edge case: jsonb_build_object() with no args is invalid;
+  -- emit an empty-object literal so the policy still parses.
+  IF v_data_json = '' THEN v_data_json := '''{}''::jsonb'; ELSE v_data_json := 'jsonb_build_object(' || v_data_json || ')'; END IF;
+
+  -- (Re)build the JSONB-shape view. `created_by_user_id` is surfaced as
+  -- a top-level column so server-side reads from `unified_records`
+  -- (which UNIONs the records table with each <name>_v) see the creator
+  -- stamp and `wassell_record_passes_scope` can read it via rec.created_by_user_id.
+  EXECUTE format('DROP VIEW IF EXISTS public.%I', v_view_name);
+  EXECUTE format(
+    'CREATE VIEW public.%I WITH (security_invoker = true) AS SELECT t.id, %L::uuid AS model_id, jsonb_strip_nulls(jsonb_build_object(%s)) AS data, t.created_by_user_id, t.created_at, t.updated_at FROM public.%I t',
+    v_view_name, p_model_id, v_view_keys, v_table
+  );
+  EXECUTE format('GRANT SELECT ON public.%I TO authenticated, anon, service_role', v_view_name);
+
+  -- (Re)generate per-table RLS policies. Drop any prior versions so
+  -- this function is idempotent across schema edits.
+  EXECUTE format('DROP POLICY IF EXISTS "frozen_view"   ON public.%I', v_table);
+  EXECUTE format('DROP POLICY IF EXISTS "frozen_insert" ON public.%I', v_table);
+  EXECUTE format('DROP POLICY IF EXISTS "frozen_update" ON public.%I', v_table);
+  EXECUTE format('DROP POLICY IF EXISTS "frozen_delete" ON public.%I', v_table);
+
+  EXECUTE format(
+    $pol$CREATE POLICY "frozen_view" ON public.%I FOR SELECT TO authenticated USING (
+      public.wassell_can_view_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s)
+    )$pol$,
+    v_table, p_model_id, v_data_json
+  );
+  EXECUTE format(
+    $pol$CREATE POLICY "frozen_insert" ON public.%I FOR INSERT TO authenticated WITH CHECK (
+      public.wassell_user_has_action(auth.uid(), %L::uuid, 'create')
+    )$pol$,
+    v_table, p_model_id
+  );
+  EXECUTE format(
+    $pol$CREATE POLICY "frozen_update" ON public.%I FOR UPDATE TO authenticated
+      USING (public.wassell_can_edit_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s))
+      WITH CHECK (public.wassell_can_edit_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s))$pol$,
+    v_table, p_model_id, v_data_json, p_model_id, v_data_json
+  );
+  EXECUTE format(
+    $pol$CREATE POLICY "frozen_delete" ON public.%I FOR DELETE TO authenticated USING (
+      public.wassell_can_edit_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s)
+      AND public.wassell_user_has_action(auth.uid(), %L::uuid, 'delete')
+    )$pol$,
+    v_table, p_model_id, v_data_json, p_model_id
+  );
+END;
+$fn$;
+
+-- ────────────────────────────────────────────────────────────────────
+-- freeze_apply_row: shared body for save RPCs. Reads the model schema
+-- from `models.schema` JSONB at call-time and dispatches scalar UPDATE,
+-- range-pair UPDATE, multiselect/multi-lookup junction replace, and
+-- table subtable replace — all using dynamic SQL keyed on the model's
+-- physical table name.
+--
+-- Why dynamic-from-schema instead of code-generating per-model bodies:
+-- adding/removing a field becomes a regenerate_frozen_model_artifacts()
+-- + ALTER TABLE call — no save-RPC body needs to be regenerated. Slightly
+-- slower per call (one schema lookup) but vastly simpler to maintain.
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.freeze_apply_row(
+  p_model_id   uuid,
+  p_id         uuid,
+  p_data       jsonb,
+  p_created_by uuid DEFAULT NULL
+)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model       record;
+  v_table       text;
+  v_field       jsonb;
+  v_fname       text;
+  v_ftype       text;
+  v_is_multi    boolean;
+  v_assignments text := '';
+  v_value       jsonb;
+  v_arr         jsonb;
+  v_row         jsonb;
+  v_row_index   int;
+BEGIN
+  SELECT * INTO v_model FROM models WHERE id = p_model_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'model % not found in freeze_apply_row', p_model_id;
+  END IF;
+  v_table := public.freeze_safe_ident(v_model.name);
+
+  -- 0. Stamp `created_by_user_id` on first save. COALESCE preserves
+  --    any existing value on subsequent saves so the creator stamp
+  --    survives later edits — same posture as the records-table flow
+  --    in src/stores/appStore.ts saveRecord.
+  IF p_created_by IS NOT NULL THEN
+    EXECUTE format(
+      'UPDATE public.%I SET created_by_user_id = COALESCE(created_by_user_id, $1) WHERE id = $2',
+      v_table
+    ) USING p_created_by, p_id;
+  END IF;
+
+  -- 1. Build a single UPDATE for all scalar/range columns.
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    v_is_multi := COALESCE((v_field->>'is_multi')::boolean, false);
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    IF public.freeze_is_virtual(v_ftype) THEN CONTINUE; END IF;
+    IF public.freeze_is_multi_value(v_ftype, v_is_multi) THEN CONTINUE; END IF;
+
+    IF v_assignments <> '' THEN v_assignments := v_assignments || ', '; END IF;
+
+    IF v_ftype = 'range' THEN
+      v_assignments := v_assignments || format(
+        '%I = public.try_numeric(($1->%L)->>''min''), %I = public.try_numeric(($1->%L)->>''max'')',
+        v_fname || '_min', v_fname, v_fname || '_max', v_fname
+      );
+    ELSIF v_ftype IN ('number', 'currency', 'formula') THEN
+      v_assignments := v_assignments || format(
+        '%I = public.try_numeric($1->>%L)', v_fname, v_fname
+      );
+    ELSIF v_ftype IN ('date', 'datetime') THEN
+      v_assignments := v_assignments || format(
+        '%I = public.try_timestamptz($1->>%L)', v_fname, v_fname
+      );
+    ELSIF v_ftype = 'checkbox' THEN
+      v_assignments := v_assignments || format(
+        '%I = public.try_boolean($1->>%L)', v_fname, v_fname
+      );
+    ELSIF v_ftype IN ('notes', 'section_mirror', 'section_selector', 'assignee') THEN
+      v_assignments := v_assignments || format(
+        '%I = $1->%L', v_fname, v_fname
+      );
+    ELSE
+      -- text-shaped: text, textarea, email, phone, url, dropdown, auto_id, lookup-single
+      v_assignments := v_assignments || format(
+        '%I = $1->>%L', v_fname, v_fname
+      );
+    END IF;
+  END LOOP;
+
+  IF v_assignments <> '' THEN
+    EXECUTE format(
+      'UPDATE public.%I SET %s, updated_at = now() WHERE id = $2',
+      v_table, v_assignments
+    ) USING p_data, p_id;
+  END IF;
+
+  -- 2. Replace junction/subtable rows for each multi-value field.
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    v_is_multi := COALESCE((v_field->>'is_multi')::boolean, false);
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    IF NOT public.freeze_is_multi_value(v_ftype, v_is_multi) THEN CONTINUE; END IF;
+
+    -- Wipe existing junction/subtable rows for this record.
+    EXECUTE format('DELETE FROM public.%I WHERE record_id = $1',
+                   v_table || '__' || v_fname) USING p_id;
+
+    v_arr := p_data->v_fname;
+    IF v_arr IS NULL OR jsonb_typeof(v_arr) <> 'array' THEN CONTINUE; END IF;
+
+    IF v_ftype = 'multiselect' THEN
+      EXECUTE format(
+        'INSERT INTO public.%I (record_id, value) SELECT $1, value::text FROM jsonb_array_elements_text($2)',
+        v_table || '__' || v_fname
+      ) USING p_id, v_arr;
+    ELSIF v_ftype = 'lookup' THEN
+      EXECUTE format(
+        'INSERT INTO public.%I (record_id, target_record_id) SELECT $1, value::uuid FROM jsonb_array_elements_text($2) WHERE value <> ''''',
+        v_table || '__' || v_fname
+      ) USING p_id, v_arr;
+    ELSIF v_ftype = 'table' THEN
+      v_row_index := 0;
+      FOR v_row IN SELECT * FROM jsonb_array_elements(v_arr) LOOP
+        EXECUTE format(
+          'INSERT INTO public.%I (record_id, row_index, %s) VALUES ($1, $2, %s)',
+          v_table || '__' || v_fname,
+          public.freeze_table_columns_dml(v_field->'table_columns', false),
+          public.freeze_table_columns_dml(v_field->'table_columns', true)
+        ) USING p_id, v_row_index, v_row;
+        v_row_index := v_row_index + 1;
+      END LOOP;
+    END IF;
+  END LOOP;
+END;
+$fn$;
+
+-- Helper for table-field DML: returns either the column-list or the
+-- VALUES expression (referencing $3 = the row jsonb).
+CREATE OR REPLACE FUNCTION public.freeze_table_columns_dml(p_columns jsonb, p_values boolean)
+RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+DECLARE
+  v_col   jsonb;
+  v_name  text;
+  v_type  text;
+  v_out   text := '';
+BEGIN
+  IF p_columns IS NULL OR jsonb_typeof(p_columns) <> 'array' THEN
+    RETURN '';
+  END IF;
+  FOR v_col IN SELECT * FROM jsonb_array_elements(p_columns) LOOP
+    v_name := v_col->>'name';
+    v_type := v_col->>'type';
+    IF v_name IS NULL OR v_name = '' THEN CONTINUE; END IF;
+    IF v_out <> '' THEN v_out := v_out || ', '; END IF;
+    IF p_values THEN
+      IF v_type IN ('number', 'currency', 'formula') THEN
+        v_out := v_out || format('public.try_numeric($3->>%L)', v_name);
+      ELSIF v_type = 'date' THEN
+        v_out := v_out || format('public.try_timestamptz($3->>%L)', v_name);
+      ELSE
+        v_out := v_out || format('$3->>%L', v_name);
+      END IF;
+    ELSE
+      v_out := v_out || format('%I', v_name);
+    END IF;
+  END LOOP;
+  RETURN v_out;
+END;
+$fn$;
+
+-- ────────────────────────────────────────────────────────────────────
+-- freeze_model: the orchestrator. Runs as a single transaction (the
+-- function itself is invoked via Supabase RPC, which auto-wraps in a
+-- transaction). Aborts on any coercion failure or DDL error so the
+-- model stays in its pre-freeze state.
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.freeze_model(p_model_id uuid)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model       record;
+  v_table       text;
+  v_columns     text := '';
+  v_field       jsonb;
+  v_fname       text;
+  v_ftype       text;
+  v_is_multi    boolean;
+  v_failures    int;
+  v_record_count int;
+  v_seq_name    text;
+  v_max_num     bigint;
+BEGIN
+  SELECT * INTO v_model FROM models WHERE id = p_model_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'model % not found', p_model_id;
+  END IF;
+  IF v_model.is_hardcoded THEN
+    RAISE EXCEPTION 'model "%" is already frozen', v_model.name;
+  END IF;
+  IF NOT public.is_freezable_model(v_model.name) THEN
+    RAISE EXCEPTION 'model "%" is not freezable (custom-UI model)', v_model.name;
+  END IF;
+
+  v_table := public.freeze_safe_ident(v_model.name);
+
+  -- Fail loudly if a table by this name already exists from a prior
+  -- aborted freeze — the user needs to drop it manually before retrying.
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = v_table
+  ) THEN
+    RAISE EXCEPTION 'table public.% already exists — drop it before re-freezing', v_table;
+  END IF;
+
+  -- Coercion check — abort with details if any rows fail.
+  SELECT count(*) INTO v_failures FROM public.freeze_check_coercion(p_model_id);
+  IF v_failures > 0 THEN
+    RAISE EXCEPTION 'freeze aborted: % records have coercion failures (call freeze_check_coercion to see them)', v_failures;
+  END IF;
+
+  -- Build CREATE TABLE column list from the schema.
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    v_is_multi := COALESCE((v_field->>'is_multi')::boolean, false);
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    IF public.freeze_is_virtual(v_ftype) THEN CONTINUE; END IF;
+    IF public.freeze_is_multi_value(v_ftype, v_is_multi) THEN CONTINUE; END IF;
+    PERFORM public.freeze_safe_ident(v_fname);
+
+    IF v_columns <> '' THEN v_columns := v_columns || ', '; END IF;
+
+    IF v_ftype = 'range' THEN
+      v_columns := v_columns || format(
+        '%I numeric, %I numeric',
+        v_fname || '_min', v_fname || '_max'
+      );
+    ELSIF v_ftype IN ('number', 'currency', 'formula') THEN
+      v_columns := v_columns || format('%I numeric', v_fname);
+    ELSIF v_ftype IN ('date', 'datetime') THEN
+      v_columns := v_columns || format('%I timestamptz', v_fname);
+    ELSIF v_ftype = 'checkbox' THEN
+      v_columns := v_columns || format('%I boolean', v_fname);
+    ELSIF v_ftype IN ('notes', 'section_mirror', 'section_selector', 'assignee') THEN
+      v_columns := v_columns || format('%I jsonb', v_fname);
+    ELSE
+      v_columns := v_columns || format('%I text', v_fname);
+    END IF;
+  END LOOP;
+
+  -- CREATE TABLE. `created_by_user_id` is the same column the records
+  -- table grew in Phase 1 RLS — frozen tables carry it forward so the
+  -- `created_by` scope target keeps working after a model is frozen.
+  EXECUTE format(
+    'CREATE TABLE public.%I (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), %s, created_by_user_id uuid REFERENCES public.users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())',
+    v_table,
+    CASE WHEN v_columns = '' THEN 'placeholder_unused boolean' ELSE v_columns END
+  );
+
+  -- updated_at trigger
+  EXECUTE format(
+    'CREATE TRIGGER set_updated_at_%I BEFORE UPDATE ON public.%I FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()',
+    v_table, v_table
+  );
+
+  -- RLS — mirror the records-table policies so the per-model + scope
+  -- access controls survive freezing. The actual policy bodies live on
+  -- a per-table SELECT/INSERT/UPDATE/DELETE policy and call the shared
+  -- `wassell_can_*_jsonb` helpers, which build a synthetic `records`
+  -- row from the frozen-table columns and delegate to the existing
+  -- `wassell_record_passes_scope` evaluator.
+  --
+  -- The policies are (re)generated inside `regenerate_frozen_model_artifacts`
+  -- so they refresh whenever the schema changes. Here we only enable RLS
+  -- + grant base privileges; policies land further down via the regen call.
+  EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', v_table);
+  EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO authenticated', v_table);
+
+  -- Junction + subtables for multi-value fields.
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    v_is_multi := COALESCE((v_field->>'is_multi')::boolean, false);
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    IF NOT public.freeze_is_multi_value(v_ftype, v_is_multi) THEN CONTINUE; END IF;
+    PERFORM public.freeze_safe_ident(v_fname);
+
+    IF v_ftype = 'multiselect' THEN
+      EXECUTE format(
+        'CREATE TABLE public.%I (record_id uuid NOT NULL REFERENCES public.%I(id) ON DELETE CASCADE, value text NOT NULL, PRIMARY KEY (record_id, value))',
+        v_table || '__' || v_fname, v_table
+      );
+    ELSIF v_ftype = 'lookup' THEN
+      EXECUTE format(
+        'CREATE TABLE public.%I (record_id uuid NOT NULL REFERENCES public.%I(id) ON DELETE CASCADE, target_record_id uuid NOT NULL, PRIMARY KEY (record_id, target_record_id))',
+        v_table || '__' || v_fname, v_table
+      );
+    ELSIF v_ftype = 'table' THEN
+      -- Subtable: row_index for ordering, plus one column per table-column.
+      EXECUTE format(
+        'CREATE TABLE public.%I (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), record_id uuid NOT NULL REFERENCES public.%I(id) ON DELETE CASCADE, row_index int NOT NULL, %s, created_at timestamptz NOT NULL DEFAULT now())',
+        v_table || '__' || v_fname,
+        v_table,
+        public.freeze_build_table_subtable_columns(v_field->'table_columns')
+      );
+      EXECUTE format(
+        'CREATE INDEX %I ON public.%I (record_id, row_index)',
+        'idx_' || v_table || '__' || v_fname || '_record', v_table || '__' || v_fname
+      );
+    END IF;
+
+    -- RLS on the junction/subtable: a row is reachable iff the parent
+    -- record is reachable. We enforce this by joining back to the parent
+    -- and reusing its policy via `EXISTS (SELECT FROM <parent> WHERE id = record_id)`.
+    -- The parent table's policy already calls wassell_can_*_jsonb, so
+    -- the per-model + scope checks compose. Without this guard a non-
+    -- admin with view perm on the model could read multiselect values
+    -- for records the parent policy excludes.
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', v_table || '__' || v_fname);
+    EXECUTE format(
+      'CREATE POLICY "frozen_junction_view" ON public.%I FOR SELECT TO authenticated USING (EXISTS (SELECT 1 FROM public.%I p WHERE p.id = record_id))',
+      v_table || '__' || v_fname, v_table
+    );
+    EXECUTE format(
+      'CREATE POLICY "frozen_junction_write" ON public.%I FOR ALL TO authenticated USING (EXISTS (SELECT 1 FROM public.%I p WHERE p.id = record_id)) WITH CHECK (EXISTS (SELECT 1 FROM public.%I p WHERE p.id = record_id))',
+      v_table || '__' || v_fname, v_table, v_table
+    );
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO authenticated', v_table || '__' || v_fname);
+  END LOOP;
+
+  -- Sequences for each auto_id field. Set the next value above any
+  -- existing numeric portion so future inserts don't collide.
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+    WHERE field->>'type' = 'auto_id'
+  LOOP
+    v_fname    := v_field->>'name';
+    v_seq_name := v_table || '__' || v_fname || '_seq';
+
+    -- Pluck the trailing integer out of any existing auto_id values
+    -- like "CLT-0042" → 42 to seed the sequence above the high water mark.
+    EXECUTE format(
+      $q$SELECT COALESCE(max((regexp_replace(data->>%L, '^.*?(\d+)$', '\1'))::bigint), 0)
+         FROM records WHERE model_id = $1
+           AND data->>%L ~ '\d+'$q$,
+      v_fname, v_fname
+    ) USING p_model_id INTO v_max_num;
+
+    EXECUTE format('CREATE SEQUENCE public.%I START WITH %s', v_seq_name, GREATEST(v_max_num + 1, 1));
+    EXECUTE format('GRANT USAGE ON SEQUENCE public.%I TO authenticated', v_seq_name);
+  END LOOP;
+
+  -- Mark the model frozen FIRST so the records-guard trigger picks it up,
+  -- then copy data, then drop the legacy v_<name> view, then regen artifacts.
+  UPDATE models SET is_hardcoded = true, table_name = v_table WHERE id = p_model_id;
+
+  -- Copy data: parent table first, then junctions/subtables.
+  PERFORM public.freeze_copy_records(p_model_id);
+
+  -- Drop the legacy records-based view (replaced by <name>_v).
+  EXECUTE format('DROP VIEW IF EXISTS public.%I', 'v_' || v_table);
+
+  -- Generate the JSONB-shape view + per-model save RPC.
+  PERFORM public.regenerate_frozen_model_artifacts(p_model_id);
+
+  -- Delete the original JSONB rows from records — they're now in the
+  -- frozen table.
+  SELECT count(*) INTO v_record_count FROM records WHERE model_id = p_model_id;
+  DELETE FROM records WHERE model_id = p_model_id;
+
+  -- Rebuild the unified_records UNION view.
+  PERFORM public.rebuild_unified_records();
+
+  RETURN jsonb_build_object(
+    'model_id',     p_model_id,
+    'model_name',   v_model.name,
+    'table_name',   v_table,
+    'rows_copied',  v_record_count,
+    'frozen_at',    now()
+  );
+END;
+$fn$;
+
+GRANT EXECUTE ON FUNCTION public.freeze_model(uuid) TO authenticated;
+
+-- Subtable column-list builder for the CREATE TABLE in freeze_model.
+CREATE OR REPLACE FUNCTION public.freeze_build_table_subtable_columns(p_columns jsonb)
+RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $fn$
+DECLARE
+  v_col  jsonb;
+  v_name text;
+  v_type text;
+  v_out  text := '';
+BEGIN
+  IF p_columns IS NULL OR jsonb_typeof(p_columns) <> 'array' THEN
+    RETURN 'placeholder_unused boolean';
+  END IF;
+  FOR v_col IN SELECT * FROM jsonb_array_elements(p_columns) LOOP
+    v_name := v_col->>'name';
+    v_type := v_col->>'type';
+    IF v_name IS NULL OR v_name = '' THEN CONTINUE; END IF;
+    PERFORM public.freeze_safe_ident(v_name);
+    IF v_out <> '' THEN v_out := v_out || ', '; END IF;
+    IF v_type IN ('number', 'currency', 'formula') THEN
+      v_out := v_out || format('%I numeric', v_name);
+    ELSIF v_type = 'date' THEN
+      v_out := v_out || format('%I timestamptz', v_name);
+    ELSE
+      v_out := v_out || format('%I text', v_name);
+    END IF;
+  END LOOP;
+  IF v_out = '' THEN v_out := 'placeholder_unused boolean'; END IF;
+  RETURN v_out;
+END;
+$fn$;
+
+-- ────────────────────────────────────────────────────────────────────
+-- freeze_copy_records: pulls every records.data row for this model and
+-- writes it into the new frozen table (parent + junctions + subtables).
+-- Called from freeze_model AFTER the table exists and the model is
+-- flagged frozen (so the records-guard trigger doesn't block the
+-- intermediate INSERTs we're about to do here).
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.freeze_copy_records(p_model_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model record;
+  v_table text;
+  v_rec   record;
+BEGIN
+  SELECT * INTO v_model FROM models WHERE id = p_model_id;
+  IF NOT FOUND OR NOT v_model.is_hardcoded THEN RETURN; END IF;
+  v_table := public.freeze_safe_ident(v_model.name);
+
+  FOR v_rec IN
+    SELECT id, data, created_by_user_id, created_at, updated_at
+      FROM records WHERE model_id = p_model_id
+  LOOP
+    -- Insert the parent row with timestamps + creator stamp preserved.
+    EXECUTE format(
+      'INSERT INTO public.%I (id, created_by_user_id, created_at, updated_at) VALUES ($1, $2, $3, $4)',
+      v_table
+    ) USING v_rec.id, v_rec.created_by_user_id, v_rec.created_at, v_rec.updated_at;
+
+    -- Apply the JSONB payload (scalar columns + junctions + subtables).
+    -- We pass NULL for p_created_by because the parent INSERT above
+    -- already set the column; freeze_apply_row's COALESCE keeps it.
+    PERFORM public.freeze_apply_row(p_model_id, v_rec.id, v_rec.data, NULL);
+  END LOOP;
+END;
+$fn$;
+
+-- ────────────────────────────────────────────────────────────────────
+-- rebuild_unified_records: a UNION ALL view of the unified records
+-- table with each frozen model's JSONB-shape view. Every server-side
+-- caller that previously read from `records` reads from this instead;
+-- the shape is identical (id, model_id, data, created_at, updated_at).
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.rebuild_unified_records()
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_sql       text := 'SELECT id, model_id, data, created_by_user_id, created_at, updated_at FROM public.records';
+  v_model     record;
+  v_view_name text;
+BEGIN
+  FOR v_model IN SELECT name FROM models WHERE is_hardcoded = true ORDER BY name LOOP
+    v_view_name := public.freeze_safe_ident(v_model.name) || '_v';
+    -- Defensive: the view may not exist if a manual cleanup is in progress.
+    IF EXISTS (
+      SELECT 1 FROM information_schema.views
+      WHERE table_schema = 'public' AND table_name = v_view_name
+    ) THEN
+      v_sql := v_sql || format(' UNION ALL SELECT id, model_id, data, created_by_user_id, created_at, updated_at FROM public.%I', v_view_name);
+    END IF;
+  END LOOP;
+
+  -- DROP first because we widened the column list (added created_by_user_id);
+  -- CREATE OR REPLACE VIEW refuses column changes.
+  EXECUTE 'DROP VIEW IF EXISTS public.unified_records';
+  EXECUTE 'CREATE VIEW public.unified_records WITH (security_invoker = true) AS ' || v_sql;
+  EXECUTE 'GRANT SELECT ON public.unified_records TO authenticated, anon, service_role';
+END;
+$fn$;
+
+-- ────────────────────────────────────────────────────────────────────
+-- Frozen-table RLS helpers — accept a JSONB payload so per-frozen-table
+-- policies can build a synthetic `records` row from columns and reuse
+-- the existing scope evaluator.
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.wassell_can_view_jsonb(
+  auth_user_id   UUID,
+  the_model_id   UUID,
+  the_id         UUID,
+  the_created_by UUID,
+  the_data       JSONB
+) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  -- Build a synthetic records-row literal. Column order MUST match the
+  -- records table CREATE: (id, model_id, data, created_by_user_id,
+  -- created_at, updated_at). Timestamps don't affect scope evaluation
+  -- so we feed `now()` for both — the helper only reads model_id, data,
+  -- and created_by_user_id off the row.
+  SELECT public.wassell_user_has_action(auth_user_id, the_model_id, 'view')
+    AND public.wassell_record_passes_scope(
+          ROW(the_id, the_model_id, the_data, the_created_by, now(), now())::records,
+          auth_user_id, 'view'
+        );
+$$;
+
+CREATE OR REPLACE FUNCTION public.wassell_can_edit_jsonb(
+  auth_user_id   UUID,
+  the_model_id   UUID,
+  the_id         UUID,
+  the_created_by UUID,
+  the_data       JSONB
+) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT public.wassell_user_has_action(auth_user_id, the_model_id, 'edit')
+    AND public.wassell_record_passes_scope(
+          ROW(the_id, the_model_id, the_data, the_created_by, now(), now())::records,
+          auth_user_id, 'view'
+        )
+    AND public.wassell_record_passes_scope(
+          ROW(the_id, the_model_id, the_data, the_created_by, now(), now())::records,
+          auth_user_id, 'edit'
+        );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.wassell_can_view_jsonb(UUID, UUID, UUID, UUID, JSONB) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_edit_jsonb(UUID, UUID, UUID, UUID, JSONB) TO authenticated;
+
+-- ────────────────────────────────────────────────────────────────────
+-- record_save / record_delete: dispatchers used by server-side endpoints
+-- and the app store. Branch on is_hardcoded so callers don't need to
+-- know whether a model is frozen. For unfrozen models, fall through to
+-- the records JSONB table; for frozen, dispatch to the per-model save.
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.record_save(
+  p_model_id   uuid,
+  p_id         uuid,
+  p_data       jsonb,
+  p_created_by uuid DEFAULT NULL
+)
+RETURNS uuid LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model record;
+  v_table text;
+BEGIN
+  SELECT id, name, is_hardcoded INTO v_model FROM models WHERE id = p_model_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'model % not found', p_model_id;
+  END IF;
+
+  IF v_model.is_hardcoded THEN
+    v_table := public.freeze_safe_ident(v_model.name);
+    -- Ensure parent row exists, then apply scalar columns + junctions.
+    EXECUTE format(
+      'INSERT INTO public.%I (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      v_table
+    ) USING p_id;
+    PERFORM public.freeze_apply_row(p_model_id, p_id, p_data, p_created_by);
+  ELSE
+    -- Phase-1 RLS column on records: stamp creator on first save,
+    -- preserve on subsequent updates. Same COALESCE posture as
+    -- freeze_apply_row above and saveRecord in the frontend store.
+    INSERT INTO records (id, model_id, data, created_by_user_id)
+    VALUES (p_id, p_model_id, p_data, p_created_by)
+    ON CONFLICT (id) DO UPDATE SET
+      data = EXCLUDED.data,
+      created_by_user_id = COALESCE(records.created_by_user_id, EXCLUDED.created_by_user_id),
+      updated_at = now();
+  END IF;
+  RETURN p_id;
+END;
+$fn$;
+
+GRANT EXECUTE ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.record_delete(p_model_id uuid, p_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model record;
+BEGIN
+  SELECT id, name, is_hardcoded INTO v_model FROM models WHERE id = p_model_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'model % not found', p_model_id;
+  END IF;
+
+  IF v_model.is_hardcoded THEN
+    EXECUTE format(
+      'DELETE FROM public.%I WHERE id = $1',
+      public.freeze_safe_ident(v_model.name)
+    ) USING p_id;
+  ELSE
+    DELETE FROM records WHERE id = p_id AND model_id = p_model_id;
+  END IF;
+END;
+$fn$;
+
+GRANT EXECUTE ON FUNCTION public.record_delete(uuid, uuid) TO authenticated;
+
+-- ────────────────────────────────────────────────────────────────────
+-- Guard trigger on `records`: prevents accidental writes targeting a
+-- frozen model. The dispatcher RPCs route correctly; this catches any
+-- forgotten direct .from('records').upsert() in legacy code paths so
+-- they fail loudly instead of silently writing to a table the app no
+-- longer reads.
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.records_block_frozen_writes()
+RETURNS trigger LANGUAGE plpgsql AS $fn$
+DECLARE
+  v_frozen boolean;
+  v_name   text;
+BEGIN
+  SELECT is_hardcoded, name INTO v_frozen, v_name FROM models WHERE id = NEW.model_id;
+  IF v_frozen THEN
+    RAISE EXCEPTION 'model "%" is frozen — write via record_save() RPC, not records table directly', v_name
+      USING HINT = 'Frozen models live in their own table. The dispatcher RPC handles routing.';
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS records_block_frozen_writes ON public.records;
+CREATE TRIGGER records_block_frozen_writes
+BEFORE INSERT OR UPDATE ON public.records
+FOR EACH ROW EXECUTE FUNCTION public.records_block_frozen_writes();
+
+-- ────────────────────────────────────────────────────────────────────
+-- View-sync trigger: skip frozen models so the legacy v_<name> view
+-- isn't recreated over an empty records slice after a freeze.
+-- ────────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public.regenerate_model_view(p_model_id uuid)
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+DECLARE
+  v_model       record;
+  v_view_name   text;
+  v_field       jsonb;
+  v_fname       text;
+  v_ftype       text;
+  v_parts       text[] := ARRAY['id', 'created_at', 'updated_at', 'model_id'];
+  v_sql         text;
+BEGIN
+  SELECT id, name, schema, is_hardcoded INTO v_model FROM public.models WHERE id = p_model_id;
+  IF NOT FOUND THEN RETURN; END IF;
+  -- Frozen models have their own <name>_v JSONB-shape view; skip the
+  -- legacy records-based v_<name>.
+  IF v_model.is_hardcoded THEN RETURN; END IF;
+  v_view_name := 'v_' || v_model.name;
+  FOR v_field IN
+    SELECT field
+    FROM jsonb_array_elements(v_model.schema->'sections') AS sec(value),
+         LATERAL jsonb_array_elements(sec.value->'fields') AS field
+  LOOP
+    v_fname := v_field->>'name';
+    v_ftype := v_field->>'type';
+    IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    IF v_ftype = 'range' THEN
+      v_parts := v_parts || format('public.try_numeric(data->%L->>''min'') AS %I', v_fname, v_fname || '_min');
+      v_parts := v_parts || format('public.try_numeric(data->%L->>''max'') AS %I', v_fname, v_fname || '_max');
+    ELSIF v_ftype IN ('number', 'currency', 'formula') THEN
+      v_parts := v_parts || format('public.try_numeric(data->>%L) AS %I', v_fname, v_fname);
+    ELSIF v_ftype IN ('date', 'datetime') THEN
+      v_parts := v_parts || format('public.try_timestamptz(data->>%L) AS %I', v_fname, v_fname);
+    ELSIF v_ftype = 'checkbox' THEN
+      v_parts := v_parts || format('public.try_boolean(data->>%L) AS %I', v_fname, v_fname);
+    ELSIF v_ftype IN ('multiselect', 'table', 'notes') THEN
+      v_parts := v_parts || format('(data->%L) AS %I', v_fname, v_fname);
+    ELSE
+      v_parts := v_parts || format('(data->>%L) AS %I', v_fname, v_fname);
+    END IF;
+  END LOOP;
+  v_sql := format(
+    'CREATE OR REPLACE VIEW public.%I WITH (security_invoker = true) AS SELECT %s FROM public.records WHERE model_id = %L',
+    v_view_name, array_to_string(v_parts, ', '), v_model.id
+  );
+  EXECUTE v_sql;
+  EXECUTE format('GRANT SELECT ON public.%I TO authenticated, anon, service_role', v_view_name);
+END;
+$fn$;
+
+-- Initial unified_records view — empty UNION on fresh installs is just
+-- `SELECT FROM records`. Re-run is idempotent.
+SELECT public.rebuild_unified_records();

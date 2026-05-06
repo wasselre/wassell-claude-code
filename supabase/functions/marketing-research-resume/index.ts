@@ -75,8 +75,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!questionsModelId) return json({ ok: false, error: "research_questions model not seeded" }, 500);
 
     const sb = getServiceClient();
+    // unified_records UNIONs JSONB records + frozen models' views.
     const { data: questions, error: qErr } = await sb
-      .from("records")
+      .from("unified_records")
       .select("data")
       .eq("model_id", questionsModelId)
       .contains("data", { operation: operationId });
