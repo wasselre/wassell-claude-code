@@ -32,6 +32,7 @@ import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
+import MfaSetup from '@/pages/auth/MfaSetup';
 
 // Lazy-loaded so tldraw's bundle + stylesheet are only fetched when the
 // whiteboard route is visited. Keeps the main app bundle lean.
@@ -154,6 +155,7 @@ export default function App() {
         {/* ── Public routes (no auth required, no layout) ─────────────── */}
         <Route path="/login" element={<Login />} />
         <Route path="/auth/reset-password" element={<ResetPassword />} />
+        <Route path="/auth/mfa-setup" element={<MfaSetup />} />
         <Route path="/public/dashboard/:token" element={<PublicDashboardPage />} />
 
         {/* ── Protected app routes (auth required, inside layout) ────── */}

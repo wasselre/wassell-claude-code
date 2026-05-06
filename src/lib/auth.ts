@@ -65,24 +65,20 @@ export async function sendPasswordResetEmail(
 }
 
 /**
- * Send an invite / sign-in link. Used by the admin "Add user" flow:
- * after creating the in-app `users` row, we email the invitee a magic
- * link. Clicking it creates the Supabase Auth account (if missing),
- * signs them in, and lands them on `/auth/reset-password` so they set
- * a password before entering the app. After that, every subsequent
- * sign-in uses email + password via the Login page.
+ * Send an invite / sign-in link via the `invite-user` Edge Function.
  *
- * The password-setup page works off the session the magic-link click
- * establishes — `updateUser({ password })` accepts any active session,
- * not just a recovery one.
+ * The Edge Function uses the service-role key to call
+ * `auth.admin.inviteUserByEmail`, which works regardless of the project's
+ * "Allow new sign-ups" setting. This means project-level sign-ups can be
+ * (and SHOULD be) turned OFF: the only way to create an account is via an
+ * admin clicking "invite" in `/settings/users`.
  *
- * Re-sending is harmless — Supabase sends a fresh link (subject to
- * its rate limits). Resending to a user who already has a password
- * still works as a passwordless sign-in; they can skip the setup page
- * or re-set the password.
+ * The function verifies the caller is an admin before issuing the invite,
+ * so a non-admin user calling it directly gets a 403.
  *
- * Requires the Supabase project's "Allow new users to sign up" setting
- * to be enabled; otherwise the call fails with "Signups not allowed".
+ * Re-sending is harmless — Supabase issues a fresh link each time (subject
+ * to per-email rate limits). The invitee lands on `/auth/reset-password`
+ * after clicking the link so they can set a password.
  */
 export async function inviteUser(
   email: string,
@@ -90,11 +86,25 @@ export async function inviteUser(
 ): Promise<AuthVoidResult> {
   if (!supabase) return { error: NOT_CONFIGURED_ERR };
   const target = redirectTo ?? `${window.location.origin}/auth/reset-password`;
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: { shouldCreateUser: true, emailRedirectTo: target },
-  });
-  return { error: error ? mapAuthError(error) : null };
+  // Get the active session so we can forward the JWT to the Edge Function.
+  const session = await getSession();
+  if (!session?.access_token) {
+    return { error: 'You must be signed in to invite users.' };
+  }
+  try {
+    const { data, error } = await supabase.functions.invoke('invite-user', {
+      body: { email, redirect_to: target },
+    });
+    if (error) return { error: error.message ?? 'Failed to send invite.' };
+    if (data && (data as { ok?: boolean }).ok === false) {
+      const errorMessage = (data as { error?: string }).error ?? 'Invite failed.';
+      return { error: errorMessage };
+    }
+    return { error: null };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { error: msg };
+  }
 }
 
 /** Update the current user's password. Only valid while a recovery session is active. */
@@ -138,6 +148,133 @@ export function isAuthAvailable(): boolean {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// MFA (TOTP). Required for is_admin profiles per Phase 2 of the user-
+// management plan. The Supabase project must have the TOTP factor
+// enabled in Auth → Providers → MFA for these to work; otherwise
+// `enroll` returns "MFA not enabled".
+//
+// Lifecycle:
+//   1. Admin signs in → currentAal = 'aal1'.
+//   2. RequireAdmin route guard sees aal !== 'aal2' and redirects to
+//      /auth/mfa-setup.
+//   3. If the user has no factor: enrollTotpFactor() → user scans the
+//      QR code → verifyMfaEnrollment(factorId, code) → factor is
+//      verified, session is upgraded to aal2.
+//   4. If the user has a factor but the session is aal1 (e.g. they
+//      just signed in fresh): challengeMfa() → user enters code →
+//      verifyMfa() → session is upgraded to aal2.
+// ────────────────────────────────────────────────────────────────────
+
+export interface AalResult {
+  /** 'aal1' | 'aal2' | null when not signed in. */
+  currentLevel: 'aal1' | 'aal2' | null;
+  /** What the next sign-in step requires. Useful for UX gating. */
+  nextLevel: 'aal1' | 'aal2' | null;
+  error: string | null;
+}
+
+/** Read the current Authenticator Assurance Level. aal1 = password only;
+ *  aal2 = password + at least one verified factor (TOTP). */
+export async function getCurrentAal(): Promise<AalResult> {
+  if (!supabase) return { currentLevel: null, nextLevel: null, error: NOT_CONFIGURED_ERR };
+  const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (error) return { currentLevel: null, nextLevel: null, error: mapAuthError(error) };
+  return {
+    currentLevel: (data?.currentLevel as 'aal1' | 'aal2' | null) ?? null,
+    nextLevel: (data?.nextLevel as 'aal1' | 'aal2' | null) ?? null,
+    error: null,
+  };
+}
+
+export interface MfaFactor {
+  id: string;
+  friendly_name?: string | null;
+  factor_type: 'totp' | 'phone';
+  status: 'verified' | 'unverified';
+}
+
+/** List the user's verified + unverified MFA factors. */
+export async function listMfaFactors(): Promise<{ factors: MfaFactor[]; error: string | null }> {
+  if (!supabase) return { factors: [], error: NOT_CONFIGURED_ERR };
+  const { data, error } = await supabase.auth.mfa.listFactors();
+  if (error) return { factors: [], error: mapAuthError(error) };
+  // The API returns `totp` and `phone` arrays separately; flatten so callers
+  // can iterate without caring about factor type.
+  const totp = (data?.totp ?? []).map((f) => ({
+    id: f.id,
+    friendly_name: f.friendly_name ?? null,
+    factor_type: 'totp' as const,
+    status: f.status as 'verified' | 'unverified',
+  }));
+  return { factors: totp, error: null };
+}
+
+export interface EnrollTotpResult {
+  factorId: string | null;
+  /** Data URI for a QR code the user can scan in their authenticator app. */
+  qrCode: string | null;
+  /** Plain-text secret as a fallback when the QR can't be scanned. */
+  secret: string | null;
+  error: string | null;
+}
+
+/** Start TOTP enrollment. Returns the factor id + QR code; the user must
+ *  scan it AND submit a code via `verifyMfaEnrollment` to complete. */
+export async function enrollTotpFactor(friendlyName = 'Authenticator'): Promise<EnrollTotpResult> {
+  if (!supabase) {
+    return { factorId: null, qrCode: null, secret: null, error: NOT_CONFIGURED_ERR };
+  }
+  const { data, error } = await supabase.auth.mfa.enroll({
+    factorType: 'totp',
+    friendlyName,
+  });
+  if (error) {
+    return { factorId: null, qrCode: null, secret: null, error: mapAuthError(error) };
+  }
+  return {
+    factorId: data.id,
+    qrCode: data.totp.qr_code,
+    secret: data.totp.secret,
+    error: null,
+  };
+}
+
+/** Verify a freshly-enrolled factor with the first 6-digit code from the
+ *  authenticator app. On success the session is automatically upgraded
+ *  to aal2. */
+export async function verifyMfaEnrollment(
+  factorId: string,
+  code: string,
+): Promise<AuthVoidResult> {
+  if (!supabase) return { error: NOT_CONFIGURED_ERR };
+  const challenge = await supabase.auth.mfa.challenge({ factorId });
+  if (challenge.error) return { error: mapAuthError(challenge.error) };
+  const verify = await supabase.auth.mfa.verify({
+    factorId,
+    challengeId: challenge.data.id,
+    code,
+  });
+  if (verify.error) return { error: mapAuthError(verify.error) };
+  return { error: null };
+}
+
+/** Same as verifyMfaEnrollment but used for the routine sign-in flow when
+ *  the factor already exists (challenge an existing factor). */
+export async function challengeAndVerifyMfa(
+  factorId: string,
+  code: string,
+): Promise<AuthVoidResult> {
+  return verifyMfaEnrollment(factorId, code);
+}
+
+/** Remove a factor. Used by the self-service /profile page. */
+export async function unenrollMfaFactor(factorId: string): Promise<AuthVoidResult> {
+  if (!supabase) return { error: NOT_CONFIGURED_ERR };
+  const { error } = await supabase.auth.mfa.unenroll({ factorId });
+  return { error: error ? mapAuthError(error) : null };
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Error mapping — keeps Supabase's wire-format messages out of the UI.
 // ────────────────────────────────────────────────────────────────────
 function mapAuthError(err: AuthError | Error): string {
@@ -156,8 +293,16 @@ function mapAuthError(err: AuthError | Error): string {
   if (lower.includes('user not found')) {
     return 'No account exists with that email.';
   }
-  if (lower.includes('password') && lower.includes('short')) {
-    return 'Password must be at least 6 characters.';
+  if (lower.includes('password') && (lower.includes('short') || lower.includes('weak'))) {
+    return 'Password must be at least 12 characters.';
   }
   return msg;
 }
+
+/**
+ * Minimum password length enforced on the client. Mirrors the project-level
+ * Supabase setting (Auth → Password requirements). The Login + ResetPassword
+ * pages use this for inline validation; the Edge Function / Supabase server
+ * is the source of truth on enforcement.
+ */
+export const MIN_PASSWORD_LENGTH = 12;

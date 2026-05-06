@@ -1135,6 +1135,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       const needle = authEmail.toLowerCase();
       const match = users.find((u) => (u.email ?? '').toLowerCase() === needle);
       if (match) {
+        // Deactivation enforcement at sign-in. RLS already gates the data
+        // (helpers require is_active = true), but a deactivated user could
+        // otherwise stay signed in viewing an empty workspace forever. Sign
+        // them out cleanly so the login page shows.
+        if (match.is_active === false) {
+          // Don't await — fire-and-forget so initialize() returns. The
+          // onAuthChange callback in bindAuth will fire once Supabase
+          // clears the session and tear down the rest of the state.
+          void authSignOut();
+          set({ currentUserId: null, authEmail: null, authUid: null, initialized: true });
+          // Surface the reason — without this the user just sees the
+          // login page and assumes their password is wrong.
+          get().addToast(
+            'حسابك معطّل — تواصل مع المسؤول للتفعيل.',
+            'error',
+          );
+          return;
+        }
         const bound = bindAuthUidToUser(match);
         currentUserId = bound.id;
       } else {

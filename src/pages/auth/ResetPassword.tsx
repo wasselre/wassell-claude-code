@@ -18,7 +18,7 @@ import { useNavigate } from 'react-router-dom';
 import { Loader2, Lock } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
-import { getSession, updatePassword, onAuthChange } from '@/lib/auth';
+import { getSession, updatePassword, onAuthChange, MIN_PASSWORD_LENGTH } from '@/lib/auth';
 
 export default function ResetPassword() {
   const { language } = useAppStore();
@@ -53,9 +53,11 @@ export default function ResetPassword() {
   const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault();
     setError(null);
-    if (password.length < 6) {
+    if (password.length < MIN_PASSWORD_LENGTH) {
       setError(
-        isAr ? 'كلمة المرور يجب أن تكون ٦ أحرف على الأقل.' : 'Password must be at least 6 characters.',
+        isAr
+          ? `كلمة المرور يجب أن تكون ${MIN_PASSWORD_LENGTH} أحرف على الأقل.`
+          : `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
       );
       return;
     }
