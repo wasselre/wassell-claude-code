@@ -477,6 +477,55 @@ async function supabaseDelete(table: string, id: string): Promise<void> {
   }
 }
 
+/**
+ * Write a row to `audit_log` (Phase 3 of the user-mgmt plan).
+ *
+ * Fire-and-forget by design — audit writes are best-effort. We surface
+ * failures via console.error but don't queue / retry: losing a row is
+ * better than blocking the user-management UI on a slow audit insert,
+ * and the entries are append-only so a missed row can't corrupt state.
+ *
+ * Caller passes:
+ *   - entityType: 'user' | 'profile' | 'role'
+ *   - action:     'created' | 'updated' | 'deleted' | 'deactivated' | 'activated'
+ *   - id, label:  for the entity (label is the display string at write time)
+ *   - before:     pre-mutation row, or null on creates
+ *   - after:      post-mutation row, or null on deletes
+ *
+ * Actor identity is read from the live store state (currentUserId / authUid /
+ * authEmail) so the helper has zero arguments for the actor side.
+ */
+async function writeAuditLog(args: {
+  entityType: 'user' | 'profile' | 'role';
+  action: 'created' | 'updated' | 'deleted' | 'deactivated' | 'activated';
+  entityId: string;
+  entityLabel?: string | null;
+  before?: unknown;
+  after?: unknown;
+}): Promise<void> {
+  if (!supabase) return;
+  const state = useAppStore.getState();
+  const row = {
+    actor_auth_uid: state.authUid ?? null,
+    actor_email: state.authEmail ?? null,
+    entity_type: args.entityType,
+    entity_id: args.entityId,
+    entity_label: args.entityLabel ?? null,
+    action: args.action,
+    before: args.before ?? null,
+    after: args.after ?? null,
+  };
+  try {
+    const { error } = await supabase.from('audit_log').insert(row);
+    if (error) {
+      // No retry queue — audit rows are append-only and best-effort.
+      console.error('[audit_log] insert failed:', error.message ?? String(error));
+    }
+  } catch (err) {
+    console.error('[audit_log] insert failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
 // Webhook-triggered workflows have no source model, which the app represents
 // as `trigger_model_id: ''`. Postgres rejects empty strings on UUID columns,
 // so convert to null before any upsert. Kept near the Supabase helpers so
@@ -2266,6 +2315,22 @@ export const useAppStore = create<AppState>((set, get) => ({
         user as unknown as Record<string, unknown>,
         { table: 'profiles', id: user.profile_id },
       );
+      // Audit log — fire and forget. Distinguish create / update /
+      // deactivate / activate so the log page can surface the meaningful
+      // distinction. existing is captured BEFORE set runs.
+      const before = existing ?? null;
+      let action: 'created' | 'updated' | 'deactivated' | 'activated' = 'updated';
+      if (!before) action = 'created';
+      else if (before.is_active === true && user.is_active === false) action = 'deactivated';
+      else if (before.is_active === false && user.is_active === true) action = 'activated';
+      void writeAuditLog({
+        entityType: 'user',
+        action,
+        entityId: user.id,
+        entityLabel: user.email,
+        before,
+        after: user,
+      });
       return { users };
     });
     return { ok: true };
@@ -2291,6 +2356,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       const users = state.users.filter((u) => u.id !== userId);
       saveLocal('wassell_users', users);
       supabaseDelete('users', userId);
+      void writeAuditLog({
+        entityType: 'user',
+        action: 'deleted',
+        entityId: userId,
+        entityLabel: target.email,
+        before: target,
+        after: null,
+      });
       return { users };
     });
     return { ok: true };
@@ -2334,11 +2407,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         }),
       };
       const idx = s.profiles.findIndex((p) => p.id === healed.id);
+      const before = idx >= 0 ? s.profiles[idx] : null;
       const profiles = idx >= 0
         ? s.profiles.map((p) => (p.id === healed.id ? healed : p))
         : [...s.profiles, healed];
       saveLocal('wassell_profiles', profiles);
       supabaseUpsert('profiles', healed as unknown as Record<string, unknown>);
+      void writeAuditLog({
+        entityType: 'profile',
+        action: before ? 'updated' : 'created',
+        entityId: healed.id,
+        entityLabel: healed.label_en || healed.label_ar,
+        before,
+        after: healed,
+      });
       return { profiles };
     });
   },
@@ -2350,9 +2432,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { ok: false, reason: 'has_users' };
     }
     set((state) => {
+      const before = state.profiles.find((p) => p.id === profileId) ?? null;
       const profiles = state.profiles.filter((p) => p.id !== profileId);
       saveLocal('wassell_profiles', profiles);
       supabaseDelete('profiles', profileId);
+      if (before) {
+        void writeAuditLog({
+          entityType: 'profile',
+          action: 'deleted',
+          entityId: profileId,
+          entityLabel: before.label_en || before.label_ar,
+          before,
+          after: null,
+        });
+      }
       return { profiles };
     });
     return { ok: true };
@@ -2362,11 +2455,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   saveRole: (role: Role) => {
     set((s) => {
       const idx = s.roles.findIndex((r) => r.id === role.id);
+      const before = idx >= 0 ? s.roles[idx] : null;
       const roles = idx >= 0
         ? s.roles.map((r) => (r.id === role.id ? role : r))
         : [...s.roles, role];
       saveLocal('wassell_roles', roles);
       supabaseUpsert('roles', role as unknown as Record<string, unknown>);
+      void writeAuditLog({
+        entityType: 'role',
+        action: before ? 'updated' : 'created',
+        entityId: role.id,
+        entityLabel: role.label_en || role.label_ar,
+        before,
+        after: role,
+      });
       return { roles };
     });
   },
@@ -2395,6 +2497,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_roles', roles);
       saveLocal('wassell_users', users);
       supabaseDelete('roles', roleId);
+      if (target) {
+        void writeAuditLog({
+          entityType: 'role',
+          action: 'deleted',
+          entityId: roleId,
+          entityLabel: target.label_en || target.label_ar,
+          before: target,
+          after: null,
+        });
+      }
       return { roles, users };
     });
     return { ok: true };

@@ -142,6 +142,17 @@ const CARDS: SettingsCard[] = [
     route: '/settings/whatsapp-numbers',
     adminOnly: true,
   },
+  {
+    titleAr: 'سجل المراجعة',
+    titleEn: 'Audit Log',
+    descAr: 'سجل تغييرات المستخدمين والملفات والأدوار',
+    descEn: 'History of changes to users, profiles, and roles',
+    icon: ScrollText,
+    color: '#7C3AED',
+    bg: '#7C3AED14',
+    route: '/settings/audit-log',
+    adminOnly: true,
+  },
 ];
 
 export default function SettingsPage() {

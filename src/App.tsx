@@ -23,6 +23,8 @@ import TranslationSettingsPage from '@/pages/Settings/TranslationSettingsPage';
 import ProfilesPage from '@/pages/Settings/ProfilesPage';
 import RolesPage from '@/pages/Settings/RolesPage';
 import UsersPage from '@/pages/Settings/UsersPage';
+import AuditLogPage from '@/pages/Settings/AuditLogPage';
+import ProfilePage from '@/pages/ProfilePage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
@@ -203,6 +205,8 @@ export default function App() {
           <Route path="/settings/roles" element={<RequireAdmin><RolesPage /></RequireAdmin>} />
           <Route path="/settings/roles/:roleId" element={<RequireAdmin><RolesPage /></RequireAdmin>} />
           <Route path="/settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
+          <Route path="/settings/audit-log" element={<RequireAdmin><AuditLogPage /></RequireAdmin>} />
+          <Route path="/profile" element={<ProfilePage />} />
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
           <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />
           <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />

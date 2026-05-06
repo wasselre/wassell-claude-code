@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useLocation, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
 import { Languages, Menu, User, LogOut, Loader2 } from 'lucide-react';
@@ -23,6 +23,7 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
   } = useAppStore();
   const location = useLocation();
   const params = useParams();
+  const navigate = useNavigate();
   const isAr = language === 'ar';
   const [signingOut, setSigningOut] = useState(false);
 
@@ -95,12 +96,16 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
           {/* ── Current user ──────────────────────────────────────── */}
           {authOn ? (
-            /* Production: read-only pill showing the signed-in user. */
+            /* Production: clickable pill that takes the user to /profile. */
             authEmail && (
-              <div className="flex items-center gap-2 pill" title={authEmail}>
+              <button
+                onClick={() => navigate('/profile')}
+                className="flex items-center gap-2 pill hover:bg-white/80 transition-colors"
+                title={authEmail}
+              >
                 <User size={14} className="text-charcoal/40" />
                 <span className="text-sm font-bold text-charcoal">{displayName}</span>
-              </div>
+              </button>
             )
           ) : (
             /* Dev / local mode: keep the user-switcher dropdown for testing. */

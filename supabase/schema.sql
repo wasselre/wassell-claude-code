@@ -653,8 +653,43 @@ CREATE POLICY "workflow_groups_admin" ON workflow_groups FOR ALL TO authenticate
 CREATE POLICY "workflow_runs_admin"   ON workflow_runs   FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
 CREATE POLICY "dashboards_admin"      ON dashboards      FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
 
--- Public dashboards: anonymous read access when is_public = true.
-CREATE POLICY "Public dashboard read" ON dashboards FOR SELECT TO anon USING (is_public = true);
+-- Public dashboards: anon access goes through `get_public_dashboard`,
+-- not a direct SELECT. The function checks BOTH is_public AND a token
+-- match server-side; anon has no direct SELECT permission so the URL
+-- token actually gates access (used to be routing-only).
+CREATE OR REPLACE FUNCTION get_public_dashboard(p_token TEXT)
+RETURNS dashboards
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT * FROM dashboards
+   WHERE public_token = p_token
+     AND is_public = true
+   LIMIT 1;
+$$;
+GRANT EXECUTE ON FUNCTION get_public_dashboard(TEXT) TO anon, authenticated;
+
+-- ── audit_log (Phase 3 — user-mgmt forensics) ────────────────────
+-- Captures every mutation on users / profiles / roles. Record-level
+-- audit is intentionally NOT here — different design + retention.
+CREATE TABLE IF NOT EXISTS audit_log (
+  id BIGSERIAL PRIMARY KEY,
+  actor_auth_uid UUID,
+  actor_email TEXT,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  entity_label TEXT,
+  action TEXT NOT NULL,
+  before JSONB,
+  after JSONB,
+  at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS audit_log_at_idx     ON audit_log(at DESC);
+CREATE INDEX IF NOT EXISTS audit_log_entity_idx ON audit_log(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS audit_log_actor_idx  ON audit_log(actor_auth_uid);
+ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "audit_log_admin_read" ON audit_log FOR SELECT TO authenticated
+  USING (wassell_is_admin(auth.uid()));
+CREATE POLICY "audit_log_admin_insert" ON audit_log FOR INSERT TO authenticated
+  WITH CHECK (wassell_is_admin(auth.uid()) OR actor_auth_uid = auth.uid());
 
 -- ============================================================
 -- WHATSAPP AI AGENT (HaberChat webhook) — DEPRECATED

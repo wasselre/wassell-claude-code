@@ -1,30 +1,51 @@
 import { useParams } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
+import { supabase } from '@/lib/supabase';
 import WidgetRenderer from './components/WidgetRenderer';
+import type { Dashboard } from '@/types';
 
 export default function PublicDashboardPage() {
   const { token } = useParams();
   const { t } = useTranslation();
-  const { dashboards, initialized, initialize, language } = useAppStore();
+  const { language } = useAppStore();
   const isAr = language === 'ar';
 
+  // Fetch the dashboard via the get_public_dashboard RPC. The function
+  // verifies BOTH the token AND is_public server-side; anon does NOT have
+  // direct SELECT on the dashboards table any more, so this RPC is the
+  // only path to read public dashboard data without authenticating.
+  const [dashboard, setDashboard] = useState<Dashboard | null | 'loading'>('loading');
   useEffect(() => {
-    if (!initialized) void initialize();
-  }, [initialized, initialize]);
+    let cancelled = false;
+    void (async () => {
+      if (!token || !supabase) {
+        if (!cancelled) setDashboard(null);
+        return;
+      }
+      const { data, error } = await supabase.rpc('get_public_dashboard', { p_token: token });
+      if (cancelled) return;
+      if (error || !data) {
+        setDashboard(null);
+        return;
+      }
+      // The RPC returns the row directly (single-row return type). When
+      // there's no match Supabase returns null (or an empty result set).
+      setDashboard(data as Dashboard);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
-  // Wait until store is initialized before checking
-  if (!initialized) {
+  if (dashboard === 'loading') {
     return (
       <div className="min-h-screen bg-cream-light flex items-center justify-center">
         <p className="text-charcoal/40">{t('common.loading')}</p>
       </div>
     );
   }
-
-  // Find dashboard by public_token - match on token only, is_public checked separately
-  const dashboard = dashboards.find((d) => d.public_token === token);
 
   if (!dashboard || !dashboard.is_public) {
     return (
@@ -34,9 +55,6 @@ export default function PublicDashboardPage() {
           <p className="text-lg font-bold text-charcoal/50">{t('dashboard.not_available')}</p>
           <p className="text-sm text-charcoal/30 mt-2">
             {isAr ? `Token: ${token ?? '—'}` : `Token: ${token ?? '—'}`}
-          </p>
-          <p className="text-xs text-charcoal/20 mt-1">
-            {isAr ? `عدد اللوحات: ${dashboards.length}` : `Total dashboards: ${dashboards.length}`}
           </p>
         </div>
       </div>
