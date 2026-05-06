@@ -612,6 +612,36 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, p
     AND wassell_record_passes_scope(rec, auth_user_id, 'edit');
 $$;
 
+-- Drop-then-create so re-running schema.sql is idempotent. Matches the
+-- pattern the older RLS sections (wa_*, chat_messages, call_logs, etc.)
+-- already use. Without these DROPs the script fails on re-run with
+-- `policy "records_view" for table "records" already exists`.
+DROP POLICY IF EXISTS "records_view"           ON records;
+DROP POLICY IF EXISTS "records_insert"         ON records;
+DROP POLICY IF EXISTS "records_update"         ON records;
+DROP POLICY IF EXISTS "records_delete"         ON records;
+DROP POLICY IF EXISTS "models_read"            ON models;
+DROP POLICY IF EXISTS "models_write"           ON models;
+DROP POLICY IF EXISTS "model_groups_read"      ON model_groups;
+DROP POLICY IF EXISTS "model_groups_write"     ON model_groups;
+DROP POLICY IF EXISTS "profiles_read"          ON profiles;
+DROP POLICY IF EXISTS "profiles_write"         ON profiles;
+DROP POLICY IF EXISTS "roles_read"             ON roles;
+DROP POLICY IF EXISTS "roles_write"            ON roles;
+DROP POLICY IF EXISTS "users_read"             ON users;
+DROP POLICY IF EXISTS "users_write"            ON users;
+DROP POLICY IF EXISTS "model_views_read"       ON model_views;
+DROP POLICY IF EXISTS "model_views_write"      ON model_views;
+DROP POLICY IF EXISTS "field_templates_read"   ON field_templates;
+DROP POLICY IF EXISTS "field_templates_write"  ON field_templates;
+DROP POLICY IF EXISTS "workflows_admin"        ON workflows;
+DROP POLICY IF EXISTS "workflow_groups_admin"  ON workflow_groups;
+DROP POLICY IF EXISTS "workflow_runs_read"     ON workflow_runs;
+DROP POLICY IF EXISTS "workflow_runs_insert"   ON workflow_runs;
+DROP POLICY IF EXISTS "workflow_runs_modify"   ON workflow_runs;
+DROP POLICY IF EXISTS "workflow_runs_delete"   ON workflow_runs;
+DROP POLICY IF EXISTS "dashboards_admin"       ON dashboards;
+
 -- Records: per-row gating. Admin profiles bypass via the helpers.
 CREATE POLICY "records_view"   ON records FOR SELECT TO authenticated USING (wassell_can_view_record(auth.uid(), records.*));
 CREATE POLICY "records_insert" ON records FOR INSERT TO authenticated WITH CHECK (wassell_can_create_record(auth.uid(), records.*));
@@ -693,6 +723,8 @@ CREATE INDEX IF NOT EXISTS audit_log_at_idx     ON audit_log(at DESC);
 CREATE INDEX IF NOT EXISTS audit_log_entity_idx ON audit_log(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS audit_log_actor_idx  ON audit_log(actor_auth_uid);
 ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "audit_log_admin_read"   ON audit_log;
+DROP POLICY IF EXISTS "audit_log_admin_insert" ON audit_log;
 CREATE POLICY "audit_log_admin_read" ON audit_log FOR SELECT TO authenticated
   USING (wassell_is_admin(auth.uid()));
 CREATE POLICY "audit_log_admin_insert" ON audit_log FOR INSERT TO authenticated
