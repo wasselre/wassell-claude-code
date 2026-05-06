@@ -1169,9 +1169,14 @@ BEGIN
       v_parts := v_parts || format('(data->>%L) AS %I', v_fname, v_fname);
     END IF;
   END LOOP;
+  -- DROP first because CREATE OR REPLACE VIEW only allows ADDING columns
+  -- at the end. When a model's schema changes (a field is renamed,
+  -- removed, or its type changes the column-list shape), the new view
+  -- has a different column list and the replace fails with
+  -- `cannot drop columns from view`.
   v_sql := format(
-    'CREATE OR REPLACE VIEW public.%I WITH (security_invoker = true) AS SELECT %s FROM public.records WHERE model_id = %L',
-    v_view_name, array_to_string(v_parts, ', '), v_model.id
+    'DROP VIEW IF EXISTS public.%I; CREATE VIEW public.%I WITH (security_invoker = true) AS SELECT %s FROM public.records WHERE model_id = %L',
+    v_view_name, v_view_name, array_to_string(v_parts, ', '), v_model.id
   );
   EXECUTE v_sql;
   EXECUTE format('GRANT SELECT ON public.%I TO authenticated, anon, service_role', v_view_name);
@@ -2286,9 +2291,14 @@ BEGIN
       v_parts := v_parts || format('(data->>%L) AS %I', v_fname, v_fname);
     END IF;
   END LOOP;
+  -- DROP first because CREATE OR REPLACE VIEW only allows ADDING columns
+  -- at the end. When a model's schema changes (a field is renamed,
+  -- removed, or its type changes the column-list shape), the new view
+  -- has a different column list and the replace fails with
+  -- `cannot drop columns from view`.
   v_sql := format(
-    'CREATE OR REPLACE VIEW public.%I WITH (security_invoker = true) AS SELECT %s FROM public.records WHERE model_id = %L',
-    v_view_name, array_to_string(v_parts, ', '), v_model.id
+    'DROP VIEW IF EXISTS public.%I; CREATE VIEW public.%I WITH (security_invoker = true) AS SELECT %s FROM public.records WHERE model_id = %L',
+    v_view_name, v_view_name, array_to_string(v_parts, ', '), v_model.id
   );
   EXECUTE v_sql;
   EXECUTE format('GRANT SELECT ON public.%I TO authenticated, anon, service_role', v_view_name);
