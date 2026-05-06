@@ -1,8 +1,64 @@
 # PRD: Access Control (Users, Roles, Profiles)
 
-**Status:** Live
-**Last updated:** 2026-05-05
+**Status:** Live (user-management feature complete; locked for ~6 months)
+**Last updated:** 2026-05-06
 **Related PRDs:** model-builder.md, record-management.md, workflow-automation.md
+
+> **2026-05-06 — User-management plan complete (Phases 1–4).**
+>
+> The four-phase plan from the user-management roadmap shipped end-to-end
+> across commits 4515af3, e8ab691, 805bdcd, and the wrap-up commit. The
+> system now meets the "perfect simple" target:
+>
+> - **Phase 1 — Real Enforcement (RLS).** All record reads/writes go
+>   through Postgres helper functions (`wassell_can_*_record`,
+>   `wassell_user_has_action`, `wassell_record_passes_scope`) that
+>   evaluate the same scope/field rules the JS evaluator uses. Admin
+>   profiles bypass; non-admin sessions get exactly the rows their
+>   profile allows even when querying Supabase directly. `users.auth_uid`
+>   binds the in-app user to `auth.users.id` on first sign-in.
+> - **Phase 2 — Auth Lockdown.** Inviting a new user goes through the
+>   `invite-user` Edge Function (service-role + admin verification);
+>   project-level signups can/should be OFF. Deactivated users get
+>   force-signed-out at sign-in. Admins must complete TOTP MFA
+>   (`/auth/mfa-setup`) before reaching admin routes — `RequireAdmin`
+>   probes AAL and bounces aal1 admins through the setup page. Password
+>   floor raised to 12 chars (`MIN_PASSWORD_LENGTH`).
+> - **Phase 3 — Audit + Self-Service + Public-Token Gate.** Every
+>   mutation on users/profiles/roles writes an `audit_log` row with
+>   actor + entity + before/after JSONB. New `/settings/audit-log` page
+>   surfaces the trail (admin-only). New `/profile` self-service page
+>   lets users update their bilingual name, change their password, and
+>   manage their MFA factor. The header avatar pill links there. Public
+>   dashboards now route through `get_public_dashboard(p_token)`
+>   (SECURITY DEFINER) instead of a broad `is_public = true` anon
+>   policy — the URL token actually gates access at the DB layer.
+> - **Phase 4 — Sign-Off.** Scope filtering is memoized on the resolved
+>   active user/profile rather than the full users/profiles arrays so
+>   unrelated saves don't invalidate every record list. The profile
+>   delete confirmation modal now offers bulk reassignment to a target
+>   profile when users still hold the deleted one (each save still
+>   respects the last_admin invariant).
+>
+> **Three project-level Supabase dashboard changes are still required**
+> to flip the lockdown switches into the ON position. They can't be set
+> via API — they live in the dashboard:
+>
+> 1. **Auth → Settings → "Allow new users to sign up": OFF**
+>    (after this, the only path to a new account is the admin invite
+>    flow via `/settings/users`).
+> 2. **Auth → Providers → MFA TOTP: ON.** Without this, the MFA
+>    enrollment call returns "MFA not enabled" and admins can't pass
+>    the aal2 gate.
+> 3. **Auth → Password requirements → Minimum length: 12.**
+>    The client validates inline; this is the server enforcement.
+>
+> Until those three flip, the lockdown is half-armed: the code paths
+> exist but the project still allows weak passwords and self-signups.
+>
+> User management is now considered **feature-complete** for ~6 months.
+> See "Open questions / known limitations" for the small handful of
+> deliberate non-goals (SSO, SCIM, record-level audit, IP allowlisting).
 
 > **2026-05-05 (2nd update):** PermissionMatrix gained two more sections per
 > model — **Saved views** and **Custom buttons** — both as deny-list toggles
@@ -120,6 +176,10 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | `src/pages/Settings/components/PermissionMatrix.tsx` | Per-model expandable card: 6 action toggles + view/edit scope editors + per-field hidden/readonly/editable rules |
 | `src/pages/Settings/components/ScopeConditionEditor.tsx` | Filter-condition row builder used inside both the view-scope and edit-scope sections of `PermissionMatrix` — picks target (model field or `created_by`), operator, and value source (literal / current user / role field) |
 | `src/lib/scopeFilters.ts` | Scope evaluator: resolves user-context value sources, walks conditions, returns boolean per record. Evaluator + `applyScope` filter helper |
+| `src/pages/Settings/AuditLogPage.tsx` | Admin-only audit-log viewer: filter by entity type, free-text search on actor + entity, expandable rows show before/after JSONB |
+| `src/pages/ProfilePage.tsx` | Self-service /profile page: change name, change password, manage MFA factor |
+| `src/pages/auth/MfaSetup.tsx` | TOTP enrollment + challenge page; gated by RequireAdmin via `getCurrentAal()` |
+| `supabase/functions/invite-user/index.ts` | Edge Function that uses the service-role key + `auth.admin.inviteUserByEmail` to invite. Verifies the caller is an admin via `wassell_is_admin(auth.uid())` |
 | `src/pages/Settings/RolesPage.tsx` | Role list + editor. Wraps each role as an `AppModel`-shaped object and delegates to `SectionManager` with `ownerKind='role'` for the full builder UX. Read-only Members table supports all field-type displays. |
 | `src/pages/Builder/components/SectionManager.tsx` | Shared builder (used by both models and roles). `ownerKind` prop gates rename propagation. |
 | `src/pages/Builder/components/FieldEditor.tsx` | Shared field editor. `ownerKind='role'` skips `renameField` propagation (role-field slugs aren't referenced in records/workflows/views). |
@@ -136,14 +196,47 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | `src/data/seedUsers.ts` | Seeded admin + Sales profiles, seeded roles, seeded admin user |
 | `src/stores/appStore.ts` | `users`, `profiles`, `roles` state; invariant enforcement; migration/heal |
 
-## Open questions / known limitations
-- **Enforcement is APP-LAYER only.** `is_admin` bypass, action checks, view/edit scopes, field rules — all evaluated in React. Postgres RLS on every business table is still `USING (true) WITH CHECK (true)` for authenticated users. A user who bypasses the React layer (DevTools, direct Supabase query with the anon key) can read and write any record in the workspace. The next milestone is to migrate scope rules into RLS policies — the condition shape in `scopeFilters.ts` was designed to translate 1:1 to SQL. **Until that ships, treat scope/field rules as UX guardrails, not security controls.**
-- **Invite requires Supabase "Allow new users to sign up" ON.** The magic-link invite uses `signInWithOtp({ shouldCreateUser: true })`, which Supabase blocks when sign-ups are disabled. If stricter control is required, the invite call should be moved to an Edge Function using `auth.admin.inviteUserByEmail` with the service-role key.
-- **No audit log** of permission, scope, field-rule, or role-assignment changes.
-- **No bulk reassignment** UI when deleting a profile. Admin must manually reassign each user first.
-- **Role lookup fields are single-select only** (`is_multi` on role fields is not yet supported).
-- **Workflows referencing a deleted role** show a warning but no auto-suggestion for a replacement.
-- **No deactivation enforcement at sign-in.** A user flipped to `is_active: false` can still receive a magic link and sign in; access-denied only kicks in once the app evaluates permissions. True lockout needs either an Edge Function check or RLS gating by `is_active`.
+## Open questions / deliberate non-goals
+After the Phase 1–4 roadmap, the system is feature-complete. The remaining
+items are *intentional* non-goals at the current scale (5–50 users) — not
+defects:
+
+- **No SSO / SAML.** Overkill for a small CRM. Revisit if Wassel onboards
+  a 500-person partner.
+- **No SCIM provisioning.** Same.
+- **No API tokens / service accounts.** Useful for automation but a
+  separate concern; user-management is for humans.
+- **No per-record audit log.** The `audit_log` table covers users /
+  profiles / roles only. Record-level audit (who edited which field on
+  which record) is a different feature with different retention rules
+  and would multiply the table size by 10–100×.
+- **No IP allowlisting.** Friction outweighs value at this scale.
+- **No multi-tenant separation.** Single-tenant is correct for Wassel —
+  there's one company, one workspace.
+- **No deactivation lockout for an existing live session.** Deactivation
+  enforces at sign-in; if a user is signed in when an admin flips them
+  to `is_active = false`, they keep their session until token refresh
+  fails. Hard immediate revoke would need a Realtime channel or Edge
+  Function pre-hook on every request.
+- **Role lookup fields are single-select only** (`is_multi` on role
+  fields is not implemented). Adding it would require updating
+  `wassell_record_passes_scope` to handle array role-field values.
+- **Workflows referencing a deleted role** still show a warning rather
+  than auto-suggesting a replacement. Same reasoning as multi-role
+  fields — the UX cost outweighs the recovery benefit.
+
+## Project-level Supabase dashboard checklist
+Three settings can only be flipped from the dashboard. **Without these,
+Phase 2's lockdown code is in place but not actually armed:**
+
+1. **Auth → Settings → "Allow new users to sign up": OFF.** Closes
+   self-registration. Inviting goes through the `invite-user` Edge
+   Function which uses the service-role key and bypasses this setting.
+2. **Auth → Providers → MFA → TOTP: enabled.** Required for
+   `mfa.enroll({ factorType: 'totp' })` to work.
+3. **Auth → Password requirements → Minimum length: 12.** The client
+   validates inline (`MIN_PASSWORD_LENGTH`); the server is the source
+   of truth.
 - **Scope conditions on structured fields are limited.** `range`-type fields can be compared via `field_path: 'min' | 'max'` (mirroring dashboard filter behavior), but `multiselect` / `lookup is_multi` fields use scalar comparison — equality against an array always fails. Use `contains` for substring matches against the JSON serialization or split into multiple OR conditions (not yet supported — filters are AND-only).
 - **Read-only fields are skipped during create.** When a profile marks a field `readonly`, that field doesn't appear in the create form — the value is populated by defaults / workflows / formulas, never by the creator. ("Create-only" semantics — set on insert, locked after — is not supported. Add a 4th state if real-world demand emerges.)
 - **`current_user` against a free-text field doesn't work usefully.** It compares the raw user UUID against the field value, which is almost never what an admin wants. Use it with `created_by` or `assignee`-typed fields where the value is also a user id.

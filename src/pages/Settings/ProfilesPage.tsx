@@ -119,7 +119,7 @@ export default function ProfilesPage() {
 /** Full-page profile editor */
 function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => void }) {
   const { t } = useTranslation();
-  const { language, users, saveProfile, deleteProfile, addToast } = useAppStore();
+  const { language, users, profiles, saveProfile, saveUser, deleteProfile, addToast } = useAppStore();
   const isAr = language === 'ar';
 
   const [name, setName] = useState(isAr ? profile.label_ar : profile.label_en);
@@ -127,6 +127,10 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
   const [hiddenViewIds, setHiddenViewIds] = useState<string[]>([...(profile.hidden_view_ids ?? [])]);
   const [hiddenButtonIds, setHiddenButtonIds] = useState<string[]>([...(profile.hidden_button_ids ?? [])]);
   const [showDelete, setShowDelete] = useState(false);
+  // Bulk reassignment target profile id when deleting a profile that
+  // still has users. Defaults to the first OTHER non-system profile.
+  const otherProfiles = profiles.filter((p) => p.id !== profile.id);
+  const [reassignTo, setReassignTo] = useState<string>(otherProfiles[0]?.id ?? '');
 
   const userCount = users.filter((u) => u.profile_id === profile.id).length;
   const blockedByUsers = userCount > 0;
@@ -147,14 +151,61 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
   };
 
   const handleDelete = () => {
+    // Empty profile — straight delete.
+    if (!blockedByUsers) {
+      const result = deleteProfile(profile.id);
+      if (!result.ok) {
+        const key = reasonToKey(result.reason);
+        addToast(t(key, { count: userCount }), 'error');
+        setShowDelete(false);
+        return;
+      }
+      addToast(t('toast.deleted'), 'success');
+      setShowDelete(false);
+      onBack();
+      return;
+    }
+    // Profile has users — bulk-reassign first, then delete. Each saveUser
+    // call still respects the last_admin invariant; if reassignment would
+    // strip admin from the only active admin, the save returns
+    // { ok: false, reason: 'last_admin' } and we abort the whole flow.
+    if (!reassignTo) {
+      addToast(
+        isAr ? 'يجب اختيار ملف بديل' : 'Pick a target profile to reassign to.',
+        'error',
+      );
+      return;
+    }
+    const affectedUsers = users.filter((u) => u.profile_id === profile.id);
+    for (const u of affectedUsers) {
+      const result = saveUser({
+        ...u,
+        profile_id: reassignTo,
+        updated_at: new Date().toISOString(),
+      });
+      if (!result.ok) {
+        addToast(
+          isAr
+            ? `فشل نقل ${u.email}: ${result.reason}`
+            : `Failed to reassign ${u.email}: ${result.reason}`,
+          'error',
+        );
+        return;
+      }
+    }
+    // All users moved — now the profile delete should succeed.
     const result = deleteProfile(profile.id);
     if (!result.ok) {
       const key = reasonToKey(result.reason);
-      addToast(t(key, { count: userCount }), 'error');
-      setShowDelete(false);
+      addToast(t(key, { count: 0 }), 'error');
       return;
     }
-    addToast(t('toast.deleted'), 'success');
+    addToast(
+      isAr
+        ? `تم نقل ${affectedUsers.length} مستخدماً وحذف الملف`
+        : `Reassigned ${affectedUsers.length} user${affectedUsers.length === 1 ? '' : 's'} and deleted the profile`,
+      'success',
+    );
     setShowDelete(false);
     onBack();
   };
@@ -214,29 +265,66 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
         />
       </div>
 
-      {/* Delete confirmation */}
+      {/* Delete confirmation — with optional bulk-reassign when the
+          profile is in use. Picking a target profile + clicking
+          "Reassign and delete" iterates the affected users one by one
+          (each save still respects last_admin) before deleting. */}
       <Modal
         open={showDelete}
         onClose={() => setShowDelete(false)}
-        title={t('common.delete')}
+        title={blockedByUsers ? (isAr ? 'نقل المستخدمين وحذف الملف' : 'Reassign users and delete') : t('common.delete')}
         footer={
           <>
             <Button variant="ghost" onClick={() => setShowDelete(false)}>{t('common.cancel')}</Button>
             <Button
               variant="danger"
               onClick={handleDelete}
-              disabled={blockedByUsers}
-              title={blockedByUsers ? t('access.cannot_delete_has_users', { count: userCount }) : undefined}
+              disabled={blockedByUsers && !reassignTo}
             >
-              {t('common.delete')}
+              {blockedByUsers
+                ? (isAr ? 'نقل وحذف' : 'Reassign and delete')
+                : t('common.delete')}
             </Button>
           </>
         }
       >
         {blockedByUsers ? (
-          <p className="text-sm text-red-600">
-            {t('profiles.has_users_body', { count: userCount })}
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm text-charcoal/80">
+              {isAr
+                ? `هذا الملف يحمله ${userCount} مستخدم. سيتم نقلهم إلى الملف المحدد قبل الحذف.`
+                : `This profile is held by ${userCount} user${userCount === 1 ? '' : 's'}. They'll be reassigned to the selected profile before the delete.`}
+            </p>
+            <div>
+              <label className="text-xs text-charcoal/60 mb-1 block">
+                {isAr ? 'نقل إلى' : 'Reassign to'}
+              </label>
+              <select
+                value={reassignTo}
+                onChange={(e) => setReassignTo(e.target.value)}
+                className="form-input"
+              >
+                {otherProfiles.length === 0 && (
+                  <option value="">
+                    {isAr ? '— لا يوجد ملف بديل —' : '— no other profile —'}
+                  </option>
+                )}
+                {otherProfiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {(isAr ? p.label_ar : p.label_en)}
+                    {p.is_admin ? (isAr ? ' (مسؤول)' : ' (admin)') : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {otherProfiles.length === 0 && (
+              <p className="text-xs text-red-600">
+                {isAr
+                  ? 'يجب إنشاء ملف آخر قبل حذف هذا الملف.'
+                  : 'You must create another profile before deleting this one.'}
+              </p>
+            )}
+          </div>
         ) : (
           <p className="text-sm text-charcoal">
             {t('profiles.confirm_delete', { name: isAr ? profile.label_ar : profile.label_en })}

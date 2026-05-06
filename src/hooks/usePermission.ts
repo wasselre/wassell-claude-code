@@ -84,20 +84,37 @@ export function useFieldPermissionResolver(modelId: string): (field: ModelField)
 
 /**
  * Filter a list of records down to those the current user can view.
- * Memoized on the inputs — primary entry point for RecordListPage,
- * lookup pickers, and any other surface that displays a list of
- * records. Admin / no-auth fast-paths inside `applyViewScopeToRecords`
- * keep the cost negligible when no filtering is needed.
+ * Primary entry point for RecordListPage, lookup pickers, and any
+ * other surface that displays a list of records.
+ *
+ * Memo strategy: the dependencies are deliberately the *resolved* user
+ * + profile + role-collection-version-marker rather than the full
+ * `users` / `profiles` / `roles` arrays. Without this, any save on any
+ * unrelated user (e.g. an admin renaming themselves) invalidates every
+ * record list in the app and re-runs the per-row scope walk —
+ * expensive at the 2,605-record scale. Computing the active user/
+ * profile once outside the memo keeps the dependency surface small;
+ * `roles.updated_at` (rough version marker via length + last id) is
+ * fine because role schemas only matter when role_field sources are
+ * referenced in scope conditions.
  */
 export function useApplyViewScope(
   model: AppModel | null | undefined,
   records: AppRecord[],
 ): AppRecord[] {
   const { currentUserId, users, profiles, roles } = useAppStore();
+  const me = users.find((u) => u.id === currentUserId) ?? null;
+  const myProfile = me ? profiles.find((p) => p.id === me.profile_id) ?? null : null;
+  // Cheap version marker for the roles collection. Identity changes only
+  // when a role is added/removed; field-value resolution still re-walks
+  // user.role_assignments which lives on `me`.
+  const rolesVersion = `${roles.length}:${roles[roles.length - 1]?.updated_at ?? ''}`;
   return useMemo(() => {
     if (!model) return records;
+    // Bail-out fast paths short-circuit before the scope walk.
     return applyViewScopeToRecords(currentUserId, users, profiles, roles, model, records);
-  }, [currentUserId, users, profiles, roles, model, records]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId, me, myProfile, rolesVersion, model, records]);
 }
 
 /**
