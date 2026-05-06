@@ -1860,8 +1860,13 @@ BEGIN
   -- CREATE TABLE. `created_by_user_id` is the same column the records
   -- table grew in Phase 1 RLS — frozen tables carry it forward so the
   -- `created_by` scope target keeps working after a model is frozen.
+  --
+  -- gen_random_uuid() is built into Postgres core (PG 13+); we use it
+  -- instead of the uuid-ossp `uuid_generate_v4()` because this function
+  -- has `SET search_path = public` and uuid-ossp lives in `extensions`,
+  -- which would otherwise be unreachable inside dynamic SQL.
   EXECUTE format(
-    'CREATE TABLE public.%I (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), %s, created_by_user_id uuid REFERENCES public.users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())',
+    'CREATE TABLE public.%I (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), %s, created_by_user_id uuid REFERENCES public.users(id) ON DELETE SET NULL, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())',
     v_table,
     CASE WHEN v_columns = '' THEN 'placeholder_unused boolean' ELSE v_columns END
   );
@@ -1910,8 +1915,10 @@ BEGIN
       );
     ELSIF v_ftype = 'table' THEN
       -- Subtable: row_index for ordering, plus one column per table-column.
+      -- gen_random_uuid() (built-in) instead of uuid_generate_v4() because
+      -- this function's search_path doesn't include extensions schema.
       EXECUTE format(
-        'CREATE TABLE public.%I (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), record_id uuid NOT NULL REFERENCES public.%I(id) ON DELETE CASCADE, row_index int NOT NULL, %s, created_at timestamptz NOT NULL DEFAULT now())',
+        'CREATE TABLE public.%I (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), record_id uuid NOT NULL REFERENCES public.%I(id) ON DELETE CASCADE, row_index int NOT NULL, %s, created_at timestamptz NOT NULL DEFAULT now())',
         v_table || '__' || v_fname,
         v_table,
         public.freeze_build_table_subtable_columns(v_field->'table_columns')
