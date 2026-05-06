@@ -123,6 +123,15 @@ export function getSessionEmail(session: Session | null): string | null {
   return session?.user?.email ?? null;
 }
 
+/**
+ * Extract the Supabase Auth user id (`auth.users.id`) from a session, or null
+ * if none. Threaded into the store as `authUid` and persisted to
+ * `users.auth_uid` on first sign-in. RLS policies key off this column.
+ */
+export function getSessionUid(session: Session | null): string | null {
+  return session?.user?.id ?? null;
+}
+
 /** Whether Supabase Auth is usable in this environment. */
 export function isAuthAvailable(): boolean {
   return supabase !== null;

@@ -282,12 +282,28 @@ CREATE TABLE IF NOT EXISTS users (
   name_ar TEXT NOT NULL,
   name_en TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
+  -- Foreign key into Supabase Auth's `auth.users.id`. Set on first sign-in
+  -- via the email-binding shim in `appStore.initialize()`. Nullable + UNIQUE
+  -- so legacy rows don't fail the NOT NULL check; once bound, every RLS
+  -- policy keys off this column instead of doing a JSONB walk per query.
+  auth_uid UUID UNIQUE,
   profile_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
   role_assignments JSONB NOT NULL DEFAULT '[]'::jsonb,
   is_active BOOLEAN NOT NULL DEFAULT true,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Existing installs: idempotent backfill so the auth-binding upgrade path
+-- doesn't fail on workspaces that predate the RLS migration.
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS auth_uid UUID;
+DO $$ BEGIN
+  -- Add the unique constraint separately so it's safe to re-run; CREATE
+  -- UNIQUE INDEX IF NOT EXISTS is the idempotent equivalent of UNIQUE
+  -- constraints in idempotent scripts.
+  CREATE UNIQUE INDEX IF NOT EXISTS users_auth_uid_key ON users(auth_uid);
+EXCEPTION WHEN duplicate_table THEN NULL; END $$;
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 
@@ -367,11 +383,31 @@ CREATE TRIGGER set_updated_at_field_templates BEFORE UPDATE ON field_templates
 -- ============================================================
 -- ROW LEVEL SECURITY (RLS)
 -- ============================================================
--- v1 policy: every authenticated user (staff) has full access to every table.
--- Public dashboards are the one exception: anon can SELECT a dashboard when
--- is_public = true so the /public/dashboard/:token page works without login.
+-- v2 policy: real per-profile enforcement.
 --
--- Policies are dropped and recreated so re-running the script is safe.
+-- Records are gated per-row by `wassell_can_*_record(auth.uid(), record)`,
+-- which composes the model-level action perm (view/create/edit/delete)
+-- with the active profile's view_scope and edit_scope. Admin profiles
+-- (`is_admin: true`) bypass automatically because every helper short-
+-- circuits when the resolved profile is admin. The same condition
+-- shape is evaluated identically in JS (src/lib/scopeFilters.ts) and
+-- SQL (wassell_record_passes_scope) so behaviour is consistent
+-- regardless of which path serves the data.
+--
+-- Read-side surfaces (sidebar, user pickers, role badges) need
+-- broader read access on `models`, `users`, `profiles`, `roles`,
+-- `model_groups`, `field_templates` so the UI can render — these
+-- stay readable by every authenticated user, but writes are admin
+-- only. The builder-area tables (workflows*, dashboards) are admin
+-- only end-to-end since non-admins have no UI for them.
+--
+-- The helper functions and policies below are also installed via
+-- supabase MCP migrations (rls_real_enforcement_v1 and
+-- replace_using_true_with_real_policies). Keeping them in this
+-- script too so a fresh `psql -f schema.sql` produces the same DB.
+-- Public dashboards keep the existing anon-SELECT policy.
+--
+-- Policies are dropped and recreated so re-running is safe.
 -- ============================================================
 
 ALTER TABLE models          ENABLE ROW LEVEL SECURITY;
@@ -402,18 +438,220 @@ DROP POLICY IF EXISTS "Authenticated full access" ON roles;
 DROP POLICY IF EXISTS "Authenticated full access" ON field_templates;
 DROP POLICY IF EXISTS "Public dashboard read" ON dashboards;
 
-CREATE POLICY "Authenticated full access" ON models          FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON model_groups    FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON records         FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON workflows       FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON workflow_groups FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON workflow_runs   FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON dashboards      FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON model_views     FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON users           FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON profiles        FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON roles           FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Authenticated full access" ON field_templates FOR ALL TO authenticated USING (true) WITH CHECK (true);
+-- ── Helper functions (also installed via the rls_real_enforcement_v1
+-- migration). Pasted here so a fresh `psql -f schema.sql` against an
+-- empty DB produces an identical setup. Functions are SECURITY DEFINER
+-- so they read profiles/users from inside an RLS-restricted session.
+
+CREATE OR REPLACE FUNCTION wassell_app_user_id(auth_user_id UUID)
+RETURNS UUID
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT id FROM users WHERE auth_uid = auth_user_id AND is_active = true LIMIT 1;
+$$;
+
+CREATE OR REPLACE FUNCTION wassell_is_admin(auth_user_id UUID)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT COALESCE((
+    SELECT p.is_admin FROM profiles p
+      JOIN users u ON u.profile_id = p.id
+     WHERE u.auth_uid = auth_user_id AND u.is_active = true LIMIT 1
+  ), false);
+$$;
+
+CREATE OR REPLACE FUNCTION wassell_user_has_action(
+  auth_user_id UUID, the_model_id UUID, action TEXT
+) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  prof profiles%ROWTYPE;
+  model_perm jsonb;
+BEGIN
+  IF auth_user_id IS NULL THEN RETURN false; END IF;
+  SELECT p.* INTO prof FROM profiles p
+    JOIN users u ON u.profile_id = p.id
+   WHERE u.auth_uid = auth_user_id AND u.is_active = true LIMIT 1;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF prof.is_admin THEN RETURN true; END IF;
+  SELECT mp INTO model_perm FROM jsonb_array_elements(prof.model_permissions) mp
+    WHERE (mp->>'model_id')::uuid = the_model_id LIMIT 1;
+  IF model_perm IS NULL THEN RETURN false; END IF;
+  RETURN (model_perm->'permissions') @> to_jsonb(action);
+END $$;
+
+-- Walks the active profile's view_/edit_scope conditions for a record.
+-- Mirrors the JS evaluator in src/lib/scopeFilters.ts; behaviour is
+-- intentionally identical so the app and the DB agree.
+CREATE OR REPLACE FUNCTION wassell_record_passes_scope(
+  rec records, auth_user_id UUID, scope_kind TEXT
+) RETURNS boolean
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  prof profiles%ROWTYPE;
+  app_uid UUID;
+  user_assignments jsonb;
+  user_assignment jsonb;
+  model_perm jsonb;
+  rule jsonb;
+  cond jsonb;
+  field_kind TEXT;
+  field_slug TEXT;
+  rec_value jsonb;
+  rec_value_text TEXT;
+  source_kind TEXT;
+  rhs_text TEXT;
+  operator TEXT;
+  pass boolean;
+BEGIN
+  IF auth_user_id IS NULL THEN RETURN false; END IF;
+  SELECT u.id, u.role_assignments INTO app_uid, user_assignments
+    FROM users u WHERE u.auth_uid = auth_user_id AND u.is_active = true LIMIT 1;
+  IF NOT FOUND THEN RETURN false; END IF;
+  SELECT p.* INTO prof FROM profiles p
+    JOIN users u ON u.profile_id = p.id WHERE u.id = app_uid LIMIT 1;
+  IF NOT FOUND THEN RETURN false; END IF;
+  IF prof.is_admin THEN RETURN true; END IF;
+
+  SELECT mp INTO model_perm FROM jsonb_array_elements(prof.model_permissions) mp
+    WHERE (mp->>'model_id')::uuid = rec.model_id LIMIT 1;
+  IF model_perm IS NULL THEN RETURN false; END IF;
+
+  rule := model_perm -> (scope_kind || '_scope');
+  IF rule IS NULL THEN RETURN true; END IF;
+  IF rule->>'mode' = 'all' THEN RETURN true; END IF;
+  IF rule->>'mode' <> 'filtered' THEN RETURN true; END IF;
+  IF jsonb_array_length(rule->'conditions') = 0 THEN RETURN true; END IF;
+
+  FOR cond IN SELECT * FROM jsonb_array_elements(rule->'conditions')
+  LOOP
+    field_kind := cond->'field'->>'kind';
+    operator := cond->>'operator';
+    IF field_kind = 'created_by' THEN
+      rec_value := to_jsonb(rec.created_by_user_id);
+      rec_value_text := rec.created_by_user_id::text;
+    ELSE
+      field_slug := cond->'field'->>'field_slug';
+      IF field_slug IS NULL THEN
+        SELECT (f->>'name') INTO field_slug FROM models m,
+          jsonb_array_elements(m.schema->'sections') s,
+          jsonb_array_elements(s->'fields') f
+         WHERE m.id = rec.model_id AND f->>'id' = cond->'field'->>'field_id' LIMIT 1;
+      END IF;
+      IF field_slug IS NULL THEN RETURN false; END IF;
+      rec_value := rec.data -> field_slug;
+      rec_value_text := rec.data ->> field_slug;
+    END IF;
+
+    IF operator = 'is_empty' THEN
+      pass := rec_value IS NULL OR rec_value = 'null'::jsonb
+              OR COALESCE(rec_value_text,'') = ''
+              OR (jsonb_typeof(rec_value)='array' AND jsonb_array_length(rec_value)=0);
+      IF NOT pass THEN RETURN false; END IF; CONTINUE;
+    ELSIF operator = 'is_not_empty' THEN
+      pass := rec_value IS NOT NULL AND rec_value <> 'null'::jsonb
+              AND COALESCE(rec_value_text,'') <> ''
+              AND (jsonb_typeof(rec_value)<>'array' OR jsonb_array_length(rec_value)>0);
+      IF NOT pass THEN RETURN false; END IF; CONTINUE;
+    END IF;
+
+    source_kind := cond->'source'->>'kind';
+    IF source_kind = 'literal' THEN
+      rhs_text := cond->'source'->>'value';
+    ELSIF source_kind = 'current_user' THEN
+      rhs_text := app_uid::text;
+    ELSIF source_kind = 'role_field' THEN
+      SELECT a INTO user_assignment FROM jsonb_array_elements(COALESCE(user_assignments,'[]'::jsonb)) a
+        WHERE a->>'role_id' = cond->'source'->>'role_id' LIMIT 1;
+      IF user_assignment IS NULL THEN RETURN false; END IF;
+      rhs_text := user_assignment->'field_values'->>(cond->'source'->>'field_slug');
+      IF rhs_text IS NULL THEN RETURN false; END IF;
+    ELSE RETURN false; END IF;
+
+    IF operator = 'equals' THEN
+      IF jsonb_typeof(rec_value)='array' THEN
+        pass := EXISTS(SELECT 1 FROM jsonb_array_elements_text(rec_value) v WHERE v = rhs_text);
+      ELSE pass := COALESCE(rec_value_text,'') = COALESCE(rhs_text,''); END IF;
+    ELSIF operator = 'not_equals' THEN
+      IF jsonb_typeof(rec_value)='array' THEN
+        pass := NOT EXISTS(SELECT 1 FROM jsonb_array_elements_text(rec_value) v WHERE v = rhs_text);
+      ELSE pass := rec_value_text IS DISTINCT FROM rhs_text; END IF;
+    ELSIF operator = 'contains' THEN
+      IF jsonb_typeof(rec_value)='array' THEN
+        pass := EXISTS(SELECT 1 FROM jsonb_array_elements_text(rec_value) v
+                        WHERE position(lower(rhs_text) IN lower(v)) > 0);
+      ELSE pass := position(lower(COALESCE(rhs_text,'')) IN lower(COALESCE(rec_value_text,''))) > 0; END IF;
+    ELSIF operator = 'greater_than' THEN
+      BEGIN pass := rec_value_text::numeric > rhs_text::numeric; EXCEPTION WHEN OTHERS THEN pass := false; END;
+    ELSIF operator = 'less_than' THEN
+      BEGIN pass := rec_value_text::numeric < rhs_text::numeric; EXCEPTION WHEN OTHERS THEN pass := false; END;
+    ELSE pass := false; END IF;
+    IF NOT pass THEN RETURN false; END IF;
+  END LOOP;
+  RETURN true;
+END $$;
+
+CREATE OR REPLACE FUNCTION wassell_can_view_record(auth_user_id UUID, rec records)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT wassell_user_has_action(auth_user_id, rec.model_id, 'view')
+    AND wassell_record_passes_scope(rec, auth_user_id, 'view');
+$$;
+CREATE OR REPLACE FUNCTION wassell_can_edit_record(auth_user_id UUID, rec records)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT wassell_user_has_action(auth_user_id, rec.model_id, 'edit')
+    AND wassell_record_passes_scope(rec, auth_user_id, 'view')
+    AND wassell_record_passes_scope(rec, auth_user_id, 'edit');
+$$;
+CREATE OR REPLACE FUNCTION wassell_can_create_record(auth_user_id UUID, rec records)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT wassell_user_has_action(auth_user_id, rec.model_id, 'create');
+$$;
+CREATE OR REPLACE FUNCTION wassell_can_delete_record(auth_user_id UUID, rec records)
+RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT wassell_user_has_action(auth_user_id, rec.model_id, 'delete')
+    AND wassell_record_passes_scope(rec, auth_user_id, 'view')
+    AND wassell_record_passes_scope(rec, auth_user_id, 'edit');
+$$;
+
+-- Records: per-row gating. Admin profiles bypass via the helpers.
+CREATE POLICY "records_view"   ON records FOR SELECT TO authenticated USING (wassell_can_view_record(auth.uid(), records.*));
+CREATE POLICY "records_insert" ON records FOR INSERT TO authenticated WITH CHECK (wassell_can_create_record(auth.uid(), records.*));
+CREATE POLICY "records_update" ON records FOR UPDATE TO authenticated USING (wassell_can_edit_record(auth.uid(), records.*)) WITH CHECK (wassell_can_edit_record(auth.uid(), records.*));
+CREATE POLICY "records_delete" ON records FOR DELETE TO authenticated USING (wassell_can_delete_record(auth.uid(), records.*));
+
+-- Models / model_groups: read for the UI, write for admins.
+CREATE POLICY "models_read"        ON models       FOR SELECT TO authenticated USING (true);
+CREATE POLICY "models_write"       ON models       FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "model_groups_read"  ON model_groups FOR SELECT TO authenticated USING (true);
+CREATE POLICY "model_groups_write" ON model_groups FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+
+-- Profiles / roles: read for UI rendering, write for admins.
+CREATE POLICY "profiles_read"  ON profiles FOR SELECT TO authenticated USING (true);
+CREATE POLICY "profiles_write" ON profiles FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "roles_read"     ON roles    FOR SELECT TO authenticated USING (true);
+CREATE POLICY "roles_write"    ON roles    FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+
+-- Users: read for assignee/role pickers; write for admin OR self.
+CREATE POLICY "users_read"  ON users FOR SELECT TO authenticated USING (true);
+CREATE POLICY "users_write" ON users FOR ALL    TO authenticated
+  USING (wassell_is_admin(auth.uid()) OR users.auth_uid = auth.uid())
+  WITH CHECK (wassell_is_admin(auth.uid()) OR users.auth_uid = auth.uid());
+
+-- Saved views: read own + shared, write own or admin.
+CREATE POLICY "model_views_read" ON model_views FOR SELECT TO authenticated
+  USING (is_shared = true OR user_id::text = wassell_app_user_id(auth.uid())::text OR wassell_is_admin(auth.uid()));
+CREATE POLICY "model_views_write" ON model_views FOR ALL TO authenticated
+  USING (user_id::text = wassell_app_user_id(auth.uid())::text OR wassell_is_admin(auth.uid()))
+  WITH CHECK (user_id::text = wassell_app_user_id(auth.uid())::text OR wassell_is_admin(auth.uid()));
+
+-- Field templates: read everyone, write admin.
+CREATE POLICY "field_templates_read"  ON field_templates FOR SELECT TO authenticated USING (true);
+CREATE POLICY "field_templates_write" ON field_templates FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+
+-- Builder area: admin only end-to-end.
+CREATE POLICY "workflows_admin"       ON workflows       FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "workflow_groups_admin" ON workflow_groups FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "workflow_runs_admin"   ON workflow_runs   FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "dashboards_admin"      ON dashboards      FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
 
 -- Public dashboards: anonymous read access when is_public = true.
 CREATE POLICY "Public dashboard read" ON dashboards FOR SELECT TO anon USING (is_public = true);

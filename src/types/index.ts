@@ -1176,13 +1176,19 @@ export type FieldPermission = 'hidden' | 'readonly' | 'editable';
 
 /**
  * What a scope condition compares against on the target record.
- *  - `field`  → a regular field on the record's model schema (by field id)
+ *  - `field`  → a regular field on the record's model schema (by field id).
+ *               `field_slug` is stored alongside the id so SQL-side RLS
+ *               evaluation can read the JSONB key directly without joining
+ *               `models` to resolve the slug. Older profiles persisted
+ *               before the RLS upgrade may have it missing; the JS evaluator
+ *               falls back to the model-schema lookup, and `saveProfile`
+ *               heals the slug on the next save.
  *  - `created_by` → the synthetic `record.created_by_user_id` column (set on
  *                   first save). Lets admins write "records I created" rules
  *                   without forcing every model to define a creator field.
  */
 export type ScopeFieldRef =
-  | { kind: 'field'; field_id: string; field_path?: string }
+  | { kind: 'field'; field_id: string; field_slug?: string; field_path?: string }
   | { kind: 'created_by' };
 
 /**
@@ -1321,6 +1327,13 @@ export interface User {
   name_ar: string;
   name_en: string;
   email: string;
+  /**
+   * Foreign key into Supabase Auth's `auth.users.id`. Set on first sign-in
+   * via the email-binding shim in `appStore.initialize()`. Older rows + the
+   * seed admin start with null and get bound on first sign-in. RLS policies
+   * key off this column so unbound users see an empty workspace until bound.
+   */
+  auth_uid?: string | null;
   profile_id: string;
   role_assignments: UserRoleAssignment[];
   is_active: boolean;
@@ -1537,6 +1550,13 @@ export interface AppState {
   // Auth (Supabase Auth session state)
   /** Email of the currently signed-in auth user, or null if signed out. */
   authEmail: string | null;
+  /**
+   * Supabase Auth user id (`auth.users.id`) of the currently signed-in user,
+   * or null if signed out. Threaded through `bindAuth` from the active
+   * session and used by `initialize()` to populate `users.auth_uid` on the
+   * matched in-app user the first time. RLS policies key off this column.
+   */
+  authUid: string | null;
   /** True once the initial session-check completes. Used to avoid flashing
    *  the login page before we've checked localStorage for a cached session. */
   authReady: boolean;

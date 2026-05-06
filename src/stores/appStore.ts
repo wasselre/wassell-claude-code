@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { v4 as uuid } from 'uuid';
 import { supabase } from '@/lib/supabase';
-import { getSession, getSessionEmail, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
+import { getSession, getSessionEmail, getSessionUid, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
 import { buildMarketingSeedWorkflows } from '@/data/seedWorkflows';
@@ -722,6 +722,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   whiteboardFolders: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
   authEmail: null,
+  authUid: null,
   authReady: false,
   language: (loadLocal<Language>('wassell_language') ?? 'ar'),
   toasts: [],
@@ -1107,13 +1108,35 @@ export const useAppStore = create<AppState>((set, get) => ({
     // ────────────────────────────────────────────────────────────────────
     let currentUserId = get().currentUserId;
     const authEmail = get().authEmail;
+    const authUid = get().authUid;
     const authConfigured = isAuthAvailable();
+
+    // Helper: persist auth_uid back to the users row the first time we see
+    // it. RLS policies key off this column; without it every authenticated
+    // query returns an empty set. Idempotent — re-runs are no-ops once set.
+    const bindAuthUidToUser = (user: User): User => {
+      if (!authUid || user.auth_uid === authUid) return user;
+      const updated: User = {
+        ...user,
+        auth_uid: authUid,
+        updated_at: new Date().toISOString(),
+      };
+      users = users.map((u) => (u.id === updated.id ? updated : u));
+      saveLocal('wassell_users', users);
+      supabaseUpsert(
+        'users',
+        updated as unknown as Record<string, unknown>,
+        { table: 'users', id: updated.id },
+      );
+      return updated;
+    };
 
     if (authConfigured && authEmail) {
       const needle = authEmail.toLowerCase();
       const match = users.find((u) => (u.email ?? '').toLowerCase() === needle);
       if (match) {
-        currentUserId = match.id;
+        const bound = bindAuthUidToUser(match);
+        currentUserId = bound.id;
       } else {
         // Bootstrap: if the only existing user is the default seed admin,
         // rewrite its email to match the signed-in address. This turns the
@@ -1125,6 +1148,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           const adopted: User = {
             ...seedAdmin,
             email: authEmail,
+            // Bind auth_uid in the same write so the very first save lands
+            // both fields atomically — no half-bound state for RLS to trip on.
+            auth_uid: authUid ?? seedAdmin.auth_uid ?? null,
             updated_at: new Date().toISOString(),
           };
           users = users.map((u) => (u.id === adopted.id ? adopted : u));
@@ -2259,12 +2285,42 @@ export const useAppStore = create<AppState>((set, get) => ({
   // --- Profiles ---
   saveProfile: (profile: Profile) => {
     set((s) => {
-      const idx = s.profiles.findIndex((p) => p.id === profile.id);
+      // Heal each scope condition's `field_slug` from the model schema so the
+      // SQL-side RLS evaluator can read it directly without joining `models`.
+      // No-op for already-healed conditions and for `created_by`-target rules
+      // (they don't reference a model field).
+      const healed: Profile = {
+        ...profile,
+        model_permissions: profile.model_permissions.map((mp) => {
+          const model = s.models.find((m) => m.id === mp.model_id);
+          if (!model) return mp;
+          const healScope = (rule?: Profile['model_permissions'][number]['view_scope']) => {
+            if (!rule || rule.mode !== 'filtered') return rule;
+            return {
+              ...rule,
+              conditions: rule.conditions.map((c) => {
+                if (c.field.kind !== 'field' || c.field.field_slug) return c;
+                const targetId = c.field.field_id;
+                const f = model.schema.sections
+                  .flatMap((sec) => sec.fields)
+                  .find((ff) => ff.id === targetId);
+                return f ? { ...c, field: { ...c.field, field_slug: f.name } } : c;
+              }),
+            };
+          };
+          return {
+            ...mp,
+            view_scope: healScope(mp.view_scope),
+            edit_scope: healScope(mp.edit_scope),
+          };
+        }),
+      };
+      const idx = s.profiles.findIndex((p) => p.id === healed.id);
       const profiles = idx >= 0
-        ? s.profiles.map((p) => (p.id === profile.id ? profile : p))
-        : [...s.profiles, profile];
+        ? s.profiles.map((p) => (p.id === healed.id ? healed : p))
+        : [...s.profiles, healed];
       saveLocal('wassell_profiles', profiles);
-      supabaseUpsert('profiles', profile as unknown as Record<string, unknown>);
+      supabaseUpsert('profiles', healed as unknown as Record<string, unknown>);
       return { profiles };
     });
   },
@@ -2364,15 +2420,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Initial read — synchronous for the app-level gate's first render.
     const initialSession = await getSession();
     const initialEmail = getSessionEmail(initialSession);
-    set({ authEmail: initialEmail, authReady: true });
+    const initialUid = getSessionUid(initialSession);
+    set({ authEmail: initialEmail, authUid: initialUid, authReady: true });
 
     // Subscribe to future events. The callback may fire many times
     // (sign-in, sign-out, token refresh, password-recovery).
     onAuthChange((session) => {
       const email = getSessionEmail(session);
+      const uid = getSessionUid(session);
       const prev = get().authEmail;
-      if (email === prev) return; // token-refresh — no-op for us
-      set({ authEmail: email });
+      if (email === prev) {
+        // Token-refresh: the email is unchanged but the auth_uid should
+        // already be set; refresh the in-memory copy in case Supabase
+        // returned a fresh session with the same user.
+        if (uid !== get().authUid) set({ authUid: uid });
+        return;
+      }
+      set({ authEmail: email, authUid: uid });
       // If the user just signed in, re-run initialize so the user record,
       // permissions, and data all reflect the new identity.
       if (email && get().initialized) {
@@ -2403,6 +2467,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         activityLogger.signOut(prev, prevUserId);
         set({
           currentUserId: null,
+          authUid: null,
           // Keep the data arrays intact; clearing them would cause a flash of
           // "empty app" as the login page routes in. The RequireAuth gate
           // blocks render before anyone sees it.
@@ -2426,7 +2491,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // authEmail is cleared by the onAuthChange callback in bindAuth, but we
     // also do it synchronously here so the UI updates without waiting for the
     // subscription round-trip.
-    set({ authEmail: null, currentUserId: null });
+    set({ authEmail: null, authUid: null, currentUserId: null });
     saveLocal('wassell_current_user_id', '');
     if (prevEmail) {
       activityLogger.signOut(prevEmail, prevUserId);
