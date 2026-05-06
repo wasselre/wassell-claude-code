@@ -1121,9 +1121,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     // in `src/data/seedWorkflows.ts`. They have stable ids so re-seeding
     // is idempotent. We only seed the ones missing from the loaded set
     // so user-edited copies (same id, different content) aren't clobbered.
+    //
+    // Phase 1 RLS made `workflows` admin-only at the DB layer. If a non-
+    // admin signs in (or no user is resolved yet), the upserts here
+    // would each fire an RLS denial toast. Skip the seed for everyone
+    // except admins — the seed is bootstrap-only, so a non-admin landing
+    // first just waits until an admin signs in and runs it.
     {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? '';
-      if (supabaseUrl) {
+      const seederIsAdmin = (() => {
+        const email = (get().authEmail ?? '').toLowerCase();
+        if (!email) return false;
+        const u = users.find((x) => (x.email ?? '').toLowerCase() === email);
+        if (!u || !u.is_active) return false;
+        const p = profiles.find((x) => x.id === u.profile_id);
+        return p?.is_admin === true;
+      })();
+      if (supabaseUrl && seederIsAdmin) {
         const seedList = buildMarketingSeedWorkflows(models, webhookSlugs, supabaseUrl);
         if (seedList.length > 0) {
           const existingIds = new Set(workflows.map((w) => w.id));

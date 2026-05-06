@@ -650,7 +650,14 @@ CREATE POLICY "field_templates_write" ON field_templates FOR ALL    TO authentic
 -- Builder area: admin only end-to-end.
 CREATE POLICY "workflows_admin"       ON workflows       FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
 CREATE POLICY "workflow_groups_admin" ON workflow_groups FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
-CREATE POLICY "workflow_runs_admin"   ON workflow_runs   FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+-- workflow_runs: any authenticated user can append (their record save
+-- might trigger a workflow whose run is logged client-side); reads /
+-- updates / deletes are admin-only. Without this split, non-admin
+-- saves produce RLS denial toasts on every triggered workflow.
+CREATE POLICY "workflow_runs_read"   ON workflow_runs FOR SELECT TO authenticated USING (wassell_is_admin(auth.uid()));
+CREATE POLICY "workflow_runs_insert" ON workflow_runs FOR INSERT TO authenticated WITH CHECK (true);
+CREATE POLICY "workflow_runs_modify" ON workflow_runs FOR UPDATE TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "workflow_runs_delete" ON workflow_runs FOR DELETE TO authenticated USING (wassell_is_admin(auth.uid()));
 CREATE POLICY "dashboards_admin"      ON dashboards      FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
 
 -- Public dashboards: anon access goes through `get_public_dashboard`,
