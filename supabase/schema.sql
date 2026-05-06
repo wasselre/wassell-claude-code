@@ -2105,6 +2105,18 @@ $fn$;
 -- the existing scope evaluator.
 -- ────────────────────────────────────────────────────────────────────
 
+-- The two helpers below need to construct a synthetic `records` row to
+-- pass into `wassell_record_passes_scope`. We CANNOT use ROW(...)::records
+-- because that's POSITIONAL — and the actual column order in production
+-- depends on whether `created_by_user_id` was added via the CREATE TABLE
+-- (column 4) or via the `ADD COLUMN IF NOT EXISTS` ALTER (appended to the
+-- end). On installs where the column was ALTER-added, position 4 is
+-- `created_at` (timestamptz) and our positional UUID would fail to cast.
+--
+-- `jsonb_populate_record` matches columns BY NAME, so it works regardless
+-- of physical column order. Timestamps default to NULL — the scope
+-- evaluator only reads model_id, data, and created_by_user_id off the row.
+
 CREATE OR REPLACE FUNCTION public.wassell_can_view_jsonb(
   auth_user_id   UUID,
   the_model_id   UUID,
@@ -2113,14 +2125,14 @@ CREATE OR REPLACE FUNCTION public.wassell_can_view_jsonb(
   the_data       JSONB
 ) RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
-  -- Build a synthetic records-row literal. Column order MUST match the
-  -- records table CREATE: (id, model_id, data, created_by_user_id,
-  -- created_at, updated_at). Timestamps don't affect scope evaluation
-  -- so we feed `now()` for both — the helper only reads model_id, data,
-  -- and created_by_user_id off the row.
   SELECT public.wassell_user_has_action(auth_user_id, the_model_id, 'view')
     AND public.wassell_record_passes_scope(
-          ROW(the_id, the_model_id, the_data, the_created_by, now(), now())::records,
+          jsonb_populate_record(NULL::records, jsonb_build_object(
+            'id',                 the_id,
+            'model_id',           the_model_id,
+            'data',               the_data,
+            'created_by_user_id', the_created_by
+          )),
           auth_user_id, 'view'
         );
 $$;
@@ -2135,11 +2147,21 @@ CREATE OR REPLACE FUNCTION public.wassell_can_edit_jsonb(
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
   SELECT public.wassell_user_has_action(auth_user_id, the_model_id, 'edit')
     AND public.wassell_record_passes_scope(
-          ROW(the_id, the_model_id, the_data, the_created_by, now(), now())::records,
+          jsonb_populate_record(NULL::records, jsonb_build_object(
+            'id',                 the_id,
+            'model_id',           the_model_id,
+            'data',               the_data,
+            'created_by_user_id', the_created_by
+          )),
           auth_user_id, 'view'
         )
     AND public.wassell_record_passes_scope(
-          ROW(the_id, the_model_id, the_data, the_created_by, now(), now())::records,
+          jsonb_populate_record(NULL::records, jsonb_build_object(
+            'id',                 the_id,
+            'model_id',           the_model_id,
+            'data',               the_data,
+            'created_by_user_id', the_created_by
+          )),
           auth_user_id, 'edit'
         );
 $$;
