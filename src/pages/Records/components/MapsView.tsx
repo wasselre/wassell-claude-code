@@ -352,7 +352,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
         mapContainerStyle={mapContainerStyle}
         center={center}
         zoom={zoom}
-        options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: true }}
+        options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: false }}
         onLoad={(m) => setMapInstance(m)}
         onUnmount={() => setMapInstance(null)}
         onIdle={() => {
@@ -393,12 +393,12 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
         )}
       </GoogleMap>
 
-      {/* Floating progress chip — top-start corner, shows while the resolver
+      {/* Floating progress chip — center of the map, shows while the resolver
           is working through unresolved URLs. Hidden once all land. */}
       {resolving && (
-        <div className="absolute top-3 start-3 bg-white/95 rounded-full border border-copper/40 px-3 py-1 shadow-sm flex items-center gap-2 pointer-events-none">
-          <span className="inline-block w-2 h-2 rounded-full bg-copper animate-pulse" />
-          <span className="text-xs font-bold text-copper">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-20 bg-white/95 rounded-full border border-copper/40 px-4 py-2 shadow-lg flex items-center gap-2 pointer-events-none">
+          <span className="inline-block w-2.5 h-2.5 rounded-full bg-copper animate-pulse" />
+          <span className="text-sm font-bold text-copper">
             {t('maps.resolving', { count: resolvingCount })}
           </span>
         </div>
