@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { GoogleMap, OverlayView, useJsApiLoader } from '@react-google-maps/api';
-import { MarkerClusterer } from '@googlemaps/markerclusterer';
+import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import {
@@ -248,6 +248,14 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   // clicks to drive our own React popup overlay below.
   const clustererRef = useRef<MarkerClusterer | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
+  // Keep the latest resolved array in a ref so click handlers can re-resolve
+  // by record id at click time. Belt-and-suspenders against any closure
+  // capturing the wrong record (e.g. if `resolved` mutates between mount and
+  // click — shouldn't happen given our useMemo, but cheap insurance).
+  const resolvedRef = useRef(resolved);
+  useEffect(() => {
+    resolvedRef.current = resolved;
+  }, [resolved]);
 
   useEffect(() => {
     if (!mapInstance || !isLoaded) return;
@@ -264,13 +272,22 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
       const icon = label
         ? buildPillIcon(label, p.color || PILL_DEFAULT_COLOR)
         : buildPillIcon('•', p.color || PILL_DEFAULT_COLOR);
+      const recordId = p.record.id;
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
         icon: icon as google.maps.Icon | undefined,
+        // Native browser tooltip — handy for diagnosing which record a
+        // visible pill belongs to when pills overlap.
+        title: label || recordId.slice(0, 8),
       });
       marker.addListener('click', () => {
-        if (cfg.click_action === 'navigate') onCardClick(p.record);
-        else setSelectedId(p.record.id);
+        // Re-resolve by record id from the latest snapshot rather than the
+        // closed-over `p`. Defensive against the (theoretical) case where
+        // resolved mutates between marker creation and click.
+        const cur = resolvedRef.current.find((r) => r.record.id === recordId);
+        const target = cur?.record ?? p.record;
+        if (cfg.click_action === 'navigate') onCardClick(target);
+        else setSelectedId(recordId);
       });
       newMarkers.push(marker);
     }
@@ -281,6 +298,13 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
     clustererRef.current = new MarkerClusterer({
       map: mapInstance,
       markers: newMarkers,
+      // Wider cluster radius (default 60px) — pill markers can run 100–200px
+      // wide depending on label length, so two pins 70–150px apart appear
+      // visually stacked but the default radius leaves them un-clustered. The
+      // click then lands on whichever marker is on top in z-order, which may
+      // not be the pill the user thought they clicked. 110px catches most
+      // visually-overlapping pairs without over-clustering distant ones.
+      algorithm: new SuperClusterAlgorithm({ radius: 110 }),
       renderer: {
         render: ({ count, position }) => {
           const icon = buildClusterIcon(count);
