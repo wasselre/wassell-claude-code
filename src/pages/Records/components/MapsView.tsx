@@ -15,7 +15,6 @@ import {
 import { useResolvedLocations, type ResolvedPin } from '@/hooks/useResolvedLocations';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
-import Badge from '@/components/ui/Badge';
 import { formatNumberWithCommas, formatRangeValue } from './RangeField';
 import type { AppModel, AppRecord, MapsConfig, ModelField, NoteEntry, User } from '@/types';
 
@@ -412,52 +411,152 @@ function PopupCard({
     }
   }
 
+  // Compact-pin layout — first 3 shown fields go in chips, the rest become
+  // single-line rows below. Mirrors variation B in the design canvas.
+  const chipFields = shownFields.slice(0, 3);
+  const restFields = shownFields.slice(3);
+
   return (
     <div
-      className="relative rounded-2xl bg-white shadow-xl border border-sand/40 min-w-[260px] max-w-[320px] overflow-hidden"
+      className="relative w-[320px] bg-white border border-sand-light rounded-2xl font-amiri"
+      style={{ boxShadow: '0 4px 16px rgba(107, 66, 38, 0.08)' }}
       dir={isAr ? 'rtl' : 'ltr'}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Close button — top-end. */}
-      <button
-        type="button"
-        onClick={onClose}
-        aria-label={isAr ? 'إغلاق' : 'Close'}
-        className="absolute top-2 end-2 w-6 h-6 rounded-full hover:bg-cream flex items-center justify-center text-charcoal/60 hover:text-charcoal transition-colors z-10"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-          <path d="M18 6L6 18M6 6l12 12" />
-        </svg>
-      </button>
+      {/* Downward tail pointer — sits on the bottom edge near the start side. */}
+      <div
+        className="absolute -bottom-2 w-4 h-4 bg-white border-r border-b border-sand-light rotate-45 start-9"
+        aria-hidden
+      />
 
-      <div className="p-4 pb-3">
-        {badgeLabel && (
-          <div className="mb-2">
-            <Badge label={badgeLabel} color={badgeColor} />
+      <div className="px-4 pt-3.5 pb-4">
+        {/* Header strip — tag/status pill on the start side, close X on the end. */}
+        <header className="flex items-center justify-between gap-2 mb-2.5">
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            {badgeLabel &&
+              (badgeColor ? (
+                // Status pill — copper-tinted background with a colored dot
+                // (option color) when the badge field option carries a color.
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-chocolate bg-copper/10 rounded-full px-2.5 py-1">
+                  <span
+                    className="inline-block w-2 h-2 rounded-full"
+                    style={{
+                      background: badgeColor,
+                      boxShadow: `0 0 0 3px ${badgeColor}33`,
+                    }}
+                  />
+                  <span className="truncate max-w-[140px]">{badgeLabel}</span>
+                </span>
+              ) : (
+                // Outlined tag chip — copper border, no fill, when the option
+                // has no color (or it's a plain text/dropdown without one).
+                <span className="inline-flex items-center text-[11px] font-bold text-copper border border-copper rounded px-2 py-0.5 tracking-wider truncate max-w-[140px]">
+                  {badgeLabel}
+                </span>
+              ))}
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label={isAr ? 'إغلاق' : 'Close'}
+            className="shrink-0 w-7 h-7 rounded-full hover:bg-cream flex items-center justify-center text-charcoal/60 hover:text-chocolate transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+              <path d="M2 2L12 12M12 2L2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+          </button>
+        </header>
+
+        {/* Title block — large brown serif, optional location subtitle. */}
+        <div className="mb-3">
+          <h3 className="font-amiri font-bold text-[20px] leading-tight text-chocolate m-0 mb-1 break-words">
+            {title}
+          </h3>
+          {subtitle && (
+            <div className="flex items-center gap-1.5 text-xs text-charcoal/60">
+              <svg
+                width="12"
+                height="14"
+                viewBox="0 0 12 14"
+                fill="none"
+                aria-hidden
+                className="text-copper shrink-0"
+              >
+                <path
+                  d="M6 13C6 13 11 8.5 11 5.5C11 2.46243 8.76142 0 6 0C3.23858 0 1 2.46243 1 5.5C1 8.5 6 13 6 13Z"
+                  stroke="currentColor"
+                  strokeWidth="1.2"
+                />
+                <circle cx="6" cy="5.5" r="1.8" stroke="currentColor" strokeWidth="1.2" />
+              </svg>
+              <span className="truncate">{subtitle}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Stat chips — first three shown fields, 3-column grid on cream. */}
+        {chipFields.length > 0 && (
+          <div className="grid grid-cols-3 gap-1.5 mb-3">
+            {chipFields.map((f) => (
+              <div
+                key={f.id}
+                className="flex items-start gap-1.5 px-2 py-2 bg-cream rounded-md min-w-0"
+              >
+                <span className="text-copper text-[11px] leading-none mt-1 shrink-0">●</span>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-[10px] text-charcoal/60 tracking-wide truncate">
+                    {isAr ? f.label_ar : f.label_en}
+                  </span>
+                  <span className="text-[12px] font-bold text-chocolate truncate">
+                    {renderValue(f)}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
-        <div className="text-base font-bold text-charcoal leading-tight pe-6">{title}</div>
-        {subtitle && <div className="text-xs text-charcoal/60 mt-1">{subtitle}</div>}
-      </div>
 
-      {shownFields.length > 0 && (
-        <div className="px-4 pb-3 space-y-1.5 border-t border-sand/30 pt-3">
-          {shownFields.map((f) => (
-            <div key={f.id} className="flex justify-between gap-3 text-xs">
-              <span className="text-charcoal/50 shrink-0">{isAr ? f.label_ar : f.label_en}</span>
-              <span className="text-charcoal font-medium text-end break-words">{renderValue(f)}</span>
-            </div>
-          ))}
+        {/* Remaining shown fields — compact label/value rows. */}
+        {restFields.length > 0 && (
+          <div className="space-y-1 mb-3 text-xs">
+            {restFields.map((f) => (
+              <div key={f.id} className="flex justify-between gap-3">
+                <span className="text-charcoal/60 shrink-0">{isAr ? f.label_ar : f.label_en}</span>
+                <span className="font-medium text-charcoal text-end break-words">
+                  {renderValue(f)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Foot — dashed top border + copper pill CTA. */}
+        <div className="pt-3 border-t border-dashed border-sand-light flex justify-end">
+          <button
+            type="button"
+            onClick={onOpen}
+            className="bg-copper hover:bg-terracotta text-white text-[13px] font-bold px-4 py-2 rounded-full inline-flex items-center gap-1.5 transition-colors"
+          >
+            <span>{openLabel}</span>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden
+              className="rtl:rotate-180"
+            >
+              <path
+                d="M8 2L3 6L8 10"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
         </div>
-      )}
-
-      <button
-        type="button"
-        onClick={onOpen}
-        className="w-full bg-copper hover:bg-terracotta text-white text-sm font-bold py-2.5 transition-colors"
-      >
-        {openLabel}
-      </button>
+      </div>
     </div>
   );
 }
