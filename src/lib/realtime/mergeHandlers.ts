@@ -29,6 +29,7 @@ import type {
   Role,
   User,
 } from '../../types';
+import { upsertRow as upsertCachedRow, removeRow as removeCachedRow } from '../recordsCache';
 
 export type RealtimeOutcome = 'applied' | 'skipped_stale' | 'skipped_unknown_model' | 'noop';
 export type PgEvent = 'INSERT' | 'UPDATE' | 'DELETE';
@@ -43,9 +44,22 @@ type SetState = (
 // If the local copy's `updated_at` is >= incoming.updated_at, the
 // incoming event is either our own echo (already applied locally) or
 // out-of-order delivery for an older revision. Skip.
+//
+// Audit fix L1: parse to milliseconds before comparing instead of
+// trusting the lex-compare. Postgres timestamptz emits microseconds
+// (`2026-05-07T12:34:56.789012+00:00`), but realtime payloads sometimes
+// strip trailing zeros (`...:56.78+00:00`) — that breaks lexicographic
+// compare. `Date.parse` collapses both to the same millisecond.
 function isIncomingStale(local: { updated_at?: string } | undefined, incoming: { updated_at?: string }): boolean {
   if (!local?.updated_at || !incoming.updated_at) return false;
-  return local.updated_at >= incoming.updated_at;
+  const localMs = Date.parse(local.updated_at);
+  const incomingMs = Date.parse(incoming.updated_at);
+  if (Number.isNaN(localMs) || Number.isNaN(incomingMs)) {
+    // Bad input — fall back to string compare so we never crash. Strict
+    // equality means "same timestamp string" → treat as stale.
+    return local.updated_at >= incoming.updated_at;
+  }
+  return localMs >= incomingMs;
 }
 
 // ─── records ──────────────────────────────────────────────────────
@@ -54,6 +68,12 @@ function isIncomingStale(local: { updated_at?: string } | undefined, incoming: {
 // model's bucket. DELETE removes by id; with REPLICA IDENTITY DEFAULT
 // (the records table) payload.old contains only `id` — that's all we
 // need.
+//
+// Audit fix H9: this handler ALSO updates `recordsByModel` (the Phase E
+// paginated cache) so its consumers see live updates instead of a stale
+// snapshot. The legacy `records[modelId]` slice and the paginated cache
+// were drifting in opposite directions when realtime fired. With the tee
+// in place, both caches stay aligned for free.
 export function mergeRecord(
   event: PgEvent,
   payload: { new?: AppRecord; old?: Partial<AppRecord> },
@@ -71,9 +91,22 @@ export function mergeRecord(
         if (filtered.length !== list.length) removed = true;
         next[modelId] = filtered;
       }
-      if (!removed) return s;
+      // Tee into the paginated cache (audit H9). We don't know which
+      // model the deleted row belonged to without payload.old.model_id,
+      // so sweep every cached model — `removeRow` is a cheap no-op
+      // when the id isn't present.
+      const nextRBM = { ...s.recordsByModel };
+      let cacheTouched = false;
+      for (const [mid, cache] of Object.entries(nextRBM)) {
+        const updated = removeCachedRow(cache, id);
+        if (updated !== cache) {
+          nextRBM[mid] = updated;
+          cacheTouched = true;
+        }
+      }
+      if (!removed && !cacheTouched) return s;
       outcome = 'applied';
-      return { records: next };
+      return cacheTouched ? { records: next, recordsByModel: nextRBM } : { records: next };
     });
     return outcome;
   }
@@ -100,8 +133,21 @@ export function mergeRecord(
     const nextList = existing
       ? list.map((r) => (r.id === row.id ? row : r))
       : [...list, row];
+    // Tee into paginated cache (audit H9). Only update the bucket if
+    // it already exists — we don't synthesize a cache entry for a
+    // model the user never paginated through.
+    const cache = s.recordsByModel[row.model_id];
+    const updates: Partial<AppState> = {
+      records: { ...s.records, [row.model_id]: nextList },
+    };
+    if (cache) {
+      updates.recordsByModel = {
+        ...s.recordsByModel,
+        [row.model_id]: upsertCachedRow(cache, row),
+      };
+    }
     outcome = 'applied';
-    return { records: { ...s.records, [row.model_id]: nextList } };
+    return updates;
   });
   return outcome;
 }

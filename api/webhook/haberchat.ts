@@ -92,6 +92,20 @@ export default async function handler(req: Request): Promise<Response> {
     // to retry indefinitely. Still visible in the Vercel function log.
     console.error('[webhook] handler error:', err);
     handlerError = err instanceof Error ? err.message : String(err);
+
+    // Audit fix M7: persist the failed event to a DLQ so an admin can
+    // triage rather than discovering the data loss six weeks later. We
+    // run this fire-and-forget and never let a DLQ insert error
+    // propagate — the original handler error is what mattered.
+    void writeHaberchatDlq({
+      eventType: type,
+      deviceWid: deviceId || null,
+      payload: event,
+      errorClass: err instanceof Error ? err.name : 'unknown',
+      errorMessage: handlerError,
+    }).catch((dlqErr) => {
+      console.error('[webhook] DLQ insert failed:', dlqErr);
+    });
   }
 
   // Fire-and-forget audit-log insert. We always return 200 to Haberchat so
@@ -106,6 +120,32 @@ export default async function handler(req: Request): Promise<Response> {
   });
 
   return json({ ok: true });
+}
+
+// ─── M7: Dead-letter queue for failed Haberchat webhook events ─────
+//
+// When `handler error` fires above, the message is silently lost from
+// the user's perspective — the chat thread doesn't update and there's
+// no surface to triage. Persist the payload + error here; an admin
+// page (future work) can retry / mark resolved.
+async function writeHaberchatDlq(input: {
+  eventType: string;
+  deviceWid: string | null;
+  payload: unknown;
+  errorClass: string;
+  errorMessage: string;
+}): Promise<void> {
+  const supa = getServiceSupabase();
+  const { error } = await supa.from('haberchat_webhook_dlq').insert({
+    event_type: input.eventType,
+    device_wid: input.deviceWid,
+    payload: input.payload as Record<string, unknown>,
+    error_class: input.errorClass,
+    error_message: input.errorMessage,
+  });
+  if (error) {
+    console.error('[webhook] haberchat_webhook_dlq insert error:', error.message);
+  }
 }
 
 // ─── Event handlers ────────────────────────────────────────────────

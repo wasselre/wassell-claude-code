@@ -40,7 +40,7 @@ const SECTION_COLORS = ['#B8734F', '#C09B5F', '#8E4E3A', '#4A2C2A', '#4A4E54', '
 
 export default function SectionManager({ model, onChange, ownerKind = 'model', readOnly = false }: SectionManagerProps) {
   const { t } = useTranslation();
-  const { language, records } = useAppStore();
+  const { language, records, saveRecord } = useAppStore();
   const [showAddSection, setShowAddSection] = useState(false);
   // Data-loss guard: when the user clicks delete on a field that has record
   // data, we show a confirmation modal instead of deleting immediately. Null
@@ -148,6 +148,36 @@ export default function SectionManager({ model, onChange, ownerKind = 'model', r
       .map((s, i) => ({ ...s, order: i }));
     const updated = { ...model, schema: { ...model.schema, sections: updatedSections } };
     onChange(updateSectionSelectorOptions(updated));
+
+    // Audit fix M6: prune the deleted section id from every record's
+    // section_selector field. The form's render filter already silently
+    // drops missing sections (they don't render), but the stored value
+    // accumulates dead ids over time and corrupts exports / scope rules
+    // that compare against the option list. Walk the records once on
+    // delete instead of carrying the cruft forward.
+    if (ownerKind === 'model') {
+      const selectorFieldId = model.schema.section_selector_field_id;
+      if (selectorFieldId) {
+        const selectorField = model.schema.sections
+          .flatMap((s) => s.fields)
+          .find((f) => f.id === selectorFieldId);
+        if (selectorField) {
+          const list = records[model.id] ?? [];
+          for (const rec of list) {
+            const v = rec.data[selectorField.name];
+            if (Array.isArray(v) && v.includes(sectionId)) {
+              const next = v.filter((x) => x !== sectionId);
+              void saveRecord({
+                ...rec,
+                data: { ...rec.data, [selectorField.name]: next },
+                updated_at: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      }
+    }
+
     // Clear active field if it was in the deleted section
     if (activeField?.sectionId === sectionId) setActiveField(null);
     if (activeSectionId === sectionId) setActiveSectionId(null);

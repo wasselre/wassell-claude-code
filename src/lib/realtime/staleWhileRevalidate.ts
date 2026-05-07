@@ -72,9 +72,17 @@ let lastSummary: RefreshSummary | null = null;
 
 /** Record the timestamp at which `table` was just loaded. Subsequent
  *  refreshSinceLastLoad() calls will fetch only rows with
- *  updated_at > this timestamp. Pass the wall-clock time BEFORE the
- *  load began so any concurrent updates are picked up next refresh —
- *  the merge handler's stale-dedup will skip rows we already have. */
+ *  updated_at >= this timestamp.
+ *
+ *  Audit fix H2: the previous semantics used a `.gt` filter, which
+ *  silently dropped any row that was modified at exactly `since` if we
+ *  hadn't loaded it locally yet (the stale-dedup couldn't help — there
+ *  was nothing to dedup against). The fetcher now uses `.gte` so the
+ *  boundary row is always picked up; echo + stale dedup handle the
+ *  duplicates the wider window introduces. With `.gte`, marking before
+ *  vs after the load no longer matters for correctness — but we still
+ *  recommend marking BEFORE so any concurrent writes during the load
+ *  window land in the next refresh rather than being silently lost. */
 export function markLoaded(table: string, ts: string = new Date().toISOString()): void {
   lastLoadTs.set(table, ts);
 }
@@ -110,10 +118,14 @@ export async function refreshSinceLastLoad(setState: SetState): Promise<RefreshS
     totalChecked += 1;
 
     try {
+      // Audit H2: `.gte` (not `.gt`) so a row modified exactly at the
+      // watermark isn't silently skipped on every subsequent refresh.
+      // The merge handler's stale-dedup discards the harmless duplicate
+      // when we already have that row.
       const { data, error } = await supabase
         .from(spec.table)
         .select('*')
-        .gt('updated_at', since)
+        .gte('updated_at', since)
         .order('updated_at', { ascending: true })
         .limit(spec.limit);
 

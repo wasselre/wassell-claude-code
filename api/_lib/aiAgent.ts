@@ -18,6 +18,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { normalizePhoneE164 } from './hatif';
 
 export const AGENT_MODEL = 'claude-opus-4-7';
 export const AGENT_MAX_TOKENS = 16_000;
@@ -608,8 +609,48 @@ async function saveLead(
   if (input.interested_project_id) leadData.interested_project_id = input.interested_project_id;
   if (input.notes) leadData.notes = input.notes;
 
+  // Audit fix M8 — phone-based idempotency.
+  //
+  // The agent loop can fire `save_lead` twice in quick succession (the
+  // model retries on a transient error, or two parallel conversations
+  // from the same caller arrive within seconds). Without dedup, two
+  // clients records land with identical data. Normalize the phone to
+  // E.164 and look up an existing clients row before inserting; if we
+  // find one, return its id with a `deduped: true` flag so the caller
+  // knows it didn't create a new lead.
+  const normalizedPhone = normalizePhoneE164(input.phone);
+  if (normalizedPhone) {
+    // Match on either the raw phone the agent sent OR the canonical
+    // form. Most existing data uses `+966...` already; some legacy rows
+    // use `0501234567`. Try both shapes; the index on `data->>phone`
+    // makes either lookup cheap.
+    const candidates = [normalizedPhone, input.phone].filter(
+      (v, i, arr) => v && arr.indexOf(v) === i,
+    ) as string[];
+    for (const candidate of candidates) {
+      const { data: existing } = await supabase
+        .from('unified_records')
+        .select('id')
+        .eq('model_id', clientsModelId)
+        .eq('data->>phone', candidate)
+        .limit(1);
+      if (existing && existing.length > 0) {
+        return JSON.stringify({
+          ok: true,
+          lead_id: existing[0]!.id,
+          deduped: true,
+          message: 'Lead already exists for this phone — reusing existing record.',
+        });
+      }
+    }
+    // Persist the canonical form so subsequent dedup queries hit the
+    // index regardless of how the agent originally formatted the input.
+    leadData.phone = normalizedPhone;
+  }
+
   // record_save dispatches to the dedicated `clients` table when the model
   // has been frozen, falls through to .from('records') when it hasn't.
+  // INSERT-only path — no p_expected_version (audit C3 note).
   const newId = crypto.randomUUID();
   const { error } = await supabase.rpc('record_save', {
     p_model_id: clientsModelId,

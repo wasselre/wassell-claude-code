@@ -429,6 +429,58 @@ export interface FreezeResult {
   error?: string; // populated when ok=false
 }
 
+/**
+ * Optional context callers can pass to `saveRecord` to opt into stronger
+ * concurrency guarantees and richer telemetry.
+ *
+ * `expectedVersion` — the value of `record.version` at the moment the
+ * caller LOADED the record (e.g. when a form first mounts). The store
+ * passes this to the `record_save` RPC as `p_expected_version`. The RPC
+ * raises `version_mismatch` (SQLSTATE 40001) if the row has been bumped
+ * by another writer in the meantime, and `saveRecord` resolves with
+ * `{ status: 'conflict' }` instead of silently overwriting. Pass
+ * `undefined` (or omit) to fall back to the store's live version
+ * (the pre-Phase F.2-fix behavior — fine for fire-and-forget callers
+ * but unsafe for forms that may stay open while realtime mutates the
+ * underlying row).
+ */
+/**
+ * Audit M5: actor provenance for activity log entries. Default kind='user'.
+ * Workflow engine / webhooks / AI agent pass their own kind so the unified
+ * /logs timeline can split bot-driven edits from manual ones.
+ */
+export type SaveRecordActor =
+  | { kind: 'user' }
+  | { kind: 'workflow'; workflow_id: string; run_id?: string }
+  | { kind: 'webhook'; slug: string }
+  | { kind: 'agent'; conversation_id?: string };
+
+export interface SaveRecordOpts {
+  expectedVersion?: number | null;
+  actor?: SaveRecordActor;
+}
+
+/**
+ * Discriminated outcome of a single record save.
+ *
+ * - `saved`    — the row landed in Supabase (or there was no Supabase
+ *                client to write to and the in-memory + localStorage
+ *                update is the entire story for an offline-only deploy).
+ * - `queued`   — the Supabase write failed for a non-conflict reason
+ *                (network, RLS, FK, RPC error). The write was added to
+ *                the `wassell_pending_sync` retry queue and will replay
+ *                on the next `initialize()`. Local state IS updated.
+ * - `conflict` — the RPC returned `version_mismatch`: another writer
+ *                bumped the row's version since we loaded it. The write
+ *                was NOT enqueued (replay would just hit the same
+ *                conflict). Local state IS updated, but the caller
+ *                should warn the user to reload before saving again.
+ */
+export type SaveResult =
+  | { status: 'saved' }
+  | { status: 'queued'; reason: string }
+  | { status: 'conflict'; message: string };
+
 // Field template — a reusable snapshot of a ModelField (options, type, width, etc.).
 // Created by the user from any saved field; inserted into any section via the
 // Builder catalog. Insertion creates a fresh ModelField with new IDs, so dropped
@@ -1710,7 +1762,18 @@ export interface AppState {
 
   // Records
   getRecords: (modelId: string) => AppRecord[];
-  saveRecord: (record: AppRecord) => Promise<void>;
+  /**
+   * Save a record. The function resolves AFTER the Supabase write has
+   * settled (or been queued for retry), so callers that need to react
+   * to a `version_mismatch` conflict can `await` the result. Fire-and-
+   * forget callers (`void saveRecord(rec)`) keep working unchanged.
+   *
+   * Pass `opts.expectedVersion` to override which version is sent as the
+   * RPC's `p_expected_version`. Forms should snapshot the version at
+   * mount time and pass it here, otherwise concurrent realtime echoes
+   * will silently update the live row's version and defeat the check.
+   */
+  saveRecord: (record: AppRecord, opts?: SaveRecordOpts) => Promise<SaveResult>;
   deleteRecord: (modelId: string, recordId: string) => void;
   // Re-saves every record on the model where `targetFieldId`'s value is empty,
   // causing the save-time fallback resolver to fill it. Used by the Builder's

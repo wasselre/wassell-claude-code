@@ -84,13 +84,38 @@ const migration_1_to_2: Migration = (state) => {
   }
 
   // Clear records for models whose schema just changed meaningfully.
+  // Audit fix M10: archive the records to a localStorage bucket BEFORE
+  // dropping them. A user who edited the seed model definition between
+  // deploys (or restored from a backup) used to lose data with only a
+  // console.warn. The archive key is human-readable so support can
+  // recover the rows manually if needed.
   const researchModel = out.find((m) => m.name === 'projects_research');
   const newRecords = { ...state.records };
   if (researchModel && newRecords[researchModel.id]?.length) {
-    console.warn(
-      `[schemaMigrations] Cleared ${newRecords[researchModel.id]!.length} projects_research record(s): ` +
-        `field slugs changed.`,
-    );
+    const archiveKey = `wassell_archive_v1_${researchModel.name}_${Date.now()}`;
+    const archived = newRecords[researchModel.id]!;
+    try {
+      localStorage.setItem(
+        archiveKey,
+        JSON.stringify({
+          model_name: researchModel.name,
+          archived_at: new Date().toISOString(),
+          reason: 'schema migration v1→v2: field slugs changed',
+          records: archived,
+        }),
+      );
+      console.warn(
+        `[schemaMigrations] Cleared ${archived.length} projects_research record(s); ` +
+          `archived to localStorage["${archiveKey}"] for recovery.`,
+      );
+    } catch (archiveErr) {
+      // If the archive write fails (quota), we still drop the records,
+      // but at least surface the loss loudly.
+      console.error(
+        `[schemaMigrations] Could NOT archive ${archived.length} projects_research record(s) ` +
+          `before clearing them. Reason: ${archiveErr instanceof Error ? archiveErr.message : String(archiveErr)}`,
+      );
+    }
     delete newRecords[researchModel.id];
   }
 

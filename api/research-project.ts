@@ -546,7 +546,24 @@ async function mainHandler(req: Request): Promise<Response> {
       const cur = (existingTp.data as Record<string, unknown> | undefined)?.[tableField.name];
       if (Array.isArray(cur)) existingTableRows = cur as Record<string, unknown>[];
     }
-    log('[research-project] targeted_projects search', Date.now() - tDb3, 'ms; existing=', !!existingTp, 'existingRows=', existingTableRows.length);
+    // Audit fix C3: snapshot the record's `version` at find time so the
+    // eventual save can use optimistic concurrency (Phase F.2). The Paseet
+    // run takes 30+ seconds; without this, a user's concurrent edit in the
+    // browser is silently overwritten when this endpoint writes back.
+    // For frozen targeted_projects the query returns no row (the version
+    // column lives on `records`, not the dedicated table); we pass null
+    // and the RPC skips the check — same posture as pre-fix, closed by
+    // Phase F.2.1 future work.
+    let versionAtFind: number | null = null;
+    if (existingTp?.id) {
+      const { data: vRow } = await supabase
+        .from('records')
+        .select('version')
+        .eq('id', existingTp.id)
+        .maybeSingle();
+      versionAtFind = (vRow as { version?: number } | null)?.version ?? null;
+    }
+    log('[research-project] targeted_projects search', Date.now() - tDb3, 'ms; existing=', !!existingTp, 'existingRows=', existingTableRows.length, 'versionAtFind=', versionAtFind);
 
     // 4. Drive Paseet via Browserbase.
     //    With PASEET_CONTEXT_ID set, the BB session inherits Paseet's auth
@@ -611,17 +628,57 @@ async function mainHandler(req: Request): Promise<Response> {
     // .from('records') — the RPC dispatches to the dedicated table when
     // `targeted_projects` is frozen and falls through to the JSONB records
     // table when it isn't. Same call shape either way.
+    //
+    // Audit fix C3 — optimistic concurrency on the update path.
+    // The Paseet run is long. Without `p_expected_version` we silently
+    // overwrite any field the user edited in the browser between when we
+    // searched for the targeted record and when we save. Pass the snapshot
+    // version, and on `version_mismatch` re-read the record and re-merge
+    // our newCells onto its CURRENT data — preserving the user's edits.
+    // We only retry once; a second collision is an outlier worth surfacing.
     if (targetedRecordId) {
       log('[research-project] updating existing targeted record', targetedRecordId, 'with', mergedRows.length, 'rows');
+      const baseData = (existingTp?.data as Record<string, unknown> | undefined) ?? {};
       const { error: upErr } = await supabase.rpc('record_save', {
         p_model_id: tpModel.id,
         p_id: targetedRecordId,
-        p_data: {
-          ...((existingTp?.data as Record<string, unknown> | undefined) ?? {}),
-          [tableField.name]: mergedRows,
-        },
+        p_data: { ...baseData, [tableField.name]: mergedRows },
+        p_expected_version: versionAtFind,
       });
-      if (upErr) return jsonError(500, `Targeted Projects record update failed: ${upErr.message}`);
+      if (upErr) {
+        const isVersionConflict =
+          upErr.code === '40001' || (upErr.message ?? '').includes('version_mismatch');
+        if (!isVersionConflict) {
+          return jsonError(500, `Targeted Projects record update failed: ${upErr.message}`);
+        }
+        log('[research-project] version_mismatch on first save — re-reading and retrying');
+        const { data: freshRow, error: freshErr } = await supabase
+          .from('records')
+          .select('data, version')
+          .eq('id', targetedRecordId)
+          .maybeSingle();
+        if (freshErr || !freshRow) {
+          return jsonError(500, `Targeted Projects record vanished during research: ${freshErr?.message ?? 'not found'}`);
+        }
+        const freshData = ((freshRow as { data?: Record<string, unknown> }).data) ?? {};
+        const freshVersion = (freshRow as { version?: number }).version ?? null;
+        const freshTableRows = Array.isArray(freshData[tableField.name])
+          ? (freshData[tableField.name] as Record<string, unknown>[])
+          : [];
+        const reMerged = [...freshTableRows, ...newCells];
+        const { error: retryErr } = await supabase.rpc('record_save', {
+          p_model_id: tpModel.id,
+          p_id: targetedRecordId,
+          p_data: { ...freshData, [tableField.name]: reMerged },
+          p_expected_version: freshVersion,
+        });
+        if (retryErr) {
+          return jsonError(
+            409,
+            `Targeted Projects record update lost a race twice — try again later: ${retryErr.message}`,
+          );
+        }
+      }
     } else {
       log('[research-project] inserting new targeted record with', newCells.length, 'rows');
       const newId = crypto.randomUUID();

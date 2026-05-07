@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
@@ -75,6 +75,44 @@ export default function RecordFormPage() {
   // Pending edits to linked records inside mirrored sections.
   // Keyed by target record id → field-name → new value.
   const [mirrorEdits, setMirrorEdits] = useState<Record<string, Record<string, unknown>>>({});
+  // Audit fix H5: snapshot the version we LOADED with so saveRecord can
+  // pass it as p_expected_version. The live store value is mutated by
+  // realtime echoes — if a concurrent writer bumps the version while
+  // this form is open, sourcing from the live store would silently
+  // accept the write and overwrite the other user's changes.
+  //
+  // Implementation note: a useState initializer + useEffect pattern
+  // doesn't work reliably here. The initializer captures `existingRecord`
+  // at first render; if records are still loading at first paint, it
+  // captures null. The useEffect then sets the snapshot to the live
+  // version — but if the live version was ALREADY bumped by a realtime
+  // echo before the effect ran, we'd capture the bumped value. Using a
+  // useRef captured during render fixes both: we set the ref the first
+  // time we observe a non-null existingRecord for this nav key, and
+  // ignore every subsequent change. Reset on navigation.
+  const versionSnapshotRef = useRef<{ navKey: string; version: number | null } | null>(null);
+  // Per-target version snapshots for mirrored-section fan-out (audit C1).
+  // Captured the first time the user touches a mirror field for that
+  // target — same reasoning as the main versionSnapshotRef.
+  const targetVersionSnapshotsRef = useRef<Record<string, number | null>>({});
+  const navKey = `${modelName ?? ''}/${recordId ?? 'new'}`;
+  if (existingRecord && versionSnapshotRef.current?.navKey !== navKey) {
+    versionSnapshotRef.current = {
+      navKey,
+      version: existingRecord.version ?? null,
+    };
+  }
+  const versionSnapshot = versionSnapshotRef.current?.version ?? null;
+  // Audit fix M2: snapshot the model's `updated_at` at form-mount so
+  // we can detect "the schema changed while this form was open" on
+  // Save. If an admin renamed/added/removed a field via the Builder
+  // mid-edit, the form's slugs are stale; saving would either lose
+  // the user's work to the now-removed slug or silently write to
+  // the new one with the wrong shape. Refusing the save and prompting
+  // a reload is the only safe default.
+  const [modelUpdatedAtSnapshot, setModelUpdatedAtSnapshot] = useState<string | null>(
+    model?.updated_at ?? null,
+  );
   const [showDelete, setShowDelete] = useState(false);
   // Tracks whether the form has unsaved user edits. Used to guard prev/next
   // navigation with a confirm prompt.
@@ -111,6 +149,11 @@ export default function RecordFormPage() {
     setMirrorEdits({});
     setShowDelete(false);
     setIsDirty(false);
+    // Audit fix H5/C1: clear the per-target snapshots on navigation.
+    // The main versionSnapshotRef is keyed on navKey and re-captures
+    // automatically during render when navKey changes — no reset here.
+    targetVersionSnapshotsRef.current = {};
+    setModelUpdatedAtSnapshot(model?.updated_at ?? null);
   }, [recordId, modelName, existingRecord?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Activity log — fire one "record opened" event per record-mount. The
@@ -186,6 +229,24 @@ export default function RecordFormPage() {
       ...prev,
       [targetRecordId]: { ...(prev[targetRecordId] ?? {}), [fieldName]: value },
     }));
+    // Audit fix C1: capture the target's version on first touch only,
+    // so realtime echoes between now and Save don't silently advance it
+    // past the value we'd want to send as p_expected_version. Stored on
+    // a ref so it isn't reset by re-renders or realtime updates.
+    if (!(targetRecordId in targetVersionSnapshotsRef.current)) {
+      let snapshot: number | null = null;
+      for (const list of Object.values(records)) {
+        const found = list.find((r) => r.id === targetRecordId);
+        if (found) {
+          snapshot = found.version ?? null;
+          break;
+        }
+      }
+      targetVersionSnapshotsRef.current = {
+        ...targetVersionSnapshotsRef.current,
+        [targetRecordId]: snapshot,
+      };
+    }
     setIsDirty(true);
   };
 
@@ -360,7 +421,21 @@ export default function RecordFormPage() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    // Audit fix M2: refuse to save if the schema changed under us.
+    // The form's slugs / required-field map / lookup config are bound
+    // to the model state at mount. If an admin edited the model mid-form
+    // we'd silently write to a stale slug or to a field that no longer
+    // exists. Tell the user to reload before proceeding.
+    if (modelUpdatedAtSnapshot && model.updated_at && model.updated_at !== modelUpdatedAtSnapshot) {
+      addToast(
+        isAr
+          ? 'تم تعديل بنية النموذج أثناء فتح هذه الصفحة. حدّث الصفحة قبل الحفظ لتجنّب فقدان البيانات.'
+          : 'The model schema changed while this form was open. Reload before saving to avoid losing data.',
+        'error',
+      );
+      return;
+    }
     // 1. Validate required fields on this record (skip derived mirror fields).
     const allFields = model.schema.sections
       .filter((s) => !s.is_mirrored)
@@ -439,6 +514,14 @@ export default function RecordFormPage() {
     }
 
     // 3. Fan-out: save each edited target record first.
+    //
+    // Audit fix C1 — atomicity & concurrency:
+    // - We AWAIT each fan-out save (was fire-and-forget).
+    // - We pass the per-target snapshot version (captured the first
+    //   time the user touched a mirror field for that target).
+    // - On `conflict`, abort the whole save: showing the user a "saved"
+    //   toast while a linked record is half-applied is a worse outcome
+    //   than asking them to reload.
     for (const [targetId, overlay] of Object.entries(mirrorEdits)) {
       if (!overlay || Object.keys(overlay).length === 0) continue;
       // Find which model this target lives under by scanning records.
@@ -461,10 +544,27 @@ export default function RecordFormPage() {
         data: { ...target.data, ...overlay },
         updated_at: new Date().toISOString(),
       };
-      saveRecord(updatedTarget);
+      const targetExpectedVersion =
+        targetId in targetVersionSnapshotsRef.current
+          ? targetVersionSnapshotsRef.current[targetId] ?? null
+          : null;
+      const targetResult = await saveRecord(updatedTarget, {
+        expectedVersion: targetExpectedVersion,
+      });
+      if (targetResult.status === 'conflict') {
+        addToast(
+          isAr
+            ? 'تم تعديل سجل مرتبط من مستخدم آخر — حدّث الصفحة قبل الحفظ.'
+            : 'A linked record was just edited by another user — reload before saving.',
+          'error',
+        );
+        return;
+      }
+      // `queued` is OK: the local state still reflects the user's
+      // intent and the retry queue will replay on the next reload.
     }
 
-    // 4. Save this record.
+    // 4. Save this record with the form-mount version snapshot (audit H5).
     const record = {
       id: existingRecord?.id ?? uuid(),
       model_id: model.id,
@@ -473,9 +573,27 @@ export default function RecordFormPage() {
       updated_at: new Date().toISOString(),
     };
 
-    saveRecord(record);
+    const result = await saveRecord(record, { expectedVersion: versionSnapshot });
+    if (result.status === 'conflict') {
+      addToast(
+        isAr
+          ? 'تم تعديل هذا السجل من مستخدم آخر — حدّث الصفحة لمشاهدة التغييرات قبل الحفظ.'
+          : 'This record was just edited by another user — reload to see their changes before re-saving.',
+        'error',
+      );
+      return;
+    }
     setIsDirty(false);
-    addToast(t('toast.saved'), 'success');
+    if (result.status === 'queued') {
+      addToast(
+        isAr
+          ? 'تم الحفظ محلياً — سيُزامن مع الخادم عند توفر الاتصال.'
+          : 'Saved locally — will sync to the server when the connection is back.',
+        'info',
+      );
+    } else {
+      addToast(t('toast.saved'), 'success');
+    }
     navigate(`/model/${model.name}`);
   };
 

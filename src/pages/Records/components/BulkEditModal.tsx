@@ -29,7 +29,7 @@ export default function BulkEditModal({
   onApplied,
 }: BulkEditModalProps) {
   const { t } = useTranslation();
-  const { language, saveRecord } = useAppStore();
+  const { language, saveRecord, addToast } = useAppStore();
   const isAr = language === 'ar';
 
   // Which field slugs the user has enabled for bulk update.
@@ -37,6 +37,10 @@ export default function BulkEditModal({
   // The new values to apply, keyed by field slug.
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [confirming, setConfirming] = useState(false);
+  // Audit fix C2: blocks the Apply button while the loop is in flight,
+  // so a frantic user can't fire two bulk writes that race against
+  // each other in the retry queue.
+  const [applying, setApplying] = useState(false);
 
   // Flat list of editable fields, grouped by their section, preserving order.
   // Hides non-editable types (mirror, auto_id, formula) and mirrored sections
@@ -93,19 +97,68 @@ export default function BulkEditModal({
     setFormData((d) => ({ ...d, [field.name]: value }));
   };
 
-  const handleApply = () => {
-    if (enabledFields.size === 0) return;
+  const handleApply = async () => {
+    if (enabledFields.size === 0 || applying) return;
     const now = new Date().toISOString();
     const patch: Record<string, unknown> = {};
     for (const name of enabledFields) patch[name] = formData[name];
-    for (const rec of selectedRecords) {
-      saveRecord({
-        ...rec,
-        data: { ...rec.data, ...patch },
-        updated_at: now,
-      });
+
+    // Audit fix C2 — concurrency, atomicity, observability:
+    // 1. Sequential awaits, not a parallel for-loop. Each save lands
+    //    before the next starts, so ordering matches what the user
+    //    would expect from a serial edit.
+    // 2. Each save passes `expectedVersion: rec.version`. The version
+    //    on `rec` is the version we LOADED with (RecordListPage's
+    //    selection state); if a concurrent writer bumped it, the RPC
+    //    raises version_mismatch and saveRecord resolves with
+    //    { status: 'conflict' }. We collect those rather than silently
+    //    overwriting.
+    // 3. The end-of-run toast tells the user what actually happened
+    //    (saved / queued / conflict). The previous code rolled all
+    //    outcomes into a single "Edited N" with no per-row visibility.
+    setApplying(true);
+    let savedCount = 0;
+    let queuedCount = 0;
+    const conflicts: AppRecord[] = [];
+    try {
+      for (const rec of selectedRecords) {
+        const result = await saveRecord(
+          {
+            ...rec,
+            data: { ...rec.data, ...patch },
+            updated_at: now,
+          },
+          { expectedVersion: rec.version ?? null },
+        );
+        if (result.status === 'conflict') {
+          conflicts.push(rec);
+        } else if (result.status === 'queued') {
+          queuedCount += 1;
+        } else {
+          savedCount += 1;
+        }
+      }
+    } finally {
+      setApplying(false);
     }
-    onApplied(selectedRecords.length);
+
+    if (conflicts.length > 0) {
+      addToast(
+        isAr
+          ? `تم تحديث ${savedCount + queuedCount} سجل، وتخطّي ${conflicts.length} لأنها عُدّلت من قبل مستخدم آخر. حدّث الصفحة لرؤية التغييرات.`
+          : `Updated ${savedCount + queuedCount} records, skipped ${conflicts.length} that were just changed by another user. Reload to see their edits.`,
+        'error',
+      );
+    } else if (queuedCount > 0) {
+      addToast(
+        isAr
+          ? `تم تحديث ${savedCount} سجل، ${queuedCount} في انتظار المزامنة عند توفر الاتصال.`
+          : `Updated ${savedCount} records, ${queuedCount} queued for sync.`,
+        'info',
+      );
+    }
+
+    onApplied(savedCount + queuedCount);
     reset();
     onClose();
   };
@@ -214,7 +267,7 @@ export default function BulkEditModal({
             <Button variant="ghost" onClick={() => setConfirming(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleApply}>
+            <Button onClick={handleApply} disabled={applying}>
               <Pencil size={14} />
               {t('records.bulk_edit_confirm_action')}
             </Button>

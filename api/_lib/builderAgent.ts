@@ -1364,6 +1364,32 @@ async function setModelGroup(supabase: SupabaseClient, input: SetModelGroupInput
 
 // ─── Dispatcher ──────────────────────────────────────────────────────────
 
+// Audit fix H7: centralized schema-mutation guard.
+//
+// Every tool that mutates a model's `schema` (sections, fields, options,
+// or anything else that maps to the dedicated table's DDL) is listed
+// here. The dispatcher does an early refuseIfFrozen check using the
+// input's `model_id` BEFORE calling into the per-tool implementation.
+// Per-tool guards remain as defense-in-depth.
+//
+// Tools deliberately NOT in this set:
+//   - get_app_context — read-only.
+//   - create_model — INSERT, no existing frozen state to protect.
+//   - update_model_metadata — labels / icon / color / group only; the
+//     dedicated table doesn't care about these and the JSONB sidecar
+//     can absorb the change without a migration.
+//   - create_model_group / rename_model_group / delete_model_group /
+//     set_model_group — group-level metadata, never touches schema.
+const SCHEMA_MUTATING_TOOLS = new Set<string>([
+  'delete_model',
+  'add_section',
+  'update_section',
+  'delete_section',
+  'add_field',
+  'update_field',
+  'delete_field',
+]);
+
 export async function executeBuilderAgentTool(
   name: string,
   input: unknown,
@@ -1371,6 +1397,20 @@ export async function executeBuilderAgentTool(
   baseUrl: string,
 ): Promise<string> {
   try {
+    if (SCHEMA_MUTATING_TOOLS.has(name)) {
+      const modelId =
+        typeof input === 'object' && input !== null && 'model_id' in input
+          ? String((input as { model_id: unknown }).model_id ?? '')
+          : '';
+      if (modelId) {
+        const m = await readModel(supabase, modelId);
+        if (m) {
+          const refusal = refuseIfFrozen(m);
+          if (refusal) return refusal;
+        }
+      }
+    }
+
     switch (name) {
       case 'get_app_context':
         return await buildAppContext(supabase, baseUrl);

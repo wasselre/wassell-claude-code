@@ -342,6 +342,16 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
   const supa = getServiceSupabase();
   // record_save dispatches to the dedicated `phone_calls` table when the
   // model is frozen, falls through to .from('records') when it isn't.
+  //
+  // Audit C3 note: this path INTENTIONALLY does NOT pass p_expected_version.
+  // Hatif webhooks are last-writer-wins by design — every webhook carries
+  // the latest authoritative state of the call from the telephony provider,
+  // and we want the most recent payload to win. The fields stored here are
+  // all webhook-sourced (status, transcription, sentiment); the only
+  // user-editable field is `client_link`, and overwriting it on a re-derive
+  // is the documented behavior. If we ever expose user-editable call notes,
+  // switch to optimistic concurrency here and merge against the freshly
+  // re-read row.
   const { error } = await supa.rpc('record_save', {
     p_model_id: modelId,
     p_id: event.callId,

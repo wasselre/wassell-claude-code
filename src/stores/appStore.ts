@@ -52,6 +52,8 @@ import type {
   ActivityLogEntry,
   FreezeCoercionFailure,
   FreezeResult,
+  SaveRecordOpts,
+  SaveResult,
 } from '@/types';
 import { activityLogger } from '@/lib/activityLogger';
 
@@ -70,10 +72,68 @@ function loadLocal<T>(key: string): T | null {
 // don't toast on every keystroke once the cliff hits.
 const localStorageWarned = new Set<string>();
 
+// Audit fix M9: keys we'll evict (in this order) when we hit a quota error,
+// before the saveLocal call gives up. Ordered by "lowest user impact when
+// dropped" first. The active record/model state is excluded — losing those
+// would defeat the entire offline-cache purpose.
+const EVICTION_ORDER: readonly string[] = [
+  'wassell_workflow_runs',
+  'wassell_activity_log',
+  'wassell_whiteboards',
+  'wassell_whiteboard_folders',
+  'wassell_webhook_payloads',
+  'wassell_chat_messages',
+];
+
+function isQuotaError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // DOMException name on most browsers; Firefox uses NS_ERROR_DOM_QUOTA_REACHED.
+  return (
+    err.name === 'QuotaExceededError' ||
+    err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+    /quota/i.test(err.message)
+  );
+}
+
 function saveLocal<T>(key: string, data: T): void {
   try {
     localStorage.setItem(key, JSON.stringify(data));
+    return;
   } catch (err) {
+    // Audit M9: on QuotaExceededError, evict less-critical buckets and
+    // retry once before giving up. The in-memory store + Supabase write
+    // path are unaffected — this is purely the offline cache's recovery.
+    if (isQuotaError(err)) {
+      let evicted = 0;
+      for (const evictKey of EVICTION_ORDER) {
+        if (evictKey === key) continue;
+        try {
+          if (localStorage.getItem(evictKey) !== null) {
+            localStorage.removeItem(evictKey);
+            evicted += 1;
+          }
+        } catch {
+          // ignore — best-effort cleanup
+        }
+      }
+      if (evicted > 0) {
+        try {
+          localStorage.setItem(key, JSON.stringify(data));
+          // eslint-disable-next-line no-console
+          console.warn(
+            `[localStorage] quota recovered after evicting ${evicted} non-critical bucket(s); "${key}" saved`,
+          );
+          return;
+        } catch (retryErr) {
+          // Eviction wasn't enough — fall through to the loud-warn path.
+          if (!isQuotaError(retryErr)) {
+            // eslint-disable-next-line no-console
+            console.error(`[localStorage] retry write to "${key}" hit a non-quota error:`, retryErr);
+          }
+        }
+      }
+    }
+
     // Surface the failure — silent catches here historically hid the
     // 1000-row pagination bug and the localStorage 5–10 MB cliff. The
     // in-memory store and the Supabase write path are independent of this
@@ -266,9 +326,18 @@ function canWriteToSupabase(): boolean {
 // given row replaces any older queued version (last-write-wins).
 const PENDING_QUEUE_KEY = 'wassell_pending_sync';
 const MAX_REPLAY_ATTEMPTS = 5;
+// Audit fix L5: schema version for queue entries. Bump whenever any RPC
+// signature, table column set, or op enum changes in a way that would
+// make a stale queued entry replay incorrectly. On load, entries with a
+// different version are dropped with a loud warning rather than silently
+// failing on replay.
+const PENDING_QUEUE_SCHEMA_VERSION = 1;
 
 interface PendingWrite {
   id: string;
+  // Schema version at the time this entry was enqueued. Replay drops
+  // entries whose v doesn't match PENDING_QUEUE_SCHEMA_VERSION.
+  v?: number;
   // 'upsert' / 'delete' — direct .from(table) ops; same shape as before.
   // 'record_upsert' / 'record_delete' — records-table ops that branch on
   //   the model's `is_hardcoded` flag at replay time. Frozen models route
@@ -289,7 +358,30 @@ interface PendingWrite {
 function loadPendingQueue(): PendingWrite[] {
   try {
     const raw = localStorage.getItem(PENDING_QUEUE_KEY);
-    return raw ? (JSON.parse(raw) as PendingWrite[]) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as PendingWrite[];
+    // Audit L5: filter out entries from older queue schemas. Replaying a
+    // pre-Phase-F.2 record_save call without `p_expected_version` would
+    // technically still work (the RPC tolerates missing params), but we
+    // don't want to ship that surprise across breaking changes — the
+    // pattern of "drop with a warning, force the user to re-do the edit"
+    // is safer than silently replaying with stale arg shapes.
+    const valid: PendingWrite[] = [];
+    let dropped = 0;
+    for (const entry of parsed) {
+      if ((entry.v ?? 0) !== PENDING_QUEUE_SCHEMA_VERSION) {
+        dropped += 1;
+        continue;
+      }
+      valid.push(entry);
+    }
+    if (dropped > 0) {
+      console.warn(
+        `[pendingQueue] dropped ${dropped} entry(ies) from an older queue schema; ` +
+          `they were enqueued before the latest deploy and would not replay correctly.`,
+      );
+    }
+    return valid;
   } catch (err) {
     console.error('[pendingQueue] read failed:', err);
     return [];
@@ -338,6 +430,7 @@ function enqueuePendingWrite(entry: Omit<PendingWrite, 'id' | 'enqueuedAt' | 'at
   }
   queue.push({
     ...entry,
+    v: PENDING_QUEUE_SCHEMA_VERSION,
     id:
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
@@ -500,8 +593,10 @@ async function supabaseUpsert(
       } else if (id) {
         // Echo dedup: tell the RealtimeOrchestrator this row id was
         // just written by us so it skips the inevitable echo from the
-        // supabase_realtime publication.
-        markRecentlyWritten(table, id);
+        // supabase_realtime publication. Pass updated_at (audit fix H1)
+        // so the dedup check is timing-independent.
+        const updatedAt = typeof row['updated_at'] === 'string' ? (row['updated_at'] as string) : null;
+        markRecentlyWritten(table, id, updatedAt);
       }
     } catch (err) {
       reportSupabaseError(table, 'upsert', err instanceof Error ? err.message : String(err));
@@ -534,7 +629,9 @@ async function supabaseDelete(table: string, id: string): Promise<void> {
       reportSupabaseError(table, 'delete', error.message ?? String(error));
       enqueuePendingWrite({ op: 'delete', table, rowId: id });
     } else {
-      markRecentlyWritten(table, id);
+      // Deletes have no updated_at to compare; rely on soft-TTL fallback
+      // in wasEchoOf for the DELETE event.
+      markRecentlyWritten(table, id, null);
     }
   } catch (err) {
     reportSupabaseError(table, 'delete', err instanceof Error ? err.message : String(err));
@@ -617,19 +714,73 @@ function isModelHardcoded(modelId: string): boolean {
   }
 }
 
-async function supabaseRecordUpsert(record: AppRecord): Promise<void> {
-  if (!supabase) return;
+// ─── M1 partial: typed serialization for records ─────────────────────
+//
+// The codebase is full of `record as unknown as Record<string, unknown>`
+// casts at the Supabase boundary; the audit flagged them as a silent-
+// corruption surface (a future schema rename can ship a row with the
+// wrong shape and TypeScript won't notice). Closing them all in one
+// pass is a big refactor; this helper handles the hottest spot — the
+// retry-queue serialization for record writes — and the rest can be
+// migrated incrementally on a per-table basis.
+//
+// `SupabaseRecordsRow` is the exact shape the public.records row takes:
+// the JSONB `data` column plus the standard metadata. By going through
+// this serializer we get a compile-time check that AppRecord still has
+// the fields we need; if AppRecord adds a column the serializer breaks
+// at the next type-check instead of silently dropping it.
+interface SupabaseRecordsRow {
+  id: string;
+  model_id: string;
+  data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  created_by_user_id: string | null;
+  version: number | null;
+  [k: string]: unknown; // allow forward-compat columns to ride through unmolested
+}
+
+function serializeRecord(record: AppRecord): SupabaseRecordsRow {
+  return {
+    id: record.id,
+    model_id: record.model_id,
+    data: record.data,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+    created_by_user_id: record.created_by_user_id ?? null,
+    version: record.version ?? null,
+  };
+}
+
+// Phase F.2 fix (audit H5): the second arg lets the caller override which
+// version to send as p_expected_version. Form pages snapshot the version
+// at mount time and pass it here so the check is against the version the
+// user was actually editing — not the one realtime may have just updated
+// underneath them. When `expectedVersion` is undefined we fall back to
+// `record.version`, which is what fire-and-forget callers (workflow,
+// import, lookup combobox) want. `null` is meaningful too: it forces the
+// RPC's "skip the check" branch (used by workflow chains where each step
+// reloads the row anyway).
+async function supabaseRecordUpsert(
+  record: AppRecord,
+  opts: { expectedVersion?: number | null } = {},
+): Promise<SaveResult> {
+  if (!supabase) return { status: 'saved' };
   if (!canWriteToSupabase()) {
     enqueuePendingWrite({
       op: 'record_upsert',
       table: 'records',
-      row: record as unknown as Record<string, unknown>,
+      row: serializeRecord(record),
     });
-    return;
+    return { status: 'queued', reason: 'offline' };
   }
   const frozen = isModelHardcoded(record.model_id);
   const id = record.id;
   const key = writeKey('records', id);
+  // The actual expectedVersion the RPC will see. Caller-supplied wins.
+  const expectedVersion =
+    opts.expectedVersion !== undefined ? opts.expectedVersion : (record.version ?? null);
+  let outcome: SaveResult = { status: 'saved' };
   const op = (async () => {
     try {
       if (frozen) {
@@ -643,33 +794,42 @@ async function supabaseRecordUpsert(record: AppRecord): Promise<void> {
           p_created_by: record.created_by_user_id ?? null,
         });
         if (error) {
-          reportSupabaseError('records', 'upsert', error.message ?? String(error));
+          const msg = error.message ?? String(error);
+          reportSupabaseError('records', 'upsert', msg);
           enqueuePendingWrite({
             op: 'record_upsert',
             table: 'records',
-            row: record as unknown as Record<string, unknown>,
+            row: serializeRecord(record),
           });
+          outcome = { status: 'queued', reason: msg };
         } else {
           // Frozen-model writes don't echo through `records` realtime
           // (the row lives in the dedicated table), but a future
           // frozen-table channel would — register defensively.
-          markRecentlyWritten('records', record.id);
+          // Audit H1: records writes go through record_save which doesn't
+          // return the row, so we don't have the canonical Postgres-side
+          // updated_at to mark with. Pass null and let dedup fall back to
+          // soft-TTL for records-channel echoes. Future work: change the
+          // RPC signature to RETURN TABLE(updated_at) so we can do strict
+          // compare here too — tracked in the audit follow-up migration.
+          markRecentlyWritten('records', record.id, null);
+          outcome = { status: 'saved' };
         }
       } else {
         // Block on any in-flight model write so the FK exists when we land.
         const prior = pendingWrites.get(writeKey('models', record.model_id));
         if (prior) { try { await prior; } catch { /* parent error */ } }
         // Phase F.2: route unfrozen writes through `record_save` so the
-        // optimistic-concurrency check applies. Pass `record.version`
-        // (the version we LOADED with) as p_expected_version. New records
-        // and records loaded before the column existed pass null, which
-        // the RPC treats as "skip the check" — same posture as before F.2.
+        // optimistic-concurrency check applies. Pass the caller-supplied
+        // `expectedVersion` (form-mount snapshot) when available; otherwise
+        // fall back to record.version. New records pass null, which the
+        // RPC treats as "skip the check".
         const { error } = await supabase!.rpc('record_save', {
           p_model_id: record.model_id,
           p_id: record.id,
           p_data: record.data,
           p_created_by: record.created_by_user_id ?? null,
-          p_expected_version: record.version ?? null,
+          p_expected_version: expectedVersion,
         });
         if (error) {
           // serialization_failure is the version_mismatch the RPC raises.
@@ -678,30 +838,39 @@ async function supabaseRecordUpsert(record: AppRecord): Promise<void> {
           const isVersionConflict =
             error.code === '40001' || (error.message ?? '').includes('version_mismatch');
           if (isVersionConflict) {
-            reportSupabaseError(
-              'records',
-              'upsert',
-              'Another user just edited this record. Reload to see their changes before re-saving.',
-            );
+            const msg = 'Another user just edited this record. Reload to see their changes before re-saving.';
+            reportSupabaseError('records', 'upsert', msg);
+            outcome = { status: 'conflict', message: msg };
           } else {
-            reportSupabaseError('records', 'upsert', error.message ?? String(error));
+            const msg = error.message ?? String(error);
+            reportSupabaseError('records', 'upsert', msg);
             enqueuePendingWrite({
               op: 'record_upsert',
               table: 'records',
-              row: record as unknown as Record<string, unknown>,
+              row: serializeRecord(record),
             });
+            outcome = { status: 'queued', reason: msg };
           }
         } else {
-          markRecentlyWritten('records', record.id);
+          // Audit H1: records writes go through record_save which doesn't
+          // return the row, so we don't have the canonical Postgres-side
+          // updated_at to mark with. Pass null and let dedup fall back to
+          // soft-TTL for records-channel echoes. Future work: change the
+          // RPC signature to RETURN TABLE(updated_at) so we can do strict
+          // compare here too — tracked in the audit follow-up migration.
+          markRecentlyWritten('records', record.id, null);
+          outcome = { status: 'saved' };
         }
       }
     } catch (err) {
-      reportSupabaseError('records', 'upsert', err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      reportSupabaseError('records', 'upsert', msg);
       enqueuePendingWrite({
         op: 'record_upsert',
         table: 'records',
-        row: record as unknown as Record<string, unknown>,
+        row: serializeRecord(record),
       });
+      outcome = { status: 'queued', reason: msg };
     }
   })();
   pendingWrites.set(key, op);
@@ -710,6 +879,7 @@ async function supabaseRecordUpsert(record: AppRecord): Promise<void> {
   } finally {
     if (pendingWrites.get(key) === op) pendingWrites.delete(key);
   }
+  return outcome;
 }
 
 async function supabaseRecordDelete(modelId: string, recordId: string): Promise<void> {
@@ -742,7 +912,7 @@ async function supabaseRecordDelete(modelId: string, recordId: string): Promise<
           modelId,
         });
       } else {
-        markRecentlyWritten('records', recordId);
+        markRecentlyWritten('records', recordId, null);
       }
     } else {
       const { error } = await supabase.from('records').delete().eq('id', recordId);
@@ -755,7 +925,7 @@ async function supabaseRecordDelete(modelId: string, recordId: string): Promise<
           modelId,
         });
       } else {
-        markRecentlyWritten('records', recordId);
+        markRecentlyWritten('records', recordId, null);
       }
     }
   } catch (err) {
@@ -2183,7 +2353,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  saveRecord: async (record: AppRecord) => {
+  saveRecord: async (record: AppRecord, opts: SaveRecordOpts = {}): Promise<SaveResult> => {
     const state = get();
     const previousRecord = (state.records[record.model_id] ?? []).find((r) => r.id === record.id);
     const isNew = !previousRecord;
@@ -2194,12 +2364,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     // atomic RPC so concurrent saves never collide on the same counter value.
     // For existing records (isNew=false) the assigner short-circuits — no RPC
     // call, no perceptible latency.
+    //
+    // Audit H3: assignAutoIdsAsync now THROWS AutoIdRpcError on RPC failure
+    // (instead of silently falling back to the racey JSONB counter). Catch
+    // it here, enqueue the write for retry, and return `queued` so the
+    // caller doesn't think the save succeeded.
     let enrichedModel = origModel;
     let enrichedData = record.data;
     if (origModel) {
-      const assigned = await assignAutoIdsAsync(origModel, record.data, isNew);
-      enrichedModel = assigned.model;
-      enrichedData = assigned.data;
+      try {
+        const assigned = await assignAutoIdsAsync(origModel, record.data, isNew);
+        enrichedModel = assigned.model;
+        enrichedData = assigned.data;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        reportSupabaseError('records', 'rpc', `auto_id_assign: ${msg}`);
+        enqueuePendingWrite({
+          op: 'record_upsert',
+          table: 'records',
+          row: serializeRecord(record),
+        });
+        return { status: 'queued', reason: msg };
+      }
       enrichedData = applyFieldFallbacks(
         enrichedModel,
         enrichedData,
@@ -2218,19 +2404,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       isNew && record.created_by_user_id == null && state.currentUserId
         ? state.currentUserId
         : record.created_by_user_id ?? previousRecord?.created_by_user_id ?? null;
-    // Phase F.2: thread the loaded `version` from the in-memory previous
-    // record so supabaseRecordUpsert can pass it as p_expected_version.
-    // Form bindings may or may not preserve `version` on `record`; sourcing
-    // it from `previousRecord` is authoritative because that's what we
-    // last read from Supabase. New records pass undefined (RPC skips check).
+    // Phase F.2 / audit H5: when the caller supplied an `expectedVersion`
+    // (form-mount snapshot), use that as the optimistic-concurrency input.
+    // Otherwise fall back to the live previousRecord — the pre-fix behavior
+    // that's adequate for fire-and-forget callers (workflow chains, lookup
+    // combobox, import) but unsafe for forms that may stay open while
+    // realtime mutates the underlying row.
+    const liveVersion = previousRecord?.version ?? record.version;
+    const expectedVersion =
+      opts.expectedVersion !== undefined ? opts.expectedVersion : (liveVersion ?? null);
     const finalRecord: AppRecord = {
       ...record,
       data: enrichedData,
       created_by_user_id: stampedCreatedBy,
-      version: previousRecord?.version ?? record.version,
+      version: liveVersion,
     };
     const modelChanged = !!enrichedModel && enrichedModel !== origModel;
 
+    // 1. Apply the in-memory + localStorage update synchronously so the UI
+    //    sees the change instantly. Model side-effects (when an auto_id
+    //    counter bumped or a formula re-cached the schema) ride along on
+    //    the same set() so the model FK exists for the records write.
     set((s) => {
       const modelRecords = s.records[record.model_id] ?? [];
       const idx = modelRecords.findIndex((r) => r.id === record.id);
@@ -2240,10 +2434,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       const records = { ...s.records, [record.model_id]: updated };
       // Per-model bucket write: O(records-in-this-model) instead of O(all).
       saveLocalRecordsForModel(record.model_id, updated);
-      // Records writes go through supabaseRecordUpsert so frozen models
-      // dispatch to the record_save RPC; unfrozen models still hit
-      // .from('records') with the same FK gate as before.
-      void supabaseRecordUpsert(finalRecord);
 
       if (modelChanged && enrichedModel) {
         const models = s.models.map((m) => (m.id === enrichedModel!.id ? enrichedModel! : m));
@@ -2257,6 +2447,15 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return { records };
     });
+
+    // 2. Now await the actual Supabase write so the function resolves with
+    //    a meaningful SaveResult. Existing fire-and-forget callers (`void
+    //    saveRecord(rec)` / no await) keep working because they never
+    //    observed the resolution timing — only the lack of a return value
+    //    is new. Callers that DO await get { status: 'saved' | 'queued' |
+    //    'conflict' } and can react (e.g. abort a fan-out, summarize
+    //    bulk-edit conflicts).
+    const result = await supabaseRecordUpsert(finalRecord, { expectedVersion });
     // Execute workflows after state is settled
     queueMicrotask(() => {
       const s = get();
@@ -2269,21 +2468,35 @@ export const useAppStore = create<AppState>((set, get) => ({
         s.records,
         s.users,
         s.roles,
-        (r) => get().saveRecord(r),
+        // Audit M5: workflow-driven saves are tagged so the activity log
+        // can distinguish them from manual edits. The cb closure can't
+        // reach into individual workflow ids (the engine knows those),
+        // so we tag every chained write here as 'workflow' without an
+        // id. Future work: pass the current workflow_id in via the
+        // engine's tool-call boundary.
+        (r) => get().saveRecord(r, { actor: { kind: 'workflow', workflow_id: 'unknown' } }),
         (msg) => get().addToast(msg, 'info'),
         s.currentUserId,
         0,
         (run) => get().appendWorkflowRun(run),
+        // Audit M4: closure over the live store so each branch re-reads
+        // the trigger record. If a concurrent user edit lands while the
+        // workflow is still selecting a branch, we pick based on fresh
+        // data rather than the snapshot at execute-time.
+        () => (get().records[finalRecord.model_id] ?? []).find((r) => r.id === finalRecord.id),
       );
     });
 
     // Activity log — fires after the state mutation so the unified /logs
     // timeline picks up every record write. recordUpdated is a no-op when
     // there are no field-level diffs (auto_id-only writes, formula re-runs).
+    // Audit M5: actor defaults to 'user'; workflow/webhook/agent callers
+    // pass their own kind so /logs can split bot-driven edits from manual.
+    const actor = opts.actor ?? { kind: 'user' as const };
     if (isNew) {
-      activityLogger.recordCreated(finalRecord, origModel);
+      activityLogger.recordCreated(finalRecord, origModel, actor);
     } else if (previousRecord) {
-      activityLogger.recordUpdated(finalRecord, previousRecord, origModel);
+      activityLogger.recordUpdated(finalRecord, previousRecord, origModel, actor);
     }
 
     // When a clients record is saved, sweep every unlinked chat and try
@@ -2295,6 +2508,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (origModel && origModel.name === 'clients') {
       queueMicrotask(() => relinkChatsAgainstClients());
     }
+
+    return result;
   },
   deleteRecord: (modelId: string, recordId: string) => {
     // Capture the model + last snapshot BEFORE the state mutation so the
@@ -2302,6 +2517,51 @@ export const useAppStore = create<AppState>((set, get) => ({
     const stateBefore = get();
     const model = stateBefore.models.find((m) => m.id === modelId);
     const previous = (stateBefore.records[modelId] ?? []).find((r) => r.id === recordId);
+
+    // Audit fix H8 — dangling-ref detection.
+    //
+    // Records reference each other via JSONB lookup fields; there's no
+    // FK at the DB level, so deleting a record leaves stale UUIDs in
+    // every other record's `data`. Sweep every model whose schema
+    // declares a lookup pointing to this model, count the rows that
+    // hold a stale reference, and surface the count via activity log
+    // + a non-blocking warning toast.
+    //
+    // We deliberately do NOT auto-null/cascade — that's a per-field
+    // policy decision (some workflows treat the dead reference as a
+    // signal to keep). Documented as a follow-up: per-lookup
+    // `on_target_delete: 'null' | 'leave' | 'cascade'` setting.
+    let danglingCount = 0;
+    const danglingByModel: Record<string, number> = {};
+    if (model) {
+      for (const otherModel of stateBefore.models) {
+        const lookupFieldsToHere = otherModel.schema.sections
+          .flatMap((s) => s.fields)
+          .filter((f) => f.type === 'lookup' && f.lookup_model_id === modelId);
+        if (lookupFieldsToHere.length === 0) continue;
+        const otherList = stateBefore.records[otherModel.id] ?? [];
+        let countForThisModel = 0;
+        for (const rec of otherList) {
+          for (const fld of lookupFieldsToHere) {
+            const v = rec.data[fld.name];
+            if (fld.is_multi) {
+              if (Array.isArray(v) && v.includes(recordId)) {
+                countForThisModel += 1;
+                break;
+              }
+            } else if (v === recordId) {
+              countForThisModel += 1;
+              break;
+            }
+          }
+        }
+        if (countForThisModel > 0) {
+          danglingByModel[otherModel.name] = countForThisModel;
+          danglingCount += countForThisModel;
+        }
+      }
+    }
+
     set((s) => {
       const modelRecords = (s.records[modelId] ?? []).filter((r) => r.id !== recordId);
       const records = { ...s.records, [modelId]: modelRecords };
@@ -2311,6 +2571,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     if (previous) {
       activityLogger.recordDeleted(previous, model);
+    }
+    if (danglingCount > 0) {
+      // Non-blocking surface — admins can audit later.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[deleteRecord] left ${danglingCount} dangling lookup reference(s) across ${Object.keys(danglingByModel).length} model(s):`,
+        danglingByModel,
+      );
+      try {
+        const lang = get().language;
+        const isAr = lang === 'ar';
+        get().addToast(
+          isAr
+            ? `تم حذف السجل، لكن ${danglingCount} إشارة في سجلات أخرى لا تزال تشير إليه.`
+            : `Record deleted, but ${danglingCount} reference(s) in other records still point to it.`,
+          'info',
+        );
+      } catch {
+        // If the toast bus isn't ready (very early in init), the console.warn above is enough.
+      }
     }
   },
   // Bulk-apply the fallback configured on `targetFieldId` to every existing

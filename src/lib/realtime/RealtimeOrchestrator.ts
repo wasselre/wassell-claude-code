@@ -42,7 +42,7 @@
 
 import { supabase } from './../supabase';
 import type { AppState } from '../../types';
-import { wasRecentlyWritten } from './dedup';
+import { wasEchoOf } from './dedup';
 import {
   mergeRecord, mergeModel, mergeModelGroup, mergeWorkflow, mergeWorkflowGroup,
   mergeWorkflowRun, mergeDashboard, mergeModelView, mergeProfile, mergeRole, mergeUser,
@@ -174,8 +174,14 @@ export function startRealtimeOrchestrator(setState: SetState): () => void {
             const event = payload.eventType as PgEvent;
             // Echo dedup: skip events whose row id this client just wrote.
             // For DELETE the id is in payload.old; for INSERT/UPDATE it's in payload.new.
+            // Audit fix H1: pass the incoming `updated_at` so dedup can do
+            // strict updated_at comparison instead of relying on a 30s TTL.
             const id = event === 'DELETE' ? payload.old?.id : payload.new?.id;
-            if (id && wasRecentlyWritten(spec.table, id)) {
+            const incomingUpdatedAt =
+              event === 'DELETE'
+                ? null
+                : (typeof payload.new?.updated_at === 'string' ? payload.new.updated_at : null);
+            if (id && wasEchoOf(spec.table, id, incomingUpdatedAt)) {
               stats.echo_skipped += 1;
               return;
             }

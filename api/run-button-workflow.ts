@@ -174,6 +174,21 @@ async function mainHandler(req: Request): Promise<Response> {
       .single();
     if (recErr || !record) return jsonError(404, `Record not found: ${recErr?.message ?? recordId}`);
 
+    // Audit fix C3: snapshot the version at find time so the post-Paseet
+    // save uses optimistic concurrency. Frozen models have no version
+    // column on `records` (they live in their dedicated table without a
+    // version column yet — Phase F.2.1 future work); the maybeSingle
+    // returns null and we pass null to the RPC, which skips the check.
+    let versionAtFind: number | null = null;
+    {
+      const { data: vRow } = await supabase
+        .from('records')
+        .select('version')
+        .eq('id', recordId)
+        .maybeSingle();
+      versionAtFind = (vRow as { version?: number } | null)?.version ?? null;
+    }
+
     // 2. Load that model's schema and find the button.
     const { data: modelRow, error: modelErr } = await supabase
       .from('models')
@@ -263,13 +278,54 @@ async function mainHandler(req: Request): Promise<Response> {
 
     // 5. Persist merged data back to the record. record_save dispatches to
     // the dedicated table when the model is frozen.
+    //
+    // Audit fix C3 — pass `p_expected_version` so a concurrent edit during
+    // the (potentially long) Paseet run is detected. On version_mismatch
+    // re-read the record, re-apply our paseet patches onto its CURRENT
+    // data (preserving the user's concurrent edit), and retry once.
     if (totalMappingsApplied > 0) {
       const { error: upErr } = await supabase.rpc('record_save', {
         p_model_id: record.model_id,
         p_id: recordId,
         p_data: mergedData,
+        p_expected_version: versionAtFind,
       });
-      if (upErr) return jsonError(500, `Failed to persist record: ${upErr.message}`);
+      if (upErr) {
+        const isVersionConflict =
+          upErr.code === '40001' || (upErr.message ?? '').includes('version_mismatch');
+        if (!isVersionConflict) {
+          return jsonError(500, `Failed to persist record: ${upErr.message}`);
+        }
+        log('[run-button-workflow] version_mismatch — re-reading and retrying');
+        const { data: freshRow, error: freshErr } = await supabase
+          .from('records')
+          .select('data, version')
+          .eq('id', recordId)
+          .maybeSingle();
+        if (freshErr || !freshRow) {
+          return jsonError(500, `Record vanished mid-run: ${freshErr?.message ?? 'not found'}`);
+        }
+        const freshData = ((freshRow as { data?: Record<string, unknown> }).data) ?? {};
+        const freshVersion = (freshRow as { version?: number }).version ?? null;
+        // Re-apply only the patches our paseet actions produced (not the
+        // entire mergedData — that would clobber the user's concurrent
+        // edit). The diff between mergedData and the original recordData
+        // is exactly what we want to write.
+        const patch: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(mergedData)) {
+          if (recordData[k] !== v) patch[k] = v;
+        }
+        const reMerged = { ...freshData, ...patch };
+        const { error: retryErr } = await supabase.rpc('record_save', {
+          p_model_id: record.model_id,
+          p_id: recordId,
+          p_data: reMerged,
+          p_expected_version: freshVersion,
+        });
+        if (retryErr) {
+          return jsonError(409, `Failed to persist record (lost a race twice): ${retryErr.message}`);
+        }
+      }
     }
     log('[run-button-workflow] done, mappings applied=', totalMappingsApplied);
 

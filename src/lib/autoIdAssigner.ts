@@ -111,9 +111,16 @@ export function assignAutoIds(
 /**
  * Phase F.1: async assigner that calls the atomic record_assign_auto_id RPC.
  * Use this in the live save path to avoid the read-modify-write race the
- * sync version has. Falls back to the client-side counter if Supabase
- * isn't configured (offline-only mode) — duplicates remain possible there
- * but no worse than the legacy behavior.
+ * sync version has.
+ *
+ * Audit fix H3 — fallback discipline:
+ * Falls back to the client-side counter ONLY when Supabase is genuinely
+ * unavailable (no client at all). RPC errors (timeouts, transient 502s,
+ * RLS denials) used to silently fall through to the racey path; concurrent
+ * online saves on a flaky network could both hit the fallback, both read
+ * the same JSONB counter, and stamp duplicate IDs. Now any RPC error
+ * THROWS so saveRecord enqueues the write for retry instead of inventing
+ * a possibly-duplicate value.
  *
  * Returns:
  *   data           — the record data with auto_id fields populated
@@ -122,6 +129,13 @@ export function assignAutoIds(
  *                    the model — the counter lives in auto_id_counters)
  *   usedServerCounter — true when at least one assignment came from the RPC
  */
+export class AutoIdRpcError extends Error {
+  constructor(message: string, public readonly fieldId: string, public readonly cause?: unknown) {
+    super(message);
+    this.name = 'AutoIdRpcError';
+  }
+}
+
 export async function assignAutoIdsAsync(
   model: AppModel,
   recordData: Record<string, unknown>,
@@ -144,9 +158,12 @@ export async function assignAutoIdsAsync(
 
     let counterValue: number | null = null;
 
-    // Server-side atomic counter — the right path. Postgres serializes
-    // INSERT...ON CONFLICT, so concurrent saves get distinct values.
     if (supabase) {
+      // Online path — call the atomic RPC. Any error (RLS denial, network
+      // blip, timeout) is FATAL: throwing aborts the save so the caller
+      // (supabaseRecordUpsert) enqueues the write for retry. Falling
+      // through to the JSONB counter here would invent IDs that two
+      // concurrent online saves could collide on.
       try {
         const { data, error } = await supabase.rpc('record_assign_auto_id', {
           p_model_id: model.id,
@@ -154,23 +171,34 @@ export async function assignAutoIdsAsync(
           p_scope_key: scopeKey,
           p_start: start,
         });
-        if (!error && typeof data === 'number') {
-          counterValue = data;
-          usedServerCounter = true;
-        } else if (error) {
-          // eslint-disable-next-line no-console
-          console.warn('[auto_id] record_assign_auto_id RPC failed; falling back to client counter:', error.message);
+        if (error) {
+          throw new AutoIdRpcError(
+            `record_assign_auto_id RPC failed for field ${field.name}: ${error.message}`,
+            field.id,
+            error,
+          );
         }
+        if (typeof data !== 'number') {
+          throw new AutoIdRpcError(
+            `record_assign_auto_id returned a non-number for field ${field.name}: ${typeof data}`,
+            field.id,
+          );
+        }
+        counterValue = data;
+        usedServerCounter = true;
       } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn('[auto_id] record_assign_auto_id threw; falling back to client counter:', err);
+        if (err instanceof AutoIdRpcError) throw err;
+        throw new AutoIdRpcError(
+          `record_assign_auto_id threw for field ${field.name}`,
+          field.id,
+          err,
+        );
       }
-    }
-
-    // Fallback: client-side counter (legacy, race-prone). Used in offline
-    // mode or when the RPC is unreachable. Mutates the model JSONB so
-    // saveRecord can persist the bumped counter alongside the record.
-    if (counterValue === null) {
+    } else {
+      // Truly offline: no Supabase client at all. Use the legacy JSONB
+      // counter — duplicates remain possible across offline tabs but
+      // we have no atomic option. Bump the counter on the model so the
+      // save persists it alongside the record.
       const counters = field.auto_id_counters ?? {};
       counterValue = counters[scopeKey] ?? start;
       workingModel = cloneModelWithFieldPatch(workingModel, field.id, {

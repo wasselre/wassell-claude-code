@@ -16,6 +16,34 @@ import type { AppRecord, AppModel, ActivityLogStatus, ActivityLogEntry } from '@
 
 // ─── Actor resolution ─────────────────────────────────────────────────
 
+/**
+ * Audit fix M5: actor provenance. The unified /logs timeline previously
+ * couldn't tell a user's manual edit apart from a workflow / webhook /
+ * AI-agent edit because every entry was attributed to whoever was
+ * signed in. With ActivityActor threaded through saveRecord, each entry
+ * persists `details.provenance` and the summary line carries a [bot]
+ * prefix so filters work without a schema change.
+ */
+export type ActivityActor =
+  | { kind: 'user' }
+  | { kind: 'workflow'; workflow_id: string; run_id?: string }
+  | { kind: 'webhook'; slug: string }
+  | { kind: 'agent'; conversation_id?: string };
+
+function actorLabelAr(actor: ActivityActor | undefined): string {
+  if (!actor || actor.kind === 'user') return '';
+  if (actor.kind === 'workflow') return '[سير عمل] ';
+  if (actor.kind === 'webhook') return '[ويبهوك] ';
+  return '[المساعد الذكي] ';
+}
+
+function actorLabelEn(actor: ActivityActor | undefined): string {
+  if (!actor || actor.kind === 'user') return '';
+  if (actor.kind === 'workflow') return '[workflow] ';
+  if (actor.kind === 'webhook') return '[webhook] ';
+  return '[agent] ';
+}
+
 interface ActorInfo {
   user_id: string | null;
   email: string | null;
@@ -168,8 +196,10 @@ export const activityLogger = {
     });
   },
 
-  /** Record was created. */
-  recordCreated(record: AppRecord, model: AppModel | undefined) {
+  /** Record was created. The optional `actor` arg (audit fix M5) records
+   *  provenance — workflow vs manual vs webhook vs AI agent. Persisted
+   *  inside `details.provenance` so /logs filters can split timelines. */
+  recordCreated(record: AppRecord, model: AppModel | undefined, actor?: ActivityActor) {
     const labels = modelLabels(record.model_id);
     const title = recordTitle(record, model);
     append({
@@ -179,18 +209,19 @@ export const activityLogger = {
       target_record_id: record.id,
       target_label: title,
       status: 'success',
-      summary_ar: `إنشاء سجل في "${labels.ar}": ${title}`,
-      summary_en: `Created record in "${labels.en}": ${title}`,
+      summary_ar: `${actorLabelAr(actor)}إنشاء سجل في "${labels.ar}": ${title}`,
+      summary_en: `${actorLabelEn(actor)}Created record in "${labels.en}": ${title}`,
       details: {
         model_label_ar: labels.ar,
         model_label_en: labels.en,
         record_data: record.data,
+        ...(actor ? { provenance: actor } : {}),
       },
     });
   },
 
   /** Record was updated. Logs only the changed fields, not the full snapshot. */
-  recordUpdated(record: AppRecord, previous: AppRecord, model: AppModel | undefined) {
+  recordUpdated(record: AppRecord, previous: AppRecord, model: AppModel | undefined, actor?: ActivityActor) {
     const labels = modelLabels(record.model_id);
     const title = recordTitle(record, model);
     const diff = diffRecordData(previous.data, record.data);
@@ -203,19 +234,20 @@ export const activityLogger = {
       target_record_id: record.id,
       target_label: title,
       status: 'success',
-      summary_ar: `تحديث "${title}" — ${changedKeys.length} حقل`,
-      summary_en: `Updated "${title}" — ${changedKeys.length} field(s)`,
+      summary_ar: `${actorLabelAr(actor)}تحديث "${title}" — ${changedKeys.length} حقل`,
+      summary_en: `${actorLabelEn(actor)}Updated "${title}" — ${changedKeys.length} field(s)`,
       details: {
         model_label_ar: labels.ar,
         model_label_en: labels.en,
         changed_fields: diff,
         changed_count: changedKeys.length,
+        ...(actor ? { provenance: actor } : {}),
       },
     });
   },
 
   /** Record was deleted. Logs the last known snapshot for forensics. */
-  recordDeleted(record: AppRecord, model: AppModel | undefined) {
+  recordDeleted(record: AppRecord, model: AppModel | undefined, actor?: ActivityActor) {
     const labels = modelLabels(record.model_id);
     const title = recordTitle(record, model);
     append({
@@ -225,12 +257,13 @@ export const activityLogger = {
       target_record_id: record.id,
       target_label: title,
       status: 'warning',
-      summary_ar: `حذف سجل من "${labels.ar}": ${title}`,
-      summary_en: `Deleted record in "${labels.en}": ${title}`,
+      summary_ar: `${actorLabelAr(actor)}حذف سجل من "${labels.ar}": ${title}`,
+      summary_en: `${actorLabelEn(actor)}Deleted record in "${labels.en}": ${title}`,
       details: {
         model_label_ar: labels.ar,
         model_label_en: labels.en,
         last_snapshot: record.data,
+        ...(actor ? { provenance: actor } : {}),
       },
     });
   },

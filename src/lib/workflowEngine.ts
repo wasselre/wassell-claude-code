@@ -140,6 +140,73 @@ function getFieldTypeMap(allModels: AppModel[], modelId: string): Map<string, st
   return map;
 }
 
+// Audit fix M3 helper: a parallel map of `field.name -> is_multi` for the
+// target model. Used by validateFieldValue to coerce/reject mappings that
+// would corrupt multi-select / multi-lookup arrays.
+function getFieldIsMultiMap(allModels: AppModel[], modelId: string): Map<string, boolean> {
+  const model = allModels.find((m) => m.id === modelId);
+  const map = new Map<string, boolean>();
+  for (const section of model?.schema.sections ?? []) {
+    for (const field of section.fields) map.set(field.name, !!field.is_multi);
+  }
+  return map;
+}
+
+// Audit fix M3: validate that a mapped value matches the target field's
+// expected shape. Returns either { ok: true, value } (possibly coerced
+// — e.g. number-string → number) or { ok: false, reason } (caller skips
+// the assignment and surfaces the reason).
+//
+// We're deliberately conservative: prefer "skip with a clear reason" over
+// "best-effort coerce" when the shape is incompatible. The previous code
+// blindly assigned, which crashed the form on next read for the worst
+// cases (multi-select expects array; got string).
+function validateFieldValue(
+  value: unknown,
+  fieldType: string | undefined,
+  isMulti: boolean,
+): { ok: true; value: unknown } | { ok: false; reason: string } {
+  if (value === null || value === undefined) return { ok: true, value };
+  if (!fieldType) return { ok: true, value }; // unknown field — leave as-is
+
+  // Multi-select / multi-lookup MUST be an array of scalars.
+  if (fieldType === 'multiselect' || (fieldType === 'lookup' && isMulti)) {
+    if (Array.isArray(value)) return { ok: true, value };
+    if (typeof value === 'string' && value !== '') return { ok: true, value: [value] };
+    return { ok: false, reason: `expected array for ${fieldType} field, got ${typeof value}` };
+  }
+  // Single lookup / dropdown: must be a string.
+  if (fieldType === 'lookup' || fieldType === 'dropdown') {
+    if (typeof value === 'string') return { ok: true, value };
+    if (Array.isArray(value)) {
+      return { ok: false, reason: `expected single ${fieldType} value, got array` };
+    }
+    return { ok: true, value: String(value) };
+  }
+  // Number / currency / formula: coerce strings if they parse cleanly.
+  if (fieldType === 'number' || fieldType === 'currency' || fieldType === 'formula') {
+    if (typeof value === 'number') return { ok: true, value };
+    if (typeof value === 'string' && value.trim() !== '') {
+      const n = Number(value);
+      if (Number.isFinite(n)) return { ok: true, value: n };
+    }
+    return { ok: false, reason: `expected number for ${fieldType} field, got ${typeof value}` };
+  }
+  // Boolean.
+  if (fieldType === 'checkbox') {
+    if (typeof value === 'boolean') return { ok: true, value };
+    if (value === 'true' || value === 1) return { ok: true, value: true };
+    if (value === 'false' || value === 0) return { ok: true, value: false };
+    return { ok: false, reason: `expected boolean for checkbox field, got ${typeof value}` };
+  }
+  // Everything else (text, textarea, email, phone, url, date, datetime,
+  // notes, etc.) — accept any non-array value, coerce to string when needed.
+  if (Array.isArray(value)) {
+    return { ok: false, reason: `expected scalar for ${fieldType} field, got array` };
+  }
+  return { ok: true, value };
+}
+
 function getFieldLabel(allModels: AppModel[], modelId: string, slug: string): string | undefined {
   const model = allModels.find((m) => m.id === modelId);
   for (const s of model?.schema.sections ?? []) {
@@ -203,6 +270,14 @@ export async function executeWorkflows(
   currentUserId?: string | null,
   depth = 0,
   logRun?: (run: WorkflowRun) => void,
+  // Audit fix M4: optional callback that re-reads the trigger record from
+  // the live store. When provided, condition evaluation re-fetches between
+  // branches so a concurrent edit during a long-running workflow doesn't
+  // pick the wrong branch off stale data. Caller must close over the live
+  // store (e.g. () => get().records[modelId]?.find(r => r.id === recordId)).
+  // When omitted (or returns undefined for "record was deleted"), the
+  // engine falls back to the snapshot passed in `triggerRecord`.
+  getLiveTriggerRecord?: () => AppRecord | undefined,
 ): Promise<void> {
   if (depth >= MAX_DEPTH) return;
 
@@ -259,12 +334,20 @@ export async function executeWorkflows(
         continue;
       }
 
+      // Audit fix M4: re-read the trigger record from the live store
+      // before evaluating this branch. A concurrent user edit during the
+      // workflow run can change the field that decides branch selection;
+      // without this re-read the engine commits to a branch based on
+      // stale data. If the record was deleted mid-run, fall back to the
+      // snapshot — the rest of the engine still has the original to
+      // inspect for trace + actions.
+      const liveTriggerRecord = getLiveTriggerRecord?.() ?? triggerRecord;
       const conditionsTrace: WorkflowConditionTrace[] = [];
       // Evaluate every condition (no short-circuit) so the trace is complete
       // even in 'any' mode — users want to see what each condition resolved
       // to regardless of the join mode.
       const perResults = branch.conditions.map((c) => {
-        const passesNow = evaluateCondition(c, triggerRecord.data);
+        const passesNow = evaluateCondition(c, liveTriggerRecord.data);
         const passedBefore = (c.only_on_change && event === 'update' && previousRecord)
           ? evaluateCondition(c, previousRecord.data)
           : undefined;
@@ -764,12 +847,31 @@ async function executeAction(
           };
         }
         const targetFieldTypes = getFieldTypeMap(allModels, action.target_model_id);
+        const targetFieldIsMulti = getFieldIsMultiMap(allModels, action.target_model_id);
         const previousData = { ...target.data };
         const updatedData = { ...target.data };
         const fieldMappingsTrace: FieldMappingTrace[] = [];
+        // Audit fix M3: validate / coerce each mapped value against the
+        // target field's expected shape. A multi-select field that
+        // receives a single string would crash the form on next read; a
+        // numeric field that receives a string would break formula
+        // evaluation. On mismatch we skip the assignment (don't corrupt
+        // the record) and log to console so the trace still has the
+        // resolved-value record for debugging.
         for (const mapping of action.field_mappings) {
           const { value, trace } = resolveFieldMappingWithTrace(mapping, triggerRecord, allUsers, allRecords, currentUserId, targetFieldTypes.get(mapping.target_field_id));
-          updatedData[mapping.target_field_id] = value;
+          const expectedType = targetFieldTypes.get(mapping.target_field_id);
+          const expectedMulti = targetFieldIsMulti.get(mapping.target_field_id) ?? false;
+          const validation = validateFieldValue(value, expectedType, expectedMulti);
+          if (!validation.ok) {
+            // eslint-disable-next-line no-console
+            console.warn(
+              `[workflowEngine] update_record skipping mapping for field ${mapping.target_field_id} on model ${action.target_model_id}: ${validation.reason}`,
+            );
+            fieldMappingsTrace.push(trace);
+            continue;
+          }
+          updatedData[mapping.target_field_id] = validation.value;
           fieldMappingsTrace.push(trace);
         }
         const diff: Record<string, { before: unknown; after: unknown }> = {};
