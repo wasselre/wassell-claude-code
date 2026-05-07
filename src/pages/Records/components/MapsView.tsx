@@ -1,3 +1,4 @@
+import type React from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
@@ -182,7 +183,7 @@ function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx): stri
 
 export default function MapsView({ model, records, onCardClick }: MapsViewProps) {
   const { t } = useTranslation();
-  const { language, records: allRecords, models, users } = useAppStore();
+  const { language, records: allRecords, models, users, mapsViewState, setMapsViewState } = useAppStore();
   const isAr = language === 'ar';
 
   const cfg = model.maps_config;
@@ -192,19 +193,25 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
 
   const { resolved, unresolved, resolving, resolvingCount } = useResolvedLocations(model, records);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Persisted view state (cross-navigation): center/zoom/selected pin.
+  // Hydrate from the in-memory store on mount so back-from-record-edit
+  // returns the user to the exact map view they left.
+  const persisted = mapsViewState[model.id];
+  const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
 
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
   const keyMissing = !isMapsKeyConfigured();
 
   const styles = parseMapStyleJson(cfg.map_style_json) ?? undefined;
-  const center = resolved[0]
-    ? { lat: resolved[0].lat, lng: resolved[0].lng }
-    : cfg.default_center_lat != null && cfg.default_center_lng != null
-      ? { lat: cfg.default_center_lat, lng: cfg.default_center_lng }
-      : DEFAULT_MAP_CENTER;
-  const zoom = cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
+  const center = persisted?.center
+    ? persisted.center
+    : resolved[0]
+      ? { lat: resolved[0].lat, lng: resolved[0].lng }
+      : cfg.default_center_lat != null && cfg.default_center_lng != null
+        ? { lat: cfg.default_center_lat, lng: cfg.default_center_lng }
+        : DEFAULT_MAP_CENTER;
+  const zoom = persisted?.zoom ?? cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
 
   // Build the label for each pin once, memoized off resolved + label field +
   // store data so the imperative marker effect can re-create on real changes
@@ -220,6 +227,21 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved, labelField, isAr, allRecords, models, users]);
+
+  // Persist selection changes — onIdle only fires on pan/zoom, not on
+  // pin clicks, so we mirror selectedId into the store separately.
+  useEffect(() => {
+    if (!mapInstance) return;
+    const c = mapInstance.getCenter();
+    const z = mapInstance.getZoom();
+    if (!c || z == null) return;
+    setMapsViewState(model.id, {
+      center: { lat: c.lat(), lng: c.lng() },
+      zoom: z,
+      selectedId,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, mapInstance, model.id]);
 
   // Imperative Marker + Clusterer pipeline — render markers as native
   // google.maps.Marker (so MarkerClusterer can manage them) and listen for
@@ -307,6 +329,20 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
         options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: true }}
         onLoad={(m) => setMapInstance(m)}
         onUnmount={() => setMapInstance(null)}
+        onIdle={() => {
+          // Persist current pan/zoom + selected pin so back-from-detail
+          // restores the same view. Fires after pans, zooms, and the initial
+          // load — cheap, in-memory only.
+          if (!mapInstance) return;
+          const c = mapInstance.getCenter();
+          const z = mapInstance.getZoom();
+          if (!c || z == null) return;
+          setMapsViewState(model.id, {
+            center: { lat: c.lat(), lng: c.lng() },
+            zoom: z,
+            selectedId,
+          });
+        }}
       >
         {cfg.click_action === 'popup' && selectedPin && (
           <OverlayView
@@ -395,6 +431,40 @@ function PopupCard({
 
   const ctx: FormatCtx = { isAr, t, allRecords, models, users, recordData: record.data };
   const renderValue = (field: ModelField): string => formatFieldValue(field, record.data[field.name], ctx);
+
+  // URL fields render as a clickable "Open link" pill so the popup never
+  // shows a raw URL overflowing the card. Mirrors DynamicCell's url case.
+  // Returns either a string (default) or a JSX node (URL fields).
+  const renderFieldNode = (field: ModelField): React.ReactNode => {
+    if (field.type === 'url') {
+      const raw = record.data[field.name];
+      if (typeof raw !== 'string' || !raw.trim()) return '—';
+      const safeHref = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+      return (
+        <a
+          href={safeHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          dir="ltr"
+          title={raw}
+          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-copper/10 hover:bg-copper/20 text-copper text-[11px] font-bold transition-colors"
+        >
+          <svg width="10" height="10" viewBox="0 0 14 14" fill="none" aria-hidden>
+            <path
+              d="M5.5 3H3v8h8V8.5M9 3h2v2M11 3L6.5 7.5"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {isAr ? 'فتح' : 'Open'}
+        </a>
+      );
+    }
+    return renderValue(field);
+  };
 
   const title = titleField ? renderValue(titleField) : `#${record.id.slice(0, 8)}`;
   const subtitle = subtitleField ? renderValue(subtitleField) : null;
@@ -508,7 +578,7 @@ function PopupCard({
                     {isAr ? f.label_ar : f.label_en}
                   </span>
                   <span className="text-[12px] font-bold text-chocolate truncate">
-                    {renderValue(f)}
+                    {renderFieldNode(f)}
                   </span>
                 </div>
               </div>
@@ -520,10 +590,10 @@ function PopupCard({
         {restFields.length > 0 && (
           <div className="space-y-1 mb-3 text-xs">
             {restFields.map((f) => (
-              <div key={f.id} className="flex justify-between gap-3">
+              <div key={f.id} className="flex justify-between gap-3 items-center">
                 <span className="text-charcoal/60 shrink-0">{isAr ? f.label_ar : f.label_en}</span>
-                <span className="font-medium text-charcoal text-end break-words">
-                  {renderValue(f)}
+                <span className="font-medium text-charcoal text-end break-words min-w-0">
+                  {renderFieldNode(f)}
                 </span>
               </div>
             ))}

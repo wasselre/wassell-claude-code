@@ -1019,6 +1019,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   language: (loadLocal<Language>('wassell_language') ?? 'ar'),
   toasts: [],
   recordNavContext: null,
+  mapsViewState: {},
   initialized: false,
   criticalDataReady: false,
   // Phase E.2: empty paginated cache. First loadRecordsPage call per
@@ -2078,6 +2079,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setRecordNavContext: (modelId: string, orderedIds: string[]) => {
     set({ recordNavContext: { modelId, orderedIds } });
+  },
+  setMapsViewState: (modelId: string, state: { center: { lat: number; lng: number }; zoom: number; selectedId: string | null }) => {
+    set((s) => ({ mapsViewState: { ...s.mapsViewState, [modelId]: state } }));
   },
 
   // ─── Phase E.2: paginated record loader ───────────────────────

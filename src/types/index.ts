@@ -1744,6 +1744,12 @@ export interface AppState {
   recordNavContext: { modelId: string; orderedIds: string[] } | null;
   setRecordNavContext: (modelId: string, orderedIds: string[]) => void;
 
+  // Per-model map view state (pan/zoom + selected pin) preserved in-memory so
+  // navigating to a record detail and clicking "back" returns the user to the
+  // exact map view they left. Cleared on page refresh.
+  mapsViewState: Record<string, { center: { lat: number; lng: number }; zoom: number; selectedId: string | null }>;
+  setMapsViewState: (modelId: string, state: { center: { lat: number; lng: number }; zoom: number; selectedId: string | null }) => void;
+
   // Workflows
   saveWorkflow: (workflow: Workflow) => void;
   deleteWorkflow: (workflowId: string) => void;
