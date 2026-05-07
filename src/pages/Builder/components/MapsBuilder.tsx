@@ -6,11 +6,13 @@ import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import {
   DEFAULT_MAP_CENTER,
   DEFAULT_MAP_ZOOM,
-  buildColoredPinIcon,
+  buildPillIcon,
   parseMapStyleJson,
 } from '@/lib/locationUtils';
 import { useResolvedLocations } from '@/hooks/useResolvedLocations';
 import type { AppModel, MapsConfig, ModelField } from '@/types';
+
+const PILL_DEFAULT_COLOR = '#4A4E54';
 
 interface MapsBuilderProps {
   model: AppModel;
@@ -59,15 +61,28 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
   // Show up to 5 pins in the preview. Short URLs that require server-side
   // resolution populate asynchronously via the same cache the Maps view uses.
   const { resolved: allResolved } = useResolvedLocations(model, modelRecords);
+  const labelField = cfg.pin_label_field_id
+    ? allFields.find((f) => f.id === cfg.pin_label_field_id)
+    : undefined;
   const previewPins = useMemo(
     () =>
-      allResolved.slice(0, 5).map((p) => ({
-        id: p.record.id,
-        lat: p.lat,
-        lng: p.lng,
-        color: p.color,
-      })),
-    [allResolved],
+      allResolved.slice(0, 5).map((p) => {
+        const raw = labelField ? p.record.data[labelField.name] : undefined;
+        const label =
+          typeof raw === 'string' && raw.trim()
+            ? raw
+            : typeof raw === 'number'
+              ? String(raw)
+              : '';
+        return {
+          id: p.record.id,
+          lat: p.lat,
+          lng: p.lng,
+          color: p.color || PILL_DEFAULT_COLOR,
+          label,
+        };
+      }),
+    [allResolved, labelField],
   );
 
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
@@ -233,7 +248,7 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
               <Marker
                 key={p.id}
                 position={{ lat: p.lat, lng: p.lng }}
-                icon={buildColoredPinIcon(p.color) as google.maps.Icon | undefined}
+                icon={buildPillIcon(p.label || '•', p.color) as google.maps.Icon | undefined}
               />
             ))}
           </GoogleMap>

@@ -162,6 +162,96 @@ export function buildColoredPinIcon(color: string): GoogleMapsIcon | undefined {
   };
 }
 
+const PILL_FONT = '600 13px Amiri, "Segoe UI", system-ui, sans-serif';
+const PILL_HEIGHT = 28;
+const PILL_PAD_X = 14;
+const PILL_MAX_TEXT_WIDTH = 200;
+let _measureCanvas: HTMLCanvasElement | null = null;
+
+function measureTextWidth(text: string, font: string): number {
+  if (typeof document === 'undefined') return text.length * 7;
+  if (!_measureCanvas) _measureCanvas = document.createElement('canvas');
+  const ctx = _measureCanvas.getContext('2d');
+  if (!ctx) return text.length * 7;
+  ctx.font = font;
+  return ctx.measureText(text).width;
+}
+
+function escapeXmlText(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function truncate(text: string, maxWidth: number): string {
+  if (measureTextWidth(text, PILL_FONT) <= maxWidth) return text;
+  // Binary search for the longest prefix + ellipsis that fits.
+  let lo = 0;
+  let hi = text.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    if (measureTextWidth(text.slice(0, mid) + '…', PILL_FONT) <= maxWidth) lo = mid;
+    else hi = mid - 1;
+  }
+  return text.slice(0, Math.max(lo, 1)) + '…';
+}
+
+/**
+ * Build a labeled pill marker icon — rounded rectangle with the project name
+ * (or any string) inside, in white text on a charcoal-or-copper background.
+ *
+ * Width is auto-sized to the text; text is truncated past PILL_MAX_TEXT_WIDTH.
+ * Anchor is at the bottom-center so the pill sits on top of its lat/lng point.
+ */
+export function buildPillIcon(label: string, color: string): GoogleMapsIcon | undefined {
+  if (typeof window === 'undefined' || !window.google?.maps) return undefined;
+  const safeLabel = (label || '').trim() || '—';
+  const truncated = truncate(safeLabel, PILL_MAX_TEXT_WIDTH);
+  const textWidth = Math.ceil(measureTextWidth(truncated, PILL_FONT));
+  const w = textWidth + PILL_PAD_X * 2;
+  const h = PILL_HEIGHT;
+  // Add room for a small downward "tail" beneath the pill so it visually
+  // points at the lat/lng — same role as a pin's stem.
+  const tail = 6;
+  const totalH = h + tail;
+  const xml = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${totalH}" viewBox="0 0 ${w} ${totalH}">
+    <rect x="0" y="0" width="${w}" height="${h}" rx="${h / 2}" ry="${h / 2}" fill="${color}" stroke="#ffffff" stroke-width="1.5"/>
+    <path d="M${w / 2 - 5} ${h - 1} L${w / 2} ${h + tail - 2} L${w / 2 + 5} ${h - 1} Z" fill="${color}" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>
+    <text x="${w / 2}" y="${h / 2 + 5}" text-anchor="middle" fill="#ffffff" font-family="Amiri, 'Segoe UI', system-ui, sans-serif" font-weight="600" font-size="13">${escapeXmlText(truncated)}</text>
+  </svg>`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(xml)}`,
+    scaledSize: new window.google.maps.Size(w, totalH),
+    anchor: new window.google.maps.Point(w / 2, totalH),
+  };
+}
+
+/**
+ * Build a circular cluster marker icon — copper-filled circle with the cluster
+ * count in white. Diameter scales mildly with count so 100+ clusters read as
+ * "big" without dwarfing the map.
+ */
+export function buildClusterIcon(count: number, color: string = '#B8734F'): GoogleMapsIcon | undefined {
+  if (typeof window === 'undefined' || !window.google?.maps) return undefined;
+  const text = String(count);
+  // Diameter steps: 1–9 = 36, 10–49 = 42, 50–99 = 48, 100+ = 54.
+  const d = count >= 100 ? 54 : count >= 50 ? 48 : count >= 10 ? 42 : 36;
+  const r = d / 2;
+  const fontSize = count >= 100 ? 14 : count >= 10 ? 15 : 16;
+  const xml = `<svg xmlns="http://www.w3.org/2000/svg" width="${d}" height="${d}" viewBox="0 0 ${d} ${d}">
+    <circle cx="${r}" cy="${r}" r="${r - 2}" fill="${color}" stroke="#ffffff" stroke-width="2"/>
+    <text x="${r}" y="${r + fontSize / 3 + 1}" text-anchor="middle" fill="#ffffff" font-family="Amiri, 'Segoe UI', system-ui, sans-serif" font-weight="700" font-size="${fontSize}">${text}</text>
+  </svg>`;
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(xml)}`,
+    scaledSize: new window.google.maps.Size(d, d),
+    anchor: new window.google.maps.Point(r, r),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Async server-side resolution (for shortened goo.gl URLs the browser can't
 // follow due to CORS). Results are cached in localStorage forever.
