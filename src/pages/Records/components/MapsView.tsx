@@ -25,7 +25,9 @@ interface MapsViewProps {
   onCardClick: (record: AppRecord) => void;
 }
 
-const mapContainerStyle = { width: '100%', height: 'calc(100vh - 320px)', minHeight: '480px', borderRadius: '12px' };
+// Map fills its parent container — RecordListPage gives it a viewport-sized
+// wrapper in full-bleed mode. No border-radius: the map runs edge-to-edge.
+const mapContainerStyle = { width: '100%', height: '100%' };
 // Default pill background — Wassel charcoal slate. Per-record `pin_color`
 // overrides take effect when a `pin_color_field_id` is configured.
 const PILL_DEFAULT_COLOR = '#4A4E54';
@@ -345,7 +347,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   const selectedPin = resolved.find((r) => r.record.id === selectedId);
 
   return (
-    <div className="relative">
+    <div className="relative h-full">
       <GoogleMap
         mapContainerStyle={mapContainerStyle}
         center={center}

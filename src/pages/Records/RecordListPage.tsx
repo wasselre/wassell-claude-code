@@ -303,113 +303,122 @@ export default function RecordListPage() {
     exportToExcel(model, selectedRecords, language, records, models);
   };
 
+  // Shared view-mode toggle, used both inline (table/cards) and floating
+  // over the map (maps). One copy keeps both surfaces in sync.
+  const viewModeToggle = (
+    <div className="flex bg-cream/50 p-1 rounded-lg">
+      <button
+        onClick={() => toggleView('table')}
+        className={`p-2 rounded-md transition-colors ${
+          viewMode === 'table' ? 'bg-white text-copper shadow-sm' : 'text-charcoal/40 hover:text-charcoal'
+        }`}
+        title={t('records.view_table')}
+      >
+        <Table2 size={18} />
+      </button>
+      <button
+        onClick={() => toggleView('cards')}
+        className={`p-2 rounded-md transition-colors ${
+          viewMode === 'cards' ? 'bg-white text-copper shadow-sm' : 'text-charcoal/40 hover:text-charcoal'
+        }`}
+        title={t('records.view_cards')}
+      >
+        <LayoutGrid size={18} />
+      </button>
+      <button
+        onClick={() => toggleView('maps')}
+        className={`p-2 rounded-md transition-colors ${
+          viewMode === 'maps' ? 'bg-white text-copper shadow-sm' : 'text-charcoal/40 hover:text-charcoal'
+        }`}
+        title={t('records.view_maps')}
+      >
+        <MapPin size={18} />
+      </button>
+    </div>
+  );
+
   return (
     <div>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center"
-            style={{ backgroundColor: `${model.color}15` }}
-          >
-            <Icon size={22} style={{ color: model.color }} />
+      {viewMode !== 'maps' && (
+        <>
+          {/* Header */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-10 h-10 rounded-xl flex items-center justify-center"
+                style={{ backgroundColor: `${model.color}15` }}
+              >
+                <Icon size={22} style={{ color: model.color }} />
+              </div>
+              <div>
+                <h1 className="text-xl font-bold text-charcoal">
+                  {isAr ? model.label_ar : model.label_en}
+                </h1>
+                <span className="text-xs text-charcoal/40">
+                  {t('records.record_count', { count: modelRecords.length })}
+                </span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {perms.has('export') && (
+                <Button variant="ghost" onClick={() => exportToExcel(model, modelRecords, language, records, models)}>
+                  <Download size={16} />
+                  {isAr ? 'تصدير' : 'Export'}
+                </Button>
+              )}
+              {perms.has('import') && (
+                <Button variant="secondary" onClick={() => setShowImport(true)}>
+                  <Upload size={16} />
+                  {isAr ? 'استيراد' : 'Import'}
+                </Button>
+              )}
+              {perms.has('create') && (
+                <Button onClick={() => navigate(`/model/${model.name}/new`)}>
+                  <Plus size={16} />
+                  {t('records.new_record')}
+                </Button>
+              )}
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-bold text-charcoal">
-              {isAr ? model.label_ar : model.label_en}
-            </h1>
-            <span className="text-xs text-charcoal/40">
-              {t('records.record_count', { count: modelRecords.length })}
-            </span>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {perms.has('export') && (
-            <Button variant="ghost" onClick={() => exportToExcel(model, modelRecords, language, records, models)}>
-              <Download size={16} />
-              {isAr ? 'تصدير' : 'Export'}
-            </Button>
-          )}
-          {perms.has('import') && (
-            <Button variant="secondary" onClick={() => setShowImport(true)}>
-              <Upload size={16} />
-              {isAr ? 'استيراد' : 'Import'}
-            </Button>
-          )}
-          {perms.has('create') && (
-            <Button onClick={() => navigate(`/model/${model.name}/new`)}>
-              <Plus size={16} />
-              {t('records.new_record')}
-            </Button>
-          )}
-        </div>
-      </div>
 
-      {/* Advanced (faceted) filters — shown in table + maps modes */}
-      {viewMode !== 'cards' && (
-        <AdvancedFilterPanel
-          model={model}
-          state={adhocFilters}
-          onChange={updateAdhocFilters}
-          collapseKey={`wassell_adhoc_collapsed_${model.id}`}
-        />
+          {/* Advanced (faceted) filters — shown in table mode only.
+              Maps mode renders its own floating filter panel below. */}
+          <AdvancedFilterPanel
+            model={model}
+            state={adhocFilters}
+            onChange={updateAdhocFilters}
+            collapseKey={`wassell_adhoc_collapsed_${model.id}`}
+          />
+
+          {/* Search + View selector + View-mode toggle */}
+          <div className="flex items-center gap-3 mb-4">
+            <div className="relative flex-1 max-w-md">
+              <Search size={16} className="absolute start-3 top-1/2 -translate-y-1/2 text-charcoal/30" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t('records.search_placeholder')}
+                className="form-input ps-9 text-sm"
+              />
+            </div>
+            {viewMode === 'table' && (
+              <ViewSelector
+                modelId={model.id}
+                views={modelViews}
+                activeViewId={activeViewId}
+                onSelect={selectView}
+                onCreateNew={() => openEditor(null)}
+                onEdit={(v) => openEditor(v)}
+              />
+            )}
+            {viewModeToggle}
+          </div>
+        </>
       )}
 
-      {/* Search + View selector + View-mode toggle */}
-      <div className="flex items-center gap-3 mb-4">
-        <div className="relative flex-1 max-w-md">
-          <Search size={16} className="absolute start-3 top-1/2 -translate-y-1/2 text-charcoal/30" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t('records.search_placeholder')}
-            className="form-input ps-9 text-sm"
-          />
-        </div>
-        {viewMode === 'table' && (
-          <ViewSelector
-            modelId={model.id}
-            views={modelViews}
-            activeViewId={activeViewId}
-            onSelect={selectView}
-            onCreateNew={() => openEditor(null)}
-            onEdit={(v) => openEditor(v)}
-          />
-        )}
-        <div className="flex bg-cream/50 p-1 rounded-lg">
-          <button
-            onClick={() => toggleView('table')}
-            className={`p-2 rounded-md transition-colors ${
-              viewMode === 'table' ? 'bg-white text-copper shadow-sm' : 'text-charcoal/40 hover:text-charcoal'
-            }`}
-            title={t('records.view_table')}
-          >
-            <Table2 size={18} />
-          </button>
-          <button
-            onClick={() => toggleView('cards')}
-            className={`p-2 rounded-md transition-colors ${
-              viewMode === 'cards' ? 'bg-white text-copper shadow-sm' : 'text-charcoal/40 hover:text-charcoal'
-            }`}
-            title={t('records.view_cards')}
-          >
-            <LayoutGrid size={18} />
-          </button>
-          <button
-            onClick={() => toggleView('maps')}
-            className={`p-2 rounded-md transition-colors ${
-              viewMode === 'maps' ? 'bg-white text-copper shadow-sm' : 'text-charcoal/40 hover:text-charcoal'
-            }`}
-            title={t('records.view_maps')}
-          >
-            <MapPin size={18} />
-          </button>
-        </div>
-      </div>
-
-      {/* Bulk action bar */}
-      {selectedIds.size > 0 && (() => {
+      {/* Bulk action bar — hidden in maps mode (no selection in maps). */}
+      {viewMode !== 'maps' && selectedIds.size > 0 && (() => {
         const pageIds = pagedRecords.map((r) => r.id);
         const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
         const hasMoreBeyondPage = filteredRecords.length > pagedRecords.length;
@@ -494,11 +503,40 @@ export default function RecordListPage() {
         />
       )}
       {viewMode === 'maps' && (
-        <MapsView
-          model={model}
-          records={filteredRecords}
-          onCardClick={(rec) => navigate(`/model/${model.name}/${rec.id}`)}
-        />
+        // Full-bleed map: negative margins escape AppLayout's `<main>` padding
+        // (`px-4 md:px-8 py-6`); explicit height fills the viewport minus the
+        // sticky header (~64px). MapsView fills this container via height:100%.
+        <div
+          className="-mx-4 md:-mx-8 -mt-6 -mb-6 relative bg-cream-light"
+          style={{ height: 'calc(100vh - 64px)' }}
+        >
+          <MapsView
+            model={model}
+            records={filteredRecords}
+            onCardClick={(rec) => navigate(`/model/${model.name}/${rec.id}`)}
+          />
+
+          {/* Floating filter chip — top-center. Defaults collapsed so it
+              looks like a chip, not a panel; expands inline downward when
+              opened. Same persistence key as table mode so collapse state
+              follows the user across views. */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[92%] max-w-2xl pointer-events-none">
+            <div className="pointer-events-auto shadow-lg rounded-xl">
+              <AdvancedFilterPanel
+                model={model}
+                state={adhocFilters}
+                onChange={updateAdhocFilters}
+                collapseKey={`wassell_adhoc_collapsed_${model.id}`}
+                defaultCollapsed
+              />
+            </div>
+          </div>
+
+          {/* Floating view-mode toggle — top-right (physical right). */}
+          <div className="absolute top-4 right-4 z-20 bg-white shadow-lg rounded-xl border border-sand/30 p-0.5">
+            {viewModeToggle}
+          </div>
+        </div>
       )}
 
       {/* Page navigator — sits below the list (not shown in maps view) */}

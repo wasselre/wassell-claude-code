@@ -18,6 +18,10 @@ interface AdvancedFilterPanelProps {
   onChange: (next: AdhocFilterState) => void;
   /** localStorage key used to persist collapsed/expanded between visits. */
   collapseKey: string;
+  /** Initial collapsed state when no localStorage entry exists yet. Defaults
+   * to false (expanded). The maps view passes true so the floating filter
+   * lands as a chip rather than a wide panel on first entry. */
+  defaultCollapsed?: boolean;
 }
 
 /**
@@ -30,13 +34,21 @@ export default function AdvancedFilterPanel({
   state,
   onChange,
   collapseKey,
+  defaultCollapsed = false,
 }: AdvancedFilterPanelProps) {
   const { t } = useTranslation();
   const { language, records, users } = useAppStore();
   const isAr = language === 'ar';
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
-    try { return localStorage.getItem(collapseKey) === '1'; } catch { return false; }
+    try {
+      const stored = localStorage.getItem(collapseKey);
+      if (stored === '1') return true;
+      if (stored === '0') return false;
+      return defaultCollapsed;
+    } catch {
+      return defaultCollapsed;
+    }
   });
   const [openFieldId, setOpenFieldId] = useState<string | null>(null);
   const anchorsRef = useRef<Record<string, HTMLButtonElement | null>>({});
