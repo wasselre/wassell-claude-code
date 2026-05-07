@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { GoogleMap, InfoWindow, Marker, useJsApiLoader } from '@react-google-maps/api';
 import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
@@ -10,8 +11,11 @@ import {
   parseMapStyleJson,
 } from '@/lib/locationUtils';
 import { useResolvedLocations } from '@/hooks/useResolvedLocations';
+import { resolveMirror } from '@/lib/mirrorResolver';
+import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import Badge from '@/components/ui/Badge';
-import type { AppModel, AppRecord, MapsConfig, ModelField } from '@/types';
+import { formatNumberWithCommas, formatRangeValue } from './RangeField';
+import type { AppModel, AppRecord, MapsConfig, ModelField, NoteEntry, User } from '@/types';
 
 interface MapsViewProps {
   model: AppModel;
@@ -23,7 +27,7 @@ const mapContainerStyle = { width: '100%', height: 'calc(100vh - 320px)', minHei
 
 export default function MapsView({ model, records, onCardClick }: MapsViewProps) {
   const { t } = useTranslation();
-  const { language } = useAppStore();
+  const { language, records: allRecords, models, users } = useAppStore();
   const isAr = language === 'ar';
 
   const cfg = model.maps_config;
@@ -89,6 +93,10 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
               cfg={cfg}
               fields={allFields}
               isAr={isAr}
+              t={t}
+              allRecords={allRecords}
+              models={models}
+              users={users}
               openLabel={t('maps.open_record')}
               onOpen={() => onCardClick(selectedPin.record)}
             />
@@ -128,11 +136,26 @@ interface PopupContentProps {
   cfg: MapsConfig;
   fields: ModelField[];
   isAr: boolean;
+  t: TFunction;
+  allRecords: Record<string, AppRecord[]>;
+  models: AppModel[];
+  users: User[];
   openLabel: string;
   onOpen: () => void;
 }
 
-function PopupContent({ record, cfg, fields, isAr, openLabel, onOpen }: PopupContentProps) {
+function PopupContent({
+  record,
+  cfg,
+  fields,
+  isAr,
+  t,
+  allRecords,
+  models,
+  users,
+  openLabel,
+  onOpen,
+}: PopupContentProps) {
   const byId = new Map(fields.map((f) => [f.id, f]));
   const titleField = cfg.popup_title_field_id ? byId.get(cfg.popup_title_field_id) : undefined;
   const subtitleField = cfg.popup_subtitle_field_id ? byId.get(cfg.popup_subtitle_field_id) : undefined;
@@ -141,13 +164,141 @@ function PopupContent({ record, cfg, fields, isAr, openLabel, onOpen }: PopupCon
     .map((id) => byId.get(id))
     .filter((f): f is ModelField => Boolean(f));
 
-  const renderValue = (field: ModelField): string => {
-    const raw = record.data[field.name];
-    if (raw == null || raw === '') return '—';
-    if (Array.isArray(raw)) return raw.join(', ');
-    if (typeof raw === 'object') return JSON.stringify(raw);
-    return String(raw);
+  const joinSep = isAr ? '، ' : ', ';
+
+  const formatScalar = (field: ModelField, raw: unknown): string => {
+    if (raw === null || raw === undefined || raw === '') return '—';
+
+    switch (field.type) {
+      case 'dropdown': {
+        const opt = field.options?.find((o) => o.value === raw);
+        if (!opt) return String(raw);
+        return isAr ? opt.label_ar : opt.label_en;
+      }
+
+      case 'multiselect':
+      case 'section_selector': {
+        const vals = Array.isArray(raw) ? (raw as unknown[]) : [];
+        if (vals.length === 0) return '—';
+        return vals
+          .map((v) => {
+            const opt = field.options?.find((o) => o.value === v);
+            return opt ? (isAr ? opt.label_ar : opt.label_en) : String(v);
+          })
+          .join(joinSep);
+      }
+
+      case 'lookup': {
+        if (!field.lookup_model_id || !field.lookup_display_field) return '—';
+        const linked = allRecords[field.lookup_model_id] ?? [];
+        const displayName = field.lookup_display_field;
+        const resolveOne = (id: unknown): string => {
+          if (typeof id !== 'string' || !id) return '';
+          const rec = linked.find((r) => r.id === id);
+          if (!rec) return isAr ? 'سجل محذوف' : 'Deleted record';
+          const dv = rec.data[displayName];
+          if (dv === null || dv === undefined || typeof dv === 'object') return id.slice(0, 8);
+          const s = String(dv);
+          return s.trim() === '' ? id.slice(0, 8) : s;
+        };
+        if (field.is_multi || Array.isArray(raw)) {
+          const ids = Array.isArray(raw) ? raw : [];
+          if (ids.length === 0) return '—';
+          return ids.map(resolveOne).filter(Boolean).join(joinSep);
+        }
+        const out = resolveOne(raw);
+        return out || '—';
+      }
+
+      case 'range': {
+        const str = formatRangeValue(field, raw, isAr);
+        return str || '—';
+      }
+
+      case 'currency': {
+        const num = Number(raw);
+        if (!Number.isFinite(num)) return String(raw);
+        const formatted = num.toLocaleString(isAr ? 'ar-SA' : 'en-SA');
+        return `${formatted} ${isAr ? 'ر.س' : 'SAR'}`;
+      }
+
+      case 'number': {
+        const num = Number(raw);
+        if (!Number.isFinite(num)) return String(raw);
+        return formatNumberWithCommas(num, isAr);
+      }
+
+      case 'formula': {
+        if (isFormulaErrorValue(raw)) return String(raw);
+        const locale = isAr ? 'ar-SA' : 'en-SA';
+        return formatFormulaValue(raw as number | string, field, locale);
+      }
+
+      case 'date': {
+        try {
+          const d = new Date(String(raw));
+          if (isNaN(d.getTime())) return String(raw);
+          return d.toLocaleDateString(isAr ? 'ar-SA' : 'en-GB');
+        } catch {
+          return String(raw);
+        }
+      }
+
+      case 'datetime': {
+        try {
+          const d = new Date(String(raw));
+          if (isNaN(d.getTime())) return String(raw);
+          const date = d.toLocaleDateString(isAr ? 'ar-SA' : 'en-GB');
+          const time = d.toLocaleTimeString(isAr ? 'ar-SA' : 'en-GB', { hour: '2-digit', minute: '2-digit' });
+          return `${date} ${time}`;
+        } catch {
+          return String(raw);
+        }
+      }
+
+      case 'checkbox':
+        return raw ? (isAr ? 'نعم' : 'Yes') : (isAr ? 'لا' : 'No');
+
+      case 'notes': {
+        const entries: NoteEntry[] = Array.isArray(raw)
+          ? (raw as unknown[]).filter(
+              (e): e is NoteEntry =>
+                !!e && typeof e === 'object' && typeof (e as NoteEntry).text === 'string',
+            )
+          : [];
+        if (entries.length === 0) return t('fields.notes_count_zero');
+        if (entries.length === 1) return t('fields.notes_count_one');
+        if (isAr && entries.length === 2) return t('fields.notes_count_two');
+        return t('fields.notes_count_other', { count: entries.length });
+      }
+
+      case 'assignee': {
+        if (typeof raw !== 'string' || !raw) return '—';
+        const u = users.find((x) => x.id === raw);
+        if (!u) return isAr ? 'غير معيّن' : 'Unassigned';
+        return isAr ? u.name_ar : u.name_en;
+      }
+
+      case 'mirror': {
+        const res = resolveMirror(field, record.data, allRecords, models);
+        if (res.status === 'target_record_missing') return isAr ? 'سجل محذوف' : 'Deleted record';
+        if (res.status !== 'ok' || !res.targetField) return '—';
+        if (Array.isArray(res.value)) {
+          if (res.value.length === 0) return '—';
+          return res.value.map((v) => formatScalar(res.targetField!, v)).filter(Boolean).join(joinSep);
+        }
+        return formatScalar(res.targetField, res.value);
+      }
+
+      // text, textarea, email, phone, url, auto_id, and any unhandled type
+      default:
+        if (Array.isArray(raw)) return raw.map((v) => String(v)).join(joinSep);
+        if (typeof raw === 'object') return JSON.stringify(raw);
+        return String(raw);
+    }
   };
+
+  const renderValue = (field: ModelField): string => formatScalar(field, record.data[field.name]);
 
   const title = titleField ? renderValue(titleField) : `#${record.id.slice(0, 8)}`;
   const subtitle = subtitleField ? renderValue(subtitleField) : null;
