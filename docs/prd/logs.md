@@ -1,7 +1,7 @@
 # PRD: Activity Log
 
 **Status:** Live
-**Last updated:** 2026-04-26
+**Last updated:** 2026-05-07 (**RLS hardening + immutability — Phase B.3, deployed 2026-05-07.** The previous `Authenticated full access` USING(true) WITH CHECK(true) FOR ALL policy on `activity_log` let any user read every other user's actions and rewrite history via UPDATE — both wrong for an audit log. The policy is now split into per-command policies: `activity_log_select` (admin sees all events; non-admin sees only events where `actor_user_id = wassell_app_user_id((SELECT auth.uid()))`), `activity_log_insert` (admin can stamp any actor; non-admin must self-stamp — NULL `actor_user_id` is rejected to prevent anonymous logging), `activity_log_delete` (admin only — for retention pruning). **No UPDATE policy** — audit logs are formally immutable. Any UPDATE attempt now returns `42501`. Service-role inserts (the Vercel API routes / webhooks paths) bypass RLS as before. The frontend logger in `src/lib/activityLogger.ts` already stamps `actor_user_id = currentUserId` so non-admin INSERTs continue to work; system events that would have written `actor_user_id = NULL` from a signed-in non-admin session would now be rejected — those paths run via the service-role helper in `api/_lib/activityLogger.ts`.)
 **Related PRDs:** [workflow-logs.md](workflow-logs.md), [ai-agent.md](ai-agent.md), [access-control.md](access-control.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
@@ -23,6 +23,7 @@ Before this page, debugging "what happened" required jumping between Supabase St
 - **Sign-in logs only on identity transition.** A page reload that restores a cached session does NOT produce a sign_in event — only a real auth-state change from null → email does.
 - **Two-tier storage cap.** In-memory + localStorage holds the most recent 200 entries. Supabase keeps everything; the LogsPage loads the most recent 500 on mount via `loadActivityLog(500)`. There is no automatic purge — admins can run a SQL delete from Supabase Studio when they want a cleanup, or use the "Clear all" button which deletes the rows currently visible.
 - **Logging is fire-and-forget.** Any error writing to the log is swallowed (logged to console only) so logging never breaks the action that triggered it.
+- **RLS-enforced visibility (Phase B.3, 2026-05-07).** Non-admin users see only their own events when querying the table directly (`actor_user_id = wassell_app_user_id((SELECT auth.uid()))`). Admins see everything. INSERTs require self-stamping; DELETEs are admin-only; UPDATEs are blocked entirely (no policy authorizes them). Service-role inserts (Vercel API routes + webhooks) bypass RLS so server-side `logServerActivity` / `logApiRequest` / `logWebhookReceipt` continue to work unchanged.
 
 ## User flows
 1. **Admin investigates a deletion:** opens `/logs`, filters category=`record`, types a record name in search → finds the row → clicks → right pane shows the deleting user, the timestamp, and `details.last_snapshot` with the full record data at delete time.
@@ -52,7 +53,8 @@ Before this page, debugging "what happened" required jumping between Supabase St
 
 ## Open questions / known limitations
 - **No retention/auto-purge.** The table grows unboundedly until admin clears it. Acceptable for v1 staff-only launch; revisit when external clients onboard.
-- **No real-time stream.** The page reloads on mount and on the manual Refresh button; events that land while the page is open don't appear until refresh. Future: subscribe to `activity_log` via Supabase Realtime.
+- **No real-time stream — but `activity_log` is NOT yet on the realtime publication.** The 2026-05-07 refactor added 11 tables to `supabase_realtime` (records, models, workflows, etc.) but `activity_log` was intentionally left off — busy installations would generate noisy events that aren't useful in the chrome. The page reloads on mount and on the manual Refresh button; events that land while the page is open don't appear until refresh. Future: opt in if it proves needed.
 - **Bulk operations log per-row.** A bulk import of 500 records produces 500 `record.create` rows. Acceptable; if it ever becomes noisy we can add a `bulk_id` column to group them.
 - **Page-view tracking is record-only.** We log when a user opens a specific record, but not when they navigate to a list, dashboard, or settings page. Adds noise without much forensic value; revisit if needed.
-- **Clear-all only purges visible rows.** Older Supabase rows beyond the 500 most-recent stay in the database. Use Supabase Studio for a full purge.
+- **Clear-all only purges visible rows.** Older Supabase rows beyond the 500 most-recent stay in the database. Use Supabase Studio for a full purge — admins use the new `slow_query_log()` admin function to identify pruning candidates.
+- **Non-admin users can't see system events.** The B.3 policy split rejects INSERTs with NULL `actor_user_id` from authenticated users (only service-role bypasses), so any system event that doesn't carry an actor must go through the server-side logger. Admin SELECTs see everything regardless.

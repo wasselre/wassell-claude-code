@@ -1,8 +1,8 @@
 # PRD: Workflow Execution Logs
 
 **Status:** Live
-**Last updated:** 2026-04-26
-**Related PRDs:** workflow-automation.md, [logs.md](logs.md)
+**Last updated:** 2026-05-07 (**Realtime added — Phase C.1, deployed 2026-05-07.** `workflow_runs` is now on the `supabase_realtime` publication at `REPLICA IDENTITY DEFAULT` (PK only) — when a workflow fires in another browser session (or in a Vercel API route), the `RealtimeOrchestrator`'s `mergeWorkflowRun` handler refetches the row by id and applies it to the in-memory store. The Workflow Logs list will reflect new entries live without a manual refresh once the consumer is wired up; today the list still reloads on mount, so this is foundation work for a follow-up that subscribes the page to realtime updates. The list page is unchanged in this update.)
+**Related PRDs:** workflow-automation.md, [logs.md](logs.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
 Every time a workflow fires — successful, skipped, or failed — the system writes a detailed log entry. The Workflow Logs page shows all those entries, and clicking one opens a page that explains step-by-step what the workflow actually did: which conditions it checked (what it expected vs. what it actually read), which actions it ran, what values were resolved for each action, which records were touched, and a before/after diff of changed fields. Designed to answer "why did this happen?" (or "why didn't it happen?") without digging through code.

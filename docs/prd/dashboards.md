@@ -1,8 +1,8 @@
 # PRD: Dashboards
 
 **Status:** Live
-**Last updated:** 2026-04-19 (range-field filter support — min/max sub-path picker)
-**Related PRDs:** model-builder.md, record-management.md, access-control.md
+**Last updated:** 2026-05-07 (**Realtime + access hardening — Phases B.1+B.2, C.1, deployed 2026-05-07.** `dashboards` is now on the `supabase_realtime` publication at `REPLICA IDENTITY FULL` — multi-user dashboard edits propagate live to other open browsers via the `RealtimeOrchestrator`. The public-dashboard read path is unchanged but reinforced: `get_public_dashboard(p_token)` is now the **only** public-schema RPC explicitly granted `EXECUTE` to `anon` (every other function had `REVOKE EXECUTE FROM PUBLIC` applied). Anon callers get `42501` on any other function. The token-based public access at `/public/dashboard/:token` continues to work because the function is SECURITY DEFINER and enforces both `is_public = true` AND `token = p_token` server-side.) | 2026-04-19 (range-field filter support — min/max sub-path picker)
+**Related PRDs:** model-builder.md, record-management.md, access-control.md, data-storage.md
 
 ## What it is (in plain English)
 Dashboards are visual, drag-and-drop reports built on top of the user's records. A dashboard is a canvas of widgets: stat cards, bar charts, pie charts, line charts, and tables. Each widget is pointed at a model, filtered, grouped/aggregated, and laid out on a grid. Dashboards can be shared publicly via a tokenized URL — no login needed for viewers.

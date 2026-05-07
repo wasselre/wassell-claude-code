@@ -1,8 +1,28 @@
 # PRD: Access Control (Users, Roles, Profiles)
 
 **Status:** Live (user-management feature complete; locked for ~6 months)
-**Last updated:** 2026-05-06
-**Related PRDs:** model-builder.md, record-management.md, workflow-automation.md
+**Last updated:** 2026-05-07
+**Related PRDs:** model-builder.md, record-management.md, workflow-automation.md, data-storage.md, logs.md
+
+> **2026-05-07 — Production RLS + privilege hardening (Phases A.1, A.4, B.1–B.4, B-followup).**
+>
+> The full database access surface was tightened in one pass. Highlights:
+>
+> - **A.1 — RLS init-plan wraps.** Every `auth.uid()` reference inside an RLS policy was rewritten as `(SELECT auth.uid())` so Postgres evaluates it once per query as an InitPlan node, not once per row. Logically identical RLS; ~10–100× planner improvement at scale. Also patched the `regenerate_frozen_model_artifacts` policy generator so future freezes emit the wrapped form, then re-regenerated artifacts for every existing frozen model. Resolves Supabase advisor `auth_rls_initplan` (24 → 0).
+> - **A.4 — `SET search_path = public, pg_temp`** on every SECURITY DEFINER function in `public`. Closes the search-path attack surface where an unprivileged user could shadow `public.records` (or any other catalog object) by creating a same-named object in a schema earlier on the search path. Resolves `function_search_path_mutable` (12 → 0).
+> - **B.1 + B.2 — `REVOKE EXECUTE FROM PUBLIC` on every public-schema function**, then explicit `GRANT EXECUTE` only to the roles that should have access. The frontend bundle ships the public anon key — without this, anyone could `curl POST /rest/v1/rpc/freeze_model` or `/rpc/drop_model_view`. After the migration: `anon` keeps **only** `get_public_dashboard`. `authenticated` keeps `record_save` / `record_delete` / `wassell_*` RLS helpers / `try_*` view casts / `get_public_dashboard` / `search_all_projects`. `service_role` is unaffected (Vercel API routes / webhooks / triggers). Resolves `anon_security_definer_function_executable` (24 → 1) and `authenticated_security_definer_function_executable` (24 → ~10 legitimate).
+> - **B.3 — `activity_log` RLS split into per-command policies.** The previous `Authenticated full access` USING(true) WITH CHECK(true) FOR ALL policy let any user read every other user's actions and rewrite history via UPDATE. Now: `activity_log_select` (admin sees all; non-admin sees only their own events), `activity_log_insert` (admin or self-stamped; rejects NULL `actor_user_id` to prevent anonymous logging), `activity_log_delete` (admin only — for retention pruning), and **NO UPDATE policy** — audit logs are now formally **immutable**. Service-role inserts (Vercel API routes, webhooks) bypass RLS entirely.
+> - **B.4 — Multiple-permissive policy split.** 9 tables had a `*_read PERMISSIVE SELECT` policy AND a `*_write PERMISSIVE ALL` policy. Postgres evaluates BOTH on every SELECT (OR-combined). Splitting `*_write FOR ALL` into separate `*_insert` / `*_update` / `*_delete` policies means SELECT now has exactly one PERMISSIVE policy. Same RLS logic, different decomposition. Tables: `field_templates`, `model_groups`, `models`, `profiles`, `roles`, `users`, `model_views`, `marketing_operations__facts`, `marketing_operations__sources`. Also patched `freeze_model` so future frozen-model junction tables get the same split. Resolves `multiple_permissive_policies` (9 → 0).
+> - **B-followup — 11 always-true policies tightened by category.**
+>   - **Webhook-driven** (read for users, write only via service_role): `chat_messages`, `call_logs`, `webhook_payloads` → SELECT for authenticated; INSERT/UPDATE/DELETE only via service_role from `/api/webhook/*`. (`webhook_payloads_consume_update` is intentionally kept open so the marketing UI can mark payloads consumed.)
+>   - **Marketing data** (admin write, authenticated read): `competitors`, `posts`, `reels`, `research_questions`.
+>   - **Settings** (admin write, authenticated read): `webhook_slugs`, `whatsapp_numbers`.
+>   - **Per-user notifications**: `marketing_notifications` → SELECT/UPDATE for owner-or-admin; INSERT/DELETE for admin only.
+>   - **Deprecated wa_***: `wa_conversations`, `wa_errors`, `wa_leads` → admin-only for ALL operations.
+>   - **Intentionally kept at USING(true)**: `whiteboards`, `whiteboard_folders` (multi-user collaboration design); `workflow_runs_insert` (any save can log).
+> - **B.5 — Auth leaked-password protection** is a project-level Supabase dashboard toggle, not a code change. Out of scope for the refactor; flag for the user to enable in Auth → Password requirements.
+>
+> The result: non-admin sessions get exactly the rows their profile allows even when querying Supabase directly. The client is no longer the trust boundary.
 
 > **2026-05-06 — User-management plan complete (Phases 1–4).**
 >
@@ -131,6 +151,27 @@ Real-estate offices have clear hierarchies (researchers, salespeople, managers, 
 - **Sidebar filter:** models a user lacks `view` on are hidden from the nav; groups with zero visible models are hidden too.
 - **Workflow assignment via role field:** a workflow action can say "assign this record to the user who holds role *Regional Manager* where *Region = record.region*". If the referenced role is later deleted, the Workflow editor surfaces a red warning next to the role picker.
 
+## Database-side enforcement (post-2026-05-07)
+The 2026-05-07 hardening pass moved enforcement out of the client. Treat the client as a UX-helper layer; the database is now the trust boundary.
+
+- **Every public-schema function has its EXECUTE privilege explicitly granted.** `REVOKE EXECUTE ... FROM PUBLIC` was applied to all of `public`. After that, only the explicitly-granted functions are callable via the REST RPC surface:
+  - `anon` → `get_public_dashboard(text)` only.
+  - `authenticated` → `record_save` (5-arg `(p_model_id, p_id, p_data, p_created_by, p_expected_version)` — the prior 4-arg signature was DROPPED in Phase F.2 to avoid overload ambiguity; `p_expected_version` defaults to NULL so callers that don't track versions are unaffected), `record_delete`, `wassell_app_user_id`, `wassell_is_admin`, `wassell_user_has_action`, `wassell_record_passes_scope`, `wassell_can_view_record` / `_edit` / `_create` / `_delete`, `wassell_can_view_jsonb` / `_edit_jsonb`, `try_boolean` / `try_numeric` / `try_timestamptz` (used by the auto-generated `v_<model>` views via `security_invoker`), `record_assign_auto_id`, `record_search`, `get_public_dashboard`, `search_all_projects`.
+  - `service_role` → unaffected (Vercel API routes / webhooks / triggers continue to work).
+  - **An anon `curl POST /rest/v1/rpc/freeze_model` now returns `42501` instead of running.**
+- **All SECURITY DEFINER functions in `public` have `SET search_path = public, pg_temp`.** Closes the search-path attack surface where an unprivileged user could shadow `public.records` (or any other catalog object) by creating a same-named object earlier on the search path.
+- **Every RLS policy uses `(SELECT auth.uid())`** instead of bare `auth.uid()`. Postgres evaluates `auth.uid()` once per query as an InitPlan node, not once per row — the same correctness, ~10–100× planner improvement at scale. The `regenerate_frozen_model_artifacts` policy generator emits the wrapped form, so future freezes inherit it automatically.
+- **Per-table policy posture (post-B-followup):**
+  - `records` — per-row gating via `wassell_can_*_record` helpers (Phase 1 — pre-existing). Init-plan wrapped.
+  - `activity_log` — split: SELECT (admin sees all, users see their own), INSERT (admin OR self-stamped, NULL `actor_user_id` rejected), DELETE (admin only). **No UPDATE policy — audit log is immutable** (any UPDATE returns 42501).
+  - `field_templates`, `model_groups`, `models`, `profiles`, `roles`, `users`, `model_views`, `marketing_operations__facts`, `marketing_operations__sources` — split into separate INSERT/UPDATE/DELETE policies (instead of the prior `*_write FOR ALL`). Same effective rules (admin-only writes), now with exactly one PERMISSIVE policy on SELECT.
+  - **Webhook tables** (`chat_messages`, `call_logs`, `webhook_payloads`) — SELECT-only for `authenticated`. INSERT/UPDATE/DELETE go through `service_role` from `/api/webhook/*` handlers (bypassing RLS). `webhook_payloads_consume_update` intentionally remains permissive so the marketing UI can mark payloads consumed.
+  - **Marketing data + settings** (`competitors`, `posts`, `reels`, `research_questions`, `webhook_slugs`, `whatsapp_numbers`) — admin write, authenticated read.
+  - `marketing_notifications` — owner-or-admin SELECT/UPDATE (UPDATE for `read_at`); admin-only INSERT/DELETE.
+  - **Deprecated `wa_*` tables** (`wa_conversations`, `wa_errors`, `wa_leads`) — admin-only for ALL operations (per CLAUDE.md these are unused, scheduled for drop).
+  - **Intentionally permissive (USING(true))**: `whiteboards`, `whiteboard_folders` (multi-user collaboration design); `workflow_runs_insert` (any user save can produce a run that needs to log).
+- **Frozen tables.** Each frozen table runs `frozen_view` / `frozen_insert` / `frozen_update` / `frozen_delete` policies + `frozen_junction_view` / `frozen_junction_write` for junctions, all wrapped with `(SELECT auth.uid())`. `wassell_can_view_jsonb` / `wassell_can_edit_jsonb` build a synthetic `records` row from the frozen-table columns and delegate to `wassell_record_passes_scope`. See data-storage.md "Frozen models" for details.
+
 ## Invariants (enforced in the store)
 Every destructive mutation returns `{ ok: true } | { ok: false, reason }`. UI guards (disabled buttons, hidden options) are ergonomic; the store is the single source of truth.
 
@@ -195,6 +236,12 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | `src/types/index.ts` | `User`, `Profile`, `Role`, `UserRoleAssignment`, `StoreMutationResult` |
 | `src/data/seedUsers.ts` | Seeded admin + Sales profiles, seeded roles, seeded admin user |
 | `src/stores/appStore.ts` | `users`, `profiles`, `roles` state; invariant enforcement; migration/heal |
+| `supabase/migrations/2026-05-06_a1_rls_initplan_wrap.sql` | RLS init-plan wraps for all 24 advisor-flagged policies; updates `regenerate_frozen_model_artifacts` to emit the wrapped form; re-regenerates artifacts for every existing frozen model |
+| `supabase/migrations/2026-05-06_a4_definer_search_path.sql` | `SET search_path = public, pg_temp` on every public-schema SECURITY DEFINER function |
+| `supabase/migrations/2026-05-06_b1_b2_revoke_definer_execute.sql` | `REVOKE EXECUTE ... FROM PUBLIC` on every public function; explicit `GRANT EXECUTE` to `anon` / `authenticated` |
+| `supabase/migrations/2026-05-06_b3_activity_log_rls.sql` | activity_log SELECT/INSERT/DELETE policy split; no UPDATE (audit log is immutable) |
+| `supabase/migrations/2026-05-06_b4_dedupe_permissive_policies.sql` | `*_write FOR ALL` → `*_insert` / `*_update` / `*_delete` split on 9 tables; `freeze_model` patched to emit the split for future frozen junctions |
+| `supabase/migrations/2026-05-07_b_followup_tighten_always_true_policies.sql` | 11 always-true policies tightened (webhook, marketing, settings, notifications, deprecated wa_*) |
 
 ## Open questions / deliberate non-goals
 After the Phase 1–4 roadmap, the system is feature-complete. The remaining

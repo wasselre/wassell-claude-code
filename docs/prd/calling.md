@@ -1,8 +1,8 @@
 # PRD: Calling (Hatif integration)
 
 **Status:** Live
-**Last updated:** 2026-04-25
-**Related PRDs:** [record-management.md](record-management.md), [data-storage.md](data-storage.md)
+**Last updated:** 2026-05-07 (**RLS + replica identity hardening, deployed 2026-05-07.** `call_logs` got Phase B-followup's webhook-table treatment: SELECT for `authenticated`, no INSERT/UPDATE/DELETE for users — every write goes through `service_role` from `/api/webhook/hatif-call.ts`. The pre-existing `Authenticated full access` USING(true) policy is gone. Replica identity is now `FULL` (Phase A.5) so realtime UPDATE/DELETE payloads on a panel-driven UPDATE carry the whole row instead of just the PK — the `CallHistoryPanel`'s realtime subscription gets full rows without a refetch.)
+**Related PRDs:** [record-management.md](record-management.md), [data-storage.md](data-storage.md), [access-control.md](access-control.md)
 
 ## What it is (in plain English)
 Every voice call that Hatif's platform sees on one of our channels — inbound from a customer, automated outbound (IVR) triggered by our app, or a live call an agent places from Hatif's own mobile/desktop app — lands as a logged row in the CRM. When a staff member opens a client record, they see every past call with that client: who placed it, when, how long, whether it was answered, an AI-generated summary, the sentiment, an audio player for the recording, and the full transcript. New calls stream in live — no refresh needed.
