@@ -386,6 +386,17 @@ export interface AppRecord {
   created_by_user_id?: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Optimistic-concurrency version (Phase F.2). Bumped by a BEFORE UPDATE
+   * trigger on `records`. The store passes the loaded `version` into
+   * `record_save` as `p_expected_version` on every save; if another tab
+   * has bumped it server-side since we loaded, the RPC raises
+   * `version_mismatch` and we surface a "reload to see latest" toast
+   * rather than silently overwriting their edit. May be missing on
+   * records imported before the column existed — null is treated as
+   * "skip the check" by the RPC.
+   */
+  version?: number;
 }
 
 // Freeze types — see `freeze_model()` in supabase/schema.sql.
@@ -1576,11 +1587,30 @@ export interface CallLog {
 
 // Store types
 
+// Phase E.2: paginated records cache. Imported here to avoid a
+// circular import — recordsCache.ts depends on AppRecord which is
+// declared in this file.
+import type { PaginatedRecordsByModel } from '../lib/recordsCache';
+
+export interface LoadRecordsPageOpts {
+  filters?: Record<string, unknown>;
+  searchText?: string;
+  /** Force a page-1 reload even if the existing cache matches the filter context. */
+  reset?: boolean;
+  /** Per-call override; default 50, max 500 (clamped server-side). */
+  limit?: number;
+}
+
 export interface AppState {
   // Data
   models: AppModel[];
   groups: ModelGroup[];
   records: Record<string, AppRecord[]>;
+  /** Phase E.2: per-model paginated cache, populated by
+   *  `loadRecordsPage`. Coexists with the legacy `records` slice;
+   *  RecordListPage opts in via the VITE_PAGINATED_RECORDS feature
+   *  flag. */
+  recordsByModel: PaginatedRecordsByModel;
   workflows: Workflow[];
   workflowGroups: WorkflowGroup[];
   workflowRuns: WorkflowRun[];
@@ -1613,8 +1643,23 @@ export interface AppState {
   language: Language;
   toasts: Toast[];
 
+  // Phase E.2: server-side cursor pagination via record_search RPC.
+  /** Fetches the next page of records for `modelId` with the given
+   *  filter context. Idempotent: repeated calls advance via the
+   *  cached cursor. Pass `reset: true` to start from page 1 (used
+   *  when filters change). Result lands in `state.recordsByModel`. */
+  loadRecordsPage: (modelId: string, opts?: LoadRecordsPageOpts) => Promise<void>;
+
   // Init
   initialized: boolean;
+  /** Phase D.2: True once the chrome-critical loads are done (groups,
+   *  models, profiles, roles, users, views, dashboards, current-user
+   *  resolution). The slow tail (records, workflows, workflow_runs,
+   *  whiteboards, activity_log) may still be in flight. Components that
+   *  only need chrome data — Sidebar, Header, navigation — render as
+   *  soon as this flips. Page bodies that need records can show a
+   *  skeleton until `initialized` flips. */
+  criticalDataReady: boolean;
   initialize: () => Promise<void>;
 
   // Auth actions
@@ -1665,7 +1710,7 @@ export interface AppState {
 
   // Records
   getRecords: (modelId: string) => AppRecord[];
-  saveRecord: (record: AppRecord) => void;
+  saveRecord: (record: AppRecord) => Promise<void>;
   deleteRecord: (modelId: string, recordId: string) => void;
   // Re-saves every record on the model where `targetFieldId`'s value is empty,
   // causing the save-time fallback resolver to fill it. Used by the Builder's

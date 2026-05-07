@@ -1,0 +1,36 @@
+-- ============================================================
+-- Phase A.5 — REPLICA IDENTITY FULL on chat_messages, call_logs
+-- ============================================================
+-- These two tables are members of the supabase_realtime publication
+-- but were left at REPLICA IDENTITY DEFAULT (PK only). With default
+-- replica identity, UPDATE/DELETE WAL records carry only the primary
+-- key — the realtime broadcaster cannot synthesize the full old/new
+-- row payload, so subscribers receive partial events.
+--
+-- FULL replica identity logs the entire row image to WAL on every
+-- UPDATE/DELETE, so subscribers receive complete payloads. Cost is
+-- additional WAL volume per write, proportional to row size.
+--
+-- Why FULL is OK here:
+--   chat_messages: low write rate, average row <2KB, ~119 rows total.
+--     WAL impact negligible.
+--   call_logs:     low write rate, average row <5KB, 107 rows total.
+--     WAL impact negligible.
+--
+-- High-volume tables (records, workflow_runs, activity_log) MUST NOT
+-- get FULL — their WAL cost compounds. Phase C.2 will set those at
+-- DEFAULT and the merge handlers will refetch full row by id when
+-- the payload only carries PK. See plan H section.
+--
+-- Verification:
+--   SELECT relname, relreplident FROM pg_class WHERE relname IN
+--     ('chat_messages','call_logs');
+--   → both 'f'
+--
+-- Rollback:
+--   ALTER TABLE chat_messages REPLICA IDENTITY DEFAULT;
+--   ALTER TABLE call_logs     REPLICA IDENTITY DEFAULT;
+-- ============================================================
+
+ALTER TABLE public.chat_messages REPLICA IDENTITY FULL;
+ALTER TABLE public.call_logs     REPLICA IDENTITY FULL;

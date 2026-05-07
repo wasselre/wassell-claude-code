@@ -331,6 +331,22 @@ CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow_id ON workflow_runs(workfl
 CREATE UNIQUE INDEX IF NOT EXISTS uniq_model_views_default
   ON model_views(model_id, user_id) WHERE is_default = true;
 
+-- ── Phase A.2 (2026-05-06): covering indexes for unindexed FKs ────
+-- Without these, parent-row DELETE/UPDATE forces a full sequential
+-- scan of the child table to verify orphans. Trivially fast at
+-- current scale; essential at any meaningful row count.
+CREATE INDEX IF NOT EXISTS idx_competitors_created_by              ON public.competitors(created_by);
+CREATE INDEX IF NOT EXISTS idx_marketing_operations_created_by_user_id ON public.marketing_operations(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_models_group_id                     ON public.models(group_id);
+CREATE INDEX IF NOT EXISTS idx_records_created_by_user_id          ON public.records(created_by_user_id);
+CREATE INDEX IF NOT EXISTS idx_research_questions_answered_by      ON public.research_questions(answered_by);
+CREATE INDEX IF NOT EXISTS idx_users_profile_id                    ON public.users(profile_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_payloads_consumed_by        ON public.webhook_payloads(consumed_by);
+CREATE INDEX IF NOT EXISTS idx_webhook_payloads_slug_id            ON public.webhook_payloads(slug_id);
+CREATE INDEX IF NOT EXISTS idx_webhook_slugs_created_by            ON public.webhook_slugs(created_by);
+CREATE INDEX IF NOT EXISTS idx_workflows_group_id                  ON public.workflows(group_id);
+CREATE INDEX IF NOT EXISTS idx_workflows_trigger_model_id          ON public.workflows(trigger_model_id);
+
 -- ============================================================
 -- AUTO-UPDATE updated_at TRIGGER
 -- ============================================================
@@ -643,52 +659,52 @@ DROP POLICY IF EXISTS "workflow_runs_delete"   ON workflow_runs;
 DROP POLICY IF EXISTS "dashboards_admin"       ON dashboards;
 
 -- Records: per-row gating. Admin profiles bypass via the helpers.
-CREATE POLICY "records_view"   ON records FOR SELECT TO authenticated USING (wassell_can_view_record(auth.uid(), records.*));
-CREATE POLICY "records_insert" ON records FOR INSERT TO authenticated WITH CHECK (wassell_can_create_record(auth.uid(), records.*));
-CREATE POLICY "records_update" ON records FOR UPDATE TO authenticated USING (wassell_can_edit_record(auth.uid(), records.*)) WITH CHECK (wassell_can_edit_record(auth.uid(), records.*));
-CREATE POLICY "records_delete" ON records FOR DELETE TO authenticated USING (wassell_can_delete_record(auth.uid(), records.*));
+CREATE POLICY "records_view"   ON records FOR SELECT TO authenticated USING (wassell_can_view_record((SELECT auth.uid()), records.*));
+CREATE POLICY "records_insert" ON records FOR INSERT TO authenticated WITH CHECK (wassell_can_create_record((SELECT auth.uid()), records.*));
+CREATE POLICY "records_update" ON records FOR UPDATE TO authenticated USING (wassell_can_edit_record((SELECT auth.uid()), records.*)) WITH CHECK (wassell_can_edit_record((SELECT auth.uid()), records.*));
+CREATE POLICY "records_delete" ON records FOR DELETE TO authenticated USING (wassell_can_delete_record((SELECT auth.uid()), records.*));
 
 -- Models / model_groups: read for the UI, write for admins.
 CREATE POLICY "models_read"        ON models       FOR SELECT TO authenticated USING (true);
-CREATE POLICY "models_write"       ON models       FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "models_write"       ON models       FOR ALL    TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "model_groups_read"  ON model_groups FOR SELECT TO authenticated USING (true);
-CREATE POLICY "model_groups_write" ON model_groups FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "model_groups_write" ON model_groups FOR ALL    TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 
 -- Profiles / roles: read for UI rendering, write for admins.
 CREATE POLICY "profiles_read"  ON profiles FOR SELECT TO authenticated USING (true);
-CREATE POLICY "profiles_write" ON profiles FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "profiles_write" ON profiles FOR ALL    TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "roles_read"     ON roles    FOR SELECT TO authenticated USING (true);
-CREATE POLICY "roles_write"    ON roles    FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "roles_write"    ON roles    FOR ALL    TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 
 -- Users: read for assignee/role pickers; write for admin OR self.
 CREATE POLICY "users_read"  ON users FOR SELECT TO authenticated USING (true);
 CREATE POLICY "users_write" ON users FOR ALL    TO authenticated
-  USING (wassell_is_admin(auth.uid()) OR users.auth_uid = auth.uid())
-  WITH CHECK (wassell_is_admin(auth.uid()) OR users.auth_uid = auth.uid());
+  USING (wassell_is_admin((SELECT auth.uid())) OR users.auth_uid = (SELECT auth.uid()))
+  WITH CHECK (wassell_is_admin((SELECT auth.uid())) OR users.auth_uid = (SELECT auth.uid()));
 
 -- Saved views: read own + shared, write own or admin.
 CREATE POLICY "model_views_read" ON model_views FOR SELECT TO authenticated
-  USING (is_shared = true OR user_id::text = wassell_app_user_id(auth.uid())::text OR wassell_is_admin(auth.uid()));
+  USING (is_shared = true OR user_id::text = wassell_app_user_id((SELECT auth.uid()))::text OR wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "model_views_write" ON model_views FOR ALL TO authenticated
-  USING (user_id::text = wassell_app_user_id(auth.uid())::text OR wassell_is_admin(auth.uid()))
-  WITH CHECK (user_id::text = wassell_app_user_id(auth.uid())::text OR wassell_is_admin(auth.uid()));
+  USING (user_id::text = wassell_app_user_id((SELECT auth.uid()))::text OR wassell_is_admin((SELECT auth.uid())))
+  WITH CHECK (user_id::text = wassell_app_user_id((SELECT auth.uid()))::text OR wassell_is_admin((SELECT auth.uid())));
 
 -- Field templates: read everyone, write admin.
 CREATE POLICY "field_templates_read"  ON field_templates FOR SELECT TO authenticated USING (true);
-CREATE POLICY "field_templates_write" ON field_templates FOR ALL    TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "field_templates_write" ON field_templates FOR ALL    TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 
 -- Builder area: admin only end-to-end.
-CREATE POLICY "workflows_admin"       ON workflows       FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
-CREATE POLICY "workflow_groups_admin" ON workflow_groups FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "workflows_admin"       ON workflows       FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "workflow_groups_admin" ON workflow_groups FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 -- workflow_runs: any authenticated user can append (their record save
 -- might trigger a workflow whose run is logged client-side); reads /
 -- updates / deletes are admin-only. Without this split, non-admin
 -- saves produce RLS denial toasts on every triggered workflow.
-CREATE POLICY "workflow_runs_read"   ON workflow_runs FOR SELECT TO authenticated USING (wassell_is_admin(auth.uid()));
+CREATE POLICY "workflow_runs_read"   ON workflow_runs FOR SELECT TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "workflow_runs_insert" ON workflow_runs FOR INSERT TO authenticated WITH CHECK (true);
-CREATE POLICY "workflow_runs_modify" ON workflow_runs FOR UPDATE TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
-CREATE POLICY "workflow_runs_delete" ON workflow_runs FOR DELETE TO authenticated USING (wassell_is_admin(auth.uid()));
-CREATE POLICY "dashboards_admin"      ON dashboards      FOR ALL TO authenticated USING (wassell_is_admin(auth.uid())) WITH CHECK (wassell_is_admin(auth.uid()));
+CREATE POLICY "workflow_runs_modify" ON workflow_runs FOR UPDATE TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "workflow_runs_delete" ON workflow_runs FOR DELETE TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "dashboards_admin"      ON dashboards      FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 
 -- Public dashboards: anon access goes through `get_public_dashboard`,
 -- not a direct SELECT. The function checks BOTH is_public AND a token
@@ -726,9 +742,9 @@ ALTER TABLE audit_log ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "audit_log_admin_read"   ON audit_log;
 DROP POLICY IF EXISTS "audit_log_admin_insert" ON audit_log;
 CREATE POLICY "audit_log_admin_read" ON audit_log FOR SELECT TO authenticated
-  USING (wassell_is_admin(auth.uid()));
+  USING (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "audit_log_admin_insert" ON audit_log FOR INSERT TO authenticated
-  WITH CHECK (wassell_is_admin(auth.uid()) OR actor_auth_uid = auth.uid());
+  WITH CHECK (wassell_is_admin((SELECT auth.uid())) OR actor_auth_uid = (SELECT auth.uid()));
 
 -- ============================================================
 -- WHATSAPP AI AGENT (HaberChat webhook) — DEPRECATED
@@ -1461,7 +1477,7 @@ GRANT EXECUTE ON FUNCTION public.freeze_check_coercion(uuid) TO authenticated;
 -- ────────────────────────────────────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION public.regenerate_frozen_model_artifacts(p_model_id uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $fn$
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $fn$
 DECLARE
   v_model        record;
   v_table        text;
@@ -1567,26 +1583,26 @@ BEGIN
 
   EXECUTE format(
     $pol$CREATE POLICY "frozen_view" ON public.%I FOR SELECT TO authenticated USING (
-      public.wassell_can_view_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s)
+      public.wassell_can_view_jsonb((SELECT auth.uid()), %L::uuid, id, created_by_user_id, %s)
     )$pol$,
     v_table, p_model_id, v_data_json
   );
   EXECUTE format(
     $pol$CREATE POLICY "frozen_insert" ON public.%I FOR INSERT TO authenticated WITH CHECK (
-      public.wassell_user_has_action(auth.uid(), %L::uuid, 'create')
+      public.wassell_user_has_action((SELECT auth.uid()), %L::uuid, 'create')
     )$pol$,
     v_table, p_model_id
   );
   EXECUTE format(
     $pol$CREATE POLICY "frozen_update" ON public.%I FOR UPDATE TO authenticated
-      USING (public.wassell_can_edit_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s))
-      WITH CHECK (public.wassell_can_edit_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s))$pol$,
+      USING (public.wassell_can_edit_jsonb((SELECT auth.uid()), %L::uuid, id, created_by_user_id, %s))
+      WITH CHECK (public.wassell_can_edit_jsonb((SELECT auth.uid()), %L::uuid, id, created_by_user_id, %s))$pol$,
     v_table, p_model_id, v_data_json, p_model_id, v_data_json
   );
   EXECUTE format(
     $pol$CREATE POLICY "frozen_delete" ON public.%I FOR DELETE TO authenticated USING (
-      public.wassell_can_edit_jsonb(auth.uid(), %L::uuid, id, created_by_user_id, %s)
-      AND public.wassell_user_has_action(auth.uid(), %L::uuid, 'delete')
+      public.wassell_can_edit_jsonb((SELECT auth.uid()), %L::uuid, id, created_by_user_id, %s)
+      AND public.wassell_user_has_action((SELECT auth.uid()), %L::uuid, 'delete')
     )$pol$,
     v_table, p_model_id, v_data_json, p_model_id
   );
@@ -2337,3 +2353,606 @@ $fn$;
 -- Initial unified_records view — empty UNION on fresh installs is just
 -- `SELECT FROM records`. Re-run is idempotent.
 SELECT public.rebuild_unified_records();
+
+-- ============================================================
+-- POST-2026-05-06 — PHASES A–G architecture refactor
+-- ============================================================
+-- Source-of-truth snapshot for the migrations under
+-- supabase/migrations/2026-05-06_a* through 2026-05-07_*. Re-runnable
+-- and idempotent. Safe to apply against any state of the DB; effects
+-- match the migrations applied in order.
+--
+-- Phase A — DB hygiene (indexes, init-plan wraps, search_path,
+--   replica identity)
+-- Phase B — Function-execute revokes + RLS policy split + always-true
+--   tightening
+-- Phase C — Realtime publication expansion
+-- Phase E — record_search RPC for cursor pagination
+-- Phase F — auto_id_counters + records.version optimistic concurrency
+-- Phase G — Slow-query telemetry
+--
+-- A.1 init-plan wraps and A.2 FK indexes are already inlined above
+-- (they updated existing CREATE POLICY / CREATE INDEX sites in place).
+-- ============================================================
+
+-- ── A.3 — records query indexes ──────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_records_model_id_created_at
+  ON public.records (model_id, created_at DESC, id);
+CREATE INDEX IF NOT EXISTS idx_records_updated_at
+  ON public.records (updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_records_data_gin
+  ON public.records USING gin (data jsonb_path_ops);
+
+-- ── A.5 + C.2 — REPLICA IDENTITY for realtime tables ─────────
+ALTER TABLE public.chat_messages       REPLICA IDENTITY FULL;
+ALTER TABLE public.call_logs           REPLICA IDENTITY FULL;
+ALTER TABLE public.models              REPLICA IDENTITY FULL;
+ALTER TABLE public.model_groups        REPLICA IDENTITY FULL;
+ALTER TABLE public.workflows           REPLICA IDENTITY FULL;
+ALTER TABLE public.workflow_groups     REPLICA IDENTITY FULL;
+ALTER TABLE public.dashboards          REPLICA IDENTITY FULL;
+ALTER TABLE public.model_views         REPLICA IDENTITY FULL;
+ALTER TABLE public.profiles            REPLICA IDENTITY FULL;
+ALTER TABLE public.roles               REPLICA IDENTITY FULL;
+ALTER TABLE public.users               REPLICA IDENTITY FULL;
+-- High-volume tables (records, workflow_runs) keep DEFAULT (PK-only):
+-- whole-row WAL on every UPDATE would be punishing at scale; merge
+-- handlers refetch by id when needed.
+
+-- ── C.1 — supabase_realtime publication membership ───────────
+DO $$
+BEGIN
+  FOR t IN
+    SELECT unnest(ARRAY[
+      'records', 'models', 'model_groups', 'workflows', 'workflow_groups',
+      'workflow_runs', 'dashboards', 'model_views', 'profiles', 'roles', 'users'
+    ]) AS name
+  LOOP
+    BEGIN
+      EXECUTE format('ALTER PUBLICATION supabase_realtime ADD TABLE public.%I', t.name);
+    EXCEPTION WHEN duplicate_object THEN
+      -- Already in the publication — re-run is fine.
+      NULL;
+    END;
+  END LOOP;
+END$$;
+
+-- ── B.1 + B.2 — REVOKE EXECUTE FROM PUBLIC, re-grant explicitly ──
+-- See migrations/2026-05-06_b1_b2_revoke_definer_execute.sql header
+-- for the rationale. Postgres grants EXECUTE to PUBLIC by default for
+-- every new function; we strip it and re-grant only what should be
+-- callable by authenticated/anon.
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION public.get_public_dashboard(text) TO anon;
+GRANT EXECUTE ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid)   TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_delete(uuid, uuid)              TO authenticated;
+GRANT EXECUTE ON FUNCTION public.get_public_dashboard(text)             TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_app_user_id(uuid)              TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_is_admin(uuid)                 TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_user_has_action(uuid, uuid, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_record_passes_scope(records, uuid, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_view_record(uuid, records) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_edit_record(uuid, records) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_create_record(uuid, records) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_delete_record(uuid, records) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_view_jsonb(uuid, uuid, uuid, uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_edit_jsonb(uuid, uuid, uuid, uuid, jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.try_boolean(text)      TO authenticated;
+GRANT EXECUTE ON FUNCTION public.try_numeric(text)      TO authenticated;
+GRANT EXECUTE ON FUNCTION public.try_timestamptz(text)  TO authenticated;
+GRANT EXECUTE ON FUNCTION public.search_all_projects(uuid, numeric, numeric, text, text, text, text, numeric, numeric, text, integer) TO authenticated;
+
+-- ── B.3 — Tighten activity_log RLS ────────────────────────────
+DROP POLICY IF EXISTS "Authenticated full access" ON public.activity_log;
+DROP POLICY IF EXISTS activity_log_select ON public.activity_log;
+DROP POLICY IF EXISTS activity_log_insert ON public.activity_log;
+DROP POLICY IF EXISTS activity_log_delete ON public.activity_log;
+CREATE POLICY activity_log_select ON public.activity_log FOR SELECT TO authenticated
+  USING (
+    public.wassell_is_admin((SELECT auth.uid()))
+    OR actor_user_id = public.wassell_app_user_id((SELECT auth.uid()))
+  );
+CREATE POLICY activity_log_insert ON public.activity_log FOR INSERT TO authenticated
+  WITH CHECK (
+    public.wassell_is_admin((SELECT auth.uid()))
+    OR actor_user_id = public.wassell_app_user_id((SELECT auth.uid()))
+  );
+-- No UPDATE policy: audit log entries are immutable.
+CREATE POLICY activity_log_delete ON public.activity_log FOR DELETE TO authenticated
+  USING (public.wassell_is_admin((SELECT auth.uid())));
+
+-- ── B.4 — Split *_write FOR ALL into INSERT / UPDATE / DELETE ─
+-- Dedupes "multiple permissive policies" perf-lint hits.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['field_templates','model_groups','models','profiles','roles']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I_write ON public.%I', t, t);
+    EXECUTE format(
+      'CREATE POLICY %I_insert ON public.%I FOR INSERT TO authenticated WITH CHECK (public.wassell_is_admin((SELECT auth.uid())))',
+      t, t);
+    EXECUTE format(
+      'CREATE POLICY %I_update ON public.%I FOR UPDATE TO authenticated USING (public.wassell_is_admin((SELECT auth.uid()))) WITH CHECK (public.wassell_is_admin((SELECT auth.uid())))',
+      t, t);
+    EXECUTE format(
+      'CREATE POLICY %I_delete ON public.%I FOR DELETE TO authenticated USING (public.wassell_is_admin((SELECT auth.uid())))',
+      t, t);
+  END LOOP;
+END$$;
+
+DROP POLICY IF EXISTS users_write ON public.users;
+DROP POLICY IF EXISTS users_insert ON public.users;
+DROP POLICY IF EXISTS users_update ON public.users;
+DROP POLICY IF EXISTS users_delete ON public.users;
+CREATE POLICY users_insert ON public.users FOR INSERT TO authenticated
+  WITH CHECK (public.wassell_is_admin((SELECT auth.uid())) OR auth_uid = (SELECT auth.uid()));
+CREATE POLICY users_update ON public.users FOR UPDATE TO authenticated
+  USING (public.wassell_is_admin((SELECT auth.uid())) OR auth_uid = (SELECT auth.uid()))
+  WITH CHECK (public.wassell_is_admin((SELECT auth.uid())) OR auth_uid = (SELECT auth.uid()));
+CREATE POLICY users_delete ON public.users FOR DELETE TO authenticated
+  USING (public.wassell_is_admin((SELECT auth.uid())) OR auth_uid = (SELECT auth.uid()));
+
+DROP POLICY IF EXISTS model_views_write ON public.model_views;
+DROP POLICY IF EXISTS model_views_insert ON public.model_views;
+DROP POLICY IF EXISTS model_views_update ON public.model_views;
+DROP POLICY IF EXISTS model_views_delete ON public.model_views;
+CREATE POLICY model_views_insert ON public.model_views FOR INSERT TO authenticated
+  WITH CHECK (
+    user_id::text = public.wassell_app_user_id((SELECT auth.uid()))::text
+    OR public.wassell_is_admin((SELECT auth.uid()))
+  );
+CREATE POLICY model_views_update ON public.model_views FOR UPDATE TO authenticated
+  USING (
+    user_id::text = public.wassell_app_user_id((SELECT auth.uid()))::text
+    OR public.wassell_is_admin((SELECT auth.uid()))
+  )
+  WITH CHECK (
+    user_id::text = public.wassell_app_user_id((SELECT auth.uid()))::text
+    OR public.wassell_is_admin((SELECT auth.uid()))
+  );
+CREATE POLICY model_views_delete ON public.model_views FOR DELETE TO authenticated
+  USING (
+    user_id::text = public.wassell_app_user_id((SELECT auth.uid()))::text
+    OR public.wassell_is_admin((SELECT auth.uid()))
+  );
+
+-- Frozen-model junction tables created prior to B.4 use the unified
+-- frozen_junction_write FOR ALL pattern. Split that on the two known
+-- junctions; future freezes will still emit the older pattern until
+-- regenerate_frozen_model_artifacts is updated.
+DO $$
+DECLARE jn text;
+BEGIN
+  FOREACH jn IN ARRAY ARRAY['marketing_operations__facts','marketing_operations__sources']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS frozen_junction_write ON public.%I', jn);
+    EXECUTE format(
+      'CREATE POLICY frozen_junction_insert ON public.%I FOR INSERT TO authenticated WITH CHECK (EXISTS (SELECT 1 FROM public.marketing_operations p WHERE p.id = record_id))',
+      jn);
+    EXECUTE format(
+      'CREATE POLICY frozen_junction_update ON public.%I FOR UPDATE TO authenticated USING (EXISTS (SELECT 1 FROM public.marketing_operations p WHERE p.id = record_id)) WITH CHECK (EXISTS (SELECT 1 FROM public.marketing_operations p WHERE p.id = record_id))',
+      jn);
+    EXECUTE format(
+      'CREATE POLICY frozen_junction_delete ON public.%I FOR DELETE TO authenticated USING (EXISTS (SELECT 1 FROM public.marketing_operations p WHERE p.id = record_id))',
+      jn);
+  END LOOP;
+EXCEPTION WHEN undefined_table THEN
+  -- Either junction may not exist in fresh installs without the
+  -- frozen marketing_operations model yet — fine.
+  NULL;
+END$$;
+
+-- ── B follow-up — Tighten 11 always-true policies ─────────────
+-- chat_messages, call_logs, webhook_payloads: SELECT-for-authenticated
+-- only. Webhooks write via service_role bypassing RLS.
+DROP POLICY IF EXISTS "Authenticated full access" ON public.chat_messages;
+DROP POLICY IF EXISTS chat_messages_select ON public.chat_messages;
+CREATE POLICY chat_messages_select ON public.chat_messages FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Authenticated full access" ON public.call_logs;
+DROP POLICY IF EXISTS call_logs_select ON public.call_logs;
+CREATE POLICY call_logs_select ON public.call_logs FOR SELECT TO authenticated USING (true);
+
+DROP POLICY IF EXISTS "Authenticated full access" ON public.webhook_payloads;
+DROP POLICY IF EXISTS webhook_payloads_select ON public.webhook_payloads;
+DROP POLICY IF EXISTS webhook_payloads_consume_update ON public.webhook_payloads;
+CREATE POLICY webhook_payloads_select ON public.webhook_payloads FOR SELECT TO authenticated USING (true);
+CREATE POLICY webhook_payloads_consume_update ON public.webhook_payloads FOR UPDATE TO authenticated
+  USING (true) WITH CHECK (true);
+
+-- competitors / posts / reels / research_questions — admin write,
+-- authenticated read.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['competitors','posts','reels']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Authenticated full access" ON public.%I', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_select ON public.%I', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_insert ON public.%I', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_update ON public.%I', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_delete ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY %I_select ON public.%I FOR SELECT TO authenticated USING (true)', t, t);
+    EXECUTE format('CREATE POLICY %I_insert ON public.%I FOR INSERT TO authenticated WITH CHECK (public.wassell_is_admin((SELECT auth.uid())))', t, t);
+    EXECUTE format('CREATE POLICY %I_update ON public.%I FOR UPDATE TO authenticated USING (public.wassell_is_admin((SELECT auth.uid()))) WITH CHECK (public.wassell_is_admin((SELECT auth.uid())))', t, t);
+    EXECUTE format('CREATE POLICY %I_delete ON public.%I FOR DELETE TO authenticated USING (public.wassell_is_admin((SELECT auth.uid())))', t, t);
+  END LOOP;
+EXCEPTION WHEN undefined_table THEN
+  NULL;
+END$$;
+
+DROP POLICY IF EXISTS "Authenticated full access" ON public.research_questions;
+DROP POLICY IF EXISTS research_questions_select ON public.research_questions;
+DROP POLICY IF EXISTS research_questions_insert ON public.research_questions;
+DROP POLICY IF EXISTS research_questions_update ON public.research_questions;
+DROP POLICY IF EXISTS research_questions_delete ON public.research_questions;
+CREATE POLICY research_questions_select ON public.research_questions FOR SELECT TO authenticated USING (true);
+CREATE POLICY research_questions_insert ON public.research_questions FOR INSERT TO authenticated
+  WITH CHECK (public.wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY research_questions_update ON public.research_questions FOR UPDATE TO authenticated
+  USING (public.wassell_is_admin((SELECT auth.uid())) OR answered_by = public.wassell_app_user_id((SELECT auth.uid())))
+  WITH CHECK (public.wassell_is_admin((SELECT auth.uid())) OR answered_by = public.wassell_app_user_id((SELECT auth.uid())));
+CREATE POLICY research_questions_delete ON public.research_questions FOR DELETE TO authenticated
+  USING (public.wassell_is_admin((SELECT auth.uid())));
+
+-- Settings: webhook_slugs, whatsapp_numbers — admin write,
+-- authenticated read.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['webhook_slugs','whatsapp_numbers']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Authenticated full access" ON public.%I', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_select ON public.%I', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_insert ON public.%I', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_update ON public.%I', t, t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_delete ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY %I_select ON public.%I FOR SELECT TO authenticated USING (true)', t, t);
+    EXECUTE format('CREATE POLICY %I_insert ON public.%I FOR INSERT TO authenticated WITH CHECK (public.wassell_is_admin((SELECT auth.uid())))', t, t);
+    EXECUTE format('CREATE POLICY %I_update ON public.%I FOR UPDATE TO authenticated USING (public.wassell_is_admin((SELECT auth.uid()))) WITH CHECK (public.wassell_is_admin((SELECT auth.uid())))', t, t);
+    EXECUTE format('CREATE POLICY %I_delete ON public.%I FOR DELETE TO authenticated USING (public.wassell_is_admin((SELECT auth.uid())))', t, t);
+  END LOOP;
+EXCEPTION WHEN undefined_table THEN
+  NULL;
+END$$;
+
+-- Per-user notifications.
+DROP POLICY IF EXISTS "Authenticated full access" ON public.marketing_notifications;
+DROP POLICY IF EXISTS marketing_notifications_select ON public.marketing_notifications;
+DROP POLICY IF EXISTS marketing_notifications_insert ON public.marketing_notifications;
+DROP POLICY IF EXISTS marketing_notifications_update ON public.marketing_notifications;
+DROP POLICY IF EXISTS marketing_notifications_delete ON public.marketing_notifications;
+CREATE POLICY marketing_notifications_select ON public.marketing_notifications FOR SELECT TO authenticated
+  USING (user_id = public.wassell_app_user_id((SELECT auth.uid())) OR public.wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY marketing_notifications_insert ON public.marketing_notifications FOR INSERT TO authenticated
+  WITH CHECK (public.wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY marketing_notifications_update ON public.marketing_notifications FOR UPDATE TO authenticated
+  USING (user_id = public.wassell_app_user_id((SELECT auth.uid())) OR public.wassell_is_admin((SELECT auth.uid())))
+  WITH CHECK (user_id = public.wassell_app_user_id((SELECT auth.uid())) OR public.wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY marketing_notifications_delete ON public.marketing_notifications FOR DELETE TO authenticated
+  USING (user_id = public.wassell_app_user_id((SELECT auth.uid())) OR public.wassell_is_admin((SELECT auth.uid())));
+
+-- Deprecated WA tables — admin-only.
+DO $$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['wa_conversations','wa_errors','wa_leads']
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS "Authenticated full access" ON public.%I', t);
+    EXECUTE format('DROP POLICY IF EXISTS %I_admin ON public.%I', t, t);
+    EXECUTE format('CREATE POLICY %I_admin ON public.%I FOR ALL TO authenticated USING (public.wassell_is_admin((SELECT auth.uid()))) WITH CHECK (public.wassell_is_admin((SELECT auth.uid())))', t, t);
+  END LOOP;
+EXCEPTION WHEN undefined_table THEN
+  NULL;
+END$$;
+
+-- ── E.1 — record_search RPC (cursor pagination, RLS-aware) ────
+-- SECURITY INVOKER so RLS applies. Returns a page with has_more flag.
+CREATE OR REPLACE FUNCTION public.record_search(
+  p_model_id   uuid,
+  p_filters    jsonb DEFAULT '{}'::jsonb,
+  p_cursor     jsonb DEFAULT NULL,
+  p_limit      int   DEFAULT 50,
+  p_search_text text DEFAULT NULL
+)
+RETURNS TABLE (
+  id           uuid,
+  model_id     uuid,
+  data         jsonb,
+  created_by_user_id uuid,
+  created_at   timestamptz,
+  updated_at   timestamptz,
+  has_more     boolean
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_cursor_created_at timestamptz;
+  v_cursor_id         uuid;
+  v_limit             int := GREATEST(1, LEAST(COALESCE(p_limit, 50), 500));
+  v_fetched           int;
+BEGIN
+  IF p_cursor IS NOT NULL THEN
+    v_cursor_created_at := (p_cursor->>'created_at')::timestamptz;
+    v_cursor_id         := (p_cursor->>'id')::uuid;
+  END IF;
+
+  RETURN QUERY
+  WITH page AS (
+    SELECT u.id, u.model_id, u.data, u.created_by_user_id, u.created_at, u.updated_at
+    FROM public.unified_records u
+    WHERE u.model_id = p_model_id
+      AND (p_filters = '{}'::jsonb OR u.data @> p_filters)
+      AND (
+        p_search_text IS NULL OR p_search_text = ''
+        OR u.data::text ILIKE '%' || p_search_text || '%'
+      )
+      AND (
+        v_cursor_created_at IS NULL
+        OR (u.created_at, u.id) < (v_cursor_created_at, v_cursor_id)
+      )
+    ORDER BY u.created_at DESC, u.id DESC
+    LIMIT v_limit + 1
+  ),
+  counted AS (
+    SELECT *, COUNT(*) OVER () AS total FROM page
+  )
+  SELECT
+    c.id,
+    c.model_id,
+    c.data,
+    c.created_by_user_id,
+    c.created_at,
+    c.updated_at,
+    (c.total > v_limit) AS has_more
+  FROM counted c
+  ORDER BY c.created_at DESC, c.id DESC
+  LIMIT v_limit;
+END;
+$fn$;
+
+REVOKE EXECUTE ON FUNCTION public.record_search(uuid, jsonb, jsonb, int, text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.record_search(uuid, jsonb, jsonb, int, text) FROM anon;
+GRANT EXECUTE ON FUNCTION public.record_search(uuid, jsonb, jsonb, int, text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_search(uuid, jsonb, jsonb, int, text) TO service_role;
+
+-- ── F.1 — auto_id_counters table + RPC ────────────────────────
+-- Atomic INSERT…ON CONFLICT DO UPDATE…RETURNING avoids the read-modify-
+-- write race that produced duplicate IDs in the client-side counter.
+CREATE TABLE IF NOT EXISTS public.auto_id_counters (
+  model_id    uuid    NOT NULL,
+  field_id    uuid    NOT NULL,
+  scope_key   text    NOT NULL DEFAULT '',
+  current_value bigint NOT NULL,
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (model_id, field_id, scope_key)
+);
+
+ALTER TABLE public.auto_id_counters ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS auto_id_counters_admin ON public.auto_id_counters;
+CREATE POLICY auto_id_counters_admin ON public.auto_id_counters FOR ALL TO authenticated
+  USING (public.wassell_is_admin((SELECT auth.uid())))
+  WITH CHECK (public.wassell_is_admin((SELECT auth.uid())));
+
+REVOKE ALL ON TABLE public.auto_id_counters FROM anon, PUBLIC;
+GRANT SELECT ON TABLE public.auto_id_counters TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.record_assign_auto_id(
+  p_model_id  uuid,
+  p_field_id  uuid,
+  p_scope_key text DEFAULT '',
+  p_start     bigint DEFAULT 1
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_value bigint;
+BEGIN
+  INSERT INTO public.auto_id_counters (model_id, field_id, scope_key, current_value)
+  VALUES (p_model_id, p_field_id, COALESCE(p_scope_key, ''), GREATEST(p_start, 1))
+  ON CONFLICT (model_id, field_id, scope_key) DO UPDATE
+    SET current_value = public.auto_id_counters.current_value + 1,
+        updated_at = now()
+  RETURNING current_value INTO v_value;
+
+  RETURN v_value;
+END;
+$fn$;
+
+REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) FROM anon;
+GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) TO service_role;
+
+-- ── F.2 — records.version + bump trigger + record_save check ──
+ALTER TABLE public.records ADD COLUMN IF NOT EXISTS version int NOT NULL DEFAULT 1;
+
+CREATE OR REPLACE FUNCTION public.records_bump_version()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = public, pg_temp
+AS $fn$
+BEGIN
+  IF OLD.version = NEW.version THEN
+    NEW.version := OLD.version + 1;
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS records_bump_version_trigger ON public.records;
+CREATE TRIGGER records_bump_version_trigger
+  BEFORE UPDATE ON public.records
+  FOR EACH ROW
+  EXECUTE FUNCTION public.records_bump_version();
+
+-- New 5-arg record_save signature with optional version check. The
+-- previous 4-arg signature is dropped to avoid overload ambiguity.
+DROP FUNCTION IF EXISTS public.record_save(uuid, uuid, jsonb, uuid);
+
+CREATE OR REPLACE FUNCTION public.record_save(
+  p_model_id        uuid,
+  p_id              uuid,
+  p_data            jsonb,
+  p_created_by      uuid DEFAULT NULL,
+  p_expected_version int DEFAULT NULL
+)
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $fn$
+DECLARE
+  v_model record;
+  v_table text;
+  v_existing_version int;
+BEGIN
+  SELECT id, name, is_hardcoded INTO v_model FROM models WHERE id = p_model_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'model % not found', p_model_id;
+  END IF;
+
+  IF v_model.is_hardcoded THEN
+    v_table := public.freeze_safe_ident(v_model.name);
+    EXECUTE format(
+      'INSERT INTO public.%I (id) VALUES ($1) ON CONFLICT (id) DO NOTHING',
+      v_table
+    ) USING p_id;
+    PERFORM public.freeze_apply_row(p_model_id, p_id, p_data, p_created_by);
+  ELSE
+    IF p_expected_version IS NOT NULL THEN
+      SELECT version INTO v_existing_version FROM records WHERE id = p_id;
+      IF FOUND AND v_existing_version <> p_expected_version THEN
+        RAISE EXCEPTION
+          'version_mismatch: record was edited by another user (loaded v%, current v%)',
+          p_expected_version, v_existing_version
+          USING ERRCODE = 'serialization_failure',
+                HINT = 'reload the record to see latest changes';
+      END IF;
+    END IF;
+
+    INSERT INTO records (id, model_id, data, created_by_user_id)
+    VALUES (p_id, p_model_id, p_data, p_created_by)
+    ON CONFLICT (id) DO UPDATE SET
+      data = EXCLUDED.data,
+      created_by_user_id = COALESCE(records.created_by_user_id, EXCLUDED.created_by_user_id),
+      updated_at = now();
+  END IF;
+  RETURN p_id;
+END;
+$fn$;
+
+REVOKE EXECUTE ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid, int) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid, int) FROM anon;
+GRANT EXECUTE ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid, int) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_save(uuid, uuid, jsonb, uuid, int) TO service_role;
+
+-- ── G.1 — Slow-query telemetry (admin-only) ───────────────────
+CREATE OR REPLACE FUNCTION public.slow_query_log(
+  p_threshold_ms numeric DEFAULT 1000,
+  p_limit        int     DEFAULT 50
+)
+RETURNS TABLE(
+  query    text,
+  calls    bigint,
+  total_ms numeric,
+  mean_ms  numeric,
+  max_ms   numeric,
+  rows_returned bigint
+)
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path = public, extensions, pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  IF NOT public.wassell_is_admin((SELECT auth.uid())) THEN
+    RAISE EXCEPTION 'admin access required' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    s.query,
+    s.calls,
+    round(s.total_exec_time::numeric, 2) AS total_ms,
+    round(s.mean_exec_time::numeric, 2)  AS mean_ms,
+    round(s.max_exec_time::numeric, 2)   AS max_ms,
+    s.rows AS rows_returned
+  FROM pg_stat_statements s
+  WHERE s.mean_exec_time > p_threshold_ms
+  ORDER BY s.total_exec_time DESC
+  LIMIT GREATEST(1, LEAST(p_limit, 500));
+END;
+$fn$;
+
+REVOKE EXECUTE ON FUNCTION public.slow_query_log(numeric, int) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.slow_query_log(numeric, int) FROM anon;
+GRANT EXECUTE ON FUNCTION public.slow_query_log(numeric, int) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.slow_query_log(numeric, int) TO service_role;
+
+CREATE TABLE IF NOT EXISTS public.query_perf_snapshot (
+  id          bigserial PRIMARY KEY,
+  taken_at    timestamptz NOT NULL DEFAULT now(),
+  threshold_ms numeric NOT NULL,
+  rows        jsonb   NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_query_perf_snapshot_taken_at
+  ON public.query_perf_snapshot(taken_at DESC);
+
+ALTER TABLE public.query_perf_snapshot ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS query_perf_snapshot_admin ON public.query_perf_snapshot;
+CREATE POLICY query_perf_snapshot_admin ON public.query_perf_snapshot FOR ALL TO authenticated
+  USING (public.wassell_is_admin((SELECT auth.uid())))
+  WITH CHECK (public.wassell_is_admin((SELECT auth.uid())));
+
+REVOKE ALL ON TABLE public.query_perf_snapshot FROM anon;
+GRANT SELECT, INSERT, DELETE ON TABLE public.query_perf_snapshot TO authenticated;
+GRANT USAGE, SELECT ON SEQUENCE public.query_perf_snapshot_id_seq TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.snapshot_slow_queries(
+  p_threshold_ms numeric DEFAULT 1000
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions, pg_catalog, pg_temp
+AS $fn$
+DECLARE
+  v_id   bigint;
+  v_rows jsonb;
+BEGIN
+  IF NOT public.wassell_is_admin((SELECT auth.uid())) THEN
+    RAISE EXCEPTION 'admin access required' USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  SELECT COALESCE(jsonb_agg(jsonb_build_object(
+    'query', query,
+    'calls', calls,
+    'total_ms', total_ms,
+    'mean_ms', mean_ms,
+    'max_ms', max_ms,
+    'rows', rows_returned
+  )), '[]'::jsonb)
+  INTO v_rows
+  FROM public.slow_query_log(p_threshold_ms, 100);
+
+  INSERT INTO public.query_perf_snapshot (threshold_ms, rows)
+  VALUES (p_threshold_ms, v_rows)
+  RETURNING id INTO v_id;
+
+  RETURN v_id;
+END;
+$fn$;
+
+REVOKE EXECUTE ON FUNCTION public.snapshot_slow_queries(numeric) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.snapshot_slow_queries(numeric) FROM anon;
+GRANT EXECUTE ON FUNCTION public.snapshot_slow_queries(numeric) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.snapshot_slow_queries(numeric) TO service_role;

@@ -6,13 +6,25 @@ import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
 import { buildMarketingSeedWorkflows } from '@/data/seedWorkflows';
 import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine';
-import { assignAutoIds } from '@/lib/autoIdAssigner';
+import { assignAutoIdsAsync } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
+import { markRecentlyWritten } from '@/lib/realtime/dedup';
+import { startRealtimeOrchestrator } from '@/lib/realtime/RealtimeOrchestrator';
+import { markLoaded, startStaleWhileRevalidate } from '@/lib/realtime/staleWhileRevalidate';
+import { installPerfMarkers, markEvent } from '@/lib/perfMarkers';
+import {
+  buildFilterKey,
+  emptyCache,
+  appendPage,
+  setLoading as setCacheLoading,
+  setError as setCacheError,
+} from '@/lib/recordsCache';
+import type { PaginatedRecordsByModel, RecordsPageCache } from '@/lib/recordsCache';
 import type {
   AppState,
   AppModel,
@@ -216,7 +228,7 @@ const writeKey = (table: string, id: string): string => `${table}:${id}`;
 // Error reporter.  Defaults to console-only for any call that happens
 // before the store is created; `initialize()` replaces this with a
 // toast-backed reporter on first run.
-let reportSupabaseError: (table: string, op: 'upsert' | 'delete' | 'load', msg: string) => void =
+let reportSupabaseError: (table: string, op: 'upsert' | 'delete' | 'load' | 'rpc', msg: string) => void =
   (table, op, msg) => {
     console.error(`[supabase] ${op} failed on ${table}: ${msg}`);
   };
@@ -485,6 +497,11 @@ async function supabaseUpsert(
         // Queue for retry on next initialize so the local edit isn't lost
         // when Supabase load runs and overwrites localStorage.
         enqueuePendingWrite({ op: 'upsert', table, row, parent });
+      } else if (id) {
+        // Echo dedup: tell the RealtimeOrchestrator this row id was
+        // just written by us so it skips the inevitable echo from the
+        // supabase_realtime publication.
+        markRecentlyWritten(table, id);
       }
     } catch (err) {
       reportSupabaseError(table, 'upsert', err instanceof Error ? err.message : String(err));
@@ -516,6 +533,8 @@ async function supabaseDelete(table: string, id: string): Promise<void> {
     if (error) {
       reportSupabaseError(table, 'delete', error.message ?? String(error));
       enqueuePendingWrite({ op: 'delete', table, rowId: id });
+    } else {
+      markRecentlyWritten(table, id);
     }
   } catch (err) {
     reportSupabaseError(table, 'delete', err instanceof Error ? err.message : String(err));
@@ -630,19 +649,50 @@ async function supabaseRecordUpsert(record: AppRecord): Promise<void> {
             table: 'records',
             row: record as unknown as Record<string, unknown>,
           });
+        } else {
+          // Frozen-model writes don't echo through `records` realtime
+          // (the row lives in the dedicated table), but a future
+          // frozen-table channel would — register defensively.
+          markRecentlyWritten('records', record.id);
         }
       } else {
         // Block on any in-flight model write so the FK exists when we land.
         const prior = pendingWrites.get(writeKey('models', record.model_id));
         if (prior) { try { await prior; } catch { /* parent error */ } }
-        const { error } = await supabase!.from('records').upsert(record as unknown as Record<string, unknown>);
+        // Phase F.2: route unfrozen writes through `record_save` so the
+        // optimistic-concurrency check applies. Pass `record.version`
+        // (the version we LOADED with) as p_expected_version. New records
+        // and records loaded before the column existed pass null, which
+        // the RPC treats as "skip the check" — same posture as before F.2.
+        const { error } = await supabase!.rpc('record_save', {
+          p_model_id: record.model_id,
+          p_id: record.id,
+          p_data: record.data,
+          p_created_by: record.created_by_user_id ?? null,
+          p_expected_version: record.version ?? null,
+        });
         if (error) {
-          reportSupabaseError('records', 'upsert', error.message ?? String(error));
-          enqueuePendingWrite({
-            op: 'record_upsert',
-            table: 'records',
-            row: record as unknown as Record<string, unknown>,
-          });
+          // serialization_failure is the version_mismatch the RPC raises.
+          // PostgreSQL SQLSTATE 40001 — surface a clear "reload" toast and
+          // do NOT enqueue for retry; replaying would hit the same conflict.
+          const isVersionConflict =
+            error.code === '40001' || (error.message ?? '').includes('version_mismatch');
+          if (isVersionConflict) {
+            reportSupabaseError(
+              'records',
+              'upsert',
+              'Another user just edited this record. Reload to see their changes before re-saving.',
+            );
+          } else {
+            reportSupabaseError('records', 'upsert', error.message ?? String(error));
+            enqueuePendingWrite({
+              op: 'record_upsert',
+              table: 'records',
+              row: record as unknown as Record<string, unknown>,
+            });
+          }
+        } else {
+          markRecentlyWritten('records', record.id);
         }
       }
     } catch (err) {
@@ -691,6 +741,8 @@ async function supabaseRecordDelete(modelId: string, recordId: string): Promise<
           rowId: recordId,
           modelId,
         });
+      } else {
+        markRecentlyWritten('records', recordId);
       }
     } else {
       const { error } = await supabase.from('records').delete().eq('id', recordId);
@@ -702,6 +754,8 @@ async function supabaseRecordDelete(modelId: string, recordId: string): Promise<
           rowId: recordId,
           modelId,
         });
+      } else {
+        markRecentlyWritten('records', recordId);
       }
     }
   } catch (err) {
@@ -966,10 +1020,18 @@ export const useAppStore = create<AppState>((set, get) => ({
   toasts: [],
   recordNavContext: null,
   initialized: false,
+  criticalDataReady: false,
+  // Phase E.2: empty paginated cache. First loadRecordsPage call per
+  // (modelId, filterKey) populates this lazily — never blocks init.
+  recordsByModel: {} as PaginatedRecordsByModel,
 
   // --- Initialize ---
   initialize: async () => {
     if (get().initialized) return;
+    // Phase G.2: install the __wasselPerf() debug global early so any
+    // marks emitted during init are observable from the console.
+    installPerfMarkers();
+    markEvent('init:start');
 
     // Wire the Supabase error reporter to push user-visible toasts. We do
     // this lazily (here, not at module scope) because `useAppStore` isn't
@@ -995,15 +1057,69 @@ export const useAppStore = create<AppState>((set, get) => ({
     // the user isn't signed in yet.
     await replayPendingWrites();
 
-    // ORDER MATTERS: groups must be persisted to Supabase BEFORE models,
-    // because `models.group_id` is a foreign key to `model_groups.id`. If we
-    // upsert models first, Postgres rejects them with a FK violation that our
-    // silent-fail error handler swallows — leaving some models missing from
-    // Supabase while others (those without a group_id) slip through.
+    // Phase D.3: capture wall-clock BEFORE the loads start. Any row
+    // updated AFTER this timestamp will be picked up by the next
+    // stale-while-revalidate sweep on focus/online; the merge
+    // handler's stale-dedup harmlessly skips rows we already have.
+    const loadsStartedAtIso = new Date().toISOString();
+
+    // ─────────────────────────────────────────────────────────────────
+    // Phase D.1: PARALLEL LOAD KICKOFF
+    // ─────────────────────────────────────────────────────────────────
+    // Fire every Supabase read up-front so they run concurrently across
+    // the network. Each `await xP` below resolves with the same shape as
+    // a direct `supabaseLoad` — only the wall-clock cost changes (one
+    // round-trip total instead of N sequential ones).
+    //
+    // Reads have NO FK ordering — SELECT queries don't depend on each
+    // other. The FK ordering for BACKFILL upserts (groups before models,
+    // profiles before users) is preserved by the awaits later in this
+    // function: those still happen serially.
+    //
+    // Boot time on a 200ms-RTT link drops from ~3000ms to ~250ms.
+    // Re-instrument via performance.mark()/measure() (Phase G.2).
+    performance.mark('wassell:init:loads:start');
+    const groupsP            = supabaseLoad<ModelGroup>('model_groups');
+    const modelsP            = supabaseLoad<AppModel>('models');
+    const unifiedRecordsP    = supabaseLoad<AppRecord>('unified_records');
+    const workflowsP         = supabaseLoad<Workflow>('workflows');
+    const workflowGroupsP    = (async () => {
+      // Tolerate the table not existing yet on older installs that haven't
+      // run the latest schema migration — same defensive try/catch the
+      // serial version had.
+      try { return await supabaseLoad<WorkflowGroup>('workflow_groups'); }
+      catch { return null; }
+    })();
+    const workflowRunsP      = supabaseLoad<WorkflowRun>('workflow_runs');
+    const activityLogP       = (async () => {
+      if (!supabase) return null;
+      const { data, error } = await supabase
+        .from('activity_log')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(500);
+      return error ? null : (data as ActivityLogEntry[] | null);
+    })();
+    const dashboardsP        = supabaseLoad<Dashboard>('dashboards');
+    const whiteboardFoldersP = supabaseLoad<WhiteboardFolder>('whiteboard_folders');
+    const whiteboardsP       = supabaseLoad<Whiteboard>('whiteboards');
+    const viewsP             = supabaseLoad<ModelView>('model_views');
+    const profilesP          = supabaseLoad<Profile>('profiles');
+    const rolesP             = supabaseLoad<Role>('roles');
+    const usersP             = supabaseLoad<User>('users');
+    const fieldTemplatesP    = supabaseLoad<FieldTemplate>('field_templates');
+    const webhookSlugsP      = supabaseLoad<WebhookSlug>('webhook_slugs');
+
+    // ORDER MATTERS for backfills (NOT loads): groups must be persisted to
+    // Supabase BEFORE models, because `models.group_id` is a foreign key to
+    // `model_groups.id`. If we upsert models first, Postgres rejects them
+    // with a FK violation that our silent-fail error handler swallows —
+    // leaving some models missing from Supabase while others (those without
+    // a group_id) slip through.
 
     // --- Groups ---
     // Load groups with cascading fallback: Supabase → localStorage → SEED.
-    const supabaseGroups = await supabaseLoad<ModelGroup>('model_groups');
+    const supabaseGroups = await groupsP;
     let groups: ModelGroup[];
     if (supabaseGroups && supabaseGroups.length > 0) {
       groups = supabaseGroups;
@@ -1043,7 +1159,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Three cascading sources: Supabase → localStorage → SEED. After loading,
     // backfill any system models missing from Supabase (matched by `name`,
     // which is UNIQUE in the schema) so subsequent loads see the full set.
-    const supabaseModels = await supabaseLoad<AppModel>('models');
+    const supabaseModels = await modelsP;
     let models: AppModel[];
     if (supabaseModels && supabaseModels.length > 0) {
       models = supabaseModels;
@@ -1071,80 +1187,37 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     saveLocal('wassell_models', models);
 
-    // Load records — Supabase first via the `unified_records` view (UNION
-    // of the JSONB `records` table for unfrozen models + each frozen
-    // model's `<name>_v` JSONB-shape view). Per-model localStorage
-    // buckets as fallback when offline. Same row shape as the records
-    // table — id, model_id, data, created_at, updated_at — so the rest
-    // of the app needs no changes.
-    let records: Record<string, AppRecord[]>;
-    const supabaseRecords = await supabaseLoad<AppRecord>('unified_records');
-    if (supabaseRecords) {
-      records = {};
-      for (const rec of supabaseRecords) {
-        if (!records[rec.model_id]) records[rec.model_id] = [];
-        records[rec.model_id]!.push(rec);
-      }
-    } else {
-      records = loadLocalRecordsMap();
-    }
-    saveLocalRecordsMap(records);
+    // ─── Phase D.2: chrome-critical loads first ──────────────
+    // The variables declared below (records, workflowRuns, activityLog,
+    // whiteboardFolders, whiteboards) are populated in the SLOW TAIL
+    // block further down, AFTER `criticalDataReady` is set. Declaring
+    // them here keeps them in scope for the migrations + final set
+    // without forcing the chrome to wait on the slow loads.
+    let records: Record<string, AppRecord[]> = {};
+    let workflowRuns: WorkflowRun[] = [];
+    let activityLog: ActivityLogEntry[] = [];
+    let whiteboardFolders: WhiteboardFolder[] = [];
+    let whiteboards: Whiteboard[] = [];
 
-    // Load workflows
-    let workflows = await supabaseLoad<Workflow>('workflows');
+    // Load workflows (chrome-critical: needed by the seed marketing
+    // workflows block below + by the workflow-list page in the sidebar).
+    let workflows = await workflowsP;
     if (!workflows) workflows = loadLocal<Workflow[]>('wassell_workflows') ?? [];
     saveLocal('wassell_workflows', workflows);
 
-    // Load workflow folders. Tolerate the table not existing yet on
-    // older installs that haven't run the latest schema migration.
+    // Workflow folders (chrome — sidebar grouping).
     let workflowGroups: WorkflowGroup[] = [];
-    try {
-      const loaded = await supabaseLoad<WorkflowGroup>('workflow_groups');
-      workflowGroups = loaded ?? loadLocal<WorkflowGroup[]>('wassell_workflow_groups') ?? [];
-    } catch {
-      workflowGroups = loadLocal<WorkflowGroup[]>('wassell_workflow_groups') ?? [];
-    }
+    const loadedWorkflowGroups = await workflowGroupsP;
+    workflowGroups = loadedWorkflowGroups ?? loadLocal<WorkflowGroup[]>('wassell_workflow_groups') ?? [];
     saveLocal('wassell_workflow_groups', workflowGroups);
 
-    // Load workflow execution logs
-    let workflowRuns = await supabaseLoad<WorkflowRun>('workflow_runs');
-    if (!workflowRuns) workflowRuns = loadLocal<WorkflowRun[]>('wassell_workflow_runs') ?? [];
-    saveLocal('wassell_workflow_runs', workflowRuns);
-
-    // Load unified activity log — fetch the most recent 500 from Supabase, or
-    // fall back to the localStorage cap of 200. The LogsPage can request more
-    // via `loadActivityLog(limit)` if the admin scrolls past the cached set.
-    let activityLog: ActivityLogEntry[] = [];
-    if (supabase) {
-      const { data, error } = await supabase
-        .from('activity_log')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(500);
-      if (!error && data) {
-        activityLog = data as ActivityLogEntry[];
-      }
-    }
-    if (activityLog.length === 0) {
-      activityLog = loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [];
-    }
-    saveLocal('wassell_activity_log', activityLog.slice(0, 200));
-
-    // Load dashboards
-    let dashboards = await supabaseLoad<Dashboard>('dashboards');
+    // Dashboards (chrome — sidebar dashboard list).
+    let dashboards = await dashboardsP;
     if (!dashboards) dashboards = loadLocal<Dashboard[]>('wassell_dashboards') ?? [];
     saveLocal('wassell_dashboards', dashboards);
 
-    // Load whiteboards + their folders
-    let whiteboardFolders = await supabaseLoad<WhiteboardFolder>('whiteboard_folders');
-    if (!whiteboardFolders) whiteboardFolders = loadLocal<WhiteboardFolder[]>('wassell_whiteboard_folders') ?? [];
-    saveLocal('wassell_whiteboard_folders', whiteboardFolders);
-    let whiteboards = await supabaseLoad<Whiteboard>('whiteboards');
-    if (!whiteboards) whiteboards = loadLocal<Whiteboard[]>('wassell_whiteboards') ?? [];
-    saveLocal('wassell_whiteboards', whiteboards);
-
-    // Load saved table views
-    let views = await supabaseLoad<ModelView>('model_views');
+    // Saved table views (chrome — view selector on each model page).
+    let views = await viewsP;
     if (!views) views = loadLocal<ModelView[]>('wassell_views') ?? [];
     saveLocal('wassell_views', views);
 
@@ -1152,7 +1225,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Cascading fallback: Supabase → localStorage → SEED. Same pattern as
     // models/groups. Users FK into profiles via `profile_id`, so we AWAIT
     // the profile backfill before moving on to users below.
-    const supabaseProfiles = await supabaseLoad<Profile>('profiles');
+    const supabaseProfiles = await profilesP;
     let profiles: Profile[];
     if (supabaseProfiles && supabaseProfiles.length > 0) {
       profiles = supabaseProfiles;
@@ -1197,7 +1270,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // --- Roles ---
     // Cascading fallback: Supabase → localStorage → SEED.
-    const supabaseRoles = await supabaseLoad<Role>('roles');
+    const supabaseRoles = await rolesP;
     let roles: Role[];
     if (supabaseRoles && supabaseRoles.length > 0) {
       roles = supabaseRoles;
@@ -1272,7 +1345,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // --- Users ---
     // Cascading fallback: Supabase → localStorage → SEED. Profiles are already
     // in Supabase (we awaited them above), so user FK writes are safe.
-    const supabaseUsers = await supabaseLoad<User>('users');
+    const supabaseUsers = await usersP;
     let users: User[];
     if (supabaseUsers && supabaseUsers.length > 0) {
       users = supabaseUsers;
@@ -1298,14 +1371,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     // --- Field templates ---
     // User-created; no seed. Just load and mirror localStorage.
-    let fieldTemplates = await supabaseLoad<FieldTemplate>('field_templates');
+    let fieldTemplates = await fieldTemplatesP;
     if (!fieldTemplates) fieldTemplates = loadLocal<FieldTemplate[]>('wassell_field_templates') ?? [];
     saveLocal('wassell_field_templates', fieldTemplates);
 
     // --- Webhook inbox (user-declared inbound endpoints) ---
-    let webhookSlugs = await supabaseLoad<WebhookSlug>('webhook_slugs');
+    let webhookSlugs = await webhookSlugsP;
     if (!webhookSlugs) webhookSlugs = loadLocal<WebhookSlug[]>('wassell_webhook_slugs') ?? [];
     saveLocal('wassell_webhook_slugs', webhookSlugs);
+
+    // Mark end of the parallel load phase. With 200ms RTT and 16 loads,
+    // expected duration drops from ~3000ms (serial) to ~250ms (parallel).
+    performance.mark('wassell:init:loads:end');
+    try {
+      performance.measure('wassell:init:loads', 'wassell:init:loads:start', 'wassell:init:loads:end');
+    } catch { /* perf API quirks — never block init on telemetry */ }
 
     // --- Seed the marketing-pipeline workflows ---
     // The 11 workflows that glue the edge functions to record writes live
@@ -1453,6 +1533,56 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
     }
 
+    // ─── Phase D.2: chrome can render NOW ─────────────────────
+    // All chrome-critical data is loaded and the user is resolved.
+    // Push the partial state so the sidebar, header, and per-page
+    // skeletons can paint with real data while the slow tail
+    // (records, workflow_runs, whiteboards, activity_log) finishes
+    // in the background. Pages that need records gate on `initialized`.
+    set({
+      models, groups, profiles, roles, users, views, dashboards,
+      fieldTemplates, webhookSlugs, workflowGroups, workflows,
+      currentUserId, criticalDataReady: true,
+    });
+    markEvent('init:critical-ready');
+    try { performance.measure('wassell:init:critical', 'wassell:init:start', 'wassell:init:critical-ready'); }
+    catch { /* perf API quirk — never block init on telemetry */ }
+
+    // ─── Phase D.2: slow tail ─────────────────────────────────
+    // These loads were kicked off in parallel at the top of init();
+    // awaiting them here only blocks the rest of init(), not chrome.
+    // Variables were declared earlier so they remain in scope for
+    // the migrations and final set below.
+    const supabaseRecords = await unifiedRecordsP;
+    if (supabaseRecords) {
+      records = {};
+      for (const rec of supabaseRecords) {
+        if (!records[rec.model_id]) records[rec.model_id] = [];
+        records[rec.model_id]!.push(rec);
+      }
+    } else {
+      records = loadLocalRecordsMap();
+    }
+    saveLocalRecordsMap(records);
+
+    const loadedWorkflowRuns = await workflowRunsP;
+    workflowRuns = loadedWorkflowRuns ?? loadLocal<WorkflowRun[]>('wassell_workflow_runs') ?? [];
+    saveLocal('wassell_workflow_runs', workflowRuns);
+
+    const activityLogData = await activityLogP;
+    if (activityLogData && activityLogData.length > 0) activityLog = activityLogData;
+    if (activityLog.length === 0) {
+      activityLog = loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [];
+    }
+    saveLocal('wassell_activity_log', activityLog.slice(0, 200));
+
+    const loadedWhiteboardFolders = await whiteboardFoldersP;
+    whiteboardFolders = loadedWhiteboardFolders ?? loadLocal<WhiteboardFolder[]>('wassell_whiteboard_folders') ?? [];
+    saveLocal('wassell_whiteboard_folders', whiteboardFolders);
+    const loadedWhiteboards = await whiteboardsP;
+    whiteboards = loadedWhiteboards ?? loadLocal<Whiteboard[]>('wassell_whiteboards') ?? [];
+    saveLocal('wassell_whiteboards', whiteboards);
+
     // Run pending schema migrations (keeps system models in sync with seedModels.ts
     // even for returning users who already have localStorage state).
     const migrated = runMigrations({ models, records, workflows, dashboards, views, groups });
@@ -1571,6 +1701,32 @@ export const useAppStore = create<AppState>((set, get) => ({
     // webhooks fan out to the workflow engine without a page reload.
     get().subscribeMarketingRealtime();
 
+    // Phase C.3: subscribe to records / models / workflows / etc. so
+    // multi-user changes appear live without manual refresh. Idempotent
+    // — repeated calls are no-ops if already running. Per-table channels
+    // can be disabled via VITE_REALTIME_<TABLE>=off env vars or globally
+    // via localStorage.wassell_realtime_disabled = '1'.
+    if (supabase) {
+      startRealtimeOrchestrator(set as Parameters<typeof startRealtimeOrchestrator>[0]);
+
+      // Phase D.3: backstop realtime with a stale-while-revalidate sweep
+      // on window focus + online events. Tables that have an updated_at
+      // column get a `WHERE updated_at > <last-load-ts>` delta fetch and
+      // the rows are merged via the same handlers as live realtime. Mark
+      // the chrome-critical tables we just loaded so the first sweep
+      // (after the user returns from another tab / closes the laptop)
+      // picks up only what changed since.
+      markLoaded('records', loadsStartedAtIso);
+      markLoaded('models', loadsStartedAtIso);
+      markLoaded('profiles', loadsStartedAtIso);
+      markLoaded('roles', loadsStartedAtIso);
+      markLoaded('users', loadsStartedAtIso);
+      markLoaded('model_views', loadsStartedAtIso);
+      markLoaded('workflows', loadsStartedAtIso);
+      markLoaded('dashboards', loadsStartedAtIso);
+      startStaleWhileRevalidate(set as Parameters<typeof startStaleWhileRevalidate>[0]);
+    }
+
     // Backfill unconsumed webhooks from the last 24 hours. Realtime only
     // delivers INSERTs that happen while we're subscribed, so anything
     // that landed while every browser tab was closed would sit forever
@@ -1600,6 +1756,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       })();
     }
+
+    // Phase G.2: total init wall time, useful for catching boot regressions.
+    markEvent('init:end');
+    try { performance.measure('wassell:init:total', 'wassell:init:start', 'wassell:init:end'); }
+    catch { /* perf API quirk — never block init on telemetry */ }
   },
 
   subscribeMarketingRealtime: () => {
@@ -1918,19 +2079,121 @@ export const useAppStore = create<AppState>((set, get) => ({
   setRecordNavContext: (modelId: string, orderedIds: string[]) => {
     set({ recordNavContext: { modelId, orderedIds } });
   },
-  saveRecord: (record: AppRecord) => {
+
+  // ─── Phase E.2: paginated record loader ───────────────────────
+  // Calls record_search RPC and accumulates results into
+  // state.recordsByModel[modelId]. Idempotent: subsequent calls
+  // advance via the cached cursor; pass `reset: true` to start
+  // over (e.g., when filters change). Concurrent-safe: the loading
+  // flag prevents double-fires.
+  loadRecordsPage: async (modelId, opts = {}) => {
+    const { filters, searchText, reset = false, limit = 50 } = opts;
+    const filterKey = buildFilterKey(filters, searchText);
+
+    // Decide which cache entry to extend, OR reset to empty.
+    const stateBefore = get();
+    const existing: RecordsPageCache | undefined = stateBefore.recordsByModel[modelId];
+    const filterChanged = !existing || existing.filterKey !== filterKey;
+    const baseCache: RecordsPageCache =
+      filterChanged || reset ? emptyCache(filterKey) : existing;
+
+    // Already loading this exact context, or exhausted: short-circuit.
+    if (baseCache.loading) return;
+    if (!filterChanged && !reset && existing && !existing.hasMore) return;
+
+    // Mark loading.
+    set((s) => ({
+      recordsByModel: {
+        ...s.recordsByModel,
+        [modelId]: setCacheLoading(baseCache, true),
+      },
+    }));
+
+    if (!supabase) {
+      set((s) => ({
+        recordsByModel: {
+          ...s.recordsByModel,
+          [modelId]: setCacheError(baseCache, 'Supabase not configured'),
+        },
+      }));
+      return;
+    }
+
+    // Cursor: only re-use the cached one if we're continuing the
+    // same filter context.
+    const cursor = !filterChanged && !reset ? existing?.nextCursor ?? null : null;
+
+    try {
+      const { data, error } = await supabase.rpc('record_search', {
+        p_model_id: modelId,
+        p_filters: (filters ?? {}) as Record<string, unknown>,
+        p_cursor: cursor,
+        p_limit: limit,
+        p_search_text: searchText ?? null,
+      });
+
+      if (error) {
+        reportSupabaseError('record_search', 'rpc', error.message ?? String(error));
+        set((s) => ({
+          recordsByModel: {
+            ...s.recordsByModel,
+            [modelId]: setCacheError(
+              s.recordsByModel[modelId] ?? baseCache,
+              error.message ?? String(error),
+            ),
+          },
+        }));
+        return;
+      }
+
+      const rawRows = (data ?? []) as Array<AppRecord & { has_more?: boolean }>;
+      const hasMore = rawRows.length > 0 ? Boolean(rawRows[0]?.has_more) : false;
+      // Strip the metadata column so the rest of the app sees plain AppRecord.
+      const cleanRows: AppRecord[] = rawRows.map((r) => {
+        const { has_more: _omit, ...rest } = r;
+        void _omit;
+        return rest as AppRecord;
+      });
+
+      set((s) => {
+        const current =
+          filterChanged || reset
+            ? emptyCache(filterKey)
+            : s.recordsByModel[modelId] ?? emptyCache(filterKey);
+        return {
+          recordsByModel: {
+            ...s.recordsByModel,
+            [modelId]: appendPage(current, cleanRows, hasMore),
+          },
+        };
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      reportSupabaseError('record_search', 'rpc', msg);
+      set((s) => ({
+        recordsByModel: {
+          ...s.recordsByModel,
+          [modelId]: setCacheError(s.recordsByModel[modelId] ?? baseCache, msg),
+        },
+      }));
+    }
+  },
+
+  saveRecord: async (record: AppRecord) => {
     const state = get();
     const previousRecord = (state.records[record.model_id] ?? []).find((r) => r.id === record.id);
     const isNew = !previousRecord;
     const origModel = state.models.find((m) => m.id === record.model_id);
 
     // Enrich the record with auto_id assignments (on create only) and formula
-    // snapshots (always). The returned model may have bumped auto_id counters —
-    // we persist it alongside the record in a single atomic `set` below.
+    // snapshots (always). Phase F.1: auto_id assignment AWAITS the server-side
+    // atomic RPC so concurrent saves never collide on the same counter value.
+    // For existing records (isNew=false) the assigner short-circuits — no RPC
+    // call, no perceptible latency.
     let enrichedModel = origModel;
     let enrichedData = record.data;
     if (origModel) {
-      const assigned = assignAutoIds(origModel, record.data, isNew);
+      const assigned = await assignAutoIdsAsync(origModel, record.data, isNew);
       enrichedModel = assigned.model;
       enrichedData = assigned.data;
       enrichedData = applyFieldFallbacks(
@@ -1951,10 +2214,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       isNew && record.created_by_user_id == null && state.currentUserId
         ? state.currentUserId
         : record.created_by_user_id ?? previousRecord?.created_by_user_id ?? null;
+    // Phase F.2: thread the loaded `version` from the in-memory previous
+    // record so supabaseRecordUpsert can pass it as p_expected_version.
+    // Form bindings may or may not preserve `version` on `record`; sourcing
+    // it from `previousRecord` is authoritative because that's what we
+    // last read from Supabase. New records pass undefined (RPC skips check).
     const finalRecord: AppRecord = {
       ...record,
       data: enrichedData,
       created_by_user_id: stampedCreatedBy,
+      version: previousRecord?.version ?? record.version,
     };
     const modelChanged = !!enrichedModel && enrichedModel !== origModel;
 

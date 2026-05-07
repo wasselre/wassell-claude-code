@@ -1,11 +1,15 @@
 // Auto ID field engine: assigns auto-incrementing IDs to records on create,
 // with an optional per-value-of-another-field scope (e.g. per-city counters).
-// Counters are stored on the field definition in the model schema JSONB,
-// keyed by slugified scope value or the `GLOBAL_KEY` sentinel.
 //
-// Pure functions — callers persist the returned `model` and `records`.
+// PHASE F.1: counter is now stored server-side in public.auto_id_counters
+// (atomic INSERT...ON CONFLICT...UPDATE). The legacy JSONB counter on the
+// field definition is kept as a fallback for offline mode and as historical
+// record. The async `assignAutoIdsAsync()` is the canonical entry point
+// used by the live save path; the sync `assignAutoIds()` is retained for
+// tests, the renumber tool, and offline use.
 
 import type { AppModel, AppRecord, ModelField } from '@/types';
+import { supabase } from '@/lib/supabase';
 
 export const GLOBAL_SCOPE_KEY = '__global__';
 const UNSET_SCOPE_KEY = '__unset__';
@@ -102,6 +106,82 @@ export function assignAutoIds(
   }
 
   return { data: workingData, model: workingModel };
+}
+
+/**
+ * Phase F.1: async assigner that calls the atomic record_assign_auto_id RPC.
+ * Use this in the live save path to avoid the read-modify-write race the
+ * sync version has. Falls back to the client-side counter if Supabase
+ * isn't configured (offline-only mode) — duplicates remain possible there
+ * but no worse than the legacy behavior.
+ *
+ * Returns:
+ *   data           — the record data with auto_id fields populated
+ *   model          — model with bumped JSONB counters when fallback fired,
+ *                    same model otherwise (server-side path doesn't mutate
+ *                    the model — the counter lives in auto_id_counters)
+ *   usedServerCounter — true when at least one assignment came from the RPC
+ */
+export async function assignAutoIdsAsync(
+  model: AppModel,
+  recordData: Record<string, unknown>,
+  isNew: boolean,
+): Promise<{ data: Record<string, unknown>; model: AppModel; usedServerCounter: boolean }> {
+  if (!isNew) return { data: recordData, model, usedServerCounter: false };
+  const fields = allFieldsOf(model);
+  const autoIdFields = fields.filter((f) => f.type === 'auto_id');
+  if (autoIdFields.length === 0) return { data: recordData, model, usedServerCounter: false };
+
+  let workingModel = model;
+  const workingData: Record<string, unknown> = { ...recordData };
+  let usedServerCounter = false;
+
+  for (const field of autoIdFields) {
+    const existing = workingData[field.name];
+    if (typeof existing === 'string' && existing !== '') continue;
+    const scopeKey = getAutoIdScopeKey(field, workingData, allFieldsOf(workingModel));
+    const start = field.auto_id_start_value ?? 1;
+
+    let counterValue: number | null = null;
+
+    // Server-side atomic counter — the right path. Postgres serializes
+    // INSERT...ON CONFLICT, so concurrent saves get distinct values.
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.rpc('record_assign_auto_id', {
+          p_model_id: model.id,
+          p_field_id: field.id,
+          p_scope_key: scopeKey,
+          p_start: start,
+        });
+        if (!error && typeof data === 'number') {
+          counterValue = data;
+          usedServerCounter = true;
+        } else if (error) {
+          // eslint-disable-next-line no-console
+          console.warn('[auto_id] record_assign_auto_id RPC failed; falling back to client counter:', error.message);
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[auto_id] record_assign_auto_id threw; falling back to client counter:', err);
+      }
+    }
+
+    // Fallback: client-side counter (legacy, race-prone). Used in offline
+    // mode or when the RPC is unreachable. Mutates the model JSONB so
+    // saveRecord can persist the bumped counter alongside the record.
+    if (counterValue === null) {
+      const counters = field.auto_id_counters ?? {};
+      counterValue = counters[scopeKey] ?? start;
+      workingModel = cloneModelWithFieldPatch(workingModel, field.id, {
+        auto_id_counters: { ...counters, [scopeKey]: counterValue + 1 },
+      });
+    }
+
+    workingData[field.name] = formatAutoId(field, counterValue);
+  }
+
+  return { data: workingData, model: workingModel, usedServerCounter };
 }
 
 /** Reset counters on a single `auto_id` field without touching existing records. */
