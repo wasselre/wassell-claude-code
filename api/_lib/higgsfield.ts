@@ -97,32 +97,12 @@ export async function higgsfieldCleanup(opts: CleanupOpts): Promise<HiggsfieldSt
       statusUrl: 'stub://cleanup',
     };
   }
-  const res = await fetch(`${env.baseUrl}/v1/predictions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: authHeader(env),
-    },
-    body: JSON.stringify({
-      model: env.modelId,
-      input: {
-        prompt: opts.cleanupPrompt,
-        image_url: opts.rawPhotoUrl,
-      },
-    }),
+  return startGeneration(env, {
+    prompt: opts.cleanupPrompt,
+    image_url: opts.rawPhotoUrl,
     signal: opts.signal,
+    phase: 'cleanup',
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Higgsfield cleanup start failed (${res.status}): ${body.slice(0, 300)}`);
-  }
-  const json = (await res.json()) as { id?: string; status_url?: string; urls?: { get?: string } };
-  const requestId = json.id ?? '';
-  const statusUrl = json.status_url ?? json.urls?.get ?? '';
-  if (!requestId || !statusUrl) {
-    throw new Error('Higgsfield cleanup response missing id or status_url');
-  }
-  return { requestId, statusUrl };
 }
 
 interface EditingOpts {
@@ -147,32 +127,12 @@ export async function higgsfieldEditing(opts: EditingOpts): Promise<HiggsfieldSt
       statusUrl: 'stub://editing',
     };
   }
-  const res = await fetch(`${env.baseUrl}/v1/predictions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: authHeader(env),
-    },
-    body: JSON.stringify({
-      model: env.modelId,
-      input: {
-        prompt: opts.editingPrompt,
-        image_url: opts.cleanedPhotoUrl,
-      },
-    }),
+  return startGeneration(env, {
+    prompt: opts.editingPrompt,
+    image_url: opts.cleanedPhotoUrl,
     signal: opts.signal,
+    phase: 'editing',
   });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Higgsfield editing start failed (${res.status}): ${body.slice(0, 300)}`);
-  }
-  const json = (await res.json()) as { id?: string; status_url?: string; urls?: { get?: string } };
-  const requestId = json.id ?? '';
-  const statusUrl = json.status_url ?? json.urls?.get ?? '';
-  if (!requestId || !statusUrl) {
-    throw new Error('Higgsfield editing response missing id or status_url');
-  }
-  return { requestId, statusUrl };
 }
 
 interface DesignOpts {
@@ -207,32 +167,85 @@ export async function higgsfieldDesign(opts: DesignOpts): Promise<HiggsfieldStar
       statusUrl: 'stub://design',
     };
   }
-  const res = await fetch(`${env.baseUrl}/v1/predictions`, {
+  return startGeneration(env, {
+    prompt: opts.designPrompt,
+    image_url: opts.editedPhotoUrl,
+    reference_image_url: opts.referenceImageUrl,
+    logo_url: opts.logoUrl,
+    signal: opts.signal,
+    phase: 'design',
+  });
+}
+
+/**
+ * Shared start helper for all three phases. Per Higgsfield's docs the
+ * model id is part of the URL path, NOT the body — the body carries
+ * `prompt` (required) plus `aspect_ratio` / `resolution` (defaults
+ * applied here) plus any image inputs the model accepts.
+ *
+ * The image input field names (`image_url`, `reference_image_url`,
+ * `logo_url`) are best-effort: Higgsfield's public docs explicitly
+ * cover only text-to-image, so any image fields we send may be
+ * silently ignored by the model. Phase 1 / Phase 2 are likely to
+ * generate-from-text only until Higgsfield publishes their image-to-
+ * image schema (or we discover it by experiment). The user will see a
+ * generated image either way; whether it incorporates the input photo
+ * depends on the model's actual capabilities.
+ */
+async function startGeneration(
+  env: HiggsfieldEnv,
+  opts: {
+    prompt: string;
+    image_url?: string;
+    reference_image_url?: string;
+    logo_url?: string;
+    signal?: AbortSignal;
+    phase: 'cleanup' | 'editing' | 'design';
+  },
+): Promise<HiggsfieldStartResult> {
+  // Drop any leading slash in modelId so the URL composes cleanly.
+  const modelPath = env.modelId.startsWith('/') ? env.modelId.slice(1) : env.modelId;
+  const url = `${env.baseUrl.replace(/\/$/, '')}/${modelPath}`;
+
+  // Body: documented fields first, image inputs second (might be no-ops
+  // for text-only models — sent on the chance Soul accepts them).
+  const body: Record<string, unknown> = {
+    prompt: opts.prompt,
+    aspect_ratio: '1:1',
+    resolution: '1080p',
+  };
+  if (opts.image_url) body.image_url = opts.image_url;
+  if (opts.reference_image_url) body.reference_image_url = opts.reference_image_url;
+  if (opts.logo_url) body.logo_url = opts.logo_url;
+
+  const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      Accept: 'application/json',
       Authorization: authHeader(env),
     },
-    body: JSON.stringify({
-      model: env.modelId,
-      input: {
-        prompt: opts.designPrompt,
-        image_url: opts.editedPhotoUrl,
-        reference_image_url: opts.referenceImageUrl,
-        logo_url: opts.logoUrl,
-      },
-    }),
+    body: JSON.stringify(body),
     signal: opts.signal,
   });
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Higgsfield design start failed (${res.status}): ${body.slice(0, 300)}`);
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Higgsfield ${opts.phase} start failed (${res.status}): ${errBody.slice(0, 300)}`);
   }
-  const json = (await res.json()) as { id?: string; status_url?: string; urls?: { get?: string } };
-  const requestId = json.id ?? '';
-  const statusUrl = json.status_url ?? json.urls?.get ?? '';
+  const json = (await res.json()) as {
+    request_id?: string;
+    status_url?: string;
+    cancel_url?: string;
+    status?: string;
+  };
+  const requestId = json.request_id ?? '';
+  // status_url is documented; if absent fall back to constructing one
+  // from request_id at the documented GET /requests/{id}/status path.
+  const statusUrl =
+    json.status_url ??
+    (requestId ? `${env.baseUrl.replace(/\/$/, '')}/requests/${requestId}/status` : '');
   if (!requestId || !statusUrl) {
-    throw new Error('Higgsfield design response missing id or status_url');
+    throw new Error(`Higgsfield ${opts.phase} response missing request_id or status_url: ${JSON.stringify(json).slice(0, 200)}`);
   }
   return { requestId, statusUrl };
 }
@@ -287,19 +300,29 @@ export async function pollHiggsfield(
     }
     const json = (await res.json()) as {
       status?: string;
+      // Per Higgsfield docs the completed shape is { images: [{ url }], video: { url } }
+      images?: Array<{ url?: string }>;
+      video?: { url?: string };
+      // Plus older / undocumented shapes we tolerate
       output?: unknown;
       error?: string;
+      detail?: string;
     };
     const status = (json.status ?? '').toLowerCase();
     if (status === 'completed' || status === 'succeeded') {
-      const urls = extractImageUrls(json.output);
+      const fromImages = Array.isArray(json.images)
+        ? json.images.map((i) => i?.url).filter((u): u is string => typeof u === 'string')
+        : [];
+      const fromVideo = json.video?.url ? [json.video.url] : [];
+      const fromOutput = extractImageUrls(json.output);
+      const urls = [...fromImages, ...fromVideo, ...fromOutput];
       return { status: 'completed', imageUrls: urls };
     }
     if (status === 'failed' || status === 'error') {
-      return { status: 'failed', rawError: json.error ?? 'unknown error' };
+      return { status: 'failed', rawError: json.error ?? json.detail ?? 'unknown error' };
     }
     if (status === 'nsfw' || status === 'content_policy_violation') {
-      return { status: 'nsfw', rawError: json.error ?? 'flagged content' };
+      return { status: 'nsfw', rawError: json.error ?? json.detail ?? 'flagged content' };
     }
     // queued | in_progress | starting → keep waiting
     await new Promise((r) => setTimeout(r, intervalMs));
