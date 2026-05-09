@@ -13,11 +13,12 @@ The website lives in a separate folder/repo (`Wassel Website/`), not in this cod
 Marketing the company and the projects it manages without spinning up a separate CMS. Admins keep working in the one tool they already use (the CRM) — and changes show up on the public site within seconds, no rebuild required.
 
 ## Key behaviors
-- **Opt-in publishing.** Each row in `all_projects` has an `is_public` checkbox (default OFF). Only rows where `is_public = true` reach the website. Existing 1,366 projects stayed private after the migration; admins toggle them on individually.
+- **Opt-in publishing.** The "إعدادات الموقع / Website Settings" section on every project has an `is_public` checkbox (default OFF). Only rows where `is_public = true` reach the website. Existing 1,366 projects stayed private after the migration; admins toggle them on individually.
+- **Schema-driven rendering.** The website does NOT hardcode field names. It reads `card_config.title_field_id` / `subtitle_field_id` / `badge_field_id` / `shown_field_ids` for the projects grid, and `maps_config.location_url_field_id` / `pin_label_field_id` / `pin_color_field_id` / `popup_*_field_id` / `popup_shown_field_ids` for the map. Whatever the admin configures in the **Card Builder** and **Maps Builder**, the website renders identically — same wiring path as the CRM's `CardView` and `MapsView`.
+- **Same map mechanics + style as the CRM.** Project locations come from whatever URL/text field `maps_config.location_url_field_id` points at — currently the existing "موقع المشروع" field in "المعلومات الجغرافية". The website parses with the same logic as `src/lib/locationUtils.ts` (long-form `@lat,lng` URLs, `?q=lat,lng`, bare `lat,lng`). It also applies `maps_config.map_style_json` as the map's `styles`, honors `default_center_lat/lng` and `default_zoom`, and loads the API with `language=ar&region=SA` to match `src/lib/mapsLoader.ts`. Short `goo.gl` links don't resolve on the website (no edge function for redirect-following).
+- **Two website-only fields on `all_projects`** in their own non-base section: `image_url` (hero photo for cards / map info windows) and `is_public`.
 - **Live data, no rebuild.** The website's JS reads directly from Supabase via the anon key. Toggling `is_public` on a project, editing its name, or changing the hero copy in `site_settings` is reflected on the next page load.
 - **Singleton config record.** `site_settings` is a system model with one record holding hero copy, contact info, social links, working hours, and the WhatsApp number. The website always reads the first record.
-- **Same map mechanics as the CRM.** Project locations come from a Google Maps URL stored in `location_url`. The website uses the same parser as `lib/locationUtils` (long-form `@lat,lng` URLs, `?q=lat,lng`, etc.). Short `goo.gl` links don't resolve on the website (they need an edge function the CRM has but the website doesn't).
-- **Two new fields on `all_projects`** beyond `is_public`: `image_url` (hero photo for cards / map info windows) and `location_url` (Google Maps URL).
 - **Narrow public RLS.** The `anon` role can SELECT only:
   - `records` rows where the model is `site_settings` (always) OR `all_projects` AND `is_public = true`.
   - `models` rows for those two models (so the website can resolve dropdown option labels like city / status).
@@ -26,8 +27,8 @@ Marketing the company and the projects it manages without spinning up a separate
 ## User flows
 1. **Admin publishes a project (happy path):**
    1. Open the project in the CRM record form.
-   2. Fill in `image_url` (an image URL), `location_url` (a Google Maps URL — long form or `?q=lat,lng`).
-   3. Tick the **عرض على الموقع / Show on Website** checkbox.
+   2. Make sure the existing "موقع المشروع" field has a Google Maps URL (long form or `?q=lat,lng`) so the project will appear on the map.
+   3. Scroll to the "إعدادات الموقع" section. Fill in `image_url` and tick **عرض على الموقع**.
    4. Save. The project appears on the public site within a few seconds (no caching beyond the browser tab).
 2. **Admin updates site copy:**
    1. Open the singleton record in the **إعدادات الموقع / Website Settings** model.
@@ -46,9 +47,9 @@ Marketing the company and the projects it manages without spinning up a separate
   - `models` rows where `name IN ('all_projects', 'site_settings')`.
   - `records` rows where `model_id = site_settings.id` OR `(model_id = all_projects.id AND data->>'is_public' = 'true')`.
 - **Writes (authenticated/CRM only):** `records.data` JSONB for both models, via the standard `record_save` RPC. No special path.
-- **Schema-time changes (one-shot in migration):**
-  - `models.schema` JSONB on `all_projects` — appended fields `image_url`, `location_url`, `is_public`.
-  - `models.maps_config` JSONB on `all_projects` — wired `location_url_field_id`, pin label, pin color, popup title, popup badge.
+- **Schema-time changes (one-shot in migrations):**
+  - `models.schema` JSONB on `all_projects` — `image_url` and `is_public` live in a new non-base "إعدادات الموقع / Website Settings" section.
+  - `models.maps_config` JSONB on `all_projects` — `location_url_field_id` set to the existing "موقع المشروع" URL field in the "المعلومات الجغرافية" section. Pin/popup wiring (title, label, color, badge, subtitle, shown fields) was tuned by the admin in the Maps Builder before this work; the migration leaves their tuning intact.
   - `models` insert — new `site_settings` row.
   - `records` insert — one default `site_settings` record matching the original static homepage copy.
   - `pg_policies` — two new `TO anon` SELECT policies (`records_public_website_read`, `models_public_website_read`).

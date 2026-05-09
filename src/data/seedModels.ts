@@ -1452,10 +1452,10 @@ const unitsModel: AppModel = {
 // allProjectsId is declared at the top of the file so earlier models (clients)
 // can reference it via lookup_model_id.
 const apBaseSectionId = uuid();
+const apWebsiteSectionId = uuid();
 const apNameFieldId = uuid();
 const apStatusFieldId = uuid();
-const apImageFieldId = uuid();
-const apLocationUrlFieldId = uuid();
+const apLocationFieldId = uuid();
 
 const allProjectsModel: AppModel = {
   id: allProjectsId,
@@ -1475,12 +1475,13 @@ const allProjectsModel: AppModel = {
     shown_field_ids: [],
   },
   // Wired so the CRM Maps view AND the public website map page resolve
-  // project locations from `location_url` (a Google Maps URL parsed by
-  // lib/locationUtils). Pin label = project name, color = status option's
-  // color (off-plan / under-construction / ready).
+  // project locations from the `location` text field (admin pastes a Google
+  // Maps URL or a bare "lat,lng" pair — both are handled by parseGoogleMapsUrl
+  // in lib/locationUtils). Pin label = project name, color = status option's
+  // color. Admins can repoint these in the Maps Builder.
   maps_config: {
     ...MAPS_CONFIG_DEFAULT,
-    location_url_field_id: apLocationUrlFieldId,
+    location_url_field_id: apLocationFieldId,
     pin_label_field_id: apNameFieldId,
     pin_color_field_id: apStatusFieldId,
     popup_title_field_id: apNameFieldId,
@@ -1521,7 +1522,7 @@ const allProjectsModel: AppModel = {
             show_in_table: true,
           },
           {
-            id: uuid(),
+            id: apLocationFieldId,
             name: 'location',
             label_ar: 'الموقع',
             label_en: 'Location',
@@ -1647,34 +1648,32 @@ const allProjectsModel: AppModel = {
             width: 'full',
             show_in_table: false,
           },
+        ],
+      },
+      // Website-only knobs live in their own non-base section so admins see
+      // them grouped together in the form. The public site reads `image_url`
+      // (hero photo) and gates visibility on `is_public` (default off — RLS
+      // policy in 2026-05-09_j only lets `is_public = true` rows reach anon).
+      {
+        id: apWebsiteSectionId,
+        label_ar: 'إعدادات الموقع',
+        label_en: 'Website Settings',
+        order: 1,
+        is_base: false,
+        color: '#B8734F',
+        fields: [
           {
-            id: apImageFieldId,
+            id: uuid(),
             name: 'image_url',
             label_ar: 'صورة المشروع',
             label_en: 'Project Image',
             type: 'url',
             required: false,
-            order: 12,
-            section_id: apBaseSectionId,
-            width: 'half',
+            order: 0,
+            section_id: apWebsiteSectionId,
+            width: 'full',
             show_in_table: false,
           },
-          {
-            id: apLocationUrlFieldId,
-            name: 'location_url',
-            label_ar: 'رابط الموقع على الخريطة',
-            label_en: 'Map Location URL',
-            type: 'url',
-            required: false,
-            order: 13,
-            section_id: apBaseSectionId,
-            width: 'half',
-            show_in_table: false,
-          },
-          // Opt-in flag for the public website. Default off — only admins
-          // who explicitly toggle this on get the project published. The
-          // RLS policy in 2026-05-09_j_website_integration.sql gates the
-          // anon-role read on this exact field.
           {
             id: uuid(),
             name: 'is_public',
@@ -1682,8 +1681,8 @@ const allProjectsModel: AppModel = {
             label_en: 'Show on Website',
             type: 'checkbox',
             required: false,
-            order: 14,
-            section_id: apBaseSectionId,
+            order: 1,
+            section_id: apWebsiteSectionId,
             width: 'half',
             show_in_table: true,
           },
