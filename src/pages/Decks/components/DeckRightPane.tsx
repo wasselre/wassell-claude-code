@@ -111,6 +111,7 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
   }
 
   function retry() {
+    if (!record) return;
     const brief = (record.data.brief as string | undefined) ?? '';
     const title = (record.data.title as string | undefined) ?? '';
     const language = ((record.data.language as LanguageChoice | undefined) ?? 'ar') as LanguageChoice;
