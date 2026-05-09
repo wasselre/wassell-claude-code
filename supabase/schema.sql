@@ -2742,19 +2742,26 @@ CREATE POLICY auto_id_counters_admin ON public.auto_id_counters FOR ALL TO authe
 REVOKE ALL ON TABLE public.auto_id_counters FROM anon, PUBLIC;
 GRANT SELECT ON TABLE public.auto_id_counters TO authenticated;
 
+-- record_assign_auto_id signature is `int`, NOT bigint. The H-audit
+-- migration (2026-05-07_h_audit_followups.sql) wraps this with a
+-- permission check at the same int signature — they MUST match or
+-- Postgres treats them as separate overloads and PostgREST's "Could
+-- not choose the best candidate function" error blocks every save
+-- with an auto_id field. The 2026-05-09_drop_auto_id_bigint_overload
+-- migration drops the legacy bigint overload on existing installs.
 CREATE OR REPLACE FUNCTION public.record_assign_auto_id(
   p_model_id  uuid,
   p_field_id  uuid,
   p_scope_key text DEFAULT '',
-  p_start     bigint DEFAULT 1
+  p_start     int DEFAULT 1
 )
-RETURNS bigint
+RETURNS int
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $fn$
 DECLARE
-  v_value bigint;
+  v_value int;
 BEGIN
   INSERT INTO public.auto_id_counters (model_id, field_id, scope_key, current_value)
   VALUES (p_model_id, p_field_id, COALESCE(p_scope_key, ''), GREATEST(p_start, 1))
@@ -2767,10 +2774,10 @@ BEGIN
 END;
 $fn$;
 
-REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) FROM PUBLIC;
-REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) FROM anon;
-GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, bigint) TO service_role;
+REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) FROM anon;
+GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) TO service_role;
 
 -- ── F.2 — records.version + bump trigger + record_save check ──
 ALTER TABLE public.records ADD COLUMN IF NOT EXISTS version int NOT NULL DEFAULT 1;
