@@ -3017,6 +3017,7 @@ const chatTemplatesModel: AppModel = {
 // website can SELECT it.
 const siteSettingsId = uuid();
 const ssBaseSectionId = uuid();
+const ssMapCardSectionId = uuid();
 const ssHeroTitleFieldId = uuid();
 const ssHeroSubtitleFieldId = uuid();
 
@@ -3062,6 +3063,30 @@ const siteSettingsModel: AppModel = {
           { id: uuid(),                name: 'instagram_url',     label_ar: 'إنستغرام',              label_en: 'Instagram URL',         type: 'url',      required: false, order: 11, section_id: ssBaseSectionId, width: 'half', show_in_table: false },
           { id: uuid(),                name: 'tiktok_url',        label_ar: 'تيك توك',               label_en: 'TikTok URL',            type: 'url',      required: false, order: 12, section_id: ssBaseSectionId, width: 'half', show_in_table: false },
           { id: uuid(),                name: 'whatsapp_phone',    label_ar: 'رقم الواتساب',          label_en: 'WhatsApp Phone',        type: 'phone',    required: false, order: 13, section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+        ],
+      },
+      // "Map Card" section — admin picks which all_projects field populates
+      // each slot in the website's map info-window card. Empty selections
+      // fall back to heuristics (first popup_shown_field_ids → chips,
+      // label-match → price, first URL → CTA). For fresh installs the
+      // dropdown options are EMPTY: the website's
+      // 2026-05-09_l_site_settings_map_card_config.sql migration snapshots
+      // all_projects fields into these dropdowns; for a brand-new tenant
+      // the admin will run that migration after first using the Builder.
+      {
+        id: ssMapCardSectionId,
+        label_ar: 'بطاقة الخريطة',
+        label_en: 'Map Card',
+        order: 1,
+        is_base: false,
+        color: '#B8734F',
+        fields: [
+          { id: uuid(), name: 'card_status_field',  label_ar: 'حقل حالة المشروع (اختياري)',     label_en: 'Status Field (optional)', type: 'dropdown', required: false, order: 0, section_id: ssMapCardSectionId, width: 'full', show_in_table: false, options: [] },
+          { id: uuid(), name: 'card_chip1_field',   label_ar: 'الشريحة الأولى — حقل المساحة',   label_en: 'Chip 1 — Area',           type: 'dropdown', required: false, order: 1, section_id: ssMapCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'card_chip2_field',   label_ar: 'الشريحة الثانية — حقل الوحدات',  label_en: 'Chip 2 — Units',          type: 'dropdown', required: false, order: 2, section_id: ssMapCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'card_chip3_field',   label_ar: 'الشريحة الثالثة — حقل المرحلة',  label_en: 'Chip 3 — Phase',          type: 'dropdown', required: false, order: 3, section_id: ssMapCardSectionId, width: 'full', show_in_table: false, options: [] },
+          { id: uuid(), name: 'card_price_field',   label_ar: 'حقل السعر (في الذيل)',           label_en: 'Price Field (footer)',    type: 'dropdown', required: false, order: 4, section_id: ssMapCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'card_cta_url_field', label_ar: 'رابط زر "فتح السجل"',            label_en: 'CTA URL Field',           type: 'dropdown', required: false, order: 5, section_id: ssMapCardSectionId, width: 'half', show_in_table: false, options: [] },
         ],
       },
     ],

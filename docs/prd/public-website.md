@@ -15,6 +15,8 @@ Marketing the company and the projects it manages without spinning up a separate
 ## Key behaviors
 - **Opt-in publishing.** The "إعدادات الموقع / Website Settings" section on every project has an `is_public` checkbox (default OFF). Only rows where `is_public = true` reach the website. Existing 1,366 projects stayed private after the migration; admins toggle them on individually.
 - **Schema-driven rendering.** The website does NOT hardcode field names. It reads `card_config.title_field_id` / `subtitle_field_id` / `badge_field_id` / `shown_field_ids` for the projects grid, and `maps_config.location_url_field_id` / `pin_label_field_id` / `pin_color_field_id` / `popup_*_field_id` / `popup_shown_field_ids` for the map. Whatever the admin configures in the **Card Builder** and **Maps Builder**, the website renders identically — same wiring path as the CRM's `CardView` and `MapsView`.
+- **Map info-window card design.** Pixel-port of "Variation B — البطاقة المدمجة" from the Claude Design handoff (`maps-card/project/`). 320px white card, copper-tinted status pill with colored option dot, 20px Amiri title in brown, location row with copper map-pin icon, 3-column cream chip grid for stats, dashed-top footer with price block + copper "فتح السجل" CTA. Card frame, tail pointer, hover lift, and tokens are exact ports of `cards.css` `.cp-card`.
+- **Per-slot field selection.** A "بطاقة الخريطة / Map Card" section on `site_settings` exposes 6 dropdowns the admin uses to pin which `all_projects` field populates each slot in the website's map card: status pill, chips 1–3, footer price, CTA URL. Dropdown options are snapshotted from the `all_projects` schema at migration time. Empty selections fall through to website-side heuristics (first 3 popup_shown_field_ids → chips, label-match `سعر|تكلف` → price, first URL field → CTA), so the migration is non-breaking.
 - **Same map mechanics + style as the CRM.** Project locations come from whatever URL/text field `maps_config.location_url_field_id` points at — currently the existing "موقع المشروع" field in "المعلومات الجغرافية". The website parses with the same logic as `src/lib/locationUtils.ts` (long-form `@lat,lng` URLs, `?q=lat,lng`, bare `lat,lng`). It also applies `maps_config.map_style_json` as the map's `styles`, honors `default_center_lat/lng` and `default_zoom`, and loads the API with `language=ar&region=SA` to match `src/lib/mapsLoader.ts`. Short `goo.gl` links don't resolve on the website (no edge function for redirect-following).
 - **Two website-only fields on `all_projects`** in their own non-base section: `image_url` (hero photo for cards / map info windows) and `is_public`.
 - **Live data, no rebuild.** The website's JS reads directly from Supabase via the anon key. Toggling `is_public` on a project, editing its name, or changing the hero copy in `site_settings` is reflected on the next page load.
@@ -34,6 +36,10 @@ Marketing the company and the projects it manages without spinning up a separate
    1. Open the singleton record in the **إعدادات الموقع / Website Settings** model.
    2. Edit hero title, description, contact info, social URLs, hours, etc.
    3. Save. Public pages pick up the change on next reload.
+3. **Admin redesigns the map card:**
+   1. Open the same `site_settings` singleton, scroll to the "بطاقة الخريطة / Map Card" section.
+   2. Pick the projects-model field for each slot (status pill, chips 1–3, price, CTA URL) from its dropdown. Leave any slot blank to fall back to heuristics.
+   3. Save. The next pin click on the public map renders the new layout.
 3. **Visitor browses projects:**
    1. Open `/projects.html`.
    2. Filter by city, status, or free-text search.
@@ -51,6 +57,7 @@ Marketing the company and the projects it manages without spinning up a separate
   - `models.schema` JSONB on `all_projects` — `image_url` and `is_public` live in a new non-base "إعدادات الموقع / Website Settings" section.
   - `models.maps_config` JSONB on `all_projects` — `location_url_field_id` set to the existing "موقع المشروع" URL field in the "المعلومات الجغرافية" section. Pin/popup wiring (title, label, color, badge, subtitle, shown fields) was tuned by the admin in the Maps Builder before this work; the migration leaves their tuning intact.
   - `models` insert — new `site_settings` row.
+  - `models.schema` JSONB on `site_settings` — appended a "بطاقة الخريطة / Map Card" section with 6 dropdown fields (`card_status_field`, `card_chip1_field`, `card_chip2_field`, `card_chip3_field`, `card_price_field`, `card_cta_url_field`). Each dropdown's options are a snapshot of the `all_projects` field list at migration time.
   - `records` insert — one default `site_settings` record matching the original static homepage copy.
   - `pg_policies` — two new `TO anon` SELECT policies (`records_public_website_read`, `models_public_website_read`).
   - `GRANT SELECT ON public.records, public.models TO anon`.
