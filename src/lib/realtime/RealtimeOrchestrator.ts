@@ -34,10 +34,10 @@
 //     skips startup entirely. Per-table disable via env vars
 //     VITE_REALTIME_<TABLE>=off.
 //
-// Frozen models (e.g. marketing_operations): NOT covered here.
-// Realtime payloads from the dedicated frozen tables go to those
-// tables' channels, not `records`. Phase E.4 will add a frozen-model
-// fast path; until then, frozen models are read-snapshot-only.
+// Frozen models: NOT covered here. Realtime payloads from dedicated
+// frozen tables go to those tables' channels, not `records`. Phase
+// E.4 will add a frozen-model fast path; until then, frozen models
+// are read-snapshot-only.
 // ─────────────────────────────────────────────────────────────────
 
 import { supabase } from './../supabase';

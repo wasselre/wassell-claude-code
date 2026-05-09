@@ -36,6 +36,7 @@ import {
   type PaseetResponseMapping,
   type MapperSchema,
 } from './_lib/paseetMapper.js';
+import { substituteTemplate } from '../src/lib/templateUtils.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -77,20 +78,6 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
   for (const [k, v] of webResp.headers) nodeRes.setHeader(k, v);
   const buf = Buffer.from(await webResp.arrayBuffer());
   nodeRes.end(buf);
-}
-
-/* ─── Template substitution ─────────────────────────────────────────── */
-
-/** Replace `{slug}` tokens in `template` with values from `data`. Missing
- *  slugs render as empty string. Object/array values are JSON-stringified
- *  so they're at least visible in the prompt rather than `[object Object]`. */
-function substituteTemplate(template: string, data: Record<string, unknown>): string {
-  return template.replace(/\{([\w.-]+)\}/g, (_match, slug: string) => {
-    const v = data[slug];
-    if (v === null || v === undefined) return '';
-    if (typeof v === 'object') return JSON.stringify(v);
-    return String(v);
-  });
 }
 
 /* ─── Workflow + button shape (light, only what we read) ────────────── */

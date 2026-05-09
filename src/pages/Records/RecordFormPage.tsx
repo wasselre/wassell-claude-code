@@ -341,62 +341,114 @@ export default function RecordFormPage() {
   };
 
   /**
-   * Fire one of the model's user-configured custom buttons. Sends
-   * { record_id, button_id } to /api/run-button-workflow. The server-side
-   * runner loads the workflow, executes its paseet_query actions against
-   * the current record, and applies the response mappings back onto the
-   * record. On success we surface what the runner did (rows added, fields
-   * touched) and refresh the form's local state by re-reading the record
-   * from Supabase — so the UI shows the new values without a hard reload.
+   * Fire one of the model's user-configured custom buttons. Dispatches on
+   * the action type:
+   *
+   *   - `trigger_workflow` → POST /api/run-button-workflow (Paseet flow).
+   *   - `generate_design`  → POST /api/marketing/generate (two-phase
+   *     Higgsfield orchestration on marketing_operations records).
+   *
+   * After either succeeds we re-read the record via `unified_records` so
+   * the form reflects whatever the server wrote without a full reload.
    */
   const handleCustomButtonClick = async (button: CustomButton): Promise<void> => {
     if (!model || !existingRecord) return;
-    if (button.action.type !== 'trigger_workflow') return;
-    if (!button.action.workflow_id) {
-      addToast(
-        isAr ? 'هذا الزر لم يربط بأي سير عمل بعد' : 'This button is not connected to any workflow yet',
-        'error',
-      );
-      return;
-    }
     setRunningButtonId(button.id);
     try {
       const session = supabase ? (await supabase.auth.getSession()).data.session : null;
       const authHeader: Record<string, string> = session?.access_token
         ? { Authorization: `Bearer ${session.access_token}` }
         : {};
-      const res = await fetch('/api/run-button-workflow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeader },
-        body: JSON.stringify({
-          record_id: existingRecord.id,
-          button_id: button.id,
-        }),
-      });
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({ error: res.statusText }));
+
+      if (button.action.type === 'trigger_workflow') {
+        if (!button.action.workflow_id) {
+          addToast(
+            isAr ? 'هذا الزر لم يربط بأي سير عمل بعد' : 'This button is not connected to any workflow yet',
+            'error',
+          );
+          return;
+        }
+        const res = await fetch('/api/run-button-workflow', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({
+            record_id: existingRecord.id,
+            button_id: button.id,
+          }),
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({ error: res.statusText }));
+          addToast(
+            isAr
+              ? `فشل تنفيذ الزر: ${errBody?.error ?? `(${res.status})`}`
+              : `Button failed: ${errBody?.error ?? `(${res.status})`}`,
+            'error',
+          );
+          return;
+        }
+        const okBody = (await res.json().catch(() => null)) as
+          | { ran?: number; mappings_applied?: number; skipped?: number }
+          | null;
+        const updated = okBody?.mappings_applied ?? 0;
         addToast(
           isAr
-            ? `فشل تنفيذ الزر: ${errBody?.error ?? `(${res.status})`}`
-            : `Button failed: ${errBody?.error ?? `(${res.status})`}`,
+            ? updated > 0
+              ? `تم — تم تحديث ${updated} حقل من رد بسيط`
+              : 'تم تنفيذ الزر بدون تغييرات على السجل'
+            : updated > 0
+              ? `Done — ${updated} field${updated === 1 ? '' : 's'} updated from Paseet`
+              : 'Button ran with no record changes',
+          'success',
+        );
+      } else if (button.action.type === 'generate_design') {
+        // Pre-flight validation. The orchestrator re-checks server-side,
+        // but failing fast here avoids a round-trip and surfaces clearer
+        // error messages. Required: project, template, raw_photo.
+        const missing: string[] = [];
+        if (!formData.project) missing.push(isAr ? 'المشروع' : 'project');
+        if (!formData.template) missing.push(isAr ? 'القالب' : 'template');
+        if (!formData.raw_photo) missing.push(isAr ? 'الصورة الخام' : 'raw photo');
+        if (missing.length > 0) {
+          addToast(
+            isAr
+              ? `أكمل الحقول التالية أولاً: ${missing.join('، ')}`
+              : `Fill in first: ${missing.join(', ')}`,
+            'error',
+          );
+          return;
+        }
+        const res = await fetch('/api/marketing/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({
+            record_id: existingRecord.id,
+            model_id: model.id,
+          }),
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({ error: res.statusText }));
+          addToast(
+            isAr
+              ? `فشل توليد التصميم: ${errBody?.error ?? `(${res.status})`}`
+              : `Design generation failed: ${errBody?.error ?? `(${res.status})`}`,
+            'error',
+          );
+          return;
+        }
+        addToast(
+          isAr
+            ? 'بدأ توليد التصميم — ستظهر النتائج تلقائياً'
+            : 'Design generation started — results will appear automatically',
+          'success',
+        );
+      } else {
+        addToast(
+          isAr ? 'إجراء الزر غير مدعوم' : 'Unsupported button action',
           'error',
         );
         return;
       }
-      const okBody = (await res.json().catch(() => null)) as
-        | { ran?: number; mappings_applied?: number; skipped?: number }
-        | null;
-      const updated = okBody?.mappings_applied ?? 0;
-      addToast(
-        isAr
-          ? updated > 0
-            ? `تم — تم تحديث ${updated} حقل من رد بسيط`
-            : 'تم تنفيذ الزر بدون تغييرات على السجل'
-          : updated > 0
-            ? `Done — ${updated} field${updated === 1 ? '' : 's'} updated from Paseet`
-            : 'Button ran with no record changes',
-        'success',
-      );
+
       // Refresh the record's data from Supabase so the form picks up
       // anything the workflow wrote — without a full page reload.
       // Reads go through `unified_records`, the UNION of the JSONB

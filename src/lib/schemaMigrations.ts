@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid';
-import { SEED_MODELS, SEED_GROUPS, PROJECTS_GROUP_ID } from '@/data/seedModels';
+import { SEED_MODELS, SEED_GROUPS, PROJECTS_GROUP_ID, RETIRED_SYSTEM_MODEL_NAMES } from '@/data/seedModels';
 import { MAPS_CONFIG_DEFAULT } from '@/types';
 import type { AppModel, AppRecord, Workflow, Dashboard, ModelView, ModelGroup, NoteEntry } from '@/types';
 
@@ -679,6 +679,84 @@ export function refreshSystemModels(state: MigrationInput): MigrationOutput {
   }
 
   return { ...state, models: finalModels };
+}
+
+/**
+ * Counterpart to `refreshSystemModels`. Drops any `is_system: true` model
+ * whose `name` is in the explicit `RETIRED_SYSTEM_MODEL_NAMES` set.
+ * Records, workflows, views, and workflow runs keyed by the dropped model
+ * ids are removed from the in-memory map too — they're orphans once the
+ * parent model is gone, and stale workflows in particular can fire
+ * against a model that no longer exists.
+ *
+ * Returns the dropped IDs so the caller can fan out a `supabaseDelete`
+ * for each one. That's the propagation path from "retired in code" →
+ * "deleted in Supabase" — without it, a stale browser session can
+ * re-upsert the row from localStorage and the ghost comes back across
+ * the entire installation.
+ *
+ * Two reasons we use the explicit `RETIRED_SYSTEM_MODEL_NAMES` set
+ * instead of "absent from SEED_MODELS":
+ *
+ *   1. Safety. A developer mid-refactor who temporarily removes a model
+ *      from `SEED_MODELS` would otherwise nuke production data.
+ *      Explicit retirement is git-auditable and intentional.
+ *   2. Distinction. A model "not in SEED_MODELS" can mean "user built
+ *      it in the Builder" — those are user-owned and must not be
+ *      touched. The retirement set narrows the action to system rows
+ *      we explicitly retired.
+ *
+ * Non-system models are NEVER pruned — those are user-built and we
+ * don't own their lifecycle.
+ */
+export interface PruneResult extends MigrationOutput {
+  /** Model IDs the caller should `supabaseDelete('models', id)` for. */
+  retiredModelIds: string[];
+  retiredNames: string[];
+}
+
+export function pruneRemovedSystemModels(state: MigrationInput): PruneResult {
+  const dropped: string[] = [];
+  const dropIds = new Set<string>();
+  const filteredModels = state.models.filter((m) => {
+    if (!m.is_system) return true;
+    if (!RETIRED_SYSTEM_MODEL_NAMES.has(m.name)) return true;
+    dropped.push(m.name);
+    dropIds.add(m.id);
+    return false;
+  });
+  if (dropped.length === 0) {
+    return { ...state, retiredModelIds: [], retiredNames: [] };
+  }
+
+  // Drop orphaned records, workflows, views, and workflow runs whose
+  // parent model is being retired. Same posture as the regular
+  // `deleteModel` action — keep the cascade tight so a workflow doesn't
+  // fire against a model that's about to disappear.
+  const filteredRecords: typeof state.records = {};
+  for (const [modelId, list] of Object.entries(state.records)) {
+    if (!dropIds.has(modelId)) filteredRecords[modelId] = list;
+  }
+  const filteredWorkflows = state.workflows.filter(
+    (w) => !dropIds.has(w.trigger_model_id),
+  );
+  const filteredViews = state.views.filter((v) => !dropIds.has(v.model_id));
+
+  console.warn(
+    `[pruneRemovedSystemModels] Retired ${dropped.length} system model(s): ${dropped.join(', ')}. ` +
+      `Cascading delete to Supabase + dropping ${state.workflows.length - filteredWorkflows.length} workflow(s) ` +
+      `and ${state.views.length - filteredViews.length} view(s).`,
+  );
+
+  return {
+    ...state,
+    models: filteredModels,
+    records: filteredRecords,
+    workflows: filteredWorkflows,
+    views: filteredViews,
+    retiredModelIds: Array.from(dropIds),
+    retiredNames: dropped,
+  };
 }
 
 export interface HealInput {

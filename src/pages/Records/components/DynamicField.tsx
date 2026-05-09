@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { ExternalLink, Fingerprint, Calculator } from 'lucide-react';
+import { ExternalLink, Fingerprint, Calculator, Upload, X } from 'lucide-react';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
@@ -10,8 +11,10 @@ import DynamicCell from './DynamicCell';
 import NotesField from './NotesField';
 import RangeField from './RangeField';
 import TableField from './TableField';
+import TemplateVariablesField from './TemplateVariablesField';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
+import { uploadImage, deleteImage, type ImageFolder } from '@/lib/imageUpload';
 import type { FieldOption, ModelField } from '@/types';
 
 // Rotating palette used when the user inline-creates a new dropdown /
@@ -432,6 +435,42 @@ export default function DynamicField({ field, value, onChange, recordData, compa
         );
       }
 
+      case 'image':
+        return (
+          <ImageFieldInput
+            value={typeof value === 'string' ? value : ''}
+            folder={field.image_folder ?? 'reference'}
+            accept={field.image_accept ?? 'image/png,image/jpeg,image/webp'}
+            maxSizeMb={field.image_max_size_mb ?? 10}
+            onChange={onChange}
+            isAr={isAr}
+          />
+        );
+
+      case 'template_variables': {
+        const owningModel = models.find((m) =>
+          m.schema.sections.some((s) => s.fields.some((f) => f.id === field.id)),
+        );
+        if (!owningModel) {
+          return (
+            <div className="form-input bg-sand/5 text-charcoal/40 italic cursor-not-allowed">
+              {isAr ? 'تعذّر تحديد النموذج' : 'Owning model unresolved'}
+            </div>
+          );
+        }
+        const safeValue = (value && typeof value === 'object' && !Array.isArray(value))
+          ? (value as Record<string, { source: 'manual' | 'mirror'; value: string | number; mirror_field?: string }>)
+          : {};
+        return (
+          <TemplateVariablesField
+            model={owningModel}
+            recordData={recordData ?? {}}
+            value={safeValue}
+            onChange={onChange}
+          />
+        );
+      }
+
       case 'assignee': {
         const { users: allUsers } = useAppStore.getState();
         const roleIds = field.assignee_role_ids ?? [];
@@ -481,5 +520,110 @@ export default function DynamicField({ field, value, onChange, recordData, compa
       </label>
       {renderInput()}
     </div>
+  );
+}
+
+interface ImageFieldInputProps {
+  value: string;
+  folder: ImageFolder;
+  accept: string;
+  maxSizeMb: number;
+  onChange: (value: unknown) => void;
+  isAr: boolean;
+}
+
+/**
+ * File picker + thumbnail for `type: 'image'`. Uploads to Supabase Storage
+ * (`marketing-assets` bucket) and stores the public URL on the record.
+ *
+ * Errors surface via the global toast (per CLAUDE.md "Silent Failures"):
+ * upload failure leaves the previous value untouched and shows a red toast.
+ * Best-effort delete on clear; a delete failure is toasted but doesn't
+ * block the user from typing a new URL into the field.
+ */
+function ImageFieldInput({ value, folder, accept, maxSizeMb, onChange, isAr }: ImageFieldInputProps) {
+  const { addToast } = useAppStore();
+  const [uploading, setUploading] = useState(false);
+
+  const handleFile = async (file: File) => {
+    if (file.size > maxSizeMb * 1024 * 1024) {
+      addToast(
+        isAr
+          ? `حجم الصورة يتجاوز ${maxSizeMb} ميجابايت`
+          : `Image exceeds ${maxSizeMb} MB`,
+        'error',
+      );
+      return;
+    }
+    setUploading(true);
+    try {
+      const url = await uploadImage(file, folder);
+      onChange(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(isAr ? `فشل رفع الصورة: ${msg}` : `Upload failed: ${msg}`, 'error');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleClear = async () => {
+    const previous = value;
+    onChange('');
+    if (previous) {
+      try {
+        await deleteImage(previous);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        addToast(
+          isAr
+            ? `تم مسح الحقل لكن تعذّر حذف الصورة من التخزين: ${msg}`
+            : `Field cleared but storage delete failed: ${msg}`,
+          'error',
+        );
+      }
+    }
+  };
+
+  if (value) {
+    return (
+      <div className="relative inline-block">
+        <img
+          src={value}
+          alt=""
+          className="block max-w-xs max-h-48 rounded-lg border border-sand/40 object-cover bg-cream/40"
+        />
+        <button
+          type="button"
+          onClick={handleClear}
+          className="absolute top-2 end-2 p-1.5 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
+          aria-label={isAr ? 'إزالة الصورة' : 'Remove image'}
+        >
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <label className="form-input flex items-center gap-2 cursor-pointer hover:bg-cream/40 transition-colors">
+      <Upload size={16} className="text-copper/60 shrink-0" />
+      <span className="text-sm text-charcoal/60">
+        {uploading
+          ? (isAr ? 'جاري الرفع...' : 'Uploading...')
+          : (isAr ? 'انقر لاختيار صورة' : 'Click to upload an image')}
+      </span>
+      <input
+        type="file"
+        accept={accept}
+        disabled={uploading}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleFile(file);
+          e.target.value = '';
+        }}
+        className="sr-only"
+      />
+    </label>
   );
 }

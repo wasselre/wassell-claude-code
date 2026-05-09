@@ -20,7 +20,9 @@ export type FieldType =
   | 'range'
   | 'auto_id'
   | 'formula'
-  | 'table';
+  | 'table'
+  | 'image'
+  | 'template_variables';
 
 // Column in a `table` field. The table's stored value on a record is an
 // array of row objects keyed by `name` (slug). Phase-1 storage mode is
@@ -174,6 +176,12 @@ export interface ModelField {
   table_columns?: TableColumn[];
   table_min_rows?: number; // validation hint; 0 = any
   table_max_rows?: number; // 0/undefined = unlimited
+  // Image field (type: 'image'). Stored value is a public URL string from
+  // the `marketing-assets` Supabase Storage bucket. Form input renders a
+  // drop-zone + thumbnail; uploads happen via `src/lib/imageUpload.ts`.
+  image_max_size_mb?: number; // default 10
+  image_accept?: string; // MIME pattern, default 'image/png,image/jpeg,image/webp'
+  image_folder?: 'raw' | 'cleaned' | 'final' | 'reference'; // upload folder; default 'reference'
 }
 
 // Notes field (type: 'notes'). Stored value is a chronological list of entries.
@@ -293,16 +301,29 @@ export interface ModelSchema {
 // actions resolve against fields on the clicked record.
 export type CustomButtonLocation = 'record_form' | 'record_list';
 
-// For now buttons can only trigger a workflow. Future actions (direct
-// HTTP request, in-app navigation, etc.) extend this discriminated union.
-export type CustomButtonActionType = 'trigger_workflow';
+// For now buttons can trigger a workflow OR fire the marketing-operations
+// design generator (Higgsfield two-phase orchestration). Future actions
+// extend this discriminated union.
+export type CustomButtonActionType = 'trigger_workflow' | 'generate_design';
 
 export interface CustomButtonActionTriggerWorkflow {
   type: 'trigger_workflow';
   workflow_id: string;
 }
 
-export type CustomButtonAction = CustomButtonActionTriggerWorkflow;
+/**
+ * Fires `/api/marketing/generate` for the current record. Server reads the
+ * record + linked template + linked project, runs Higgsfield phase 1
+ * (cleanup) and phase 2 (design), and writes results back to the record.
+ * No payload — the action discriminator is enough.
+ */
+export interface CustomButtonActionGenerateDesign {
+  type: 'generate_design';
+}
+
+export type CustomButtonAction =
+  | CustomButtonActionTriggerWorkflow
+  | CustomButtonActionGenerateDesign;
 
 export interface CustomButton {
   id: string;
@@ -1455,17 +1476,6 @@ export interface User {
 // (Presentations feature was removed.)
 export type __PresentationsRemoved = never;
 
-// ────────────────────────────────────────────────────────────────────
-// MARKETING OPERATIONS (reels + posts content pipeline)
-// ────────────────────────────────────────────────────────────────────
-// Marketing-operations pipeline types were removed when the pipeline was
-// ported to the generic records + workflows system. The seed models in
-// src/data/seedModels.ts define the schema (marketing_operations, reels,
-// posts, research_questions, competitors); src/data/seedWorkflows.ts
-// wires the 5 edge functions into record writes via webhook-triggered
-// workflows. Records stream through the app via the regular
-// RecordListPage / RecordFormPage pages under /model/<slug>.
-
 // UI types
 
 export type Language = 'ar' | 'en';
@@ -1973,12 +1983,11 @@ export interface AppState {
     patch: { status?: 'active' | 'resolved' | 'archived'; labels?: string[] },
   ) => Promise<void>;
 
-  // ── Marketing pipeline — workflow-driven ───────────────────────────
-  // Every marketing record (marketing_operations / reels / posts /
-  // research_questions / competitors) lives in the generic `records`
-  // store, keyed by model_id. Edge-function side-effects arrive on the
-  // `webhook_payloads` table; the app atomically claims each payload
-  // and fans it out to user-editable workflows.
+  // ── Webhook ingress ────────────────────────────────────────────────
+  // External services post to /functions/v1/inbox/<slug>. The inbox
+  // function writes a webhook_payloads row; the app atomically claims
+  // each payload and fires any workflow with a matching webhook
+  // trigger.
   webhookSlugs: WebhookSlug[];
   webhookPayloads: WebhookPayload[];
 

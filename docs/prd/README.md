@@ -25,6 +25,8 @@ This folder contains the **living source of truth** for what every section of th
 | 15 | [ai-agent.md](ai-agent.md) | Internal Claude-powered AI sales agent — chat UI inside the app, tool-use loop over project records, save_lead into clients |
 | 16 | [logs.md](logs.md) | Unified activity log — single timeline showing auth, record CRUD, workflow runs, AI agent turns + tool calls, API hits, webhook receipts |
 | 17 | [public-website.md](public-website.md) | Public marketing site — `is_public` opt-in on projects, `site_settings` model, anon RLS contract powering projects.html + map.html + index.html |
+| 18 | [marketing-operations.md](marketing-operations.md) | Template-driven design generator — pick project + template, fill variables, two-phase Higgsfield orchestration writes cleaned + final image back to the record |
+| 19 | [templates-library.md](templates-library.md) | Reusable design templates: reference image, cleanup + design prompts with `{{PLACEHOLDER}}` tokens, typed variable list |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 

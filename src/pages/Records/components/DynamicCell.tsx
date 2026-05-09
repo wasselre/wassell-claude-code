@@ -125,6 +125,36 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
     case 'auto_id':
       return <span className="font-mono font-bold text-copper" dir="ltr">{String(value)}</span>;
 
+    case 'image': {
+      const url = String(value);
+      if (!/^https?:\/\//i.test(url)) {
+        return <span className="text-charcoal/30 italic text-xs">{isAr ? 'رابط غير صالح' : 'Invalid URL'}</span>;
+      }
+      return (
+        <img
+          src={url}
+          alt=""
+          className="block w-10 h-10 rounded object-cover border border-sand/30 bg-cream/40"
+          loading="lazy"
+        />
+      );
+    }
+
+    case 'template_variables': {
+      // Compact summary for the table view: show how many variables are filled.
+      const map = (value && typeof value === 'object' && !Array.isArray(value))
+        ? (value as Record<string, { value: unknown }>)
+        : {};
+      const filled = Object.values(map).filter((entry) => entry?.value !== undefined && entry?.value !== '').length;
+      const total = Object.keys(map).length;
+      if (total === 0) return <span className="text-charcoal/20">—</span>;
+      return (
+        <span className="text-xs text-charcoal/60" dir="ltr">
+          {filled}/{total} {isAr ? 'متغيرات' : 'vars'}
+        </span>
+      );
+    }
+
     case 'formula': {
       if (isFormulaErrorValue(value)) return <span className="font-mono text-red-500 text-xs">{String(value)}</span>;
       if (typeof value === 'boolean') return <span>{value ? (isAr ? 'نعم' : 'true') : (isAr ? 'لا' : 'false')}</span>;

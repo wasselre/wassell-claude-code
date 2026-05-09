@@ -1,237 +1,83 @@
-# PRD: Marketing Operations (Reels + Posts)
+# PRD: Marketing Operations (Template-Driven Design Generator)
 
 **Status:** Live
-**Last updated:** 2026-04-24 (**Two production bugs fixed:** (1) the `research-question` / `reel-generated` / `post-generated` webhook slugs had auto-generated HMAC secrets from the seed migration, but the agents' `webhookOutbox` never signs outgoing POSTs — every per-item webhook was getting 401'd by the inbox. Cleared the secrets to match the other 6 slugs, which always had `secret=NULL`. (2) The research agent's synchronous tool-use loop ran past Supabase free-tier's 150 s wall-clock limit on complex projects, so the gateway 502'd the call before the `research-complete` webhook could fire. Switched the agent to fire-and-forget via `EdgeRuntime.waitUntil` — HTTP response returns in ~2 s while the agent keeps running in the background; reduced max iterations 15→6 and web_search max_uses 10→5; tightened `fetch_url` timeout 30 s → 15 s. Also added a webhook-payload backfill sweep on app init so if a webhook lands while no browser tab is listening, it gets claimed + run on the next sign-in within a 24 h window.)
-**Related PRDs:** `record-management.md` (project lookup), `data-storage.md` (Supabase), `workflow-automation.md` (webhook triggers + http_request action), `model-builder.md` (table field type)
+**Last updated:** 2026-05-09
+**Related PRDs:** [templates-library.md](templates-library.md) (the design templates this module consumes), [record-management.md](record-management.md) (project lookup, section_mirror), [data-storage.md](data-storage.md) (Supabase + storage bucket)
 
 ## What it is (in plain English)
 
-A Marketing area in the Wassell CRM where the team creates a "marketing
-operation" for a real-estate project and gets back AI-generated reels
-(short video scripts) and Instagram-style posts ready for human review.
+A workspace where a marketer turns a project + a saved design template into a finished branded image. One record = one design generation.
 
-The pipeline is **100% user-configurable** — there are no hardcoded
-marketing tables and no hardcoded automation. Every marketing artifact
-(operations, reels, posts, questions, competitors) is a regular record
-in the generic `records` table, driven by a system-seeded model. The 5
-AI agents are stateless edge functions that read records and POST
-webhooks; user-editable workflows turn those webhooks into record
-writes. Admins can edit the models in the Builder, re-wire the
-workflows in the Workflows page, and never touch code.
+The marketer:
+1. Picks a project from `all_projects`. The project's information shows up read-only as a mirrored section.
+2. Picks a template from the Templates Library. The template's variables (e.g. `{{PROJECT_NAME_AR}}`, `{{UNIT_SIZE}}`) appear as input rows.
+3. Fills each variable either by typing manually or by linking it to a field on the chosen project.
+4. Uploads the project's raw building photograph.
+5. Clicks **Generate Design**.
+
+Server-side, the app runs a two-phase Higgsfield orchestration: phase 1 cleans up the raw photo, phase 2 produces the final branded design. Both images land back on the record.
 
 ## Why it exists
 
-The original OMA pipeline lived in Google Sheets + Apps Script. The v1
-Wassell port moved it into a dedicated Postgres schema with its own
-pages, but the behavior was still locked into agent code. The v2
-workflow-driven rewrite closes the last gap: the pipeline becomes
-data — the same model-builder + workflow-engine users already use for
-every other CRM feature.
+The previous Marketing Operations module was an agent pipeline (5 Supabase Edge Functions, 11 seeded workflows, Claude-powered research + content generation). It was experimental, expensive to operate, and never settled into a flow the team used. This rebuild swaps the agent system for a deterministic template + image-generation pipeline so the marketing team can produce on-brand visuals quickly without prompt engineering.
+
+The Competitors library — once an input to the agents — is preserved as a standalone reference (no longer wired into anything but still useful internally).
 
 ## Key behaviors
 
-- **Every artifact is a record.** `marketing_operations`, `reels`,
-  `posts`, `research_questions`, and `competitors` are all regular
-  system models defined in `src/data/seedModels.ts`. Create, edit, and
-  list them via the standard `/model/<slug>` pages — no bespoke UI.
-- **Agents are read-only on Postgres.** The 5 edge functions
-  (`marketing-research`, `marketing-research-resume`,
-  `marketing-content`, `marketing-reels`, `marketing-posts`) load the
-  trigger record from the `records` table, run Claude, and POST
-  webhook payloads into the app's own `/functions/v1/inbox/<slug>`
-  endpoint. They never INSERT or UPDATE a record directly.
-- **Workflows own all writes.** 11 seeded workflows (see
-  `src/data/seedWorkflows.ts`) glue the pieces together:
-  1. `on_create marketing_operations` → http_request marketing-research
-  2. `on_update research_questions (status=answered)` → http_request
-     marketing-research-resume (agent self-gates on "all answered")
-  3. `webhook research-complete` → update operation + http_request
-     marketing-content
-  4. `webhook research-contradictions` → update operation status to
-     `research_waiting_answers` + save partial research output
-  5. `webhook research-question` → create one research_questions record
-  6. `webhook reel-generated` → create one reels record
-  7. `webhook post-generated` → create one posts record
-  8. `webhook reels-ready` → flag `reels_batch_done=true` on operation
-  9. `webhook posts-ready` → flag `posts_batch_done=true` on operation
-  10. `webhook content-done` → operation status = `ready_for_review`
-  11. `webhook operation-failed` → operation status = `failed`
-     + capture error in `research_error`
-- **Per-item webhooks fan out N records.** The workflow engine can't
-  iterate arrays in a single action, so agents fire one
-  `reel-generated` / `post-generated` / `research-question` webhook
-  per generated item; the matching workflow's `create_record` action
-  creates one record each.
-- **Completion is agent-side.** `marketing-reels` and `marketing-posts`
-  re-query the records table after their batch finishes; if both sides
-  have enough child records, they POST `content-done`. This is the
-  only piece of workflow logic that doesn't fit the declarative model
-  (workflows have no aggregate/count primitives).
-- **Re-entrancy guard on content.** `marketing-content` skips if any
-  child reel/post already exists for the operation — protects against
-  the research-complete webhook firing twice (clean research + resume
-  research both land on the same slug).
-- **Research table edits.** Facts, sources, notFound, confidence, and
-  research_notes are stored as regular fields on the marketing
-  operation record (facts and sources are `table` fields). Users edit
-  them inline via the standard record form like any other record.
-- **Competitors library is just records.** `/model/competitors` shows
-  the same CRUD as any other model. Agents re-query it on every run via
-  `loadCompetitors()` (`data.type='reel_script'|'post_example'`), with
-  Anthropic prompt caching on the formatted block.
-
-## Running pipeline
-
-```
-┌──────────────────────────────┐
-│ User saves new operation rec │
-└────────────┬─────────────────┘
-             ▼
-┌─────────────────────────────────┐     ┌──────────────────────────────┐
-│ WF: on_create marketing_ops     │───► │ fn: marketing-research       │
-└─────────────────────────────────┘     │  - reads operation record    │
-                                        │  - reads project record      │
-                                        │  - runs Claude + web tools   │
-                                        └────────┬─────────────────────┘
-                                                 │
-                          ┌──────────────────────┼──────────────────────┐
-                          │                      │                      │
-                          ▼                      ▼                      ▼
-           webhook research-contradictions   webhook research-question  webhook research-complete
-                          │                      │  (N times)           │
-                          ▼                      ▼                      │
-                 WF 4: update status      WF 5: create question         │
-                                                                         │
-                 (user answers questions)                                │
-                          │                                              │
-                          ▼                                              │
-                 WF 2: on_update → fn: marketing-research-resume        │
-                          │ (self-gates: only runs when all answered)   │
-                          ▼                                              │
-                          └────────────────────► webhook research-complete
-                                                                         │
-                                                                         ▼
-                                                 WF 3: update operation + http_request marketing-content
-                                                                         │
-                                                                         ▼
-                                                      fn: marketing-content fans out →
-                                                                  ▼                    ▼
-                                                     fn: marketing-reels     fn: marketing-posts
-                                                       │    │                       │    │
-                                                       ▼    ▼                       ▼    ▼
-                                                     reel-    reels-ready         post-    posts-ready
-                                                     generated    │               generated    │
-                                                     (N times)    ▼               (N times)    ▼
-                                                       │     WF 8: flag done         │     WF 9: flag done
-                                                       ▼                              ▼
-                                                     WF 6: create reel              WF 7: create post
-
-(both agents re-count; when both sides complete)
-                                                       │
-                                                       ▼
-                                                 webhook content-done
-                                                       │
-                                                       ▼
-                                                 WF 10: status=ready_for_review
-```
+- **Project Info section is read-only.** Implemented via the existing `section_mirror` field type, pointing at the linked `all_projects` record's base section, with `edit_mode='none'`. Edits go to the project from the Builder, never from here.
+- **Template variables are dynamic.** They aren't fixed schema fields — the `template_variables` field type renders one input row per variable defined on the linked template, at runtime. When the template changes, orphan keys are dropped and missing variables initialize empty.
+- **Three ways to fill a variable: manual entry, project-field link.** AI auto-link is **deferred** to v2.
+- **Mirror values resolve at generate time, not at fill time.** A user who picks `mirror → project.unit_size` stores `{ source: 'mirror', mirror_field: 'unit_size' }`. The server reads the live value from the project on Generate, so the latest value always reaches Higgsfield.
+- **Substitution uses double-brace placeholders.** `{{NAME}}` only — single-brace `{NAME}` is reserved for legacy paseet workflows. Single source of truth at [src/lib/templateUtils.ts](../../src/lib/templateUtils.ts).
+- **Phase 1 is skipped on re-run when inputs haven't changed.** A SHA-256 of `raw_photo URL + cleanup_prompt` is stored as `cleanup_input_hash`. Identical hash + existing `cleaned_photo` → re-Generate jumps straight to phase 2.
+- **Status is the single source of UI truth.** The form's stepper reflects `record.data.status`: `draft → cleaning → generating → complete`, or `cleanup_failed` / `generation_failed`. The realtime subscription on `records` (already running in the store) updates the form mid-run with no SSE.
+- **Errors fail loudly.** Higgsfield 4xx/5xx, network errors, or timeouts all write `status=*_failed` plus a human-readable `error_message` and surface a red toast. No silent swallows (CLAUDE.md "Silent Failures").
+- **Stub mode for offline dev.** Set `HIGGSFIELD_API_KEY=stub` to skip the network and return canned `picsum.photos` URLs after a 2 s sleep — same UI flow, no API spend.
 
 ## User flows
 
-1. **Main happy path**
-   1. Open `/model/marketing_operations` → click **+ New**.
-   2. Fill out the form: pick a project (lookup to all_projects), set
-      reels count/type/platform/voiceover + posts count/type/usage.
-   3. Save. `on_create` workflow fires marketing-research.
-   4. Research completes → operation record gets `facts`, `sources`,
-      etc. filled in via webhook → content workflow kicks off.
-   5. Reels and posts records appear under the operation (via the
-      `operation` lookup back-reference). Status flips to
-      `ready_for_review`.
-   6. Reviewer opens each reel/post record and edits freely. Flipping
-      status to `approved` is a regular record save.
-2. **Contradictions flow**
-   1. Research finds conflicting sources → fires N `research-question`
-      webhooks + one `research-contradictions` webhook.
-   2. N research_questions records appear under the operation; status
-      flips to `research_waiting_answers`.
-   3. Reviewer opens each question record, fills in `answer`, flips
-      `status` to `answered`.
-   4. Each status change fires the resume workflow; only the FINAL
-      answered-transition triggers real work in the agent (it checks
-      "all answered" itself). The agent then fires
-      `research-complete`, which re-enters the main flow.
-3. **Failure**
-   - Any agent catches an exception → fires `operation-failed`. The
-     operation record status becomes `failed` with the error in
-     `research_error`.
+1. **Happy path:**
+   1. Sidebar → Designs → Marketing Operations → New.
+   2. Pick a project → Project Info section auto-populates read-only.
+   3. Pick a template from the Templates Library.
+   4. Template Variables section renders one row per variable. Toggle each row to "Manual" or "Link to project field" and fill.
+   5. Upload Raw Photo (image field; lands in `marketing-assets/raw/<uuid>.png`).
+   6. Save the record.
+   7. Click **Generate Design**. Status flips `cleaning` → cleaned photo appears → `generating` → final design appears → `complete`.
+
+2. **Re-run after cleanup-input change:** edit the cleanup prompt on the template, return to the marketing record, click Generate. The hash mismatches → phase 1 reruns. If only the design prompt changed, the hash matches → phase 1 is skipped.
+
+3. **Failure (Higgsfield 5xx):** status flips to `cleanup_failed` (or `generation_failed`), `error_message` is set, a red toast appears. Click Generate again to retry.
+
+4. **Empty template:** picking a template with no variables renders the Template Variables section as "This template has no variables" — Generate still works (substitutes nothing).
 
 ## Data touched
 
-All marketing data lives in two generic tables:
-
-- **`models`** — 5 system-seeded marketing models (is_system=true):
-  `marketing_operations`, `research_questions`, `reels`, `posts`,
-  `competitors`. Grouped under `MARKETING_GROUP_ID`.
-- **`records`** — all user data, keyed by `model_id`. `data` is a
-  JSONB blob keyed by field slug.
-- **`workflows`** — 11 seeded pipeline workflows (deterministic ids
-  `00000000-0000-4000-a000-00000000000X`) plus whatever the user adds.
-- **`webhook_slugs`** + **`webhook_payloads`** — the inbound webhook
-  infrastructure. 9 marketing-pipeline slugs are seeded via migration:
-  `research-complete`, `research-contradictions`, `research-question`,
-  `reel-generated`, `post-generated`, `reels-ready`, `posts-ready`,
-  `content-done`, `operation-failed`.
-
-No dedicated marketing tables exist anymore. The v1
-`marketing_operations` / `reels` / `posts` / `research_questions` /
-`competitors` / `marketing_notifications` tables were dropped in the
-cutover migration (2026-04-23); the 10 legacy competitor rows were
-migrated into `records`.
+- Reads:
+  - `unified_records` (the marketing record itself, its linked template, its linked project)
+  - `models` (schema for project field discovery, template variable list)
+- Writes:
+  - `record_save` RPC on the marketing record (`status`, `cleaned_photo`, `final_design`, `error_message`, `cleanup_input_hash`)
+  - `marketing-assets` Supabase Storage bucket (raw photos via the form, cleaned + final via Higgsfield URLs we copy back if needed; v1 stores Higgsfield's CDN URL directly).
 
 ## Key files
 
 | File | What it does |
 |---|---|
-| `src/data/seedModels.ts` | Defines the 5 marketing system models (competitors, marketing_operations, research_questions, reels, posts). Facts/sources/scenes are `table` fields on the operation/reels records. |
-| `src/data/seedWorkflows.ts` | Builds the 11 pipeline workflows at runtime — resolves model ids + webhook slug ids from the loaded state and bakes the Supabase URL into http_request actions. Stable workflow ids so re-seeding is idempotent. |
-| `src/stores/appStore.ts` | On `initialize()`, backfills missing workflows from `buildMarketingSeedWorkflows()`. Subscribes to `webhook_payloads` INSERTs so every inbound webhook fans out to the workflow engine via `claimAndRunWebhookPayload` (atomic; prevents multi-tab double-firing). |
-| `src/lib/workflowEngine.ts` | Runs record-event and webhook-event workflows. Handles the `http_request` action (supports `{field_slug}` token substitution in URLs + bodies, fire-and-forget with AbortController timeout). `update_record` matches on top-level record id when `filter_field_id === 'id'`. |
-| `supabase/functions/_shared/marketingOperation.ts` | Reads operation record from `records` into a flat `OperationRecord`. Also `getModelIdBySlug` (per-install model lookup) and `countChildRecords` (completion check). |
-| `supabase/functions/_shared/competitors.ts` | Reads competitors from `records` table (model.name='competitors'), filters by `data.type`, formats the competitors block for the prompt. |
-| `supabase/functions/_shared/projectData.ts` | Reads the project record from `records`; builds the research user message + markdown representation. |
-| `supabase/functions/_shared/webhookOutbox.ts` | Fire-and-forget POST to `/functions/v1/inbox/<slug>` with `EdgeRuntime.waitUntil` so the isolate lives long enough for the request to land. |
-| `supabase/functions/_shared/anthropic.ts` | Claude client + JSON extraction. |
-| `supabase/functions/_shared/prompts.ts` | 4 agent prompts as string constants. |
-| `supabase/functions/_shared/web.ts` | `fetch_url` tool schema + Deno implementation. |
-| `supabase/functions/marketing-research/index.ts` | Research agent. Tool-use loop (web_search + fetch_url) + forced-tool retry on non-JSON output. POSTs `research-complete` (clean) OR `research-contradictions` + N × `research-question` (conflicts). |
-| `supabase/functions/marketing-research-resume/index.ts` | Reads all research_questions records for the operation; noops if any are still unanswered. POSTs `research-complete` on success. |
-| `supabase/functions/marketing-content/index.ts` | Orchestrator. Re-entrancy guard (skips if child records exist). Invokes reels/posts agents in parallel via `invokeFunction`. |
-| `supabase/functions/marketing-reels/index.ts` | Reels writer. POSTs N × `reel-generated` + 1 `reels-ready` + optional `content-done` if posts side is also complete. |
-| `supabase/functions/marketing-posts/index.ts` | Posts writer. Mirror of reels. |
-| `supabase/functions/inbox/index.ts` | Generic webhook receiver. Verifies HMAC signature, inserts into `webhook_payloads`. The app's realtime listener claims + runs workflows. |
-| `src/pages/Settings/WebhookSlugsPage.tsx` | CRUD for webhook slug definitions (name, slug, secret, payload schema). Agent slugs are seeded via migration but editable from here. |
+| [src/data/seedModels.ts](../../src/data/seedModels.ts) | Seeds the `marketing_operations` model — sections, fields, custom Generate button. |
+| [src/pages/Records/RecordFormPage.tsx](../../src/pages/Records/RecordFormPage.tsx) | Hosts the form. Custom-button click handler dispatches `generate_design` to `/api/marketing/generate`. |
+| [src/pages/Records/components/TemplateVariablesField.tsx](../../src/pages/Records/components/TemplateVariablesField.tsx) | Renders the dynamic per-template variable inputs (manual / link toggle). |
+| [src/pages/Records/components/DynamicField.tsx](../../src/pages/Records/components/DynamicField.tsx) | Image upload UI for `raw_photo` / `cleaned_photo` / `final_design`. |
+| [src/lib/imageUpload.ts](../../src/lib/imageUpload.ts) | Wraps Supabase Storage `marketing-assets` bucket. |
+| [src/lib/templateUtils.ts](../../src/lib/templateUtils.ts) | `substituteTemplate({{slug}})` + shared template-variable types. |
+| [api/marketing/generate.ts](../../api/marketing/generate.ts) | Two-phase orchestrator. Loads record + template + project, resolves variables, runs Higgsfield, writes results back via `record_save`. |
+| [api/_lib/higgsfield.ts](../../api/_lib/higgsfield.ts) | Cleanup + design adapters + status poller. Stub mode for offline dev. |
 
 ## Open questions / known limitations
 
-- **Deterministic model ids.** Model UUIDs are per-install — generated
-  on first seed load. `buildMarketingSeedWorkflows` looks them up by
-  `name` (slug) every init, so workflow seeding works across installs.
-  The first app load on a brand-new Supabase project has to finish
-  seeding models + webhook slugs before the workflow seeder can run;
-  the ordering inside `initialize()` guarantees this.
-- **Completion check lives in the agents.** Workflows can't aggregate
-  record counts, so the "both batches complete?" decision is made by
-  each content agent re-querying the records table. This is the
-  single piece of non-declarative logic in the pipeline. A
-  future `aggregate_condition` workflow primitive could move it
-  out, but the ergonomics aren't obviously worth it.
-- **Anon key RLS.** Workflows and webhook slugs are gated by the
-  `authenticated full access` policy, so unauthenticated previews
-  see zero seeded workflows. The seeder only runs once the user
-  signs in and webhook slugs hydrate.
-- **No tests yet.** Manual verification only. The engine's `http_request`
-  + webhook-trigger paths would benefit from targeted unit tests.
-- **Deploys are still CLI-only.** The marketing edge function sources
-  are tracked in git, but no CI job builds or deploys them on merge.
-  Updates currently require a manual `supabase functions deploy` or
-  an MCP deploy call.
+- **AI auto-link is not in v1.** Roadmap item: a button that asks Claude to map every template variable to a project field automatically.
+- **Higgsfield request shape is best-effort.** Public docs don't fully specify Soul-ID, reference-image, and webhook params. Confirm against the sandbox before going live and adjust [api/_lib/higgsfield.ts](../../api/_lib/higgsfield.ts) accordingly.
+- **Logo URL is derived from the deployment origin** (`{origin}/assets/logo-full.png`). On preview deploys with non-public domains, Higgsfield may not be able to reach the URL — workaround is to upload the logo to `marketing-assets/reference/wassel-logo.png` once and hardcode that URL.
+- **Vercel timeout** is `maxDuration: 240`. Cleanup + design easily fit, but extreme cases (queues, retries) could time out — return surfaces as `generation_failed`.
+- **Image bucket is public-read in v1.** If we later restrict, switch [src/lib/imageUpload.ts](../../src/lib/imageUpload.ts) to signed URLs (1 h TTL is plenty for review cycles).

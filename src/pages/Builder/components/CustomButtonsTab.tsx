@@ -136,10 +136,14 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
       {buttons.map((btn) => {
         const expanded = expandedId === btn.id;
         const label = (isAr ? btn.label_ar : btn.label_en) || (isAr ? '(بدون اسم)' : '(unnamed)');
-        const wf = workflows.find((w) => w.id === btn.action.workflow_id);
-        const wfLabel = wf
-          ? (isAr ? wf.label_ar : wf.label_en) || wf.id
-          : isAr ? '(بدون سير عمل)' : '(no workflow)';
+        const triggerWorkflowId =
+          btn.action.type === 'trigger_workflow' ? btn.action.workflow_id : null;
+        const wf = triggerWorkflowId ? workflows.find((w) => w.id === triggerWorkflowId) : null;
+        const wfLabel = btn.action.type === 'generate_design'
+          ? (isAr ? '(توليد تصميم)' : '(generate design)')
+          : wf
+            ? (isAr ? wf.label_ar : wf.label_en) || wf.id
+            : isAr ? '(بدون سير عمل)' : '(no workflow)';
         return (
           <div
             key={btn.id}
@@ -277,6 +281,13 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
                   <label className="block text-xs font-bold text-charcoal/60 mb-1">
                     {isAr ? 'سير العمل عند الضغط' : 'Workflow to trigger on click'}
                   </label>
+                  {btn.action.type === 'generate_design' ? (
+                    <div className="form-input bg-sand/5 text-charcoal/60 italic cursor-not-allowed">
+                      {isAr
+                        ? 'هذا الزر مرتبط بمولّد التصميم النظامي ولا يستخدم سير عمل.'
+                        : 'This button is wired to the built-in design generator and does not use a workflow.'}
+                    </div>
+                  ) : (
                   <select
                     className="form-input w-full"
                     value={btn.action.workflow_id}
@@ -295,7 +306,8 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
                       </option>
                     ))}
                   </select>
-                  {triggerableWorkflows.length === 0 && (
+                  )}
+                  {btn.action.type === 'trigger_workflow' && triggerableWorkflows.length === 0 && (
                     <p className="text-xs text-amber-700 mt-1">
                       {isAr
                         ? 'لا توجد أي سير عمل مرتبط بهذا النموذج. أنشئ سير عمل من صفحة الأتمتة أولًا.'

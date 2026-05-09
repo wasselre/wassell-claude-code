@@ -9,10 +9,40 @@ import type { AppModel, FieldOption, ModelGroup } from '@/types';
 // project models to disappear from the Sidebar whenever the stored group went missing.
 export const PROJECTS_GROUP_ID = '00000000-0000-4000-8000-000000000001';
 
-// Stable id for the Marketing group (reels/posts content pipeline). Same
-// contract as PROJECTS_GROUP_ID — don't change it or existing marketing
-// models get orphaned from the sidebar.
-export const MARKETING_GROUP_ID = '00000000-0000-4000-8000-000000000002';
+// Stable id for the Designs group (Templates Library + Marketing Operations
+// + Competitors reference). Same contract as PROJECTS_GROUP_ID — the UUID
+// is preserved across the 2026-05-09 rename from "Marketing" → "Designs"
+// so existing competitors records keep their group_id pointer.
+export const DESIGNS_GROUP_ID = '00000000-0000-4000-8000-000000000002';
+
+// Retired system models — names that USED to be seeded but have been
+// removed from the codebase. On every `initialize()`, the store hard-
+// deletes any row matching these names from BOTH Supabase AND local
+// cache (via the existing deleteModel action which cascades records,
+// workflows, views, and workflow runs). This is the propagation path
+// from "deleted in code" → "deleted everywhere", so a deployed instance
+// can't keep ghost models alive via stale localStorage, queued pending
+// writes, or rogue upserts during the demolition cycle.
+//
+// Hard rule: only `is_system: true` rows are eligible for retirement —
+// user-built models with these names (unlikely but possible) are
+// untouched. Add a name here ONLY when retiring a system model.
+//
+// Why a set instead of "absent from SEED_MODELS = retired": the latter
+// would silently delete production data the moment a developer removes
+// a model from the seed list (e.g. mid-refactor). Explicit retirement
+// is git-auditable and impossible to trigger by accident.
+export const RETIRED_SYSTEM_MODEL_NAMES: ReadonlySet<string> = new Set([
+  // 2026-05-09: agent-driven marketing pipeline retired in favor of the
+  // template-driven design generator. The competitors model is preserved
+  // (still listed in SEED_MODELS), the other four are dead.
+  'reels',
+  'posts',
+  'research_questions',
+  // Note: 'marketing_operations' is NOT here — the name was reused for
+  // the rebuilt schema. The OLD UUID's row was already deleted in P1
+  // and the new UUID is part of SEED_MODELS.
+]);
 
 // Dropdown-option helper: Arabic label is the value (stored verbatim); English label
 // defaults to the Arabic when no transliteration is provided. Admin can edit in Builder.
@@ -151,11 +181,6 @@ const allProjectsId = uuid();
 export const unitsId = uuid();
 export const appointmentsId = uuid();
 
-// Marketing pipeline cross-model ids — declared up-front so child rows
-// (research_questions, reels, posts) can declare lookup_model_id pointing
-// at marketing_operations without TDZ issues.
-const marketingOperationsId = uuid();
-
 // ============================================================
 // DEVELOPERS MODEL (new 2026-04-18)
 // ============================================================
@@ -269,9 +294,9 @@ export const SEED_GROUPS: ModelGroup[] = [
     order: 0,
   },
   {
-    id: MARKETING_GROUP_ID,
-    label_ar: 'التسويق',
-    label_en: 'Marketing',
+    id: DESIGNS_GROUP_ID,
+    label_ar: 'التصاميم',
+    label_en: 'Designs',
     order: 1,
   },
 ];
@@ -2558,19 +2583,12 @@ const phoneCallsModel: AppModel = {
 };
 
 // ============================================================
-// MARKETING MODELS (reels + posts content pipeline — migration from
-// hardcoded tables to user-editable models, 2026-04-23)
+// MARKETING REFERENCE — COMPETITORS LIBRARY
 // ============================================================
 //
-// Five models that replace the dedicated marketing_operations / reels /
-// posts / research_questions / competitors tables with generic JSONB
-// records. Together with the http_request workflow action, the webhook
-// trigger, and the table field type, users can now own the full
-// marketing pipeline through the Builder + Workflows with no code.
-//
-// The old hardcoded tables + pages keep working in parallel until the
-// decommission phase — these new models give the user a place to start
-// customizing.
+// Reusable library of competitor content samples. Standalone reference
+// data; the old agent-driven marketing pipeline that consumed this was
+// replaced by the template-driven design generator (2026-05-09 rebuild).
 
 // --- COMPETITORS MODEL ---
 const competitorsId = uuid();
@@ -2582,7 +2600,7 @@ const competitorsModel: AppModel = {
   label_en: 'Competitors',
   icon: 'megaphone',
   color: '#B8734F',
-  group_id: MARKETING_GROUP_ID,
+  group_id: DESIGNS_GROUP_ID,
   is_system: true,
   created_at: now(),
   updated_at: now(),
@@ -2609,17 +2627,92 @@ const competitorsModel: AppModel = {
   },
 };
 
-// --- MARKETING OPERATIONS MODEL ---
-const marketingOperationsBaseId = uuid();
-const marketingOperationsResearchId = uuid();
+// ============================================================
+// DESIGN TEMPLATES MODEL — Templates Library
+// ============================================================
+// Reusable catalog of design templates feeding the Marketing Operations
+// generator. Each row carries: a reference image (visual target), a
+// cleanup_prompt + design_prompt with `{{PLACEHOLDER}}` tokens, and a
+// typed `variables` table listing the placeholders. Marketing-Operation
+// records pick a template via lookup and fill its variables.
+const designTemplatesId = uuid();
+const designTemplatesBaseId = uuid();
+const designTemplatesModel: AppModel = {
+  id: designTemplatesId,
+  name: 'design_templates',
+  label_ar: 'مكتبة القوالب',
+  label_en: 'Templates Library',
+  icon: 'layout-template',
+  color: '#0D9488',
+  group_id: DESIGNS_GROUP_ID,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: { title_field_id: null, shown_field_ids: [] },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: designTemplatesBaseId,
+        label_ar: 'تفاصيل القالب',
+        label_en: 'Template Details',
+        order: 0,
+        is_base: true,
+        color: '#0D9488',
+        fields: [
+          { id: uuid(), name: 'name', label_ar: 'اسم القالب', label_en: 'Template Name', type: 'text', required: true, order: 0, section_id: designTemplatesBaseId, width: 'half', show_in_table: true },
+          { id: uuid(), name: 'reference_image', label_ar: 'الصورة المرجعية', label_en: 'Reference Image', type: 'image', required: true, order: 1, section_id: designTemplatesBaseId, width: 'full', show_in_table: false, image_folder: 'reference', image_max_size_mb: 10 },
+          { id: uuid(), name: 'cleanup_prompt', label_ar: 'تعليمة التنظيف', label_en: 'Cleanup Prompt', type: 'textarea', required: true, order: 2, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'design_prompt', label_ar: 'تعليمة التصميم', label_en: 'Design Prompt', type: 'textarea', required: true, order: 3, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'variables', label_ar: 'المتغيرات', label_en: 'Variables', type: 'table', required: false, order: 4, section_id: designTemplatesBaseId, width: 'full', show_in_table: false,
+            table_columns: [
+              { id: uuid(), name: 'name', label_ar: 'الاسم', label_en: 'Name', type: 'text', required: true },
+              { id: uuid(), name: 'label_ar', label_ar: 'العنوان (عربي)', label_en: 'Label (AR)', type: 'text', required: true },
+              { id: uuid(), name: 'label_en', label_ar: 'العنوان (إنجليزي)', label_en: 'Label (EN)', type: 'text', required: true },
+              { id: uuid(), name: 'type', label_ar: 'النوع', label_en: 'Type', type: 'dropdown', required: true, options: [
+                opt('text', 'Text'),
+                opt('number', 'Number'),
+                opt('currency', 'Currency'),
+              ] },
+            ] },
+          { id: uuid(), name: 'notes', label_ar: 'ملاحظات', label_en: 'Notes', type: 'textarea', required: false, order: 5, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
+// MARKETING OPERATIONS MODEL — Template-driven design generator
+// ============================================================
+// Each row = one design generation. The user picks a project, the
+// project info auto-mirrors in read-only, picks a template from the
+// Templates Library, fills the template's variables (manual entry or
+// link to a project field), uploads a raw building photo, then clicks
+// Generate. The Generate button hits /api/marketing/generate which
+// runs the two-phase Higgsfield orchestration (cleanup + design) and
+// writes results back to the record.
+//
+// `cleanup_input_hash` is written by the server (not declared as a
+// field) on `record.data` — it lets the orchestrator skip phase 1 on
+// re-runs when the inputs haven't changed.
+const marketingOperationsId = uuid();
+const marketingOperationsOpSectionId = uuid();
+const marketingOperationsInfoSectionId = uuid();
+const marketingOperationsVarsSectionId = uuid();
+const marketingOperationsIoSectionId = uuid();
+const marketingOperationsProjectFieldId = uuid();
+const marketingOperationsGenerateButtonId = uuid();
+
 const marketingOperationsModel: AppModel = {
   id: marketingOperationsId,
   name: 'marketing_operations',
   label_ar: 'عمليات التسويق',
   label_en: 'Marketing Operations',
   icon: 'megaphone',
-  color: '#DB2777',
-  group_id: MARKETING_GROUP_ID,
+  color: '#0D9488',
+  group_id: DESIGNS_GROUP_ID,
   is_system: true,
   created_at: now(),
   updated_at: now(),
@@ -2628,225 +2721,81 @@ const marketingOperationsModel: AppModel = {
   schema: {
     sections: [
       {
-        id: marketingOperationsBaseId,
-        label_ar: 'تفاصيل العملية',
-        label_en: 'Operation Details',
+        id: marketingOperationsOpSectionId,
+        label_ar: 'العملية',
+        label_en: 'Operation',
         order: 0,
         is_base: true,
-        color: '#DB2777',
+        color: '#0D9488',
         fields: [
-          { id: uuid(), name: 'project', label_ar: 'المشروع', label_en: 'Project', type: 'lookup', required: true, order: 0, section_id: marketingOperationsBaseId, width: 'half', show_in_table: true, lookup_model_id: allProjectsId, lookup_display_field: 'project_name' },
-          { id: uuid(), name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: true, order: 1, section_id: marketingOperationsBaseId, width: 'half', show_in_table: true, options: [
-            opt('research_pending', 'Research pending'),
-            opt('research_in_progress', 'Research in progress'),
-            opt('research_waiting_answers', 'Waiting on answers'),
-            opt('research_complete', 'Research complete'),
-            opt('content_generating', 'Content generating'),
-            opt('ready_for_review', 'Ready for review'),
-            opt('approved', 'Approved'),
-            opt('failed', 'Failed'),
+          { id: uuid(), name: 'auto_id', label_ar: 'الرقم', label_en: 'ID', type: 'auto_id', required: false, order: 0, section_id: marketingOperationsOpSectionId, width: 'half', show_in_table: true, auto_id_prefix: 'MO-', auto_id_padding: 3, auto_id_start_value: 1 },
+          { id: marketingOperationsProjectFieldId, name: 'project', label_ar: 'المشروع', label_en: 'Project', type: 'lookup', required: true, order: 1, section_id: marketingOperationsOpSectionId, width: 'half', show_in_table: true, lookup_model_id: allProjectsId, lookup_display_field: 'project_name' },
+          { id: uuid(), name: 'template', label_ar: 'القالب', label_en: 'Template', type: 'lookup', required: true, order: 2, section_id: marketingOperationsOpSectionId, width: 'half', show_in_table: true, lookup_model_id: designTemplatesId, lookup_display_field: 'name' },
+          { id: uuid(), name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: false, order: 3, section_id: marketingOperationsOpSectionId, width: 'half', show_in_table: true, options: [
+            opt('draft', 'Draft'),
+            opt('cleaning', 'Cleaning photo'),
+            opt('cleanup_failed', 'Cleanup failed'),
+            opt('generating', 'Generating design'),
+            opt('generation_failed', 'Generation failed'),
+            opt('complete', 'Complete'),
           ] },
-          { id: uuid(), name: 'reels_count', label_ar: 'عدد الريلز', label_en: 'Reels count', type: 'number', required: false, order: 2, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false },
-          { id: uuid(), name: 'reels_type', label_ar: 'نوع الريلز', label_en: 'Reels type', type: 'dropdown', required: false, order: 3, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false, options: [opt('ترويجي', 'Promo'), opt('تغطية', 'Coverage'), opt('سينمائي', 'Cinematic')] },
-          { id: uuid(), name: 'reels_platform', label_ar: 'منصة الريلز', label_en: 'Reels platform', type: 'dropdown', required: false, order: 4, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false, options: [opt('حسابات', 'Accounts'), opt('إعلان', 'Ads'), opt('واتساب', 'WhatsApp'), opt('موقع', 'Website')] },
-          { id: uuid(), name: 'reels_voiceover', label_ar: 'التعليق الصوتي', label_en: 'Reels voiceover', type: 'dropdown', required: false, order: 5, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false, options: [opt('رجل', 'Male'), opt('امرأة', 'Female'), opt('بدون', 'None')] },
-          { id: uuid(), name: 'posts_count', label_ar: 'عدد المنشورات', label_en: 'Posts count', type: 'number', required: false, order: 6, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false },
-          { id: uuid(), name: 'posts_type', label_ar: 'نوع المنشورات', label_en: 'Posts type', type: 'dropdown', required: false, order: 7, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false, options: [opt('توعية', 'Awareness'), opt('إهتمام', 'Interest')] },
-          { id: uuid(), name: 'posts_usage', label_ar: 'استخدام المنشورات', label_en: 'Posts usage', type: 'dropdown', required: false, order: 8, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false, options: [opt('الحسابات', 'Accounts'), opt('إعلانات', 'Ads'), opt('واتساب', 'WhatsApp'), opt('موقع', 'Website')] },
-          { id: uuid(), name: 'reels_batch_done', label_ar: 'اكتمل دفعة الريلز', label_en: 'Reels batch done', type: 'checkbox', required: false, order: 9, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false },
-          { id: uuid(), name: 'posts_batch_done', label_ar: 'اكتمل دفعة المنشورات', label_en: 'Posts batch done', type: 'checkbox', required: false, order: 10, section_id: marketingOperationsBaseId, width: 'third', show_in_table: false },
-          { id: uuid(), name: 'research_error', label_ar: 'خطأ البحث', label_en: 'Research error', type: 'textarea', required: false, order: 11, section_id: marketingOperationsBaseId, width: 'full', show_in_table: false },
         ],
       },
       {
-        id: marketingOperationsResearchId,
-        label_ar: 'نتائج البحث',
-        label_en: 'Research Output',
+        id: marketingOperationsInfoSectionId,
+        label_ar: 'معلومات المشروع',
+        label_en: 'Project Info',
         order: 1,
+        is_base: true,
+        color: '#8E4E3A',
+        fields: [
+          { id: uuid(), name: 'project_info', label_ar: 'معلومات المشروع', label_en: 'Project Info', type: 'section_mirror', required: false, order: 0, section_id: marketingOperationsInfoSectionId, width: 'full', show_in_table: false,
+            section_mirror_via_lookup_field_id: marketingOperationsProjectFieldId,
+            section_mirror_source_section_id: apBaseSectionId,
+            section_mirror_field_mode: 'all',
+            section_mirror_edit_mode: 'none',
+          },
+        ],
+      },
+      {
+        id: marketingOperationsVarsSectionId,
+        label_ar: 'متغيرات القالب',
+        label_en: 'Template Variables',
+        order: 2,
+        is_base: true,
+        color: '#7C3AED',
+        fields: [
+          { id: uuid(), name: 'template_field_values', label_ar: 'القيم', label_en: 'Values', type: 'template_variables', required: false, order: 0, section_id: marketingOperationsVarsSectionId, width: 'full', show_in_table: false },
+        ],
+      },
+      {
+        id: marketingOperationsIoSectionId,
+        label_ar: 'الإدخال والإخراج',
+        label_en: 'Input & Output',
+        order: 3,
         is_base: true,
         color: '#B8734F',
         fields: [
-          { id: uuid(), name: 'facts', label_ar: 'الحقائق', label_en: 'Facts', type: 'table', required: false, order: 0, section_id: marketingOperationsResearchId, width: 'full', show_in_table: false,
-            table_columns: [
-              { id: uuid(), name: 'data_type', label_ar: 'الحقل', label_en: 'Field', type: 'text' },
-              { id: uuid(), name: 'value', label_ar: 'القيمة', label_en: 'Value', type: 'textarea' },
-              { id: uuid(), name: 'source', label_ar: 'المصدر', label_en: 'Source', type: 'text' },
-              { id: uuid(), name: 'source_url', label_ar: 'رابط المصدر', label_en: 'Source URL', type: 'url' },
-              { id: uuid(), name: 'confidence', label_ar: 'الثقة', label_en: 'Confidence', type: 'dropdown', options: [opt('high', 'High'), opt('medium', 'Medium'), opt('low', 'Low')] },
-            ] },
-          { id: uuid(), name: 'sources', label_ar: 'المصادر', label_en: 'Sources', type: 'table', required: false, order: 1, section_id: marketingOperationsResearchId, width: 'full', show_in_table: false,
-            table_columns: [
-              { id: uuid(), name: 'url', label_ar: 'الرابط', label_en: 'URL', type: 'url' },
-              { id: uuid(), name: 'title', label_ar: 'العنوان', label_en: 'Title', type: 'text' },
-              { id: uuid(), name: 'type', label_ar: 'النوع', label_en: 'Type', type: 'text' },
-              { id: uuid(), name: 'reliability', label_ar: 'الموثوقية', label_en: 'Reliability', type: 'dropdown', options: [opt('high', 'High'), opt('medium', 'Medium'), opt('low', 'Low')] },
-            ] },
-          { id: uuid(), name: 'not_found', label_ar: 'بيانات غير موجودة', label_en: 'Not found', type: 'textarea', required: false, order: 2, section_id: marketingOperationsResearchId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'confidence', label_ar: 'ثقة البحث', label_en: 'Research confidence', type: 'dropdown', required: false, order: 3, section_id: marketingOperationsResearchId, width: 'half', show_in_table: false, options: [opt('high', 'High'), opt('medium', 'Medium'), opt('low', 'Low')] },
-          { id: uuid(), name: 'research_notes', label_ar: 'ملاحظات البحث', label_en: 'Research notes', type: 'textarea', required: false, order: 4, section_id: marketingOperationsResearchId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'raw_photo', label_ar: 'الصورة الخام', label_en: 'Raw Photo', type: 'image', required: true, order: 0, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false, image_folder: 'raw' },
+          { id: uuid(), name: 'cleaned_photo', label_ar: 'الصورة المنظفة', label_en: 'Cleaned Photo', type: 'image', required: false, order: 1, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false, image_folder: 'cleaned' },
+          { id: uuid(), name: 'final_design', label_ar: 'التصميم النهائي', label_en: 'Final Design', type: 'image', required: false, order: 2, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: true, image_folder: 'final' },
+          { id: uuid(), name: 'error_message', label_ar: 'رسالة الخطأ', label_en: 'Error Message', type: 'textarea', required: false, order: 3, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false },
         ],
       },
     ],
     section_selector_field_id: null,
-  },
-};
-
-// --- RESEARCH QUESTIONS MODEL ---
-const researchQuestionsId = uuid();
-const researchQuestionsBaseId = uuid();
-const researchQuestionsModel: AppModel = {
-  id: researchQuestionsId,
-  name: 'research_questions',
-  label_ar: 'أسئلة البحث',
-  label_en: 'Research Questions',
-  icon: 'help-circle',
-  color: '#8B5CF6',
-  group_id: MARKETING_GROUP_ID,
-  is_system: true,
-  created_at: now(),
-  updated_at: now(),
-  card_config: { title_field_id: null, shown_field_ids: [] },
-  maps_config: { ...MAPS_CONFIG_DEFAULT },
-  schema: {
-    sections: [
+    custom_buttons: [
       {
-        id: researchQuestionsBaseId,
-        label_ar: 'السؤال',
-        label_en: 'Question',
-        order: 0,
-        is_base: true,
-        color: '#8B5CF6',
-        fields: [
-          { id: uuid(), name: 'operation', label_ar: 'العملية', label_en: 'Operation', type: 'lookup', required: true, order: 0, section_id: researchQuestionsBaseId, width: 'half', show_in_table: true, lookup_model_id: marketingOperationsId, lookup_display_field: 'status' },
-          { id: uuid(), name: 'question_number', label_ar: 'رقم السؤال', label_en: 'Question #', type: 'number', required: false, order: 1, section_id: researchQuestionsBaseId, width: 'half', show_in_table: true },
-          { id: uuid(), name: 'question', label_ar: 'السؤال', label_en: 'Question', type: 'textarea', required: true, order: 2, section_id: researchQuestionsBaseId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'source_conflict', label_ar: 'تعارض المصادر', label_en: 'Source conflict', type: 'textarea', required: false, order: 3, section_id: researchQuestionsBaseId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'answer', label_ar: 'الإجابة', label_en: 'Answer', type: 'textarea', required: false, order: 4, section_id: researchQuestionsBaseId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: true, order: 5, section_id: researchQuestionsBaseId, width: 'half', show_in_table: true, options: [opt('waiting', 'Waiting'), opt('answered', 'Answered')] },
-        ],
+        id: marketingOperationsGenerateButtonId,
+        label_ar: 'توليد التصميم',
+        label_en: 'Generate Design',
+        icon: 'wand-2',
+        color: '#0D9488',
+        locations: ['record_form'],
+        action: { type: 'generate_design' },
+        enabled: true,
       },
     ],
-    section_selector_field_id: null,
-  },
-};
-
-// --- REELS MODEL ---
-const reelsId = uuid();
-const reelsBaseId = uuid();
-const reelsContentId = uuid();
-const reelsModel: AppModel = {
-  id: reelsId,
-  name: 'reels',
-  label_ar: 'الريلز',
-  label_en: 'Reels',
-  icon: 'video',
-  color: '#EF4444',
-  group_id: MARKETING_GROUP_ID,
-  is_system: true,
-  created_at: now(),
-  updated_at: now(),
-  card_config: { title_field_id: null, shown_field_ids: [] },
-  maps_config: { ...MAPS_CONFIG_DEFAULT },
-  schema: {
-    sections: [
-      {
-        id: reelsBaseId,
-        label_ar: 'الأساسية',
-        label_en: 'Basics',
-        order: 0,
-        is_base: true,
-        color: '#EF4444',
-        fields: [
-          { id: uuid(), name: 'operation', label_ar: 'العملية', label_en: 'Operation', type: 'lookup', required: true, order: 0, section_id: reelsBaseId, width: 'half', show_in_table: true, lookup_model_id: marketingOperationsId, lookup_display_field: 'status' },
-          { id: uuid(), name: 'reel_number', label_ar: 'رقم الريل', label_en: 'Reel #', type: 'number', required: false, order: 1, section_id: reelsBaseId, width: 'half', show_in_table: true },
-          { id: uuid(), name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: true, order: 2, section_id: reelsBaseId, width: 'half', show_in_table: true, options: [
-            opt('pending', 'Pending'), opt('writing', 'Writing'), opt('draft_ready', 'Draft ready'),
-            opt('approved', 'Approved'), opt('published', 'Published'), opt('failed', 'Failed'),
-          ] },
-          { id: uuid(), name: 'type', label_ar: 'النوع', label_en: 'Type', type: 'dropdown', required: false, order: 3, section_id: reelsBaseId, width: 'half', show_in_table: false, options: [opt('ترويجي', 'Promo'), opt('تغطية', 'Coverage'), opt('سينمائي', 'Cinematic')] },
-          { id: uuid(), name: 'duration', label_ar: 'المدة', label_en: 'Duration', type: 'text', required: false, order: 4, section_id: reelsBaseId, width: 'third', show_in_table: false },
-          { id: uuid(), name: 'platform', label_ar: 'المنصة', label_en: 'Platform', type: 'dropdown', required: false, order: 5, section_id: reelsBaseId, width: 'third', show_in_table: false, options: [opt('حسابات', 'Accounts'), opt('إعلان', 'Ads'), opt('واتساب', 'WhatsApp'), opt('موقع', 'Website')] },
-          { id: uuid(), name: 'voiceover', label_ar: 'التعليق الصوتي', label_en: 'Voiceover', type: 'dropdown', required: false, order: 6, section_id: reelsBaseId, width: 'third', show_in_table: false, options: [opt('رجل', 'Male'), opt('امرأة', 'Female'), opt('بدون', 'None')] },
-          { id: uuid(), name: 'goal', label_ar: 'الهدف', label_en: 'Goal', type: 'dropdown', required: false, order: 7, section_id: reelsBaseId, width: 'half', show_in_table: false, options: [opt('مهتمين', 'Interested'), opt('وعي', 'Awareness')] },
-        ],
-      },
-      {
-        id: reelsContentId,
-        label_ar: 'المحتوى',
-        label_en: 'Content',
-        order: 1,
-        is_base: true,
-        color: '#DB2777',
-        fields: [
-          { id: uuid(), name: 'scenes', label_ar: 'المشاهد', label_en: 'Scenes', type: 'table', required: false, order: 0, section_id: reelsContentId, width: 'full', show_in_table: false,
-            table_columns: [
-              { id: uuid(), name: 'number', label_ar: 'رقم المشهد', label_en: 'Scene #', type: 'number' },
-              { id: uuid(), name: 'description', label_ar: 'وصف المشهد', label_en: 'Description', type: 'textarea' },
-              { id: uuid(), name: 'text', label_ar: 'النص', label_en: 'Script', type: 'textarea' },
-            ] },
-        ],
-      },
-    ],
-    section_selector_field_id: null,
-  },
-};
-
-// --- POSTS MODEL ---
-const postsId = uuid();
-const postsBaseId = uuid();
-const postsContentId = uuid();
-const postsModel: AppModel = {
-  id: postsId,
-  name: 'posts',
-  label_ar: 'المنشورات',
-  label_en: 'Posts',
-  icon: 'image',
-  color: '#F97316',
-  group_id: MARKETING_GROUP_ID,
-  is_system: true,
-  created_at: now(),
-  updated_at: now(),
-  card_config: { title_field_id: null, shown_field_ids: [] },
-  maps_config: { ...MAPS_CONFIG_DEFAULT },
-  schema: {
-    sections: [
-      {
-        id: postsBaseId,
-        label_ar: 'الأساسية',
-        label_en: 'Basics',
-        order: 0,
-        is_base: true,
-        color: '#F97316',
-        fields: [
-          { id: uuid(), name: 'operation', label_ar: 'العملية', label_en: 'Operation', type: 'lookup', required: true, order: 0, section_id: postsBaseId, width: 'half', show_in_table: true, lookup_model_id: marketingOperationsId, lookup_display_field: 'status' },
-          { id: uuid(), name: 'post_number', label_ar: 'رقم المنشور', label_en: 'Post #', type: 'number', required: false, order: 1, section_id: postsBaseId, width: 'half', show_in_table: true },
-          { id: uuid(), name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: true, order: 2, section_id: postsBaseId, width: 'half', show_in_table: true, options: [
-            opt('pending', 'Pending'), opt('writing', 'Writing'), opt('draft_ready', 'Draft ready'),
-            opt('approved', 'Approved'), opt('published', 'Published'), opt('failed', 'Failed'),
-          ] },
-          { id: uuid(), name: 'type', label_ar: 'النوع', label_en: 'Type', type: 'dropdown', required: false, order: 3, section_id: postsBaseId, width: 'half', show_in_table: false, options: [opt('توعية', 'Awareness'), opt('إهتمام', 'Interest')] },
-          { id: uuid(), name: 'components', label_ar: 'المكوّنات', label_en: 'Components', type: 'text', required: false, order: 4, section_id: postsBaseId, width: 'half', show_in_table: false },
-          { id: uuid(), name: 'visual', label_ar: 'البصري', label_en: 'Visual', type: 'text', required: false, order: 5, section_id: postsBaseId, width: 'half', show_in_table: false },
-          { id: uuid(), name: 'usage', label_ar: 'الاستخدام', label_en: 'Usage', type: 'dropdown', required: false, order: 6, section_id: postsBaseId, width: 'half', show_in_table: false, options: [opt('الحسابات', 'Accounts'), opt('إعلانات', 'Ads'), opt('واتساب', 'WhatsApp'), opt('موقع', 'Website')] },
-        ],
-      },
-      {
-        id: postsContentId,
-        label_ar: 'المحتوى',
-        label_en: 'Content',
-        order: 1,
-        is_base: true,
-        color: '#DB2777',
-        fields: [
-          { id: uuid(), name: 'title', label_ar: 'العنوان', label_en: 'Title', type: 'text', required: false, order: 0, section_id: postsContentId, width: 'full', show_in_table: true },
-          { id: uuid(), name: 'design_text_1', label_ar: 'النص ١', label_en: 'Design text 1', type: 'textarea', required: false, order: 1, section_id: postsContentId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'design_text_2', label_ar: 'النص ٢', label_en: 'Design text 2', type: 'textarea', required: false, order: 2, section_id: postsContentId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'design_text_3', label_ar: 'النص ٣', label_en: 'Design text 3', type: 'textarea', required: false, order: 3, section_id: postsContentId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'caption', label_ar: 'التعليق', label_en: 'Caption', type: 'textarea', required: false, order: 4, section_id: postsContentId, width: 'full', show_in_table: false },
-        ],
-      },
-    ],
-    section_selector_field_id: null,
   },
 };
 
@@ -3116,15 +3065,11 @@ export const SEED_MODELS: AppModel[] = [
   chatTemplatesModel,
   aiChatsModel,
   phoneCallsModel,
-  // Marketing (phase 3A, 2026-04-23): user-editable replacements for the
-  // hardcoded marketing_operations / reels / posts / research_questions /
-  // competitors tables. The old pipeline still owns writes until the
-  // workflow-based rewrite lands.
+  // Designs group: Templates Library + Marketing Operations + Competitors
+  // reference (template-driven design generator, 2026-05-09 rebuild).
   competitorsModel,
+  designTemplatesModel,
   marketingOperationsModel,
-  researchQuestionsModel,
-  reelsModel,
-  postsModel,
   // Website (2026-05-09): backs the public marketing site at /, /projects, /map.
   siteSettingsModel,
 ];

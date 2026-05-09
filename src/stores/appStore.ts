@@ -4,12 +4,11 @@ import { supabase } from '@/lib/supabase';
 import { getSession, getSessionEmail, getSessionUid, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
-import { buildMarketingSeedWorkflows } from '@/data/seedWorkflows';
 import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine';
 import { assignAutoIdsAsync } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
-import { runMigrations, healSystemModelGroups, healClientsSchema, healMapsConfigForModels, refreshSystemModels } from '@/lib/schemaMigrations';
+import { runMigrations, healSystemModelGroups, healClientsSchema, healMapsConfigForModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -1577,43 +1576,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       performance.measure('wassell:init:loads', 'wassell:init:loads:start', 'wassell:init:loads:end');
     } catch { /* perf API quirks — never block init on telemetry */ }
 
-    // --- Seed the marketing-pipeline workflows ---
-    // The 11 workflows that glue the edge functions to record writes live
-    // in `src/data/seedWorkflows.ts`. They have stable ids so re-seeding
-    // is idempotent. We only seed the ones missing from the loaded set
-    // so user-edited copies (same id, different content) aren't clobbered.
-    //
-    // Phase 1 RLS made `workflows` admin-only at the DB layer. If a non-
-    // admin signs in (or no user is resolved yet), the upserts here
-    // would each fire an RLS denial toast. Skip the seed for everyone
-    // except admins — the seed is bootstrap-only, so a non-admin landing
-    // first just waits until an admin signs in and runs it.
-    {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? '';
-      const seederIsAdmin = (() => {
-        const email = (get().authEmail ?? '').toLowerCase();
-        if (!email) return false;
-        const u = users.find((x) => (x.email ?? '').toLowerCase() === email);
-        if (!u || !u.is_active) return false;
-        const p = profiles.find((x) => x.id === u.profile_id);
-        return p?.is_admin === true;
-      })();
-      if (supabaseUrl && seederIsAdmin) {
-        const seedList = buildMarketingSeedWorkflows(models, webhookSlugs, supabaseUrl);
-        if (seedList.length > 0) {
-          const existingIds = new Set(workflows.map((w) => w.id));
-          const toAdd = seedList.filter((w) => !existingIds.has(w.id));
-          if (toAdd.length > 0) {
-            workflows = [...workflows, ...toAdd];
-            saveLocal('wassell_workflows', workflows);
-            await Promise.all(
-              toAdd.map((w) => supabaseUpsert('workflows', workflowToSupabaseRow(w))),
-            );
-          }
-        }
-      }
-    }
-
     // ────────────────────────────────────────────────────────────────────
     // Resolve the current user based on auth state.
     //
@@ -1819,7 +1781,53 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     models = refreshed.models;
 
+    // Counterpart to refreshSystemModels: drops is_system models listed in
+    // the explicit RETIRED_SYSTEM_MODEL_NAMES set (currently the old
+    // marketing pipeline's reels / posts / research_questions, retired
+    // 2026-05-09 in favor of the template-driven design generator).
+    //
+    // The pruner returns the retired ids; we fan out `supabaseDelete` for
+    // each one so the cleanup propagates from local cache to Supabase. This
+    // is the load-bearing piece — without the supabaseDelete fan-out, a
+    // stale browser session could re-upsert the row from a queued pending
+    // write or HMR cycle, and the ghost comes back across every install
+    // that loads after.
+    const pruned = pruneRemovedSystemModels({
+      models,
+      records: migratedRecords,
+      workflows: refreshed.workflows,
+      dashboards: refreshed.dashboards,
+      views: refreshed.views,
+      groups: refreshed.groups,
+    });
+    models = pruned.models;
+    migratedRecords = pruned.records;
+    let prunedWorkflows = pruned.workflows;
+    let prunedViews = pruned.views;
+
+    if (pruned.retiredModelIds.length > 0) {
+      // Fire-and-forget delete via the standard helper. Each call goes
+      // through `supabaseDelete` which (a) tries the wire request, (b)
+      // queues on failure for replay on next sign-in, (c) toasts on
+      // hard failures. Running these sequentially lets the FK cascade
+      // (records → models) play out cleanly. Records under retired
+      // models also get deleted to keep the records table tight.
+      void Promise.all(
+        pruned.retiredModelIds.flatMap((modelId) => [
+          // Records first, then the model. Postgres CASCADE would handle
+          // this server-side, but explicitly deleting also clears the
+          // pending-write queue for any orphans.
+          ...((migratedRecords[modelId] ?? []).map((r) =>
+            supabaseDelete('records', r.id),
+          ) as Promise<void>[]),
+          supabaseDelete('models', modelId),
+        ]),
+      ).catch(() => { /* errors already toasted by supabaseDelete */ });
+    }
+
     saveLocal('wassell_models', models);
+    saveLocal('wassell_workflows', prunedWorkflows);
+    saveLocal('wassell_views', prunedViews);
     saveLocalRecordsMap(migratedRecords);
 
     // --- Admin profile normalization ---
@@ -1870,12 +1878,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       models,
       groups,
       records: migratedRecords,
-      workflows: migrated.workflows,
+      workflows: prunedWorkflows,
       workflowGroups,
       workflowRuns,
       activityLog,
       dashboards: migrated.dashboards,
-      views: migrated.views,
+      views: prunedViews,
       profiles,
       roles,
       users,
