@@ -347,7 +347,13 @@ interface PendingWrite {
   //   replay can look up whether the model is frozen without scanning.
   op: 'upsert' | 'delete' | 'record_upsert' | 'record_delete';
   table: string;
-  row?: Record<string, unknown>;
+  // Audit M1 expanded: was `Record<string, unknown>`, which forced ~40
+  // `as unknown as Record<string, unknown>` casts at every supabaseUpsert
+  // call site (because typed AppModel/Workflow/etc. don't have an index
+  // signature). Loosening to `object` accepts any object subtype directly
+  // — the row is JSON-serialized into localStorage anyway, so we don't
+  // need a stronger compile-time shape here.
+  row?: object;
   rowId?: string;
   modelId?: string;
   parent?: { table: string; id: string | null | undefined };
@@ -411,12 +417,12 @@ function enqueuePendingWrite(entry: Omit<PendingWrite, 'id' | 'enqueuedAt' | 'at
   // Dedupe: if a write for this row is already queued, replace it (last
   // write wins). Keeps the queue from ballooning when the user edits the
   // same record repeatedly while offline.
-  const rowId = (entry.row?.id as string | undefined) ?? entry.rowId;
+  const rowId = ((entry.row as { id?: string } | undefined)?.id) ?? entry.rowId;
   if (typeof rowId === 'string') {
     const idx = queue.findIndex(
       (w) =>
         w.table === entry.table &&
-        ((w.row?.id as string | undefined) === rowId || w.rowId === rowId),
+        (((w.row as { id?: string } | undefined)?.id) === rowId || w.rowId === rowId),
     );
     if (idx >= 0) {
       queue[idx] = {
@@ -526,7 +532,7 @@ async function replayPendingWrites(): Promise<{
       const next = { ...w, attempts: w.attempts + 1 };
       if (next.attempts >= MAX_REPLAY_ATTEMPTS) {
         dropped++;
-        const idShort = (next.row?.id as string | undefined)?.slice(0, 8) ?? next.rowId?.slice(0, 8) ?? '?';
+        const idShort = ((next.row as { id?: string } | undefined)?.id)?.slice(0, 8) ?? next.rowId?.slice(0, 8) ?? '?';
         console.error(
           `[pendingQueue] DROPPING ${next.op} on ${next.table}#${idShort} after ${MAX_REPLAY_ATTEMPTS} attempts.`,
           next,
@@ -559,7 +565,11 @@ async function replayPendingWrites(): Promise<{
 
 async function supabaseUpsert(
   table: string,
-  row: Record<string, unknown>,
+  // Audit M1 expanded: typed `object` instead of `Record<string, unknown>`.
+  // AppModel / AppRecord / Workflow / etc. now flow in directly without
+  // the `as unknown as Record<string, unknown>` ceremony at every call
+  // site. We re-narrow internally where we need to read named props.
+  row: object,
   parent?: { table: string; id: string | null | undefined },
 ): Promise<void> {
   // No Supabase client at all (env not configured) → pure offline-only mode.
@@ -580,11 +590,20 @@ async function supabaseUpsert(
       try { await prior; } catch { /* parent errored; we still try our write */ }
     }
   }
-  const id = typeof row.id === 'string' ? row.id : undefined;
+  // Re-narrow once for the internal property reads (id, updated_at).
+  // The contract is: every row this function takes has a string `id` and
+  // optionally a string `updated_at`. We don't try to verify the rest of
+  // the shape — Supabase's PostgREST will reject malformed payloads at
+  // the wire if any required column is missing, and the typed call sites
+  // upstream are the source of truth for shape.
+  const rowReadable = row as Record<string, unknown>;
+  const id = typeof rowReadable.id === 'string' ? rowReadable.id : undefined;
   const key = id ? writeKey(table, id) : undefined;
   const op = (async () => {
     try {
-      const { error } = await supabase!.from(table).upsert(row);
+      // Supabase's .upsert() accepts a record-shaped object; the cast
+      // here mirrors the cast-once pattern.
+      const { error } = await supabase!.from(table).upsert(rowReadable);
       if (error) {
         reportSupabaseError(table, 'upsert', error.message ?? String(error));
         // Queue for retry on next initialize so the local edit isn't lost
@@ -595,7 +614,7 @@ async function supabaseUpsert(
         // just written by us so it skips the inevitable echo from the
         // supabase_realtime publication. Pass updated_at (audit fix H1)
         // so the dedup check is timing-independent.
-        const updatedAt = typeof row['updated_at'] === 'string' ? (row['updated_at'] as string) : null;
+        const updatedAt = typeof rowReadable['updated_at'] === 'string' ? (rowReadable['updated_at'] as string) : null;
         markRecentlyWritten(table, id, updatedAt);
       }
     } catch (err) {
@@ -716,7 +735,7 @@ function isModelHardcoded(modelId: string): boolean {
 
 // ─── M1 partial: typed serialization for records ─────────────────────
 //
-// The codebase is full of `record as unknown as Record<string, unknown>`
+// The codebase is full of `record`
 // casts at the Supabase boundary; the audit flagged them as a silent-
 // corruption surface (a future schema rename can ship a row with the
 // wrong shape and TypeScript won't notice). Closing them all in one
@@ -1151,7 +1170,7 @@ function relinkChatsAgainstClients(): void {
   });
 
   for (const rec of patched) {
-    void supabaseUpsert('records', rec as unknown as Record<string, unknown>, {
+    void supabaseUpsert('records', rec, {
       table: 'models',
       id: rec.model_id,
     });
@@ -1320,7 +1339,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (missingGroups.length > 0) {
         await Promise.all(
           missingGroups.map((g) =>
-            supabaseUpsert('model_groups', g as unknown as Record<string, unknown>),
+            supabaseUpsert('model_groups', g),
           ),
         );
       }
@@ -1351,7 +1370,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         // want the writes to land. Groups already exist (above), so no FK trap.
         await Promise.all(
           missing.map((m) =>
-            supabaseUpsert('models', m as unknown as Record<string, unknown>),
+            supabaseUpsert('models', m),
           ),
         );
       }
@@ -1433,7 +1452,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (missingProfiles.length > 0) {
         await Promise.all(
           missingProfiles.map((p) =>
-            supabaseUpsert('profiles', p as unknown as Record<string, unknown>),
+            supabaseUpsert('profiles', p),
           ),
         );
       }
@@ -1508,7 +1527,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const existingRoleIds = new Set(supabaseRoles.map((r) => r.id));
       for (const r of roles) {
         if (!existingRoleIds.has(r.id)) {
-          supabaseUpsert('roles', r as unknown as Record<string, unknown>);
+          supabaseUpsert('roles', r);
         }
       }
     }
@@ -1533,7 +1552,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (!existingUserIds.has(u.id)) {
           supabaseUpsert(
             'users',
-            u as unknown as Record<string, unknown>,
+            u,
             { table: 'profiles', id: u.profile_id },
           );
         }
@@ -1630,7 +1649,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_users', users);
       supabaseUpsert(
         'users',
-        updated as unknown as Record<string, unknown>,
+        updated,
         { table: 'users', id: updated.id },
       );
       return updated;
@@ -1680,7 +1699,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           saveLocal('wassell_users', users);
           supabaseUpsert(
             'users',
-            adopted as unknown as Record<string, unknown>,
+            adopted,
             { table: 'profiles', id: adopted.profile_id },
           );
           currentUserId = adopted.id;
@@ -1843,7 +1862,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (upsertedAdminProfiles.length > 0) {
       saveLocal('wassell_profiles', profiles);
       for (const p of upsertedAdminProfiles) {
-        supabaseUpsert('profiles', p as unknown as Record<string, unknown>);
+        supabaseUpsert('profiles', p);
       }
     }
 
@@ -2006,7 +2025,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // write so a freshly-created group lands before the model references it.
       supabaseUpsert(
         'models',
-        model as unknown as Record<string, unknown>,
+        model,
         model.group_id ? { table: 'model_groups', id: model.group_id } : undefined,
       );
       return { models };
@@ -2089,7 +2108,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (m) {
           supabaseUpsert(
             'models',
-            m as unknown as Record<string, unknown>,
+            m,
             m.group_id ? { table: 'model_groups', id: m.group_id } : undefined,
           );
         }
@@ -2099,7 +2118,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (r) {
           supabaseUpsert(
             'records',
-            r as unknown as Record<string, unknown>,
+            r,
             { table: 'models', id: r.model_id },
           );
         }
@@ -2119,7 +2138,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (v) {
           supabaseUpsert(
             'model_views',
-            v as unknown as Record<string, unknown>,
+            v,
             { table: 'models', id: v.model_id },
           );
         }
@@ -2141,7 +2160,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.groups.map((g) => (g.id === group.id ? group : g))
         : [...s.groups, group];
       saveLocal('wassell_groups', groups);
-      supabaseUpsert('model_groups', group as unknown as Record<string, unknown>);
+      supabaseUpsert('model_groups', group);
       return { groups };
     });
   },
@@ -2167,7 +2186,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // in case Supabase was offline, flush the touched models on next
       // connection via a fire-and-forget upsert.
       for (const m of touchedModels) {
-        supabaseUpsert('models', m as unknown as Record<string, unknown>);
+        supabaseUpsert('models', m);
       }
       return { groups, models };
     });
@@ -2229,12 +2248,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       // Persist to Supabase — groups first so model upserts see their parents.
       for (const g of changedGroups) {
-        supabaseUpsert('model_groups', g as unknown as Record<string, unknown>);
+        supabaseUpsert('model_groups', g);
       }
       for (const m of changedModels) {
         supabaseUpsert(
           'models',
-          m as unknown as Record<string, unknown>,
+          m,
           m.group_id ? { table: 'model_groups', id: m.group_id } : undefined,
         );
       }
@@ -2440,7 +2459,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         saveLocal('wassell_models', models);
         supabaseUpsert(
           'models',
-          enrichedModel as unknown as Record<string, unknown>,
+          enrichedModel,
           enrichedModel.group_id ? { table: 'model_groups', id: enrichedModel.group_id } : undefined,
         );
         return { records, models };
@@ -2642,7 +2661,15 @@ export const useAppStore = create<AppState>((set, get) => ({
         error: 'Supabase not configured — Freeze is unavailable in offline-only mode',
       };
     }
-    const { data, error } = await supabase.rpc('freeze_model', {
+    // Audit fix H6 cutover: route through `freeze_model_safe` (defined in
+    // the audit-followup migration). The wrapper takes a per-model
+    // advisory lock so two admins clicking Freeze simultaneously can't
+    // both pass the validation phase + duplicate rows in the dedicated
+    // table. It's also idempotent on already-frozen models — returns
+    // `{ok: true, already_frozen: true}` instead of erroring or
+    // double-freezing. The wrapper additionally writes an activity_log
+    // entry (audit L3) so the freeze is auditable.
+    const { data, error } = await supabase.rpc('freeze_model_safe', {
       p_model_id: modelId,
     });
     if (error) {
@@ -2663,7 +2690,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       table_name?: string;
       rows_copied?: number;
       frozen_at?: string;
+      already_frozen?: boolean;
     };
+    // already_frozen means another writer beat us to it; flip the local
+    // flag from whatever fresh data the wrapper returned but don't
+    // celebrate as a brand-new freeze.
     // Update local model: flip is_hardcoded + set table_name. Don't refetch
     // from Supabase — the RPC has already committed; the local state just
     // needs the two new flags so subsequent saves dispatch correctly.
@@ -2722,7 +2753,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.workflowGroups.map((g) => (g.id === group.id ? group : g))
         : [...s.workflowGroups, group];
       saveLocal('wassell_workflow_groups', workflowGroups);
-      supabaseUpsert('workflow_groups', group as unknown as Record<string, unknown>);
+      supabaseUpsert('workflow_groups', group);
       return { workflowGroups };
     });
   },
@@ -2760,7 +2791,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const MAX_RUNS = 500;
       const next = [run, ...s.workflowRuns].slice(0, MAX_RUNS);
       saveLocal('wassell_workflow_runs', next);
-      supabaseUpsert('workflow_runs', run as unknown as Record<string, unknown>);
+      supabaseUpsert('workflow_runs', run);
       return { workflowRuns: next };
     });
     // Mirror a one-line summary into the unified activity log so workflow
@@ -2828,7 +2859,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const MAX_ENTRIES = 200;
       const next = [entry, ...s.activityLog].slice(0, MAX_ENTRIES);
       saveLocal('wassell_activity_log', next);
-      supabaseUpsert('activity_log', entry as unknown as Record<string, unknown>);
+      supabaseUpsert('activity_log', entry);
       return { activityLog: next };
     });
   },
@@ -2877,7 +2908,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.dashboards.map((d) => (d.id === dashboard.id ? dashboard : d))
         : [...s.dashboards, dashboard];
       saveLocal('wassell_dashboards', dashboards);
-      supabaseUpsert('dashboards', dashboard as unknown as Record<string, unknown>);
+      supabaseUpsert('dashboards', dashboard);
       return { dashboards };
     });
   },
@@ -2902,7 +2933,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const whiteboardFolders = [...s.whiteboardFolders, folder];
       saveLocal('wassell_whiteboard_folders', whiteboardFolders);
-      supabaseUpsert('whiteboard_folders', folder as unknown as Record<string, unknown>);
+      supabaseUpsert('whiteboard_folders', folder);
       return { whiteboardFolders };
     });
     return folder;
@@ -2916,7 +2947,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       saveLocal('wassell_whiteboard_folders', whiteboardFolders);
       const updated = whiteboardFolders.find((f) => f.id === folderId);
-      if (updated) supabaseUpsert('whiteboard_folders', updated as unknown as Record<string, unknown>);
+      if (updated) supabaseUpsert('whiteboard_folders', updated);
       return { whiteboardFolders };
     });
   },
@@ -2950,7 +2981,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const whiteboards = [...s.whiteboards, board];
       saveLocal('wassell_whiteboards', whiteboards);
-      supabaseUpsert('whiteboards', board as unknown as Record<string, unknown>);
+      supabaseUpsert('whiteboards', board);
       return { whiteboards };
     });
     return board;
@@ -2962,7 +2993,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       saveLocal('wassell_whiteboards', whiteboards);
       const updated = whiteboards.find((b) => b.id === boardId);
-      if (updated) supabaseUpsert('whiteboards', updated as unknown as Record<string, unknown>);
+      if (updated) supabaseUpsert('whiteboards', updated);
       return { whiteboards };
     });
   },
@@ -2981,7 +3012,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       saveLocal('wassell_whiteboards', whiteboards);
       const updated = whiteboards.find((b) => b.id === boardId);
-      if (updated) supabaseUpsert('whiteboards', updated as unknown as Record<string, unknown>);
+      if (updated) supabaseUpsert('whiteboards', updated);
       return { whiteboards };
     });
   },
@@ -2992,7 +3023,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       );
       saveLocal('wassell_whiteboards', whiteboards);
       const updated = whiteboards.find((b) => b.id === boardId);
-      if (updated) supabaseUpsert('whiteboards', updated as unknown as Record<string, unknown>);
+      if (updated) supabaseUpsert('whiteboards', updated);
       return { whiteboards };
     });
   },
@@ -3017,7 +3048,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // FK: model_views.model_id → models.id.
       supabaseUpsert(
         'model_views',
-        view as unknown as Record<string, unknown>,
+        view,
         { table: 'models', id: view.model_id },
       );
       return { views };
@@ -3041,7 +3072,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const updated = { ...v, is_default: shouldBeDefault, updated_at: now };
         supabaseUpsert(
           'model_views',
-          updated as unknown as Record<string, unknown>,
+          updated,
           { table: 'models', id: updated.model_id },
         );
         return updated;
@@ -3088,7 +3119,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       // user assigned to a newly-created profile doesn't race past it.
       supabaseUpsert(
         'users',
-        user as unknown as Record<string, unknown>,
+        user,
         { table: 'profiles', id: user.profile_id },
       );
       // Audit log — fire and forget. Distinguish create / update /
@@ -3188,7 +3219,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.profiles.map((p) => (p.id === healed.id ? healed : p))
         : [...s.profiles, healed];
       saveLocal('wassell_profiles', profiles);
-      supabaseUpsert('profiles', healed as unknown as Record<string, unknown>);
+      supabaseUpsert('profiles', healed);
       void writeAuditLog({
         entityType: 'profile',
         action: before ? 'updated' : 'created',
@@ -3236,7 +3267,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.roles.map((r) => (r.id === role.id ? role : r))
         : [...s.roles, role];
       saveLocal('wassell_roles', roles);
-      supabaseUpsert('roles', role as unknown as Record<string, unknown>);
+      supabaseUpsert('roles', role);
       void writeAuditLog({
         entityType: 'role',
         action: before ? 'updated' : 'created',
@@ -3265,7 +3296,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         };
         supabaseUpsert(
           'users',
-          next as unknown as Record<string, unknown>,
+          next,
           { table: 'profiles', id: next.profile_id },
         );
         return next;
@@ -3296,7 +3327,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? s.fieldTemplates.map((t) => (t.id === template.id ? template : t))
         : [...s.fieldTemplates, template];
       saveLocal('wassell_field_templates', fieldTemplates);
-      supabaseUpsert('field_templates', template as unknown as Record<string, unknown>);
+      supabaseUpsert('field_templates', template);
       return { fieldTemplates };
     });
   },
@@ -3441,7 +3472,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // whatsapp_numbers.device_id is the PK, so supabase-js infers onConflict.
     // The generic supabaseUpsert works even though `row.id` is undefined —
     // the write still succeeds; it just isn't tracked in `pendingWrites`.
-    await supabaseUpsert('whatsapp_numbers', next as unknown as Record<string, unknown>);
+    await supabaseUpsert('whatsapp_numbers', next);
   },
 
   loadChatsFromHaberchat: async () => {
@@ -3521,7 +3552,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // the chats model itself is already in Supabase.
     for (const rec of merged) {
       // Intentionally not awaited — fire-and-forget batched via microtask.
-      void supabaseUpsert('records', rec as unknown as Record<string, unknown>);
+      void supabaseUpsert('records', rec);
     }
   },
 
@@ -3782,7 +3813,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocalRecordsForModel(chatsModel.id, nextList);
       return { records: nextRecords };
     });
-    void supabaseUpsert('records', record as unknown as Record<string, unknown>, {
+    void supabaseUpsert('records', record, {
       table: 'models',
       id: record.model_id,
     });
@@ -3970,7 +4001,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     void supabaseUpsert(
       'records',
-      { ...rec, data: nextData } as unknown as Record<string, unknown>,
+      { ...rec, data: nextData },
       { table: 'models', id: rec.model_id },
     );
 
@@ -4012,7 +4043,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_webhook_slugs', next);
       return { webhookSlugs: next };
     });
-    await supabaseUpsert('webhook_slugs', updated as unknown as Record<string, unknown>);
+    await supabaseUpsert('webhook_slugs', updated);
   },
 
   deleteWebhookSlug: async (slugId) => {
