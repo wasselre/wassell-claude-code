@@ -28,6 +28,7 @@ import ProfilePage from '@/pages/ProfilePage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
+import WebsiteSettingsPage from '@/pages/Settings/WebsiteSettingsPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
@@ -210,6 +211,7 @@ export default function App() {
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
           <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />
           <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />
+          <Route path="/settings/website" element={<RequireAdmin><WebsiteSettingsPage /></RequireAdmin>} />
           <Route path="/logs" element={<RequireAdmin><LogsPage /></RequireAdmin>} />
         </Route>
       </Routes>

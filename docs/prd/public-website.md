@@ -37,9 +37,12 @@ Marketing the company and the projects it manages without spinning up a separate
    2. Edit hero title, description, contact info, social URLs, hours, etc.
    3. Save. Public pages pick up the change on next reload.
 3. **Admin redesigns the map card:**
-   1. Open the same `site_settings` singleton, scroll to the "بطاقة الخريطة / Map Card" section.
-   2. Pick the projects-model field for each slot (status pill, chips 1–3, price, CTA URL) from its dropdown. Leave any slot blank to fall back to heuristics.
-   3. Save. The next pin click on the public map renders the new layout.
+   1. Open `/settings` → click **إعدادات الموقع / Website Settings**.
+   2. Scroll to the "بطاقة الخريطة / Map Card" section.
+   3. Pick the projects-model field for each slot (status pill, البطاقة الأولى/الثانية/الثالثة, price, CTA URL) from its dropdown. Leave any slot blank to fall back to heuristics.
+   4. Save. The next pin click on the public map renders the new layout.
+
+**Settings-page integration:** `site_settings` is hidden from the regular Sidebar by name (`Sidebar.tsx` `SETTINGS_ONLY_MODEL_NAMES`) — the only entry point is the **Website Settings** card on `/settings`, which routes through `/settings/website`. That route hydrates the singleton record from the store and redirects into `/model/site_settings/<id>` so the standard record form renders. New tenants land on `/model/site_settings/new` and the form creates the singleton on first save.
 3. **Visitor browses projects:**
    1. Open `/projects.html`.
    2. Filter by city, status, or free-text search.

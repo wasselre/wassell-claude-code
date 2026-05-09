@@ -6,6 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
+  Globe,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -151,6 +152,17 @@ const CARDS: SettingsCard[] = [
     color: '#7C3AED',
     bg: '#7C3AED14',
     route: '/settings/audit-log',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'إعدادات الموقع',
+    titleEn: 'Website Settings',
+    descAr: 'محتوى الموقع العام، معلومات التواصل، وتخصيص بطاقة الخريطة',
+    descEn: 'Public site copy, contact info, and map card customization',
+    icon: Globe,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/settings/website',
     adminOnly: true,
   },
 ];

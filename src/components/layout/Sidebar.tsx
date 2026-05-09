@@ -142,8 +142,14 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     return ao - bo;
   };
 
+  // Models that aren't surfaced in the regular sidebar — they're reached
+  // through the Settings page instead (see src/pages/Settings/SettingsPage.tsx).
+  // `site_settings` is the public website's singleton config record; the
+  // user edits it via /settings/website rather than navigating to a model.
+  const SETTINGS_ONLY_MODEL_NAMES = new Set(['site_settings']);
+
   const ungroupedModels = models
-    .filter((m) => !m.group_id && canView(m.id))
+    .filter((m) => !m.group_id && canView(m.id) && !SETTINGS_ONLY_MODEL_NAMES.has(m.name))
     .slice()
     .sort(byModelOrder);
   const groupedModels = groups
@@ -152,7 +158,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     .map((g) => ({
       group: g,
       models: models
-        .filter((m) => m.group_id === g.id && canView(m.id))
+        .filter((m) => m.group_id === g.id && canView(m.id) && !SETTINGS_ONLY_MODEL_NAMES.has(m.name))
         .slice()
         .sort(byModelOrder),
     }))
