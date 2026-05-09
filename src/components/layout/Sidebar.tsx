@@ -102,7 +102,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   const currentUser = users.find((u) => u.id === currentUserId);
   const currentProfile = currentUser?.profile_id ? profiles.find((p) => p.id === currentUser.profile_id) : null;
   const isAdmin = !!currentProfile?.is_admin;
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem('sidebar_collapsed') === 'true';
@@ -159,7 +159,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
     .filter((g) => g.models.length > 0);
 
   const toggleGroup = (groupId: string) => {
-    setCollapsed((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
+    setExpanded((prev) => ({ ...prev, [groupId]: !prev[groupId] }));
   };
 
   return (
@@ -313,10 +313,10 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
                     </div>
                     <ChevronDown
                       size={14}
-                      className={`transition-transform text-charcoal/30 ${collapsed[group.id] ? '-rotate-90 rtl:rotate-90' : ''}`}
+                      className={`transition-transform text-charcoal/30 ${!expanded[group.id] ? '-rotate-90 rtl:rotate-90' : ''}`}
                     />
                   </button>
-                  {!collapsed[group.id] && (
+                  {expanded[group.id] && (
                     <div className="ms-5 ps-3 border-s border-sand/20 space-y-0.5 mt-0.5">
                       {gModels.map((model) => {
                         const Icon = getIconComponent(model.icon);
