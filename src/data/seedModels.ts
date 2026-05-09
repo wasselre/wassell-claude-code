@@ -2631,10 +2631,12 @@ const competitorsModel: AppModel = {
 // DESIGN TEMPLATES MODEL — Templates Library
 // ============================================================
 // Reusable catalog of design templates feeding the Marketing Operations
-// generator. Each row carries: a reference image (visual target), a
-// cleanup_prompt + design_prompt with `{{PLACEHOLDER}}` tokens, and a
-// typed `variables` table listing the placeholders. Marketing-Operation
-// records pick a template via lookup and fill its variables.
+// generator. Each row carries: a reference image (visual target), three
+// prompts (cleanup → editing → design) with `{{PLACEHOLDER}}` tokens,
+// and a typed `variables` table listing the placeholders.
+// Marketing-Operation records pick a template via lookup and fill its
+// variables; the orchestrator runs the three phases and writes each
+// phase's output back to the record.
 const designTemplatesId = uuid();
 const designTemplatesBaseId = uuid();
 const designTemplatesModel: AppModel = {
@@ -2662,9 +2664,10 @@ const designTemplatesModel: AppModel = {
         fields: [
           { id: uuid(), name: 'name', label_ar: 'اسم القالب', label_en: 'Template Name', type: 'text', required: true, order: 0, section_id: designTemplatesBaseId, width: 'half', show_in_table: true },
           { id: uuid(), name: 'reference_image', label_ar: 'الصورة المرجعية', label_en: 'Reference Image', type: 'image', required: true, order: 1, section_id: designTemplatesBaseId, width: 'full', show_in_table: false, image_folder: 'reference', image_max_size_mb: 10 },
-          { id: uuid(), name: 'cleanup_prompt', label_ar: 'تعليمة التنظيف', label_en: 'Cleanup Prompt', type: 'textarea', required: true, order: 2, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'design_prompt', label_ar: 'تعليمة التصميم', label_en: 'Design Prompt', type: 'textarea', required: true, order: 3, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
-          { id: uuid(), name: 'variables', label_ar: 'المتغيرات', label_en: 'Variables', type: 'table', required: false, order: 4, section_id: designTemplatesBaseId, width: 'full', show_in_table: false,
+          { id: uuid(), name: 'cleanup_prompt', label_ar: 'تعليمة التنظيف (مرحلة ١)', label_en: 'Cleanup Prompt (Phase 1)', type: 'textarea', required: true, order: 2, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'editing_prompt', label_ar: 'تعليمة التعديل (مرحلة ٢)', label_en: 'Editing Prompt (Phase 2)', type: 'textarea', required: true, order: 3, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'design_prompt', label_ar: 'تعليمة التصميم (مرحلة ٣)', label_en: 'Design Prompt (Phase 3)', type: 'textarea', required: true, order: 4, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'variables', label_ar: 'المتغيرات', label_en: 'Variables', type: 'table', required: false, order: 5, section_id: designTemplatesBaseId, width: 'full', show_in_table: false,
             table_columns: [
               { id: uuid(), name: 'name', label_ar: 'الاسم', label_en: 'Name', type: 'text', required: true },
               { id: uuid(), name: 'label_ar', label_ar: 'العنوان (عربي)', label_en: 'Label (AR)', type: 'text', required: true },
@@ -2675,7 +2678,7 @@ const designTemplatesModel: AppModel = {
                 opt('currency', 'Currency'),
               ] },
             ] },
-          { id: uuid(), name: 'notes', label_ar: 'ملاحظات', label_en: 'Notes', type: 'textarea', required: false, order: 5, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'notes', label_ar: 'ملاحظات', label_en: 'Notes', type: 'textarea', required: false, order: 6, section_id: designTemplatesBaseId, width: 'full', show_in_table: false },
         ],
       },
     ],
@@ -2691,12 +2694,18 @@ const designTemplatesModel: AppModel = {
 // Templates Library, fills the template's variables (manual entry or
 // link to a project field), uploads a raw building photo, then clicks
 // Generate. The Generate button hits /api/marketing/generate which
-// runs the two-phase Higgsfield orchestration (cleanup + design) and
-// writes results back to the record.
+// runs the THREE-phase Higgsfield orchestration:
 //
-// `cleanup_input_hash` is written by the server (not declared as a
-// field) on `record.data` — it lets the orchestrator skip phase 1 on
-// re-runs when the inputs haven't changed.
+//   1. Cleanup — strip distractions from the raw building photograph.
+//   2. Editing — regenerate a hero camera angle from the cleaned photo.
+//   3. Design  — composite the edited photo + reference layout + logo
+//                into the finished social post.
+//
+// Each phase has its own intermediate image saved on the record so the
+// marketer can inspect / approve mid-way. `cleanup_input_hash` and
+// `editing_input_hash` are written by the server (not declared as
+// fields) on `record.data` so the orchestrator can skip phases whose
+// inputs haven't changed across re-runs.
 const marketingOperationsId = uuid();
 const marketingOperationsOpSectionId = uuid();
 const marketingOperationsInfoSectionId = uuid();
@@ -2735,6 +2744,8 @@ const marketingOperationsModel: AppModel = {
             opt('draft', 'Draft'),
             opt('cleaning', 'Cleaning photo'),
             opt('cleanup_failed', 'Cleanup failed'),
+            opt('editing', 'Editing photo'),
+            opt('editing_failed', 'Editing failed'),
             opt('generating', 'Generating design'),
             opt('generation_failed', 'Generation failed'),
             opt('complete', 'Complete'),
@@ -2777,9 +2788,10 @@ const marketingOperationsModel: AppModel = {
         color: '#B8734F',
         fields: [
           { id: uuid(), name: 'raw_photo', label_ar: 'الصورة الخام', label_en: 'Raw Photo', type: 'image', required: true, order: 0, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false, image_folder: 'raw' },
-          { id: uuid(), name: 'cleaned_photo', label_ar: 'الصورة المنظفة', label_en: 'Cleaned Photo', type: 'image', required: false, order: 1, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false, image_folder: 'cleaned' },
-          { id: uuid(), name: 'final_design', label_ar: 'التصميم النهائي', label_en: 'Final Design', type: 'image', required: false, order: 2, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: true, image_folder: 'final' },
-          { id: uuid(), name: 'error_message', label_ar: 'رسالة الخطأ', label_en: 'Error Message', type: 'textarea', required: false, order: 3, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'cleaned_photo', label_ar: 'الصورة المنظفة (مرحلة ١)', label_en: 'Cleaned Photo (Phase 1)', type: 'image', required: false, order: 1, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false, image_folder: 'cleaned' },
+          { id: uuid(), name: 'edited_photo', label_ar: 'الصورة بعد التعديل (مرحلة ٢)', label_en: 'Edited Photo (Phase 2)', type: 'image', required: false, order: 2, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false, image_folder: 'cleaned' },
+          { id: uuid(), name: 'final_design', label_ar: 'التصميم النهائي (مرحلة ٣)', label_en: 'Final Design (Phase 3)', type: 'image', required: false, order: 3, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: true, image_folder: 'final' },
+          { id: uuid(), name: 'error_message', label_ar: 'رسالة الخطأ', label_en: 'Error Message', type: 'textarea', required: false, order: 4, section_id: marketingOperationsIoSectionId, width: 'full', show_in_table: false },
         ],
       },
     ],

@@ -33,6 +33,7 @@ const STUB_KEY = 'stub';
 
 const STUB_DELAY_MS = 2000;
 const STUB_CLEANED_URL = 'https://picsum.photos/seed/wassel-cleaned/1024/1024';
+const STUB_EDITED_URL = 'https://picsum.photos/seed/wassel-edited/1024/1024';
 const STUB_FINAL_URL = 'https://picsum.photos/seed/wassel-final/1024/1024';
 
 export interface HiggsfieldStartResult {
@@ -124,8 +125,63 @@ export async function higgsfieldCleanup(opts: CleanupOpts): Promise<HiggsfieldSt
   return { requestId, statusUrl };
 }
 
-interface DesignOpts {
+interface EditingOpts {
   cleanedPhotoUrl: string;
+  editingPrompt: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Phase 2. Takes the cleaned photo + an editing prompt and returns
+ * the request id + status URL. The editing prompt typically asks the
+ * model to regenerate a new camera angle of the same building (or
+ * apply other photographic adjustments) while preserving the
+ * architectural identity. Same wire shape as cleanup — just a
+ * different intent at the prompt level.
+ */
+export async function higgsfieldEditing(opts: EditingOpts): Promise<HiggsfieldStartResult> {
+  const env = readEnv();
+  if (env.apiKey === STUB_KEY) {
+    return {
+      requestId: `stub-editing-${crypto.randomUUID()}`,
+      statusUrl: 'stub://editing',
+    };
+  }
+  const res = await fetch(`${env.baseUrl}/v1/predictions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: authHeader(env),
+    },
+    body: JSON.stringify({
+      model: env.modelId,
+      input: {
+        prompt: opts.editingPrompt,
+        image_url: opts.cleanedPhotoUrl,
+      },
+    }),
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`Higgsfield editing start failed (${res.status}): ${body.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { id?: string; status_url?: string; urls?: { get?: string } };
+  const requestId = json.id ?? '';
+  const statusUrl = json.status_url ?? json.urls?.get ?? '';
+  if (!requestId || !statusUrl) {
+    throw new Error('Higgsfield editing response missing id or status_url');
+  }
+  return { requestId, statusUrl };
+}
+
+interface DesignOpts {
+  /**
+   * The phase-2 EDITED photo (not the cleaned one). The design phase
+   * composites this hero shot into the layout, so it should already
+   * have the right camera angle / lighting.
+   */
+  editedPhotoUrl: string;
   referenceImageUrl: string;
   logoUrl: string;
   designPrompt: string;
@@ -133,9 +189,10 @@ interface DesignOpts {
 }
 
 /**
- * Phase 2. Takes the cleaned photo + the template's reference image +
- * the Wassel logo URL + the design prompt (already substituted with the
- * template's variable values) and returns the request id + status URL.
+ * Phase 3. Takes the EDITED photo (phase-2 output) + the template's
+ * reference image + the Wassel logo URL + the design prompt (already
+ * substituted with the template's variable values) and returns the
+ * request id + status URL.
  *
  * Reference image and logo are passed as separate inputs so the model
  * can use one as the visual target and the other as a brand asset to
@@ -160,7 +217,7 @@ export async function higgsfieldDesign(opts: DesignOpts): Promise<HiggsfieldStar
       model: env.modelId,
       input: {
         prompt: opts.designPrompt,
-        image_url: opts.cleanedPhotoUrl,
+        image_url: opts.editedPhotoUrl,
         reference_image_url: opts.referenceImageUrl,
         logo_url: opts.logoUrl,
       },
@@ -203,9 +260,14 @@ export async function pollHiggsfield(
   if (statusUrl.startsWith('stub://')) {
     await new Promise((r) => setTimeout(r, STUB_DELAY_MS));
     const phase = statusUrl.slice('stub://'.length);
+    const stubByPhase: Record<string, string> = {
+      cleanup: STUB_CLEANED_URL,
+      editing: STUB_EDITED_URL,
+      design: STUB_FINAL_URL,
+    };
     return {
       status: 'completed',
-      imageUrls: [phase === 'design' ? STUB_FINAL_URL : STUB_CLEANED_URL],
+      imageUrls: [stubByPhase[phase] ?? STUB_CLEANED_URL],
     };
   }
 
