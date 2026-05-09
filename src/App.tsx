@@ -119,6 +119,14 @@ function RecordListDispatcher() {
   if (modelName === 'ai_chats') {
     return <AiAgentPage />;
   }
+  // Singleton-config models — the list view is meaningless (always exactly
+  // one record) and confusing (looks like a normal model, but isn't). Punt
+  // straight to /settings/website which then opens the singleton's edit form.
+  // Belt-and-suspenders alongside the Sidebar `SETTINGS_ONLY_MODEL_NAMES`
+  // filter — covers direct URL hits, old bookmarks, and shared links.
+  if (modelName === 'site_settings') {
+    return <Navigate to="/settings/website" replace />;
+  }
   return <RecordListPage />;
 }
 
