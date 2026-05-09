@@ -1429,6 +1429,8 @@ const unitsModel: AppModel = {
 const apBaseSectionId = uuid();
 const apNameFieldId = uuid();
 const apStatusFieldId = uuid();
+const apImageFieldId = uuid();
+const apLocationUrlFieldId = uuid();
 
 const allProjectsModel: AppModel = {
   id: allProjectsId,
@@ -1447,7 +1449,18 @@ const allProjectsModel: AppModel = {
     badge_field_id: apStatusFieldId,
     shown_field_ids: [],
   },
-  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  // Wired so the CRM Maps view AND the public website map page resolve
+  // project locations from `location_url` (a Google Maps URL parsed by
+  // lib/locationUtils). Pin label = project name, color = status option's
+  // color (off-plan / under-construction / ready).
+  maps_config: {
+    ...MAPS_CONFIG_DEFAULT,
+    location_url_field_id: apLocationUrlFieldId,
+    pin_label_field_id: apNameFieldId,
+    pin_color_field_id: apStatusFieldId,
+    popup_title_field_id: apNameFieldId,
+    popup_badge_field_id: apStatusFieldId,
+  },
   schema: {
     sections: [
       {
@@ -1608,6 +1621,46 @@ const allProjectsModel: AppModel = {
             section_id: apBaseSectionId,
             width: 'full',
             show_in_table: false,
+          },
+          {
+            id: apImageFieldId,
+            name: 'image_url',
+            label_ar: 'صورة المشروع',
+            label_en: 'Project Image',
+            type: 'url',
+            required: false,
+            order: 12,
+            section_id: apBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: apLocationUrlFieldId,
+            name: 'location_url',
+            label_ar: 'رابط الموقع على الخريطة',
+            label_en: 'Map Location URL',
+            type: 'url',
+            required: false,
+            order: 13,
+            section_id: apBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          // Opt-in flag for the public website. Default off — only admins
+          // who explicitly toggle this on get the project published. The
+          // RLS policy in 2026-05-09_j_website_integration.sql gates the
+          // anon-role read on this exact field.
+          {
+            id: uuid(),
+            name: 'is_public',
+            label_ar: 'عرض على الموقع',
+            label_en: 'Show on Website',
+            type: 'checkbox',
+            required: false,
+            order: 14,
+            section_id: apBaseSectionId,
+            width: 'half',
+            show_in_table: true,
           },
         ],
       },
@@ -2984,6 +3037,70 @@ const chatTemplatesModel: AppModel = {
 };
 
 // ============================================================
+// SITE SETTINGS MODEL
+// ============================================================
+// Singleton-style model that backs the public marketing site (Wassel Website).
+// Holds editable hero copy, contact info, social links, and working hours so
+// the website can be re-skinned without a code redeploy. The website fetches
+// the first record (treats it as a singleton); admins should not create more
+// than one. Backed by the public-read RLS policy in the
+// `2026-05-09_j_website_integration.sql` migration so anon traffic from the
+// website can SELECT it.
+const siteSettingsId = uuid();
+const ssBaseSectionId = uuid();
+const ssHeroTitleFieldId = uuid();
+const ssHeroSubtitleFieldId = uuid();
+
+const siteSettingsModel: AppModel = {
+  id: siteSettingsId,
+  name: 'site_settings',
+  label_ar: 'إعدادات الموقع',
+  label_en: 'Website Settings',
+  icon: 'globe',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: ssHeroTitleFieldId,
+    subtitle_field_id: ssHeroSubtitleFieldId,
+    badge_field_id: null,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: ssBaseSectionId,
+        label_ar: 'إعدادات الموقع',
+        label_en: 'Website Settings',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          { id: ssHeroTitleFieldId,    name: 'hero_title',        label_ar: 'عنوان البطل',           label_en: 'Hero Title',            type: 'text',     required: false, order: 0,  section_id: ssBaseSectionId, width: 'half', show_in_table: true },
+          { id: ssHeroSubtitleFieldId, name: 'hero_subtitle',     label_ar: 'العنوان الفرعي',        label_en: 'Hero Subtitle',         type: 'text',     required: false, order: 1,  section_id: ssBaseSectionId, width: 'half', show_in_table: true },
+          { id: uuid(),                name: 'hero_description',  label_ar: 'وصف البطل',             label_en: 'Hero Description',      type: 'textarea', required: false, order: 2,  section_id: ssBaseSectionId, width: 'full', show_in_table: false },
+          { id: uuid(),                name: 'hero_bg_image_url', label_ar: 'صورة خلفية البطل',      label_en: 'Hero Background Image', type: 'url',      required: false, order: 3,  section_id: ssBaseSectionId, width: 'full', show_in_table: false },
+          { id: uuid(),                name: 'contact_phone',     label_ar: 'رقم التواصل',           label_en: 'Contact Phone',         type: 'phone',    required: false, order: 4,  section_id: ssBaseSectionId, width: 'half', show_in_table: true },
+          { id: uuid(),                name: 'contact_email',     label_ar: 'البريد الإلكتروني',     label_en: 'Contact Email',         type: 'email',    required: false, order: 5,  section_id: ssBaseSectionId, width: 'half', show_in_table: true },
+          { id: uuid(),                name: 'address_ar',        label_ar: 'العنوان (عربي)',        label_en: 'Address (AR)',          type: 'text',     required: false, order: 6,  section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+          { id: uuid(),                name: 'address_en',        label_ar: 'العنوان (إنجليزي)',     label_en: 'Address (EN)',          type: 'text',     required: false, order: 7,  section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+          { id: uuid(),                name: 'hours_ar',          label_ar: 'ساعات العمل (عربي)',    label_en: 'Working Hours (AR)',    type: 'text',     required: false, order: 8,  section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+          { id: uuid(),                name: 'hours_en',          label_ar: 'ساعات العمل (إنجليزي)', label_en: 'Working Hours (EN)',    type: 'text',     required: false, order: 9,  section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+          { id: uuid(),                name: 'linkedin_url',      label_ar: 'لينكدإن',               label_en: 'LinkedIn URL',          type: 'url',      required: false, order: 10, section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+          { id: uuid(),                name: 'instagram_url',     label_ar: 'إنستغرام',              label_en: 'Instagram URL',         type: 'url',      required: false, order: 11, section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+          { id: uuid(),                name: 'tiktok_url',        label_ar: 'تيك توك',               label_en: 'TikTok URL',            type: 'url',      required: false, order: 12, section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+          { id: uuid(),                name: 'whatsapp_phone',    label_ar: 'رقم الواتساب',          label_en: 'WhatsApp Phone',        type: 'phone',    required: false, order: 13, section_id: ssBaseSectionId, width: 'half', show_in_table: false },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 export const SEED_MODELS: AppModel[] = [
@@ -3008,4 +3125,6 @@ export const SEED_MODELS: AppModel[] = [
   researchQuestionsModel,
   reelsModel,
   postsModel,
+  // Website (2026-05-09): backs the public marketing site at /, /projects, /map.
+  siteSettingsModel,
 ];

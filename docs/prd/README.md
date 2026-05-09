@@ -24,6 +24,7 @@ This folder contains the **living source of truth** for what every section of th
 | 14 | [whiteboard.md](whiteboard.md) | Built-in drawing canvas (tldraw) — freeform sketching, annotations, per-browser IndexedDB persistence |
 | 15 | [ai-agent.md](ai-agent.md) | Internal Claude-powered AI sales agent — chat UI inside the app, tool-use loop over project records, save_lead into clients |
 | 16 | [logs.md](logs.md) | Unified activity log — single timeline showing auth, record CRUD, workflow runs, AI agent turns + tool calls, API hits, webhook receipts |
+| 17 | [public-website.md](public-website.md) | Public marketing site — `is_public` opt-in on projects, `site_settings` model, anon RLS contract powering projects.html + map.html + index.html |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 
