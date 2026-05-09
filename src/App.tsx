@@ -32,6 +32,7 @@ import WebsiteSettingsPage from '@/pages/Settings/WebsiteSettingsPage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
+import DecksPage from '@/pages/Decks/DecksPage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
@@ -86,6 +87,11 @@ function RecordDetailDispatcher() {
     // mount keying.
     return <AiAgentPage />;
   }
+  if (modelName === 'decks') {
+    // DecksPage is a split-pane deck-builder UI — reads :recordId itself,
+    // handles brief form / progress / ready / failed states internally.
+    return <DecksPage />;
+  }
   if (modelName === 'chat_templates') {
     // Custom editor — generic record form doesn't handle the file upload
     // + preview flow well. Keyed on recordId so prev/next nav across
@@ -118,6 +124,9 @@ function RecordListDispatcher() {
   }
   if (modelName === 'ai_chats') {
     return <AiAgentPage />;
+  }
+  if (modelName === 'decks') {
+    return <DecksPage />;
   }
   // Singleton-config models — the list view is meaningless (always exactly
   // one record) and confusing (looks like a normal model, but isn't). Punt

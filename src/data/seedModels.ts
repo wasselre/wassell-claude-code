@@ -3095,6 +3095,208 @@ const siteSettingsModel: AppModel = {
 };
 
 // ============================================================
+// DECKS MODEL (AI-generated Wassel-branded PowerPoints)
+// ============================================================
+// Each record is one user-requested deck. The brief field stores the user's
+// prompt; status starts at 'queued' and the /api/generate-deck endpoint
+// updates it through 'generating' → 'ready' (file_url + file_path set) or
+// 'failed' (error_message set). Detail and list routes are overridden to
+// render DecksPage instead of the generic record form / list — see
+// App.tsx dispatcher.
+//
+// File storage: /api/generate-deck calls the Anthropic API with the
+// `wassel-general-ppt` skill (registered via Skills API, id stored in
+// ANTHROPIC_WASSEL_SKILL_ID) and the code_execution tool. Claude writes a
+// .pptx in its sandbox; the endpoint downloads it via the Files API and
+// uploads to the private `wassel-decks` Supabase Storage bucket at
+// {auth.uid()}/{record_id}/{filename}. file_url is a 7-day signed URL;
+// DecksPage re-signs from file_path when the URL expires.
+// See docs/prd/decks.md.
+
+export const decksId = uuid();
+const decksBaseSectionId = uuid();
+const decksTitleFieldId = uuid();
+const decksBriefFieldId = uuid();
+const decksStatusFieldId = uuid();
+const decksFileUrlFieldId = uuid();
+const decksFilePathFieldId = uuid();
+const decksFilenameFieldId = uuid();
+const decksAnthropicFileIdFieldId = uuid();
+const decksErrorMessageFieldId = uuid();
+const decksModelUsedFieldId = uuid();
+const decksLanguageFieldId = uuid();
+
+const decksModel: AppModel = {
+  id: decksId,
+  name: 'decks',
+  label_ar: 'العروض التقديمية',
+  label_en: 'Decks',
+  icon: 'presentation',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: decksTitleFieldId,
+    subtitle_field_id: decksBriefFieldId,
+    badge_field_id: decksStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: decksBaseSectionId,
+        label_ar: 'العرض التقديمي',
+        label_en: 'Deck',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          {
+            id: decksTitleFieldId,
+            name: 'title',
+            label_ar: 'العنوان',
+            label_en: 'Title',
+            type: 'text',
+            required: true,
+            order: 0,
+            section_id: decksBaseSectionId,
+            width: 'full',
+            show_in_table: true,
+          },
+          {
+            id: decksBriefFieldId,
+            name: 'brief',
+            label_ar: 'الموجز',
+            label_en: 'Brief',
+            type: 'textarea',
+            required: true,
+            order: 1,
+            section_id: decksBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: decksStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: false,
+            order: 2,
+            section_id: decksBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'بانتظار المعالجة', label_en: 'Queued', value: 'queued', color: '#9ca3af' },
+              { id: uuid(), label_ar: 'قيد التوليد', label_en: 'Generating', value: 'generating', color: '#3b82f6' },
+              { id: uuid(), label_ar: 'جاهز', label_en: 'Ready', value: 'ready', color: '#22c55e' },
+              { id: uuid(), label_ar: 'فشل', label_en: 'Failed', value: 'failed', color: '#ef4444' },
+            ],
+          },
+          {
+            id: decksLanguageFieldId,
+            name: 'language',
+            label_ar: 'اللغة',
+            label_en: 'Language',
+            type: 'dropdown',
+            required: false,
+            order: 3,
+            section_id: decksBaseSectionId,
+            width: 'third',
+            show_in_table: false,
+            options: [
+              { id: uuid(), label_ar: 'عربي', label_en: 'Arabic', value: 'ar' },
+              { id: uuid(), label_ar: 'إنجليزي', label_en: 'English', value: 'en' },
+              { id: uuid(), label_ar: 'مختلط', label_en: 'Mixed', value: 'mixed' },
+            ],
+          },
+          {
+            id: decksModelUsedFieldId,
+            name: 'model_used',
+            label_ar: 'النموذج المستخدم',
+            label_en: 'Model',
+            type: 'dropdown',
+            required: false,
+            order: 4,
+            section_id: decksBaseSectionId,
+            width: 'third',
+            show_in_table: false,
+            options: [
+              { id: uuid(), label_ar: 'Opus 4.7', label_en: 'Opus 4.7', value: 'claude-opus-4-7' },
+              { id: uuid(), label_ar: 'Sonnet 4.6', label_en: 'Sonnet 4.6', value: 'claude-sonnet-4-6' },
+            ],
+          },
+          {
+            id: decksFilenameFieldId,
+            name: 'filename',
+            label_ar: 'اسم الملف',
+            label_en: 'Filename',
+            type: 'text',
+            required: false,
+            order: 5,
+            section_id: decksBaseSectionId,
+            width: 'full',
+            show_in_table: true,
+          },
+          {
+            id: decksFileUrlFieldId,
+            name: 'file_url',
+            label_ar: 'رابط الملف',
+            label_en: 'File URL',
+            type: 'url',
+            required: false,
+            order: 6,
+            section_id: decksBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: decksFilePathFieldId,
+            name: 'file_path',
+            label_ar: 'مسار التخزين',
+            label_en: 'Storage path',
+            type: 'text',
+            required: false,
+            order: 7,
+            section_id: decksBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: decksAnthropicFileIdFieldId,
+            name: 'anthropic_file_id',
+            label_ar: 'معرّف الملف لدى Anthropic',
+            label_en: 'Anthropic file id',
+            type: 'text',
+            required: false,
+            order: 8,
+            section_id: decksBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: decksErrorMessageFieldId,
+            name: 'error_message',
+            label_ar: 'رسالة الخطأ',
+            label_en: 'Error message',
+            type: 'textarea',
+            required: false,
+            order: 9,
+            section_id: decksBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 export const SEED_MODELS: AppModel[] = [
@@ -3109,6 +3311,7 @@ export const SEED_MODELS: AppModel[] = [
   chatsModel,
   chatTemplatesModel,
   aiChatsModel,
+  decksModel,
   phoneCallsModel,
   // Designs group: Templates Library + Marketing Operations + Competitors
   // reference (template-driven design generator, 2026-05-09 rebuild).
