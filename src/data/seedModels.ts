@@ -2759,13 +2759,22 @@ const marketingOperationsModel: AppModel = {
         order: 1,
         is_base: true,
         color: '#8E4E3A',
+        // Ten individual `mirror` fields hopping through the `project`
+        // lookup. Section_mirror would have been more compact, but the
+        // requested fields span three different sections on the
+        // all_projects model (info / geographic / details), and
+        // section_mirror only ever mirrors a single source section.
         fields: [
-          { id: uuid(), name: 'project_info', label_ar: 'معلومات المشروع', label_en: 'Project Info', type: 'section_mirror', required: false, order: 0, section_id: marketingOperationsInfoSectionId, width: 'full', show_in_table: false,
-            section_mirror_via_lookup_field_id: marketingOperationsProjectFieldId,
-            section_mirror_source_section_id: apBaseSectionId,
-            section_mirror_field_mode: 'all',
-            section_mirror_edit_mode: 'none',
-          },
+          { id: uuid(), name: 'mirror_project_name', label_ar: 'اسم المشروع', label_en: 'Project Name', type: 'mirror', required: false, order: 0, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'project_name' },
+          { id: uuid(), name: 'mirror_developer',    label_ar: 'المطور',       label_en: 'Developer',    type: 'mirror', required: false, order: 1, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'item_mo4ul4p0' },
+          { id: uuid(), name: 'mirror_unit_types',   label_ar: 'أنواع الوحدات', label_en: 'Unit Types',   type: 'mirror', required: false, order: 2, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'item_mo4kz61h' },
+          { id: uuid(), name: 'mirror_amenities',    label_ar: 'المرافق',       label_en: 'Amenities',    type: 'mirror', required: false, order: 3, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'preferred_amenities' },
+          { id: uuid(), name: 'mirror_city',         label_ar: 'المدينة',       label_en: 'City',         type: 'mirror', required: false, order: 4, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'preferred_city' },
+          { id: uuid(), name: 'mirror_district',     label_ar: 'الحي',          label_en: 'District',     type: 'mirror', required: false, order: 5, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'preferred_neighborhoods' },
+          { id: uuid(), name: 'mirror_price_range', label_ar: 'نطاق السعر',     label_en: 'Price Range',  type: 'mirror', required: false, order: 6, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'price_range' },
+          { id: uuid(), name: 'mirror_area_range',  label_ar: 'نطاق المساحة',   label_en: 'Area Range',   type: 'mirror', required: false, order: 7, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'area_range' },
+          { id: uuid(), name: 'mirror_bedrooms',    label_ar: 'نطاق غرف النوم',  label_en: 'Bedrooms Range', type: 'mirror', required: false, order: 8, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'bedroom_range' },
+          { id: uuid(), name: 'mirror_bathrooms',   label_ar: 'نطاق دورات المياة', label_en: 'Bathrooms Range', type: 'mirror', required: false, order: 9, section_id: marketingOperationsInfoSectionId, width: 'half', show_in_table: false, mirror_via_lookup_field_id: marketingOperationsProjectFieldId, mirror_target_field_name: 'bathroom_range' },
         ],
       },
       {
