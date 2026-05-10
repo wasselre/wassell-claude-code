@@ -1,7 +1,7 @@
 # PRD: Decks (AI-generated PowerPoints)
 
 **Status:** Live (v1)
-**Last updated:** 2026-05-09
+**Last updated:** 2026-05-10
 **Related PRDs:** [navigation-layout.md](navigation-layout.md), [data-storage.md](data-storage.md), [record-management.md](record-management.md), [ai-agent.md](ai-agent.md), [logs.md](logs.md)
 
 ## What it is (in plain English)
@@ -18,15 +18,27 @@ The Wassel design system (palette, Amiri font, Arabic typography rules, wording 
 - **Decks as records.** Each generation is one `decks` record. The brief, status, filename, signed URL, storage path, Anthropic file id, language, and chosen model are all fields on the record (so they show up in admin views and Activity Log dumps without anything custom).
 - **Skill on the cloud.** The `wassel-general-ppt` skill folder (SKILL.md + `wassel_chrome.py` + the white logo PNG) is uploaded once to the Anthropic Skills API and referenced by `skill_id` (env var `ANTHROPIC_WASSEL_SKILL_ID`). Re-uploading bumps the version; client always references `version: "latest"`.
 - **Server-side generation.**
-  1. Client POSTs `{record_id, brief, language, model}` to `/api/generate-deck` (the `decks` record was created with status `queued` first, so we have a row to update progressively).
-  2. Endpoint sets status → `generating`, then calls `client.beta.messages.create` with `container.skills` referencing the skill, `tools: [code_execution]`, and a system prompt instructing Claude to save the output to `/mnt/user-data/outputs/<slug>.pptx`.
-  3. Endpoint walks the response for a `code_execution_result` block carrying a `file_id`, downloads it via `client.beta.files.download(file_id)`, and uploads the bytes to the `wassel-decks` Supabase bucket at `{auth.uid()}/{record_id}/{filename}`.
-  4. Endpoint creates a 7-day signed URL, updates the record (status → `ready`, `file_url`, `file_path`, `filename`, `anthropic_file_id`), and emits a `done` SSE event.
+  1. Client POSTs `{record_id, brief, language, model, size, attachments}` to `/api/generate-deck` (the `decks` record was created with status `queued` first, so we have a row to update progressively).
+  2. Endpoint sets status → `generating`, then for each attachment downloads it from Supabase Storage (RLS-gated by the user's JWT) and uploads to the Anthropic Files API in parallel.
+  3. Endpoint calls `client.beta.messages.stream` with `container.skills` referencing the skill, `container.file_ids` listing every uploaded attachment, `tools: [code_execution]`, and a system prompt that pins the slide dimensions to the chosen aspect ratio and lists the uploaded attachments. Up to 3 images (≤5 MB each) and 1 PDF are also embedded as `image` / `document` content blocks for native vision / native PDF reading.
+  4. Endpoint extracts the .pptx bytes via the base64-stdout return channel (Claude prints the file as base64 between sentinel markers in a final bash; the receiver scans bash stdouts for the markers and decodes). Falls back to Anthropic Files API list-and-download if base64 is missing — but the base64 path is the primary because Anthropic's automatic file_id capture for Skills + code_execution is unreliable.
+  5. Endpoint uploads the bytes to the `wassel-decks` Supabase bucket at `{auth.uid()}/{record_id}/{filename}`, creates a 7-day signed URL, updates the record (status → `ready`, `file_url`, `file_path`, `filename`, `anthropic_file_id`), and emits a `done` SSE event.
 - **Streaming progress.** The endpoint emits SSE events as it moves through phases: `status` (with `phase` ∈ `calling-claude` / `downloading` / `uploading`), `done` (with the signed URL), and `error` (with a message). Front-end renders each phase with a copper-bronze progress bar and a one-line description.
-- **Storage layout.** Bucket is private. Path scheme `{auth.uid()}/{record_id}/{filename}` ensures Supabase RLS (path-prefix scoped to `auth.uid()`) gives each user access only to their own files. Signed URLs sidestep RLS for downloads but expire in 7 days.
+- **Storage layout.** Bucket is private. Path scheme is `{auth.uid()}/{record_id}/<file>` for outputs and `{auth.uid()}/{record_id}/uploads/<timestamp>_<file>` for user attachments. Path-prefix RLS keys off the first segment (`auth.uid()`), so a user can only read/write files they own. Signed URLs sidestep RLS for downloads but expire in 7 days. Bucket file size limit is 100 MB; per-attachment cap is enforced client-side at 32 MB to match the Anthropic Files API limit.
 - **Re-sign on demand.** If the user opens an old deck whose `file_url` is past its expiry, the page reads `file_path` from the record and asks the backend to mint a fresh signed URL. The original `file_path` never expires.
 - **Model choice.** Brief form has a model dropdown (Opus 4.7 / Sonnet 4.6). Default is Opus 4.7 for variety/quality; Sonnet is offered for cost-sensitive runs. The chosen model is saved on the record for reproducibility.
 - **Language tag.** Optional `ar` / `en` / `mixed` field on the record — passed into the system prompt so Claude favors the right language defaults. Doesn't restrict what Claude outputs; it's a hint.
+- **Slide size.** Brief form has a 4-segment size selector (16:9 widescreen / 9:16 vertical / 4:3 standard / 1:1 square) with mini aspect-ratio thumbnails. The chosen ratio maps to python-pptx `slide_width` / `slide_height` in inches via the system prompt:
+  - `16:9` → 13.333" × 7.5" (default)
+  - `9:16` → 7.5" × 13.333"
+  - `4:3`  → 10" × 7.5"
+  - `1:1`  → 7.5" × 7.5"
+  Saved on the record as `size`. Older records read as undefined → endpoint coerces to `16:9`.
+- **Attachments (Excel, PDF, PowerPoint, Word, images).** The brief form has a drop-zone / file-picker that uploads files immediately to `wassel-decks/{auth.uid()}/{record_id}/uploads/<timestamp>_<filename>` with the user's JWT (RLS scoped to the user's path prefix). The endpoint downloads each file, forwards it to the Anthropic Files API, and:
+  1. Adds every uploaded file_id to `container.file_ids` so it appears in the sandbox at `/mnt/user-data/uploads/<filename>` for the skill code to read with pandas / openpyxl / pypdf / python-pptx / python-docx / PIL.
+  2. For up to 3 small images (≤ 5 MB each), additionally embeds them as `image` content blocks so Claude can reason about them visually.
+  3. For up to 1 PDF, additionally embeds it as a `document` content block for native PDF reading.
+  Per-file cap is 32 MB (matches Anthropic Files API limit). Accepted mime types are governed by the bucket's `allowed_mime_types`: pptx, xlsx, xls, docx, doc, pdf, png, jpg, webp, gif, heic, heif, csv, txt. Attachments persist on the record so a "Try again" reuses them without re-uploading.
 - **Auth.** Every `/api/generate-deck` request must carry the caller's Supabase JWT. The endpoint creates a Supabase client scoped to that JWT so the storage upload + record write happen as the user (not the service role) and respect RLS.
 - **Env vars.** `ANTHROPIC_API_KEY` and `ANTHROPIC_WASSEL_SKILL_ID` must be set on Vercel (production + preview). Missing key → endpoint returns `500 "ANTHROPIC_API_KEY is not configured"`. Missing skill id → `500 "ANTHROPIC_WASSEL_SKILL_ID is not configured"`.
 - **Long-running.** Generation typically takes 60–180 seconds depending on deck complexity and model. The endpoint runs Node runtime with `maxDuration: 300` (Vercel Pro plan limit). Anything that takes longer fails with `error` event "generation timed out — try a shorter brief or fewer slides".
@@ -35,8 +47,8 @@ The Wassel design system (palette, Amiri font, Arabic typography rules, wording 
 1. **Generate a deck (happy path):**
    1. Click `العروض التقديمية` in the sidebar.
    2. Click "عرض جديد / New deck" — a new `decks` record is created with status `queued`, URL flips to `/model/decks/:newId`, and the brief form loads on the right.
-   3. Fill in title (e.g. "Capability deck for AlMutlaq partner meeting"), brief (free-form description, AR or EN), pick language, pick model. Submit.
-   4. Right pane swaps to a progress view. Status pill animates: "Calling Claude…" → "Downloading file…" → "Uploading to storage…" → ready.
+   3. Fill in title (e.g. "Capability deck for AlMutlaq partner meeting"), brief (free-form description, AR or EN), pick language, pick model, pick size. Optionally drop in attachments (Excel sheets with property data, PDF brochures, reference PowerPoints, photos). Submit. Submit is blocked while any attachment is still uploading.
+   4. Right pane swaps to a progress view. Status pill animates: "Calling Claude…" (which now also includes "uploading N attachments…" when files are being forwarded to the Anthropic Files API) → ready.
    5. Download card appears with the filename and a primary download button. The same row updates on the left pane.
 2. **Reopen an old deck:**
    1. Click a row in the left pane.
@@ -57,16 +69,17 @@ The Wassel design system (palette, Amiri font, Arabic typography rules, wording 
 ## Key files
 | File | What it does |
 |---|---|
-| `src/data/seedModels.ts` | Defines the `decks` system model (registered in `SEED_MODELS`). |
+| `src/data/seedModels.ts` | Defines the `decks` system model (registered in `SEED_MODELS`). Includes `size` field added 2026-05-10. |
+| `src/lib/schemaMigrations.ts` | `healDecksSchema` appends any missing-by-name fields from the seed shape (added 2026-05-10 to roll out the `size` field on existing installs without forcing a hand-migration). |
 | `src/App.tsx` | Dispatchers: `modelName === 'decks'` in both list + detail routes → render `DecksPage`. |
 | `src/pages/Decks/DecksPage.tsx` | Split-pane layout, deck list, new-deck button. |
-| `src/pages/Decks/components/DeckBriefForm.tsx` | Right-pane brief form (title / brief / language / model / submit). |
-| `src/pages/Decks/components/DeckProgress.tsx` | Right-pane progress view during generation. |
-| `src/pages/Decks/components/DeckReady.tsx` | Right-pane download card; re-signs URL on demand. |
-| `src/lib/decks/client.ts` | Browser-side SSE pump for `/api/generate-deck` + helper for re-signing URLs. |
-| `api/generate-deck.ts` | Vercel Node function — calls Anthropic Skills + code_execution, downloads via Files API, uploads to Storage, streams SSE. |
+| `src/pages/Decks/components/DeckRightPane.tsx` | Right-pane that toggles between BriefForm / GeneratingView / ReadyView / FailedView based on the record's status. BriefForm hosts the title/brief/language/model/size selectors and the attachment drop-zone. |
+| `src/lib/decks/client.ts` | Browser-side SSE pump for `/api/generate-deck`, helper for re-signing URLs, and `uploadDeckAttachment` / `deleteDeckAttachment` storage helpers. Defines the wire types `DeckSize` and `DeckAttachment`. |
+| `api/generate-deck.ts` | Vercel Edge function — uploads attachments to the Anthropic Files API, calls Anthropic Skills + code_execution with `container.file_ids` populated, extracts the .pptx via base64-stdout (with Files API list as fallback), uploads to Storage, streams SSE. |
+| `api/sign-deck-url.ts` | Edge function that mints a fresh 7-day signed URL for an existing record's `file_path`. Called when the user reopens an old deck. |
 | `scripts/upload-wassel-skill.mjs` | One-time / re-runnable uploader that pushes the `wassel-general-ppt` folder to the Anthropic Skills API. Run when the local skill changes. |
 | `supabase/migrations/2026-05-09_l_decks_storage.sql` | Creates the `wassel-decks` bucket + path-prefix RLS policies. |
+| `supabase/migrations/2026-05-10_decks_bucket_allow_attachments.sql` | Expands the bucket's `allowed_mime_types` to cover Excel / PDF / PowerPoint / Word / images / CSV / text in addition to the generated .pptx output. |
 | `C:\Users\rayan\.claude\skills\wassel-general-ppt` | The local skill folder — source of truth for the brand engine. Edit here, then re-run `scripts/upload-wassel-skill.mjs --version-of <skill_id>` to ship a new version to Anthropic. |
 
 ## Open questions / known limitations

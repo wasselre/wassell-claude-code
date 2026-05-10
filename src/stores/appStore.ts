@@ -8,7 +8,7 @@ import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine'
 import { assignAutoIdsAsync } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
-import { runMigrations, healSystemModelGroups, healClientsSchema, healMapsConfigForModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
+import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -1758,6 +1758,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (healedClients.changed) {
       models = healedClients.models;
       migratedRecords = healedClients.records;
+    }
+
+    // Always-run heal for the Decks schema — appends seed fields missing
+    // from the persisted shape (added 2026-05-10 to roll out the new
+    // `size` field without forcing a hand-migration on every install).
+    // Idempotent.
+    const healedDecks = healDecksSchema({ models, records: migratedRecords });
+    if (healedDecks.changed) {
+      models = healedDecks.models;
+      migratedRecords = healedDecks.records;
     }
 
     // Always-run heal for maps_config. Backfills default on any model missing

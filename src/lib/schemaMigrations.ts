@@ -864,6 +864,65 @@ export function healClientsSchema(state: HealSchemaInput): HealSchemaOutput {
 }
 
 /**
+ * Always-run, idempotent heal for the Decks system model's schema.
+ *
+ * The decks model gains fields over time (originally just title/brief/status,
+ * later language + model + filename + URL + path + anthropic_file_id +
+ * error_message; 2026-05-10 we add `size` for output orientation and the
+ * UI also writes `attachments` into record.data even though we don't
+ * declare it as a schema field — the page is custom UI so JSONB is free).
+ * Existing installs already have the row in Supabase from earlier seeding,
+ * so refreshSystemModels() is a no-op for them. This heal patches the
+ * existing schema by appending any missing-by-name fields from the seed
+ * shape (in seed order), preserving every other Builder edit the user
+ * may have made. Idempotent: if all seed slugs are present, returns
+ * unchanged. Targeted at the `size` rollout, but generic enough that
+ * future single-field additions to decks won't need another heal.
+ */
+export function healDecksSchema(state: HealSchemaInput): HealSchemaOutput {
+  const decksSeed = SEED_MODELS.find((m) => m.name === 'decks');
+  if (!decksSeed) return { models: state.models, records: state.records, changed: false };
+
+  const decksIdx = state.models.findIndex((m) => m.name === 'decks' && m.is_system);
+  if (decksIdx === -1) return { models: state.models, records: state.records, changed: false };
+
+  const existing = state.models[decksIdx]!;
+  const existingBase = existing.schema.sections[0];
+  const seedBase = decksSeed.schema.sections[0];
+  if (!existingBase || !seedBase) return { models: state.models, records: state.records, changed: false };
+
+  const existingSlugs = new Set(existingBase.fields.map((f) => f.name));
+  const missingSeedFields = seedBase.fields.filter((f) => !existingSlugs.has(f.name));
+  if (missingSeedFields.length === 0) {
+    return { models: state.models, records: state.records, changed: false };
+  }
+
+  // Re-target each missing field's section_id to the EXISTING base section's
+  // id (the seed's section id is regenerated per module-load, so the seed's
+  // section_id won't match the persisted one). Order is preserved as-seeded.
+  const appended = missingSeedFields.map((f) => ({ ...f, section_id: existingBase.id }));
+  const newBaseFields = [...existingBase.fields, ...appended];
+
+  const models = state.models.slice();
+  models[decksIdx] = {
+    ...existing,
+    schema: {
+      ...existing.schema,
+      sections: [
+        { ...existingBase, fields: newBaseFields },
+        ...existing.schema.sections.slice(1),
+      ],
+    },
+    updated_at: new Date().toISOString(),
+  };
+
+  console.warn(
+    `[healDecksSchema] Added missing field(s) to decks model: ${missingSeedFields.map((f) => f.name).join(', ')}`,
+  );
+  return { models, records: state.records, changed: true };
+}
+
+/**
  * Always-run, idempotent heal for the Projects group and its system models.
  *
  * Runs on every `initialize()` (not gated by schema version) because orphaning

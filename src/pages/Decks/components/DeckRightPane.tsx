@@ -9,14 +9,48 @@ import {
   ExternalLink,
   Copy,
   Check,
+  Paperclip,
+  X,
+  FileSpreadsheet,
+  FileText as FileTextIcon,
+  FileImage,
+  File as FileIcon,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
-import { signDeckUrl, streamGenerateDeck } from '@/lib/decks/client';
+import {
+  signDeckUrl,
+  streamGenerateDeck,
+  uploadDeckAttachment,
+  deleteDeckAttachment,
+  type DeckAttachment,
+  type DeckSize,
+} from '@/lib/decks/client';
 
 type Phase = 'calling-claude' | 'downloading' | 'uploading' | 'finalizing';
 type ModelChoice = 'claude-opus-4-7' | 'claude-sonnet-4-6';
 type LanguageChoice = 'ar' | 'en' | 'mixed';
+
+/** UI-only superset of the wire `DeckAttachment` — adds local upload state
+ * so the brief form can show progress / errors without persisting them
+ * to the record. Once `status === 'ready'` the entry can be sent to the
+ * API as a plain `DeckAttachment`. */
+interface UiAttachment extends DeckAttachment {
+  /** Local id for React keys / removal. */
+  uiId: string;
+  status: 'uploading' | 'ready' | 'failed';
+  error?: string;
+}
+
+/** Mime types accepted by the brief form. Aligned with the bucket's
+ * `allowed_mime_types` (see migration 2026-05-10). */
+const ACCEPT_ATTRIBUTE = [
+  '.xlsx', '.xls', '.csv',
+  '.pdf',
+  '.pptx', '.docx', '.doc',
+  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.heic', '.heif',
+  '.txt',
+].join(',');
 
 interface Props {
   recordId: string;
@@ -64,7 +98,15 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
   const isStreaming = livePhase !== null;
   const effectiveStatus = isStreaming ? 'generating' : status;
 
-  async function startGeneration(brief: string, title: string, language: LanguageChoice, model: ModelChoice) {
+  async function startGeneration(args: {
+    brief: string;
+    title: string;
+    language: LanguageChoice;
+    model: ModelChoice;
+    size: DeckSize;
+    attachments: DeckAttachment[];
+  }) {
+    const { brief, title, language, model, size, attachments } = args;
     setLiveError(null);
     setLivePhase('calling-claude');
 
@@ -72,6 +114,8 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
     // network failure mid-stream and so the list pane reflects the title
     // immediately. The endpoint also stamps language + model_used, but we
     // do it here too so the values appear before the first SSE tick.
+    // Attachments are persisted on the record so retries / reloads can
+    // reuse them without re-uploading.
     if (record) {
       const newData = {
         ...record.data,
@@ -79,6 +123,8 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
         brief,
         language,
         model_used: model,
+        size,
+        attachments,
         status: 'queued', // endpoint flips to 'generating' on entry
       };
       await saveRecord({ ...record, data: newData });
@@ -89,7 +135,7 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
 
     try {
       await streamGenerateDeck(
-        { recordId, brief, language, model },
+        { recordId, brief, language, model, size, attachments },
         (event) => {
           if (event.type === 'status') setLivePhase(event.phase);
           else if (event.type === 'error') setLiveError(event.message);
@@ -116,7 +162,9 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
     const title = (record.data.title as string | undefined) ?? '';
     const language = ((record.data.language as LanguageChoice | undefined) ?? 'ar') as LanguageChoice;
     const model = ((record.data.model_used as ModelChoice | undefined) ?? 'claude-opus-4-7') as ModelChoice;
-    void startGeneration(brief, title, language, model);
+    const size = ((record.data.size as DeckSize | undefined) ?? '16:9') as DeckSize;
+    const attachments = ((record.data.attachments as DeckAttachment[] | undefined) ?? []);
+    void startGeneration({ brief, title, language, model, size, attachments });
   }
 
   if (effectiveStatus === 'generating' || isStreaming) {
@@ -149,8 +197,16 @@ function BriefForm({
 }: {
   isAr: boolean;
   record: AppRecord;
-  onSubmit: (brief: string, title: string, language: LanguageChoice, model: ModelChoice) => Promise<void>;
+  onSubmit: (args: {
+    brief: string;
+    title: string;
+    language: LanguageChoice;
+    model: ModelChoice;
+    size: DeckSize;
+    attachments: DeckAttachment[];
+  }) => Promise<void>;
 }) {
+  const userId = useAppStore((s) => s.currentUserId);
   const [title, setTitle] = useState((record.data.title as string | undefined) ?? '');
   const [brief, setBrief] = useState((record.data.brief as string | undefined) ?? '');
   const [language, setLanguage] = useState<LanguageChoice>(
@@ -163,12 +219,99 @@ function BriefForm({
     // channel instead of relying on Anthropic's file capture.
     ((record.data.model_used as ModelChoice | undefined) ?? 'claude-opus-4-7') as ModelChoice,
   );
-  const canSubmit = title.trim().length > 0 && brief.trim().length >= 10;
+  const [size, setSize] = useState<DeckSize>(
+    ((record.data.size as DeckSize | undefined) ?? '16:9') as DeckSize,
+  );
+
+  // Hydrate any attachments persisted on a previous in-flight save (e.g.
+  // user uploaded files, refreshed the page, came back). Stored entries
+  // are already 'ready' — only freshly-picked files go through 'uploading'.
+  const initialAttachments: UiAttachment[] = useMemo(() => {
+    const stored = record.data.attachments as DeckAttachment[] | undefined;
+    if (!Array.isArray(stored)) return [];
+    return stored.map((a) => ({ ...a, uiId: crypto.randomUUID(), status: 'ready' as const }));
+    // Only on mount — user edits should not be clobbered by record updates.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [attachments, setAttachments] = useState<UiAttachment[]>(initialAttachments);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const uploadingCount = attachments.filter((a) => a.status === 'uploading').length;
+  const canSubmit =
+    title.trim().length > 0 && brief.trim().length >= 10 && uploadingCount === 0;
+
+  function addFiles(files: FileList | File[]) {
+    if (!userId) {
+      alert(isAr ? 'يجب تسجيل الدخول لرفع المرفقات.' : 'Sign in to upload attachments.');
+      return;
+    }
+    const arr = Array.from(files);
+    const placeholders: UiAttachment[] = arr.map((file) => ({
+      uiId: crypto.randomUUID(),
+      name: file.name,
+      path: '',
+      mimeType: file.type || '',
+      size: file.size,
+      status: 'uploading' as const,
+    }));
+    setAttachments((prev) => [...prev, ...placeholders]);
+
+    arr.forEach(async (file, idx) => {
+      const placeholder = placeholders[idx]!;
+      try {
+        const result = await uploadDeckAttachment(userId, record.id, file);
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.uiId === placeholder.uiId
+              ? { ...a, ...result, status: 'ready' as const }
+              : a,
+          ),
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.uiId === placeholder.uiId
+              ? { ...a, status: 'failed' as const, error: msg }
+              : a,
+          ),
+        );
+      }
+    });
+  }
+
+  async function removeAttachment(uiId: string) {
+    const target = attachments.find((a) => a.uiId === uiId);
+    setAttachments((prev) => prev.filter((a) => a.uiId !== uiId));
+    if (target?.path && target.status === 'ready') {
+      try {
+        await deleteDeckAttachment(target.path);
+      } catch (err) {
+        // Best-effort: log but don't block the UI. A leftover file will
+        // be paid for in a tiny amount of bucket storage; not a correctness
+        // issue. (Surfaced via console so we can inspect later.)
+        console.warn('[DeckRightPane] removeAttachment storage delete failed:', err);
+      }
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
-    await onSubmit(brief.trim(), title.trim(), language, model);
+    // Strip UI-only state before sending to the API. Failed uploads are
+    // skipped so the run isn't poisoned by missing files.
+    const ready: DeckAttachment[] = attachments
+      .filter((a) => a.status === 'ready')
+      .map(({ path, name, mimeType, size }) => ({ path, name, mimeType, size }));
+    await onSubmit({
+      brief: brief.trim(),
+      title: title.trim(),
+      language,
+      model,
+      size,
+      attachments: ready,
+    });
   }
 
   return (
@@ -287,6 +430,114 @@ function BriefForm({
         </fieldset>
       </div>
 
+      {/* Size selector — visual aspect-ratio thumbnails so the user can
+          see the orientation at a glance instead of parsing "9:16" math.
+          Each option shows a mini-rectangle proportioned to the ratio. */}
+      <fieldset className="mb-6">
+        <legend className="text-sm font-medium text-charcoal mb-2">
+          {isAr ? 'حجم الشرائح' : 'Slide size'}
+        </legend>
+        <div className="grid grid-cols-4 gap-2">
+          {(
+            [
+              { v: '16:9', label: isAr ? '١٦:٩' : '16:9', sub: isAr ? 'أفقي' : 'Widescreen', boxClass: 'w-9 h-[20px]' },
+              { v: '9:16', label: isAr ? '٩:١٦' : '9:16', sub: isAr ? 'رأسي' : 'Vertical',  boxClass: 'w-[14px] h-[26px]' },
+              { v: '4:3',  label: isAr ? '٤:٣' : '4:3',   sub: isAr ? 'قياسي' : 'Standard',  boxClass: 'w-7 h-[21px]' },
+              { v: '1:1',  label: isAr ? '١:١' : '1:1',   sub: isAr ? 'مربع' : 'Square',     boxClass: 'w-5 h-5' },
+            ] as const
+          ).map((opt) => (
+            <label
+              key={opt.v}
+              className={`px-2 py-3 rounded-lg border text-center cursor-pointer transition-colors ${
+                size === opt.v
+                  ? 'border-copper bg-copper/10 text-copper font-medium'
+                  : 'border-sand/40 text-charcoal/70 hover:border-copper/50'
+              }`}
+            >
+              <input
+                type="radio"
+                name="size"
+                value={opt.v}
+                checked={size === opt.v}
+                onChange={() => setSize(opt.v as DeckSize)}
+                className="sr-only"
+              />
+              <div className="flex items-center justify-center h-7 mb-1">
+                <div className={`rounded-sm border-[1.5px] border-current ${opt.boxClass}`} />
+              </div>
+              <div className="text-xs">{opt.label}</div>
+              <div className="text-[10px] opacity-70 leading-tight">{opt.sub}</div>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      {/* Attachments — drop or pick files for Claude to inspect inside the
+          sandbox. Uploads happen immediately to wassel-decks under
+          <user>/<deck>/uploads/ so they survive a tab refresh and so the
+          generation request body stays small. Per-file cap aligned with
+          Anthropic's Files API limit (32 MB). */}
+      <fieldset className="mb-6">
+        <legend className="text-sm font-medium text-charcoal mb-2">
+          {isAr ? 'المرفقات (اختياري)' : 'Attachments (optional)'}
+        </legend>
+        <div
+          onDragOver={(e) => {
+            e.preventDefault();
+            setIsDragOver(true);
+          }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragOver(false);
+            if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+          }}
+          onClick={() => fileInputRef.current?.click()}
+          className={`rounded-lg border-2 border-dashed cursor-pointer p-4 text-center text-sm transition-colors ${
+            isDragOver
+              ? 'border-copper bg-copper/10 text-copper'
+              : 'border-sand/40 text-charcoal/60 hover:border-copper/50 hover:bg-cream/50'
+          }`}
+        >
+          <Paperclip size={20} className="mx-auto mb-1.5 opacity-70" />
+          <div>
+            {isAr
+              ? 'اسحب الملفات هنا أو اضغط للاختيار'
+              : 'Drop files here or click to choose'}
+          </div>
+          <div className="text-[11px] opacity-70 mt-1">
+            {isAr
+              ? 'Excel ، PDF ، PowerPoint ، Word ، صور (حد أقصى ٣٢ ميجابايت لكل ملف)'
+              : 'Excel, PDF, PowerPoint, Word, images (32 MB max each)'}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept={ACCEPT_ATTRIBUTE}
+            className="hidden"
+            onChange={(e) => {
+              if (e.target.files) addFiles(e.target.files);
+              // Reset so the same file can be re-picked after a remove.
+              e.target.value = '';
+            }}
+          />
+        </div>
+
+        {attachments.length > 0 && (
+          <ul className="mt-3 space-y-1.5">
+            {attachments.map((att) => (
+              <AttachmentRow
+                key={att.uiId}
+                att={att}
+                isAr={isAr}
+                onRemove={() => removeAttachment(att.uiId)}
+              />
+            ))}
+          </ul>
+        )}
+      </fieldset>
+
       <button
         type="submit"
         disabled={!canSubmit}
@@ -294,6 +545,13 @@ function BriefForm({
       >
         <Sparkles size={16} />
         {isAr ? 'توليد العرض' : 'Generate deck'}
+        {uploadingCount > 0 && (
+          <span className="text-xs opacity-90">
+            {isAr
+              ? `(جارٍ رفع ${uploadingCount}…)`
+              : `(${uploadingCount} uploading…)`}
+          </span>
+        )}
       </button>
 
       <p className="text-xs text-charcoal/50 mt-4">
@@ -303,6 +561,71 @@ function BriefForm({
       </p>
     </form>
   );
+}
+
+/** Single attachment row in the brief form's list. Surfaces upload progress
+ * and any failure inline so a user can retry by removing + re-picking. */
+function AttachmentRow({
+  att,
+  isAr,
+  onRemove,
+}: {
+  att: UiAttachment;
+  isAr: boolean;
+  onRemove: () => void;
+}) {
+  const Icon = pickAttachmentIcon(att.mimeType, att.name);
+  const sizeMb = (att.size / 1024 / 1024).toFixed(att.size < 1024 * 1024 ? 2 : 1);
+  return (
+    <li
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-lg border text-sm ${
+        att.status === 'failed'
+          ? 'border-red-200 bg-red-50'
+          : 'border-sand/30 bg-cream/40'
+      }`}
+    >
+      <Icon size={16} className={att.status === 'failed' ? 'text-red-600' : 'text-copper'} />
+      <div className="flex-1 min-w-0">
+        <div className="truncate text-charcoal">{att.name}</div>
+        <div className="text-[11px] text-charcoal/50">
+          {sizeMb} MB
+          {att.status === 'uploading' && ` · ${isAr ? 'جارٍ الرفع…' : 'uploading…'}`}
+          {att.status === 'failed' && att.error ? ` · ${att.error}` : ''}
+        </div>
+      </div>
+      {att.status === 'uploading' && <Loader2 size={14} className="animate-spin text-charcoal/40" />}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="p-1 rounded hover:bg-charcoal/5 text-charcoal/50 hover:text-red-600"
+        aria-label={isAr ? 'إزالة' : 'Remove'}
+      >
+        <X size={14} />
+      </button>
+    </li>
+  );
+}
+
+/** Pick a Lucide icon based on the file's mime + extension. Falls back to
+ * a generic file icon for anything we don't classify. */
+function pickAttachmentIcon(mimeType: string, name: string): typeof FileIcon {
+  const lowerName = name.toLowerCase();
+  if (mimeType.startsWith('image/') || /\.(png|jpe?g|webp|gif|hei[cf])$/i.test(lowerName)) {
+    return FileImage;
+  }
+  if (mimeType.includes('spreadsheet') || /\.(xlsx?|csv)$/i.test(lowerName)) {
+    return FileSpreadsheet;
+  }
+  if (mimeType.includes('pdf') || /\.pdf$/i.test(lowerName)) {
+    return FileTextIcon;
+  }
+  if (mimeType.includes('presentation') || /\.pptx?$/i.test(lowerName)) {
+    return FileTextIcon;
+  }
+  if (mimeType.includes('word') || /\.docx?$/i.test(lowerName)) {
+    return FileTextIcon;
+  }
+  return FileIcon;
 }
 
 // ────────────────────────────────────────────────────────────────────────

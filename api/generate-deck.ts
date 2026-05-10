@@ -41,17 +41,60 @@ import { withAuth, jsonError } from './_lib/auth.js';
 // fires immediately on stream start).
 export const config = { runtime: 'edge' };
 
+type DeckSize = '16:9' | '9:16' | '4:3' | '1:1';
+
+interface DeckAttachmentRef {
+  /** Storage path inside the `wassel-decks` bucket. The user's JWT must be
+   * able to read it (path-prefix RLS — first segment must be auth.uid()). */
+  path: string;
+  /** Display name. Doubles as the filename inside the sandbox at
+   * `/mnt/user-data/uploads/<name>`. */
+  name: string;
+  /** Browser-reported mime type. Empty string is acceptable — falls back to
+   * extension sniffing for upload to Anthropic. */
+  mimeType: string;
+  /** Bytes — informational, not enforced server-side (bucket already
+   * enforces 100 MB). */
+  size: number;
+}
+
 interface GenerateDeckRequestBody {
   recordId: string;
   brief: string;
   language?: 'ar' | 'en' | 'mixed';
   model?: 'claude-opus-4-7' | 'claude-sonnet-4-6';
+  size?: DeckSize;
+  attachments?: DeckAttachmentRef[];
 }
 
 const PPTX_MIME =
   'application/vnd.openxmlformats-officedocument.presentationml.presentation';
 const STORAGE_BUCKET = 'wassel-decks';
 const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
+
+/** Mapping from aspect ratio → python-pptx slide_width / slide_height in
+ * inches. Mirrors the values supplied to the model in the system prompt
+ * so we can validate the size param up front. */
+const SIZE_TO_INCHES: Record<DeckSize, { width: number; height: number }> = {
+  '16:9': { width: 13.333, height: 7.5 },
+  '9:16': { width: 7.5, height: 13.333 },
+  '4:3': { width: 10, height: 7.5 },
+  '1:1': { width: 7.5, height: 7.5 },
+};
+
+/** Cap on how many image attachments we ALSO embed as `image` content
+ * blocks (in addition to making them available in the sandbox). Vision
+ * is expensive — a Sonnet vision token is ~5x text — so we trade quality
+ * for cost with a small budget. The remaining images stay accessible
+ * via /mnt/user-data/uploads/ for the skill to embed/inspect with PIL. */
+const MAX_VISION_IMAGES = 3;
+/** Per-image cap for the vision content-block path. Anthropic enforces
+ * 5 MB on image inputs; bigger images go to sandbox-only. */
+const VISION_IMAGE_BYTES_CAP = 5 * 1024 * 1024;
+/** Cap on how many PDF attachments we ALSO add as `document` content
+ * blocks for native reading. Document content blocks are even more
+ * expensive than images (~1500 tok/page) so we limit to one. */
+const MAX_DOCUMENT_PDFS = 1;
 
 const ANTHROPIC_BETAS = [
   'skills-2025-10-02',
@@ -82,9 +125,38 @@ const ANTHROPIC_BETAS = [
 // returns all 266k bytes intact.
 const B64_MARKER_START = '===WASSEL_DECK_B64_START===';
 const B64_MARKER_END = '===WASSEL_DECK_B64_END===';
-const SYSTEM_PROMPT = `Build a Wassel-branded PowerPoint (.pptx) per the user's brief.
+
+/** Build the system prompt. We keep the wrapper minimal so the skill's own
+ * SKILL.md can drive the design workflow — earlier versions stacked an
+ * aesthetics + workflow prompt on top, which made Claude RUSH the design
+ * pass. Variable parts (size + attachments) are appended only when set. */
+function buildSystemPrompt(args: {
+  size: DeckSize;
+  attachments: ReadonlyArray<{ name: string; mimeType: string }>;
+}): string {
+  const dims = SIZE_TO_INCHES[args.size];
+  const sizeBlock = `Slide size: ${args.size} (${dims.width}" × ${dims.height}"). When initializing the python-pptx Presentation, set:
+    prs.slide_width  = Inches(${dims.width})
+    prs.slide_height = Inches(${dims.height})
+Compose every layout for this aspect ratio — don't reuse 16:9 grids on a 9:16 deck.`;
+
+  const attachmentsBlock = args.attachments.length === 0
+    ? ''
+    : `\n\nUser attachments are mounted at /mnt/user-data/uploads/ — inspect them BEFORE designing because the user expects you to use them:
+${args.attachments.map((a) => `  • ${a.name}${a.mimeType ? ` (${a.mimeType})` : ''}`).join('\n')}
+
+Read the right tool per type:
+  • .xlsx / .xls / .csv → pandas / openpyxl: extract the rows the user is referring to and turn them into slides (charts, tables, callouts)
+  • .pdf                → pypdf or pdfplumber: pull headings + body. Some PDFs were also passed natively above — read them visually if so
+  • .pptx               → python-pptx: read existing slides; copy structure / typography / brand if asked
+  • .docx               → python-docx: read paragraphs as deck content
+  • images              → PIL for dimensions; embed via slide.shapes.add_picture(path, ...). Some images were also passed visually above — use them for layout decisions`;
+
+  return `Build a Wassel-branded PowerPoint (.pptx) per the user's brief.
 
 The 'wassel-general-ppt' skill is loaded at /mnt/skills/wassel-general-ppt/. Read its SKILL.md and follow that workflow as written.
+
+${sizeBlock}${attachmentsBlock}
 
 Save to /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
 
@@ -92,6 +164,7 @@ Save to /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx. After saving, run ONE
     base64 -w0 /mnt/user-data/outputs/<FILE>
     echo
     echo "${B64_MARKER_END}"`;
+}
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
@@ -115,8 +188,25 @@ export default async function handler(req: Request): Promise<Response> {
     // the file_id capture is no longer in the critical path.
     const model = body.model ?? 'claude-opus-4-7';
     const language = body.language ?? 'ar';
+    const size: DeckSize = body.size ?? '16:9';
+    const attachments: DeckAttachmentRef[] = Array.isArray(body.attachments)
+      ? body.attachments
+      : [];
     if (!['claude-opus-4-7', 'claude-sonnet-4-6'].includes(model)) {
       return jsonError(400, `unsupported model: ${model}`);
+    }
+    if (!(size in SIZE_TO_INCHES)) {
+      return jsonError(400, `unsupported size: ${size}`);
+    }
+    // Defensive: every attachment must declare a path that starts with
+    // the caller's auth.uid()/. Anyone bypassing the form could try to
+    // smuggle a path from another user — the storage RLS would still
+    // block the download, but failing fast here returns a clearer error
+    // and avoids spending an Anthropic Files API upload slot on it.
+    for (const att of attachments) {
+      if (!att.path || typeof att.path !== 'string' || !att.path.startsWith(`${user.userId}/`)) {
+        return jsonError(400, `attachment path outside user scope: ${att.path ?? '(missing)'}`);
+      }
     }
 
     const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -187,24 +277,116 @@ export default async function handler(req: Request): Promise<Response> {
           }
         };
 
+        // Track Anthropic file_ids we created for THIS request — uploaded
+        // attachments + (later) the output file. Used to power
+        // container.file_ids and content blocks. Local cleanup is
+        // intentionally skipped — the Files API has its own retention,
+        // and a follow-up GC pass can sweep stale uploads if needed.
+        const uploadedAttachments: Array<{
+          fileId: string;
+          name: string;
+          mimeType: string;
+          sizeBytes: number;
+        }> = [];
+
         try {
           send({ type: 'status', phase: 'calling-claude', detail: model });
           await updateRecord({
             status: 'generating',
             model_used: model,
             language,
+            size,
+            attachments,
             error_message: null,
           });
 
-          const userPrompt =
-            `Brief:\n${body.brief.trim()}\n\n` +
-            `Language hint: ${
-              language === 'ar'
-                ? 'Arabic preferred — default the deck to Arabic RTL with Amiri.'
-                : language === 'en'
-                  ? 'English preferred — Latin layout with Amiri throughout.'
-                  : 'Mixed — choose per-slide based on what the content implies.'
-            }`;
+          // Forward each attachment to Anthropic Files API. We download
+          // from Supabase Storage with the user's JWT (RLS-gated), then
+          // upload to Anthropic. Done in parallel — typical case is 1-3
+          // small files, so we don't bother throttling. Any failure
+          // poisons the run with a clear error rather than silently
+          // dropping the file (per CLAUDE.md "Silent Failures").
+          if (attachments.length > 0) {
+            send({
+              type: 'status',
+              phase: 'calling-claude',
+              detail: `uploading ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}…`,
+            });
+            const uploads = await Promise.all(
+              attachments.map(async (att) => {
+                const { data: blob, error: dlErr } = await supabase.storage
+                  .from(STORAGE_BUCKET)
+                  .download(att.path);
+                if (dlErr || !blob) {
+                  throw new Error(
+                    `Failed to read attachment "${att.name}" from storage: ${dlErr?.message ?? 'unknown'}`,
+                  );
+                }
+                const arrayBuf = await blob.arrayBuffer();
+                const file = new File(
+                  [arrayBuf],
+                  att.name,
+                  { type: att.mimeType || (blob.type ?? 'application/octet-stream') },
+                );
+                // SDK 0.91.0 doesn't expose beta.files.upload in the public
+                // typings yet — same cast pattern we use for messages.stream.
+                const uploaded = await (anthropic.beta.files as unknown as {
+                  upload: (args: Record<string, unknown>) => Promise<{ id: string; filename?: string; size_bytes?: number }>;
+                }).upload({ file, betas: ANTHROPIC_BETAS });
+                return {
+                  fileId: uploaded.id,
+                  name: att.name,
+                  mimeType: att.mimeType || (blob.type ?? 'application/octet-stream'),
+                  sizeBytes: arrayBuf.byteLength,
+                };
+              }),
+            );
+            uploadedAttachments.push(...uploads);
+            console.log(
+              `[generate-deck] uploaded ${uploads.length} attachment(s) to Anthropic Files API: ${uploads.map((u) => u.fileId).join(', ')}`,
+            );
+          }
+
+          // Build the user message. Text first, then small images as
+          // visible blocks (so Claude can reason about what they look
+          // like), then the first PDF as a document block (native pdf
+          // reading), then everything else stays sandbox-only via
+          // container.file_ids below.
+          const visionImages = uploadedAttachments
+            .filter((a) => a.mimeType.startsWith('image/') && a.sizeBytes <= VISION_IMAGE_BYTES_CAP)
+            .slice(0, MAX_VISION_IMAGES);
+          const documentPdfs = uploadedAttachments
+            .filter((a) => a.mimeType === 'application/pdf')
+            .slice(0, MAX_DOCUMENT_PDFS);
+
+          const userContentBlocks: Array<Record<string, unknown>> = [
+            {
+              type: 'text',
+              text:
+                `Brief:\n${body.brief.trim()}\n\n` +
+                `Language hint: ${
+                  language === 'ar'
+                    ? 'Arabic preferred — default the deck to Arabic RTL with Amiri.'
+                    : language === 'en'
+                      ? 'English preferred — Latin layout with Amiri throughout.'
+                      : 'Mixed — choose per-slide based on what the content implies.'
+                }\n\n` +
+                `Slide size: ${size}.` +
+                (uploadedAttachments.length > 0
+                  ? `\n\nAttachments mounted at /mnt/user-data/uploads/:\n${uploadedAttachments
+                      .map((u) => `  • ${u.name} (${u.mimeType})`)
+                      .join('\n')}`
+                  : ''),
+            },
+            ...visionImages.map((a) => ({
+              type: 'image',
+              source: { type: 'file', file_id: a.fileId },
+            })),
+            ...documentPdfs.map((a) => ({
+              type: 'document',
+              source: { type: 'file', file_id: a.fileId },
+            })),
+          ];
 
           // Use streaming: iterating the SDK's stream forces Node to keep
           // reading the HTTP response from Anthropic, which avoids a
@@ -237,9 +419,23 @@ export default async function handler(req: Request): Promise<Response> {
             betas: ANTHROPIC_BETAS,
             container: {
               skills: [{ type: 'custom', skill_id: skillId, version: 'latest' }],
+              // file_ids makes EVERY uploaded attachment available in the
+              // sandbox at /mnt/user-data/uploads/<filename>. Even files
+              // that are also passed as image/document content blocks go
+              // here — the skill code may want to embed the same image
+              // it inspected visually, or extract more from a PDF.
+              ...(uploadedAttachments.length > 0
+                ? { file_ids: uploadedAttachments.map((u) => u.fileId) }
+                : {}),
             },
-            system: SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: userPrompt }],
+            system: buildSystemPrompt({
+              size,
+              attachments: uploadedAttachments.map((u) => ({
+                name: u.name,
+                mimeType: u.mimeType,
+              })),
+            }),
+            messages: [{ role: 'user', content: userContentBlocks }],
             tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
           });
 

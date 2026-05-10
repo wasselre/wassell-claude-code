@@ -3123,6 +3123,7 @@ const decksAnthropicFileIdFieldId = uuid();
 const decksErrorMessageFieldId = uuid();
 const decksModelUsedFieldId = uuid();
 const decksLanguageFieldId = uuid();
+const decksSizeFieldId = uuid();
 
 const decksModel: AppModel = {
   id: decksId,
@@ -3228,13 +3229,37 @@ const decksModel: AppModel = {
             ],
           },
           {
+            // Output orientation. Stored as a free-form aspect-ratio string
+            // ('16:9' / '9:16' / '4:3' / '1:1'); the API maps this to the
+            // python-pptx slide_width/slide_height in inches when invoking
+            // the wassel-general-ppt skill. Defaulting to 16:9 in the form
+            // (most common) — the schema field itself has no default; older
+            // records read as undefined → endpoint coerces to 16:9.
+            id: decksSizeFieldId,
+            name: 'size',
+            label_ar: 'الحجم',
+            label_en: 'Size',
+            type: 'dropdown',
+            required: false,
+            order: 5,
+            section_id: decksBaseSectionId,
+            width: 'third',
+            show_in_table: false,
+            options: [
+              { id: uuid(), label_ar: '١٦:٩ (أفقي)', label_en: '16:9 (Widescreen)', value: '16:9' },
+              { id: uuid(), label_ar: '٩:١٦ (رأسي)', label_en: '9:16 (Vertical)', value: '9:16' },
+              { id: uuid(), label_ar: '٤:٣ (قياسي)', label_en: '4:3 (Standard)', value: '4:3' },
+              { id: uuid(), label_ar: '١:١ (مربع)', label_en: '1:1 (Square)', value: '1:1' },
+            ],
+          },
+          {
             id: decksFilenameFieldId,
             name: 'filename',
             label_ar: 'اسم الملف',
             label_en: 'Filename',
             type: 'text',
             required: false,
-            order: 5,
+            order: 6,
             section_id: decksBaseSectionId,
             width: 'full',
             show_in_table: true,
@@ -3246,7 +3271,7 @@ const decksModel: AppModel = {
             label_en: 'File URL',
             type: 'url',
             required: false,
-            order: 6,
+            order: 7,
             section_id: decksBaseSectionId,
             width: 'full',
             show_in_table: false,
@@ -3258,7 +3283,7 @@ const decksModel: AppModel = {
             label_en: 'Storage path',
             type: 'text',
             required: false,
-            order: 7,
+            order: 8,
             section_id: decksBaseSectionId,
             width: 'full',
             show_in_table: false,
@@ -3270,7 +3295,7 @@ const decksModel: AppModel = {
             label_en: 'Anthropic file id',
             type: 'text',
             required: false,
-            order: 8,
+            order: 9,
             section_id: decksBaseSectionId,
             width: 'full',
             show_in_table: false,
@@ -3282,7 +3307,7 @@ const decksModel: AppModel = {
             label_en: 'Error message',
             type: 'textarea',
             required: false,
-            order: 9,
+            order: 10,
             section_id: decksBaseSectionId,
             width: 'full',
             show_in_table: false,
