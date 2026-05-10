@@ -252,17 +252,25 @@ async function startGeneration(
     throw new Error(`Higgsfield ${opts.phase} start failed (${res.status}): ${errBody.slice(0, 300)}`);
   }
   const json = (await res.json()) as {
+    // The SDK's TS types declare `request_id`, but the live API
+    // actually returns `id` at the top level on this endpoint plus a
+    // `jobs[]` array. The polling endpoint /requests/{id}/status
+    // accepts the top-level `id` (NOT the inner jobs[0].id — that
+    // 404s). We accept both names for forward-compat.
     request_id?: string;
+    id?: string;
     status_url?: string;
     cancel_url?: string;
     status?: string;
+    type?: string;
+    jobs?: Array<{ id: string; job_set_type?: string }>;
   };
-  const requestId = json.request_id ?? '';
+  const requestId = json.request_id ?? json.id ?? '';
   const statusUrl =
     json.status_url ??
     (requestId ? `${env.baseUrl.replace(/\/$/, '')}/requests/${requestId}/status` : '');
   if (!requestId || !statusUrl) {
-    throw new Error(`Higgsfield ${opts.phase} response missing request_id or status_url: ${JSON.stringify(json).slice(0, 200)}`);
+    throw new Error(`Higgsfield ${opts.phase} response missing id or status_url: ${JSON.stringify(json).slice(0, 200)}`);
   }
   return { requestId, statusUrl };
 }
