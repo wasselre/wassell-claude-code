@@ -4,6 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
 import AppLayout from '@/components/layout/AppLayout';
 import ToastContainer from '@/components/ui/Toast';
+import UpdateBanner from '@/components/UpdateBanner';
 import HomePage from '@/pages/Home/HomePage';
 import ModelBuilderPage from '@/pages/Builder/ModelBuilderPage';
 import BuilderAgentPage from '@/pages/Builder/BuilderAgentPage';
@@ -241,6 +242,7 @@ export default function App() {
         </Route>
       </Routes>
       <ToastContainer />
+      <UpdateBanner />
     </BrowserRouter>
   );
 }

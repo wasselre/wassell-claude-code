@@ -2,6 +2,13 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 
+// Build version stamp — used by the in-app update detector.
+// On Vercel: `VERCEL_GIT_COMMIT_SHA` is set automatically per build.
+// Locally: falls back to a timestamp so dev rebuilds still differ.
+const buildVersion =
+  process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12)
+  ?? `dev-${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -13,5 +20,12 @@ export default defineConfig({
     // bundle, which would trip "Invalid hook call" in dev. Harmless on a
     // single-install setup.
     dedupe: ['react', 'react-dom'],
+  },
+  // Inject the build version into the bundle as a literal — readable at
+  // runtime as `__BUILD_VERSION__`. The version poller compares this against
+  // /api/version to detect when a new build is live and prompt the user to
+  // reload, instead of asking real users to clear their browser cache.
+  define: {
+    __BUILD_VERSION__: JSON.stringify(buildVersion),
   },
 });
