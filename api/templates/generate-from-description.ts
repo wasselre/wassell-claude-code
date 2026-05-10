@@ -159,10 +159,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     let response;
     try {
       response = await client.messages.create({
-        // Sonnet 4.7 alias — same naming convention as the rest of the
-        // app's agents (api/_lib/aiAgent.ts uses claude-opus-4-7).
-        // Sonnet is cheap enough for structured-extraction work.
-        model: 'claude-sonnet-4-7',
+        // Use the exact alias the rest of the app uses
+        // (api/_lib/aiAgent.ts:23 — claude-opus-4-7). claude-sonnet-4-7
+        // returned 404 not_found, so Sonnet at this 4.7 generation
+        // isn't exposed yet; Opus 4.7 is the working alias.
+        model: 'claude-opus-4-7',
         max_tokens: 16_000,
         system: SYSTEM_PROMPT,
         tools: [TOOL_SCHEMA],
