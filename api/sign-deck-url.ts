@@ -51,7 +51,7 @@ export default async function handler(req: Request): Promise<Response> {
 
     const { data: rec, error: readErr } = await supabase
       .from('records')
-      .select('data, model_id')
+      .select('data, model_id, created_by_user_id')
       .eq('id', body.recordId)
       .single();
     if (readErr || !rec) return jsonError(404, `record not found: ${readErr?.message ?? 'unknown'}`);
@@ -73,12 +73,14 @@ export default async function handler(req: Request): Promise<Response> {
 
     // Persist the fresh URL so reopens are a single round trip. Best effort —
     // a write failure here doesn't block the caller (they got their URL).
+    // Pass the EXISTING created_by_user_id (or null) — see generate-deck.ts
+    // for the FK-violation rationale.
     void supabase
       .rpc('record_save', {
         p_model_id: rec.model_id,
         p_id: body.recordId,
         p_data: { ...data, file_url: signed.signedUrl },
-        p_created_by: user.userId,
+        p_created_by: (rec as { created_by_user_id: string | null }).created_by_user_id ?? null,
         p_expected_version: null,
       })
       .then(({ error }) => {

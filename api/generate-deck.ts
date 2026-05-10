@@ -141,10 +141,16 @@ export default async function handler(req: Request): Promise<Response> {
         // Pass p_expected_version: null — the endpoint is the only writer
         // during a generation, so the version-conflict check is unnecessary
         // and skipping it lets us recover from a partial earlier failure.
+        // Pass p_created_by as the EXISTING created_by_user_id (or null) —
+        // never the auth.uid() blindly, because records.created_by_user_id
+        // has an FK to public.users (the CRM's user table) which is a
+        // strict subset of auth.users; passing an auth.uid that isn't in
+        // public.users raises 23503 / FK violation. This mirrors the
+        // appStore.supabaseRecordUpsert pattern.
         const updateRecord = async (patch: Record<string, unknown>) => {
           const { data: current, error: readErr } = await supabase
             .from('records')
-            .select('data')
+            .select('data, created_by_user_id')
             .eq('id', body.recordId)
             .single();
           if (readErr || !current) {
@@ -155,7 +161,7 @@ export default async function handler(req: Request): Promise<Response> {
             p_model_id: decksModelId,
             p_id: body.recordId,
             p_data: newData,
-            p_created_by: user.userId,
+            p_created_by: (current as { created_by_user_id: string | null }).created_by_user_id ?? null,
             p_expected_version: null,
           });
           if (saveErr) {
