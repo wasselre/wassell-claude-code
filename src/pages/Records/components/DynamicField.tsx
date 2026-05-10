@@ -15,6 +15,7 @@ import TemplateVariablesField from './TemplateVariablesField';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { uploadImage, deleteImage, type ImageFolder } from '@/lib/imageUpload';
+import ImagePreview from '@/components/ui/ImagePreview';
 import type { FieldOption, ModelField } from '@/types';
 
 // Rotating palette used when the user inline-creates a new dropdown /
@@ -544,6 +545,7 @@ interface ImageFieldInputProps {
 function ImageFieldInput({ value, folder, accept, maxSizeMb, onChange, isAr }: ImageFieldInputProps) {
   const { addToast } = useAppStore();
   const [uploading, setUploading] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const handleFile = async (file: File) => {
     if (file.size > maxSizeMb * 1024 * 1024) {
@@ -587,21 +589,31 @@ function ImageFieldInput({ value, folder, accept, maxSizeMb, onChange, isAr }: I
 
   if (value) {
     return (
-      <div className="relative inline-block">
-        <img
-          src={value}
-          alt=""
-          className="block max-w-xs max-h-48 rounded-lg border border-sand/40 object-cover bg-cream/40"
-        />
-        <button
-          type="button"
-          onClick={handleClear}
-          className="absolute top-2 end-2 p-1.5 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
-          aria-label={isAr ? 'إزالة الصورة' : 'Remove image'}
-        >
-          <X size={14} />
-        </button>
-      </div>
+      <>
+        <div className="relative inline-block">
+          <button
+            type="button"
+            onClick={() => setPreviewOpen(true)}
+            className="block cursor-zoom-in"
+            aria-label={isAr ? 'فتح الصورة' : 'Open image'}
+          >
+            <img
+              src={value}
+              alt=""
+              className="block max-w-xs max-h-48 rounded-lg border border-sand/40 object-cover bg-cream/40 hover:opacity-90 transition-opacity"
+            />
+          </button>
+          <button
+            type="button"
+            onClick={handleClear}
+            className="absolute top-2 end-2 p-1.5 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
+            aria-label={isAr ? 'إزالة الصورة' : 'Remove image'}
+          >
+            <X size={14} />
+          </button>
+        </div>
+        {previewOpen && <ImagePreview url={value} onClose={() => setPreviewOpen(false)} />}
+      </>
     );
   }
 

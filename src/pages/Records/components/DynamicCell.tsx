@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Phone, Copy, StickyNote, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Badge from '@/components/ui/Badge';
 import WhatsAppIcon from '@/components/ui/WhatsAppIcon';
+import ImagePreview from '@/components/ui/ImagePreview';
 import { telUrl, whatsappUrl } from '@/lib/phone';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { formatRangeValue } from './RangeField';
@@ -20,6 +22,8 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
   const { t } = useTranslation();
   const { language, addToast, models } = useAppStore();
   const isAr = language === 'ar';
+  // One preview state per cell. Cheap — most cells never open it.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Mirror fields resolve at render time by hopping through a sibling lookup.
   // Handle BEFORE the empty check so sibling-not-selected / deleted-record states render correctly.
@@ -131,12 +135,25 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
         return <span className="text-charcoal/30 italic text-xs">{isAr ? 'رابط غير صالح' : 'Invalid URL'}</span>;
       }
       return (
-        <img
-          src={url}
-          alt=""
-          className="block w-10 h-10 rounded object-cover border border-sand/30 bg-cream/40"
-          loading="lazy"
-        />
+        <>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewUrl(url);
+            }}
+            className="block cursor-zoom-in"
+            aria-label={isAr ? 'فتح الصورة' : 'Open image'}
+          >
+            <img
+              src={url}
+              alt=""
+              className="block w-10 h-10 rounded object-cover border border-sand/30 bg-cream/40 hover:opacity-80 transition-opacity"
+              loading="lazy"
+            />
+          </button>
+          {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
+        </>
       );
     }
 
