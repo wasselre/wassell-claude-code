@@ -71,11 +71,32 @@ const ANTHROPIC_BETAS = [
 // capture lose track when the same path is overwritten across iterations
 // — it apparently caches the file_id of the first write and silently
 // drops subsequent overwrites from the response. Unique names sidestep that.
+// File-return strategy: empirically Anthropic's automatic file_id capture
+// from Skills + code_execution is unreliable for this skill — verified
+// runs where the file lands on disk (rc=0, ls confirmed, 198 KB) but
+// Files API has no entry. The sandbox has no outbound internet (DNS
+// blocked) so we can't curl directly to Supabase. The reliable channel
+// is bash stdout: we ask Claude to base64 the saved file between two
+// sentinel markers in the FINAL bash call, and the endpoint extracts
+// bytes from the stdout stream. Tested with 200KB+ payloads — stdout
+// returns all 266k bytes intact.
+const B64_MARKER_START = '===WASSEL_DECK_B64_START===';
+const B64_MARKER_END = '===WASSEL_DECK_B64_END===';
 const SYSTEM_PROMPT = `Build a brand-compliant PowerPoint (.pptx) for Wassel Real Estate (وصل العقارية) per the user's brief.
 
-The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Read its SKILL.md and follow the workflow it describes — including its design-each-slide-fresh, vary-the-layout, read-the-engine-docstring instructions. Use the engine at scripts/wassel_chrome.py (primitives only — no shortcuts).
+The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Read its SKILL.md and follow the workflow it describes — design each slide fresh, vary the layout, read the engine docstring. Use the engine at scripts/wassel_chrome.py.
 
-Save the finished file to /mnt/user-data/outputs/wassel-deck-<unix_timestamp_ms>.pptx (compute the timestamp in Python with int(time.time()*1000)). NEVER overwrite an existing file — every save uses a fresh timestamped name. This is required for the file to be captured correctly.
+Save the finished file to /mnt/user-data/outputs/wassel-deck-<unix_timestamp_ms>.pptx.
+
+REQUIRED — without this the file cannot be returned to the user:
+After saving the deck, run ONE FINAL bash command that prints the file as base64 between two sentinel lines, EXACTLY like this (substitute your actual filename for <FILE>):
+
+    echo "${B64_MARKER_START}"
+    base64 -w0 /mnt/user-data/outputs/<FILE>
+    echo
+    echo "${B64_MARKER_END}"
+
+Do NOT skip this step. Do NOT modify the marker strings. Use ONE single bash call so all base64 lands in the same stdout. The receiver scans bash stdouts for these exact markers and decodes the bytes between them.
 
 Reply with one short sentence describing what you built.`;
 
@@ -264,7 +285,50 @@ export default async function handler(req: Request): Promise<Response> {
           const response = await turn.finalMessage();
           captureFileId(response.content);
 
-          if (!outputFileId) {
+          // PRIMARY return path: walk bash stdouts for the base64 sentinel
+          // markers and extract bytes directly. This sidesteps Anthropic's
+          // unreliable Files API capture entirely. If markers are present
+          // and decode cleanly, we skip the Files API path below.
+          let extractedBytes: Uint8Array | null = null;
+          let extractedFilename: string | null = null;
+          for (const block of response.content) {
+            const b = block as { type?: string; content?: unknown };
+            if (b.type !== 'bash_code_execution_tool_result') continue;
+            const stdout = ((b.content as { stdout?: string } | undefined)?.stdout) ?? '';
+            const start = stdout.indexOf(B64_MARKER_START);
+            const end = stdout.indexOf(B64_MARKER_END);
+            if (start === -1 || end === -1 || end <= start) continue;
+            const lineEnd = stdout.indexOf('\n', start);
+            if (lineEnd === -1) continue;
+            const b64 = stdout.slice(lineEnd + 1, end).replace(/\s+/g, '');
+            if (b64.length < 100) continue;
+            try {
+              const binStr = atob(b64);
+              const out = new Uint8Array(binStr.length);
+              for (let i = 0; i < binStr.length; i++) out[i] = binStr.charCodeAt(i);
+              // Sanity-check: .pptx files start with PK\x03\x04 (zip magic)
+              if (out.length >= 4 && out[0] === 0x50 && out[1] === 0x4b && out[2] === 0x03 && out[3] === 0x04) {
+                extractedBytes = out;
+                console.log(`[generate-deck] extracted ${out.byteLength} bytes from bash stdout via base64 markers`);
+              } else {
+                console.warn(`[generate-deck] base64 decoded ${out.byteLength} bytes but missing PK zip magic — discarding`);
+              }
+              break;
+            } catch (e) {
+              console.error('[generate-deck] base64 decode failed:', e);
+            }
+          }
+          // Recover the filename Claude used (matches our prompt's pattern).
+          if (extractedBytes) {
+            for (const block of response.content) {
+              const b = block as { type?: string; content?: unknown };
+              const stdout = ((b.content as { stdout?: string } | undefined)?.stdout) ?? '';
+              const m = stdout.match(/wassel-deck-\d+\.pptx/);
+              if (m) { extractedFilename = m[0]; break; }
+            }
+          }
+
+          if (!outputFileId && !extractedBytes) {
             // Fallback: scan Files API for any .pptx created during this
             // request window. Anthropic sometimes doesn't surface file_id
             // in the response even when the file landed in Files API.
@@ -315,7 +379,7 @@ export default async function handler(req: Request): Promise<Response> {
             }
           }
 
-          if (!outputFileId) {
+          if (!outputFileId && !extractedBytes) {
             // Still nothing. Surface the most actionable error — full
             // last text (no truncation), last bash stdout (so we can
             // see the path Claude used and decide whether the file
@@ -355,17 +419,25 @@ export default async function handler(req: Request): Promise<Response> {
             throw new Error(lines.join('\n'));
           }
 
-          send({ type: 'status', phase: 'downloading' });
-          const meta = await anthropic.beta.files.retrieveMetadata(outputFileId);
-          const dlResponse = await anthropic.beta.files.download(outputFileId);
-          const arrayBuffer = await dlResponse.arrayBuffer();
-          // Edge runtime: no Node Buffer — use Uint8Array. Supabase
-          // storage.upload accepts both, so this is shape-compatible
-          // with the previous Buffer-based code.
-          const bytes = new Uint8Array(arrayBuffer);
-
-          send({ type: 'status', phase: 'uploading', detail: `${(bytes.byteLength / 1024).toFixed(0)} KB` });
-          const filename = (meta.filename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
+          // Source the bytes — base64-from-stdout (primary) wins; otherwise
+          // fall back to Anthropic Files API download.
+          let bytes: Uint8Array;
+          let filename: string;
+          if (extractedBytes) {
+            bytes = extractedBytes;
+            filename = (extractedFilename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
+            send({ type: 'status', phase: 'uploading', detail: `${(bytes.byteLength / 1024).toFixed(0)} KB (via base64 stream)` });
+          } else if (outputFileId) {
+            send({ type: 'status', phase: 'downloading' });
+            const meta = await anthropic.beta.files.retrieveMetadata(outputFileId);
+            const dlResponse = await anthropic.beta.files.download(outputFileId);
+            const arrayBuffer = await dlResponse.arrayBuffer();
+            bytes = new Uint8Array(arrayBuffer);
+            filename = (meta.filename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
+            send({ type: 'status', phase: 'uploading', detail: `${(bytes.byteLength / 1024).toFixed(0)} KB` });
+          } else {
+            throw new Error('internal: reached upload branch without bytes or file_id');
+          }
           const path = `${user.userId}/${body.recordId}/${filename}`;
 
           const { error: uploadErr } = await supabase.storage
