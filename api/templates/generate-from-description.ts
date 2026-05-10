@@ -159,7 +159,10 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     let response;
     try {
       response = await client.messages.create({
-        model: 'claude-sonnet-4-5-20250929',
+        // Sonnet 4.7 alias — same naming convention as the rest of the
+        // app's agents (api/_lib/aiAgent.ts uses claude-opus-4-7).
+        // Sonnet is cheap enough for structured-extraction work.
+        model: 'claude-sonnet-4-7',
         max_tokens: 16_000,
         system: SYSTEM_PROMPT,
         tools: [TOOL_SCHEMA],
