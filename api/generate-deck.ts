@@ -36,10 +36,18 @@ import { withAuth, jsonError } from './_lib/auth.js';
 
 // Edge runtime: SSE chunks flush in real-time on Vercel (Node runtime
 // buffers and can hang the response). The Anthropic call typically takes
-// 60-120s — well within Edge's streaming budget as long as we emit bytes
-// within 25s of the request landing (we do — the first `status` event
-// fires immediately on stream start).
+// 60-120s.
+//
+// `maxDuration` is REQUIRED to extend Edge functions past the default 30s
+// wall-clock. Without this export, Vercel kills the function at 30s even
+// while the SSE response is actively flushing — observed 2026-05-10 on
+// record 545bd8d6 (Vercel Runtime Timeout Error at exactly 29s). Pro plan
+// supports up to 800s on Edge; we cap at 300s (5 min) — Anthropic's
+// Opus + skills + code_execution combo typically finishes in 90-180s,
+// so 5 min leaves comfortable headroom while still failing fast on
+// pathological hangs.
 export const config = { runtime: 'edge' };
+export const maxDuration = 300;
 
 type DeckSize = '16:9' | '9:16' | '4:3' | '1:1';
 
