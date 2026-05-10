@@ -26,7 +26,11 @@ interface PhaseShape {
   error_message?: string;
 }
 
-const STATUS_LABELS: Record<string, { ar: string; en: string; tone: 'pending' | 'progress' | 'done' | 'error' }> = {
+/** Status enum → bilingual label + visual tone. Exported so the
+ *  templates_picker chips can surface the same per-template status
+ *  inline next to each selected card without duplicating strings. */
+export type StatusTone = 'pending' | 'progress' | 'done' | 'error';
+export const GENERATION_STATUS_LABELS: Record<string, { ar: string; en: string; tone: StatusTone }> = {
   pending: { ar: 'في الانتظار', en: 'Pending', tone: 'pending' },
   cleaning: { ar: 'تنظيف الصورة...', en: 'Cleaning...', tone: 'progress' },
   cleanup_failed: { ar: 'فشل التنظيف', en: 'Cleanup failed', tone: 'error' },
@@ -36,6 +40,22 @@ const STATUS_LABELS: Record<string, { ar: string; en: string; tone: 'pending' | 
   generation_failed: { ar: 'فشل التوليد', en: 'Generation failed', tone: 'error' },
   complete: { ar: 'مكتمل', en: 'Complete', tone: 'done' },
 };
+
+export function GenerationStatusBadge({ tone, label, compact = false }: { tone: StatusTone; label: string; compact?: boolean }) {
+  const styles: Record<StatusTone, string> = {
+    pending: 'bg-sand/30 text-charcoal/60',
+    progress: 'bg-blue-100 text-blue-700',
+    done: 'bg-green-100 text-green-700',
+    error: 'bg-red-100 text-red-700',
+  };
+  const Icon = tone === 'progress' ? Loader2 : tone === 'done' ? CheckCircle2 : tone === 'error' ? AlertCircle : null;
+  return (
+    <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full font-bold ${styles[tone]} ${compact ? 'text-[10px]' : 'text-xs'}`}>
+      {Icon ? <Icon size={compact ? 10 : 12} className={tone === 'progress' ? 'animate-spin' : ''} /> : null}
+      {label}
+    </span>
+  );
+}
 
 export default function GenerationsGallery({ templateIds, generations, isAr }: GenerationsGalleryProps) {
   const { models, records } = useAppStore();
@@ -66,13 +86,13 @@ export default function GenerationsGallery({ templateIds, generations, isAr }: G
             ? (generations[tid] as PhaseShape)
             : {};
           const status = phase.status ?? 'pending';
-          const statusInfo = STATUS_LABELS[status] ?? STATUS_LABELS.pending!;
+          const statusInfo = GENERATION_STATUS_LABELS[status] ?? GENERATION_STATUS_LABELS.pending!;
 
           return (
             <div key={tid} className="border border-sand/40 rounded-xl bg-white overflow-hidden">
               <div className="flex items-center gap-2 p-3 border-b border-sand/30 bg-cream/40">
                 <span className="font-bold text-sm text-charcoal flex-1 truncate">{name}</span>
-                <StatusBadge tone={statusInfo.tone} label={isAr ? statusInfo.ar : statusInfo.en} />
+                <GenerationStatusBadge tone={statusInfo.tone} label={isAr ? statusInfo.ar : statusInfo.en} />
               </div>
               {phase.error_message && (
                 <div className="px-3 py-2 bg-red-50 border-b border-red-100 text-xs text-red-700 flex items-start gap-2">
@@ -106,22 +126,6 @@ export default function GenerationsGallery({ templateIds, generations, isAr }: G
       </div>
       {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
     </>
-  );
-}
-
-function StatusBadge({ tone, label }: { tone: 'pending' | 'progress' | 'done' | 'error'; label: string }) {
-  const styles: Record<typeof tone, string> = {
-    pending: 'bg-sand/30 text-charcoal/60',
-    progress: 'bg-blue-100 text-blue-700',
-    done: 'bg-green-100 text-green-700',
-    error: 'bg-red-100 text-red-700',
-  };
-  const Icon = tone === 'progress' ? Loader2 : tone === 'done' ? CheckCircle2 : tone === 'error' ? AlertCircle : null;
-  return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-bold ${styles[tone]}`}>
-      {Icon ? <Icon size={12} className={tone === 'progress' ? 'animate-spin' : ''} /> : null}
-      {label}
-    </span>
   );
 }
 

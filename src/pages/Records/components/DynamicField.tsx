@@ -13,7 +13,7 @@ import RangeField from './RangeField';
 import TableField from './TableField';
 import TemplateVariablesField from './TemplateVariablesField';
 import TemplatesPickerModal from './TemplatesPickerModal';
-import GenerationsGallery from './GenerationsGallery';
+import GenerationsGallery, { GENERATION_STATUS_LABELS, GenerationStatusBadge } from './GenerationsGallery';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { uploadImage, deleteImage, type ImageFolder } from '@/lib/imageUpload';
@@ -474,14 +474,24 @@ export default function DynamicField({ field, value, onChange, recordData, compa
         );
       }
 
-      case 'templates_picker':
+      case 'templates_picker': {
+        // Pull the per-template generation map (written by the
+        // marketing/generate orchestrator) so each chip can show its
+        // own status badge inline. Replaces the old single-status
+        // dropdown that was meaningless once one record could trigger
+        // N templates with independent outcomes.
+        const generations = (recordData?.generations && typeof recordData.generations === 'object' && !Array.isArray(recordData.generations))
+          ? (recordData.generations as Record<string, unknown>)
+          : {};
         return (
           <TemplatesPickerInput
             value={Array.isArray(value) ? (value as string[]) : []}
+            generations={generations}
             onChange={onChange}
             isAr={isAr}
           />
         );
+      }
 
       case 'generations_gallery': {
         const generations = (recordData?.generations && typeof recordData.generations === 'object' && !Array.isArray(recordData.generations))
@@ -667,6 +677,9 @@ function ImageFieldInput({ value, folder, accept, maxSizeMb, onChange, isAr }: I
 
 interface TemplatesPickerInputProps {
   value: string[];
+  /** Per-template generation map keyed by template id. Each entry's
+   *  `.status` drives the status badge on that template's chip. */
+  generations: Record<string, unknown>;
   onChange: (value: unknown) => void;
   isAr: boolean;
 }
@@ -679,7 +692,7 @@ interface TemplatesPickerInputProps {
  * orchestrator iterates this list and runs the three-phase generation
  * once per id.
  */
-function TemplatesPickerInput({ value, onChange, isAr }: TemplatesPickerInputProps) {
+function TemplatesPickerInput({ value, generations, onChange, isAr }: TemplatesPickerInputProps) {
   const { models, records } = useAppStore();
   const [modalOpen, setModalOpen] = useState(false);
 
@@ -727,27 +740,37 @@ function TemplatesPickerInput({ value, onChange, isAr }: TemplatesPickerInputPro
         </button>
         {selected.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-            {selected.map((s) => (
-              <div
-                key={s.id}
-                className="relative rounded-lg overflow-hidden border border-sand/40 bg-white"
-              >
-                <div className="aspect-square bg-sand/20 flex items-center justify-center overflow-hidden">
-                  {s.referenceImage ? (
-                    <img src={s.referenceImage} alt="" className="w-full h-full object-cover" loading="lazy" />
-                  ) : null}
-                </div>
-                <div className="p-2 text-xs font-bold text-charcoal truncate">{s.name}</div>
-                <button
-                  type="button"
-                  onClick={() => removeOne(s.id)}
-                  className="absolute top-1.5 end-1.5 p-1 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
-                  aria-label={isAr ? 'إزالة' : 'Remove'}
+            {selected.map((s) => {
+              const slot = (generations[s.id] && typeof generations[s.id] === 'object' && !Array.isArray(generations[s.id]))
+                ? (generations[s.id] as { status?: string })
+                : null;
+              const status = slot?.status ?? 'pending';
+              const statusInfo = GENERATION_STATUS_LABELS[status] ?? GENERATION_STATUS_LABELS.pending!;
+              return (
+                <div
+                  key={s.id}
+                  className="relative rounded-lg overflow-hidden border border-sand/40 bg-white"
                 >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
+                  <div className="aspect-square bg-sand/20 flex items-center justify-center overflow-hidden">
+                    {s.referenceImage ? (
+                      <img src={s.referenceImage} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    ) : null}
+                  </div>
+                  <div className="p-2 space-y-1">
+                    <div className="text-xs font-bold text-charcoal truncate">{s.name}</div>
+                    <GenerationStatusBadge tone={statusInfo.tone} label={isAr ? statusInfo.ar : statusInfo.en} compact />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeOne(s.id)}
+                    className="absolute top-1.5 end-1.5 p-1 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
+                    aria-label={isAr ? 'إزالة' : 'Remove'}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

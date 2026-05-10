@@ -2744,13 +2744,11 @@ const marketingOperationsModel: AppModel = {
         fields: [
           { id: uuid(), name: 'auto_id', label_ar: 'الرقم', label_en: 'ID', type: 'auto_id', required: false, order: 0, section_id: marketingOperationsOpSectionId, width: 'half', show_in_table: true, auto_id_prefix: 'MO-', auto_id_padding: 3, auto_id_start_value: 1 },
           { id: marketingOperationsProjectFieldId, name: 'project', label_ar: 'المشروع', label_en: 'Project', type: 'lookup', required: true, order: 1, section_id: marketingOperationsOpSectionId, width: 'half', show_in_table: true, lookup_model_id: allProjectsId, lookup_display_field: 'project_name' },
+          // Per-template status badges live on the picker chips below
+          // (driven by record.data.generations[tid].status). The old
+          // single-record `status` dropdown was meaningless for a
+          // multi-template run — dropped 2026-05-10.
           { id: uuid(), name: 'templates', label_ar: 'القوالب', label_en: 'Templates', type: 'templates_picker', required: true, order: 2, section_id: marketingOperationsOpSectionId, width: 'full', show_in_table: true },
-          { id: uuid(), name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: false, order: 3, section_id: marketingOperationsOpSectionId, width: 'half', show_in_table: true, options: [
-            opt('draft', 'Draft'),
-            opt('generating', 'Generating'),
-            opt('complete', 'Complete'),
-            opt('failed', 'Failed'),
-          ] },
         ],
       },
       {
