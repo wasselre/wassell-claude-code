@@ -67,7 +67,13 @@ function readEnv(): HiggsfieldEnv {
     apiKey,
     apiSecret: apiSecret ?? '',
     baseUrl: process.env.HIGGSFIELD_BASE_URL ?? 'https://platform.higgsfield.ai',
-    modelId: process.env.HIGGSFIELD_MODEL_ID ?? 'higgsfield-ai/soul/standard',
+    // Endpoint path for Soul image generation. Discovered from
+    // @higgsfield/client v0.2.1 TypeScript types — the docs site
+    // showed `higgsfield-ai/soul/standard` but the SDK actually hits
+    // `/v1/text2image/soul`. Override only when targeting a different
+    // model (the SDK also defines `/v1/image2video/dop` and
+    // `/v1/speak/higgsfield` but those are video endpoints).
+    modelId: process.env.HIGGSFIELD_MODEL_ID ?? '/v1/text2image/soul',
   };
 }
 
@@ -99,7 +105,7 @@ export async function higgsfieldCleanup(opts: CleanupOpts): Promise<HiggsfieldSt
   }
   return startGeneration(env, {
     prompt: opts.cleanupPrompt,
-    image_url: opts.rawPhotoUrl,
+    imageReferenceUrl: opts.rawPhotoUrl,
     signal: opts.signal,
     phase: 'cleanup',
   });
@@ -129,7 +135,7 @@ export async function higgsfieldEditing(opts: EditingOpts): Promise<HiggsfieldSt
   }
   return startGeneration(env, {
     prompt: opts.editingPrompt,
-    image_url: opts.cleanedPhotoUrl,
+    imageReferenceUrl: opts.cleanedPhotoUrl,
     signal: opts.signal,
     phase: 'editing',
   });
@@ -167,56 +173,69 @@ export async function higgsfieldDesign(opts: DesignOpts): Promise<HiggsfieldStar
       statusUrl: 'stub://design',
     };
   }
+  // Soul accepts ONE image_reference. We pass the edited building
+  // photo (the most important visual). The reference layout image and
+  // the Wassel logo are described in the prompt — Soul doesn't have
+  // multi-image input slots in the public API. If composite quality
+  // suffers, we'd need to either (a) pre-compose the three images
+  // into a single reference upload, or (b) pre-register the logo via
+  // Soul's `custom_reference_id` (Soul ID) flow.
   return startGeneration(env, {
     prompt: opts.designPrompt,
-    image_url: opts.editedPhotoUrl,
-    reference_image_url: opts.referenceImageUrl,
-    logo_url: opts.logoUrl,
+    imageReferenceUrl: opts.editedPhotoUrl,
     signal: opts.signal,
     phase: 'design',
   });
 }
 
 /**
- * Shared start helper for all three phases. Per Higgsfield's docs the
- * model id is part of the URL path, NOT the body — the body carries
- * `prompt` (required) plus `aspect_ratio` / `resolution` (defaults
- * applied here) plus any image inputs the model accepts.
+ * Shared start helper for all three phases. Body shape comes from
+ * @higgsfield/client v0.2.1's `SoulText2ImageInput` interface:
  *
- * The image input field names (`image_url`, `reference_image_url`,
- * `logo_url`) are best-effort: Higgsfield's public docs explicitly
- * cover only text-to-image, so any image fields we send may be
- * silently ignored by the model. Phase 1 / Phase 2 are likely to
- * generate-from-text only until Higgsfield publishes their image-to-
- * image schema (or we discover it by experiment). The user will see a
- * generated image either way; whether it incorporates the input photo
- * depends on the model's actual capabilities.
+ *   {
+ *     prompt: string;
+ *     width_and_height: string;     // e.g. '1536x1536'
+ *     quality: '720p' | '1080p';
+ *     batch_size: 1 | 4;
+ *     image_reference?: { type: 'image_url'; image_url: string };
+ *     ...
+ *   }
+ *
+ * The model id is part of the URL path. `image_reference` is the ONE
+ * documented image input — Soul doesn't accept separate "logo" or
+ * "layout reference" images. Multi-image references either need to
+ * be pre-composed into a single upload OR described in the prompt.
  */
 async function startGeneration(
   env: HiggsfieldEnv,
   opts: {
     prompt: string;
-    image_url?: string;
-    reference_image_url?: string;
-    logo_url?: string;
+    imageReferenceUrl?: string;
     signal?: AbortSignal;
     phase: 'cleanup' | 'editing' | 'design';
   },
 ): Promise<HiggsfieldStartResult> {
-  // Drop any leading slash in modelId so the URL composes cleanly.
-  const modelPath = env.modelId.startsWith('/') ? env.modelId.slice(1) : env.modelId;
-  const url = `${env.baseUrl.replace(/\/$/, '')}/${modelPath}`;
+  // Compose the URL: SDK paths use a leading slash (e.g. /v1/text2image/soul)
+  // — preserve it. Strip a trailing slash on baseUrl to avoid doubles.
+  const modelPath = env.modelId.startsWith('/') ? env.modelId : `/${env.modelId}`;
+  const url = `${env.baseUrl.replace(/\/$/, '')}${modelPath}`;
 
-  // Body: documented fields first, image inputs second (might be no-ops
-  // for text-only models — sent on the chance Soul accepts them).
-  const body: Record<string, unknown> = {
+  // Body MUST be wrapped in `params` — the SDK source comment
+  // ("send input directly, not wrapped in params") is stale; live
+  // smoke test shows the API returns `{detail:[{loc:["body","params"],
+  // msg:"Field required"}]}` when you send the unwrapped shape.
+  const params: Record<string, unknown> = {
     prompt: opts.prompt,
-    aspect_ratio: '1:1',
-    resolution: '1080p',
+    width_and_height: '1536x1536', // Square 1080p — fits the social-post layout
+    quality: '1080p',
+    batch_size: 1,
   };
-  if (opts.image_url) body.image_url = opts.image_url;
-  if (opts.reference_image_url) body.reference_image_url = opts.reference_image_url;
-  if (opts.logo_url) body.logo_url = opts.logo_url;
+  if (opts.imageReferenceUrl) {
+    params.image_reference = {
+      type: 'image_url',
+      image_url: opts.imageReferenceUrl,
+    };
+  }
 
   const res = await fetch(url, {
     method: 'POST',
@@ -225,7 +244,7 @@ async function startGeneration(
       Accept: 'application/json',
       Authorization: authHeader(env),
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ params }),
     signal: opts.signal,
   });
   if (!res.ok) {
@@ -239,8 +258,6 @@ async function startGeneration(
     status?: string;
   };
   const requestId = json.request_id ?? '';
-  // status_url is documented; if absent fall back to constructing one
-  // from request_id at the documented GET /requests/{id}/status path.
   const statusUrl =
     json.status_url ??
     (requestId ? `${env.baseUrl.replace(/\/$/, '')}/requests/${requestId}/status` : '');
