@@ -82,23 +82,16 @@ const ANTHROPIC_BETAS = [
 // returns all 266k bytes intact.
 const B64_MARKER_START = '===WASSEL_DECK_B64_START===';
 const B64_MARKER_END = '===WASSEL_DECK_B64_END===';
-const SYSTEM_PROMPT = `Build a brand-compliant PowerPoint (.pptx) for Wassel Real Estate (وصل العقارية) per the user's brief.
+const SYSTEM_PROMPT = `Build a Wassel-branded PowerPoint (.pptx) per the user's brief.
 
-The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Read its SKILL.md and follow the workflow it describes — design each slide fresh, vary the layout, read the engine docstring. Use the engine at scripts/wassel_chrome.py.
+The 'wassel-general-ppt' skill is loaded at /mnt/skills/wassel-general-ppt/. Read its SKILL.md and follow that workflow as written.
 
-Save the finished file to /mnt/user-data/outputs/wassel-deck-<unix_timestamp_ms>.pptx.
-
-REQUIRED — without this the file cannot be returned to the user:
-After saving the deck, run ONE FINAL bash command that prints the file as base64 between two sentinel lines, EXACTLY like this (substitute your actual filename for <FILE>):
+Save to /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
 
     echo "${B64_MARKER_START}"
     base64 -w0 /mnt/user-data/outputs/<FILE>
     echo
-    echo "${B64_MARKER_END}"
-
-Do NOT skip this step. Do NOT modify the marker strings. Use ONE single bash call so all base64 lands in the same stdout. The receiver scans bash stdouts for these exact markers and decodes the bytes between them.
-
-Reply with one short sentence describing what you built.`;
+    echo "${B64_MARKER_END}"`;
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
@@ -116,15 +109,11 @@ export default async function handler(req: Request): Promise<Response> {
     if (!body.brief || typeof body.brief !== 'string' || body.brief.trim().length < 10) {
       return jsonError(400, 'brief must be at least 10 characters');
     }
-    // Default to Sonnet 4.6 — Opus 4.7 currently has a known issue with
-    // Skills + code_execution where the .pptx is written to the sandbox
-    // (script returns 0, prints the save path) but Anthropic does NOT
-    // surface a file_id, so the endpoint can't download the result. Verified
-    // by side-by-side runs with the same brief: Sonnet 4.6 returns file_id,
-    // Opus 4.7 returns content: [] on every bash result. Until Anthropic
-    // fixes this we keep Opus selectable for future use but won't make it
-    // the default.
-    const model = body.model ?? 'claude-sonnet-4-6';
+    // Default to Opus 4.7 — quality matters more than cost, and the
+    // earlier "Opus doesn't return file_id" blocker was about file
+    // capture, not generation. With the base64-via-stdout return path
+    // the file_id capture is no longer in the critical path.
+    const model = body.model ?? 'claude-opus-4-7';
     const language = body.language ?? 'ar';
     if (!['claude-opus-4-7', 'claude-sonnet-4-6'].includes(model)) {
       return jsonError(400, `unsupported model: ${model}`);
@@ -231,12 +220,17 @@ export default async function handler(req: Request): Promise<Response> {
             };
           }).stream({
             model,
-            // Opus 4.7 supports up to 32k output tokens. With a complex
-            // brief Claude can spend several thousand on the bash steps
-            // alone (each script edit + run round-trips through the
-            // model). The earlier 8192 cap caused stop_reason=max_tokens
-            // before the final .pptx was saved.
+            // 32 k total budget. With extended thinking on Opus 4.7,
+            // 16 k is reserved for hidden reasoning; the remaining 16 k
+            // is available for visible output (text + tool calls).
+            // Skill exploration + base64 print rarely need more than
+            // ~6 k of visible output, so this is comfortable.
             max_tokens: 32000,
+            // Extended thinking — gives Opus headroom to plan layouts
+            // before composing, mirroring the adaptive-thinking
+            // behavior of Claude Code sessions which produces the
+            // higher-quality decks the user gets locally.
+            thinking: { type: 'enabled', budget_tokens: 16000 },
             betas: ANTHROPIC_BETAS,
             container: {
               skills: [{ type: 'custom', skill_id: skillId, version: 'latest' }],
