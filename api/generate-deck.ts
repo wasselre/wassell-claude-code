@@ -95,7 +95,15 @@ export default async function handler(req: Request): Promise<Response> {
     if (!body.brief || typeof body.brief !== 'string' || body.brief.trim().length < 10) {
       return jsonError(400, 'brief must be at least 10 characters');
     }
-    const model = body.model ?? 'claude-opus-4-7';
+    // Default to Sonnet 4.6 — Opus 4.7 currently has a known issue with
+    // Skills + code_execution where the .pptx is written to the sandbox
+    // (script returns 0, prints the save path) but Anthropic does NOT
+    // surface a file_id, so the endpoint can't download the result. Verified
+    // by side-by-side runs with the same brief: Sonnet 4.6 returns file_id,
+    // Opus 4.7 returns content: [] on every bash result. Until Anthropic
+    // fixes this we keep Opus selectable for future use but won't make it
+    // the default.
+    const model = body.model ?? 'claude-sonnet-4-6';
     const language = body.language ?? 'ar';
     if (!['claude-opus-4-7', 'claude-sonnet-4-6'].includes(model)) {
       return jsonError(400, `unsupported model: ${model}`);

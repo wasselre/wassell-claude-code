@@ -157,7 +157,10 @@ function BriefForm({
     ((record.data.language as LanguageChoice | undefined) ?? 'ar') as LanguageChoice,
   );
   const [model, setModel] = useState<ModelChoice>(
-    ((record.data.model_used as ModelChoice | undefined) ?? 'claude-opus-4-7') as ModelChoice,
+    // Default to Sonnet 4.6 — Opus 4.7 currently has a known Anthropic issue
+    // where Skills + code_execution doesn't surface file_id, so the endpoint
+    // can't download the .pptx. See api/generate-deck.ts for context.
+    ((record.data.model_used as ModelChoice | undefined) ?? 'claude-sonnet-4-6') as ModelChoice,
   );
   const canSubmit = title.trim().length > 0 && brief.trim().length >= 10;
 
@@ -255,8 +258,8 @@ function BriefForm({
           <div className="flex gap-2">
             {(
               [
-                { v: 'claude-opus-4-7', label: 'Opus 4.7', sub: isAr ? 'الأجود' : 'Best' },
-                { v: 'claude-sonnet-4-6', label: 'Sonnet 4.6', sub: isAr ? 'أوفر' : 'Cheaper' },
+                { v: 'claude-sonnet-4-6', label: 'Sonnet 4.6', sub: isAr ? 'الموصى به' : 'Recommended' },
+                { v: 'claude-opus-4-7', label: 'Opus 4.7', sub: isAr ? 'تجريبي' : 'Experimental' },
               ] as const
             ).map((opt) => (
               <label

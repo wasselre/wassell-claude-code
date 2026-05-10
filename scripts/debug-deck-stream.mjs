@@ -6,13 +6,25 @@ import Anthropic from "@anthropic-ai/sdk";
 const SKILL_ID = "skill_01WfZySZ4829ynH3zaLB9nao";
 const BETAS = ["skills-2025-10-02", "code-execution-2025-08-25", "files-api-2025-04-14"];
 
-const SYSTEM = `You are building a Wassel Real Estate brand-compliant PowerPoint per the user's brief.
-The 'wassel-general-ppt' skill is loaded — read its SKILL.md and use scripts/wassel_chrome.py.
-Compose a custom Python build script and save the output to /mnt/user-data/outputs/<slug>.pptx.
-Reply with one short sentence describing what you built.`;
+const SYSTEM = `You are building a Wassel Real Estate (وصل العقارية) brand-compliant PowerPoint (.pptx) per the user's brief.
 
-// User's actual brief (copied from the failed record)
-const BRIEF = `الملف التعريفي
+Resources:
+- The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Its SKILL.md spells out the brand contract (palette, Amiri font, Arabic typography rules, wording rules); scripts/wassel_chrome.py is the engine.
+- The code_execution tool runs Python in a sandbox.
+
+How to work — output budget is tight, do NOT over-explore:
+1. Quickly read SKILL.md and the top of wassel_chrome.py (one read each, no more).
+2. Write the COMPLETE build script in a SINGLE file via the text editor — composing every slide before the first execution.
+3. Run it once with bash. The script must save to /mnt/user-data/outputs/<slug>.pptx.
+4. If the run errors, fix and re-run ONCE. Do not iterate further.
+5. Reply with one short sentence describing what you built.
+
+Critical: the output file MUST end up at /mnt/user-data/outputs/<slug>.pptx.`;
+
+// SHORT brief — sanity-check the working path. Toggle DEBUG_USER_BRIEF=1 to use the long one.
+const SHORT_BRIEF = `A 4-slide capability deck for Wassel Real Estate. Slide 1: brand title. Slide 2: what we do (marketing + sales for KSA real estate). Slide 3: how we work (CRM + AI agents + workflows). Slide 4: contact. Arabic, RTL, modern minimal layout.`;
+
+const LONG_BRIEF = `الملف التعريفي
 1. الغلاف (Cover)
 اسم الشركة
 الشعار
@@ -66,13 +78,16 @@ const BRIEF = `الملف التعريفي
 الموقع
 حسابات التواصل`;
 
+const BRIEF = process.env.DEBUG_USER_BRIEF ? LONG_BRIEF : SHORT_BRIEF;
+console.log(`Using ${process.env.DEBUG_USER_BRIEF ? 'LONG' : 'SHORT'} brief`);
+
 async function main() {
   const client = new Anthropic();
 
   const t0 = Date.now();
   const turn = client.beta.messages.stream({
-    model: "claude-opus-4-7",
-    max_tokens: 8192,
+    model: process.env.DEBUG_MODEL ?? "claude-sonnet-4-6",
+    max_tokens: 32000,
     betas: BETAS,
     container: { skills: [{ type: "custom", skill_id: SKILL_ID, version: "latest" }] },
     system: SYSTEM,
@@ -129,7 +144,21 @@ async function main() {
   // Show last text block content
   const textBlocks = response.content.filter(b => b.type === "text");
   if (textBlocks.length) {
-    console.log(`\nfinal text: "${textBlocks[textBlocks.length - 1].text?.slice(0, 300)}"`);
+    console.log(`\nfinal text: "${textBlocks[textBlocks.length - 1].text?.slice(0, 500)}"`);
+  }
+
+  // Dump ALL bash + text-editor outputs to see what actually happened
+  console.log(`\n=== bash + text_editor outputs ===`);
+  for (let i = 0; i < response.content.length; i++) {
+    const b = response.content[i];
+    if (b.type === "bash_code_execution_tool_result" || b.type === "text_editor_code_execution_tool_result") {
+      console.log(`\n[${i}] ${b.type}:`);
+      console.log(JSON.stringify(b.content, null, 2).slice(0, 1500));
+    }
+    if (b.type === "server_tool_use" && b.name === "bash_code_execution") {
+      console.log(`\n[${i}] server_tool_use bash input:`);
+      console.log(JSON.stringify(b.input, null, 2).slice(0, 600));
+    }
   }
 }
 
