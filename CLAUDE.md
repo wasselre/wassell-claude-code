@@ -337,6 +337,26 @@ When any agent (including future Claude sessions) claims to have shipped a fix, 
 
 A fix that exists only in an agent's chat output is not deployed and not real. Trust the SHA, not the prose.
 
+## Worktree workflow (CRITICAL — added 2026-05-10)
+
+Many parallel Claude sessions can be running, each in its own `.claude/worktrees/<name>/` worktree on a `claude/<name>` branch. The trap: a worktree created days/weeks ago has a `main` snapshot from days/weeks ago. If it pushes directly to `main`, it can silently revert every commit landed since.
+
+**Past incident (2026-05-10):** with 65 simultaneous worktrees, several were 100+ commits behind `origin/main`. A single force-push from any of them would have wiped everything in between.
+
+**Two safety nets — do not bypass either:**
+
+1. **Pre-push hook** (`scripts/safe-push-main.sh`, installed via `scripts/install-git-hooks.sh`) refuses any push to `main` whose local tip is not on top of `origin/main`. Lives in the *shared* `.git/hooks/` directory, so a single install protects every worktree of the repo (existing and future). To install or re-install: `bash scripts/install-git-hooks.sh` from any worktree. Bypass with `--no-verify` is **not allowed** without explicit user OK.
+2. **Vercel preview deploys.** Push the worktree's `claude/<name>` branch to GitHub (NOT `main`). Vercel auto-builds a preview URL like `wassell-crm-git-claude-<name>-wassell.vercel.app` within ~2 min. Smoke-test there. Only merge to `main` once the preview looks right and the branch is rebased onto latest `origin/main`. Each in-flight feature gets its own preview URL — they don't fight for the prod slot.
+
+**Before pushing to main from a worktree:**
+```bash
+git fetch origin main
+git rebase origin/main      # resolve conflicts if any
+git push origin HEAD:main   # hook double-checks; refuses if you skipped the rebase
+```
+
+**When work ships:** kill the worktree (`git worktree remove <path>` + `git branch -d claude/<name>`). A stale worktree left around is a future landmine.
+
 ## Do Not
 - Do not use `any` TypeScript type
 - Do not hardcode Arabic or English strings in JSX
@@ -345,3 +365,4 @@ A fix that exists only in an agent's chat output is not deployed and not real. T
 - Do not break RTL layout — always test both directions when adding UI
 - Do not add non-schema keys (`_comment`, etc.) to `vercel.json` — see "Deployment Config" above
 - Do not silently swallow errors — see "Silent Failures" above
+- Do not push directly to `main` from a stale worktree — see "Worktree workflow" above
