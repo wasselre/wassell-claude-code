@@ -23,7 +23,10 @@ import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 
 export const config = {
   runtime: 'nodejs',
-  maxDuration: 60,
+  // Opus chews through long inputs slowly. The first version capped
+  // at 60s and 504'd on the RSM 12 spec (~10k input tokens). 240s is
+  // the Pro-plan ceiling and matches api/marketing/generate.
+  maxDuration: 240,
 };
 
 interface RequestBody {
@@ -159,12 +162,16 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     let response;
     try {
       response = await client.messages.create({
-        // Use the exact alias the rest of the app uses
-        // (api/_lib/aiAgent.ts:23 — claude-opus-4-7). claude-sonnet-4-7
-        // returned 404 not_found, so Sonnet at this 4.7 generation
-        // isn't exposed yet; Opus 4.7 is the working alias.
+        // claude-opus-4-7 is the alias api/_lib/aiAgent.ts:23 uses (the
+        // sales agent runs against it, so we know it's valid for this
+        // account). claude-sonnet-4-7 returned 404 not_found.
         model: 'claude-opus-4-7',
-        max_tokens: 16_000,
+        // Output budget. Even the longest spec we expect (RSM 12) tops
+        // out around 5–6k tokens of structured output (3 prompts +
+        // variables + notes). 8k gives headroom without padding the
+        // tail-end latency the way 16k did — the bigger cap pushes
+        // Opus past the 60s gateway timeout we hit on the first run.
+        max_tokens: 8_000,
         system: SYSTEM_PROMPT,
         tools: [TOOL_SCHEMA],
         tool_choice: { type: 'tool', name: 'create_design_template' },
