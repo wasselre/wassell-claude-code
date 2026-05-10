@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe,
+  Globe, LayoutTemplate,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -163,6 +163,17 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/website',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'تفاصيل المشاريع',
+    titleEn: 'Project Details Pages',
+    descAr: 'تخصيص صفحة التفاصيل لكل مشروع — صور، مميزات، معالم قريبة، مستشار، ولون مميّز',
+    descEn: 'Per-project detail pages — images, features, nearby landmarks, agent, and accent color',
+    icon: LayoutTemplate,
+    color: '#C4754A',
+    bg: '#C4754A14',
+    route: '/settings/project-details',
     adminOnly: true,
   },
 ];

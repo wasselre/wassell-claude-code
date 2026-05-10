@@ -30,6 +30,8 @@ import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
 import WebsiteSettingsPage from '@/pages/Settings/WebsiteSettingsPage';
+import ProjectDetailsListPage from '@/pages/Settings/ProjectDetailsListPage';
+import ProjectDetailsBridgePage from '@/pages/Settings/ProjectDetailsBridgePage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
@@ -145,6 +147,12 @@ function RecordListDispatcher() {
   if (modelName === 'site_settings') {
     return <Navigate to="/settings/website" replace />;
   }
+  // project_details list view is meaningless on its own — the records are
+  // sidecars of all_projects, so picking by project is what makes sense.
+  // Punt to the project picker (Settings card entry point).
+  if (modelName === 'project_details') {
+    return <Navigate to="/settings/project-details" replace />;
+  }
   return <RecordListPage />;
 }
 
@@ -238,6 +246,8 @@ export default function App() {
           <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />
           <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />
           <Route path="/settings/website" element={<RequireAdmin><WebsiteSettingsPage /></RequireAdmin>} />
+          <Route path="/settings/project-details" element={<RequireAdmin><ProjectDetailsListPage /></RequireAdmin>} />
+          <Route path="/settings/project-details/:projectId" element={<RequireAdmin><ProjectDetailsBridgePage /></RequireAdmin>} />
           <Route path="/logs" element={<RequireAdmin><LogsPage /></RequireAdmin>} />
         </Route>
       </Routes>

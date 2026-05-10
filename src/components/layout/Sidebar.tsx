@@ -146,7 +146,7 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   // through the Settings page instead (see src/pages/Settings/SettingsPage.tsx).
   // `site_settings` is the public website's singleton config record; the
   // user edits it via /settings/website rather than navigating to a model.
-  const SETTINGS_ONLY_MODEL_NAMES = new Set(['site_settings']);
+  const SETTINGS_ONLY_MODEL_NAMES = new Set(['site_settings', 'project_details']);
 
   const ungroupedModels = models
     .filter((m) => !m.group_id && canView(m.id) && !SETTINGS_ONLY_MODEL_NAMES.has(m.name))
