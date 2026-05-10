@@ -502,7 +502,7 @@ function FailedView({
         <h2 className="text-xl font-semibold text-charcoal mb-2">
           {isAr ? 'فشل التوليد' : 'Generation failed'}
         </h2>
-        <div className="text-sm text-charcoal/70 bg-red-50 border border-red-100 rounded-lg p-3 mb-6 text-start whitespace-pre-wrap">
+        <div className="text-sm text-charcoal/70 bg-red-50 border border-red-100 rounded-lg p-3 mb-6 text-start whitespace-pre-wrap max-h-96 overflow-y-auto">
           {message || (isAr ? 'حدث خطأ غير معروف.' : 'Unknown error.')}
         </div>
         <div className="flex flex-col sm:flex-row gap-2 justify-center">

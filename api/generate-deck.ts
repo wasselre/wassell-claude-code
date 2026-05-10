@@ -304,22 +304,43 @@ export default async function handler(req: Request): Promise<Response> {
           }
 
           if (!outputFileId) {
-            // Still nothing. Surface the most actionable error.
+            // Still nothing. Surface the most actionable error — full
+            // last text (no truncation), last bash stdout (so we can
+            // see the path Claude used and decide whether the file
+            // was actually written), and stop_reason.
             const stopReason = (response as unknown as { stop_reason?: string }).stop_reason;
             const lastText = response.content
               .filter((b) => (b as { type?: string }).type === 'text')
               .map((b) => (b as { text?: string }).text ?? '')
-              .pop()
-              ?.slice(0, 200);
-            const blockTypes = response.content.map((b) => (b as { type?: string }).type ?? '?').join(', ');
+              .pop();
+            // Walk for the LAST bash result's stdout/stderr/return_code.
+            let lastBash: { stdout?: string; stderr?: string; return_code?: number } | null = null;
+            for (const b of response.content) {
+              const bb = b as { type?: string; content?: { stdout?: string; stderr?: string; return_code?: number } | unknown };
+              if (bb.type === 'bash_code_execution_tool_result' && bb.content && typeof bb.content === 'object') {
+                lastBash = bb.content as { stdout?: string; stderr?: string; return_code?: number };
+              }
+            }
             if (stopReason === 'max_tokens') {
               throw new Error(
-                `Claude ran out of output tokens before saving the .pptx (the brief is too large for one pass). Try a shorter brief — fewer slides or less detail per slide. Last note from Claude: "${lastText ?? '(empty)'}"`,
+                `Claude ran out of output tokens before saving the .pptx. Try a shorter brief.\n\nLast note: ${lastText ?? '(empty)'}`,
               );
             }
-            throw new Error(
-              `Claude did not save a file. stop_reason=${stopReason ?? 'unknown'}, block types: [${blockTypes}], last text: "${lastText ?? '(empty)'}"`,
-            );
+            const lines: string[] = [
+              `Claude finished without surfacing a file_id (Anthropic-side intermittent issue with Skills + code_execution).`,
+              ``,
+              `stop_reason: ${stopReason ?? 'unknown'}`,
+              ``,
+              `Claude's final note:`,
+              lastText ?? '(empty)',
+            ];
+            if (lastBash) {
+              lines.push(``, `Last bash result: rc=${lastBash.return_code ?? '?'}`);
+              if (lastBash.stdout) lines.push(`stdout: ${lastBash.stdout.slice(0, 600)}`);
+              if (lastBash.stderr) lines.push(`stderr: ${lastBash.stderr.slice(0, 600)}`);
+            }
+            lines.push(``, `Try clicking "إعادة المحاولة" again — this is intermittent and usually works on the second or third try.`);
+            throw new Error(lines.join('\n'));
           }
 
           send({ type: 'status', phase: 'downloading' });
