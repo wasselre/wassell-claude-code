@@ -245,6 +245,12 @@ export default async function handler(req: Request): Promise<Response> {
             }
           };
 
+          // Track request-start time so we can fall back to "list Files
+          // API for newly-created .pptx during this request" if the
+          // streaming response doesn't surface file_id (some model +
+          // skill + code_execution combos drop the file_id from the
+          // response even though the file lands in Files API).
+          const requestStartedAtMs = Date.now() - 5000; // 5s slack
           for await (const event of turn) {
             captureFileId(event);
             if (event.type === 'content_block_start') {
@@ -259,8 +265,43 @@ export default async function handler(req: Request): Promise<Response> {
           captureFileId(response.content);
 
           if (!outputFileId) {
-            // Use stop_reason to give a precise error rather than a
-            // generic "too vague" hint that misled the user earlier.
+            // Fallback: scan Files API for any .pptx created during this
+            // request window. Anthropic sometimes doesn't surface
+            // file_id in the response even when the file landed.
+            console.log('[generate-deck] no file_id in response, scanning Files API');
+            try {
+              const list = await (anthropic.beta.files as unknown as {
+                list: (args: Record<string, unknown>) => AsyncIterable<{
+                  id: string;
+                  filename?: string;
+                  created_at?: string;
+                  size_bytes?: number;
+                }>;
+              }).list({ limit: 20 });
+              const candidates: Array<{ id: string; filename: string; created_at: string }> = [];
+              for await (const f of list) {
+                const ts = f.created_at ? new Date(f.created_at).getTime() : 0;
+                if (ts >= requestStartedAtMs && (f.filename ?? '').endsWith('.pptx')) {
+                  candidates.push({
+                    id: f.id,
+                    filename: f.filename ?? `deck-${Date.now()}.pptx`,
+                    created_at: f.created_at ?? '',
+                  });
+                }
+              }
+              candidates.sort((a, b) => b.created_at.localeCompare(a.created_at));
+              if (candidates.length > 0 && candidates[0]) {
+                outputFileId = candidates[0].id;
+                console.log(`[generate-deck] fallback recovered file_id=${outputFileId}`);
+                send({ type: 'status', phase: 'calling-claude', detail: 'recovered output via Files API fallback' });
+              }
+            } catch (listErr) {
+              console.error('[generate-deck] Files API list fallback failed:', listErr);
+            }
+          }
+
+          if (!outputFileId) {
+            // Still nothing. Surface the most actionable error.
             const stopReason = (response as unknown as { stop_reason?: string }).stop_reason;
             const lastText = response.content
               .filter((b) => (b as { type?: string }).type === 'text')
