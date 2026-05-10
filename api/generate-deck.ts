@@ -621,50 +621,98 @@ export default async function handler(req: Request): Promise<Response> {
           }
 
           // Source the bytes — base64-from-stdout (primary) wins; otherwise
-          // fall back to Anthropic Files API download.
+          // fall back to Anthropic Files API download. Per-step logs from
+          // here on are deliberately verbose: a previous run (record
+          // 545bd8d6, 2026-05-10 17:56:58) extracted bytes successfully
+          // but never wrote status='ready' or status='failed', leaving
+          // the record stuck in 'generating' indefinitely. We need to
+          // know which post-extraction step the function dies on next
+          // time so we can fix it instead of guessing.
           let bytes: Uint8Array;
           let filename: string;
           if (extractedBytes) {
             bytes = extractedBytes;
             filename = (extractedFilename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
+            console.log(`[generate-deck] step=source-bytes route=base64 size=${bytes.byteLength}B filename=${filename}`);
             send({ type: 'status', phase: 'uploading', detail: `${(bytes.byteLength / 1024).toFixed(0)} KB (via base64 stream)` });
           } else if (outputFileId) {
             send({ type: 'status', phase: 'downloading' });
+            console.log(`[generate-deck] step=files-api-download file_id=${outputFileId}`);
             const meta = await anthropic.beta.files.retrieveMetadata(outputFileId);
             const dlResponse = await anthropic.beta.files.download(outputFileId);
             const arrayBuffer = await dlResponse.arrayBuffer();
             bytes = new Uint8Array(arrayBuffer);
             filename = (meta.filename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
+            console.log(`[generate-deck] step=source-bytes route=files-api size=${bytes.byteLength}B filename=${filename}`);
             send({ type: 'status', phase: 'uploading', detail: `${(bytes.byteLength / 1024).toFixed(0)} KB` });
           } else {
             throw new Error('internal: reached upload branch without bytes or file_id');
           }
           const path = `${user.userId}/${body.recordId}/${filename}`;
 
-          const { error: uploadErr } = await supabase.storage
-            .from(STORAGE_BUCKET)
-            .upload(path, bytes, {
-              contentType: PPTX_MIME,
-              upsert: true,
-            });
-          if (uploadErr) throw new Error(`Storage upload failed: ${uploadErr.message}`);
+          // withTimeout wrapper. If any single Supabase op hangs (we
+          // observed a silent hang after extraction on record 545bd8d6),
+          // we raise a clear error instead of letting Vercel kill the
+          // function silently — the catch block then writes
+          // status='failed' with a useful message.
+          const withTimeout = async <T>(label: string, ms: number, p: Promise<T>): Promise<T> => {
+            return Promise.race([
+              p,
+              new Promise<T>((_, reject) =>
+                setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+              ),
+            ]);
+          };
+
+          console.log(`[generate-deck] step=storage-upload-start path=${path}`);
+          const uploadStartedAt = Date.now();
+          const { error: uploadErr } = await withTimeout(
+            'storage upload',
+            45_000,
+            supabase.storage
+              .from(STORAGE_BUCKET)
+              .upload(path, bytes, {
+                contentType: PPTX_MIME,
+                upsert: true,
+              }),
+          );
+          if (uploadErr) {
+            console.error(`[generate-deck] step=storage-upload-FAIL path=${path} error=${uploadErr.message}`);
+            throw new Error(`Storage upload failed: ${uploadErr.message}`);
+          }
+          console.log(`[generate-deck] step=storage-upload-OK path=${path} elapsed_ms=${Date.now() - uploadStartedAt}`);
 
           send({ type: 'status', phase: 'finalizing' });
-          const { data: signed, error: signErr } = await supabase.storage
-            .from(STORAGE_BUCKET)
-            .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+          console.log(`[generate-deck] step=sign-url-start`);
+          const signStartedAt = Date.now();
+          const { data: signed, error: signErr } = await withTimeout(
+            'signed URL creation',
+            10_000,
+            supabase.storage
+              .from(STORAGE_BUCKET)
+              .createSignedUrl(path, SIGNED_URL_TTL_SECONDS),
+          );
           if (signErr || !signed) {
+            console.error(`[generate-deck] step=sign-url-FAIL error=${signErr?.message ?? 'unknown'}`);
             throw new Error(`signed URL creation failed: ${signErr?.message ?? 'unknown'}`);
           }
+          console.log(`[generate-deck] step=sign-url-OK elapsed_ms=${Date.now() - signStartedAt}`);
 
-          await updateRecord({
-            status: 'ready',
-            file_url: signed.signedUrl,
-            file_path: path,
-            filename,
-            anthropic_file_id: outputFileId,
-            error_message: null,
-          });
+          console.log(`[generate-deck] step=record-save-ready-start`);
+          const recordStartedAt = Date.now();
+          await withTimeout(
+            'record_save (ready)',
+            10_000,
+            updateRecord({
+              status: 'ready',
+              file_url: signed.signedUrl,
+              file_path: path,
+              filename,
+              anthropic_file_id: outputFileId,
+              error_message: null,
+            }),
+          );
+          console.log(`[generate-deck] step=record-save-ready-OK elapsed_ms=${Date.now() - recordStartedAt} record=${body.recordId}`);
 
           send({
             type: 'done',
@@ -672,19 +720,21 @@ export default async function handler(req: Request): Promise<Response> {
             file_path: path,
             filename,
           });
+          console.log(`[generate-deck] step=DONE record=${body.recordId} filename=${filename}`);
           controller.close();
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
-          console.error('[generate-deck] failed', message, err);
+          console.error(`[generate-deck] step=CATCH record=${body.recordId} message=${message}`, err);
           // Best-effort: mark the record as failed so the UI can show an
           // error state on reload. If this itself fails, surface BOTH
           // problems to the SSE consumer rather than silently dropping one.
           let combined = message;
           try {
             await updateRecord({ status: 'failed', error_message: message });
+            console.log(`[generate-deck] step=CATCH-record-saved-failed record=${body.recordId}`);
           } catch (innerErr) {
             const innerMsg = innerErr instanceof Error ? innerErr.message : String(innerErr);
-            console.error('[generate-deck] also failed to mark record as failed:', innerMsg);
+            console.error(`[generate-deck] step=CATCH-record-save-FAILED record=${body.recordId} inner=${innerMsg}`);
             combined = `${message} — and updating the record also failed: ${innerMsg}`;
           }
           try {
