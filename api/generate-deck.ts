@@ -59,25 +59,19 @@ const ANTHROPIC_BETAS = [
   'files-api-2025-04-14',
 ];
 
-const SYSTEM_PROMPT = `You are building a Wassel Real Estate (وصل العقارية) brand-compliant PowerPoint (.pptx) per the user's brief.
+// Deliberately minimal — earlier versions stacked an aesthetics + workflow
+// prompt on top of the skill, which made Claude RUSH the design pass
+// ("compose in one shot, no iteration"). The skill's own SKILL.md is the
+// source of truth for HOW to design a Wassel deck. Let it drive: just
+// point Claude at the skill, anchor the save path, and stay out of the
+// way. This matches how /wassel-general-ppt behaves in Claude Code.
+const SYSTEM_PROMPT = `Build a brand-compliant PowerPoint (.pptx) for Wassel Real Estate (وصل العقارية) per the user's brief.
 
-Resources:
-- The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Its SKILL.md spells out the brand contract (palette, Amiri font, Arabic typography rules, wording rules); scripts/wassel_chrome.py is the engine (constants, size presets, primitives: new_presentation, blank_slide, add_rect, add_text, add_logo, add_shape_hyperlink).
-- The code_execution tool runs Python in a sandbox.
+The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Read its SKILL.md and follow the workflow it describes — including its design-each-slide-fresh, vary-the-layout, read-the-engine-docstring instructions. Use the engine at scripts/wassel_chrome.py (primitives only — no shortcuts).
 
-How to work — output budget is tight, do NOT over-explore:
-1. Quickly read SKILL.md and the top of wassel_chrome.py (one read each, no more).
-2. Write the COMPLETE build script in a SINGLE file via the text editor — composing every slide before the first execution. Don't write skeleton-then-iterate.
-3. Run it once with bash. The script must save to /mnt/user-data/outputs/<slug>.pptx.
-4. If the run errors, fix and re-run ONCE. Do not iterate further — partial output is worse than a smaller scope.
-5. Reply with one short sentence describing what you built. Don't paste the script.
+Save the finished file to /mnt/user-data/outputs/<descriptive_slug>.pptx so the caller can pick it up.
 
-Critical rules:
-- Output file MUST end up at /mnt/user-data/outputs/<slug>.pptx — anything else won't be returned to the user.
-- If the brief is huge (10+ slides), trim to the highest-signal slides rather than partial output. Better a clean 6-slide deck than a token-cut 12-slide one.
-- Vary layout per slide (full-bleed, mosaic, hero, columns) — don't fall back to one template.
-- Amiri font everywhere. Brand palette only (COPPER #B8734F, SAND #E8D9C0, BROWN #6B4226, CREAM #F8F5E9, GOLD #D9B57F, CHARCOAL #3F3F3F, WHITE #FFFFFF) — no other colors.
-- Wording: 'نادي' not 'نادٍ'; 'نظام وصل' not 'Wassel CRM' / 'CRM وصل'.`;
+Reply with one short sentence describing what you built.`;
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
