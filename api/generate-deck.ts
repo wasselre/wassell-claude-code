@@ -260,11 +260,18 @@ export default async function handler(req: Request): Promise<Response> {
 
           if (!outputFileId) {
             // Fallback: scan Files API for any .pptx created during this
-            // request window. Anthropic sometimes doesn't surface
-            // file_id in the response even when the file landed.
+            // request window. Anthropic sometimes doesn't surface file_id
+            // in the response even when the file landed in Files API.
+            //
+            // No `await` before the for-await-of — the SDK's list() is a
+            // PagePromise which is itself async-iterable (auto-paginates
+            // under the hood). Awaiting it first collapses it to a single
+            // Page object whose for-await-of behavior differs and the
+            // iteration silently yields nothing.
             console.log('[generate-deck] no file_id in response, scanning Files API');
             try {
-              const list = await (anthropic.beta.files as unknown as {
+              const candidates: Array<{ id: string; filename: string; created_at: string }> = [];
+              const listIter = (anthropic.beta.files as unknown as {
                 list: (args: Record<string, unknown>) => AsyncIterable<{
                   id: string;
                   filename?: string;
@@ -272,9 +279,9 @@ export default async function handler(req: Request): Promise<Response> {
                   size_bytes?: number;
                 }>;
               }).list({ limit: 20 });
-              const candidates: Array<{ id: string; filename: string; created_at: string }> = [];
-              for await (const f of list) {
+              for await (const f of listIter) {
                 const ts = f.created_at ? new Date(f.created_at).getTime() : 0;
+                console.log(`[generate-deck] candidate id=${f.id} filename=${f.filename} created_at=${f.created_at} ts=${ts} threshold=${requestStartedAtMs}`);
                 if (ts >= requestStartedAtMs && (f.filename ?? '').endsWith('.pptx')) {
                   candidates.push({
                     id: f.id,
@@ -288,6 +295,8 @@ export default async function handler(req: Request): Promise<Response> {
                 outputFileId = candidates[0].id;
                 console.log(`[generate-deck] fallback recovered file_id=${outputFileId}`);
                 send({ type: 'status', phase: 'calling-claude', detail: 'recovered output via Files API fallback' });
+              } else {
+                console.log(`[generate-deck] fallback found 0 .pptx candidates after threshold`);
               }
             } catch (listErr) {
               console.error('[generate-deck] Files API list fallback failed:', listErr);
