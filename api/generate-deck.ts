@@ -34,7 +34,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError } from './_lib/auth.js';
 
-export const config = { runtime: 'nodejs', maxDuration: 300 };
+// Edge runtime: SSE chunks flush in real-time on Vercel (Node runtime
+// buffers and can hang the response). The Anthropic call typically takes
+// 60-120s — well within Edge's streaming budget as long as we emit bytes
+// within 25s of the request landing (we do — the first `status` event
+// fires immediately on stream start).
+export const config = { runtime: 'edge' };
 
 interface GenerateDeckRequestBody {
   recordId: string;
@@ -177,13 +182,19 @@ export default async function handler(req: Request): Promise<Response> {
                   : 'Mixed — choose per-slide based on what the content implies.'
             }`;
 
+          // Use streaming: iterating the SDK's stream forces Node to keep
+          // reading the HTTP response from Anthropic, which avoids a
+          // long-idle hang on Vercel Edge (and keeps the SSE consumer
+          // up-to-date with text deltas + tool starts as Claude works).
           // Cast to any: the SDK's beta.messages typing in 0.91.0 doesn't
-          // yet expose `container.skills` or `code_execution_20250825`, but
-          // the endpoint accepts both — confirmed in the Skills API docs
-          // (https://platform.claude.com/docs/en/build-with-claude/skills-guide).
-          const response = await (anthropic.beta.messages as unknown as {
-            create: (args: Record<string, unknown>) => Promise<{ content: unknown[] }>;
-          }).create({
+          // expose `container.skills` or `code_execution_20250825` yet —
+          // the endpoint accepts both per the Skills API docs.
+          const turn = (anthropic.beta.messages as unknown as {
+            stream: (args: Record<string, unknown>) => {
+              [Symbol.asyncIterator]: () => AsyncIterator<{ type: string; [k: string]: unknown }>;
+              finalMessage: () => Promise<{ content: unknown[] }>;
+            };
+          }).stream({
             model,
             max_tokens: 8192,
             betas: ANTHROPIC_BETAS,
@@ -195,20 +206,36 @@ export default async function handler(req: Request): Promise<Response> {
             tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
           });
 
-          // Walk the response for a code_execution_result block carrying a
-          // file_id. Claude can emit multiple — pick the LAST one so a file
-          // re-saved in a later iteration wins over an earlier draft.
-          let outputFileId: string | null = null;
-          for (const blockUntyped of response.content) {
-            const block = blockUntyped as { type?: string; content?: unknown };
-            if (block.type !== 'code_execution_result') continue;
-            const inner = block.content;
-            if (!Array.isArray(inner)) continue;
-            for (const itemUntyped of inner) {
-              const item = itemUntyped as { file_id?: string };
-              if (item && typeof item.file_id === 'string') {
-                outputFileId = item.file_id;
+          // Forward content_block_start events as progress notes — the
+          // user sees "Claude is editing the script" / "running the
+          // sandbox" instead of staring at a single spinner for 90s.
+          for await (const event of turn) {
+            if (event.type === 'content_block_start') {
+              const cb = (event as unknown as { content_block?: { type?: string; name?: string } }).content_block;
+              const cbType = cb?.type ?? 'unknown';
+              if (cbType === 'server_tool_use') {
+                send({ type: 'status', phase: 'calling-claude', detail: `tool: ${cb?.name ?? 'unknown'}` });
               }
+            }
+          }
+          const response = await turn.finalMessage();
+
+          // Walk every block recursively for any `file_id` value. The
+          // shape varies: `bash_code_execution_tool_result` nests file_id
+          // at block.content.content[i].file_id, while a future block
+          // type might place it elsewhere. Take the LAST file_id found —
+          // if Claude regenerates the deck across iterations, the latest
+          // wins.
+          let outputFileId: string | null = null;
+          const seen = new Set<unknown>();
+          const stack: unknown[] = [...response.content];
+          while (stack.length > 0) {
+            const node = stack.pop();
+            if (!node || typeof node !== 'object' || seen.has(node)) continue;
+            seen.add(node);
+            for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+              if (k === 'file_id' && typeof v === 'string') outputFileId = v;
+              else if (v && typeof v === 'object') stack.push(v);
             }
           }
 
@@ -222,9 +249,12 @@ export default async function handler(req: Request): Promise<Response> {
           const meta = await anthropic.beta.files.retrieveMetadata(outputFileId);
           const dlResponse = await anthropic.beta.files.download(outputFileId);
           const arrayBuffer = await dlResponse.arrayBuffer();
-          const bytes = Buffer.from(arrayBuffer);
+          // Edge runtime: no Node Buffer — use Uint8Array. Supabase
+          // storage.upload accepts both, so this is shape-compatible
+          // with the previous Buffer-based code.
+          const bytes = new Uint8Array(arrayBuffer);
 
-          send({ type: 'status', phase: 'uploading', detail: `${(bytes.length / 1024).toFixed(0)} KB` });
+          send({ type: 'status', phase: 'uploading', detail: `${(bytes.byteLength / 1024).toFixed(0)} KB` });
           const filename = (meta.filename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
           const path = `${user.userId}/${body.recordId}/${filename}`;
 
