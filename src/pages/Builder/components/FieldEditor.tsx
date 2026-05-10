@@ -2,14 +2,15 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput, slugify } from '@/lib/autoTranslate';
+import { slugify } from '@/lib/autoTranslate';
+import { useDebouncedTranslation } from '@/hooks/useDebouncedTranslation';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import FieldPicker from '@/components/ui/FieldPicker';
 import OptionsEditor from './OptionsEditor';
 import SaveAsTemplateModal from './SaveAsTemplateModal';
 import { formatNumberWithCommas, parseFormattedNumber } from '@/pages/Records/components/RangeField';
-import { Info, Layers, Bookmark, RotateCcw, AlertTriangle } from 'lucide-react';
+import { Info, Layers, Bookmark, RotateCcw, AlertTriangle, Loader2 } from 'lucide-react';
 import { COUNTRY_CODES, DEFAULT_COUNTRY_CODE } from '@/lib/phone';
 import { formatAutoId, resetAutoIdCounters, renumberAutoIdField } from '@/lib/autoIdAssigner';
 import {
@@ -281,12 +282,36 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
     }
   }, [field, isAr, sectionId, defaultType]);
 
+  // Live-translate the field label as the user types. Only runs while creating
+  // a new field — for existing fields we don't auto-translate the label change
+  // because we'd clobber the manually-curated opposite-language label.
+  const labelTranslation = useDebouncedTranslation(label, {
+    kind: 'field',
+    enabled: !field,
+  });
+
   // Auto-sync the API name from the label while creating a NEW field, until the
-  // user manually types into the API-name input. Existing fields are left alone.
+  // user manually types into the API-name input. For Arabic input we wait for
+  // the live translation result so the slug is derived from the English label
+  // (`phone_number`), not gibberish — matching the "no random names" rule.
   useEffect(() => {
     if (field || apiNameTouched) return;
-    setApiName(label.trim() ? slugify(label.trim()) : '');
-  }, [label, field, apiNameTouched]);
+    if (!label.trim()) {
+      setApiName('');
+      return;
+    }
+    const sync = slugify(label.trim());
+    if (sync) {
+      setApiName(sync);
+      return;
+    }
+    // Non-Latin input — only commit a slug once the translation lands. Until
+    // then, keep the previous value so we don't flicker between blank and the
+    // final slug.
+    if (labelTranslation.result?.name) {
+      setApiName(labelTranslation.result.name);
+    }
+  }, [label, field, apiNameTouched, labelTranslation.result]);
 
   // API name validation — format + uniqueness within this model.
   const apiNameError: 'empty' | 'invalid' | 'taken' | null = useMemo(() => {
@@ -321,14 +346,19 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const formulaHasError =
     type === 'formula' && (!!formulaParseError || formulaUnknownRefs.length > 0 || !!formulaCyclePath);
 
-  const buildSavedField = (): ModelField | null => {
+  const buildSavedField = (
+    resolvedLabels?: { label_ar: string; label_en: string },
+    resolvedSlug?: string,
+  ): ModelField | null => {
     if (!label.trim()) return null;
     if (formulaHasError) return null;
-    if (apiNameError) return null;
+    // For new fields the slug comes from translation (or a manual override);
+    // skip the validation gate when we already have a fresh resolved slug.
+    if (apiNameError && !resolvedSlug) return null;
     const { label_ar, label_en } = field
       ? { label_ar: isAr ? label.trim() : field.label_ar, label_en: isAr ? field.label_en : label.trim() }
-      : bilingualFromInput(label.trim(), language);
-    const slug = apiName.trim();
+      : (resolvedLabels ?? { label_ar: label.trim(), label_en: label.trim() });
+    const slug = (resolvedSlug ?? apiName).trim();
     // For auto_id: re-read counters from the LIVE model at save time. Our local
     // `autoIdCounters` state was captured when the modal opened; if records
     // were created in the meantime (e.g. by a workflow) the counter has since
@@ -394,8 +424,30 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
     return saved;
   };
 
-  const handleSave = () => {
-    const saved = buildSavedField();
+  const [savingField, setSavingField] = useState(false);
+
+  const handleSave = async () => {
+    // For NEW fields, ensure we have a complete translation before persisting.
+    // translateNow() resolves immediately if the debounce already settled —
+    // otherwise it forces an immediate fetch. Throws on failure (toast shown
+    // by the hook); we stay on the editor and let the user retry.
+    let resolvedLabels: { label_ar: string; label_en: string } | undefined;
+    let resolvedSlug: string | undefined;
+    if (!field && label.trim()) {
+      setSavingField(true);
+      try {
+        const out = labelTranslation.result ?? (await labelTranslation.translateNow());
+        resolvedLabels = { label_ar: out.label_ar, label_en: out.label_en };
+        // Only override the slug from translation if the user hasn't typed a
+        // custom one. Manual overrides win.
+        if (!apiNameTouched) resolvedSlug = out.name;
+      } catch {
+        setSavingField(false);
+        return;
+      }
+      setSavingField(false);
+    }
+    const saved = buildSavedField(resolvedLabels, resolvedSlug);
     if (!saved) return;
     // For role schemas, rename propagation doesn't apply — role-field slugs
     // aren't referenced in records, workflows, views, or other models. Commit
@@ -570,6 +622,28 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
             dir={isAr ? 'rtl' : 'ltr'}
             placeholder={isAr ? 'مثال: رقم الهاتف' : 'e.g. Phone Number'}
           />
+          {!field && label.trim() && (
+            <div className="text-[11px] text-charcoal/55 mt-1 ps-0.5 leading-relaxed">
+              {labelTranslation.status === 'pending' && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 size={10} className="animate-spin" />
+                  {isAr ? 'يترجم تلقائياً…' : 'Auto-translating…'}
+                </span>
+              )}
+              {labelTranslation.status === 'success' && labelTranslation.result && (
+                <span dir={isAr ? 'ltr' : 'rtl'}>
+                  {isAr
+                    ? `الإنجليزية: ${labelTranslation.result.label_en}`
+                    : `العربية: ${labelTranslation.result.label_ar}`}
+                </span>
+              )}
+              {labelTranslation.status === 'error' && (
+                <span className="text-red-500">
+                  {isAr ? 'تعذرت الترجمة — حاول مجدداً' : 'Translation failed — try again'}
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* API name (slug) — editable identifier used in formulas, imports, automations. */}
@@ -1741,8 +1815,28 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
 
       {/* ── Footer ── */}
       <div className="px-5 py-4 bg-white border-t border-sand/15 space-y-2">
-        <Button onClick={handleSave} disabled={!label.trim() || formulaHasError || !!apiNameError} className="w-full py-3">
-          {t('common.save')}
+        <Button
+          onClick={handleSave}
+          disabled={
+            !label.trim()
+            || formulaHasError
+            || savingField
+            // For new fields the slug is filled by translation — block save
+            // while the translation is in flight so we never persist an empty
+            // slug. Existing fields keep the old api-name validation gate.
+            || (!field && (labelTranslation.status === 'pending' || labelTranslation.status === 'error'))
+            || (!!field && !!apiNameError)
+          }
+          className="w-full py-3"
+        >
+          {savingField || labelTranslation.status === 'pending' ? (
+            <span className="inline-flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              {isAr ? 'جارٍ الترجمة…' : 'Translating…'}
+            </span>
+          ) : (
+            t('common.save')
+          )}
         </Button>
         {field && type !== 'section_selector' && type !== 'mirror' && type !== 'section_mirror' && type !== 'auto_id' && type !== 'formula' && (
           <button

@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput } from '@/lib/autoTranslate';
 import { emptyRoleSchema, roleFields } from '@/lib/roleSchema';
 import { Briefcase, Plus, Pencil, Users, ArrowRight, Trash2, Settings, Save, Lock } from 'lucide-react';
 import Button from '@/components/ui/Button';
@@ -80,11 +79,12 @@ export default function RolesPage() {
         </div>
         <Button onClick={() => {
           const id = uuid();
-          const labels = bilingualFromInput(isAr ? 'دور جديد' : 'New Role', language);
+          // Hardcoded placeholder in both languages — user renames in the
+          // role editor where translation kicks in via the rename flow.
           saveRole({
             id,
-            label_ar: labels.label_ar,
-            label_en: labels.label_en,
+            label_ar: 'دور جديد',
+            label_en: 'New Role',
             is_system: false,
             schema: emptyRoleSchema(),
             created_at: new Date().toISOString(),

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput } from '@/lib/autoTranslate';
+import { translateLabel } from '@/lib/translateLabel';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -27,7 +27,7 @@ const WIDGET_TYPES: { type: WidgetType; icon: typeof Hash; labelKey: string; des
 
 export default function WidgetConfigModal({ open, onClose, onSave, existingWidget }: WidgetConfigModalProps) {
   const { t } = useTranslation();
-  const { models, language } = useAppStore();
+  const { models, language, addToast } = useAppStore();
   const isAr = language === 'ar';
 
   const [step, setStep] = useState<1 | 2>(existingWidget ? 2 : 1);
@@ -147,9 +147,26 @@ export default function WidgetConfigModal({ open, onClose, onSave, existingWidge
             label={isAr ? 'عنوان العنصر' : 'Widget Title'}
             value={isAr ? titleAr : titleEn}
             onChange={(e) => {
-              const labels = bilingualFromInput(e.target.value, language);
-              setTitleAr(isAr ? e.target.value : labels.label_ar);
-              setTitleEn(isAr ? labels.label_en : e.target.value);
+              // Only update the typed side; the other gets filled on blur.
+              if (isAr) setTitleAr(e.target.value);
+              else setTitleEn(e.target.value);
+            }}
+            onBlur={async (e) => {
+              const typed = e.target.value.trim();
+              if (!typed) return;
+              const otherSide = isAr ? titleEn : titleAr;
+              if (otherSide && otherSide.trim()) return;
+              try {
+                const labels = await translateLabel(typed, 'dashboard');
+                if (isAr) setTitleEn(labels.label_en);
+                else setTitleAr(labels.label_ar);
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                addToast(
+                  isAr ? `تعذرت ترجمة عنوان العنصر: ${msg}` : `Widget title translation failed: ${msg}`,
+                  'error',
+                );
+              }
             }}
             required
             dir={isAr ? 'rtl' : 'ltr'}

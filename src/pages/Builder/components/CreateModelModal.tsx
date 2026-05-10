@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
+import { Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput, slugify } from '@/lib/autoTranslate';
+import { useDebouncedTranslation } from '@/hooks/useDebouncedTranslation';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -36,68 +37,86 @@ export default function CreateModelModal({ open, onClose }: CreateModelModalProp
   const [newGroupName, setNewGroupName] = useState('');
   const [showNewGroup, setShowNewGroup] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  const handleCreate = () => {
+  // Live translate the model name as the user types — fills both labels
+  // and the snake_case slug. Status drives the submit button state so the
+  // user never saves a half-translated model.
+  const modelTranslation = useDebouncedTranslation(name, { kind: 'model' });
+  const groupTranslation = useDebouncedTranslation(newGroupName, {
+    kind: 'group',
+    enabled: showNewGroup,
+  });
+
+  const handleCreate = async () => {
     if (!name.trim()) return;
+    setSubmitting(true);
+    try {
+      // Block save until we have a real translation. translateNow() is a
+      // no-op if the debounce already settled — otherwise it forces an
+      // immediate fetch. Throws on failure (toast already shown).
+      const modelLabels = modelTranslation.result ?? (await modelTranslation.translateNow());
 
-    const { label_ar, label_en } = bilingualFromInput(name.trim(), language);
-    const slug = slugify(name.trim());
+      let finalGroupId = groupId;
+      if (showNewGroup && newGroupName.trim()) {
+        const groupLabels = groupTranslation.result ?? (await groupTranslation.translateNow());
+        const newGroup = {
+          id: uuid(),
+          label_ar: groupLabels.label_ar,
+          label_en: groupLabels.label_en,
+          order: groups.length,
+        };
+        saveGroup(newGroup);
+        finalGroupId = newGroup.id;
+      }
 
-    let finalGroupId = groupId;
-    if (showNewGroup && newGroupName.trim()) {
-      const groupLabels = bilingualFromInput(newGroupName.trim(), language);
-      const newGroup = {
+      const baseSectionLabels = isAr
+        ? { label_ar: 'معلومات عامة', label_en: 'General Information' }
+        : { label_ar: 'معلومات عامة', label_en: 'General Information' };
+
+      const baseSectionId = uuid();
+      const model: AppModel = {
         id: uuid(),
-        label_ar: groupLabels.label_ar,
-        label_en: groupLabels.label_en,
-        order: groups.length,
+        name: modelLabels.name,
+        label_ar: modelLabels.label_ar,
+        label_en: modelLabels.label_en,
+        icon,
+        color,
+        group_id: finalGroupId,
+        is_system: false,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        card_config: {
+          title_field_id: null,
+          subtitle_field_id: null,
+          badge_field_id: null,
+          shown_field_ids: [],
+        },
+        maps_config: { ...MAPS_CONFIG_DEFAULT },
+        schema: {
+          section_selector_field_id: null,
+          sections: [
+            {
+              id: baseSectionId,
+              ...baseSectionLabels,
+              order: 0,
+              is_base: true,
+              color: color,
+              fields: [],
+            },
+          ],
+        },
       };
-      saveGroup(newGroup);
-      finalGroupId = newGroup.id;
+
+      saveModel(model);
+      resetForm();
+      onClose();
+      navigate(`/builder/${model.id}`);
+    } catch {
+      // Translation failure — already toasted by the hook. Stay on the modal.
+    } finally {
+      setSubmitting(false);
     }
-
-    const baseSectionLabels = isAr
-      ? { label_ar: 'معلومات عامة', label_en: 'General Information' }
-      : { label_ar: 'General Information', label_en: 'General Information' };
-
-    const baseSectionId = uuid();
-    const model: AppModel = {
-      id: uuid(),
-      name: slug,
-      label_ar,
-      label_en,
-      icon,
-      color,
-      group_id: finalGroupId,
-      is_system: false,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-      card_config: {
-        title_field_id: null,
-        subtitle_field_id: null,
-        badge_field_id: null,
-        shown_field_ids: [],
-      },
-      maps_config: { ...MAPS_CONFIG_DEFAULT },
-      schema: {
-        section_selector_field_id: null,
-        sections: [
-          {
-            id: baseSectionId,
-            ...baseSectionLabels,
-            order: 0,
-            is_base: true,
-            color: color,
-            fields: [],
-          },
-        ],
-      },
-    };
-
-    saveModel(model);
-    resetForm();
-    onClose();
-    navigate(`/builder/${model.id}`);
   };
 
   const resetForm = () => {
@@ -111,6 +130,20 @@ export default function CreateModelModal({ open, onClose }: CreateModelModalProp
 
   const SelectedIcon = getIconComponent(icon);
 
+  const modelStatus = modelTranslation.status;
+  const groupStatus = groupTranslation.status;
+  const previewLabel = modelTranslation.result
+    ? (isAr ? modelTranslation.result.label_en : modelTranslation.result.label_ar)
+    : null;
+  const previewSlug = modelTranslation.result?.name ?? null;
+
+  const submitDisabled =
+    submitting ||
+    !name.trim() ||
+    modelStatus === 'pending' ||
+    modelStatus === 'error' ||
+    (showNewGroup && newGroupName.trim() && (groupStatus === 'pending' || groupStatus === 'error'));
+
   return (
     <>
       <Modal
@@ -119,11 +152,18 @@ export default function CreateModelModal({ open, onClose }: CreateModelModalProp
         title={t('builder.new_model')}
         footer={
           <>
-            <Button variant="ghost" onClick={() => { resetForm(); onClose(); }}>
+            <Button variant="ghost" onClick={() => { resetForm(); onClose(); }} disabled={submitting}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleCreate} disabled={!name.trim()}>
-              {t('common.create')}
+            <Button onClick={handleCreate} disabled={!!submitDisabled}>
+              {submitting || modelStatus === 'pending' ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  {isAr ? 'جارٍ الترجمة…' : 'Translating…'}
+                </span>
+              ) : (
+                t('common.create')
+              )}
             </Button>
           </>
         }
@@ -137,6 +177,29 @@ export default function CreateModelModal({ open, onClose }: CreateModelModalProp
             dir={isAr ? 'rtl' : 'ltr'}
             placeholder={isAr ? 'مثال: العملاء' : 'e.g. Clients'}
           />
+          {name.trim() && (
+            <div className="text-xs text-charcoal/55 -mt-2 ps-0.5 leading-relaxed">
+              {modelStatus === 'pending' && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 size={11} className="animate-spin" />
+                  {isAr ? 'يترجم تلقائياً…' : 'Auto-translating…'}
+                </span>
+              )}
+              {modelStatus === 'success' && previewLabel && (
+                <span dir={isAr ? 'ltr' : 'rtl'}>
+                  {isAr ? `الإنجليزية: ${previewLabel}` : `العربية: ${previewLabel}`}
+                  {previewSlug && (
+                    <span className="ms-2 font-mono text-charcoal/40" dir="ltr">· {previewSlug}</span>
+                  )}
+                </span>
+              )}
+              {modelStatus === 'error' && (
+                <span className="text-red-500">
+                  {isAr ? 'تعذرت الترجمة — حاول مجدداً' : 'Translation failed — try again'}
+                </span>
+              )}
+            </div>
+          )}
 
           {/* Icon + Color row */}
           <div className="flex gap-4">
@@ -207,6 +270,17 @@ export default function CreateModelModal({ open, onClose }: CreateModelModalProp
                   onChange={(e) => setNewGroupName(e.target.value)}
                   dir={isAr ? 'rtl' : 'ltr'}
                 />
+                {newGroupName.trim() && groupStatus === 'pending' && (
+                  <div className="text-xs text-charcoal/55 mt-1 ps-0.5 inline-flex items-center gap-1.5">
+                    <Loader2 size={11} className="animate-spin" />
+                    {isAr ? 'يترجم اسم المجموعة…' : 'Translating group name…'}
+                  </div>
+                )}
+                {groupStatus === 'error' && (
+                  <div className="text-xs text-red-500 mt-1 ps-0.5">
+                    {isAr ? 'تعذرت ترجمة اسم المجموعة' : 'Group name translation failed'}
+                  </div>
+                )}
               </div>
             )}
           </div>

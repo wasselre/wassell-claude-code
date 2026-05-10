@@ -1,8 +1,16 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { needsTranslation } from '@/lib/autoTranslate';
-import { Languages, Search, AlertTriangle, Check, ChevronDown } from 'lucide-react';
+import {
+  scanLegacyEntities,
+  translateCandidates,
+  applyCandidates,
+  type MigrationCandidate,
+  type MigrationProgress,
+  type MigrationOutcome,
+} from '@/lib/migrateLegacyLabels';
+import { Languages, Search, AlertTriangle, Check, ChevronDown, Wand2, Loader2, X } from 'lucide-react';
 // types used indirectly through store data
 
 type TranslationItem = {
@@ -19,8 +27,30 @@ type FilterMode = 'all' | 'needs_translation' | 'translated';
 
 export default function TranslationSettingsPage() {
   const { t } = useTranslation();
-  const { models, groups, workflows, dashboards, language, saveModel, saveGroup, saveWorkflow, saveDashboard } = useAppStore();
+  const {
+    models, groups, workflows, dashboards, roles, profiles, language,
+    saveModel, saveGroup, saveWorkflow, saveDashboard, saveRole, saveProfile,
+    saveRecord, renameField, addToast,
+  } = useAppStore();
   const isAr = language === 'ar';
+
+  // ── One-shot legacy-label migration state ──────────────────────────
+  // Phases:
+  //   idle      — nothing scanned yet / scan returned 0 candidates
+  //   scanned   — candidates found, awaiting user confirmation to translate
+  //   translating — calling /api/translate for each candidate (concurrent)
+  //   ready     — all translations done, awaiting user confirmation to apply
+  //   applying  — sequentially writing back to the store + Supabase
+  //   done      — finished; outcome shown
+  //   error     — something blocked progress
+  type MigrationPhase = 'idle' | 'scanned' | 'translating' | 'ready' | 'applying' | 'done' | 'error';
+  const [migPhase, setMigPhase] = useState<MigrationPhase>('idle');
+  const [migCandidates, setMigCandidates] = useState<MigrationCandidate[]>([]);
+  const [migProgress, setMigProgress] = useState<MigrationProgress | null>(null);
+  const [migOutcome, setMigOutcome] = useState<MigrationOutcome | null>(null);
+  const [migTranslateFails, setMigTranslateFails] = useState<{ candidate: MigrationCandidate; error: string }[]>([]);
+  const [migError, setMigError] = useState<string | null>(null);
+  const migAbortRef = useRef<AbortController | null>(null);
 
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<FilterMode>('all');
@@ -243,6 +273,107 @@ export default function TranslationSettingsPage() {
     });
   };
 
+  // ── Migration handlers ─────────────────────────────────────────────
+  const startScan = () => {
+    setMigError(null);
+    setMigOutcome(null);
+    setMigTranslateFails([]);
+    const candidates = scanLegacyEntities({ models, groups, workflows, dashboards, roles, profiles });
+    setMigCandidates(candidates);
+    setMigPhase(candidates.length > 0 ? 'scanned' : 'idle');
+    if (candidates.length === 0) {
+      addToast(isAr ? 'لا توجد عناصر قديمة بحاجة لإصلاح' : 'No legacy items found — your data is clean', 'success');
+    }
+  };
+
+  const startTranslate = async () => {
+    if (migCandidates.length === 0) return;
+    setMigPhase('translating');
+    setMigProgress({ done: 0, total: migCandidates.length });
+    setMigError(null);
+    const ctrl = new AbortController();
+    migAbortRef.current = ctrl;
+    try {
+      const { ok, failed } = await translateCandidates(
+        migCandidates,
+        (p) => setMigProgress(p),
+        ctrl.signal,
+      );
+      setMigCandidates(ok);
+      setMigTranslateFails(failed);
+      setMigPhase(ok.length > 0 ? 'ready' : 'error');
+      if (ok.length === 0 && failed.length > 0) {
+        setMigError(isAr
+          ? `فشلت ترجمة جميع العناصر (${failed.length})`
+          : `All ${failed.length} translation calls failed`);
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMigError(msg);
+      setMigPhase('error');
+    } finally {
+      migAbortRef.current = null;
+    }
+  };
+
+  const startApply = async () => {
+    if (migCandidates.length === 0) return;
+    setMigPhase('applying');
+    setMigProgress({ done: 0, total: migCandidates.length });
+    setMigError(null);
+    const ctrl = new AbortController();
+    migAbortRef.current = ctrl;
+    try {
+      const outcome = await applyCandidates(
+        migCandidates,
+        {
+          getState: () => useAppStore.getState(),
+          saveModel,
+          saveGroup,
+          saveWorkflow,
+          saveDashboard,
+          saveRole,
+          saveProfile,
+          saveRecord,
+          renameField,
+        },
+        (p) => setMigProgress(p),
+        ctrl.signal,
+      );
+      setMigOutcome(outcome);
+      setMigPhase('done');
+      addToast(
+        isAr
+          ? `تمت الترجمة: ${outcome.applied.length} عنصر${outcome.failed.length > 0 ? `، فشل ${outcome.failed.length}` : ''}`
+          : `Migrated: ${outcome.applied.length} items${outcome.failed.length > 0 ? `, ${outcome.failed.length} failed` : ''}`,
+        outcome.failed.length === 0 ? 'success' : 'info',
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMigError(msg);
+      setMigPhase('error');
+    } finally {
+      migAbortRef.current = null;
+    }
+  };
+
+  const cancelMigration = () => {
+    migAbortRef.current?.abort();
+    setMigPhase('idle');
+    setMigCandidates([]);
+    setMigProgress(null);
+    setMigOutcome(null);
+    setMigTranslateFails([]);
+    setMigError(null);
+  };
+
+  // Frozen-model field-slug renames need a SQL migration we don't run from
+  // here — surface them in the preview so the user knows to ask for one.
+  const migFrozenSkips = useMemo(
+    () => migCandidates.filter((c) => c.kind === 'field_slug' && c.isFrozen),
+    [migCandidates],
+  );
+
   return (
     <div className="max-w-4xl">
       {/* Header */}
@@ -276,6 +407,236 @@ export default function TranslationSettingsPage() {
           <div className="text-2xl font-bold text-green-600">{totalCount - needsCount}</div>
           <div className="text-xs text-charcoal/40">{isAr ? 'مترجم' : 'Translated'}</div>
         </div>
+      </div>
+
+      {/* ── One-shot legacy migration panel ────────────────────────────
+          Scans for items that the legacy auto-translate stub left in
+          a broken state (label_ar === label_en, item_<timestamp> slugs)
+          and migrates them in three confirmable phases: scan → translate
+          → apply. The translate phase calls /api/translate with a
+          bounded concurrency; the apply phase rewrites the store + DB
+          one item at a time, using `renameField` for field-slug renames
+          so cross-references (records, formulas, lookups, mirrors,
+          workflows, views) update atomically. */}
+      <div className="mb-6 rounded-2xl border border-copper/20 bg-gradient-to-br from-copper/5 to-amber-50/40 p-5">
+        <div className="flex items-start gap-3 mb-3">
+          <div className="w-10 h-10 rounded-xl bg-copper/15 flex items-center justify-center shrink-0">
+            <Wand2 size={18} className="text-copper" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-base font-bold text-chocolate">
+              {isAr ? 'ترجمة البيانات القديمة' : 'Legacy data migration'}
+            </h2>
+            <p className="text-xs text-charcoal/55 mt-0.5">
+              {isAr
+                ? 'يفحص جميع النماذج والأقسام والحقول والخيارات والقواعد واللوحات بحثاً عن نصوص لم تُترجم وأسماء مولّدة تلقائياً مثل item_xxx، ويصلحها مرة واحدة. سيُحدِّث جميع المراجع المرتبطة (السجلات، الصيغ، الروابط، النسخ، التدفقات، العروض) بشكل ذرّي.'
+                : 'Scans every model, section, field, option, workflow, and dashboard for untranslated labels and auto-generated slugs like item_xxx, then fixes them in one pass. All cross-references (records, formulas, lookups, mirrors, workflows, views) are updated atomically.'}
+            </p>
+          </div>
+        </div>
+
+        {migPhase === 'idle' && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={startScan}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-sm font-bold"
+            >
+              <Search size={14} />
+              {isAr ? 'فحص البيانات' : 'Scan database'}
+            </button>
+            <span className="text-xs text-charcoal/40">
+              {isAr ? 'لا يُجرى أي تعديل في هذه المرحلة' : 'No changes are made at this step'}
+            </span>
+          </div>
+        )}
+
+        {migPhase === 'scanned' && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="px-3 py-2 rounded-lg bg-amber-100/60 border border-amber-300/50 text-sm">
+                <b className="text-amber-700">{migCandidates.length}</b>{' '}
+                <span className="text-charcoal/70">
+                  {isAr ? 'عنصر بحاجة لإصلاح' : migCandidates.length === 1 ? 'item to migrate' : 'items to migrate'}
+                </span>
+              </div>
+              {migFrozenSkips.length > 0 && (
+                <div className="px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 text-xs text-charcoal/70">
+                  {isAr
+                    ? `سيتم تخطي ${migFrozenSkips.length} حقل في نماذج مجمَّدة (يحتاج هجرة SQL يدوية).`
+                    : `${migFrozenSkips.length} field${migFrozenSkips.length === 1 ? '' : 's'} on frozen models will be skipped — they need a manual SQL migration.`}
+                </div>
+              )}
+            </div>
+            <CandidatePreview candidates={migCandidates} isAr={isAr} />
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={startTranslate}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-sm font-bold"
+              >
+                <Wand2 size={14} />
+                {isAr ? 'ترجمة الكل' : 'Translate all'}
+              </button>
+              <button
+                onClick={cancelMigration}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-sand text-charcoal/70 hover:bg-sand/20 text-sm font-bold"
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <span className="text-xs text-charcoal/40">
+                {isAr
+                  ? 'سيقوم Claude بترجمة كل عنصر — حتى الآن لا يتم حفظ أي شيء.'
+                  : 'Claude translates each item. Nothing is saved yet — you\'ll review before applying.'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {(migPhase === 'translating' || migPhase === 'applying') && migProgress && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <Loader2 size={16} className="animate-spin text-copper shrink-0" />
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold text-charcoal">
+                  {migPhase === 'translating'
+                    ? (isAr ? 'جارٍ الترجمة…' : 'Translating…')
+                    : (isAr ? 'جارٍ الحفظ في قاعدة البيانات…' : 'Writing to database…')}
+                </div>
+                <div className="text-xs text-charcoal/55 truncate" dir="ltr">
+                  {migProgress.current?.path ?? ''}
+                </div>
+              </div>
+              <div className="text-sm font-bold text-charcoal/70 tabular-nums shrink-0">
+                {migProgress.done} / {migProgress.total}
+              </div>
+              <button
+                onClick={cancelMigration}
+                className="p-1.5 rounded-lg text-charcoal/40 hover:text-red-500 hover:bg-red-50"
+                title={isAr ? 'إلغاء' : 'Cancel'}
+              >
+                <X size={14} />
+              </button>
+            </div>
+            <div className="h-1.5 rounded-full bg-sand/30 overflow-hidden">
+              <div
+                className="h-full bg-copper transition-all duration-150"
+                style={{ width: `${(migProgress.done / Math.max(1, migProgress.total)) * 100}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {migPhase === 'ready' && (
+          <div className="space-y-3">
+            <div className="px-3 py-2 rounded-lg bg-green-50 border border-green-200 text-sm">
+              <b className="text-green-700">{migCandidates.length}</b>{' '}
+              <span className="text-charcoal/70">
+                {isAr ? 'عنصر جاهز للحفظ' : migCandidates.length === 1 ? 'item ready to apply' : 'items ready to apply'}
+              </span>
+              {migTranslateFails.length > 0 && (
+                <span className="ms-3 text-amber-600">
+                  · {isAr ? `${migTranslateFails.length} فشلت ترجمتها` : `${migTranslateFails.length} translation${migTranslateFails.length === 1 ? '' : 's'} failed`}
+                </span>
+              )}
+            </div>
+            <CandidatePreview candidates={migCandidates} isAr={isAr} showProposed />
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                onClick={startApply}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-green-600 text-white hover:bg-green-700 text-sm font-bold"
+              >
+                <Check size={14} />
+                {isAr ? 'تطبيق على قاعدة البيانات' : 'Apply to database'}
+              </button>
+              <button
+                onClick={cancelMigration}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-sand text-charcoal/70 hover:bg-sand/20 text-sm font-bold"
+              >
+                {isAr ? 'إلغاء' : 'Cancel'}
+              </button>
+              <span className="text-xs text-charcoal/40">
+                {isAr
+                  ? 'سيُكتب التعديل إلى قاعدة البيانات وجميع المراجع المرتبطة.'
+                  : 'Writes to the database and updates every cross-reference.'}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {migPhase === 'done' && migOutcome && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2 text-sm">
+              <Check size={16} className="text-green-600" />
+              <b>
+                {isAr
+                  ? `تمت ترجمة ${migOutcome.applied.length} عنصر بنجاح`
+                  : `Migrated ${migOutcome.applied.length} item${migOutcome.applied.length === 1 ? '' : 's'} successfully`}
+              </b>
+            </div>
+            {migOutcome.failed.length > 0 && (
+              <details className="rounded-lg bg-red-50 border border-red-200 p-3">
+                <summary className="text-sm font-bold text-red-700 cursor-pointer">
+                  {isAr ? `${migOutcome.failed.length} عنصر فشل` : `${migOutcome.failed.length} item${migOutcome.failed.length === 1 ? '' : 's'} failed`}
+                </summary>
+                <ul className="mt-2 space-y-1 text-xs text-red-700/80">
+                  {migOutcome.failed.map((f, i) => (
+                    <li key={i} dir="ltr">
+                      <code>{f.candidate.path}</code> — {f.error}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            {migOutcome.skipped.length > 0 && (
+              <details className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <summary className="text-sm font-bold text-amber-700 cursor-pointer">
+                  {isAr ? `${migOutcome.skipped.length} عنصر تم تخطيه` : `${migOutcome.skipped.length} item${migOutcome.skipped.length === 1 ? '' : 's'} skipped`}
+                </summary>
+                <ul className="mt-2 space-y-1 text-xs text-amber-700/80">
+                  {migOutcome.skipped.map((s, i) => (
+                    <li key={i} dir="ltr">
+                      <code>{s.candidate.path}</code> — {s.reason}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            <button
+              onClick={cancelMigration}
+              className="text-xs font-bold text-charcoal/50 hover:text-charcoal underline"
+            >
+              {isAr ? 'إغلاق' : 'Close'}
+            </button>
+          </div>
+        )}
+
+        {migPhase === 'error' && (
+          <div className="space-y-2">
+            <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              <AlertTriangle size={14} className="inline me-2" />
+              {migError ?? (isAr ? 'حدث خطأ' : 'Something went wrong')}
+            </div>
+            {migTranslateFails.length > 0 && (
+              <details className="rounded-lg bg-red-50 border border-red-200 p-3">
+                <summary className="text-sm font-bold text-red-700 cursor-pointer">
+                  {isAr ? 'تفاصيل الإخفاقات' : 'Failure details'}
+                </summary>
+                <ul className="mt-2 space-y-1 text-xs text-red-700/80">
+                  {migTranslateFails.slice(0, 20).map((f, i) => (
+                    <li key={i} dir="ltr">
+                      <code>{f.candidate.path}</code> — {f.error}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            )}
+            <button
+              onClick={cancelMigration}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-sand text-charcoal/70 hover:bg-sand/20 text-xs font-bold"
+            >
+              {isAr ? 'إغلاق' : 'Close'}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Search + Filter */}
@@ -422,6 +783,98 @@ export default function TranslationSettingsPage() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Compact preview of migration candidates. Shown twice in the migration
+ * flow — once at "scanned" (just the path + current labels) and once at
+ * "ready" (with proposed translations). Caps at the first 50 to keep
+ * rendering snappy on large databases; the rest still get migrated.
+ */
+function CandidatePreview({
+  candidates,
+  isAr,
+  showProposed = false,
+}: {
+  candidates: MigrationCandidate[];
+  isAr: boolean;
+  showProposed?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? candidates : candidates.slice(0, 8);
+  if (candidates.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-sand/40 bg-white max-h-64 overflow-y-auto text-xs">
+      <table className="w-full">
+        <thead className="bg-sand/15 sticky top-0">
+          <tr className="text-charcoal/55">
+            <th className="text-start px-3 py-1.5 font-bold">{isAr ? 'المسار' : 'Path'}</th>
+            <th className="text-start px-3 py-1.5 font-bold">{isAr ? 'السبب' : 'Issue'}</th>
+            <th className="text-start px-3 py-1.5 font-bold">{isAr ? 'الحالي' : 'Current'}</th>
+            {showProposed && (
+              <th className="text-start px-3 py-1.5 font-bold">{isAr ? 'المقترح' : 'Proposed'}</th>
+            )}
+          </tr>
+        </thead>
+        <tbody>
+          {visible.map((c) => {
+            const cur = c.current.slug
+              ? `${c.current.label_ar || c.current.label_en || ''} (${c.current.slug})`
+              : (c.current.label_ar || '') + (c.current.label_ar && c.current.label_en ? ' / ' : '') + (c.current.label_en || '');
+            const prop = c.proposed
+              ? `${c.proposed.label_ar} / ${c.proposed.label_en}${
+                  (c.kind === 'field_slug' || c.kind === 'option_value') ? ` (${c.proposed.name})` : ''
+                }`
+              : '';
+            return (
+              <tr key={c.id} className="border-t border-sand/15 hover:bg-sand/10">
+                <td className="px-3 py-1.5 text-charcoal/80 truncate max-w-[280px]" title={c.path} dir="ltr">
+                  {c.path}
+                </td>
+                <td className="px-3 py-1.5">
+                  {c.reason === 'placeholder_slug' ? (
+                    <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-mono text-[10px]">
+                      {isAr ? 'اسم تلقائي' : 'placeholder slug'}
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px]">
+                      {isAr ? 'بدون ترجمة' : 'untranslated'}
+                    </span>
+                  )}
+                </td>
+                <td className="px-3 py-1.5 text-charcoal/55 truncate max-w-[200px]" title={cur} dir="auto">
+                  {cur}
+                </td>
+                {showProposed && (
+                  <td className="px-3 py-1.5 truncate max-w-[260px]" title={prop} dir="auto">
+                    {prop ? (
+                      <span className="text-charcoal">{prop}</span>
+                    ) : (
+                      <span className="text-amber-600 italic">{isAr ? 'فشلت الترجمة' : 'translation failed'}</span>
+                    )}
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      {candidates.length > 8 && (
+        <div className="border-t border-sand/15 px-3 py-2 bg-sand/5">
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="text-xs font-bold text-copper hover:text-terracotta"
+          >
+            {expanded
+              ? (isAr ? 'إخفاء' : 'Show fewer')
+              : (isAr
+                  ? `عرض الكل (${candidates.length} عنصر)`
+                  : `Show all ${candidates.length} items`)}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

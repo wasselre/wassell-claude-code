@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput } from '@/lib/autoTranslate';
 import { inviteUser, isAuthAvailable } from '@/lib/auth';
 import { Users as UsersIcon, Plus, Pencil, Trash2, Shield, Mail, Loader2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
@@ -63,9 +62,14 @@ export default function UsersPage() {
 
   const handleSave = async () => {
     if (!name.trim() || !email.trim() || !profileId) return;
+    // User display names are proper nouns ("Mohamed", "محمد"). We do NOT
+    // auto-translate them — translating "Mohamed" to "محمد" or vice-versa
+    // is a transliteration choice the user owns. New users get the typed
+    // name in both slots; the user can edit either side later from the
+    // user-edit form.
     const labels = editing
       ? { name_ar: isAr ? name.trim() : editing.name_ar, name_en: isAr ? editing.name_en : name.trim() }
-      : (() => { const l = bilingualFromInput(name.trim(), language); return { name_ar: l.label_ar, name_en: l.label_en }; })();
+      : { name_ar: name.trim(), name_en: name.trim() };
 
     const trimmedEmail = email.trim();
     const user: User = {

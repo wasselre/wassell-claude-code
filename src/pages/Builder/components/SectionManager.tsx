@@ -12,7 +12,8 @@ import SectionCard from './SectionCard';
 import FieldEditor, { FieldEditorEmpty } from './FieldEditor';
 import FieldTypeCatalog from './FieldTypeCatalog';
 import FieldTemplateCatalog from './FieldTemplateCatalog';
-import { bilingualFromInput } from '@/lib/autoTranslate';
+import { useDebouncedTranslation } from '@/hooks/useDebouncedTranslation';
+import { Loader2 } from 'lucide-react';
 import { countRecordsWithFieldData } from '@/lib/fieldDataImpact';
 import type { AppModel, ModelSection, ModelField, FieldType, FieldTemplate, FieldOption } from '@/types';
 
@@ -114,24 +115,40 @@ export default function SectionManager({ model, onChange, ownerKind = 'model', r
     onChange({ ...model, schema: { ...model.schema, sections: reordered } });
   };
 
-  const addSection = () => {
+  // Live-translate the new section name as the user types — fills both
+  // labels. The save path awaits translateNow() so we never persist a
+  // copy-of-input in the other language.
+  const sectionTranslation = useDebouncedTranslation(newSectionName, {
+    kind: 'section',
+    enabled: showAddSection,
+  });
+  const [addingSection, setAddingSection] = useState(false);
+
+  const addSection = async () => {
     if (!newSectionName.trim()) return;
-    const labels = bilingualFromInput(newSectionName.trim(), language);
-    const section: ModelSection = {
-      id: uuid(),
-      label_ar: labels.label_ar,
-      label_en: labels.label_en,
-      order: sections.length,
-      is_base: newSectionBase,
-      color: newSectionColor,
-      fields: [],
-    };
-    const updatedSections = [...model.schema.sections, section];
-    const updated = { ...model, schema: { ...model.schema, sections: updatedSections } };
-    onChange(updateSectionSelectorOptions(updated));
-    setShowAddSection(false);
-    setNewSectionName('');
-    setNewSectionBase(false);
+    setAddingSection(true);
+    try {
+      const labels = sectionTranslation.result ?? (await sectionTranslation.translateNow());
+      const section: ModelSection = {
+        id: uuid(),
+        label_ar: labels.label_ar,
+        label_en: labels.label_en,
+        order: sections.length,
+        is_base: newSectionBase,
+        color: newSectionColor,
+        fields: [],
+      };
+      const updatedSections = [...model.schema.sections, section];
+      const updated = { ...model, schema: { ...model.schema, sections: updatedSections } };
+      onChange(updateSectionSelectorOptions(updated));
+      setShowAddSection(false);
+      setNewSectionName('');
+      setNewSectionBase(false);
+    } catch {
+      // Translation failure — toast already shown. Stay on modal.
+    } finally {
+      setAddingSection(false);
+    }
   };
 
   const updateSection = (sectionId: string, updates: Partial<ModelSection>) => {
@@ -440,11 +457,26 @@ export default function SectionManager({ model, onChange, ownerKind = 'model', r
         title={t('builder.add_section')}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setShowAddSection(false)}>
+            <Button variant="ghost" onClick={() => setShowAddSection(false)} disabled={addingSection}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={addSection} disabled={!newSectionName.trim()}>
-              {t('common.add')}
+            <Button
+              onClick={addSection}
+              disabled={
+                !newSectionName.trim() ||
+                addingSection ||
+                sectionTranslation.status === 'pending' ||
+                sectionTranslation.status === 'error'
+              }
+            >
+              {addingSection || sectionTranslation.status === 'pending' ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  {isAr ? 'جارٍ الترجمة…' : 'Translating…'}
+                </span>
+              ) : (
+                t('common.add')
+              )}
             </Button>
           </>
         }
@@ -458,6 +490,28 @@ export default function SectionManager({ model, onChange, ownerKind = 'model', r
             dir={isAr ? 'rtl' : 'ltr'}
             placeholder={isAr ? 'مثال: بيانات التواصل' : 'e.g. Contact Details'}
           />
+          {newSectionName.trim() && (
+            <div className="text-xs text-charcoal/55 -mt-2 ps-0.5 leading-relaxed">
+              {sectionTranslation.status === 'pending' && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 size={11} className="animate-spin" />
+                  {isAr ? 'يترجم تلقائياً…' : 'Auto-translating…'}
+                </span>
+              )}
+              {sectionTranslation.status === 'success' && sectionTranslation.result && (
+                <span dir={isAr ? 'ltr' : 'rtl'}>
+                  {isAr
+                    ? `الإنجليزية: ${sectionTranslation.result.label_en}`
+                    : `العربية: ${sectionTranslation.result.label_ar}`}
+                </span>
+              )}
+              {sectionTranslation.status === 'error' && (
+                <span className="text-red-500">
+                  {isAr ? 'تعذرت الترجمة — حاول مجدداً' : 'Translation failed — try again'}
+                </span>
+              )}
+            </div>
+          )}
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"

@@ -7,7 +7,7 @@ import { Pencil, Trash2, ChevronDown, Link2, AlertTriangle, ChevronsDownUp, Chev
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput } from '@/lib/autoTranslate';
+import { translateLabel } from '@/lib/translateLabel';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import FieldRow from './FieldRow';
@@ -38,11 +38,12 @@ export default function SectionCard({
   onReorderFields,
 }: SectionCardProps) {
   const { t } = useTranslation();
-  const { models } = useAppStore();
+  const { models, addToast } = useAppStore();
   const isAr = language === 'ar';
   const [editing, setEditing] = useState(false);
   const [editAr, setEditAr] = useState(section.label_ar);
   const [editEn, setEditEn] = useState(section.label_en);
+  const [savingEdit, setSavingEdit] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showMirrorConfig, setShowMirrorConfig] = useState(false);
@@ -68,9 +69,37 @@ export default function SectionCard({
     onReorderFields(oldIndex, newIndex);
   };
 
-  const saveEdit = () => {
-    onUpdate({ label_ar: editAr, label_en: editEn });
-    setEditing(false);
+  const saveEdit = async () => {
+    const ar = editAr.trim();
+    const en = editEn.trim();
+    if (!ar && !en) return;
+    // If exactly one side is filled, translate it. If both are filled, trust
+    // the user's manual entries (no translate). If both are empty we never
+    // get here.
+    if (ar && en) {
+      onUpdate({ label_ar: ar, label_en: en });
+      setEditing(false);
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const labels = await translateLabel(ar || en, 'section');
+      onUpdate({
+        label_ar: ar || labels.label_ar,
+        label_en: en || labels.label_en,
+      });
+      setEditAr(ar || labels.label_ar);
+      setEditEn(en || labels.label_en);
+      setEditing(false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(
+        isAr ? `تعذرت ترجمة اسم القسم: ${msg}` : `Section name translation failed: ${msg}`,
+        'error',
+      );
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   // Mirror config resolution — for the body pill when is_mirrored.
@@ -107,7 +136,9 @@ export default function SectionCard({
               className="form-input text-sm py-1.5 flex-1"
               dir="ltr"
             />
-            <Button onClick={saveEdit} className="py-1.5 px-4 text-xs">{t('common.save')}</Button>
+            <Button onClick={saveEdit} className="py-1.5 px-4 text-xs" disabled={savingEdit}>
+              {savingEdit ? (isAr ? 'يترجم…' : 'Translating…') : t('common.save')}
+            </Button>
           </div>
         ) : (
           <>
@@ -322,12 +353,11 @@ export default function SectionCard({
         {(() => {
           const groups = [...(section.field_groups ?? [])].sort((a, b) => a.order - b.order);
           const addGroup = () => {
-            const defaultLabel = isAr ? 'مجموعة جديدة' : 'New group';
-            const labels = bilingualFromInput(defaultLabel, language);
+            // Placeholder labels in both languages — the user renames immediately.
             const next: SectionFieldGroup = {
               id: uuid(),
-              label_ar: labels.label_ar,
-              label_en: labels.label_en,
+              label_ar: 'مجموعة جديدة',
+              label_en: 'New group',
               order: groups.length,
               default_collapsed: false,
             };
@@ -366,9 +396,20 @@ export default function SectionCard({
                   group={g}
                   isAr={isAr}
                   language={language}
-                  onRename={(label) => {
-                    const labels = bilingualFromInput(label, language);
-                    updateGroup(g.id, labels);
+                  onRename={async (label) => {
+                    try {
+                      const labels = await translateLabel(label.trim(), 'group');
+                      updateGroup(g.id, {
+                        label_ar: labels.label_ar,
+                        label_en: labels.label_en,
+                      });
+                    } catch (err) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      addToast(
+                        isAr ? `تعذرت ترجمة المجموعة: ${msg}` : `Group rename translation failed: ${msg}`,
+                        'error',
+                      );
+                    }
                   }}
                   onToggleDefaultCollapsed={(v) => updateGroup(g.id, { default_collapsed: v })}
                   onDelete={() => deleteGroup(g.id)}
@@ -406,7 +447,7 @@ function FieldGroupRow({
   group: SectionFieldGroup;
   isAr: boolean;
   language: Language;
-  onRename: (label: string) => void;
+  onRename: (label: string) => void | Promise<void>;
   onToggleDefaultCollapsed: (value: boolean) => void;
   onDelete: () => void;
 }) {

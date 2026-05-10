@@ -6,7 +6,7 @@ import { useAppStore } from '@/stores/appStore';
 import { ArrowRight, Save, GitBranch, Plus, Maximize2, Minimize2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
-import { bilingualFromInput } from '@/lib/autoTranslate';
+import { translateLabel } from '@/lib/translateLabel';
 import WorkflowCanvas from './canvas/WorkflowCanvas';
 import type { Workflow, WorkflowEvent, WorkflowBranch, ModelField } from '@/types';
 
@@ -165,12 +165,33 @@ export default function WorkflowEditorPage() {
           <Input
             value={isAr ? workflow.label_ar : workflow.label_en}
             onChange={(e) => {
-              const labels = bilingualFromInput(e.target.value, language);
+              // Update only the side the user is typing in. The opposite
+              // side gets filled by the translate-on-blur handler below.
               setWorkflow({
                 ...workflow,
-                label_ar: isAr ? e.target.value : labels.label_ar,
-                label_en: isAr ? labels.label_en : e.target.value,
+                label_ar: isAr ? e.target.value : workflow.label_ar,
+                label_en: isAr ? workflow.label_en : e.target.value,
               });
+            }}
+            onBlur={async (e) => {
+              const typed = e.target.value.trim();
+              if (!typed) return;
+              const otherSide = isAr ? workflow.label_en : workflow.label_ar;
+              if (otherSide && otherSide.trim()) return; // user filled both manually
+              try {
+                const labels = await translateLabel(typed, 'workflow');
+                setWorkflow((prev) => ({
+                  ...prev,
+                  label_ar: isAr ? prev.label_ar : labels.label_ar,
+                  label_en: isAr ? labels.label_en : prev.label_en,
+                }));
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                addToast(
+                  isAr ? `تعذرت ترجمة اسم القاعدة: ${msg}` : `Workflow name translation failed: ${msg}`,
+                  'error',
+                );
+              }
             }}
             required
             dir={isAr ? 'rtl' : 'ltr'}

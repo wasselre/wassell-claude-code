@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput } from '@/lib/autoTranslate';
+import { translateLabel } from '@/lib/translateLabel';
 import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import WidgetRenderer from './components/WidgetRenderer';
@@ -82,8 +82,33 @@ export default function DashboardEditorPage() {
           <input
             value={isAr ? dashboard.label_ar : dashboard.label_en}
             onChange={(e) => {
-              const labels = bilingualFromInput(e.target.value, language);
-              saveDashboard({ ...dashboard, label_ar: isAr ? e.target.value : labels.label_ar, label_en: isAr ? labels.label_en : e.target.value });
+              // Update only the typed side; opposite side gets filled on blur
+              // via the live translator.
+              saveDashboard({
+                ...dashboard,
+                label_ar: isAr ? e.target.value : dashboard.label_ar,
+                label_en: isAr ? dashboard.label_en : e.target.value,
+              });
+            }}
+            onBlur={async (e) => {
+              const typed = e.target.value.trim();
+              if (!typed) return;
+              const otherSide = isAr ? dashboard.label_en : dashboard.label_ar;
+              if (otherSide && otherSide.trim()) return;
+              try {
+                const labels = await translateLabel(typed, 'dashboard');
+                saveDashboard({
+                  ...dashboard,
+                  label_ar: isAr ? dashboard.label_ar : labels.label_ar,
+                  label_en: isAr ? labels.label_en : dashboard.label_en,
+                });
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                addToast(
+                  isAr ? `تعذرت ترجمة اسم اللوحة: ${msg}` : `Dashboard name translation failed: ${msg}`,
+                  'error',
+                );
+              }
             }}
             className="form-input py-1.5 text-sm w-56"
             dir={isAr ? 'rtl' : 'ltr'}

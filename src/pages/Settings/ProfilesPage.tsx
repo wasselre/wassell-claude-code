@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput } from '@/lib/autoTranslate';
 import { Shield, Plus, Pencil, Trash2, Users, ArrowRight, Lock } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -54,11 +53,12 @@ export default function ProfilesPage() {
         </div>
         <Button onClick={() => {
           const id = uuid();
-          const labels = bilingualFromInput(isAr ? 'ملف جديد' : 'New Profile', language);
+          // Hardcoded placeholder in both languages — the user renames in
+          // the profile editor where translation kicks in via the rename flow.
           saveProfile({
             id,
-            label_ar: labels.label_ar,
-            label_en: labels.label_en,
+            label_ar: 'ملف جديد',
+            label_en: 'New Profile',
             is_system: false,
             is_admin: false,
             model_permissions: [],

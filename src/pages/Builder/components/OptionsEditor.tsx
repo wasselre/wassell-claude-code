@@ -6,7 +6,8 @@ import { CSS } from '@dnd-kit/utilities';
 import { v4 as uuid } from 'uuid';
 import { GripVertical, Trash2, Plus, ChevronDown, ChevronRight, FolderPlus, Folder, Pencil, Lock, Check, List } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { bilingualFromInput, slugify } from '@/lib/autoTranslate';
+import { slugify } from '@/lib/autoTranslate';
+import { translateLabel } from '@/lib/translateLabel';
 import Modal from '@/components/ui/Modal';
 import type { FieldOption, FieldOptionGroup } from '@/types';
 
@@ -135,8 +136,9 @@ function OptionRow({
   onDelete: () => void;
   locked?: boolean;
 }) {
-  const { language } = useAppStore();
+  const { language, addToast } = useAppStore();
   const isAr = language === 'ar';
+  const [translating, setTranslating] = useState(false);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: option.id,
@@ -149,28 +151,62 @@ function OptionRow({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  // When either label is edited and `value` is still empty, seed it from the
-  // first non-empty input — so freshly-created options get a sensible slug
-  // without the user having to type one manually. Once `value` is populated
-  // (either auto-seeded or user-typed), label edits NEVER touch it — the api
-  // name is a stable identifier that workflows + filters compare as a literal
-  // string, so rewriting it on every keystroke silently broke every
-  // downstream reference.
+  // While the user is typing, just update the label + seed the slug from the
+  // sync slugify (works for Latin input). The opposite-language fill happens
+  // on blur via fillOppositeOnBlur — translating on every keystroke would
+  // burn API calls and feel laggy in a tight grid of options.
   const handleLabelArChange = (val: string) => {
     const patch: Partial<FieldOption> = { label_ar: val };
-    if (!option.value && val.trim()) patch.value = slugify(val);
+    if (!option.value && val.trim()) {
+      const sync = slugify(val);
+      if (sync) patch.value = sync;
+    }
     onUpdate(patch);
   };
 
   const handleLabelEnChange = (val: string) => {
     const patch: Partial<FieldOption> = { label_en: val };
-    if (!option.value && val.trim()) patch.value = slugify(val);
+    if (!option.value && val.trim()) {
+      const sync = slugify(val);
+      if (sync) patch.value = sync;
+    }
     onUpdate(patch);
   };
 
+  // On blur of the AR or EN input: if one side has content and the other is
+  // empty, translate. Also derive a slug if `value` is still empty. This
+  // gives "type one side, get the other for free" without the cost of
+  // translating mid-keystroke.
+  const fillOppositeOnBlur = async () => {
+    if (translating) return;
+    const ar = (option.label_ar ?? '').trim();
+    const en = (option.label_en ?? '').trim();
+    const slug = (option.value ?? '').trim();
+    const arMissing = !ar;
+    const enMissing = !en;
+    if (arMissing === enMissing && slug) return; // nothing to do
+    const source = ar || en;
+    if (!source) return;
+    setTranslating(true);
+    try {
+      const labels = await translateLabel(source, 'option');
+      const patch: Partial<FieldOption> = {};
+      if (arMissing) patch.label_ar = labels.label_ar;
+      if (enMissing) patch.label_en = labels.label_en;
+      if (!slug) patch.value = labels.name;
+      if (Object.keys(patch).length > 0) onUpdate(patch);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(
+        isAr ? `تعذرت ترجمة الخيار: ${msg}` : `Option translation failed: ${msg}`,
+        'error',
+      );
+    } finally {
+      setTranslating(false);
+    }
+  };
+
   const handleApiNameChange = (raw: string) => {
-    // slugify normalizes case + strips whitespace so we never store
-    // display-formatted strings as the api name.
     onUpdate({ value: slugify(raw) });
   };
 
@@ -203,16 +239,20 @@ function OptionRow({
       <input
         value={option.label_ar}
         onChange={(e) => handleLabelArChange(e.target.value)}
+        onBlur={fillOppositeOnBlur}
         className="form-input text-sm py-1.5 flex-1 min-w-0"
         placeholder="عربي"
         dir="rtl"
+        disabled={translating}
       />
       <input
         value={option.label_en}
         onChange={(e) => handleLabelEnChange(e.target.value)}
+        onBlur={fillOppositeOnBlur}
         className="form-input text-sm py-1.5 flex-1 min-w-0"
         placeholder="English"
         dir="ltr"
+        disabled={translating}
       />
       <input
         value={option.value}
@@ -393,7 +433,7 @@ export default function OptionsEditor({
   hint,
 }: OptionsEditorProps) {
   const { t } = useTranslation();
-  const { language } = useAppStore();
+  const { language, addToast } = useAppStore();
   const isAr = language === 'ar';
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [modalOpen, setModalOpen] = useState(false);
@@ -438,19 +478,37 @@ export default function OptionsEditor({
   };
 
   const addGroup = () => {
-    const defaultLabel = isAr ? 'مجموعة جديدة' : 'New group';
-    const labels = bilingualFromInput(defaultLabel, language);
+    // Both labels hardcoded — this is a placeholder until the user renames,
+    // and the rename path translates properly. No need to round-trip the
+    // stub through /api/translate just for "New group".
     const newGroup: FieldOptionGroup = {
       id: uuid(),
-      label_ar: labels.label_ar,
-      label_en: labels.label_en,
+      label_ar: 'مجموعة جديدة',
+      label_en: 'New group',
     };
     onGroupsChange([...groups, newGroup]);
   };
 
-  const renameGroup = (id: string, newLabel: string) => {
-    const labels = bilingualFromInput(newLabel, language);
-    onGroupsChange(groups.map((g) => (g.id === id ? { ...g, ...labels } : g)));
+  const renameGroup = async (id: string, newLabel: string) => {
+    const trimmed = newLabel.trim();
+    if (!trimmed) return;
+    try {
+      const labels = await translateLabel(trimmed, 'group');
+      onGroupsChange(groups.map((g) => (g.id === id ? {
+        ...g,
+        label_ar: labels.label_ar,
+        label_en: labels.label_en,
+      } : g)));
+    } catch (err) {
+      // Toast surfaced higher up; keep the user's typed value in the editor
+      // so they can retry without losing their input.
+      console.error('renameGroup translate failed', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(
+        isAr ? `تعذرت ترجمة اسم المجموعة: ${msg}` : `Group name translation failed: ${msg}`,
+        'error',
+      );
+    }
   };
 
   const deleteGroup = (id: string) => {
