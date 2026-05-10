@@ -1667,7 +1667,13 @@ const allProjectsModel: AppModel = {
             name: 'image_url',
             label_ar: 'صورة المشروع',
             label_en: 'Project Image',
-            type: 'url',
+            type: 'image',
+            // Drop-zone uploader → marketing-assets bucket → public URL
+            // stored as the field value. Same string shape as a `url`
+            // field so the website's <img src=…> rendering keeps working.
+            image_folder: 'reference',
+            image_accept: 'image/png,image/jpeg,image/webp',
+            image_max_size_mb: 10,
             required: false,
             order: 0,
             section_id: apWebsiteSectionId,
