@@ -33,6 +33,7 @@ import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import DecksPage from '@/pages/Decks/DecksPage';
+import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
@@ -127,6 +128,13 @@ function RecordListDispatcher() {
   }
   if (modelName === 'decks') {
     return <DecksPage />;
+  }
+  if (modelName === 'design_templates') {
+    // Card-grid library instead of the generic record-list table — each
+    // template's reference image is its primary identifier, so a visual
+    // browse beats column rows. Edit + delete are still routed to the
+    // standard record form via /model/design_templates/<id>.
+    return <TemplatesLibraryPage />;
   }
   // Singleton-config models — the list view is meaningless (always exactly
   // one record) and confusing (looks like a normal model, but isn't). Punt
