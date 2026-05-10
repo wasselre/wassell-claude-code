@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Plus, Search, ImageOff, Pencil, Trash2, MoreVertical, Layers } from 'lucide-react';
+import { Plus, Search, ImageOff, Pencil, Trash2, MoreVertical, Layers, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import TemplatesAiAgentModal from './TemplatesAiAgentModal';
 
 /**
  * Custom page for `/model/design_templates`. Renders the templates as a
@@ -22,6 +23,7 @@ export default function TemplatesLibraryPage() {
 
   const [query, setQuery] = useState('');
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [aiOpen, setAiOpen] = useState(false);
 
   const designTemplatesModel = useMemo(
     () => models.find((m) => m.name === 'design_templates'),
@@ -103,6 +105,15 @@ export default function TemplatesLibraryPage() {
           </div>
           <button
             type="button"
+            onClick={() => setAiOpen(true)}
+            className="btn-secondary flex items-center gap-2"
+            title={isAr ? 'الصق وصف القالب وسيقوم الذكاء الاصطناعي بإنشائه' : 'Paste a template description and the AI will build it'}
+          >
+            <Sparkles size={16} className="text-copper" />
+            {isAr ? 'إنشاء بالذكاء الاصطناعي' : 'AI Agent'}
+          </button>
+          <button
+            type="button"
             onClick={() => navigate(`/model/${designTemplatesModel.name}/new`)}
             className="btn-primary flex items-center gap-2"
           >
@@ -111,6 +122,13 @@ export default function TemplatesLibraryPage() {
           </button>
         </div>
       </div>
+
+      {aiOpen && (
+        <TemplatesAiAgentModal
+          modelId={designTemplatesModel.id}
+          onClose={() => setAiOpen(false)}
+        />
+      )}
 
       {/* Empty state */}
       {cards.length === 0 ? (
