@@ -220,17 +220,20 @@ export default async function handler(req: Request): Promise<Response> {
             };
           }).stream({
             model,
-            // 32 k total budget. With extended thinking on Opus 4.7,
-            // 16 k is reserved for hidden reasoning; the remaining 16 k
-            // is available for visible output (text + tool calls).
-            // Skill exploration + base64 print rarely need more than
-            // ~6 k of visible output, so this is comfortable.
             max_tokens: 32000,
-            // Extended thinking — gives Opus headroom to plan layouts
-            // before composing, mirroring the adaptive-thinking
-            // behavior of Claude Code sessions which produces the
-            // higher-quality decks the user gets locally.
-            thinking: { type: 'enabled', budget_tokens: 16000 },
+            // Adaptive thinking — Opus 4.7's preferred mode. The model
+            // decides how much hidden reasoning to spend per turn based
+            // on task complexity. Combined with effort=high, this
+            // mirrors Claude Code session behavior which is part of
+            // why local /wassel-general-ppt produces nicer decks than
+            // a plain non-thinking call. Sonnet 4.6 doesn't support
+            // adaptive thinking, so we omit thinking when on Sonnet.
+            ...(model === 'claude-opus-4-7'
+              ? {
+                  thinking: { type: 'adaptive' },
+                  output_config: { effort: 'high' },
+                }
+              : {}),
             betas: ANTHROPIC_BETAS,
             container: {
               skills: [{ type: 'custom', skill_id: skillId, version: 'latest' }],
