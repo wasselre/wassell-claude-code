@@ -65,11 +65,17 @@ const ANTHROPIC_BETAS = [
 // source of truth for HOW to design a Wassel deck. Let it drive: just
 // point Claude at the skill, anchor the save path, and stay out of the
 // way. This matches how /wassel-general-ppt behaves in Claude Code.
+//
+// One pragmatic addition: ask Claude to use a UNIQUE timestamped filename
+// per save, never overwrite. We've observed Anthropic's sandbox file
+// capture lose track when the same path is overwritten across iterations
+// — it apparently caches the file_id of the first write and silently
+// drops subsequent overwrites from the response. Unique names sidestep that.
 const SYSTEM_PROMPT = `Build a brand-compliant PowerPoint (.pptx) for Wassel Real Estate (وصل العقارية) per the user's brief.
 
 The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Read its SKILL.md and follow the workflow it describes — including its design-each-slide-fresh, vary-the-layout, read-the-engine-docstring instructions. Use the engine at scripts/wassel_chrome.py (primitives only — no shortcuts).
 
-Save the finished file to /mnt/user-data/outputs/<descriptive_slug>.pptx so the caller can pick it up.
+Save the finished file to /mnt/user-data/outputs/wassel-deck-<unix_timestamp_ms>.pptx (compute the timestamp in Python with int(time.time()*1000)). NEVER overwrite an existing file — every save uses a fresh timestamped name. This is required for the file to be captured correctly.
 
 Reply with one short sentence describing what you built.`;
 
@@ -262,14 +268,11 @@ export default async function handler(req: Request): Promise<Response> {
             // Fallback: scan Files API for any .pptx created during this
             // request window. Anthropic sometimes doesn't surface file_id
             // in the response even when the file landed in Files API.
-            //
-            // No `await` before the for-await-of — the SDK's list() is a
-            // PagePromise which is itself async-iterable (auto-paginates
-            // under the hood). Awaiting it first collapses it to a single
-            // Page object whose for-await-of behavior differs and the
-            // iteration silently yields nothing.
+            // We poll up to 3 times with a 2s gap between attempts — Files
+            // API has indexing latency and the file may appear shortly
+            // after the streaming response closes.
             console.log('[generate-deck] no file_id in response, scanning Files API');
-            try {
+            const scanFilesApi = async () => {
               const candidates: Array<{ id: string; filename: string; created_at: string }> = [];
               const listIter = (anthropic.beta.files as unknown as {
                 list: (args: Record<string, unknown>) => AsyncIterable<{
@@ -278,10 +281,9 @@ export default async function handler(req: Request): Promise<Response> {
                   created_at?: string;
                   size_bytes?: number;
                 }>;
-              }).list({ limit: 20 });
+              }).list({ limit: 30 });
               for await (const f of listIter) {
                 const ts = f.created_at ? new Date(f.created_at).getTime() : 0;
-                console.log(`[generate-deck] candidate id=${f.id} filename=${f.filename} created_at=${f.created_at} ts=${ts} threshold=${requestStartedAtMs}`);
                 if (ts >= requestStartedAtMs && (f.filename ?? '').endsWith('.pptx')) {
                   candidates.push({
                     id: f.id,
@@ -291,12 +293,22 @@ export default async function handler(req: Request): Promise<Response> {
                 }
               }
               candidates.sort((a, b) => b.created_at.localeCompare(a.created_at));
-              if (candidates.length > 0 && candidates[0]) {
-                outputFileId = candidates[0].id;
-                console.log(`[generate-deck] fallback recovered file_id=${outputFileId}`);
-                send({ type: 'status', phase: 'calling-claude', detail: 'recovered output via Files API fallback' });
-              } else {
-                console.log(`[generate-deck] fallback found 0 .pptx candidates after threshold`);
+              return candidates;
+            };
+            try {
+              for (let attempt = 0; attempt < 3 && !outputFileId; attempt++) {
+                if (attempt > 0) {
+                  console.log(`[generate-deck] fallback retry ${attempt + 1}/3 after 2s`);
+                  await new Promise((r) => setTimeout(r, 2000));
+                }
+                const candidates = await scanFilesApi();
+                console.log(`[generate-deck] fallback attempt ${attempt + 1}: ${candidates.length} candidates after threshold ${requestStartedAtMs}`);
+                if (candidates.length > 0 && candidates[0]) {
+                  outputFileId = candidates[0].id;
+                  console.log(`[generate-deck] fallback recovered file_id=${outputFileId} filename=${candidates[0].filename}`);
+                  send({ type: 'status', phase: 'calling-claude', detail: 'recovered output via Files API fallback' });
+                  break;
+                }
               }
             } catch (listErr) {
               console.error('[generate-deck] Files API list fallback failed:', listErr);
