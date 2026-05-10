@@ -29,6 +29,10 @@ import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
 import CallHistoryPanel from './components/CallHistoryPanel';
+import RecordFormModal from './components/RecordFormModal';
+import { useAutoLink } from './hooks/useAutoLink';
+import { useAutoFill } from './hooks/useAutoFill';
+import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
 import { isButtonVisible } from '@/lib/permissions';
 
@@ -123,6 +127,19 @@ export default function RecordFormPage() {
   // ID of the currently-running custom button (if any). Used to render a
   // spinner on the active button and disable other buttons while it runs.
   const [runningButtonId, setRunningButtonId] = useState<string | null>(null);
+  // Open record-form modal triggered by a `create_record` /
+  // `find_or_create_record` custom button. Null when no modal is open.
+  const [recordModal, setRecordModal] = useState<{
+    modelId: string;
+    recordId: string | null;
+    prefill?: Record<string, unknown>;
+  } | null>(null);
+
+  // Smart auto-link + auto-fill primitives. The hooks no-op when no field
+  // on this model declares the relevant config, so they're cheap to mount
+  // unconditionally for every record form.
+  useAutoLink({ model, formData, setFormData });
+  useAutoFill({ model, formData, setFormData });
 
   // Prev/next navigation uses the filtered+sorted list published by
   // RecordListPage. If no nav context is available (e.g. deep-linked into a
@@ -400,6 +417,50 @@ export default function RecordFormPage() {
               : 'Button ran with no record changes',
           'success',
         );
+      } else if (button.action.type === 'create_record') {
+        // Open RecordFormModal with a blank new record, prefilled per the
+        // action's mapping. No server call — the workflow engine isn't
+        // involved here. The modal's own save flow goes through the
+        // store's saveRecord (record_save RPC).
+        const prefill = buildCreatePrefill(button.action, formData);
+        setRecordModal({
+          modelId: button.action.target_model_id,
+          recordId: null,
+          prefill,
+        });
+        return;
+      } else if (button.action.type === 'find_or_create_record') {
+        // Look up the latest matching record. If found, open it for edit.
+        // If not (or the trigger record lacks the search criteria), open
+        // a blank create with prefill. Errors during the search are
+        // surfaced and we abort — better than silently falling through
+        // to "create new" which could create a duplicate.
+        let searchFailed = false;
+        const found = await findLatestMatch(
+          button.action,
+          formData,
+          (msg) => {
+            searchFailed = true;
+            addToast(
+              isAr ? `تعذر البحث عن السجل: ${msg}` : `Search failed: ${msg}`,
+              'error',
+            );
+          },
+        );
+        if (searchFailed) return;
+        if (found) {
+          setRecordModal({
+            modelId: button.action.target_model_id,
+            recordId: found.id,
+          });
+        } else {
+          setRecordModal({
+            modelId: button.action.target_model_id,
+            recordId: null,
+            prefill: buildPrefill(button.action.prefill, formData),
+          });
+        }
+        return;
       } else if (button.action.type === 'generate_design') {
         // Pre-flight validation. The orchestrator re-checks server-side,
         // but failing fast here avoids a round-trip and surfaces clearer
@@ -781,6 +842,16 @@ export default function RecordFormPage() {
         <div className="mt-6">
           <CallHistoryPanel phones={phoneValues} />
         </div>
+      )}
+
+      {/* Record-form modal triggered by create_record / find_or_create_record buttons */}
+      {recordModal && (
+        <RecordFormModal
+          modelId={recordModal.modelId}
+          recordId={recordModal.recordId}
+          prefill={recordModal.prefill}
+          onClose={() => setRecordModal(null)}
+        />
       )}
 
       {/* Delete modal */}

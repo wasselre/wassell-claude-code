@@ -184,6 +184,30 @@ export interface ModelField {
   image_max_size_mb?: number; // default 10
   image_accept?: string; // MIME pattern, default 'image/png,image/jpeg,image/webp'
   image_folder?: 'raw' | 'cleaned' | 'final' | 'reference'; // upload folder; default 'reference'
+  // Reverse-link primitive. When THIS field's value changes, the form
+  // debounce-searches the sibling lookup's target model for a record where
+  // `auto_link_target_field_name` matches this field's value, and on a
+  // unique match sets the lookup field to that record's id. Used by the
+  // visits model: typing a client phone in the `phone` field auto-selects
+  // the matching `client_id` lookup.
+  //
+  // `auto_link_normalize` controls how the typed value is compared. 'phone'
+  // routes through normalizePhone() to handle 0xx / 5xx / 966 / +966 all
+  // collapsing to the same E.164 form. Future-proofed as a discriminated
+  // string so we can add 'email_lower' / 'whitespace_collapsed' etc.
+  // without breaking existing rows.
+  auto_link_lookup_field_id?: string | null;
+  auto_link_target_field_name?: string | null;
+  auto_link_normalize?: 'phone';
+  // Forward auto-fill primitive. When the referenced lookup field's value
+  // changes, the form copies the linked record's `auto_fill_source_field_name`
+  // value into THIS field. Editable afterwards — user overrides survive
+  // until the lookup id changes again. Used by the visits model: picking
+  // a client_id auto-fills the visit's `name` from the client's
+  // `client_name`. Different from `mirror`: mirror is read-only and resolves
+  // at render time; auto-fill writes once on change and the user can edit.
+  auto_fill_from_lookup_field_id?: string | null;
+  auto_fill_source_field_name?: string | null;
 }
 
 // Notes field (type: 'notes'). Stored value is a chronological list of entries.
@@ -306,7 +330,11 @@ export type CustomButtonLocation = 'record_form' | 'record_list';
 // For now buttons can trigger a workflow OR fire the marketing-operations
 // design generator (Higgsfield two-phase orchestration). Future actions
 // extend this discriminated union.
-export type CustomButtonActionType = 'trigger_workflow' | 'generate_design';
+export type CustomButtonActionType =
+  | 'trigger_workflow'
+  | 'generate_design'
+  | 'create_record'
+  | 'find_or_create_record';
 
 export interface CustomButtonActionTriggerWorkflow {
   type: 'trigger_workflow';
@@ -323,9 +351,54 @@ export interface CustomButtonActionGenerateDesign {
   type: 'generate_design';
 }
 
+/**
+ * Maps one field on the trigger record to one field on the new/found target
+ * record. Used by `create_record` (prefill) and `find_or_create_record`
+ * (search criteria + prefill on no-match). Both names are the field's
+ * snake_case slug — never UUIDs — because the consumer reads/writes the
+ * record's JSONB `data` map by slug.
+ */
+export interface CustomButtonFieldMap {
+  target_field_name: string;
+  source_field_name: string;
+}
+
+/**
+ * Opens a record-form modal for `target_model_id` with a blank new record.
+ * `prefill` copies values from the trigger record into the new record's
+ * data before the user sees the form. Used by the Follow-Ups buttons
+ * "Book a visit" (target = visits) and "Schedule a follow-up" (target =
+ * followups), both prefilling the client.
+ */
+export interface CustomButtonActionCreateRecord {
+  type: 'create_record';
+  target_model_id: string;
+  prefill?: CustomButtonFieldMap[];
+}
+
+/**
+ * Opens a record-form modal for `target_model_id` with either:
+ * - an existing record (the latest match by `search_by` + `order_by`), or
+ * - a blank new record prefilled per `prefill` if no match exists.
+ *
+ * `search_by` is treated as an AND of equality predicates against
+ * `unified_records.data->>field`. Used by the Follow-Ups "Register a visit"
+ * button to find the most recent visit for the trigger record's client_id
+ * and surface it for editing.
+ */
+export interface CustomButtonActionFindOrCreateRecord {
+  type: 'find_or_create_record';
+  target_model_id: string;
+  search_by: CustomButtonFieldMap[];
+  order_by: 'created_at_desc' | 'updated_at_desc';
+  prefill?: CustomButtonFieldMap[];
+}
+
 export type CustomButtonAction =
   | CustomButtonActionTriggerWorkflow
-  | CustomButtonActionGenerateDesign;
+  | CustomButtonActionGenerateDesign
+  | CustomButtonActionCreateRecord
+  | CustomButtonActionFindOrCreateRecord;
 
 export interface CustomButton {
   id: string;

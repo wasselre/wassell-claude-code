@@ -180,6 +180,18 @@ const DISTRICT_OPTIONS: FieldOption[] = [
 const allProjectsId = uuid();
 export const unitsId = uuid();
 export const appointmentsId = uuid();
+// Visits model (2026-05-10): user-built but seeded so fresh installs match
+// the migrated production state. Schema lives near ourProjectsModel below.
+// Field IDs are declared up-front because the followups model's
+// custom_buttons reference visits by id, and visits' auto-link / auto-fill
+// props on `phone` and `name` reference the sibling `client_id` lookup id.
+export const visitsId = uuid();
+const visitsBasicSectionId = uuid();
+const visitsClientFieldId = uuid();
+const visitsPhoneFieldId = uuid();
+const visitsNameFieldId = uuid();
+const visitsScheduledFieldId = uuid();
+const visitsProjectFieldId = uuid();
 
 // ============================================================
 // DEVELOPERS MODEL (new 2026-04-18)
@@ -1176,6 +1188,51 @@ const followupsModel: AppModel = {
         ],
       },
     ],
+    // Three action buttons surfaced in the follow-up record form. All
+    // three carry the trigger record's client through to the target via
+    // a `client_id → client_id` prefill mapping. "Register a visit" runs
+    // a find-or-create against the visits model: latest visit for this
+    // client wins; if there is none, a blank visit form opens prefilled.
+    custom_buttons: [
+      {
+        id: uuid(),
+        label_ar: 'حجز زيارة',
+        label_en: 'Book a visit',
+        icon: 'calendar-plus',
+        locations: ['record_form'],
+        action: {
+          type: 'create_record',
+          target_model_id: visitsId,
+          prefill: [{ target_field_name: 'client_id', source_field_name: 'client_id' }],
+        },
+      },
+      {
+        id: uuid(),
+        label_ar: 'جدولة متابعة',
+        label_en: 'Schedule follow-up',
+        icon: 'calendar-clock',
+        locations: ['record_form'],
+        action: {
+          type: 'create_record',
+          target_model_id: followupsId,
+          prefill: [{ target_field_name: 'client_id', source_field_name: 'client_id' }],
+        },
+      },
+      {
+        id: uuid(),
+        label_ar: 'تسجيل زيارة',
+        label_en: 'Register a visit',
+        icon: 'map-pin-check',
+        locations: ['record_form'],
+        action: {
+          type: 'find_or_create_record',
+          target_model_id: visitsId,
+          search_by: [{ target_field_name: 'client_id', source_field_name: 'client_id' }],
+          order_by: 'created_at_desc',
+          prefill: [{ target_field_name: 'client_id', source_field_name: 'client_id' }],
+        },
+      },
+    ],
   },
 };
 
@@ -1949,6 +2006,142 @@ const ourProjectsModel: AppModel = {
       },
     ],
     section_selector_field_id: null,
+  },
+};
+
+// ============================================================
+// VISITS MODEL (2026-05-10)
+// ============================================================
+// Records of physical visits to projects. Reached from the Follow-Ups
+// "Book a visit" / "Register a visit" buttons (which trigger the
+// create_record / find_or_create_record button actions).
+//
+// Two pieces of UX worth knowing about:
+//
+// 1. The `client_id` lookup displays the client's `client_code` auto-ID
+//    (e.g. "CLT-0001") in the dropdown rather than the client's name.
+//    This is on purpose — the user identifies clients by code in the
+//    visits flow.
+//
+// 2. The form is bidirectional on phone vs client_id:
+//      - Typing into `phone` runs `useAutoLink` → searches clients by
+//        `phone_number` (with normalizePhone()) → on a unique match
+//        sets `client_id`.
+//      - Picking `client_id` runs `useAutoFill` → fills `name` from
+//        `client_name`. The phone field also auto-fills from
+//        `phone_number`, but is editable and the user's typed value
+//        wins until the lookup id changes.
+//
+// Kept as a builder model (NOT frozen) per explicit request — the
+// schema is expected to evolve before being promoted to a typed table.
+const visitsModel: AppModel = {
+  id: visitsId,
+  name: 'visits',
+  label_ar: 'الزيارات',
+  label_en: 'Visits',
+  icon: 'map-pin',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: visitsNameFieldId,
+    subtitle_field_id: visitsScheduledFieldId,
+    badge_field_id: null,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: visitsBasicSectionId,
+        label_ar: 'تفاصيل الزيارة',
+        label_en: 'Visit Details',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          {
+            id: visitsClientFieldId,
+            name: 'client_id',
+            label_ar: 'العميل',
+            label_en: 'Client',
+            type: 'lookup',
+            required: true,
+            order: 0,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            lookup_model_id: clientsId,
+            // Show the client's auto-id (CLT-0001 …) in the picker, not the name.
+            lookup_display_field: 'client_code',
+          },
+          {
+            id: visitsPhoneFieldId,
+            name: 'phone',
+            label_ar: 'رقم الجوال',
+            label_en: 'Phone',
+            type: 'phone',
+            required: false,
+            order: 1,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            default_country_code: '+966',
+            // Reverse-search: typing a phone hunts a client by phone_number
+            // (after normalization) and sets client_id on a unique match.
+            auto_link_lookup_field_id: visitsClientFieldId,
+            auto_link_target_field_name: 'phone_number',
+            auto_link_normalize: 'phone',
+            // Forward auto-fill: when the user picks a client_id directly,
+            // pull the client's phone_number into this editable field.
+            auto_fill_from_lookup_field_id: visitsClientFieldId,
+            auto_fill_source_field_name: 'phone_number',
+          },
+          {
+            id: visitsNameFieldId,
+            name: 'name',
+            label_ar: 'الاسم',
+            label_en: 'Name',
+            type: 'text',
+            required: false,
+            order: 2,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            auto_fill_from_lookup_field_id: visitsClientFieldId,
+            auto_fill_source_field_name: 'client_name',
+          },
+          {
+            id: visitsScheduledFieldId,
+            name: 'scheduled_datetime',
+            label_ar: 'موعد الزيارة',
+            label_en: 'Scheduled Date & Time',
+            type: 'datetime',
+            required: false,
+            order: 3,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+          },
+          {
+            id: visitsProjectFieldId,
+            name: 'project_id',
+            label_ar: 'المشروع',
+            label_en: 'Project',
+            type: 'lookup',
+            required: false,
+            order: 4,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            lookup_model_id: ourProjectsId,
+            lookup_display_field: 'project_name',
+          },
+        ],
+      },
+    ],
   },
 };
 
@@ -3326,6 +3519,7 @@ export const SEED_MODELS: AppModel[] = [
   clientsModel,
   followupsModel,
   appointmentsModel,
+  visitsModel,
   developersModel,
   unitsModel,
   allProjectsModel,

@@ -281,31 +281,41 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
                   <label className="block text-xs font-bold text-charcoal/60 mb-1">
                     {isAr ? 'سير العمل عند الضغط' : 'Workflow to trigger on click'}
                   </label>
-                  {btn.action.type === 'generate_design' ? (
+                  {btn.action.type === 'trigger_workflow' ? (
+                    <select
+                      className="form-input w-full"
+                      value={btn.action.workflow_id}
+                      onChange={(e) =>
+                        patchButton(btn.id, {
+                          action: { type: 'trigger_workflow', workflow_id: e.target.value },
+                        })
+                      }
+                    >
+                      <option value="">
+                        {isAr ? '— اختر سير عمل —' : '— Select a workflow —'}
+                      </option>
+                      {triggerableWorkflows.map((wf) => (
+                        <option key={wf.id} value={wf.id}>
+                          {isAr ? wf.label_ar : wf.label_en}
+                        </option>
+                      ))}
+                    </select>
+                  ) : btn.action.type === 'generate_design' ? (
                     <div className="form-input bg-sand/5 text-charcoal/60 italic cursor-not-allowed">
                       {isAr
                         ? 'هذا الزر مرتبط بمولّد التصميم النظامي ولا يستخدم سير عمل.'
                         : 'This button is wired to the built-in design generator and does not use a workflow.'}
                     </div>
                   ) : (
-                  <select
-                    className="form-input w-full"
-                    value={btn.action.workflow_id}
-                    onChange={(e) =>
-                      patchButton(btn.id, {
-                        action: { type: 'trigger_workflow', workflow_id: e.target.value },
-                      })
-                    }
-                  >
-                    <option value="">
-                      {isAr ? '— اختر سير عمل —' : '— Select a workflow —'}
-                    </option>
-                    {triggerableWorkflows.map((wf) => (
-                      <option key={wf.id} value={wf.id}>
-                        {isAr ? wf.label_ar : wf.label_en}
-                      </option>
-                    ))}
-                  </select>
+                    // create_record / find_or_create_record — Builder UI for these
+                    // is a follow-up. Today they're configured via SQL migration
+                    // (see src/data/seedModels.ts followups custom_buttons +
+                    // 2026-05-10_visits_rebuild_and_followup_buttons.sql).
+                    <div className="form-input bg-sand/5 text-charcoal/60 italic cursor-not-allowed">
+                      {isAr
+                        ? 'هذا الزر يفتح نافذة إنشاء سجل (يُهيّأ عبر الكود حالياً).'
+                        : 'This button opens a record-form modal (configured via code for now).'}
+                    </div>
                   )}
                   {btn.action.type === 'trigger_workflow' && triggerableWorkflows.length === 0 && (
                     <p className="text-xs text-amber-700 mt-1">
