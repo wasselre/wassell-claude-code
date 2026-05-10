@@ -81,7 +81,12 @@ export function useAppVersionPoller(): AppVersionState {
         const body = (await res.json()) as VersionResponse;
         const live = body.sha;
         if (cancelled) return;
-        if (live && typeof live === 'string') {
+        // Ignore sentinel values — those mean Vercel didn't have a real SHA
+        // to stamp this deploy with. Treating them as a mismatch would show
+        // the banner forever on otherwise-fine deploys.
+        const liveIsValid = live && typeof live === 'string'
+          && live !== 'unknown' && !live.startsWith('dev-');
+        if (liveIsValid) {
           setLiveVersion(live);
           if (live !== loadedVersion) {
             setUpdateAvailable(true);

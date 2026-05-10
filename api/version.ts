@@ -21,9 +21,11 @@ export const config = {
 };
 
 export default function handler(_req: IncomingMessage, res: ServerResponse): void {
-  // VERCEL_GIT_COMMIT_SHA is injected per deploy. Locally we don't run this
-  // (Vite dev doesn't serve /api), so the fallback is mostly defensive.
-  const sha = (process.env.VERCEL_GIT_COMMIT_SHA ?? 'dev').slice(0, 12);
+  // VERCEL_GIT_COMMIT_SHA is injected per Git deploy. CLI deploys (no git
+  // context) sometimes set it to a string of zeros — treat that as missing.
+  const raw = (process.env.VERCEL_GIT_COMMIT_SHA ?? '').trim();
+  const isZeroes = /^0+$/.test(raw);
+  const sha = raw && !isZeroes ? raw.slice(0, 12) : 'unknown';
   const deployedAt = process.env.VERCEL_DEPLOYMENT_CREATED_AT ?? null;
   const body = JSON.stringify({ sha, deployedAt });
   res.statusCode = 200;

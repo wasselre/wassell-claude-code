@@ -3,11 +3,16 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 // Build version stamp — used by the in-app update detector.
-// On Vercel: `VERCEL_GIT_COMMIT_SHA` is set automatically per build.
+// On Vercel git deploys: `VERCEL_GIT_COMMIT_SHA` is set automatically per build.
+// On Vercel CLI deploys (which carry no commit context): the env var is
+// either unset or a string of zeros — both treated as fallback.
 // Locally: falls back to a timestamp so dev rebuilds still differ.
+const rawSha = (process.env.VERCEL_GIT_COMMIT_SHA ?? '').trim();
+const isZeroes = /^0+$/.test(rawSha);
 const buildVersion =
-  process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 12)
-  ?? `dev-${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
+  rawSha && !isZeroes
+    ? rawSha.slice(0, 12)
+    : `dev-${new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14)}`;
 
 export default defineConfig({
   plugins: [react()],
