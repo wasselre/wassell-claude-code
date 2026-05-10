@@ -406,7 +406,9 @@ export default function RecordFormPage() {
         // error messages. Required: project, template, raw_photo.
         const missing: string[] = [];
         if (!formData.project) missing.push(isAr ? 'المشروع' : 'project');
-        if (!formData.template) missing.push(isAr ? 'القالب' : 'template');
+        const tplsRaw = formData.templates;
+        const tplsArr = Array.isArray(tplsRaw) ? (tplsRaw as unknown[]).filter((x) => typeof x === 'string') : [];
+        if (tplsArr.length === 0) missing.push(isAr ? 'القوالب (اختر واحداً على الأقل)' : 'templates (pick at least one)');
         if (!formData.raw_photo) missing.push(isAr ? 'الصورة الخام' : 'raw photo');
         if (missing.length > 0) {
           addToast(

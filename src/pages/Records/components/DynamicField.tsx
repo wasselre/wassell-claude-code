@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
@@ -12,6 +12,8 @@ import NotesField from './NotesField';
 import RangeField from './RangeField';
 import TableField from './TableField';
 import TemplateVariablesField from './TemplateVariablesField';
+import TemplatesPickerModal from './TemplatesPickerModal';
+import GenerationsGallery from './GenerationsGallery';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { uploadImage, deleteImage, type ImageFolder } from '@/lib/imageUpload';
@@ -460,7 +462,7 @@ export default function DynamicField({ field, value, onChange, recordData, compa
           );
         }
         const safeValue = (value && typeof value === 'object' && !Array.isArray(value))
-          ? (value as Record<string, { source: 'manual' | 'mirror'; value: string | number; mirror_field?: string }>)
+          ? (value as Record<string, Record<string, { source: 'manual' | 'mirror'; value: string | number; mirror_field?: string }>>)
           : {};
         return (
           <TemplateVariablesField
@@ -468,6 +470,29 @@ export default function DynamicField({ field, value, onChange, recordData, compa
             recordData={recordData ?? {}}
             value={safeValue}
             onChange={onChange}
+          />
+        );
+      }
+
+      case 'templates_picker':
+        return (
+          <TemplatesPickerInput
+            value={Array.isArray(value) ? (value as string[]) : []}
+            onChange={onChange}
+            isAr={isAr}
+          />
+        );
+
+      case 'generations_gallery': {
+        const generations = (recordData?.generations && typeof recordData.generations === 'object' && !Array.isArray(recordData.generations))
+          ? (recordData.generations as Record<string, unknown>)
+          : {};
+        const templateIds = Array.isArray(recordData?.templates) ? (recordData?.templates as string[]) : [];
+        return (
+          <GenerationsGallery
+            templateIds={templateIds}
+            generations={generations}
+            isAr={isAr}
           />
         );
       }
@@ -637,5 +662,102 @@ function ImageFieldInput({ value, folder, accept, maxSizeMb, onChange, isAr }: I
         className="sr-only"
       />
     </label>
+  );
+}
+
+interface TemplatesPickerInputProps {
+  value: string[];
+  onChange: (value: unknown) => void;
+  isAr: boolean;
+}
+
+/**
+ * Renders the trigger button + selected-template chips for a
+ * `templates_picker` field. Clicking opens the card-grid modal.
+ *
+ * Stored value: `string[]` of template IDs. The marketing-operations
+ * orchestrator iterates this list and runs the three-phase generation
+ * once per id.
+ */
+function TemplatesPickerInput({ value, onChange, isAr }: TemplatesPickerInputProps) {
+  const { models, records } = useAppStore();
+  const [modalOpen, setModalOpen] = useState(false);
+
+  const designTemplates = useMemo(() => {
+    const dt = models.find((m) => m.name === 'design_templates');
+    if (!dt) return [];
+    return records[dt.id] ?? [];
+  }, [models, records]);
+
+  const selected = value
+    .map((id) => {
+      const r = designTemplates.find((rec) => rec.id === id);
+      if (!r) return null;
+      const data = r.data as Record<string, unknown>;
+      return {
+        id,
+        name: typeof data.name === 'string' ? data.name : id,
+        referenceImage: typeof data.reference_image === 'string' ? data.reference_image : '',
+      };
+    })
+    .filter((x): x is { id: string; name: string; referenceImage: string } => x !== null);
+
+  const removeOne = (id: string) => {
+    onChange(value.filter((x) => x !== id));
+  };
+
+  return (
+    <>
+      <div className="space-y-2">
+        <button
+          type="button"
+          onClick={() => setModalOpen(true)}
+          className="form-input w-full flex items-center justify-between text-start hover:bg-cream/40 transition-colors"
+        >
+          <span className={value.length === 0 ? 'text-charcoal/40' : 'text-charcoal'}>
+            {value.length === 0
+              ? (isAr ? 'انقر لاختيار قوالب...' : 'Click to pick templates...')
+              : isAr
+                ? `${value.length} قالب مختار`
+                : `${value.length} template${value.length === 1 ? '' : 's'} selected`}
+          </span>
+          <span className="text-charcoal/40 text-sm">
+            {isAr ? 'تعديل' : 'Edit'}
+          </span>
+        </button>
+        {selected.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+            {selected.map((s) => (
+              <div
+                key={s.id}
+                className="relative rounded-lg overflow-hidden border border-sand/40 bg-white"
+              >
+                <div className="aspect-square bg-sand/20 flex items-center justify-center overflow-hidden">
+                  {s.referenceImage ? (
+                    <img src={s.referenceImage} alt="" className="w-full h-full object-cover" loading="lazy" />
+                  ) : null}
+                </div>
+                <div className="p-2 text-xs font-bold text-charcoal truncate">{s.name}</div>
+                <button
+                  type="button"
+                  onClick={() => removeOne(s.id)}
+                  className="absolute top-1.5 end-1.5 p-1 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
+                  aria-label={isAr ? 'إزالة' : 'Remove'}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      {modalOpen && (
+        <TemplatesPickerModal
+          selectedIds={value}
+          onSave={(ids) => onChange(ids)}
+          onClose={() => setModalOpen(false)}
+        />
+      )}
+    </>
   );
 }

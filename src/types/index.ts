@@ -22,7 +22,9 @@ export type FieldType =
   | 'formula'
   | 'table'
   | 'image'
-  | 'template_variables';
+  | 'template_variables'
+  | 'templates_picker'
+  | 'generations_gallery';
 
 // Column in a `table` field. The table's stored value on a record is an
 // array of row objects keyed by `name` (slug). Phase-1 storage mode is

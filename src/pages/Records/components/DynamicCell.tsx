@@ -158,16 +158,50 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
     }
 
     case 'template_variables': {
-      // Compact summary for the table view: show how many variables are filled.
-      const map = (value && typeof value === 'object' && !Array.isArray(value))
-        ? (value as Record<string, { value: unknown }>)
+      // Two-level map: { [templateId]: { [varName]: { value } } }.
+      // Sum across templates for the compact table-cell summary.
+      const outer = (value && typeof value === 'object' && !Array.isArray(value))
+        ? (value as Record<string, Record<string, { value: unknown }>>)
         : {};
-      const filled = Object.values(map).filter((entry) => entry?.value !== undefined && entry?.value !== '').length;
-      const total = Object.keys(map).length;
+      let filled = 0;
+      let total = 0;
+      for (const inner of Object.values(outer)) {
+        if (!inner || typeof inner !== 'object') continue;
+        for (const entry of Object.values(inner)) {
+          total++;
+          if (entry?.value !== undefined && entry?.value !== '') filled++;
+        }
+      }
       if (total === 0) return <span className="text-charcoal/20">—</span>;
       return (
         <span className="text-xs text-charcoal/60" dir="ltr">
           {filled}/{total} {isAr ? 'متغيرات' : 'vars'}
+        </span>
+      );
+    }
+
+    case 'templates_picker': {
+      const ids = Array.isArray(value) ? (value as string[]) : [];
+      if (ids.length === 0) return <span className="text-charcoal/20">—</span>;
+      return (
+        <span className="text-xs text-charcoal/60" dir="ltr">
+          {ids.length} {isAr ? 'قالب' : 'template' + (ids.length === 1 ? '' : 's')}
+        </span>
+      );
+    }
+
+    case 'generations_gallery': {
+      // Read from recordData.generations (sibling field) for a count.
+      const gens = recordData?.generations;
+      const map = (gens && typeof gens === 'object' && !Array.isArray(gens))
+        ? (gens as Record<string, { status?: string }>)
+        : {};
+      const total = Object.keys(map).length;
+      if (total === 0) return <span className="text-charcoal/20">—</span>;
+      const done = Object.values(map).filter((g) => g?.status === 'complete').length;
+      return (
+        <span className="text-xs text-charcoal/60" dir="ltr">
+          {done}/{total} {isAr ? 'مكتمل' : 'done'}
         </span>
       );
     }
