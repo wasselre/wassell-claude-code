@@ -206,7 +206,10 @@ function BriefForm({
     attachments: DeckAttachment[];
   }) => Promise<void>;
 }) {
-  const userId = useAppStore((s) => s.currentUserId);
+  // Storage path-prefix RLS keys off auth.uid() (the Supabase auth user id),
+  // NOT the CRM-internal users.id. Use authUid here so uploads land at
+  // <auth.uid()>/<deck_id>/uploads/... and the storage policy passes.
+  const userId = useAppStore((s) => s.authUid);
   const [title, setTitle] = useState((record.data.title as string | undefined) ?? '');
   const [brief, setBrief] = useState((record.data.brief as string | undefined) ?? '');
   const [language, setLanguage] = useState<LanguageChoice>(
