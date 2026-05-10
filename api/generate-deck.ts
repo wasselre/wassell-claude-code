@@ -61,23 +61,23 @@ const ANTHROPIC_BETAS = [
 
 const SYSTEM_PROMPT = `You are building a Wassel Real Estate (وصل العقارية) brand-compliant PowerPoint (.pptx) per the user's brief.
 
-Resources available to you:
-- The 'wassel-general-ppt' skill is loaded — its SKILL.md spells out the brand contract (palette, Amiri font, Arabic typography rules, wording rules) and the engine API. Read it first.
-- The skill's scripts/wassel_chrome.py is the engine: brand constants, size presets, and the primitives (new_presentation, blank_slide, add_rect, add_text, add_logo, add_shape_hyperlink, clean_text). Compose every slide from these primitives.
-- The code_execution tool runs Python in a sandbox where the skill files are auto-mounted at /mnt/skills/.
+Resources:
+- The 'wassel-general-ppt' skill is loaded under /mnt/skills/. Its SKILL.md spells out the brand contract (palette, Amiri font, Arabic typography rules, wording rules); scripts/wassel_chrome.py is the engine (constants, size presets, primitives: new_presentation, blank_slide, add_rect, add_text, add_logo, add_shape_hyperlink).
+- The code_execution tool runs Python in a sandbox.
 
-What to do:
-1. Read the brief carefully. Pick a canvas size that fits the purpose (don't default to 16:9 reflexively).
-2. Compose a custom Python build script that produces a deck whose layout, sectioning, and visual approach are specific to the brief — do NOT fall back to a generic template. Variety across decks is a hard requirement.
-3. Save the output to /mnt/user-data/outputs/<descriptive_slug>.pptx.
-4. Reply with one short sentence summarizing what you built (e.g. "Built a 7-slide A4-portrait capability deck with mosaic project grid"). Don't paste the script — the file is what matters.
+How to work — output budget is tight, do NOT over-explore:
+1. Quickly read SKILL.md and the top of wassel_chrome.py (one read each, no more).
+2. Write the COMPLETE build script in a SINGLE file via the text editor — composing every slide before the first execution. Don't write skeleton-then-iterate.
+3. Run it once with bash. The script must save to /mnt/user-data/outputs/<slug>.pptx.
+4. If the run errors, fix and re-run ONCE. Do not iterate further — partial output is worse than a smaller scope.
+5. Reply with one short sentence describing what you built. Don't paste the script.
 
-Hard rules (the engine enforces some, the rest are on you):
-- Amiri font on every text element. The engine sets it on all three OOXML font slots.
-- Brand palette only (COPPER #B8734F, SAND #E8D9C0, BROWN #6B4226, CREAM #F8F5E9, GOLD #D9B57F, CHARCOAL #3F3F3F, WHITE #FFFFFF). No off-palette fill or stroke.
-- Arabic typography: digits → Arabic-Indic, decimals → ٫, thousands → ٬, em-dashes wrapped with RLM in Arabic context (auto via add_text).
-- Wording: 'نادي' not 'نادٍ'. 'نظام وصل' not 'Wassel CRM' / 'CRM وصل'. Latin codes inside Arabic paragraphs wrapped with LRM marks.
-- File MUST land at /mnt/user-data/outputs/. Anything else won't be picked up.`;
+Critical rules:
+- Output file MUST end up at /mnt/user-data/outputs/<slug>.pptx — anything else won't be returned to the user.
+- If the brief is huge (10+ slides), trim to the highest-signal slides rather than partial output. Better a clean 6-slide deck than a token-cut 12-slide one.
+- Vary layout per slide (full-bleed, mosaic, hero, columns) — don't fall back to one template.
+- Amiri font everywhere. Brand palette only (COPPER #B8734F, SAND #E8D9C0, BROWN #6B4226, CREAM #F8F5E9, GOLD #D9B57F, CHARCOAL #3F3F3F, WHITE #FFFFFF) — no other colors.
+- Wording: 'نادي' not 'نادٍ'; 'نظام وصل' not 'Wassel CRM' / 'CRM وصل'.`;
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
@@ -202,7 +202,12 @@ export default async function handler(req: Request): Promise<Response> {
             };
           }).stream({
             model,
-            max_tokens: 8192,
+            // Opus 4.7 supports up to 32k output tokens. With a complex
+            // brief Claude can spend several thousand on the bash steps
+            // alone (each script edit + run round-trips through the
+            // model). The earlier 8192 cap caused stop_reason=max_tokens
+            // before the final .pptx was saved.
+            max_tokens: 32000,
             betas: ANTHROPIC_BETAS,
             container: {
               skills: [{ type: 'custom', skill_id: skillId, version: 'latest' }],
@@ -215,7 +220,25 @@ export default async function handler(req: Request): Promise<Response> {
           // Forward content_block_start events as progress notes — the
           // user sees "Claude is editing the script" / "running the
           // sandbox" instead of staring at a single spinner for 90s.
+          // Also belt-and-suspenders capture file_id from any event, in
+          // case the SDK's finalMessage assembly drops nested fields.
+          let outputFileId: string | null = null;
+          const captureFileId = (root: unknown): void => {
+            const seen = new Set<unknown>();
+            const stack: unknown[] = [root];
+            while (stack.length > 0) {
+              const node = stack.pop();
+              if (!node || typeof node !== 'object' || seen.has(node)) continue;
+              seen.add(node);
+              for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+                if (k === 'file_id' && typeof v === 'string') outputFileId = v;
+                else if (v && typeof v === 'object') stack.push(v);
+              }
+            }
+          };
+
           for await (const event of turn) {
+            captureFileId(event);
             if (event.type === 'content_block_start') {
               const cb = (event as unknown as { content_block?: { type?: string; name?: string } }).content_block;
               const cbType = cb?.type ?? 'unknown';
@@ -225,29 +248,25 @@ export default async function handler(req: Request): Promise<Response> {
             }
           }
           const response = await turn.finalMessage();
-
-          // Walk every block recursively for any `file_id` value. The
-          // shape varies: `bash_code_execution_tool_result` nests file_id
-          // at block.content.content[i].file_id, while a future block
-          // type might place it elsewhere. Take the LAST file_id found —
-          // if Claude regenerates the deck across iterations, the latest
-          // wins.
-          let outputFileId: string | null = null;
-          const seen = new Set<unknown>();
-          const stack: unknown[] = [...response.content];
-          while (stack.length > 0) {
-            const node = stack.pop();
-            if (!node || typeof node !== 'object' || seen.has(node)) continue;
-            seen.add(node);
-            for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-              if (k === 'file_id' && typeof v === 'string') outputFileId = v;
-              else if (v && typeof v === 'object') stack.push(v);
-            }
-          }
+          captureFileId(response.content);
 
           if (!outputFileId) {
+            // Use stop_reason to give a precise error rather than a
+            // generic "too vague" hint that misled the user earlier.
+            const stopReason = (response as unknown as { stop_reason?: string }).stop_reason;
+            const lastText = response.content
+              .filter((b) => (b as { type?: string }).type === 'text')
+              .map((b) => (b as { text?: string }).text ?? '')
+              .pop()
+              ?.slice(0, 200);
+            const blockTypes = response.content.map((b) => (b as { type?: string }).type ?? '?').join(', ');
+            if (stopReason === 'max_tokens') {
+              throw new Error(
+                `Claude ran out of output tokens before saving the .pptx (the brief is too large for one pass). Try a shorter brief — fewer slides or less detail per slide. Last note from Claude: "${lastText ?? '(empty)'}"`,
+              );
+            }
             throw new Error(
-              'Claude did not produce an output file. The brief may be too vague — try describing the deck more concretely (purpose, audience, slide count, language).',
+              `Claude did not save a file. stop_reason=${stopReason ?? 'unknown'}, block types: [${blockTypes}], last text: "${lastText ?? '(empty)'}"`,
             );
           }
 
