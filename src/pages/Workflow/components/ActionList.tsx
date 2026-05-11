@@ -32,12 +32,39 @@ function parseDateExpression(expr: string): DateOffsetRow[] {
   return rows;
 }
 
-function serializeDateOffsets(rows: DateOffsetRow[]): string {
-  return rows
+// Pull the `@HH:MM` token out of a serialized expression. Returns null if
+// no time-of-day override was specified — meaning the result keeps the
+// base date's time. Returns `{hours, minutes}` otherwise. The engine's
+// applyDateExpression accepts the same token.
+function parseTimeOfDay(expr: string): { hours: string; minutes: string } | null {
+  const m = expr.match(/@\s*(\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  return { hours: m[1]!, minutes: m[2]! };
+}
+
+function serializeDateOffsets(
+  rows: DateOffsetRow[],
+  timeOfDay?: { hours: string; minutes: string } | null,
+): string {
+  const offsetParts = rows
     .map((r) => ({ ...r, n: parseInt(r.amount, 10) }))
-    .filter((r) => Number.isFinite(r.n) && r.n > 0)
-    .map((r) => `${r.op}${r.n}${r.unit}`)
-    .join(' ');
+    // Allow a zero-amount row when the user is only setting a time-of-day —
+    // serialize it as `+0d` so applyDateExpression has a tracker token. The
+    // raw `0` units (`+0w`, `+0mo`, etc.) collapse to "+0d" so we don't emit
+    // semantically-redundant tokens.
+    .filter((r) => Number.isFinite(r.n) && r.n >= 0);
+  const offsets = offsetParts.length === 0 || offsetParts.every((r) => r.n === 0)
+    ? (timeOfDay ? '+0d' : '')
+    : offsetParts
+        .filter((r) => r.n > 0)
+        .map((r) => `${r.op}${r.n}${r.unit}`)
+        .join(' ');
+  if (timeOfDay) {
+    const hh = String(Math.min(23, Math.max(0, parseInt(timeOfDay.hours, 10) || 0))).padStart(2, '0');
+    const mm = String(Math.min(59, Math.max(0, parseInt(timeOfDay.minutes, 10) || 0))).padStart(2, '0');
+    return offsets ? `${offsets} @${hh}:${mm}` : `@${hh}:${mm}`;
+  }
+  return offsets;
 }
 
 interface ActionListProps {
@@ -1418,10 +1445,20 @@ function DateOffsetEditor({ value, onChange }: { value: string; onChange: (next:
     const parsed = parseDateExpression(value);
     return parsed.length > 0 ? parsed : [{ id: uuid(), op: '+', amount: '', unit: 'd' }];
   });
+  // Optional `@HH:MM` time-of-day override. When enabled, the date
+  // produced by the offsets is forced to that exact local time — useful
+  // for "appointment date at 10:00 AM" reminders. Off by default; turning
+  // it off restores the base date's time.
+  const [timeOfDayEnabled, setTimeOfDayEnabled] = useState<boolean>(() => parseTimeOfDay(value) !== null);
+  const [timeHours, setTimeHours] = useState<string>(() => parseTimeOfDay(value)?.hours ?? '10');
+  const [timeMinutes, setTimeMinutes] = useState<string>(() => parseTimeOfDay(value)?.minutes ?? '00');
+
+  const currentTimeOfDay = (): { hours: string; minutes: string } | null =>
+    timeOfDayEnabled ? { hours: timeHours, minutes: timeMinutes } : null;
 
   const commit = (next: DateOffsetRow[]) => {
     setRows(next);
-    onChange(serializeDateOffsets(next));
+    onChange(serializeDateOffsets(next, currentTimeOfDay()));
   };
 
   const updateRow = (id: string, updates: Partial<DateOffsetRow>) => {
@@ -1435,6 +1472,16 @@ function DateOffsetEditor({ value, onChange }: { value: string; onChange: (next:
   const removeRow = (id: string) => {
     const next = rows.filter((r) => r.id !== id);
     commit(next.length > 0 ? next : [{ id: uuid(), op: '+', amount: '', unit: 'd' }]);
+  };
+
+  const toggleTimeOfDay = (enabled: boolean) => {
+    setTimeOfDayEnabled(enabled);
+    onChange(serializeDateOffsets(rows, enabled ? { hours: timeHours, minutes: timeMinutes } : null));
+  };
+  const updateTime = (hours: string, minutes: string) => {
+    setTimeHours(hours);
+    setTimeMinutes(minutes);
+    if (timeOfDayEnabled) onChange(serializeDateOffsets(rows, { hours, minutes }));
   };
 
   const unitLabels: Record<DateOffsetUnit, { ar: string; en: string }> = {
@@ -1495,6 +1542,52 @@ function DateOffsetEditor({ value, onChange }: { value: string; onChange: (next:
       >
         + {isAr ? 'إضافة إزاحة' : 'Add offset'}
       </button>
+
+      {/* Optional `@HH:MM` time-of-day override — useful for "appointment date at 10:00 AM"
+          style reminders where the offsets pick the calendar date and this fixes the hour. */}
+      <div className="pt-2 mt-2 border-t border-charcoal/10 space-y-2">
+        <label className="flex items-center gap-2 text-xs text-charcoal/70 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={timeOfDayEnabled}
+            onChange={(e) => toggleTimeOfDay(e.target.checked)}
+            className="rounded border-charcoal/30"
+          />
+          <span className="font-bold">{isAr ? 'تثبيت وقت اليوم' : 'Set time of day'}</span>
+          <span className="text-charcoal/40">
+            {isAr ? '(مثال: 10:00 صباحاً)' : '(e.g. 10:00 AM)'}
+          </span>
+        </label>
+        {timeOfDayEnabled && (
+          <div className="flex items-center gap-2 ms-6">
+            <input
+              type="number"
+              min={0}
+              max={23}
+              value={timeHours}
+              onChange={(e) => updateTime(e.target.value.replace(/[^0-9]/g, ''), timeMinutes)}
+              className="form-input text-xs py-1.5 w-16 text-center"
+              aria-label={isAr ? 'الساعة' : 'Hours'}
+              dir="ltr"
+            />
+            <span className="text-charcoal/50 font-bold">:</span>
+            <input
+              type="number"
+              min={0}
+              max={59}
+              step={5}
+              value={timeMinutes}
+              onChange={(e) => updateTime(timeHours, e.target.value.replace(/[^0-9]/g, ''))}
+              className="form-input text-xs py-1.5 w-16 text-center"
+              aria-label={isAr ? 'الدقيقة' : 'Minutes'}
+              dir="ltr"
+            />
+            <span className="text-[11px] text-charcoal/40">
+              {isAr ? '(بتوقيت الرياض)' : '(Riyadh local time)'}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -2,7 +2,6 @@ import type {
   AppRecord,
   Workflow,
   WorkflowBranch,
-  WorkflowCondition,
   FieldMapping,
   WorkflowAction,
   WorkflowActionOutboundIvr,
@@ -22,6 +21,21 @@ import { v4 as uuid } from 'uuid';
 import { supabase } from '@/lib/supabase';
 import { normalizePhone } from '@/lib/phone';
 import { useAppStore } from '@/stores/appStore';
+import {
+  applyDateExpression as applyDateExpressionCore,
+  evaluateCondition as evaluateConditionCore,
+  formatDateForField as formatDateForFieldCore,
+  getWorkflowBranches as getWorkflowBranchesCore,
+} from './workflowEngineCore';
+
+// Re-export the pure helpers from the shared core. The previous local
+// definitions moved to workflowEngineCore.ts so the server-side sweeper
+// (api/_lib/workflowSweeper.ts) can reuse them without dragging in the
+// browser-only deps imported above.
+export const applyDateExpression = applyDateExpressionCore;
+export const formatDateForField = formatDateForFieldCore;
+export const getWorkflowBranches = getWorkflowBranchesCore;
+const evaluateCondition = evaluateConditionCore;
 
 /**
  * Resolve an outbound_ivr action's destination to a normalized E.164 phone.
@@ -103,18 +117,6 @@ export function getIvrDestination(action: WorkflowActionOutboundIvr): OutboundIv
 export function getWhatsAppMessageDestination(action: WorkflowActionSendWhatsAppMessage): OutboundIvrDestination {
   if (action.to) return action.to;
   return { kind: 'trigger_field', field_name: action.to_field_id ?? '' };
-}
-
-// Normalize a workflow into its branch list. Workflows saved by the branched
-// editor always carry `branches`. Older saves are wrapped into a single
-// implicit branch so the engine has one code path.
-export function getWorkflowBranches(workflow: Workflow): WorkflowBranch[] {
-  if (workflow.branches && workflow.branches.length > 0) return workflow.branches;
-  return [{
-    id: `${workflow.id}__legacy`,
-    conditions: workflow.conditions ?? [],
-    actions: workflow.actions ?? [],
-  }];
 }
 
 const MAX_DEPTH = 3;
@@ -215,45 +217,6 @@ function getFieldLabel(allModels: AppModel[], modelId: string, slug: string): st
     }
   }
   return undefined;
-}
-
-// Format a Date for storage in a record field so that the HTML form inputs will re-hydrate it.
-// `<input type="date">` expects `YYYY-MM-DD` and `<input type="datetime-local">` expects
-// `YYYY-MM-DDTHH:MM` in local time. A raw ISO string with a `Z` suffix is silently rejected
-// by the browser even though the table view (which goes through `new Date(...)`) still displays it.
-export function formatDateForField(date: Date, fieldType: string | undefined): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const y = date.getFullYear();
-  const mo = pad(date.getMonth() + 1);
-  const d = pad(date.getDate());
-  if (fieldType === 'date') return `${y}-${mo}-${d}`;
-  if (fieldType === 'datetime') {
-    const hh = pad(date.getHours());
-    const mi = pad(date.getMinutes());
-    return `${y}-${mo}-${d}T${hh}:${mi}`;
-  }
-  return date.toISOString();
-}
-
-// Parse a date-offset expression like "+5d -2w +3mo +1y +2h -30min" and apply it to `base`.
-export function applyDateExpression(base: Date, expression: string): Date {
-  const result = new Date(base.getTime());
-  const tokens = expression.match(/[+-]\s*\d+\s*(?:mo|min|d|w|y|h)/gi) ?? [];
-  for (const raw of tokens) {
-    const m = raw.replace(/\s+/g, '').match(/^([+-]\d+)(mo|min|d|w|y|h)$/i);
-    if (!m) continue;
-    const amount = parseInt(m[1]!, 10);
-    const unit = m[2]!.toLowerCase();
-    switch (unit) {
-      case 'd':   result.setDate(result.getDate() + amount); break;
-      case 'w':   result.setDate(result.getDate() + amount * 7); break;
-      case 'mo':  result.setMonth(result.getMonth() + amount); break;
-      case 'y':   result.setFullYear(result.getFullYear() + amount); break;
-      case 'h':   result.setHours(result.getHours() + amount); break;
-      case 'min': result.setMinutes(result.getMinutes() + amount); break;
-    }
-  }
-  return result;
 }
 
 export async function executeWorkflows(
@@ -544,54 +507,6 @@ export async function executeWebhookWorkflows(
         console.error('[executeWebhookWorkflows] action failed:', err);
       }
     }
-  }
-}
-
-function evaluateCondition(
-  condition: WorkflowCondition,
-  data: Record<string, unknown>,
-): boolean {
-  const value = data[condition.field_id];
-  const target = condition.value;
-
-  switch (condition.operator) {
-    case 'equals':
-      if (Array.isArray(value) && Array.isArray(target)) {
-        return value.length === target.length && value.every((v) => target.includes(v));
-      }
-      return value == target;
-    case 'not_equals':
-      if (Array.isArray(value) && Array.isArray(target)) {
-        return !(value.length === target.length && value.every((v) => target.includes(v)));
-      }
-      return value != target;
-    case 'contains':
-      if (Array.isArray(value) && Array.isArray(target)) {
-        return (target as unknown[]).some((v) => (value as unknown[]).includes(v));
-      }
-      if (Array.isArray(value)) {
-        return (value as unknown[]).includes(target);
-      }
-      if (Array.isArray(target)) {
-        return (target as unknown[]).includes(value);
-      }
-      return String(value ?? '').includes(String(target ?? ''));
-    case 'intersects': {
-      const leftArr = Array.isArray(value) ? value : value == null || value === '' ? [] : [value];
-      const rightArr = Array.isArray(target) ? target : target == null || target === '' ? [] : [target];
-      if (leftArr.length === 0 || rightArr.length === 0) return false;
-      return leftArr.some((v) => rightArr.includes(v));
-    }
-    case 'greater_than':
-      return Number(value) > Number(target);
-    case 'less_than':
-      return Number(value) < Number(target);
-    case 'is_empty':
-      return !value || value === '';
-    case 'is_not_empty':
-      return !!value && value !== '';
-    default:
-      return true;
   }
 }
 

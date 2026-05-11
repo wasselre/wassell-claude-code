@@ -997,6 +997,21 @@ const followupsModel: AppModel = {
               { id: fuWhatsAppSectionId, label_ar: 'متابعة واتساب', label_en: 'WhatsApp Follow-Up', value: fuWhatsAppSectionId, color: '#25D366' },
             ],
           },
+          {
+            // Set by the on_due sweeper (api/sweep-due-followups.ts) the
+            // first time it fires this row, so we don't double-fire on the
+            // next sweep tick. Hidden from the table; users shouldn't edit.
+            id: uuid(),
+            name: 'fired_at',
+            label_ar: 'وقت تشغيل التذكير الآلي',
+            label_en: 'Auto-Reminder Fired At',
+            type: 'datetime',
+            required: false,
+            order: 99,
+            section_id: fuBasicSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
         ],
       },
       {
