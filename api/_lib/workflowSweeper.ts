@@ -38,8 +38,9 @@
  * @see docs/prd/workflow-automation.md
  */
 
-import { createHash } from 'node:crypto';
-import { randomUUID } from 'node:crypto';
+// Web Crypto API (`crypto.randomUUID`, `crypto.subtle.digest`) instead of
+// `node:crypto`. Vercel's edge runtime ships the Web Crypto API as a
+// global but disallows the `node:crypto` import.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   AppRecord,
@@ -333,7 +334,7 @@ async function executeCreateRecord(
     }
   }
 
-  const newId = randomUUID();
+  const newId = crypto.randomUUID();
   const newRecord: AppRecord = {
     id: newId,
     model_id: action.target_model_id,
@@ -405,10 +406,13 @@ async function executeSendWhatsApp(
   // Idempotency reference: stable hash of (workflow-action, trigger record,
   // trigger record's fired_at). Re-running the sweeper for the same row
   // (e.g. a cron retry after a partial failure) gives the same reference,
-  // and Haberchat dedupes by `reference` server-side.
-  const reference = createHash('sha256')
-    .update(`${action.id}|${triggerRecord.id}|${String(triggerRecord.data.fired_at ?? '')}`)
-    .digest('hex')
+  // and Haberchat dedupes by `reference` server-side. Web Crypto's
+  // `subtle.digest` returns an ArrayBuffer that we hex-encode by hand.
+  const refInput = `${action.id}|${triggerRecord.id}|${String(triggerRecord.data.fired_at ?? '')}`;
+  const digestBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(refInput));
+  const reference = Array.from(new Uint8Array(digestBuf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
     .slice(0, 32);
 
   try {
