@@ -58,6 +58,7 @@ import {
   evaluateCondition,
   formatDateForField,
   getWorkflowBranches,
+  substituteFieldTokens,
 } from '../../src/lib/workflowEngineCore.js';
 import { normalizePhone } from '../../src/lib/phone.js';
 import { sendMessage as haberchatSendMessage, defaultDeviceId } from './haberchat.js';
@@ -435,15 +436,6 @@ async function executeSendWhatsApp(
 }
 
 /* ─── shared helpers ────────────────────────────────────────────────── */
-
-function substituteFieldTokens(template: string, triggerRecord: AppRecord): string {
-  return template.replace(/\{([a-zA-Z_][\w]*)\}/g, (_, slug) => {
-    const value = triggerRecord.data[slug];
-    if (value === null || value === undefined) return '';
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
-  });
-}
 
 function getTargetFieldType(
   models: AppModel[],

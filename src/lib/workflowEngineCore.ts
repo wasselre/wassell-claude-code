@@ -10,7 +10,8 @@
  * module. The whole point is that this file loads cleanly under Node.
  */
 
-import type { Workflow, WorkflowBranch, WorkflowCondition } from '@/types';
+import type { AppRecord, Workflow, WorkflowBranch, WorkflowCondition } from '@/types';
+import { formatDateHumanAr } from './dateFormat';
 
 /**
  * Format a Date for storage in a record field so that the HTML form inputs
@@ -118,6 +119,45 @@ export function evaluateCondition(
     default:
       return true;
   }
+}
+
+/**
+ * Replace `{field_slug}` tokens in a template string with the trigger
+ * record's values. Used by the `http_request`, `send_whatsapp_message`,
+ * and `outbound_ivr` actions for URL / header / body / TTS templating.
+ *
+ * **Formatter pipe (added 2026-05-11).** Tokens may carry an optional
+ * `|formatter` suffix — e.g. `{appointment_date|human_ar}` — to apply a
+ * named transformation to the raw value before substitution. v1
+ * formatters:
+ *
+ *   `human_ar` — friendly Arabic date+time phrase
+ *                (see `formatDateHumanAr` for examples)
+ *
+ * Unknown formatters fall back to the raw value with a console warning
+ * (no silent skip — CLAUDE.md "Silent Failures"). Missing fields
+ * substitute to an empty string. Object values are JSON-stringified
+ * before substitution.
+ */
+export function substituteFieldTokens(template: string, triggerRecord: AppRecord): string {
+  return template.replace(/\{([a-zA-Z_][\w]*)(?:\|([a-zA-Z_]\w*))?\}/g, (_, slug, formatter) => {
+    const value = triggerRecord.data[slug];
+    if (value === null || value === undefined) return '';
+    if (!formatter) {
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    }
+    switch (formatter) {
+      case 'human_ar':
+        return formatDateHumanAr(value as string | Date);
+      default: {
+        // eslint-disable-next-line no-console
+        console.warn(`[substituteFieldTokens] unknown formatter "${formatter}" on token "{${slug}|${formatter}}" — falling back to raw value`);
+        if (typeof value === 'object') return JSON.stringify(value);
+        return String(value);
+      }
+    }
+  });
 }
 
 /**

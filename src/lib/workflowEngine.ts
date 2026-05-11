@@ -26,6 +26,7 @@ import {
   evaluateCondition as evaluateConditionCore,
   formatDateForField as formatDateForFieldCore,
   getWorkflowBranches as getWorkflowBranchesCore,
+  substituteFieldTokens as substituteFieldTokensCore,
 } from './workflowEngineCore';
 
 // Re-export the pure helpers from the shared core. The previous local
@@ -36,6 +37,7 @@ export const applyDateExpression = applyDateExpressionCore;
 export const formatDateForField = formatDateForFieldCore;
 export const getWorkflowBranches = getWorkflowBranchesCore;
 const evaluateCondition = evaluateConditionCore;
+const substituteFieldTokens = substituteFieldTokensCore;
 
 /**
  * Resolve an outbound_ivr action's destination to a normalized E.164 phone.
@@ -120,18 +122,6 @@ export function getWhatsAppMessageDestination(action: WorkflowActionSendWhatsApp
 }
 
 const MAX_DEPTH = 3;
-
-// Replace `{field_slug}` tokens in a template string with the trigger
-// record's values. Missing fields substitute to an empty string. Used by the
-// `http_request` action for URL, headers, and JSON body templating.
-function substituteFieldTokens(template: string, triggerRecord: AppRecord): string {
-  return template.replace(/\{([a-zA-Z_][\w]*)\}/g, (_, slug) => {
-    const value = triggerRecord.data[slug];
-    if (value === null || value === undefined) return '';
-    if (typeof value === 'object') return JSON.stringify(value);
-    return String(value);
-  });
-}
 
 function getFieldTypeMap(allModels: AppModel[], modelId: string): Map<string, string> {
   const model = allModels.find((m) => m.id === modelId);
