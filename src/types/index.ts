@@ -592,7 +592,7 @@ export interface FieldTemplate {
 
 // Workflow types
 
-export type WorkflowEvent = 'create' | 'update' | 'delete' | 'webhook' | 'button_click';
+export type WorkflowEvent = 'create' | 'update' | 'delete' | 'webhook' | 'button_click' | 'on_due';
 
 // A declared inbound-webhook endpoint. External systems POST JSON to
 // /functions/v1/inbox/<slug> and the workflow engine fires any workflow

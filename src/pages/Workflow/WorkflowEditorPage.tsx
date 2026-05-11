@@ -283,11 +283,21 @@ function InlineTriggerPicker({ workflow, onChange }: InlineTriggerPickerProps) {
   const isAr = language === 'ar';
   const isWebhook = workflow.trigger_event === 'webhook';
 
+  // `on_due` is followups-only in v1: the cron sweeper sweeps that one
+  // model's `scheduled_datetime`. Hide the option for other models so it's
+  // not pickable on a workflow that would never fire.
+  const selectedModel = models.find((m) => m.id === workflow.trigger_model_id);
+  const supportsOnDue = selectedModel?.name === 'followups';
+
   const events: { value: WorkflowEvent; label: string }[] = [
     { value: 'create', label: t('workflow.event_create') },
     { value: 'update', label: t('workflow.event_update') },
     { value: 'delete', label: t('workflow.event_delete') },
     { value: 'webhook', label: isAr ? 'خطاف وارد' : 'Webhook' },
+    { value: 'button_click', label: isAr ? 'ضغطة زر مخصص' : 'Custom button click' },
+    ...(supportsOnDue
+      ? [{ value: 'on_due' as WorkflowEvent, label: isAr ? 'حان موعد المتابعة (تلقائي)' : 'Followup due (auto-fired)' }]
+      : []),
   ];
 
   return (

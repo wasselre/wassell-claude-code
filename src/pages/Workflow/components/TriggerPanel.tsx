@@ -24,18 +24,26 @@ export default function TriggerPanel({
   const { models, webhookSlugs, language } = useAppStore();
   const isAr = language === 'ar';
 
+  const selectedModel = models.find((m) => m.id === triggerModelId);
+  // `on_due` is followups-only in v1: the cron sweeper sweeps that one
+  // model's `scheduled_datetime`. Hide the option for other models so it's
+  // not pickable on a workflow that would never fire.
+  const supportsOnDue = selectedModel?.name === 'followups';
+
   const events: { value: WorkflowEvent; label: string }[] = [
     { value: 'create', label: t('workflow.event_create') },
     { value: 'update', label: t('workflow.event_update') },
     { value: 'delete', label: t('workflow.event_delete') },
     { value: 'webhook', label: isAr ? 'خطاف وارد' : 'Webhook' },
     { value: 'button_click', label: isAr ? 'ضغطة زر مخصص' : 'Custom button click' },
+    ...(supportsOnDue
+      ? [{ value: 'on_due' as WorkflowEvent, label: isAr ? 'حان موعد المتابعة (تلقائي)' : 'Followup due (auto-fired)' }]
+      : []),
   ];
-
-  const selectedModel = models.find((m) => m.id === triggerModelId);
   const selectedSlug = webhookSlugs.find((s) => s.id === triggerWebhookSlugId);
   const isWebhook = triggerEvent === 'webhook';
   const isButtonClick = triggerEvent === 'button_click';
+  const isOnDue = triggerEvent === 'on_due';
   // Buttons configured on the selected model (any button can target any
   // workflow on the model — the linkage is stored on the button via its
   // action.workflow_id; this list is informational so the user knows which
@@ -153,6 +161,14 @@ export default function TriggerPanel({
           <span className="font-bold text-amber-700">{events.find((e) => e.value === triggerEvent)?.label}</span>
           <span className="text-charcoal/40"> {isAr ? 'على' : 'on'} </span>
           <span className="font-bold text-amber-700">&ldquo;{isAr ? selectedModel.label_ar : selectedModel.label_en}&rdquo;</span>
+        </div>
+      )}
+
+      {isOnDue && (
+        <div className="mt-3 text-xs text-amber-800/80 bg-amber-100/40 border border-amber-300/40 rounded-lg px-3 py-2 leading-relaxed">
+          {isAr
+            ? 'يقوم المُجدوِل (يعمل كل 5 دقائق) بإطلاق هذا السير عند وصول وقت "موعد المتابعة المجدول" لكل سجل متابعة. يتم وسم كل سجل بحقل "وقت تشغيل التذكير الآلي" حتى لا يتكرر إطلاقه. الأنواع المدعومة من الإجراءات حالياً: تحديث سجل، إنشاء سجل، إرسال رسالة واتساب — أي إجراء آخر يفشل بشكل ظاهر مع سبب «غير مدعوم في المُجدوِل».'
+            : 'A cron sweeper (every 5 minutes) fires this workflow when a followup\'s "Scheduled Follow-up" time arrives. Each row is stamped with "Auto-Reminder Fired At" so it never fires twice. Supported actions in v1: Update Record, Create Record, Send WhatsApp Message — any other action type fails loudly with "unsupported_in_sweeper".'}
         </div>
       )}
     </div>

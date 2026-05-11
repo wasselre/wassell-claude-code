@@ -1,0 +1,563 @@
+/**
+ * Server-side mini-engine for the `on_due` workflow trigger.
+ *
+ * The client-side workflow engine (`src/lib/workflowEngine.ts`) runs in
+ * the browser and handles the `create` / `update` / `delete` / `webhook`
+ * / `button_click` triggers — those fire synchronously after a record
+ * save.
+ *
+ * `on_due` is different: it fires when a followup's `scheduled_datetime`
+ * arrives, regardless of whether any browser tab is open. The
+ * `api/sweep-due-followups.ts` cron endpoint sweeps for due rows every 5
+ * minutes and calls into this module to execute their workflows.
+ *
+ * **Supported scope (v1):**
+ *   - Trigger event: `on_due` only.
+ *   - Trigger model: `followups` only.
+ *   - Action types: `update_record`, `create_record`, `send_whatsapp_message`.
+ *   - Field-mapping sources: `static`, `trigger_field`, `current_date`,
+ *     `record_id`, `date_expression`.
+ *
+ * **Unsupported in v1 (loud failure, no silent skip):**
+ *   - Other action types (`outbound_ivr`, `http_request`, `assign_user`,
+ *     `send_notification`, `paseet_query`) — they're either client-only
+ *     (notifications) or not yet wired here. The action's status comes
+ *     back as `failed` with reason `unsupported_in_sweeper` so the run
+ *     summary surfaces it loudly.
+ *   - Field-mapping sources `current_user`, `role_variable`, `formula`
+ *     resolve to `null` with a console warn. Not silent — just narrow
+ *     in v1.
+ *
+ * Mirrors the client engine's semantics for the supported subset:
+ *   - Branch evaluation: top-down, first match wins, `else` is the
+ *     trailing default.
+ *   - Branch `condition_mode`: `'all'` (AND, default) or `'any'` (OR).
+ *   - `update_record` filter is lookup-aware (single-lookup field whose
+ *     `lookup_model_id` matches `target_model_id` → match by record id).
+ *
+ * @see docs/prd/workflow-automation.md
+ */
+
+import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type {
+  AppRecord,
+  AppModel,
+  OutboundIvrDestination,
+  Workflow,
+  WorkflowAction,
+  WorkflowActionCreateRecord,
+  WorkflowActionUpdateRecord,
+  WorkflowActionSendWhatsAppMessage,
+  FieldMapping,
+} from '../../src/types/index.js';
+import {
+  applyDateExpression,
+  evaluateCondition,
+  formatDateForField,
+  getWorkflowBranches,
+} from '../../src/lib/workflowEngineCore.js';
+import { normalizePhone } from '../../src/lib/phone.js';
+import { sendMessage as haberchatSendMessage, defaultDeviceId } from './haberchat.js';
+
+interface ActionResult {
+  action_id: string;
+  type: WorkflowAction['type'];
+  status: 'executed' | 'skipped' | 'failed';
+  reason?: string;
+  detail?: Record<string, unknown>;
+}
+
+interface BranchResult {
+  branch_id: string;
+  conditions_passed: boolean;
+  was_selected: boolean;
+}
+
+export interface WorkflowRunSummary {
+  workflow_id: string;
+  workflow_label_en?: string;
+  trigger_record_id: string;
+  branches: BranchResult[];
+  selected_branch_id?: string;
+  actions: ActionResult[];
+  status: 'success' | 'partial_success' | 'failed' | 'skipped';
+}
+
+export interface SweeperContext {
+  supabase: SupabaseClient;
+  models: AppModel[];
+  workflows: Workflow[];
+  // Cached records keyed by model_id, used for lookup-aware filter
+  // resolution and to find dedup matches when create_record has
+  // skip_if_exists set. Lazily populated as needed.
+  recordsByModel: Map<string, AppRecord[]>;
+}
+
+/**
+ * Run every active `on_due` workflow whose `trigger_model_id` matches the
+ * triggerRecord's model. Returns a per-workflow summary the caller can log.
+ */
+export async function runOnDueForRecord(
+  triggerRecord: AppRecord,
+  ctx: SweeperContext,
+): Promise<WorkflowRunSummary[]> {
+  const matching = ctx.workflows.filter(
+    (w) =>
+      w.is_active &&
+      w.trigger_event === 'on_due' &&
+      w.trigger_model_id === triggerRecord.model_id,
+  );
+  const summaries: WorkflowRunSummary[] = [];
+  for (const workflow of matching) {
+    summaries.push(await runWorkflow(workflow, triggerRecord, ctx));
+  }
+  return summaries;
+}
+
+async function runWorkflow(
+  workflow: Workflow,
+  triggerRecord: AppRecord,
+  ctx: SweeperContext,
+): Promise<WorkflowRunSummary> {
+  const branches = getWorkflowBranches(workflow);
+  const branchTraces: BranchResult[] = [];
+  let winnerIdx = -1;
+
+  for (let i = 0; i < branches.length; i++) {
+    const b = branches[i]!;
+    if (winnerIdx >= 0) {
+      branchTraces.push({ branch_id: b.id, conditions_passed: false, was_selected: false });
+      continue;
+    }
+    if (b.is_else) {
+      winnerIdx = i;
+      branchTraces.push({ branch_id: b.id, conditions_passed: true, was_selected: true });
+      continue;
+    }
+    const results = b.conditions.map((c) => evaluateCondition(c, triggerRecord.data));
+    const mode = b.condition_mode ?? 'all';
+    const passed = results.length === 0
+      ? true
+      : (mode === 'any' ? results.some(Boolean) : results.every(Boolean));
+    if (passed) winnerIdx = i;
+    branchTraces.push({ branch_id: b.id, conditions_passed: passed, was_selected: passed });
+  }
+
+  if (winnerIdx < 0) {
+    return {
+      workflow_id: workflow.id,
+      workflow_label_en: workflow.label_en,
+      trigger_record_id: triggerRecord.id,
+      branches: branchTraces,
+      actions: [],
+      status: 'skipped',
+    };
+  }
+
+  const winner = branches[winnerIdx]!;
+  const actions: ActionResult[] = [];
+  let anyFailed = false;
+  let anyExecuted = false;
+  // Map of action_id → record this action created. Lets `prev_action_output`
+  // destinations (rare, but supported for parity with the client engine)
+  // resolve against records the workflow just created.
+  const prevActionOutputs: Record<string, AppRecord> = {};
+
+  for (const action of winner.actions) {
+    const result = await executeAction(action, triggerRecord, ctx, prevActionOutputs);
+    actions.push(result);
+    if (result.status === 'executed') anyExecuted = true;
+    if (result.status === 'failed') anyFailed = true;
+  }
+
+  const status: WorkflowRunSummary['status'] = anyFailed
+    ? (anyExecuted ? 'partial_success' : 'failed')
+    : 'success';
+
+  return {
+    workflow_id: workflow.id,
+    workflow_label_en: workflow.label_en,
+    trigger_record_id: triggerRecord.id,
+    branches: branchTraces,
+    selected_branch_id: winner.id,
+    actions,
+    status,
+  };
+}
+
+async function executeAction(
+  action: WorkflowAction,
+  triggerRecord: AppRecord,
+  ctx: SweeperContext,
+  prevActionOutputs: Record<string, AppRecord>,
+): Promise<ActionResult> {
+  try {
+    switch (action.type) {
+      case 'update_record':
+        return await executeUpdateRecord(action, triggerRecord, ctx);
+      case 'create_record':
+        return await executeCreateRecord(action, triggerRecord, ctx, prevActionOutputs);
+      case 'send_whatsapp_message':
+        return await executeSendWhatsApp(action, triggerRecord, ctx, prevActionOutputs);
+      // The remaining action types are intentionally unsupported in v1 —
+      // we fail loudly so users understand why their on_due workflow
+      // didn't behave as expected. The client-side engine still handles
+      // these on `create`/`update`/etc. triggers.
+      case 'send_notification':
+      case 'outbound_ivr':
+      case 'http_request':
+      case 'assign_user':
+      case 'paseet_query':
+      default:
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[workflowSweeper] action type "${(action as WorkflowAction).type}" is not supported on the on_due trigger yet — skipping`,
+        );
+        return {
+          action_id: action.id,
+          type: (action as WorkflowAction).type,
+          status: 'failed',
+          reason: 'unsupported_in_sweeper',
+        };
+    }
+  } catch (err) {
+    return {
+      action_id: action.id,
+      type: action.type,
+      status: 'failed',
+      reason: 'exception',
+      detail: { message: err instanceof Error ? err.message : String(err) },
+    };
+  }
+}
+
+/* ─── update_record ────────────────────────────────────────────────── */
+
+async function executeUpdateRecord(
+  action: WorkflowActionUpdateRecord,
+  triggerRecord: AppRecord,
+  ctx: SweeperContext,
+): Promise<ActionResult> {
+  const targetRecords = await loadRecordsForModel(action.target_model_id, ctx);
+  const filterValueSource = action.filter_value_source ?? 'static';
+  const filterValue = (filterValueSource === 'trigger_field' && action.filter_trigger_field_id)
+    ? triggerRecord.data[action.filter_trigger_field_id]
+    : action.filter_value;
+
+  // Lookup-aware match — same posture as the client engine.
+  let target: AppRecord | undefined;
+  if (filterValueSource === 'trigger_field' && action.filter_trigger_field_id && typeof filterValue === 'string') {
+    const triggerModel = ctx.models.find((m) => m.id === triggerRecord.model_id);
+    const triggerField = triggerModel?.schema.sections
+      .flatMap((s) => s.fields)
+      .find((f) => f.name === action.filter_trigger_field_id);
+    if (
+      triggerField?.type === 'lookup' &&
+      !triggerField.is_multi &&
+      triggerField.lookup_model_id === action.target_model_id
+    ) {
+      target = targetRecords.find((r) => r.id === filterValue);
+    }
+  }
+  if (!target && action.filter_field_id === 'id' && typeof filterValue === 'string') {
+    target = targetRecords.find((r) => r.id === filterValue);
+  }
+  if (!target) {
+    target = targetRecords.find((r) => r.data[action.filter_field_id] === filterValue);
+  }
+  if (!target) {
+    return { action_id: action.id, type: 'update_record', status: 'skipped', reason: 'no_matching_record' };
+  }
+
+  const updatedData = { ...target.data };
+  for (const mapping of action.field_mappings) {
+    const value = resolveFieldMapping(mapping, triggerRecord);
+    updatedData[mapping.target_field_id] = value;
+  }
+
+  const { error } = await ctx.supabase.rpc('record_save', {
+    p_model_id: action.target_model_id,
+    p_id: target.id,
+    p_data: updatedData,
+    p_created_by: target.created_by_user_id ?? null,
+  });
+  if (error) {
+    return {
+      action_id: action.id,
+      type: 'update_record',
+      status: 'failed',
+      reason: 'rpc_error',
+      detail: { message: error.message },
+    };
+  }
+
+  // Invalidate the model's cache so a later action in the same workflow
+  // sees the fresh data.
+  ctx.recordsByModel.delete(action.target_model_id);
+
+  return {
+    action_id: action.id,
+    type: 'update_record',
+    status: 'executed',
+    detail: { matched_record_id: target.id },
+  };
+}
+
+/* ─── create_record ────────────────────────────────────────────────── */
+
+async function executeCreateRecord(
+  action: WorkflowActionCreateRecord,
+  triggerRecord: AppRecord,
+  ctx: SweeperContext,
+  prevActionOutputs: Record<string, AppRecord>,
+): Promise<ActionResult> {
+  const data: Record<string, unknown> = {};
+  for (const mapping of action.field_mappings) {
+    data[mapping.target_field_id] = resolveFieldMapping(mapping, triggerRecord);
+  }
+
+  // skip_if_exists guard — same as client engine.
+  if (action.skip_if_exists && action.dedup_target_field_id) {
+    const existing = await loadRecordsForModel(action.target_model_id, ctx);
+    const dup = existing.find((r) => r.data[action.dedup_target_field_id!] === data[action.dedup_target_field_id!]);
+    if (dup) {
+      return {
+        action_id: action.id,
+        type: 'create_record',
+        status: 'skipped',
+        reason: 'duplicate_exists',
+        detail: { matched_record_id: dup.id },
+      };
+    }
+  }
+
+  const newId = randomUUID();
+  const newRecord: AppRecord = {
+    id: newId,
+    model_id: action.target_model_id,
+    data,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error } = await ctx.supabase.rpc('record_save', {
+    p_model_id: action.target_model_id,
+    p_id: newId,
+    p_data: data,
+    p_created_by: null,
+  });
+  if (error) {
+    return {
+      action_id: action.id,
+      type: 'create_record',
+      status: 'failed',
+      reason: 'rpc_error',
+      detail: { message: error.message },
+    };
+  }
+
+  prevActionOutputs[action.id] = newRecord;
+  ctx.recordsByModel.delete(action.target_model_id);
+
+  return {
+    action_id: action.id,
+    type: 'create_record',
+    status: 'executed',
+    detail: { created_record_id: newId },
+  };
+}
+
+/* ─── send_whatsapp_message ─────────────────────────────────────────── */
+
+async function executeSendWhatsApp(
+  action: WorkflowActionSendWhatsAppMessage,
+  triggerRecord: AppRecord,
+  ctx: SweeperContext,
+  prevActionOutputs: Record<string, AppRecord>,
+): Promise<ActionResult> {
+  const dest = action.to ?? { kind: 'trigger_field' as const, field_name: action.to_field_id ?? '' };
+  const phone = await resolveDestinationPhone(dest, triggerRecord, ctx, prevActionOutputs);
+  if (!phone) {
+    return { action_id: action.id, type: 'send_whatsapp_message', status: 'skipped', reason: 'no_destination_number' };
+  }
+
+  const body = substituteFieldTokens(action.body_template ?? '', triggerRecord);
+  if (!body.trim()) {
+    return { action_id: action.id, type: 'send_whatsapp_message', status: 'skipped', reason: 'empty_body_after_substitution' };
+  }
+
+  // Resolve the sending device. Action override → server env default.
+  // The client engine also consults the user's overlay default but that
+  // table is per-user — for cron we fall back to the env default.
+  const deviceId = action.device_id || defaultDeviceId();
+  if (!deviceId) {
+    return {
+      action_id: action.id,
+      type: 'send_whatsapp_message',
+      status: 'failed',
+      reason: 'no_device_id',
+      detail: { hint: 'set HABERCHAT_DEFAULT_DEVICE_ID in env or pin a device on the workflow action' },
+    };
+  }
+
+  // Idempotency reference: stable hash of (workflow-action, trigger record,
+  // trigger record's fired_at). Re-running the sweeper for the same row
+  // (e.g. a cron retry after a partial failure) gives the same reference,
+  // and Haberchat dedupes by `reference` server-side.
+  const reference = createHash('sha256')
+    .update(`${action.id}|${triggerRecord.id}|${String(triggerRecord.data.fired_at ?? '')}`)
+    .digest('hex')
+    .slice(0, 32);
+
+  try {
+    const result = await haberchatSendMessage({ deviceId, phone, body, reference });
+    return {
+      action_id: action.id,
+      type: 'send_whatsapp_message',
+      status: 'executed',
+      detail: { wid: result.wid, status: result.status, phone, body_length: body.length },
+    };
+  } catch (err) {
+    return {
+      action_id: action.id,
+      type: 'send_whatsapp_message',
+      status: 'failed',
+      reason: 'haberchat_error',
+      detail: { message: err instanceof Error ? err.message : String(err) },
+    };
+  }
+}
+
+/* ─── shared helpers ────────────────────────────────────────────────── */
+
+function substituteFieldTokens(template: string, triggerRecord: AppRecord): string {
+  return template.replace(/\{([a-zA-Z_][\w]*)\}/g, (_, slug) => {
+    const value = triggerRecord.data[slug];
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'object') return JSON.stringify(value);
+    return String(value);
+  });
+}
+
+function getTargetFieldType(
+  models: AppModel[],
+  modelId: string,
+  fieldName: string,
+): string | undefined {
+  const model = models.find((m) => m.id === modelId);
+  for (const s of model?.schema.sections ?? []) {
+    for (const f of s.fields) {
+      if (f.name === fieldName) return f.type;
+    }
+  }
+  return undefined;
+}
+
+function resolveFieldMapping(mapping: FieldMapping, triggerRecord: AppRecord): unknown {
+  switch (mapping.source_type) {
+    case 'static':
+      return mapping.static_value ?? null;
+    case 'trigger_field':
+      return mapping.trigger_field_id ? triggerRecord.data[mapping.trigger_field_id] : null;
+    case 'current_date': {
+      // We don't know the target field type from the mapping alone — the
+      // sweeper doesn't track every model's field types. Default to
+      // datetime format which is a strict superset of date and round-trips
+      // through the form's <input type="datetime-local">.
+      return formatDateForField(new Date(), 'datetime');
+    }
+    case 'record_id':
+      return triggerRecord.id;
+    case 'date_expression': {
+      const baseVal = mapping.date_base === 'trigger_field' && mapping.date_base_field_id
+        ? triggerRecord.data[mapping.date_base_field_id]
+        : new Date();
+      const baseDate = baseVal instanceof Date ? baseVal : new Date(String(baseVal ?? ''));
+      if (isNaN(baseDate.getTime())) return null;
+      return formatDateForField(applyDateExpression(baseDate, mapping.date_expression ?? ''), 'datetime');
+    }
+    case 'current_user':
+    case 'role_variable':
+    case 'formula':
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[workflowSweeper] field-mapping source "${mapping.source_type}" is not supported on the on_due trigger yet — resolving to null`,
+      );
+      return null;
+    default:
+      return null;
+  }
+}
+
+async function loadRecordsForModel(modelId: string, ctx: SweeperContext): Promise<AppRecord[]> {
+  const cached = ctx.recordsByModel.get(modelId);
+  if (cached) return cached;
+  // Read through unified_records so we cover both records-table-backed
+  // models and frozen models without branching here. Same posture the
+  // client store uses on initial load.
+  const { data, error } = await ctx.supabase
+    .from('unified_records')
+    .select('id, model_id, data, created_by_user_id, created_at, updated_at')
+    .eq('model_id', modelId);
+  if (error) {
+    // eslint-disable-next-line no-console
+    console.error(`[workflowSweeper] failed to load records for model ${modelId}: ${error.message}`);
+    return [];
+  }
+  const rows: AppRecord[] = (data ?? []).map((r) => ({
+    id: r.id as string,
+    model_id: r.model_id as string,
+    data: (r.data as Record<string, unknown>) ?? {},
+    created_at: r.created_at as string,
+    updated_at: r.updated_at as string,
+    created_by_user_id: (r.created_by_user_id as string | null) ?? undefined,
+  }));
+  ctx.recordsByModel.set(modelId, rows);
+  return rows;
+}
+
+async function resolveDestinationPhone(
+  dest: OutboundIvrDestination,
+  triggerRecord: AppRecord,
+  ctx: SweeperContext,
+  prevActionOutputs: Record<string, AppRecord>,
+): Promise<string | null> {
+  switch (dest.kind) {
+    case 'trigger_field': {
+      const raw = triggerRecord.data[dest.field_name];
+      return typeof raw === 'string' ? normalizePhone(raw) : null;
+    }
+    case 'static': {
+      return normalizePhone(dest.phone);
+    }
+    case 'lookup': {
+      const lookupValue = triggerRecord.data[dest.lookup_field_name];
+      const targetId = Array.isArray(lookupValue) ? lookupValue[0] : lookupValue;
+      if (typeof targetId !== 'string' || !targetId) return null;
+      const triggerModel = ctx.models.find((m) => m.id === triggerRecord.model_id);
+      const lookupField = triggerModel?.schema.sections
+        .flatMap((s) => s.fields)
+        .find((f) => f.name === dest.lookup_field_name);
+      if (!lookupField?.lookup_model_id) return null;
+      const targetRecords = await loadRecordsForModel(lookupField.lookup_model_id, ctx);
+      const targetRecord = targetRecords.find((r) => r.id === targetId);
+      if (!targetRecord) return null;
+      const raw = targetRecord.data[dest.target_phone_field_name];
+      return typeof raw === 'string' ? normalizePhone(raw) : null;
+    }
+    case 'prev_action_output': {
+      const rec = prevActionOutputs[dest.action_id];
+      if (!rec) return null;
+      const raw = rec.data[dest.phone_field_name];
+      return typeof raw === 'string' ? normalizePhone(raw) : null;
+    }
+    default:
+      return null;
+  }
+}
+
+// Suppress unused-warning for the model-type helper — kept for future
+// validation that mappings target known fields. No-op until then.
+void getTargetFieldType;
