@@ -1,5 +1,5 @@
 /**
- * Frontend wrapper for the `project-details-ai` edge function.
+ * Frontend wrapper for the `project-details-ai-v2` edge function.
  *
  * Used by ProjectDetailsBridgePage when the admin chooses "Draft with AI"
  * while creating a fresh project_details sidecar. The edge function reads
@@ -7,12 +7,13 @@
  * can see), prompts Claude in Arabic, and returns strict JSON for the
  * editorial blocks.
  *
- * The returned shape is mapped 1:1 onto the project_details record's
- * fields by the bridge page before opening the standard editor — the
- * admin always reviews and edits before publishing.
+ * Slug is `-v2` because the v1 slug got stuck in a Supabase deploy-error
+ * state. The function body itself is the v4 version, with dynamic CORS
+ * and per-step error reporting — see supabase/functions/project-details-ai-v2.
  */
 
 import { supabase } from '@/lib/supabase';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 
 export interface ProjectDetailsAiDraft {
   hero_short_description: string;
@@ -30,22 +31,39 @@ export interface DraftError {
   error: string;
 }
 
+// Read the function's structured error body (rather than the generic
+// "Edge Function returned a non-2xx status code"). The function returns
+// JSON like `{ error: "...", step: "..." }` on failure.
+async function readFunctionError(error: unknown): Promise<string> {
+  if (error instanceof FunctionsHttpError) {
+    try {
+      const body = await error.context.json();
+      if (body && typeof body === 'object') {
+        const e = (body as { error?: string }).error;
+        const s = (body as { step?: string }).step;
+        if (e && s) return `[${s}] ${e}`;
+        if (e) return e;
+      }
+    } catch {
+      // Body wasn't JSON. Fall through.
+    }
+  }
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
 export async function draftProjectDetails(projectId: string): Promise<DraftResult | DraftError> {
   if (!supabase) return { ok: false, error: 'Supabase not configured' };
   if (!projectId) return { ok: false, error: 'projectId is required' };
 
   try {
-    // v2 endpoint — corrects CORS allow-headers to include `apikey` and
-    // `x-client-info` (the supabase-js client adds these on .invoke(), and
-    // missing them from the preflight allow-list silently blocked the POST
-    // with "Failed to send a request to the Edge Function"). The original
-    // `project-details-ai` slug was stuck in a deploy-broken state, so we
-    // shipped the fix as a sibling slug rather than wait it out.
     const { data, error } = await supabase.functions.invoke('project-details-ai-v2', {
       body: { projectId },
     });
     if (error) {
-      return { ok: false, error: error.message || 'AI draft failed' };
+      return { ok: false, error: await readFunctionError(error) };
     }
     if (!data || typeof data !== 'object') {
       return { ok: false, error: 'Empty AI response' };
@@ -64,7 +82,6 @@ export async function draftProjectDetails(projectId: string): Promise<DraftResul
       },
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: msg };
+    return { ok: false, error: await readFunctionError(err) };
   }
 }
