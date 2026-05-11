@@ -34,11 +34,11 @@ import { runOnDueForRecord, type SweeperContext, type WorkflowRunSummary } from 
 import type { AppModel, AppRecord, Workflow } from '../src/types/index.js';
 
 export const config = {
-  runtime: 'nodejs',
-  // 60 seconds — well above the few-second cost of a normal sweep.
-  // Generous because a rare burst (e.g. a backlog after a deploy) might
-  // walk through dozens of rows.
-  maxDuration: 60,
+  // Web Request/Response signature → edge runtime, matching the
+  // haberchat webhook pattern (`api/webhook/haberchat.ts`). The
+  // sweeper's only side effects are Supabase HTTP + Haberchat HTTP,
+  // both of which work fine on edge.
+  runtime: 'edge',
 };
 
 interface SweepResult {
