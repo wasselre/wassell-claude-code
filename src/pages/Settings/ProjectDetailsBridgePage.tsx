@@ -72,9 +72,27 @@ export default function ProjectDetailsBridgePage() {
     setPhase('choose');
   }, [projectId, projectsModel, detailsModel, records, project, navigate, isAr]);
 
+  // Pull every pd_*-prefixed field from the site_settings singleton so we
+  // can seed new project_details records with the template text. Anything
+  // the admin already has in site_settings becomes the project's override
+  // value, so the editor opens with the template visible and tweakable
+  // (vs. blank fields that fall back to the template silently).
+  function templateOverridesFromSiteSettings(): Record<string, unknown> {
+    const siteModel = models.find((m) => m.name === 'site_settings');
+    if (!siteModel) return {};
+    const record = (records[siteModel.id] ?? [])[0];
+    const data = (record?.data ?? {}) as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (k.startsWith('pd_') && typeof v === 'string' && v.trim()) out[k] = v;
+    }
+    return out;
+  }
+
   async function createSidecar(extras: Record<string, unknown> = {}) {
     if (!detailsModel || !projectId) return;
     handledRef.current = true;
+    const template = templateOverridesFromSiteSettings();
     const blank: AppRecord = {
       id: crypto.randomUUID(),
       model_id: detailsModel.id,
@@ -88,6 +106,10 @@ export default function ProjectDetailsBridgePage() {
         show_units: true,
         show_form: true,
         show_agent: true,
+        // Template text values from site_settings — admin can edit any of
+        // these per-project in the new "نصوص الصفحة" section.
+        ...template,
+        // `extras` (AI-drafted content, etc.) win over the template defaults.
         ...extras,
       },
       created_at: new Date().toISOString(),
