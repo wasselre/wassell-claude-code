@@ -201,6 +201,21 @@ export interface ModelField {
   auto_link_lookup_field_id?: string | null;
   auto_link_target_field_name?: string | null;
   auto_link_normalize?: 'phone';
+  // Auto-create primitive (extends auto-link). When the debounced search
+  // returns zero matches AND this is true, the form creates a new minimal
+  // record in the lookup target model with `{ [auto_link_target_field_name]:
+  // <normalized value> }`, then links to it. Used by the appointments
+  // model: typing a phone that doesn't belong to any existing client
+  // creates a new client on the fly so the user can keep filling out the
+  // appointment without context-switching to /model/clients/new.
+  //
+  // `auto_link_create_min_length` guards against mid-typing creates: the
+  // normalized source value must be at least this many characters before
+  // the create fires. Sensible default for E.164 Saudi mobiles is 12
+  // (e.g. "+9665012345" is 11 — too short; "+966501234567" is 13 — ok).
+  // Absent / 0 = no guard (any non-empty value triggers create — risky).
+  auto_link_create_if_missing?: boolean;
+  auto_link_create_min_length?: number;
   // Forward auto-fill primitive. When the referenced lookup field's value
   // changes, the form copies the linked record's `auto_fill_source_field_name`
   // value into THIS field. Editable afterwards — user overrides survive

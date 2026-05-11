@@ -1,8 +1,9 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
+import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import { normalizePhone } from '@/lib/phone';
-import type { AppModel, ModelField } from '@/types';
+import type { AppModel, AppRecord, ModelField } from '@/types';
 
 interface UseAutoLinkArgs {
   model: AppModel | null | undefined;
@@ -47,6 +48,12 @@ export function useAutoLink({ model, formData, setFormData }: UseAutoLinkArgs): 
   const lastSetByMe = useRef<Map<string, string>>(new Map());
   // Per-source-field token to detect stale debounced results.
   const tokenCounter = useRef<Map<string, number>>(new Map());
+  // Per-source-field: the most recent normalized needle we already
+  // auto-created a target record for. Prevents a second create when the
+  // debounce re-fires with the same value (e.g. unrelated formData change).
+  // Cleared when the user changes the source value to something else, so
+  // a corrected phone after a stale auto-create still does a fresh search.
+  const lastCreatedFor = useRef<Map<string, string>>(new Map());
 
   // Flatten all native (non-mirrored-section) fields once per render.
   // Empty when the model isn't loaded yet — every check below short-circuits.
@@ -130,14 +137,64 @@ export function useAutoLink({ model, formData, setFormData }: UseAutoLinkArgs): 
               );
               return;
             }
-            if (!data || data.length !== 1) return; // 0 or 2+ — do nothing
-            const matched = data[0];
-            if (!matched) return;
-            // Use the functional updater so any unrelated edits made
-            // during the debounce are preserved. The user-edit-safety
-            // check is also done against `prev` (truly live) rather than
-            // the closure-captured formData.
+            if (data && data.length === 1) {
+              const matched = data[0];
+              if (!matched) return;
+              // Use the functional updater so any unrelated edits made
+              // during the debounce are preserved. The user-edit-safety
+              // check is also done against `prev` (truly live) rather than
+              // the closure-captured formData.
+              setFormData((prev) => {
+                const live = prev[lookupField.name];
+                if (
+                  live !== undefined &&
+                  live !== null &&
+                  live !== '' &&
+                  lastSetByMe.current.get(lookupField.id) !== live
+                ) {
+                  return prev;
+                }
+                lastSetByMe.current.set(lookupField.id, matched.id);
+                return { ...prev, [lookupField.name]: matched.id };
+              });
+              return;
+            }
+            // 2+ matches — ambiguous, leave the lookup alone so the user
+            // can pick from the dropdown manually.
+            if (data && data.length > 1) return;
+            // 0 matches. If the field opts in to auto-create AND the
+            // normalized needle is long enough to be a "real" value
+            // (not still-being-typed), create a new minimal record in
+            // the target model and link to it. Skip when the user has
+            // already typed something that exactly matches the last
+            // value we auto-created for — that's the debounce re-firing
+            // on an unrelated formData change, not a new search.
+            if (!f.auto_link_create_if_missing) return;
+            const minLen = f.auto_link_create_min_length ?? 0;
+            if (needle.length < minLen) return;
+            if (lastCreatedFor.current.get(f.id) === needle) return;
+            const newId = uuid();
+            const newRecord: AppRecord = {
+              id: newId,
+              model_id: targetModelId,
+              data: { [targetField]: needle },
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            // Mark BEFORE the await so a re-fire during the save can't
+            // double-create. If saveRecord fails we'll clear it below so
+            // the user can retry.
+            lastCreatedFor.current.set(f.id, needle);
+            const result = await useAppStore.getState().saveRecord(newRecord);
+            if (result?.status === 'conflict' || result?.status === 'queued') {
+              // Either path stamped the in-memory store with the new id,
+              // so the lookup link below is still useful — the queued
+              // write will replay on next initialize().
+            }
+            // Stale-token check after the save too.
+            if (tokenCounter.current.get(f.id) !== myToken) return;
             setFormData((prev) => {
+              // Same user-edit-safety check as the match path.
               const live = prev[lookupField.name];
               if (
                 live !== undefined &&
@@ -147,8 +204,8 @@ export function useAutoLink({ model, formData, setFormData }: UseAutoLinkArgs): 
               ) {
                 return prev;
               }
-              lastSetByMe.current.set(lookupField.id, matched.id);
-              return { ...prev, [lookupField.name]: matched.id };
+              lastSetByMe.current.set(lookupField.id, newId);
+              return { ...prev, [lookupField.name]: newId };
             });
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
