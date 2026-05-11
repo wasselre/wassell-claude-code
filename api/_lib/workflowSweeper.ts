@@ -385,7 +385,10 @@ async function executeSendWhatsApp(
     return { action_id: action.id, type: 'send_whatsapp_message', status: 'skipped', reason: 'no_destination_number' };
   }
 
-  const body = substituteFieldTokens(action.body_template ?? '', triggerRecord);
+  const body = substituteFieldTokens(action.body_template ?? '', triggerRecord, {
+    triggerModel: ctx.models.find((m) => m.id === triggerRecord.model_id),
+    recordsByModel: ctx.recordsByModel,
+  });
   if (!body.trim()) {
     return { action_id: action.id, type: 'send_whatsapp_message', status: 'skipped', reason: 'empty_body_after_substitution' };
   }

@@ -10,7 +10,7 @@
  * module. The whole point is that this file loads cleanly under Node.
  */
 
-import type { AppRecord, Workflow, WorkflowBranch, WorkflowCondition } from '@/types';
+import type { AppModel, AppRecord, Workflow, WorkflowBranch, WorkflowCondition } from '@/types';
 import { formatDateHumanAr } from './dateFormat';
 
 /**
@@ -122,42 +122,105 @@ export function evaluateCondition(
 }
 
 /**
+ * Optional context for `substituteFieldTokens` — needed when the template
+ * references lookup-traversal tokens like `{project_id.project_name}`.
+ * Without context, dot-path tokens substitute to "" with a console.warn.
+ */
+export interface SubstituteTokensContext {
+  /** Model of the trigger record — used to resolve lookup field metadata. */
+  triggerModel?: AppModel | undefined;
+  /** All records keyed by model_id. Accepts a Map (server sweeper) or a plain object (client store). */
+  recordsByModel?: Map<string, AppRecord[]> | Record<string, AppRecord[]>;
+}
+
+function getModelRecords(
+  byModel: SubstituteTokensContext['recordsByModel'],
+  modelId: string,
+): AppRecord[] {
+  if (!byModel) return [];
+  if (byModel instanceof Map) return byModel.get(modelId) ?? [];
+  return byModel[modelId] ?? [];
+}
+
+function applyFormatter(value: unknown, formatter: string, debugToken: string): string {
+  if (value === null || value === undefined) return '';
+  switch (formatter) {
+    case 'human_ar':
+      return formatDateHumanAr(value as string | Date);
+    default: {
+      // eslint-disable-next-line no-console
+      console.warn(`[substituteFieldTokens] unknown formatter "${formatter}" on token "${debugToken}" — falling back to raw value`);
+      if (typeof value === 'object') return JSON.stringify(value);
+      return String(value);
+    }
+  }
+}
+
+/**
  * Replace `{field_slug}` tokens in a template string with the trigger
  * record's values. Used by the `http_request`, `send_whatsapp_message`,
  * and `outbound_ivr` actions for URL / header / body / TTS templating.
  *
- * **Formatter pipe (added 2026-05-11).** Tokens may carry an optional
- * `|formatter` suffix — e.g. `{appointment_date|human_ar}` — to apply a
- * named transformation to the raw value before substitution. v1
- * formatters:
+ * **Token syntax**
  *
- *   `human_ar` — friendly Arabic date+time phrase
- *                (see `formatDateHumanAr` for examples)
+ *   `{slug}`                                  raw field value
+ *   `{slug|formatter}`                        formatted value
+ *   `{lookup_slug.target_field}`              dereference a lookup — read
+ *                                             `target_field` off the linked
+ *                                             record in the lookup target
+ *                                             model (single hop)
+ *   `{lookup_slug.target_field|formatter}`    dereference + format
  *
- * Unknown formatters fall back to the raw value with a console warning
- * (no silent skip — CLAUDE.md "Silent Failures"). Missing fields
- * substitute to an empty string. Object values are JSON-stringified
- * before substitution.
+ * **Formatters (v1):**
+ *   `human_ar` — friendly Arabic date+time phrase (see `formatDateHumanAr`)
+ *
+ * **Dot-path traversal** requires `context.triggerModel` and
+ * `context.recordsByModel` so we can resolve the lookup. Without them,
+ * a dot-path token substitutes to "" with a console.warn — never a
+ * silent skip (CLAUDE.md "Silent Failures").
+ *
+ * Unknown formatters fall back to the raw value with a console.warn.
+ * Missing fields / unresolved lookup targets substitute to "". Object
+ * values are JSON-stringified before substitution.
  */
-export function substituteFieldTokens(template: string, triggerRecord: AppRecord): string {
-  return template.replace(/\{([a-zA-Z_][\w]*)(?:\|([a-zA-Z_]\w*))?\}/g, (_, slug, formatter) => {
-    const value = triggerRecord.data[slug];
-    if (value === null || value === undefined) return '';
-    if (!formatter) {
+export function substituteFieldTokens(
+  template: string,
+  triggerRecord: AppRecord,
+  context?: SubstituteTokensContext,
+): string {
+  return template.replace(
+    /\{([a-zA-Z_]\w*)(?:\.([a-zA-Z_]\w*))?(?:\|([a-zA-Z_]\w*))?\}/g,
+    (match, slug, dotField, formatter) => {
+      let value: unknown = triggerRecord.data[slug];
+
+      if (dotField) {
+        if (!context?.triggerModel) {
+          // eslint-disable-next-line no-console
+          console.warn(`[substituteFieldTokens] dot-path token "${match}" needs context.triggerModel — substituting empty`);
+          return '';
+        }
+        const lookupField = context.triggerModel.schema.sections
+          .flatMap((s) => s.fields)
+          .find((f) => f.name === slug);
+        if (!lookupField || lookupField.type !== 'lookup' || !lookupField.lookup_model_id) {
+          // eslint-disable-next-line no-console
+          console.warn(`[substituteFieldTokens] dot-path token "${match}" but "${slug}" isn't a lookup field — substituting empty`);
+          return '';
+        }
+        const targetId = Array.isArray(value) ? value[0] : value;
+        if (typeof targetId !== 'string' || !targetId) return '';
+        const candidates = getModelRecords(context.recordsByModel, lookupField.lookup_model_id);
+        const targetRecord = candidates.find((r) => r.id === targetId);
+        if (!targetRecord) return '';
+        value = targetRecord.data[dotField];
+      }
+
+      if (value === null || value === undefined) return '';
+      if (formatter) return applyFormatter(value, formatter, match);
       if (typeof value === 'object') return JSON.stringify(value);
       return String(value);
-    }
-    switch (formatter) {
-      case 'human_ar':
-        return formatDateHumanAr(value as string | Date);
-      default: {
-        // eslint-disable-next-line no-console
-        console.warn(`[substituteFieldTokens] unknown formatter "${formatter}" on token "{${slug}|${formatter}}" — falling back to raw value`);
-        if (typeof value === 'object') return JSON.stringify(value);
-        return String(value);
-      }
-    }
-  });
+    },
+  );
 }
 
 /**

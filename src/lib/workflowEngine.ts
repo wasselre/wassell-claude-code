@@ -639,6 +639,13 @@ async function executeAction(
 ): Promise<WorkflowActionTrace> {
   const startedAt = Date.now();
   const traceBase = { id: action.id, order, duration_ms: 0 };
+  // Build the substitute-token context once. Templates that use the new
+  // `{lookup.target_field}` dot-path syntax need triggerModel + records
+  // to resolve the lookup; plain `{slug}` tokens don't need it.
+  const subCtx = {
+    triggerModel: allModels.find((m) => m.id === triggerRecord.model_id),
+    recordsByModel: allRecords,
+  };
 
   try {
     switch (action.type) {
@@ -825,17 +832,17 @@ async function executeAction(
       case 'http_request': {
         const timeoutMs = Math.max(1000, Math.min(120_000, action.timeout_ms ?? 30_000));
         // Resolve templating on URL + header values against the trigger record.
-        const resolvedUrl = substituteFieldTokens(action.url, triggerRecord);
+        const resolvedUrl = substituteFieldTokens(action.url, triggerRecord, subCtx);
         const resolvedHeaders: Record<string, string> = {};
         for (const pair of action.headers ?? []) {
           if (!pair.name.trim()) continue;
-          resolvedHeaders[pair.name] = substituteFieldTokens(pair.value, triggerRecord);
+          resolvedHeaders[pair.name] = substituteFieldTokens(pair.value, triggerRecord, subCtx);
         }
         // Build the request body per the selected mode.
         const targetFieldTypes = new Map<string, string>();
         let bodyString: string | undefined;
         if (action.body_mode === 'json_template' && action.body_template) {
-          bodyString = substituteFieldTokens(action.body_template, triggerRecord);
+          bodyString = substituteFieldTokens(action.body_template, triggerRecord, subCtx);
         } else if (action.body_mode === 'form_mappings' && action.body_mappings?.length) {
           const bodyObj: Record<string, unknown> = {};
           for (const mapping of action.body_mappings) {
@@ -1028,7 +1035,7 @@ async function executeAction(
         // channelId default + webhookUrl server-side, so we send only what
         // the user configured.
         const resolvedTts = action.audio_mode === 'tts' && action.tts_text
-          ? substituteFieldTokens(action.tts_text, triggerRecord)
+          ? substituteFieldTokens(action.tts_text, triggerRecord, subCtx)
           : undefined;
 
         // Hatif stores one label per option. We send the action's chosen
@@ -1143,7 +1150,7 @@ async function executeAction(
           };
         }
 
-        const resolvedBody = substituteFieldTokens(action.body_template ?? '', triggerRecord);
+        const resolvedBody = substituteFieldTokens(action.body_template ?? '', triggerRecord, subCtx);
         if (!resolvedBody.trim()) {
           return {
             ...traceBase,
