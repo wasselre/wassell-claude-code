@@ -141,6 +141,14 @@ const B64_MARKER_END = '===WASSEL_DECK_B64_END===';
 function buildSystemPrompt(args: {
   size: DeckSize;
   attachments: ReadonlyArray<{ name: string; mimeType: string }>;
+  /** Whether the wassel-deck-review skill is also loaded. When true, the
+   * prompt instructs Claude to run review_deck() with fix=True against
+   * the raw deck and base64-stdout the REVIEWED file instead of the
+   * raw one. The review skill auto-patches RTL/font-slot/spacing/LRM
+   * issues that the builder skill doesn't catch — fixes the "tables
+   * left-to-right" + "overlapping text" issues observed on production
+   * runs that bypass the local /wassel-general-ppt pipeline. */
+  reviewEnabled: boolean;
 }): string {
   const dims = SIZE_TO_INCHES[args.size];
   const sizeBlock = `Slide size: ${args.size} (${dims.width}" × ${dims.height}"). When initializing the python-pptx Presentation, set:
@@ -160,18 +168,46 @@ Read the right tool per type:
   • .docx               → python-docx: read paragraphs as deck content
   • images              → PIL for dimensions; embed via slide.shapes.add_picture(path, ...). Some images were also passed visually above — use them for layout decisions`;
 
+  // When review skill is loaded, the workflow is: build → save raw →
+  // review with fix=True → save reviewed → base64 the REVIEWED file.
+  // When review skill is NOT loaded (env var missing), fall back to
+  // the old single-pass workflow that base64s the raw file directly.
+  const finalSaveBlock = args.reviewEnabled
+    ? `Save the raw build to \`/mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx\`.
+
+Then run the 'wassel-deck-review' skill (loaded at /mnt/skills/wassel-deck-review/) to auto-patch brand-compliance + typography bugs. This is the same final-gate that runs locally before delivery — it fixes broken RTL on tables, missing complex-script font slots (which makes Arabic render as theme default), blue hyperlink color, double-spaced separators, missing LRM marks on numbers inside Arabic text, parens-in-body, etc. Do not skip it.
+
+\`\`\`python
+import sys
+sys.path.insert(0, "/mnt/skills/wassel-deck-review/scripts")
+from review import review_deck
+
+raw_path = "/mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx"
+reviewed_path = "/mnt/user-data/outputs/wassel-deck-<unix_ms>_reviewed.pptx"
+report = review_deck(input_path=raw_path, output_path=reviewed_path, fix=True)
+print(report.markdown())  # optional but useful for the log
+\`\`\`
+
+Then run ONE final bash that prints the **reviewed** file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
+
+    echo "${B64_MARKER_START}"
+    base64 -w0 /mnt/user-data/outputs/wassel-deck-<unix_ms>_reviewed.pptx
+    echo
+    echo "${B64_MARKER_END}"`
+    : `Save to /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
+
+    echo "${B64_MARKER_START}"
+    base64 -w0 /mnt/user-data/outputs/<FILE>
+    echo
+    echo "${B64_MARKER_END}"`;
+
   return `Build a Wassel-branded PowerPoint (.pptx) per the user's brief.
 
 The 'wassel-general-ppt' skill is loaded at /mnt/skills/wassel-general-ppt/. Read its SKILL.md and follow that workflow as written.
 
 ${sizeBlock}${attachmentsBlock}
 
-Save to /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
-
-    echo "${B64_MARKER_START}"
-    base64 -w0 /mnt/user-data/outputs/<FILE>
-    echo
-    echo "${B64_MARKER_END}"`;
+${finalSaveBlock}`;
 }
 
 export default async function handler(req: Request): Promise<Response> {
@@ -221,6 +257,13 @@ export default async function handler(req: Request): Promise<Response> {
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
     const skillId = process.env.ANTHROPIC_WASSEL_SKILL_ID;
     if (!skillId) return jsonError(500, 'ANTHROPIC_WASSEL_SKILL_ID is not configured');
+    // Optional: when set, the endpoint also loads wassel-deck-review as a
+    // second skill and the system prompt instructs Claude to run it
+    // against the generated .pptx before returning bytes. If unset, the
+    // review step is skipped and the raw deck is returned as-is. Keeping
+    // this optional means a misconfig (missing env var) degrades to "no
+    // review" rather than "endpoint broken".
+    const reviewSkillId = process.env.ANTHROPIC_WASSEL_REVIEW_SKILL_ID ?? null;
 
     const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
     const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
@@ -447,8 +490,21 @@ export default async function handler(req: Request): Promise<Response> {
             // `container_upload` content blocks in the user message
             // (added above) — passing `file_ids` here returns 400
             // "Extra inputs are not permitted".
+            //
+            // Two skills when ANTHROPIC_WASSEL_REVIEW_SKILL_ID is set:
+            //   1. wassel-general-ppt — composition
+            //   2. wassel-deck-review — auto-patch QA gate (RTL on
+            //      tables, font slots, spacing, LRM marks, etc.)
+            // This mirrors what /wassel-general-ppt does locally,
+            // where the review is the mandatory final step before
+            // returning the file.
             container: {
-              skills: [{ type: 'custom', skill_id: skillId, version: 'latest' }],
+              skills: [
+                { type: 'custom', skill_id: skillId, version: 'latest' },
+                ...(reviewSkillId
+                  ? [{ type: 'custom', skill_id: reviewSkillId, version: 'latest' }]
+                  : []),
+              ],
             },
             system: buildSystemPrompt({
               size,
@@ -456,6 +512,7 @@ export default async function handler(req: Request): Promise<Response> {
                 name: u.name,
                 mimeType: u.mimeType,
               })),
+              reviewEnabled: reviewSkillId !== null,
             }),
             messages: [{ role: 'user', content: userContentBlocks }],
             tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
@@ -570,13 +627,28 @@ export default async function handler(req: Request): Promise<Response> {
             }
           }
           // Recover the filename Claude used (matches our prompt's pattern).
+          // Prefer the `_reviewed` variant when both names appear in the
+          // logs — when wassel-deck-review is loaded, the user gets the
+          // reviewed file and the display name should reflect that.
           if (extractedBytes) {
+            let reviewedName: string | null = null;
+            let rawName: string | null = null;
             for (const block of response.content) {
               const b = block as { type?: string; content?: unknown };
               const stdout = ((b.content as { stdout?: string } | undefined)?.stdout) ?? '';
-              const m = stdout.match(/wassel-deck-\d+\.pptx/);
-              if (m) { extractedFilename = m[0]; break; }
+              if (!reviewedName) {
+                const m = stdout.match(/wassel-deck-\d+_reviewed\.pptx/);
+                if (m) reviewedName = m[0];
+              }
+              if (!rawName) {
+                // Match a deck filename that is NOT immediately followed by
+                // `_reviewed` — this is the raw build.
+                const m = stdout.match(/wassel-deck-\d+(?!_reviewed)\.pptx/);
+                if (m) rawName = m[0];
+              }
+              if (reviewedName) break;
             }
+            extractedFilename = reviewedName ?? rawName;
           }
 
           if (!outputFileId && !extractedBytes) {

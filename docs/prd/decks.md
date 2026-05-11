@@ -1,7 +1,7 @@
 # PRD: Decks (AI-generated PowerPoints)
 
 **Status:** Live (v1)
-**Last updated:** 2026-05-10
+**Last updated:** 2026-05-11
 **Related PRDs:** [navigation-layout.md](navigation-layout.md), [data-storage.md](data-storage.md), [record-management.md](record-management.md), [ai-agent.md](ai-agent.md), [logs.md](logs.md)
 
 ## What it is (in plain English)
@@ -16,7 +16,10 @@ The Wassel design system (palette, Amiri font, Arabic typography rules, wording 
 - **Sidebar entry** `العروض التقديمية / Decks` is a top-level item (no group), driven by a system model `name: 'decks'`. The record-list and record-detail dispatchers in `App.tsx` swap the generic views for a purpose-built split-pane page.
 - **Split layout.** Left pane (~320px) = list of past decks sorted by `created_at` desc, each row showing the title + a status pill. Right pane = the active deck — either a brief form (when status is `queued`), a progress view (`generating`), a download card (`ready`), or an error view with retry (`failed`).
 - **Decks as records.** Each generation is one `decks` record. The brief, status, filename, signed URL, storage path, Anthropic file id, language, and chosen model are all fields on the record (so they show up in admin views and Activity Log dumps without anything custom).
-- **Skill on the cloud.** The `wassel-general-ppt` skill folder (SKILL.md + `wassel_chrome.py` + the white logo PNG) is uploaded once to the Anthropic Skills API and referenced by `skill_id` (env var `ANTHROPIC_WASSEL_SKILL_ID`). Re-uploading bumps the version; client always references `version: "latest"`.
+- **Skills on the cloud.** Two skill folders are uploaded once to the Anthropic Skills API and loaded together in every generation call:
+  1. **`wassel-general-ppt`** (env: `ANTHROPIC_WASSEL_SKILL_ID`) — the composition primitives (palette, Amiri font, RTL helpers, logo, drawing utilities).
+  2. **`wassel-deck-review`** (env: `ANTHROPIC_WASSEL_REVIEW_SKILL_ID`, optional but recommended) — the auto-patch QA gate. Mirrors the local `/wassel-general-ppt` workflow where the review is the mandatory final step before delivery. The endpoint instructs Claude to: save the raw build → call `review_deck(input, output, fix=True)` from the review skill → base64-stdout the **reviewed** file. The review fixes mechanical bugs Claude's first pass tends to leave behind: tables with broken RTL ordering, missing complex-script font slots (which silently makes Arabic fall back to theme default), blue hyperlink color/underline, double-spaced separators, missing LRM marks around numbers inside Arabic paragraphs, parens-in-body, etc.
+  Re-uploading any skill bumps the version; the client always references `version: "latest"`. The review skill is optional — when its env var is unset, the endpoint falls back to single-pass composition and returns the raw build (with a no-op cost).
 - **Server-side generation.**
   1. Client POSTs `{record_id, brief, language, model, size, attachments}` to `/api/generate-deck` (the `decks` record was created with status `queued` first, so we have a row to update progressively).
   2. Endpoint sets status → `generating`, then for each attachment downloads it from Supabase Storage (RLS-gated by the user's JWT) and uploads to the Anthropic Files API in parallel.
@@ -78,6 +81,7 @@ The Wassel design system (palette, Amiri font, Arabic typography rules, wording 
 | `api/generate-deck.ts` | Vercel Edge function — uploads attachments to the Anthropic Files API, calls Anthropic Skills + code_execution with `container.file_ids` populated, extracts the .pptx via base64-stdout (with Files API list as fallback), uploads to Storage, streams SSE. |
 | `api/sign-deck-url.ts` | Edge function that mints a fresh 7-day signed URL for an existing record's `file_path`. Called when the user reopens an old deck. |
 | `scripts/upload-wassel-skill.mjs` | One-time / re-runnable uploader that pushes the `wassel-general-ppt` folder to the Anthropic Skills API. Run when the local skill changes. |
+| `scripts/upload-wassel-review-skill.mjs` | Same shape but for the `wassel-deck-review` skill (QA gate). Run when the local review skill changes. |
 | `supabase/migrations/2026-05-09_l_decks_storage.sql` | Creates the `wassel-decks` bucket + path-prefix RLS policies. |
 | `supabase/migrations/2026-05-10_decks_bucket_allow_attachments.sql` | Expands the bucket's `allowed_mime_types` to cover Excel / PDF / PowerPoint / Word / images / CSV / text in addition to the generated .pptx output. |
 | `C:\Users\rayan\.claude\skills\wassel-general-ppt` | The local skill folder — source of truth for the brand engine. Edit here, then re-run `scripts/upload-wassel-skill.mjs --version-of <skill_id>` to ship a new version to Anthropic. |
