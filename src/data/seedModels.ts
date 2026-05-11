@@ -324,6 +324,8 @@ function now(): string {
 const clientsId = uuid();
 const clientsBasicSectionId = uuid();
 const clientsPrefsSectionId = uuid();
+const clientsWhatsAppSectionId = uuid();
+const clientsCallsSectionId = uuid();
 
 const clientNameFieldId = uuid();
 const clientStatusFieldId = uuid();
@@ -829,6 +831,57 @@ const clientsModel: AppModel = {
             range_step: 50000,
             range_unit_ar: 'ر.س',
             range_unit_en: 'SAR',
+          },
+        ],
+      },
+      // WhatsApp History — derived view of every chat_messages row exchanged
+      // with this client across every Haberchat device (i.e. every one of OUR
+      // phone numbers). Single field of type `whatsapp_history`, no stored value.
+      {
+        id: clientsWhatsAppSectionId,
+        label_ar: 'سجل واتساب',
+        label_en: 'WhatsApp History',
+        order: 2,
+        is_base: false,
+        color: '#25D366',
+        fields: [
+          {
+            id: uuid(),
+            name: 'whatsapp_history',
+            label_ar: 'سجل واتساب',
+            label_en: 'WhatsApp History',
+            type: 'whatsapp_history',
+            required: false,
+            order: 0,
+            section_id: clientsWhatsAppSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+        ],
+      },
+      // Calls — derived view of every Hatif-logged call from/to any phone on
+      // the client's record. Replaces the bottom-of-form CallHistoryPanel for
+      // the clients model (suppressed in RecordFormPage when model.name ===
+      // 'clients' to avoid duplication).
+      {
+        id: clientsCallsSectionId,
+        label_ar: 'سجل المكالمات',
+        label_en: 'Calls',
+        order: 3,
+        is_base: false,
+        color: '#3B82F6',
+        fields: [
+          {
+            id: uuid(),
+            name: 'call_history',
+            label_ar: 'سجل المكالمات',
+            label_en: 'Call History',
+            type: 'call_history',
+            required: false,
+            order: 0,
+            section_id: clientsCallsSectionId,
+            width: 'full',
+            show_in_table: false,
           },
         ],
       },

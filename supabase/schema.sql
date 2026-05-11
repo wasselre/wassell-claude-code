@@ -1170,6 +1170,8 @@ BEGIN
     v_fname := v_field->>'name';
     v_ftype := v_field->>'type';
     IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    -- Virtual / derived field types: no stored value, skip in views.
+    IF v_ftype IN ('whatsapp_history', 'call_history') THEN CONTINUE; END IF;
     IF v_ftype = 'range' THEN
       v_parts := v_parts || format('public.try_numeric(data->%L->>''min'') AS %I', v_fname, v_fname || '_min');
       v_parts := v_parts || format('public.try_numeric(data->%L->>''max'') AS %I', v_fname, v_fname || '_max');
@@ -1276,6 +1278,7 @@ SELECT public.regenerate_all_model_views();
 --   lookup is_multi=true                                            → junction <model>__<field> (record_id, target_record_id)
 --   table                                                           → subtable <model>__<field> with row columns
 --   mirror                                                          → SKIPPED (computed at runtime from sibling lookup)
+--   whatsapp_history / call_history                                 → SKIPPED (derived from chat_messages / call_logs at render)
 --
 -- Coercion failures abort the freeze and are reported back to the caller —
 -- never silently NULL'd. Auto-IDs switch from JSONB-counter to a Postgres
@@ -1331,9 +1334,13 @@ RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
 $fn$;
 
 -- Field types that get NO physical column (computed at runtime).
+-- `mirror` resolves through a sibling lookup at read time.
+-- `whatsapp_history` / `call_history` render derived data (chat messages,
+-- Hatif call logs) keyed off the parent record's id and phone fields —
+-- they store nothing on the record itself.
 CREATE OR REPLACE FUNCTION public.freeze_is_virtual(p_ftype text)
 RETURNS boolean LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $fn$
-  SELECT p_ftype = 'mirror';
+  SELECT p_ftype IN ('mirror', 'whatsapp_history', 'call_history');
 $fn$;
 
 -- ────────────────────────────────────────────────────────────────────
@@ -2321,6 +2328,8 @@ BEGIN
     v_fname := v_field->>'name';
     v_ftype := v_field->>'type';
     IF v_fname IS NULL OR v_fname = '' THEN CONTINUE; END IF;
+    -- Virtual / derived field types: no stored value, skip in views.
+    IF v_ftype IN ('whatsapp_history', 'call_history') THEN CONTINUE; END IF;
     IF v_ftype = 'range' THEN
       v_parts := v_parts || format('public.try_numeric(data->%L->>''min'') AS %I', v_fname, v_fname || '_min');
       v_parts := v_parts || format('public.try_numeric(data->%L->>''max'') AS %I', v_fname, v_fname || '_max');

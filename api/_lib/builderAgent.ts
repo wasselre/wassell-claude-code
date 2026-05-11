@@ -523,6 +523,9 @@ const FIELD_TYPES = [
   'currency', 'url', 'checkbox', 'dropdown', 'multiselect', 'lookup',
   'mirror', 'section_mirror', 'section_selector', 'assignee', 'notes',
   'range', 'auto_id', 'formula', 'table',
+  // Display-only field types — no stored value, no extra config. Render
+  // derived data (chat messages / call logs) keyed off the parent record.
+  'whatsapp_history', 'call_history',
 ] as const;
 
 const ICON_NAMES = [

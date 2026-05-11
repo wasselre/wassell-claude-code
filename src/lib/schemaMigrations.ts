@@ -810,6 +810,47 @@ export function healClientsSchema(state: HealSchemaInput): HealSchemaOutput {
   const existing = state.models[clientsIdx]!;
   const slugs = new Set(existing.schema.sections.flatMap((s) => s.fields.map((f) => f.name)));
   const newShape = slugs.has('client_stage') && slugs.has('preferred_area');
+
+  // Phase: append the WhatsApp History + Calls sections if missing. Detected by
+  // the field types — covers both fresh installs that landed pre-Client-360
+  // and any install whose sections were never re-seeded after the rollout.
+  // Idempotent: no-op once both field types are present.
+  const fieldTypes = new Set(existing.schema.sections.flatMap((s) => s.fields.map((f) => f.type)));
+  const needsClient360Sections = newShape && (!fieldTypes.has('whatsapp_history') || !fieldTypes.has('call_history'));
+  if (needsClient360Sections) {
+    const seedSections = clientsSeed.schema.sections;
+    const existingLabelEn = new Set(existing.schema.sections.map((s) => s.label_en));
+    const missingSections = seedSections.filter(
+      (s) =>
+        !existingLabelEn.has(s.label_en) &&
+        s.fields.some((f) => f.type === 'whatsapp_history' || f.type === 'call_history'),
+    );
+    if (missingSections.length === 0) {
+      return { models: state.models, records: state.records, changed: false };
+    }
+    const nextOrderBase = existing.schema.sections.reduce(
+      (max, s) => Math.max(max, s.order ?? 0),
+      -1,
+    );
+    const appendedSections = missingSections.map((s, i) => ({
+      ...s,
+      order: nextOrderBase + 1 + i,
+    }));
+    const models = state.models.slice();
+    models[clientsIdx] = {
+      ...existing,
+      schema: {
+        ...existing.schema,
+        sections: [...existing.schema.sections, ...appendedSections],
+      },
+      updated_at: new Date().toISOString(),
+    };
+    console.warn(
+      `[healClientsSchema] Appended missing section(s): ${missingSections.map((s) => s.label_en).join(', ')}`,
+    );
+    return { models, records: state.records, changed: true };
+  }
+
   if (newShape) return { models: state.models, records: state.records, changed: false };
 
   const models = state.models.slice();

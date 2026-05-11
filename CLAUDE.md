@@ -195,6 +195,7 @@ COMMIT;
 - `lookup is_multi=true` → junction `<model>__<field>` with `(record_id uuid, target_record_id uuid, PK)`
 - `table` → subtable `<model>__<field>` with `(id uuid, record_id, row_index, ...row columns)`
 - `mirror` → SKIPPED (computed at runtime)
+- `whatsapp_history`, `call_history` → SKIPPED (display-only — render derived data from `chat_messages` / `call_logs` based on the parent record's id and phone fields; never stored on the record)
 
 **Hard rules — never violate:**
 

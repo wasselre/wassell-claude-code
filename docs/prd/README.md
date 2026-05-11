@@ -28,6 +28,7 @@ This folder contains the **living source of truth** for what every section of th
 | 18 | [marketing-operations.md](marketing-operations.md) | Template-driven design generator — pick project + template, fill variables, two-phase Higgsfield orchestration writes cleaned + final image back to the record |
 | 19 | [templates-library.md](templates-library.md) | Reusable design templates: reference image, cleanup + design prompts with `{{PLACEHOLDER}}` tokens, typed variable list |
 | 20 | [decks.md](decks.md) | AI-generated Wassel-branded PowerPoints — brief form + Anthropic Skills API + code_execution + Supabase Storage. New section under sidebar "Decks" |
+| 21 | [clients.md](clients.md) | Clients model + Client 360 view — WhatsApp / Calls inline sections, tab strip on every record that references a client, cross-model Related Records panel |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 

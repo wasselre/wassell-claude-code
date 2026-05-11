@@ -1,0 +1,83 @@
+# PRD: Clients (Client 360 view)
+
+**Status:** Live
+**Last updated:** 2026-05-10
+**Related PRDs:** [record-management.md](record-management.md), [chats.md](chats.md), [calling.md](calling.md), [model-builder.md](model-builder.md), [data-storage.md](data-storage.md)
+
+## What it is (in plain English)
+The Clients model is the central record of every customer the agency has touched. Its record page is a 360° view: the client's own form on one tab, plus a "Client Details" tab that the user can also reach from any other record in the CRM that points at the client (a Follow-Up, a Visit, an Appointment, a Phone Call, etc.). The Client Details tab shows the client's full record read-only, every WhatsApp message we've exchanged with them across every one of our numbers, every Hatif-logged call to or from any of their phones, and a "Related Records" list of every record in any other model that references this client. Sales staff can see the whole story of a client without leaving the form they're working in.
+
+## Why it exists
+Sales conversations span channels — WhatsApp, calls, in-person visits, email — and span days. Before the 360° view, an agent had to open the client record in one tab, the chats inbox in another, and click through Follow-Ups in a third just to brief themselves before a call-back. Surfacing all of it on one screen, reachable from any record that references the client, makes follow-ups faster and cuts the number of times an agent loses their place.
+
+## Key behaviors
+- **Two new sections in the seeded `clients` model (added 2026-05-10):**
+  - **WhatsApp History** / **سجل واتساب** — single field of type `whatsapp_history`. Renders every chat message exchanged with this client across every Haberchat device (i.e. across every one of our WhatsApp numbers), grouped by day, each bubble tagged with the device label that handled it. Live — new inbound messages stream in via the global `subscribeToAllChats` channel without a refresh.
+  - **Calls** / **سجل المكالمات** — single field of type `call_history`. Renders the same `CallHistoryPanel` that other models get at the bottom of the form, but inline as a section. Pulls every call_log row matching any phone-typed value on the client record.
+  - Both sections are non-base (`is_base: false`), are NOT wired through `section_selector_field_id` (the clients model's selector field is still `null`), and are visible by default. Per-record collapse comes from `SectionBlock`'s standard chevron — no special control.
+- **Two new field types** (`whatsapp_history`, `call_history`) — see the field-type taxonomy in [data-storage.md](data-storage.md). Both are non-storable / virtual (like `mirror`): no value lives on the record, freeze SKIPS them, the auto-generated `v_<name>` views SKIP them. They render meaningfully on the clients model — or on any other model where the parent record's id can be used as a client id — and surface an empty state ("Save the record first to view this section") on `/new` because they need a record id to query off.
+- **Bottom-of-form `CallHistoryPanel` is suppressed for the `clients` model.** `RecordFormPage` checks `model.name !== 'clients'` before rendering the legacy bottom panel. Other models still get it as a backward-compatible default — they can opt into the in-section render later by adding a `call_history` field via the Builder.
+- **Tab strip** appears on a record's edit page when **any** of the following is true:
+  1. `model.name === 'clients'` AND the record exists (not `/new`).
+  2. The record has at least one populated `lookup` field whose `lookup_model_id` points at the clients model (single OR multi-select; multi counts every populated id).
+
+  Tabs:
+  - **Form** — the existing record form (default).
+  - **Client Details** (with a Users icon) — embedded read-only view of the linked client. Renders every section of the client (including the new WhatsApp History + Calls panels) followed by a "Related Records" panel.
+
+  Tab state is persisted in the URL via `?tab=client` (and `?client=<recordId>` when there are multiple client lookups, see below) so the user can deep-link, share a link, or hit the browser back button without losing context.
+- **Multi-client switcher.** When a record has more than one populated client lookup (e.g. a record that links a buyer AND a seller, or a Follow-Up that points at two clients), the Client Details tab shows a small chip strip above the embedded client view labeled "Client:" / "عميل:" with one chip per client. Picking a chip writes `?client=<id>` and re-renders the embedded view for that client. Defaults to the first client id in iteration order. Hidden when only one client is in scope.
+- **Related Records panel.** Cross-model query, purely client-side off the in-memory `records` slice. Walks every model's schema once (memoized on `models`) to build a lookup-fields-by-target-model index, then for each lookup field that targets the clients model, finds every record whose stored value for that field references this client (single value `=== id` or array `.includes(id)`). Groups results by source model in a sorted list, with each row showing the record's title field value (from `card_config.title_field_id`), an optional subtitle, and a "right" chevron. Clicking a row routes to `/model/<modelName>/<recordId>`. Excludes the clients model itself (the client's own record is rendered in the parent tab pane). Empty state: "No records in other models reference this client yet." / "لا توجد سجلات في النماذج الأخرى مرتبطة بهذا العميل."
+- **Refactored `CallHistoryPanel`** — gained an optional `chrome?: 'card' | 'naked'` prop. `'card'` (default) wraps the panel in its own `<section className="card">` with the existing copper "Call History" header (legacy bottom-of-form path, every non-clients model). `'naked'` strips the chrome so the surrounding section block's header is the only title (used by the new `call_history` field type).
+- **Refactored `SectionBlock`** — gained a `recordId?: string` prop. Special-cases the two new field types BEFORE the standard `DynamicField` dispatch: full-width column, no label/input chrome, ignores any per-field readonly/edit toggle (the panels are inherently read-only). When `recordId` is missing (`/new` form), shows "Save the record first to view this section" / "احفظ السجل أولاً لعرض هذا القسم".
+- **Migration for existing installs.** `healClientsSchema` in `src/lib/schemaMigrations.ts` runs on every `initialize()`. It detects the absence of either `whatsapp_history` or `call_history` field types in the user's stored clients model and APPENDS the missing sections from the seed (matched by `label_en`, ordered after the highest existing section order). Idempotent — no-op once both field types are present. Records are untouched (no field on them stores anything for these types). Newly-customized clients models that were edited in the Builder before this rollout still get the new sections appended without losing the customizations.
+
+## User flows
+1. **Brief myself before calling a client (happy path):**
+   1. Agent opens a Follow-Up record from their queue.
+   2. Tab strip shows because the Follow-Up's `client_id` is populated → click **Client Details**.
+   3. Page swaps to the embedded client view: client basics, preferences, then WhatsApp History (every chat across every of our numbers, with device labels), then Calls (every Hatif log on this client's phone), then Related Records (every Visit, Appointment, Phone Call record that points at this client).
+   4. Agent scrolls the chat history, reads the latest call's transcript, then clicks the Form tab to log the next follow-up.
+2. **Open a client directly:**
+   1. Sidebar → Clients → pick a row.
+   2. Tab strip is visible (record exists, model is clients). Form tab is active by default.
+   3. Scroll past the basics into the new WhatsApp History section — messages render exactly like the dedicated chats UI (same `MessageBubble` component, same Realtime subscription).
+   4. Below that, Calls — every call from any of the client's phones, deduped by call id.
+3. **Two clients on one record:**
+   1. A record has two populated lookups pointing at clients (e.g. a deal record with buyer + seller).
+   2. Click **Client Details**. The Client switcher chip strip appears with both client names.
+   3. Click the second chip → URL becomes `?tab=client&client=<id2>` and the embedded view re-renders for the second client.
+   4. Browser back returns to the first client's embedded view.
+4. **Empty states:**
+   - On `/new` (no record id yet): the in-section panels show "Save the record first to view this section."
+   - Client has never WhatsApp'd us: WhatsApp History shows "No WhatsApp conversations linked to this client yet."
+   - Client has never been called via Hatif: Calls section shows "No calls logged for this client yet."
+   - No other model references the client: Related Records shows "No records in other models reference this client yet."
+
+## Data touched
+- **Reads:** `models` (to find clients + every model with a lookup at clients); `records` (the client's own record + every candidate cross-model record); `chat_messages` (via `chatMessages` slice, populated by the global `subscribeToAllChats` Realtime channel); `call_logs` (via `CallHistoryPanel`'s per-phone `listCallsForPhone` + Realtime subscription).
+- **Writes:** none — the entire 360° view is read-only. Edits to the client itself happen on the client's own record page (Form tab); edits to a related record happen on that record's page.
+- **Storage shapes:** the new section field types `whatsapp_history` and `call_history` store **nothing** on the record — they're virtual. Freeze SKIPS them, `regenerate_model_view` SKIPS them, no `required` toggle, no `show_in_table`.
+
+## Key files
+| File | What it does |
+|---|---|
+| `src/pages/Records/RecordFormPage.tsx` | Hosts the tab strip; `?tab=client` URL state via `useSearchParams`; cross-model client-lookup detection (`clientCandidateIds`); chip switcher when >1; suppresses the bottom-of-form `CallHistoryPanel` when `model.name === 'clients'` |
+| `src/pages/Records/components/RecordTabBar.tsx` | Pure tab strip component (Form / Client Details). Controlled by parent. |
+| `src/pages/Records/components/ClientDetailsTabPane.tsx` | Embedded client view: every section read-only via `SectionBlock` with `formReadOnly={true}` + `RelatedRecordsPanel` below |
+| `src/pages/Records/components/RelatedRecordsPanel.tsx` | Cross-model "every record that references this client" list. Memoized lookup-fields-by-target index over `models`; grouped by source model; click-through routing |
+| `src/pages/Records/components/WhatsAppHistoryPanel.tsx` | Unified WhatsApp history across every Haberchat device for one client. Mounts `subscribeToAllChats` on first render; loads each linked chat's last 50 messages via `loadMessagesForChat`; per-bubble device label |
+| `src/pages/Records/components/CallHistoryPanel.tsx` | Now accepts `chrome?: 'card' \| 'naked'` so the same panel renders either as a freestanding card (legacy bottom-of-form) or naked inside a section field |
+| `src/pages/Records/components/SectionBlock.tsx` | Added `recordId?: string` prop. Special-cases `whatsapp_history` + `call_history` BEFORE the standard `DynamicField` dispatch (full-width, no chrome, always read-only). Empty-state for `/new` |
+| `src/lib/haberchat/clientHistory.ts` | `selectClientChatMessages(input)` — pure selector that finds every chats record with `client_link === clientId`, flattens all their messages from the `chatMessages` slice into one ascending list |
+| `src/data/seedModels.ts` | Two new sections appended to the `clients` system model: WhatsApp History (`#25D366`) and Calls (`#3B82F6`). Both `is_base: false`, NOT wired through `section_selector_field_id` |
+| `src/lib/schemaMigrations.ts` | `healClientsSchema` heal — appends the new sections to existing installs whose stored clients model lacks them. Idempotent on field-type presence |
+| `src/types/index.ts` | `FieldType` union: added `whatsapp_history` and `call_history` |
+| `supabase/schema.sql` | `freeze_is_virtual(p_ftype)` includes both new types alongside `mirror`; `regenerate_model_view` SKIPs them too |
+
+## Open questions / known limitations
+- **Client Details is read-only.** Editing a client from inside another record's Client Details tab isn't supported — the user has to click through to the client's own page (which is what the chevron rows in Related Records do). Saves a lot of complexity around mirrored writes; revisit if the workflow proves slow.
+- **Related Records is in-memory.** The cross-model query reads from the Zustand `records` slice. Models that haven't been loaded yet (e.g. a model not on the chrome-critical tier and the record was opened before the slow tail finished) won't show their references until the slice fills in. Acceptable in practice because boot is fast and the panel re-memos when records change.
+- **Multi-client chip strip is unsorted.** Chip order follows the order lookups are walked (section order × field order); if a record has two unrelated clients on different sections, the user might prefer alphabetical. Cheap fix when someone asks.
+- **WhatsApp History per-device labels depend on `whatsapp_numbers` overlay.** Devices without a friendly name fall back to phone or device id. Configure friendly names in `/settings/whatsapp-numbers`.
+- **No "linked client" CTA on a record without a client lookup.** If a model has phone fields but no lookup-into-clients, the tab strip never appears even though the record could conceptually be associated with a client. Adding a lookup field via the Builder is the documented path.

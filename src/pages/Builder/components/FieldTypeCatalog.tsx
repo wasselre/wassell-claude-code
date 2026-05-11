@@ -5,7 +5,7 @@ import {
   Type, AlignLeft, Hash, AtSign, Phone, CalendarDays, Clock, DollarSign,
   Link2, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
   StickyNote, SlidersHorizontal, Plus, Rows3, Fingerprint, Calculator, Table2,
-  Image as ImageIcon,
+  Image as ImageIcon, MessageSquare, PhoneCall,
 } from 'lucide-react';
 import type { FieldType } from '@/types';
 import type { ComponentType } from 'react';
@@ -42,6 +42,8 @@ const TYPE_CARDS: TypeCard[] = [
   { type: 'formula',          icon: Calculator,        color: '#7E22CE', bg: '#7E22CE15' },
   { type: 'table',            icon: Table2,            color: '#B8734F', bg: '#B8734F15' },
   { type: 'image',            icon: ImageIcon,         color: '#0D9488', bg: '#0D948815' },
+  { type: 'whatsapp_history', icon: MessageSquare,     color: '#25D366', bg: '#25D36615' },
+  { type: 'call_history',     icon: PhoneCall,         color: '#3B82F6', bg: '#3B82F615' },
 ];
 
 interface FieldTypeCatalogProps {

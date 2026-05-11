@@ -26,7 +26,7 @@ import type {
 const FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'notes', 'number', 'range', 'email', 'phone', 'date', 'datetime',
   'currency', 'url', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'mirror', 'section_mirror', 'section_selector', 'assignee',
-  'auto_id', 'formula', 'table',
+  'auto_id', 'formula', 'table', 'whatsapp_history', 'call_history',
 ];
 
 // Field types that can be the scope of an auto_id counter — values we can use
@@ -61,6 +61,7 @@ const FALLBACK_TARGET_TYPES: FieldType[] = [
 // a scalar value that makes sense as a "fill this empty field" source.
 const FALLBACK_SOURCE_DISALLOWED_TYPES: FieldType[] = [
   'formula', 'mirror', 'section_mirror', 'section_selector', 'notes', 'checkbox', 'assignee',
+  'whatsapp_history', 'call_history',
 ];
 
 interface FieldEditorProps {
@@ -379,11 +380,11 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       label_ar,
       label_en,
       type,
-      required: (type === 'mirror' || type === 'section_mirror' || type === 'auto_id' || type === 'formula') ? false : required,
+      required: (type === 'mirror' || type === 'section_mirror' || type === 'auto_id' || type === 'formula' || type === 'whatsapp_history' || type === 'call_history') ? false : required,
       order: nextOrder,
       section_id: targetSectionId,
       width,
-      show_in_table: type === 'section_mirror' ? false : showInTable,
+      show_in_table: (type === 'section_mirror' || type === 'whatsapp_history' || type === 'call_history') ? false : showInTable,
       field_group_id: fieldGroupId,
       options: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector') ? options : undefined,
       option_groups: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector') && optionGroups.length > 0 ? optionGroups : undefined,
@@ -735,20 +736,22 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
         <div className="space-y-3">
           <label
             className={`flex items-center gap-2.5 group py-0.5 ${
-              type === 'mirror' || type === 'section_mirror' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+              type === 'mirror' || type === 'section_mirror' || type === 'whatsapp_history' || type === 'call_history' ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
             }`}
             title={
               type === 'mirror'
                 ? (isAr ? 'حقول المرآة محسوبة، لا يمكن أن تكون مطلوبة' : 'Mirror fields are derived and cannot be required')
                 : type === 'section_mirror'
                   ? (isAr ? 'مرآة القسم تعرض عدة حقول؛ اضبط الإلزام على الحقول الأصلية' : 'Section mirror shows multiple fields; set required on the source fields')
-                  : undefined
+                  : (type === 'whatsapp_history' || type === 'call_history')
+                    ? (isAr ? 'هذا الحقل عرض فقط — لا يخزن قيمة' : 'This field is display-only — no stored value')
+                    : undefined
             }
           >
             <input
               type="checkbox"
-              checked={(type === 'mirror' || type === 'section_mirror') ? false : required}
-              disabled={type === 'mirror' || type === 'section_mirror'}
+              checked={(type === 'mirror' || type === 'section_mirror' || type === 'whatsapp_history' || type === 'call_history') ? false : required}
+              disabled={type === 'mirror' || type === 'section_mirror' || type === 'whatsapp_history' || type === 'call_history'}
               onChange={(e) => setRequired(e.target.checked)}
               className="w-4 h-4 rounded border-sand/50 text-copper focus:ring-copper/20 transition-colors"
             />
@@ -756,7 +759,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
               {t('fields.required')}
             </span>
           </label>
-          {type !== 'section_mirror' && (
+          {type !== 'section_mirror' && type !== 'whatsapp_history' && type !== 'call_history' && (
             <label className="flex items-center gap-2.5 cursor-pointer group py-0.5">
               <input
                 type="checkbox"

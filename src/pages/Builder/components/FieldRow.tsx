@@ -5,7 +5,7 @@ import {
   Type, AlignLeft, Hash, AtSign, Phone, CalendarDays, Clock, DollarSign,
   Link2, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
   StickyNote, SlidersHorizontal, Rows3, Fingerprint, Calculator, Table2,
-  Image as ImageIcon,
+  Image as ImageIcon, MessageSquare, PhoneCall,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { validateFormula, findUnknownReferences } from '@/lib/formulaEngine';
@@ -38,6 +38,8 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   template_variables: { icon: Layers,           color: '#7C3AED', bg: '#7C3AED12' },
   templates_picker:  { icon: Layers,            color: '#7C3AED', bg: '#7C3AED12' },
   generations_gallery: { icon: ImageIcon,       color: '#0D9488', bg: '#0D948812' },
+  whatsapp_history: { icon: MessageSquare,      color: '#25D366', bg: '#25D36612' },
+  call_history:     { icon: PhoneCall,          color: '#3B82F6', bg: '#3B82F612' },
 };
 
 function detectMirrorMisconfig(field: ModelField, model: AppModel | null, allModels: AppModel[]): boolean {

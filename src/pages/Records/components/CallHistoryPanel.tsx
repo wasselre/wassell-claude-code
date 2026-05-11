@@ -18,6 +18,14 @@ import { listCallsForPhone, subscribeToCallsForPhone } from '@/lib/hatif/client'
 
 interface CallHistoryPanelProps {
   phones: string[];                    // one or more phone values from the record
+  /**
+   * 'card' (default) — wraps the panel in a `<section className="card">` with a
+   *   header. Used by the bottom-of-form fallback.
+   * 'naked' — drops the card chrome; the surrounding section block already
+   *   provides the title and frame. Used when this panel renders inside a
+   *   client section via the `call_history` field type.
+   */
+  chrome?: 'card' | 'naked';
 }
 
 /**
@@ -26,7 +34,7 @@ interface CallHistoryPanelProps {
  * in live. Accepts multiple phones because a client record may have main +
  * alternate phones (we look each up, dedupe by call id).
  */
-export default function CallHistoryPanel({ phones }: CallHistoryPanelProps) {
+export default function CallHistoryPanel({ phones, chrome = 'card' }: CallHistoryPanelProps) {
   const { language } = useAppStore();
   const isAr = language === 'ar';
 
@@ -73,20 +81,8 @@ export default function CallHistoryPanel({ phones }: CallHistoryPanelProps) {
 
   if (uniquePhones.length === 0) return null;
 
-  return (
-    <section className="card">
-      <header className="flex items-center gap-2 mb-4">
-        <Phone size={18} className="text-copper" />
-        <h3 className="text-lg font-semibold text-charcoal">
-          {isAr ? 'سجل المكالمات' : 'Call History'}
-        </h3>
-        {!loading && (
-          <span className="text-sm text-charcoal/60">
-            ({calls.length})
-          </span>
-        )}
-      </header>
-
+  const body = (
+    <>
       {loading ? (
         <p className="text-sm text-charcoal/60">
           {isAr ? 'جارٍ التحميل…' : 'Loading…'}
@@ -100,6 +96,38 @@ export default function CallHistoryPanel({ phones }: CallHistoryPanelProps) {
           {calls.map((c) => <CallRow key={c.id} call={c} isAr={isAr} />)}
         </ul>
       )}
+    </>
+  );
+
+  if (chrome === 'naked') {
+    // Inside a section block — the section header already supplies the title.
+    // Surface only the count so the user knows how much data is below.
+    return (
+      <div>
+        {!loading && calls.length > 0 && (
+          <p className="text-xs text-charcoal/60 mb-3" dir="ltr">
+            {calls.length} {isAr ? 'مكالمة' : calls.length === 1 ? 'call' : 'calls'}
+          </p>
+        )}
+        {body}
+      </div>
+    );
+  }
+
+  return (
+    <section className="card">
+      <header className="flex items-center gap-2 mb-4">
+        <Phone size={18} className="text-copper" />
+        <h3 className="text-lg font-semibold text-charcoal">
+          {isAr ? 'سجل المكالمات' : 'Call History'}
+        </h3>
+        {!loading && (
+          <span className="text-sm text-charcoal/60">
+            ({calls.length})
+          </span>
+        )}
+      </header>
+      {body}
     </section>
   );
 }

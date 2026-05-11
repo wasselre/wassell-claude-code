@@ -24,7 +24,9 @@ export type FieldType =
   | 'image'
   | 'template_variables'
   | 'templates_picker'
-  | 'generations_gallery';
+  | 'generations_gallery'
+  | 'whatsapp_history'
+  | 'call_history';
 
 // Column in a `table` field. The table's stored value on a record is an
 // array of row objects keyed by `name` (slug). Phase-1 storage mode is

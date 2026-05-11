@@ -3,6 +3,8 @@ import { useAppStore } from '@/stores/appStore';
 import { Shield, Link2, ChevronDown } from 'lucide-react';
 import DynamicField from './DynamicField';
 import DynamicCell from './DynamicCell';
+import CallHistoryPanel from './CallHistoryPanel';
+import WhatsAppHistoryPanel from './WhatsAppHistoryPanel';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorField } from '@/lib/sectionMirrorFieldResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
@@ -42,6 +44,13 @@ interface SectionBlockProps {
    * that compose with mirror semantics. Defaults to `() => 'editable'`.
    */
   getFieldPermission?: (field: ModelField) => FieldPermission;
+  /**
+   * Current record's id. Required for the `whatsapp_history` field type
+   * (the panel needs the id to find chat records via `client_link`). Optional
+   * because we can't pass it for /new (no record id yet) — those field types
+   * render an empty state until the record is saved.
+   */
+  recordId?: string;
 }
 
 function widthClass(width: ModelField['width']): string {
@@ -84,6 +93,7 @@ export default function SectionBlock({
   onSelectResearchView,
   formReadOnly,
   getFieldPermission,
+  recordId,
 }: SectionBlockProps) {
   const { language, records, models } = useAppStore();
   const isAr = language === 'ar';
@@ -220,6 +230,44 @@ export default function SectionBlock({
   // ungrouped fields AND each field group's members through the same path.
   const renderFieldNodes = (fieldsToRender: ModelField[]) =>
     fieldsToRender.flatMap((field) => {
+          // Display-only derived field types — render their own panel inside
+          // the section, bypassing the standard label / input chrome. Always
+          // full-width, never editable, no value stored.
+          if (field.type === 'whatsapp_history' || field.type === 'call_history') {
+            const fieldPerm = getFieldPermission ? getFieldPermission(field) : 'editable';
+            if (fieldPerm === 'hidden') return [];
+            if (!recordId) {
+              return [(
+                <div key={field.id} className="col-span-12 text-[12px] text-charcoal/40 italic">
+                  {isAr ? 'احفظ السجل أولاً لعرض هذا القسم.' : 'Save the record first to view this section.'}
+                </div>
+              )];
+            }
+            if (field.type === 'whatsapp_history') {
+              return [(
+                <div key={field.id} className="col-span-12">
+                  <WhatsAppHistoryPanel clientId={recordId} chrome="naked" />
+                </div>
+              )];
+            }
+            // call_history — extract every phone-typed value on the current
+            // record and feed CallHistoryPanel. The panel dedupes by call id
+            // so multiple matching phones don't double-list calls.
+            const phoneValues: string[] = [];
+            for (const sec of currentModel.schema.sections) {
+              for (const f of sec.fields) {
+                if (f.type !== 'phone') continue;
+                const v = formData[f.name];
+                if (typeof v === 'string' && v.trim()) phoneValues.push(v.trim());
+              }
+            }
+            return [(
+              <div key={field.id} className="col-span-12">
+                <CallHistoryPanel phones={phoneValues} chrome="naked" />
+              </div>
+            )];
+          }
+
           if (field.type !== 'section_mirror') {
             // Resolve the effective per-field rule. `hidden` removes the field
             // from layout entirely; `readonly` (or whole-form read-only) renders

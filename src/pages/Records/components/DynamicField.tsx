@@ -532,6 +532,15 @@ export default function DynamicField({ field, value, onChange, recordData, compa
         );
       }
 
+      case 'whatsapp_history':
+      case 'call_history':
+        // Display-only derived field types. The full panel lives in
+        // SectionBlock (which has access to recordId / model phones); inside
+        // DynamicField — which is also reused in compact / mirrored / table
+        // contexts — they collapse to a quiet dash. SectionBlock short-circuits
+        // before reaching here on the main form path.
+        return <span className="text-charcoal/30 italic text-xs">—</span>;
+
       default:
         return (
           <input

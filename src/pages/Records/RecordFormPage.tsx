@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
@@ -30,6 +30,9 @@ import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
 import CallHistoryPanel from './components/CallHistoryPanel';
 import RecordFormModal from './components/RecordFormModal';
+import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
+import ClientDetailsTabPane from './components/ClientDetailsTabPane';
+import { Users } from 'lucide-react';
 import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
@@ -213,6 +216,83 @@ export default function RecordFormPage() {
     // Base sections + mirrored sections always render; others only if picked via selector.
     return sorted.filter((s) => s.is_base || s.is_mirrored || selectorValue.includes(s.id));
   }, [model, formData]);
+
+  // ─── Client Details tab ──────────────────────────────────────────
+  // Show a "Client Details" tab when this record either IS a client (so the
+  // tab adds the cross-model related-records list to the 360°) or has at
+  // least one populated `lookup` field pointing at the clients model.
+  // Multi-client-lookup case: surface every populated candidate so the user
+  // can switch between them via the `?client=<id>` query param. Default to
+  // the first.
+  const clientsModelId = useMemo(
+    () => models.find((m) => m.name === 'clients')?.id ?? null,
+    [models],
+  );
+
+  const clientCandidateIds = useMemo<string[]>(() => {
+    if (!model) return [];
+    if (model.name === 'clients' && existingRecord) return [existingRecord.id];
+    if (!clientsModelId) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const sec of model.schema.sections) {
+      for (const f of sec.fields) {
+        if (f.type !== 'lookup' || f.lookup_model_id !== clientsModelId) continue;
+        const v = formData[f.name];
+        if (Array.isArray(v)) {
+          for (const id of v) {
+            if (typeof id === 'string' && id && !seen.has(id)) { seen.add(id); out.push(id); }
+          }
+        } else if (typeof v === 'string' && v && !seen.has(v)) {
+          seen.add(v);
+          out.push(v);
+        }
+      }
+    }
+    return out;
+  }, [model, formData, clientsModelId, existingRecord]);
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'client' && clientCandidateIds.length > 0
+    ? 'client'
+    : 'form';
+  const activeClientId = (() => {
+    const param = searchParams.get('client');
+    if (param && clientCandidateIds.includes(param)) return param;
+    return clientCandidateIds[0] ?? null;
+  })();
+
+  const tabs = useMemo<RecordTab[]>(() => {
+    if (clientCandidateIds.length === 0) return [];
+    return [
+      { id: 'form', label_ar: 'النموذج', label_en: 'Form' },
+      {
+        id: 'client',
+        label_ar: 'تفاصيل العميل',
+        label_en: 'Client Details',
+        icon: <Users size={14} />,
+      },
+    ];
+  }, [clientCandidateIds]);
+
+  const handleTabChange = (next: string) => {
+    const sp = new URLSearchParams(searchParams);
+    if (next === 'client') {
+      sp.set('tab', 'client');
+      if (activeClientId) sp.set('client', activeClientId);
+    } else {
+      sp.delete('tab');
+      sp.delete('client');
+    }
+    setSearchParams(sp, { replace: true });
+  };
+
+  const handleClientSwitch = (id: string) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('tab', 'client');
+    sp.set('client', id);
+    setSearchParams(sp, { replace: true });
+  };
 
   if (!model) {
     return (
@@ -820,7 +900,46 @@ export default function RecordFormPage() {
         </div>
       </div>
 
-      {/* Sections */}
+      {/* Tabs — visible whenever this record references a client or IS a client */}
+      <RecordTabBar tabs={tabs} active={activeTab} onChange={handleTabChange} />
+
+      {/* When multiple client lookups are populated on a non-clients record,
+        * surface a small switcher chip strip so the user can flip between
+        * them inside the same Client Details tab. */}
+      {activeTab === 'client' && clientCandidateIds.length > 1 && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs text-charcoal/50">
+            {isAr ? 'عميل:' : 'Client:'}
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {clientCandidateIds.map((cid) => {
+              const r = (records[clientsModelId ?? ''] ?? []).find((rr) => rr.id === cid);
+              const label = (r?.data as Record<string, unknown> | undefined)?.client_name;
+              const displayLabel = (typeof label === 'string' && label.trim()) || cid.slice(0, 8);
+              const selected = activeClientId === cid;
+              return (
+                <button
+                  key={cid}
+                  type="button"
+                  onClick={() => handleClientSwitch(cid)}
+                  className={`text-xs font-bold px-2.5 py-1 rounded-full transition-colors ${
+                    selected
+                      ? 'bg-copper text-cream'
+                      : 'bg-sand/30 text-charcoal/70 hover:bg-sand/50'
+                  }`}
+                >
+                  {displayLabel}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'client' && activeClientId ? (
+        <ClientDetailsTabPane clientId={activeClientId} />
+      ) : (
+      /* Sections */
       <div className="space-y-6">
         {visibleSections.map((section) => (
           <SectionBlock
@@ -833,12 +952,20 @@ export default function RecordFormPage() {
             onMirrorFieldChange={handleMirrorFieldChange}
             formReadOnly={readOnly}
             getFieldPermission={resolveFieldPermission}
+            recordId={existingRecord?.id}
           />
         ))}
       </div>
+      )}
 
-      {/* Call history — every Hatif-logged call for any phone on this record */}
-      {existingRecord && phoneValues.length > 0 && (
+      {/* Call history fallback — every Hatif-logged call for any phone on this
+        * record. Suppressed for the `clients` model: client records have a
+        * dedicated `call_history` field-typed section that renders the same
+        * panel inside the form, so this bottom-of-form copy would duplicate it.
+        * Kept for every other model with a phone field as a backward-compatible
+        * default — those models can opt into the in-section render later by
+        * adding a `call_history` field via the Builder. */}
+      {existingRecord && phoneValues.length > 0 && model.name !== 'clients' && (
         <div className="mt-6">
           <CallHistoryPanel phones={phoneValues} />
         </div>
