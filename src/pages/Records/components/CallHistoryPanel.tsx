@@ -42,6 +42,16 @@ export default function CallHistoryPanel({ phones, chrome = 'card' }: CallHistor
   const [loading, setLoading] = useState(true);
 
   // Dedupe phone list so two fields with the same number don't double-fetch.
+  //
+  // The dependency key is the JOINED string, NOT the `phones` array — callers
+  // (notably the inline render path in SectionBlock for the `call_history`
+  // field type) construct a fresh array on every render with identical
+  // contents. Depending on `[phones]` would re-run this memo + the subscribe
+  // effect on every parent render, causing an infinite refetch / re-subscribe
+  // loop. A content-derived string is reference-stable when the actual phones
+  // haven't changed. We use a NUL separator (\x00) so digits never collide.
+  const phonesKey = phones.map((p) => (p ?? '').trim()).filter(Boolean).join('\x00');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const uniquePhones = useMemo(() => {
     const seen = new Set<string>();
     const out: string[] = [];
@@ -50,7 +60,7 @@ export default function CallHistoryPanel({ phones, chrome = 'card' }: CallHistor
       if (trimmed && !seen.has(trimmed)) { seen.add(trimmed); out.push(trimmed); }
     }
     return out;
-  }, [phones]);
+  }, [phonesKey]);
 
   useEffect(() => {
     let cancelled = false;

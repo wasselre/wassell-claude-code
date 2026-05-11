@@ -70,6 +70,16 @@ export default function WhatsAppHistoryPanel({ clientId, chrome = 'card' }: What
   // Initial fetch: load the most recent page of messages for every chat
   // record linked to this client. This is what lets the panel show history
   // for conversations the user hasn't opened in the dedicated chats page yet.
+  //
+  // Dependency key is the JOINED chatWids string, NOT the `chatRecords`
+  // array. selectClientChatMessages returns a fresh `chatRecords` array on
+  // every call because its parent useMemo also depends on `chatMessages` —
+  // and `chatMessages` mutates the instant loadMessagesForChat finishes.
+  // Depending on `[chatRecords]` would cause this effect to re-fire as soon
+  // as it succeeded, refetching every conversation forever. A content-derived
+  // string stays stable while the underlying conversations stay the same.
+  const chatWidsKey = chatRecords.map((cr) => cr.chatWid).join('\x00');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (chatRecords.length === 0) {
       setLoading(false);
@@ -85,9 +95,7 @@ export default function WhatsAppHistoryPanel({ clientId, chrome = 'card' }: What
     return () => {
       cancelled = true;
     };
-    // chatRecords identity changes whenever the underlying chats records do —
-    // safe to depend on it directly.
-  }, [chatRecords, loadMessagesForChat]);
+  }, [chatWidsKey, loadMessagesForChat]);
 
   if (chatRecords.length === 0 && !loading) {
     return (
