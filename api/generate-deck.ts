@@ -355,11 +355,22 @@ export default async function handler(req: Request): Promise<Response> {
             );
           }
 
-          // Build the user message. Text first, then small images as
-          // visible blocks (so Claude can reason about what they look
-          // like), then the first PDF as a document block (native pdf
-          // reading), then everything else stays sandbox-only via
-          // container.file_ids below.
+          // Build the user message. Order:
+          //  1. text — brief, language hint, slide size, file inventory
+          //  2. container_upload blocks — one per attachment. THIS is how
+          //     files reach the code_execution sandbox; they land at
+          //     /mnt/user-data/uploads/<original_filename>. Earlier we
+          //     tried `container.file_ids: [...]` at the top level, but
+          //     Anthropic rejects that with
+          //     `container.ContainerParams.file_ids: Extra inputs are not
+          //     permitted` (observed 2026-05-10 with an .xlsx attachment).
+          //     The supported channel is the content block.
+          //  3. image — for small images, ALSO expose visually so Claude
+          //     can reason about layout/branding (the container_upload
+          //     above is what makes them readable from python-pptx).
+          //  4. document — for the first PDF, ALSO expose for native PDF
+          //     reading. Doesn't replace the sandbox copy; both work
+          //     together.
           const visionImages = uploadedAttachments
             .filter((a) => a.mimeType.startsWith('image/') && a.sizeBytes <= VISION_IMAGE_BYTES_CAP)
             .slice(0, MAX_VISION_IMAGES);
@@ -386,10 +397,17 @@ export default async function handler(req: Request): Promise<Response> {
                       .join('\n')}`
                   : ''),
             },
+            // Mount every attachment in the sandbox.
+            ...uploadedAttachments.map((a) => ({
+              type: 'container_upload',
+              file_id: a.fileId,
+            })),
+            // Plus visual access for the small images we picked.
             ...visionImages.map((a) => ({
               type: 'image',
               source: { type: 'file', file_id: a.fileId },
             })),
+            // Plus native PDF reading for the first PDF.
             ...documentPdfs.map((a) => ({
               type: 'document',
               source: { type: 'file', file_id: a.fileId },
@@ -425,16 +443,12 @@ export default async function handler(req: Request): Promise<Response> {
                 }
               : {}),
             betas: ANTHROPIC_BETAS,
+            // container takes `skills` only. Files reach the sandbox via
+            // `container_upload` content blocks in the user message
+            // (added above) — passing `file_ids` here returns 400
+            // "Extra inputs are not permitted".
             container: {
               skills: [{ type: 'custom', skill_id: skillId, version: 'latest' }],
-              // file_ids makes EVERY uploaded attachment available in the
-              // sandbox at /mnt/user-data/uploads/<filename>. Even files
-              // that are also passed as image/document content blocks go
-              // here — the skill code may want to embed the same image
-              // it inspected visually, or extract more from a PDF.
-              ...(uploadedAttachments.length > 0
-                ? { file_ids: uploadedAttachments.map((u) => u.fileId) }
-                : {}),
             },
             system: buildSystemPrompt({
               size,
