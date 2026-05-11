@@ -460,6 +460,7 @@ export default async function handler(req: Request): Promise<Response> {
             messages: [{ role: 'user', content: userContentBlocks }],
             tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
           });
+          console.log(`[generate-deck] step=stream-created model=${model} content_blocks=${userContentBlocks.length} attachments=${uploadedAttachments.length}`);
 
           // Forward content_block_start events as progress notes — the
           // user sees "Claude is editing the script" / "running the
@@ -487,17 +488,52 @@ export default async function handler(req: Request): Promise<Response> {
           // skill + code_execution combos drop the file_id from the
           // response even though the file lands in Files API).
           const requestStartedAtMs = Date.now() - 5000; // 5s slack
-          for await (const event of turn) {
-            captureFileId(event);
-            if (event.type === 'content_block_start') {
-              const cb = (event as unknown as { content_block?: { type?: string; name?: string } }).content_block;
-              const cbType = cb?.type ?? 'unknown';
-              if (cbType === 'server_tool_use') {
-                send({ type: 'status', phase: 'calling-claude', detail: `tool: ${cb?.name ?? 'unknown'}` });
+
+          // Diagnostic: count every event the SDK yields so a hang shows
+          // up as "iterated 0 events in 5 min" rather than a silent void.
+          // Also log the FIRST event so we can see what Anthropic
+          // accepted (or rejected) before going quiet. The three runs
+          // on record f7b2cd0d (2026-05-11) all stopped at "uploaded N
+          // attachments" with zero subsequent logs — without these we
+          // can't tell whether the request was rejected, the stream
+          // never sent the first event, or every event was filtered out
+          // by the type check below.
+          let eventCount = 0;
+          let lastEventType: string | null = null;
+          const iterStartedAtMs = Date.now();
+          try {
+            for await (const event of turn) {
+              eventCount++;
+              lastEventType = event.type;
+              if (eventCount === 1) {
+                console.log(`[generate-deck] step=stream-first-event type=${event.type} elapsed_ms=${Date.now() - iterStartedAtMs}`);
+              }
+              if (eventCount % 50 === 0) {
+                console.log(`[generate-deck] step=stream-progress events=${eventCount} last_type=${event.type} elapsed_ms=${Date.now() - iterStartedAtMs}`);
+              }
+              captureFileId(event);
+              if (event.type === 'content_block_start') {
+                const cb = (event as unknown as { content_block?: { type?: string; name?: string } }).content_block;
+                const cbType = cb?.type ?? 'unknown';
+                console.log(`[generate-deck] content_block_start type=${cbType} name=${cb?.name ?? 'n/a'}`);
+                if (cbType === 'server_tool_use') {
+                  send({ type: 'status', phase: 'calling-claude', detail: `tool: ${cb?.name ?? 'unknown'}` });
+                }
+              }
+              if (event.type === 'message_stop' || event.type === 'error') {
+                console.log(`[generate-deck] step=stream-terminal type=${event.type}`);
               }
             }
+            console.log(`[generate-deck] step=stream-iter-done events=${eventCount} last_type=${lastEventType ?? 'none'} elapsed_ms=${Date.now() - iterStartedAtMs}`);
+          } catch (streamErr) {
+            const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+            console.error(`[generate-deck] step=stream-iter-FAIL events=${eventCount} last_type=${lastEventType ?? 'none'} elapsed_ms=${Date.now() - iterStartedAtMs} error=${msg}`);
+            throw streamErr; // Re-throw so the outer catch writes status='failed'.
           }
+          console.log(`[generate-deck] step=final-message-start`);
+          const finalStartedAtMs = Date.now();
           const response = await turn.finalMessage();
+          console.log(`[generate-deck] step=final-message-OK elapsed_ms=${Date.now() - finalStartedAtMs} blocks=${response.content.length}`);
           captureFileId(response.content);
 
           // PRIMARY return path: walk bash stdouts for the base64 sentinel
