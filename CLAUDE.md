@@ -343,19 +343,41 @@ Many parallel Claude sessions can be running, each in its own `.claude/worktrees
 
 **Past incident (2026-05-10):** with 65 simultaneous worktrees, several were 100+ commits behind `origin/main`. A single force-push from any of them would have wiped everything in between.
 
-**Two safety nets — do not bypass either:**
+### The standard flow — rebase, then push to main. No GitHub UI required.
 
-1. **Pre-push hook** (`scripts/safe-push-main.sh`, installed via `scripts/install-git-hooks.sh`) refuses any push to `main` whose local tip is not on top of `origin/main`. Lives in the *shared* `.git/hooks/` directory, so a single install protects every worktree of the repo (existing and future). To install or re-install: `bash scripts/install-git-hooks.sh` from any worktree. Bypass with `--no-verify` is **not allowed** without explicit user OK.
-2. **Vercel preview deploys.** Push the worktree's `claude/<name>` branch to GitHub (NOT `main`). Vercel auto-builds a preview URL like `wassell-crm-git-claude-<name>-wassell.vercel.app` within ~2 min. Smoke-test there. Only merge to `main` once the preview looks right and the branch is rebased onto latest `origin/main`. Each in-flight feature gets its own preview URL — they don't fight for the prod slot.
+When the user says "push" or "deploy", do exactly this from the worktree:
 
-**Before pushing to main from a worktree:**
 ```bash
 git fetch origin main
-git rebase origin/main      # resolve conflicts if any
-git push origin HEAD:main   # hook double-checks; refuses if you skipped the rebase
+git rebase origin/main      # if conflicts, STOP and ask the user
+git push origin HEAD:main   # pre-push hook double-checks; Vercel deploys main
 ```
 
-**When work ships:** kill the worktree (`git worktree remove <path>` + `git branch -d claude/<name>`). A stale worktree left around is a future landmine.
+**No PR. No branch-push-and-wait. No clicking "Merge pull request" on GitHub.** The user has explicitly rejected those flows for routine deploys.
+
+### The safety net — pre-push hook
+
+`scripts/safe-push-main.sh`, installed via `scripts/install-git-hooks.sh`, refuses any push to `main` whose local tip is not on top of `origin/main`. Lives in the *shared* `.git/hooks/` directory, so a single install protects every worktree of the repo (existing and future). To install or re-install: `bash scripts/install-git-hooks.sh` from any worktree. Bypass with `--no-verify` is **not allowed** without explicit user OK.
+
+The hook is the safety net for when someone skips the rebase. It is NOT the workflow — always rebase proactively so the push goes through on the first try.
+
+### Optional — preview deploys (only when the user asks)
+
+Vercel auto-builds a preview URL for every non-main branch push: `wassell-claude-code-git-claude-<name>-wassel1.vercel.app`. Use this flow ONLY when the user explicitly asks for "a preview," "show me before going live," "open a PR," or similar:
+
+```bash
+git push origin HEAD            # branch push → preview URL builds (~2 min)
+# user reviews preview URL
+git fetch origin main
+git rebase origin/main
+git push origin HEAD:main       # ships to prod
+```
+
+Do not default to this flow. The user has explicitly said they don't want to open GitHub or wait on a preview for every push.
+
+### When work ships
+
+Kill the worktree (`git worktree remove <path>` + `git branch -d claude/<name>`). A stale worktree left around is a future landmine. Audit with `bash scripts/audit-worktrees.sh`; bulk-clean safely with `bash scripts/prune-worktrees.sh --apply` (skips anything dirty).
 
 ## Do Not
 - Do not use `any` TypeScript type
