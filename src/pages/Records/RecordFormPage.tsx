@@ -28,7 +28,6 @@ function resolveLucideIcon(name?: string): LucideIcon {
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import SectionBlock from './components/SectionBlock';
-import CallHistoryPanel from './components/CallHistoryPanel';
 import RecordFormModal from './components/RecordFormModal';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
@@ -185,22 +184,6 @@ export default function RecordFormPage() {
     if (isNew || !model || !existingRecord) return;
     activityLogger.recordOpened(existingRecord.id, model.id, model, existingRecord);
   }, [model?.id, existingRecord?.id, isNew]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Every phone-type value currently on the record. Passed to CallHistoryPanel
-  // so we load call_logs rows keyed on any phone on the record (main +
-  // alternates). When the list is empty, the panel renders nothing.
-  const phoneValues = useMemo(() => {
-    if (!model) return [] as string[];
-    const out: string[] = [];
-    for (const section of model.schema.sections) {
-      for (const field of section.fields) {
-        if (field.type !== 'phone') continue;
-        const raw = formData[field.name];
-        if (typeof raw === 'string' && raw.trim()) out.push(raw);
-      }
-    }
-    return out;
-  }, [model, formData]);
 
   const visibleSections = useMemo(() => {
     if (!model) return [];
@@ -958,18 +941,11 @@ export default function RecordFormPage() {
       </div>
       )}
 
-      {/* Call history fallback — every Hatif-logged call for any phone on this
-        * record. Suppressed for the `clients` model: client records have a
-        * dedicated `call_history` field-typed section that renders the same
-        * panel inside the form, so this bottom-of-form copy would duplicate it.
-        * Kept for every other model with a phone field as a backward-compatible
-        * default — those models can opt into the in-section render later by
-        * adding a `call_history` field via the Builder. */}
-      {existingRecord && phoneValues.length > 0 && model.name !== 'clients' && (
-        <div className="mt-6">
-          <CallHistoryPanel phones={phoneValues} />
-        </div>
-      )}
+      {/* Call history is no longer a bottom-of-form fallback on every model
+        * with a phone field. It only renders when a model explicitly opts in
+        * by adding a `call_history` field in the Builder — which the clients
+        * model does in its dedicated Calls section. Projects and other models
+        * that happen to carry a phone field don't show calls anymore. */}
 
       {/* Record-form modal triggered by create_record / find_or_create_record buttons */}
       {recordModal && (

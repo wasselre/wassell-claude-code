@@ -860,9 +860,11 @@ const clientsModel: AppModel = {
         ],
       },
       // Calls — derived view of every Hatif-logged call from/to any phone on
-      // the client's record. Replaces the bottom-of-form CallHistoryPanel for
-      // the clients model (suppressed in RecordFormPage when model.name ===
-      // 'clients' to avoid duplication).
+      // the client's record. Renders inline via the `call_history` field type
+      // in SectionBlock. Only the clients model ships with this field; other
+      // models that want call history can add the field via the Builder.
+      // RecordFormPage no longer carries a bottom-of-form fallback — call
+      // history is strictly opt-in via the field type.
       {
         id: clientsCallsSectionId,
         label_ar: 'سجل المكالمات',
