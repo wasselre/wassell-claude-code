@@ -11,7 +11,7 @@ import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
-import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
+import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient } from '@/lib/haberchat/normalize';
 import { markRecentlyWritten } from '@/lib/realtime/dedup';
 import { startRealtimeOrchestrator } from '@/lib/realtime/RealtimeOrchestrator';
 import { markLoaded, startStaleWhileRevalidate } from '@/lib/realtime/staleWhileRevalidate';
@@ -1099,11 +1099,14 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
     const isNewer = !curAt || row.date > curAt;
     const nextUnread = row.flow === 'in' && !wasKnown ? curUnread + 1 : curUnread;
 
-    // Opportunistic client link — only if the chat isn't already linked.
+    // Opportunistic client link — when the chat isn't currently attached
+    // to a LIVE client. A stale `client_link` UUID pointing at a since-
+    // deleted client is treated as unlinked so a freshly-created client
+    // with the same phone can pick the chat up.
     let clientLinkPatch: { client_link: string } | null = null;
-    if (!data.client_link) {
-      const clientsModel = s.models.find((m) => m.name === 'clients');
-      const clients = clientsModel ? (s.records[clientsModel.id] ?? []) : [];
+    const clientsModel = s.models.find((m) => m.name === 'clients');
+    const clients = clientsModel ? (s.records[clientsModel.id] ?? []) : [];
+    if (!isLiveClient(data.client_link, clients)) {
       const slugs = phoneFieldSlugs(clientsModel);
       const link = resolveClientLink(data.phone as string | null | undefined, clients, slugs);
       if (link) clientLinkPatch = { client_link: link };
@@ -1152,9 +1155,12 @@ function relinkChatsAgainstClients(): void {
   const patched: AppRecord[] = [];
   const next = chats.map((rec) => {
     const data = rec.data as Record<string, unknown>;
-    if (data.client_link) return rec;
+    // Skip only when already linked to a LIVE client. A dangling
+    // `client_link` (target client was deleted) is treated as unlinked
+    // so the sweep can attach the chat to whoever owns the phone now.
+    if (isLiveClient(data.client_link, clients)) return rec;
     const link = resolveClientLink(data.phone as string | null | undefined, clients, slugs);
-    if (!link) return rec;
+    if (!link || link === data.client_link) return rec;
     const updated = { ...rec, data: { ...data, client_link: link }, updated_at: new Date().toISOString() };
     patched.push(updated);
     return updated;
@@ -1964,6 +1970,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       })();
     }
+
+    // Backfill chat→client links once on boot. Heals chats whose
+    // previous `client_link` pointed to a since-deleted client AND chats
+    // that were never linked because the client was created AFTER the
+    // chat record was synced (and no message has arrived since). Cheap,
+    // idempotent, in-memory only — Supabase upserts go through
+    // supabaseUpsert so failures persist to the retry queue.
+    queueMicrotask(() => relinkChatsAgainstClients());
 
     // Phase G.2: total init wall time, useful for catching boot regressions.
     markEvent('init:end');
@@ -3541,19 +3555,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
     if (!changed) return;
 
-    // Resolve client_link for any unlinked chats. Matches clients records
-    // by digits-only phone compare so format differences ("+966...",
-    // "0...", "966...") don't block the match. Never overwrites an
-    // existing link — an admin may have manually linked to a different
-    // client and we respect that.
+    // Resolve client_link for any chat that isn't attached to a LIVE
+    // client. Matches by digits-only phone compare so format differences
+    // ("+966...", "0...", "966...") don't block. A `client_link` pointing
+    // to a since-deleted client is treated as unlinked — that's the only
+    // way a chat picks up a freshly-recreated client with the same phone.
+    // Never overwrites a link to a live client — admins may have manually
+    // linked to someone other than the phone owner and we respect that.
     const clientsModel = state.models.find((m) => m.name === 'clients');
     const clientRecords = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
     const clientPhoneSlugs = phoneFieldSlugs(clientsModel);
     const merged = [...byId.values()].map((rec) => {
       const data = rec.data as Record<string, unknown>;
-      if (data.client_link) return rec;
+      if (isLiveClient(data.client_link, clientRecords)) return rec;
       const link = resolveClientLink(data.phone as string | null | undefined, clientRecords, clientPhoneSlugs);
-      if (!link) return rec;
+      if (!link || link === data.client_link) return rec;
       return { ...rec, data: { ...data, client_link: link } };
     });
 
@@ -3812,10 +3828,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       meta: {},
     };
     let record = mergeChatIntoRecord(existing ?? null, synth, deviceId, chatsModel.id);
-    // Opportunistic client link for brand-new chats.
-    if (!(record.data as Record<string, unknown>).client_link) {
-      const clientsModel = state.models.find((m) => m.name === 'clients');
-      const clients = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
+    // Opportunistic client link — for brand-new chats AND for revived
+    // chats whose previous `client_link` points to a since-deleted client.
+    const clientsModel = state.models.find((m) => m.name === 'clients');
+    const clients = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
+    if (!isLiveClient((record.data as Record<string, unknown>).client_link, clients)) {
       const slugs = phoneFieldSlugs(clientsModel);
       const link = resolveClientLink(e164, clients, slugs);
       if (link) record = { ...record, data: { ...record.data, client_link: link } };

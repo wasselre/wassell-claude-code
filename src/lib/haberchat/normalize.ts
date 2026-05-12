@@ -64,6 +64,28 @@ export function resolveClientLink(
 }
 
 /**
+ * True when `clientLink` is a non-empty string that matches a currently-live
+ * clients record. Used by the chat→client relinkers to treat a stale link
+ * (e.g. pointing to a since-deleted client) as "unlinked" so the next sweep
+ * can attach the chat to a freshly-created client with the same phone.
+ *
+ * `deleteRecord` deliberately leaves dangling lookup references in JSONB
+ * (see appStore.ts), so without this check the relinkers would skip every
+ * chat whose original client was deleted — even if a replacement client
+ * with the same number was added later.
+ */
+export function isLiveClient(
+  clientLink: unknown,
+  clients: AppRecord[],
+): boolean {
+  if (typeof clientLink !== 'string' || clientLink === '') return false;
+  for (const c of clients) {
+    if (c.id === clientLink) return true;
+  }
+  return false;
+}
+
+/**
  * Fixed namespace for the chats module. Do NOT change — records already
  * in production were keyed with this namespace and renaming it would
  * orphan them. Generated once via `uuidv4()` and baked in here.
