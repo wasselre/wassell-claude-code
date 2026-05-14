@@ -114,17 +114,24 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
     // Phase 2 — pull the fal.ai temp URL and re-upload to our bucket so
     // the resulting URL is stable, scoped to our project, and not subject
-    // to fal.ai's expiry.
+    // to fal.ai's expiry. recraft-v3's `vector_illustration` style returns
+    // SVG even when the fal.ai response URL ends in `.png`, so sniff the
+    // first bytes and store with the correct extension + content type —
+    // otherwise the browser refuses to render SVG bytes labelled image/png.
     const srcRes = await fetch(sourceUrl);
     if (!srcRes.ok) {
       return jsonError(502, `failed to fetch generated icon: ${srcRes.status}`);
     }
     const bytes = new Uint8Array(await srcRes.arrayBuffer());
-    const path = `icons/generated/${crypto.randomUUID()}.png`;
+    const head = new TextDecoder().decode(bytes.slice(0, 200)).trimStart();
+    const isSvg = head.startsWith('<svg') || head.startsWith('<?xml');
+    const ext = isSvg ? 'svg' : 'png';
+    const contentType = isSvg ? 'image/svg+xml' : 'image/png';
+    const path = `icons/generated/${crypto.randomUUID()}.${ext}`;
     const { error: upErr } = await supabase.storage
       .from('marketing-assets')
       .upload(path, bytes, {
-        contentType: 'image/png',
+        contentType,
         upsert: false,
       });
     if (upErr) {

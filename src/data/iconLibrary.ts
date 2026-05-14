@@ -4,16 +4,19 @@
  * at a PNG that lives in the `marketing-assets/icons/library/` Supabase
  * Storage folder.
  *
- * The PNGs themselves are pre-rendered by `scripts/seed-icon-library.ts`
+ * The SVGs themselves are pre-rendered by `scripts/seed-icon-library.mjs`
  * (one-time, then committed to the bucket — Supabase Storage is the
- * source of truth, not git). The slug list here is the source of truth
- * for *which* icons make up the library. It must stay in sync with:
+ * source of truth, not git). recraft-v3's `vector_illustration` style
+ * returns SVG content; the seed script sniffs the bytes and stores with
+ * a `.svg` extension and `image/svg+xml` content type. The slug list
+ * here is the source of truth for *which* icons make up the library.
+ * It must stay in sync with:
  *   - The slug→noun prompt map in `scripts/seed-icon-library.ts`.
  *   - The `FEATURE_ICONS` / `LANDMARK_ICONS` arrays the AI drafter uses
  *     in `supabase/functions/project-details-ai-v2/index.ts`.
  *   - The public website's icon renderer (separate repo).
  *
- * URL shape: `<VITE_SUPABASE_URL>/storage/v1/object/public/marketing-assets/icons/library/<slug>.png`.
+ * URL shape: `<VITE_SUPABASE_URL>/storage/v1/object/public/marketing-assets/icons/library/<slug>.svg`.
  * We resolve it at runtime rather than hardcoding the project ref so the
  * same code works across dev/preview/prod Supabase projects.
  */
@@ -71,7 +74,7 @@ export function libraryIconUrl(slug: string, baseUrlOverride?: string): string {
     ?? (typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_URL as string | undefined) : undefined)
     ?? '';
   const trimmed = base.replace(/\/$/, '');
-  return `${trimmed}${STORAGE_PUBLIC_PREFIX}${slug}.png`;
+  return `${trimmed}${STORAGE_PUBLIC_PREFIX}${slug}.svg`;
 }
 
 /**

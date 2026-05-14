@@ -136,14 +136,28 @@ async function poll(statusUrl, responseUrl) {
   throw new Error('poll timeout');
 }
 
-async function uploadPng(slug, bytes) {
+// recraft-v3's `vector_illustration` style returns SVG, even though the
+// fal.ai response URL ends in `.png`. Sniff the bytes so we store with
+// the correct extension + content type — otherwise the browser refuses
+// to render SVG bytes labelled as `image/png`.
+function detectImage(bytes) {
+  const head = bytes.subarray(0, 200).toString('utf-8').trimStart();
+  if (head.startsWith('<svg') || head.startsWith('<?xml')) {
+    return { ext: 'svg', contentType: 'image/svg+xml' };
+  }
+  return { ext: 'png', contentType: 'image/png' };
+}
+
+async function uploadAsset(slug, bytes) {
+  const { ext, contentType } = detectImage(bytes);
   const { error } = await supabase.storage
     .from('marketing-assets')
-    .upload(`icons/library/${slug}.png`, bytes, {
-      contentType: 'image/png',
+    .upload(`icons/library/${slug}.${ext}`, bytes, {
+      contentType,
       upsert: true,
     });
   if (error) throw new Error(`upload ${slug}: ${error.message}`);
+  return ext;
 }
 
 async function processSlug(slug, subject) {
@@ -154,8 +168,8 @@ async function processSlug(slug, subject) {
   const res = await fetch(sourceUrl);
   if (!res.ok) throw new Error(`fetch source failed (${res.status})`);
   const bytes = Buffer.from(await res.arrayBuffer());
-  await uploadPng(slug, bytes);
-  console.log(`[${slug}] uploaded to icons/library/${slug}.png`);
+  const ext = await uploadAsset(slug, bytes);
+  console.log(`[${slug}] uploaded to icons/library/${slug}.${ext}`);
 }
 
 (async () => {
