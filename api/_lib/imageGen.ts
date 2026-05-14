@@ -84,8 +84,15 @@ function readIconEnv(): FalEnv {
   return {
     apiKey,
     baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
-    modelId: process.env.FAL_ICON_MODEL_ID ?? 'fal-ai/recraft-v3',
+    // Nano Banana 2 (Google Gemini 3 Pro Image) — text-to-image variant.
+    // The /edit variant is used separately for image-input mode.
+    modelId: process.env.FAL_ICON_MODEL_ID ?? 'fal-ai/nano-banana-pro',
   };
+}
+
+function readIconEditEnv(): FalEnv {
+  const env = readIconEnv();
+  return { ...env, modelId: process.env.FAL_ICON_EDIT_MODEL_ID ?? 'fal-ai/nano-banana-pro/edit' };
 }
 
 function authHeader(env: FalEnv): string {
@@ -175,50 +182,84 @@ export async function imageGenDesign(opts: DesignOpts): Promise<ImageGenStartRes
 interface IconOpts {
   /** Free-form description ("rooftop swimming pool") OR a curated noun. */
   prompt: string;
+  signal?: AbortSignal;
+}
+
+interface IconEditOpts {
   /**
-   * Recraft style. Defaults to `vector_illustration/line_art` — the
-   * cleanest recraft-v3 substyle for Lucide-class monoline icons, which
-   * is what the Wassel website renders. Pass `'vector_illustration/thin'`
-   * for an even lighter stroke, or any other style from the recraft-v3
-   * enum. recraft-v3 rejects `icon/*` subtypes (different recraft model).
+   * Free-form text instruction to layer on top of the image. For the
+   * /api/icons/generate flow this is the user's prompt PLUS the mode
+   * instruction (recreate exactly vs use as reference) assembled by
+   * the caller.
    */
-  style?: string;
+  prompt: string;
+  /**
+   * Publicly-fetchable URLs of the reference image(s). Nano Banana 2's
+   * edit endpoint pulls bytes from these URLs server-side, so they must
+   * be reachable from fal.ai. The icon endpoint uploads the user's
+   * compressed reference to the marketing-assets bucket first and
+   * passes the public URL in.
+   */
+  imageUrls: string[];
   signal?: AbortSignal;
 }
 
 /**
- * Text-to-image generation tuned for the project_details icon picker.
- * Wraps recraft-v3 (text-to-image, no input image) and returns the same
- * tracking shape as the marketing-deck phases. The `imageGenIcon` /
- * `pollImageGen` pair drives the `/api/icons/generate` endpoint.
+ * Text-to-image icon generation via Nano Banana 2
+ * (Google Gemini 3 Pro Image; fal-ai/nano-banana-pro). Returns the
+ * standard ImageGenStartResult tracking shape; pair with `pollImageGen`.
  *
- * Per CLAUDE.md "Silent Failures": this throws loudly on any fal.ai
- * non-2xx and returns `status: 'failed'` (with the error body) when the
- * queue reports FAILED — never swallow.
+ * Per CLAUDE.md "Silent Failures": throws loudly on any fal.ai non-2xx
+ * and `pollImageGen` returns `status: 'failed'` when the queue reports
+ * FAILED — never swallow.
  */
 export async function imageGenIcon(opts: IconOpts): Promise<ImageGenStartResult> {
   const env = readIconEnv();
   if (env.apiKey === STUB_KEY) {
     return stubStart('icon');
   }
-  return startTextToImage(env, {
+  return startNanoBanana(env, {
     prompt: opts.prompt,
-    style: opts.style ?? 'vector_illustration/line_art',
+    imageUrls: [],
     signal: opts.signal,
     phase: 'icon',
   });
 }
 
 /**
- * Submit a text-to-image request to fal.ai's queue (recraft-v3 shape:
- * `{ prompt, style, image_size }`, no `image_urls`). Returns the same
- * tracking URLs as the edit-flow `startGeneration`.
+ * Image-input icon generation via Nano Banana 2 edit
+ * (fal-ai/nano-banana-pro/edit). Used by the "upload a reference image"
+ * branch of the Generate tab — the caller passes the user's image URL
+ * plus a prompt that mixes the mode instruction (recreate exactly /
+ * use as reference) with any free-form context.
  */
-async function startTextToImage(
+export async function imageGenIconEdit(opts: IconEditOpts): Promise<ImageGenStartResult> {
+  const env = readIconEditEnv();
+  if (env.apiKey === STUB_KEY) {
+    return stubStart('icon');
+  }
+  if (opts.imageUrls.length === 0) {
+    throw new Error('imageGenIconEdit requires at least one image URL');
+  }
+  return startNanoBanana(env, {
+    prompt: opts.prompt,
+    imageUrls: opts.imageUrls,
+    signal: opts.signal,
+    phase: 'icon',
+  });
+}
+
+/**
+ * Submit a Nano Banana 2 request to fal.ai's queue. Same body shape as
+ * the marketing-deck startGeneration but accepts an empty imageUrls
+ * array for the text-to-image variant (the model id flips between
+ * `/nano-banana-pro` and `/nano-banana-pro/edit`).
+ */
+async function startNanoBanana(
   env: FalEnv,
   opts: {
     prompt: string;
-    style: string;
+    imageUrls: string[];
     signal?: AbortSignal;
     phase: 'icon';
   },
@@ -226,11 +267,15 @@ async function startTextToImage(
   const modelPath = env.modelId.startsWith('/') ? env.modelId.slice(1) : env.modelId;
   const url = `${env.baseUrl.replace(/\/$/, '')}/${modelPath}`;
 
-  const body = {
+  const body: Record<string, unknown> = {
     prompt: opts.prompt,
-    style: opts.style,
-    image_size: 'square_hd',
+    num_images: 1,
+    aspect_ratio: '1:1',
+    output_format: 'png',
   };
+  if (opts.imageUrls.length > 0) {
+    body.image_urls = opts.imageUrls;
+  }
 
   const res = await fetch(url, {
     method: 'POST',
