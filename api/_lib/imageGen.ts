@@ -176,12 +176,11 @@ interface IconOpts {
   /** Free-form description ("rooftop swimming pool") OR a curated noun. */
   prompt: string;
   /**
-   * Recraft style. Defaults to `vector_illustration` — clean line/shape
-   * vector graphics that read well at small sizes and pair with Wassel's
-   * flat copper-on-cream brand. Other valid recraft-v3 styles include
-   * `vector_illustration/line_art`, `digital_illustration`, etc.
-   * recraft-v3 rejects `icon/*` subtypes (validation error) — those live
-   * on a different recraft model.
+   * Recraft style. Defaults to `vector_illustration/line_art` — the
+   * cleanest recraft-v3 substyle for Lucide-class monoline icons, which
+   * is what the Wassel website renders. Pass `'vector_illustration/thin'`
+   * for an even lighter stroke, or any other style from the recraft-v3
+   * enum. recraft-v3 rejects `icon/*` subtypes (different recraft model).
    */
   style?: string;
   signal?: AbortSignal;
@@ -204,7 +203,7 @@ export async function imageGenIcon(opts: IconOpts): Promise<ImageGenStartResult>
   }
   return startTextToImage(env, {
     prompt: opts.prompt,
-    style: opts.style ?? 'vector_illustration',
+    style: opts.style ?? 'vector_illustration/line_art',
     signal: opts.signal,
     phase: 'icon',
   });
