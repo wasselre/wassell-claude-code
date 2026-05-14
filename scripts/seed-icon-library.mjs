@@ -1,79 +1,98 @@
-// One-time (re-runnable) script that pre-renders the 27 curated project_details
-// icons and uploads them to `marketing-assets/icons/library/<slug>.png` in the
-// configured Supabase project. The runtime CRM resolves library URLs by slug
-// against `VITE_SUPABASE_URL`, so this script is what makes those URLs exist.
+// One-time (re-runnable) script that generates the 27 curated
+// project_details icons as clean monoline SVGs via Claude (Sonnet 4.6)
+// and uploads them to `marketing-assets/icons/library/<slug>.svg`.
 //
-// Re-runs upsert (overwrite) each PNG — handy when you tweak the prompt
-// framing or the style and want to refresh the whole library.
+// Re-runs upsert (overwrite) — handy when you tweak the prompts or the
+// brand spec and want a fresh library.
 //
 // Required env:
-//   FAL_KEY                     fal.ai API key
-//   SUPABASE_URL                project URL (e.g. https://abc.supabase.co)
-//   SUPABASE_SERVICE_ROLE_KEY   service-role key (write access to storage)
+//   ANTHROPIC_API_KEY            Claude API key
+//   SUPABASE_URL                 project URL (e.g. https://abc.supabase.co)
+//   SUPABASE_SERVICE_ROLE_KEY    service-role key (write access to storage)
 //
 // Optional env:
-//   FAL_BASE_URL                default https://queue.fal.run
-//   FAL_ICON_MODEL_ID           default fal-ai/recraft-v3
-//   ICON_STYLE                  default icon/broken_line
-//   ONLY                        comma-separated slug subset to (re)generate
+//   ICON_MODEL_ID                Claude model (default: claude-sonnet-4-6)
+//   ONLY                         comma-separated slug subset
 //
 // Usage:
 //   node scripts/seed-icon-library.mjs
 //   node scripts/seed-icon-library.mjs --only=building,metro
 
 import { createClient } from '@supabase/supabase-js';
+import Anthropic from '@anthropic-ai/sdk';
 
-const FAL_KEY = process.env.FAL_KEY;
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-if (!FAL_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
-  console.error('Missing env: FAL_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
+if (!ANTHROPIC_API_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error('Missing env: ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY');
   process.exit(1);
 }
 
-const FAL_BASE_URL = process.env.FAL_BASE_URL ?? 'https://queue.fal.run';
-const FAL_MODEL_ID = process.env.FAL_ICON_MODEL_ID ?? 'fal-ai/recraft-v3';
-const STYLE = process.env.ICON_STYLE ?? 'vector_illustration';
+const MODEL_ID = process.env.ICON_MODEL_ID ?? 'claude-sonnet-4-6';
 
 // Slug → human noun. Keep in sync with FEATURE_ICONS / LANDMARK_ICONS in
-// src/data/iconLibrary.ts (slugs) and supabase/functions/project-details-ai-v2
-// (slugs the AI picks from).
+// src/data/iconLibrary.ts and the AI drafter's curated lists in
+// supabase/functions/project-details-ai-v2/index.ts.
 const SLUG_PROMPTS = {
   // Features
   building:   'a modern multi-story residential building',
-  home:       'a contemporary villa with a pitched roof',
-  car:        'a car parked in a covered parking space',
-  smart_home: 'a smart-home control panel with a Wi-Fi symbol',
+  home:       'a single-family villa house with a roof',
+  car:        'a car under a parking shade / covered parking',
+  smart_home: 'a smart-home icon (house with a wifi or signal mark)',
   ac:         'a wall-mounted air conditioner unit',
-  camera:     'a wall-mounted security camera',
-  key:        'a modern door key',
-  facade:     'a stylized building facade with windows',
+  camera:     'a security CCTV camera on a wall mount',
+  key:        'a door key',
+  facade:     'a building facade with a grid of windows',
   bed:        'a double bed seen from the side',
   box:        'a stack of storage boxes',
-  sparkle:    'a sparkle indicating premium finish',
-  elevator:   'an elevator door between two arrows',
+  sparkle:    'a sparkle / shine mark indicating premium finish',
+  elevator:   'an elevator door between up and down arrows',
   shield:     'a security shield with a check mark',
-  wifi:       'a Wi-Fi signal symbol',
+  wifi:       'a wifi signal symbol',
   pool:       'a swimming pool with a ladder',
   gym:        'a dumbbell representing a gym',
   // Landmarks
-  metro:      'a metro train at a station platform',
+  metro:      'a metro train',
   road:       'a highway road with lane markings',
   shop:       'a shopping bag with a handle',
   school:     'a school building with a flag',
   hospital:   'a hospital building with a cross symbol',
-  park:       'a tree in a public park',
-  mosque:     'a mosque with a dome and minaret',
+  park:       'a single tree representing a park',
+  mosque:     'a mosque with a dome and a minaret',
   airport:    'an airplane taking off',
   restaurant: 'a fork and knife crossed for a restaurant',
   gas:        'a fuel pump for a gas station',
   pin:        'a map pin marking a generic location',
 };
 
-const STYLE_PREFIX =
-  'Single real-estate icon, copper #B8734F outline on transparent background, ' +
-  'flat vector, single line weight, centered, minimal, no text, no shadows. ' +
-  'Subject: ';
+const SYSTEM_PROMPT = `You are an icon designer for Wassel Real Estate (وصل العقارية).
+
+You produce ONE minimal flat SVG icon that matches the Wassel brand:
+- Single line weight, monoline outline style (think Lucide / Phosphor / Heroicons outline).
+- Stroke color is exactly Wassel copper: #B8734F.
+- Stroke width 1.5 on a 24x24 viewBox.
+- stroke-linecap="round" and stroke-linejoin="round".
+- fill="none" on every stroke shape (no filled blobs).
+- Transparent background (no background rect).
+- Centered subject. No text, no labels, no decorative shadows.
+- Use only basic shapes (path, circle, rect, line, polyline, polygon). Inline only — no external refs, no <style>, no <script>, no <foreignObject>, no <image>, no <use href>.
+- Output ONLY the SVG markup via the tool. Do NOT explain.
+
+The subject of the icon is described in the user message. Translate it visually into one cohesive icon.`;
+
+const TOOL_SCHEMA = {
+  name: 'emit_icon_svg',
+  description: 'Emit the final SVG icon markup.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      svg: { type: 'string', description: 'Complete SVG markup starting with <svg and ending with </svg>.' },
+    },
+    required: ['svg'],
+    additionalProperties: false,
+  },
+};
 
 const args = Object.fromEntries(
   process.argv
@@ -88,88 +107,53 @@ const onlyFilter = typeof args.only === 'string'
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
+const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-function authHeader() {
-  return `Key ${FAL_KEY}`;
+function validateSvg(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('<svg') || !trimmed.endsWith('</svg>')) {
+    throw new Error('malformed SVG envelope');
+  }
+  if (/<\s*(script|foreignObject|image|iframe|link|style)\b/i.test(trimmed)) {
+    throw new Error('SVG contains disallowed element');
+  }
+  if (/javascript:/i.test(trimmed) || /\son\w+\s*=/i.test(trimmed)) {
+    throw new Error('SVG contains inline JS / event handlers');
+  }
+  return trimmed;
 }
 
-async function startGeneration(prompt) {
-  const url = `${FAL_BASE_URL.replace(/\/$/, '')}/${FAL_MODEL_ID}`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      Authorization: authHeader(),
-    },
-    body: JSON.stringify({ prompt, style: STYLE, image_size: 'square_hd' }),
+async function generateSvg(subject) {
+  const response = await anthropic.messages.create({
+    model: MODEL_ID,
+    max_tokens: 4000,
+    system: SYSTEM_PROMPT,
+    tools: [TOOL_SCHEMA],
+    tool_choice: { type: 'tool', name: TOOL_SCHEMA.name },
+    messages: [{ role: 'user', content: `Subject: ${subject}` }],
   });
-  if (!res.ok) {
-    throw new Error(`start failed (${res.status}): ${(await res.text()).slice(0, 300)}`);
-  }
-  return res.json();
+  const toolBlock = response.content.find((b) => b.type === 'tool_use');
+  if (!toolBlock) throw new Error('Claude did not call the tool');
+  const svg = toolBlock.input?.svg;
+  if (typeof svg !== 'string' || !svg) throw new Error('missing svg field');
+  return validateSvg(svg);
 }
 
-async function poll(statusUrl, responseUrl) {
-  const deadline = Date.now() + 120_000;
-  while (Date.now() < deadline) {
-    const r = await fetch(statusUrl, { headers: { Authorization: authHeader() } });
-    if (!r.ok) throw new Error(`poll failed (${r.status}): ${(await r.text()).slice(0, 200)}`);
-    const j = await r.json();
-    const status = (j.status ?? '').toUpperCase();
-    if (status === 'COMPLETED') {
-      const res = await fetch(responseUrl, { headers: { Authorization: authHeader() } });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`response fetch failed (${res.status}): ${body.slice(0, 500)}`);
-      }
-      const data = await res.json();
-      const u = data?.images?.[0]?.url;
-      if (!u) throw new Error('no image URL in response');
-      return u;
-    }
-    if (status === 'FAILED' || status === 'ERROR' || status === 'NSFW') {
-      throw new Error(`${status}: ${j.error ?? j.detail ?? 'unknown'}`);
-    }
-    await new Promise((res) => setTimeout(res, 1500));
-  }
-  throw new Error('poll timeout');
-}
-
-// recraft-v3's `vector_illustration` style returns SVG, even though the
-// fal.ai response URL ends in `.png`. Sniff the bytes so we store with
-// the correct extension + content type — otherwise the browser refuses
-// to render SVG bytes labelled as `image/png`.
-function detectImage(bytes) {
-  const head = bytes.subarray(0, 200).toString('utf-8').trimStart();
-  if (head.startsWith('<svg') || head.startsWith('<?xml')) {
-    return { ext: 'svg', contentType: 'image/svg+xml' };
-  }
-  return { ext: 'png', contentType: 'image/png' };
-}
-
-async function uploadAsset(slug, bytes) {
-  const { ext, contentType } = detectImage(bytes);
+async function uploadSvg(slug, svg) {
   const { error } = await supabase.storage
     .from('marketing-assets')
-    .upload(`icons/library/${slug}.${ext}`, bytes, {
-      contentType,
+    .upload(`icons/library/${slug}.svg`, Buffer.from(svg, 'utf-8'), {
+      contentType: 'image/svg+xml',
       upsert: true,
     });
   if (error) throw new Error(`upload ${slug}: ${error.message}`);
-  return ext;
 }
 
 async function processSlug(slug, subject) {
-  const prompt = `${STYLE_PREFIX}${subject}.`;
   console.log(`[${slug}] generating…`);
-  const started = await startGeneration(prompt);
-  const sourceUrl = await poll(started.status_url, started.response_url);
-  const res = await fetch(sourceUrl);
-  if (!res.ok) throw new Error(`fetch source failed (${res.status})`);
-  const bytes = Buffer.from(await res.arrayBuffer());
-  const ext = await uploadAsset(slug, bytes);
-  console.log(`[${slug}] uploaded to icons/library/${slug}.${ext}`);
+  const svg = await generateSvg(subject);
+  await uploadSvg(slug, svg);
+  console.log(`[${slug}] uploaded to icons/library/${slug}.svg (${svg.length} bytes)`);
 }
 
 (async () => {
