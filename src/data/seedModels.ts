@@ -3322,6 +3322,7 @@ const chatTemplatesModel: AppModel = {
 const siteSettingsId = uuid();
 const ssBaseSectionId = uuid();
 const ssMapCardSectionId = uuid();
+const ssProjectCardSectionId = uuid();
 const ssHeroTitleFieldId = uuid();
 const ssHeroSubtitleFieldId = uuid();
 
@@ -3391,6 +3392,33 @@ const siteSettingsModel: AppModel = {
           { id: uuid(), name: 'card_chip3_field',   label_ar: 'البطاقة الثالثة',            label_en: 'Card 3',                  type: 'dropdown', required: false, order: 3, section_id: ssMapCardSectionId, width: 'full', show_in_table: false, options: [] },
           { id: uuid(), name: 'card_price_field',   label_ar: 'حقل السعر (في الذيل)',       label_en: 'Price Field (footer)',    type: 'dropdown', required: false, order: 4, section_id: ssMapCardSectionId, width: 'half', show_in_table: false, options: [] },
           { id: uuid(), name: 'card_cta_url_field', label_ar: 'رابط زر "فتح السجل"',        label_en: 'CTA URL Field',           type: 'dropdown', required: false, order: 5, section_id: ssMapCardSectionId, width: 'half', show_in_table: false, options: [] },
+        ],
+      },
+      // "Project Card" section — admin picks which all_projects field
+      // populates each slot in the website's projects-listing card
+      // (projects.html grid). Empty selections fall back to heuristics:
+      // image → record.data.image_url; title/subtitle/status →
+      // all_projects.card_config; chip1/2 → first two of card_config
+      // shown_field_ids; price hides if unset; CTA defaults to
+      // project.html?id=<record id>. Dropdown options are EMPTY for
+      // fresh installs — the 2026-05-14_b_site_settings_project_card_config.sql
+      // migration snapshots all_projects fields into these dropdowns.
+      {
+        id: ssProjectCardSectionId,
+        label_ar: 'بطاقة المشروع',
+        label_en: 'Project Card',
+        order: 2,
+        is_base: false,
+        color: '#B8734F',
+        fields: [
+          { id: uuid(), name: 'proj_card_image_field',    label_ar: 'حقل صورة المشروع',     label_en: 'Image Field',     type: 'dropdown', required: false, order: 0, section_id: ssProjectCardSectionId, width: 'full', show_in_table: false, options: [] },
+          { id: uuid(), name: 'proj_card_title_field',    label_ar: 'حقل العنوان',          label_en: 'Title Field',     type: 'dropdown', required: false, order: 1, section_id: ssProjectCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'proj_card_subtitle_field', label_ar: 'حقل العنوان الفرعي',   label_en: 'Subtitle Field',  type: 'dropdown', required: false, order: 2, section_id: ssProjectCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'proj_card_status_field',   label_ar: 'حقل حالة المشروع',     label_en: 'Status Field',    type: 'dropdown', required: false, order: 3, section_id: ssProjectCardSectionId, width: 'full', show_in_table: false, options: [] },
+          { id: uuid(), name: 'proj_card_chip1_field',    label_ar: 'الشريحة الأولى',       label_en: 'Chip 1',          type: 'dropdown', required: false, order: 4, section_id: ssProjectCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'proj_card_chip2_field',    label_ar: 'الشريحة الثانية',      label_en: 'Chip 2',          type: 'dropdown', required: false, order: 5, section_id: ssProjectCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'proj_card_price_field',    label_ar: 'حقل السعر',            label_en: 'Price Field',     type: 'dropdown', required: false, order: 6, section_id: ssProjectCardSectionId, width: 'half', show_in_table: false, options: [] },
+          { id: uuid(), name: 'proj_card_cta_url_field',  label_ar: 'رابط زر "عرض المشروع"', label_en: 'CTA URL Field',  type: 'dropdown', required: false, order: 7, section_id: ssProjectCardSectionId, width: 'half', show_in_table: false, options: [] },
         ],
       },
     ],
