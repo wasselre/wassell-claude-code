@@ -28,7 +28,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
-import { generateIconSvg } from '../_lib/iconGenClaude.js';
+import { generateIconSvg, type IconReferenceMode, type GenerateIconImage } from '../_lib/iconGenClaude.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -37,6 +37,39 @@ export const config = {
 
 interface RequestBody {
   prompt?: string;
+  /**
+   * Optional reference image as a data URL
+   * (`data:image/<png|jpeg|webp|gif>;base64,<payload>`). The frontend is
+   * expected to compress the image client-side first — server still
+   * enforces a 5 MB cap as a safety net.
+   */
+  image_data_url?: string;
+  /** Required when `image_data_url` is set. Defaults to 'reference' otherwise. */
+  mode?: IconReferenceMode;
+}
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const ALLOWED_IMAGE_TYPES = new Set<GenerateIconImage['mediaType']>([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+]);
+
+function parseDataUrl(input: string): GenerateIconImage | { error: string } {
+  const m = /^data:([a-z]+\/[a-z0-9+.-]+);base64,(.+)$/i.exec(input.trim());
+  if (!m) return { error: 'image_data_url must be a base64 data URL' };
+  const mediaType = m[1].toLowerCase() as GenerateIconImage['mediaType'];
+  if (!ALLOWED_IMAGE_TYPES.has(mediaType)) {
+    return { error: `unsupported image type: ${mediaType}` };
+  }
+  const base64 = m[2];
+  // base64 → bytes is roughly len * 3/4. Cheap upper-bound check.
+  const approxBytes = Math.floor((base64.length * 3) / 4);
+  if (approxBytes > MAX_IMAGE_BYTES) {
+    return { error: `image too large (${Math.round(approxBytes / 1024)} KB, max 5 MB)` };
+  }
+  return { mediaType, base64 };
 }
 
 /* ─── Node ↔ Web Request adapter ─────────────────────────────────── */
@@ -80,11 +113,21 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     } catch {
       return jsonError(400, 'invalid JSON body');
     }
-    const prompt = body.prompt?.trim();
-    if (!prompt) return jsonError(400, 'prompt is required');
+    const prompt = body.prompt?.trim() ?? '';
     if (prompt.length > 300) {
       return jsonError(400, 'prompt is too long (max 300 chars)');
     }
+
+    let image: GenerateIconImage | undefined;
+    if (body.image_data_url) {
+      const parsed = parseDataUrl(body.image_data_url);
+      if ('error' in parsed) return jsonError(400, parsed.error);
+      image = parsed;
+    }
+    if (!prompt && !image) {
+      return jsonError(400, 'prompt or image_data_url is required');
+    }
+    const mode: IconReferenceMode = body.mode === 'exact' ? 'exact' : 'reference';
 
     const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
     const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
@@ -100,7 +143,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 
     let svg: string;
     try {
-      svg = await generateIconSvg({ prompt });
+      svg = await generateIconSvg({ prompt, image, mode });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return jsonError(502, `icon generation failed: ${msg}`);

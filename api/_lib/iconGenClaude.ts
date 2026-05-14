@@ -86,9 +86,28 @@ function validateSvg(raw: string): string {
   return trimmed;
 }
 
+export type IconReferenceMode = 'exact' | 'reference';
+
+export interface GenerateIconImage {
+  /** Base64 (no data: prefix) bytes of the source image. */
+  base64: string;
+  /** MIME type Claude vision accepts: image/jpeg, image/png, image/webp, image/gif. */
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+}
+
 export interface GenerateIconOpts {
-  /** User-facing description. Free-form, may be Arabic or English. */
+  /** User-facing description. Free-form, may be Arabic or English. Optional when an image is provided. */
   prompt: string;
+  /** Optional reference image. When set, switches the user message to vision mode. */
+  image?: GenerateIconImage;
+  /**
+   * Determines how the image is used:
+   * - 'exact'     → trace the image as a monoline icon (subject + composition match).
+   * - 'reference' → take the subject as inspiration but design a minimalist Wassel-style icon.
+   * Branding is enforced in BOTH modes — Wassel copper stroke, monoline outline, no fills.
+   * Ignored when `image` is not provided.
+   */
+  mode?: IconReferenceMode;
   modelId?: string;
   signal?: AbortSignal;
 }
@@ -96,8 +115,42 @@ export interface GenerateIconOpts {
 export async function generateIconSvg(opts: GenerateIconOpts): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set');
+  if (!opts.image && !opts.prompt) {
+    throw new Error('generateIconSvg requires either a prompt or an image');
+  }
 
   const client = new Anthropic({ apiKey });
+
+  // Build the final user-message content. Without an image, behave as
+  // before (text-only few-shot). With an image, swap in a vision block
+  // and mode-specific instructions.
+  let userContent: Anthropic.MessageParam['content'];
+  if (opts.image) {
+    const mode: IconReferenceMode = opts.mode ?? 'reference';
+    const modeInstruction = mode === 'exact'
+      ? 'Recreate the subject and composition of the attached image as a single monoline SVG icon. Preserve the shape and silhouette of the subject; do not invent new objects. Still apply the Wassel brand: copper #B8734F stroke, single line weight, fill="none", no colors from the image.'
+      : 'Take the attached image only as visual inspiration for the SUBJECT. Design a fresh minimalist Wassel-style icon of that subject (e.g. if the image is a photo of a pool, design a clean Lucide-style pool icon). Do NOT trace the image; simplify aggressively.';
+    const extraPrompt = opts.prompt
+      ? `\n\nAdditional context from the user: ${opts.prompt}`
+      : '';
+    userContent = [
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: opts.image.mediaType,
+          data: opts.image.base64,
+        },
+      },
+      {
+        type: 'text',
+        text: `${FEW_SHOT_USER_MESSAGE}\n\n${modeInstruction}${extraPrompt}`,
+      },
+    ];
+  } else {
+    userContent = `${FEW_SHOT_USER_MESSAGE}${opts.prompt}`;
+  }
+
   const response = await client.messages.create(
     {
       model: opts.modelId ?? MODEL_ID,
@@ -105,7 +158,7 @@ export async function generateIconSvg(opts: GenerateIconOpts): Promise<string> {
       system: SYSTEM_PROMPT,
       tools: [TOOL_SCHEMA],
       tool_choice: { type: 'tool', name: TOOL_SCHEMA.name },
-      messages: [{ role: 'user', content: `${FEW_SHOT_USER_MESSAGE}${opts.prompt}` }],
+      messages: [{ role: 'user', content: userContent }],
     },
     opts.signal ? { signal: opts.signal } : undefined,
   );

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Loader2, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Loader2, Sparkles, Image as ImageIcon, Upload, X } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
@@ -19,6 +19,33 @@ interface IconPickerModalProps {
 }
 
 type Tab = 'library' | 'generate';
+type Mode = 'exact' | 'reference';
+
+const MAX_DIMENSION = 1024; // resize so longest side ≤ 1024px
+const JPEG_QUALITY = 0.82;
+
+/**
+ * Compress a user-selected image client-side before upload. Resizes the
+ * longest side to MAX_DIMENSION, re-encodes as JPEG. Server still enforces
+ * a 5 MB cap as a safety net. Returns a data URL ready for the Anthropic
+ * vision API (server splits the data URL back into mediaType + base64).
+ */
+async function compressImage(file: File): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const longest = Math.max(bitmap.width, bitmap.height);
+  const scale = longest > MAX_DIMENSION ? MAX_DIMENSION / longest : 1;
+  const w = Math.round(bitmap.width * scale);
+  const h = Math.round(bitmap.height * scale);
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Canvas 2D context unavailable');
+  ctx.drawImage(bitmap, 0, 0, w, h);
+  bitmap.close();
+  // JPEG keeps file sizes small for vision input. PNGs of photos blow up.
+  return canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+}
 
 export default function IconPickerModal({ open, onClose, selected, onSelect }: IconPickerModalProps) {
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -27,14 +54,28 @@ export default function IconPickerModal({ open, onClose, selected, onSelect }: I
   const [prompt, setPrompt] = useState('');
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const [mode, setMode] = useState<Mode>('reference');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   if (!open) return null;
 
   const t = (ar: string, en: string) => (isAr ? ar : en);
 
+  const handleFilePicked = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const dataUrl = await compressImage(file);
+      setImageDataUrl(dataUrl);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(t(`فشل تحميل الصورة: ${msg}`, `Image load failed: ${msg}`), 'error');
+    }
+  };
+
   const handleGenerate = async () => {
     const trimmed = prompt.trim();
-    if (!trimmed) return;
+    if (!trimmed && !imageDataUrl) return;
     setBusy(true);
     setPreview(null);
     try {
@@ -46,7 +87,11 @@ export default function IconPickerModal({ open, onClose, selected, onSelect }: I
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ prompt: trimmed }),
+        body: JSON.stringify({
+          prompt: trimmed,
+          image_data_url: imageDataUrl ?? undefined,
+          mode: imageDataUrl ? mode : undefined,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -69,6 +114,8 @@ export default function IconPickerModal({ open, onClose, selected, onSelect }: I
     setPrompt('');
     setPreview(null);
     setBusy(false);
+    setImageDataUrl(null);
+    setMode('reference');
     onClose();
   };
 
@@ -124,7 +171,7 @@ export default function IconPickerModal({ open, onClose, selected, onSelect }: I
         <div className="space-y-4">
           <div>
             <label className="block text-xs font-bold text-charcoal/70 mb-1">
-              {t('صف الأيقونة', 'Describe the icon')}
+              {t('صف الأيقونة (اختياري إذا رفعت صورة)', 'Describe the icon (optional if you upload an image)')}
             </label>
             <textarea
               value={prompt}
@@ -145,11 +192,91 @@ export default function IconPickerModal({ open, onClose, selected, onSelect }: I
             </p>
           </div>
 
+          {/* Reference-image uploader */}
+          <div>
+            <label className="block text-xs font-bold text-charcoal/70 mb-1">
+              {t('صورة مرجعية (اختياري)', 'Reference image (optional)')}
+            </label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                handleFilePicked(file);
+                e.target.value = '';
+              }}
+            />
+            {imageDataUrl ? (
+              <div className="border border-sand/40 rounded-lg p-3 bg-cream/30 flex items-center gap-3">
+                <img
+                  src={imageDataUrl}
+                  alt="reference"
+                  className="w-16 h-16 rounded object-cover border border-sand/30"
+                />
+                <div className="flex-1 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                      <input
+                        type="radio"
+                        name="icon-mode"
+                        checked={mode === 'reference'}
+                        onChange={() => setMode('reference')}
+                        className="accent-copper"
+                      />
+                      {t('استخدمها كمرجع', 'Use as reference')}
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer">
+                      <input
+                        type="radio"
+                        name="icon-mode"
+                        checked={mode === 'exact'}
+                        onChange={() => setMode('exact')}
+                        className="accent-copper"
+                      />
+                      {t('أعد إنشاءها بدقة', 'Recreate exactly')}
+                    </label>
+                  </div>
+                  <p className="text-[10px] text-charcoal/50 leading-snug">
+                    {mode === 'exact'
+                      ? t(
+                          'سيتم تتبع شكل الصورة وحدوده مع تطبيق هوية وصل (نحاسي، خطوط أحادية).',
+                          'Traces the shape/silhouette and applies Wassel branding (copper monoline).',
+                        )
+                      : t(
+                          'سيتم استلهام الموضوع فقط، مع تصميم أيقونة وصل أنيقة ومبسّطة.',
+                          'Takes the subject as inspiration; designs a fresh minimalist Wassel icon.',
+                        )}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setImageDataUrl(null)}
+                  className="p-1 rounded text-charcoal/50 hover:text-red-600 hover:bg-red-50"
+                  aria-label={t('إزالة الصورة', 'Remove image')}
+                  title={t('إزالة الصورة', 'Remove image')}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-3 rounded-lg border border-dashed border-sand/60 text-xs text-charcoal/60 hover:border-copper hover:text-copper hover:bg-cream/30 transition-colors"
+              >
+                <Upload size={14} />
+                {t('ارفع صورة (JPG/PNG/WEBP، حتى 5MB)', 'Upload image (JPG/PNG/WEBP, up to 5MB)')}
+              </button>
+            )}
+          </div>
+
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={busy || !prompt.trim()}
+              disabled={busy || (!prompt.trim() && !imageDataUrl)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-copper text-white text-sm font-bold hover:bg-terracotta disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {busy ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
