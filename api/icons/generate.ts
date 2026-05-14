@@ -1,48 +1,43 @@
 /**
  * POST /api/icons/generate
  *
- * Generate a single icon from a user-provided description (the "Generate"
- * tab in `IconPickerModal`), upload it to
- * `marketing-assets/icons/generated/<uuid>.<ext>`, and return the public URL.
+ * Generate a single SVG icon from a user-provided description (the
+ * "Generate" tab of `IconPickerModal`), upload it to
+ * `marketing-assets/icons/generated/<uuid>.svg`, and return the public
+ * URL.
  *
- * Body: `{ prompt: string, style?: string }`.
+ * Body: `{ prompt: string }`.
  *
- * Routes through fal.ai's recraft-v3 text-to-image with the
- * `vector_illustration/line_art` style by default — the closest recraft
- * substyle to the website's hand-coded Lucide-style monolines. Per
- * recraft-v3's output behavior, `vector_illustration/*` returns SVG; we
- * sniff the bytes and store with the matching content type so browsers
- * actually render it (an earlier bug saved SVG as `image/png` and every
- * icon broke).
+ * Engine: Claude (Sonnet 4.6) via api/_lib/iconGenClaude.ts, which
+ * forces the model through a strict tool schema AND shows it 3 reference
+ * SVGs from `Wassel Website/js/project-icons.js` so the output matches
+ * the website's Lucide-class monoline style.
  *
  * Loud failures only — per CLAUDE.md "Silent Failures":
- *   - fal.ai non-2xx / FAILED queue state → 502 with the upstream error.
- *   - storage upload error → 500 with the storage error.
- *   - missing JWT / invalid JWT → 401 (via withAuth).
+ *   - Anthropic non-2xx / malformed SVG → 502 with the message.
+ *   - storage upload error → 500.
+ *   - missing JWT → 401 (via withAuth).
  *
- * Auth: requires the caller's Supabase JWT; the upload uses that JWT so
- * the bucket's authenticated-write RLS applies.
+ * History:
+ *   - First version used fal.ai recraft-v3 `vector_illustration` →
+ *     gradient-filled editorial SVGs, never Lucide-shape. Tried `line_art`,
+ *     `thin`, `marker_outline` substyles; all 60–200 KB and equally
+ *     non-iconlike. Switched to Claude with few-shot website references.
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
-import { imageGenIcon, pollImageGen } from '../_lib/imageGen.js';
+import { generateIconSvg } from '../_lib/iconGenClaude.js';
 
 export const config = {
   runtime: 'nodejs',
-  maxDuration: 60,
+  maxDuration: 30,
 };
 
 interface RequestBody {
   prompt?: string;
-  style?: string;
 }
-
-const WASSEL_STYLE_PREFIX =
-  'Minimal flat icon, single line weight, monoline outline only, '
-  + 'copper #B8734F stroke, transparent background, centered, no fill, '
-  + 'no gradient, no shadow, no text. Subject: ';
 
 /* ─── Node ↔ Web Request adapter ─────────────────────────────────── */
 
@@ -85,9 +80,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     } catch {
       return jsonError(400, 'invalid JSON body');
     }
-    const userPrompt = body.prompt?.trim();
-    if (!userPrompt) return jsonError(400, 'prompt is required');
-    if (userPrompt.length > 300) {
+    const prompt = body.prompt?.trim();
+    if (!prompt) return jsonError(400, 'prompt is required');
+    if (prompt.length > 300) {
       return jsonError(400, 'prompt is too long (max 300 chars)');
     }
 
@@ -103,32 +98,20 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       global: { headers: { Authorization: `Bearer ${jwt}` } },
     });
 
-    const fullPrompt = `${WASSEL_STYLE_PREFIX}${userPrompt}.`;
-    const start = await imageGenIcon({ prompt: fullPrompt, style: body.style });
-    const result = await pollImageGen(start, { intervalMs: 1500, timeoutMs: 55_000 });
-    if (result.status !== 'completed' || !result.imageUrls?.[0]) {
-      const detail = result.rawError ? `: ${result.rawError}` : '';
-      return jsonError(502, `icon generation ${result.status}${detail}`);
+    let svg: string;
+    try {
+      svg = await generateIconSvg({ prompt });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return jsonError(502, `icon generation failed: ${msg}`);
     }
 
-    const srcRes = await fetch(result.imageUrls[0]);
-    if (!srcRes.ok) {
-      return jsonError(502, `failed to fetch generated icon: ${srcRes.status}`);
-    }
-    const bytes = new Uint8Array(await srcRes.arrayBuffer());
-    // recraft `vector_illustration/*` returns SVG even when the response
-    // URL ends `.png`. Sniff the bytes so we store with the right
-    // extension + content type (browsers refuse to render SVG bytes
-    // labelled image/png).
-    const head = new TextDecoder().decode(bytes.slice(0, 200)).trimStart();
-    const isSvg = head.startsWith('<svg') || head.startsWith('<?xml');
-    const ext = isSvg ? 'svg' : 'png';
-    const contentType = isSvg ? 'image/svg+xml' : 'image/png';
-    const path = `icons/generated/${crypto.randomUUID()}.${ext}`;
+    const bytes = new TextEncoder().encode(svg);
+    const path = `icons/generated/${crypto.randomUUID()}.svg`;
     const { error: upErr } = await supabase.storage
       .from('marketing-assets')
       .upload(path, bytes, {
-        contentType,
+        contentType: 'image/svg+xml',
         upsert: false,
       });
     if (upErr) {
