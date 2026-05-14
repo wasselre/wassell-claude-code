@@ -63,6 +63,14 @@ export const LANDMARK_ICONS: IconLibraryEntry[] = [
 
 const STORAGE_PUBLIC_PREFIX = '/storage/v1/object/public/marketing-assets/icons/library/';
 
+// Cache-bust stamp. Supabase Storage serves library files with
+// `Cache-Control: public, max-age=3600`, and Cloudflare in front of it
+// holds the bytes even longer. When we re-seed the library, browsers and
+// edge nodes keep serving the OLD bytes for ~1 hour. Bump this stamp
+// whenever scripts/seed-icon-library.mjs is re-run so every client
+// re-fetches immediately. Format: YYYYMMDDhhmm of the most recent seed.
+const LIBRARY_VERSION = '202605142000';
+
 /**
  * Build the public URL for a library icon. Resolved at call-time against
  * `VITE_SUPABASE_URL` so the same slug works in dev, preview, and prod
@@ -74,7 +82,7 @@ export function libraryIconUrl(slug: string, baseUrlOverride?: string): string {
     ?? (typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_SUPABASE_URL as string | undefined) : undefined)
     ?? '';
   const trimmed = base.replace(/\/$/, '');
-  return `${trimmed}${STORAGE_PUBLIC_PREFIX}${slug}.svg`;
+  return `${trimmed}${STORAGE_PUBLIC_PREFIX}${slug}.svg?v=${LIBRARY_VERSION}`;
 }
 
 /**
