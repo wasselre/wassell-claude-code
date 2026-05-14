@@ -32,7 +32,7 @@ export type FieldType =
 // array of row objects keyed by `name` (slug). Phase-1 storage mode is
 // always 'inline' (JSONB on the parent record). A future `child_model`
 // mode can add relational storage without a breaking change.
-export type TableColumnType = 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'url' | 'dropdown' | 'formula';
+export type TableColumnType = 'text' | 'textarea' | 'number' | 'currency' | 'date' | 'url' | 'dropdown' | 'formula' | 'image_icon';
 
 export interface TableColumn {
   id: string;

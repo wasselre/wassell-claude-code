@@ -14,6 +14,7 @@
 
 import { supabase } from '@/lib/supabase';
 import { FunctionsHttpError } from '@supabase/supabase-js';
+import { resolveSlugToLibraryUrl } from '@/data/iconLibrary';
 
 export interface ProjectDetailsAiDraft {
   hero_short_description: string;
@@ -54,6 +55,15 @@ async function readFunctionError(error: unknown): Promise<string> {
   return String(error);
 }
 
+function resolveOrWarnSlug(value: unknown, kind: 'feature' | 'landmark'): string {
+  if (typeof value !== 'string' || !value) return '';
+  const url = resolveSlugToLibraryUrl(value);
+  if (url) return url;
+  // No silent fallback — fail loudly per CLAUDE.md "Silent Failures".
+  console.error(`[projectDetailsAi] unknown ${kind} icon slug from AI: ${value}`);
+  return '';
+}
+
 export async function draftProjectDetails(projectId: string): Promise<DraftResult | DraftError> {
   if (!supabase) return { ok: false, error: 'Supabase not configured' };
   if (!projectId) return { ok: false, error: 'projectId is required' };
@@ -72,13 +82,32 @@ export async function draftProjectDetails(projectId: string): Promise<DraftResul
       return { ok: false, error: String((data as { error: string }).error) };
     }
     const d = data as ProjectDetailsAiDraft;
+    // The edge function still emits short slug names (`"building"`,
+    // `"metro"`, …) because Claude picks from a curated vocabulary —
+    // cheaper and more deterministic than asking it to invent visuals.
+    // The CRM stores image URLs now, so translate each slug to its
+    // library URL before handing the draft to the form. If a slug is
+    // unknown, leave it as-is and warn loudly — the form's image_icon
+    // cell will render the placeholder and the editor can pick manually.
+    const features = Array.isArray(d.features)
+      ? d.features.map((f) => ({
+          ...f,
+          icon: resolveOrWarnSlug(f?.icon, 'feature'),
+        }))
+      : [];
+    const landmarks = Array.isArray(d.landmarks)
+      ? d.landmarks.map((l) => ({
+          ...l,
+          icon: resolveOrWarnSlug(l?.icon, 'landmark'),
+        }))
+      : [];
     return {
       ok: true,
       draft: {
         hero_short_description: typeof d.hero_short_description === 'string' ? d.hero_short_description : '',
         description: typeof d.description === 'string' ? d.description : '',
-        features: Array.isArray(d.features) ? d.features : [],
-        landmarks: Array.isArray(d.landmarks) ? d.landmarks : [],
+        features,
+        landmarks,
       },
     };
   } catch (err) {

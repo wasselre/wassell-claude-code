@@ -2072,17 +2072,18 @@ export function FieldEditorEmpty() {
 // column becomes a cell input when the field is rendered in the record form.
 // Rendered inside a popup modal (see FieldEditor's showTableColumnsModal) so
 // the layout can spread out into a real visual table grid.
-const TABLE_COLUMN_TYPES: TableColumnType[] = ['text', 'textarea', 'number', 'currency', 'date', 'url', 'dropdown', 'formula'];
+const TABLE_COLUMN_TYPES: TableColumnType[] = ['text', 'textarea', 'number', 'currency', 'date', 'url', 'dropdown', 'formula', 'image_icon'];
 
 const COLUMN_TYPE_LABELS: Record<TableColumnType, { ar: string; en: string }> = {
-  text:     { ar: 'نص',          en: 'Text' },
-  textarea: { ar: 'نص طويل',     en: 'Long text' },
-  number:   { ar: 'رقم',          en: 'Number' },
-  currency: { ar: 'عملة',         en: 'Currency' },
-  date:     { ar: 'تاريخ',        en: 'Date' },
-  url:      { ar: 'رابط',         en: 'URL' },
-  dropdown: { ar: 'قائمة منسدلة', en: 'Dropdown' },
-  formula:  { ar: 'صيغة محسوبة',  en: 'Formula' },
+  text:       { ar: 'نص',          en: 'Text' },
+  textarea:   { ar: 'نص طويل',     en: 'Long text' },
+  number:     { ar: 'رقم',          en: 'Number' },
+  currency:   { ar: 'عملة',         en: 'Currency' },
+  date:       { ar: 'تاريخ',        en: 'Date' },
+  url:        { ar: 'رابط',         en: 'URL' },
+  dropdown:   { ar: 'قائمة منسدلة', en: 'Dropdown' },
+  formula:    { ar: 'صيغة محسوبة',  en: 'Formula' },
+  image_icon: { ar: 'أيقونة',       en: 'Icon (image)' },
 };
 
 function TableColumnsEditor({

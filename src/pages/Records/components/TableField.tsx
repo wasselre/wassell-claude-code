@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ImagePlus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { ModelField, TableColumn } from '@/types';
 import { evaluateFormula, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { formatNumberWithCommas, parseFormattedNumber } from './RangeField';
+import IconPickerModal from './IconPickerModal';
+import { resolveSlugToLibraryUrl } from '@/data/iconLibrary';
 
 type Row = Record<string, unknown>;
 
@@ -183,6 +185,8 @@ function CellInput({
       );
     case 'formula':
       return <FormulaCell column={column} row={row} isAr={isAr} />;
+    case 'image_icon':
+      return <ImageIconCell value={value} onChange={onChange} isAr={isAr} />;
     default:
       return (
         <input
@@ -232,6 +236,64 @@ function NumericCellInput({
       className={className}
       dir="ltr"
     />
+  );
+}
+
+/**
+ * Cell renderer for `image_icon` columns (project_details features /
+ * landmarks). The stored value is a public URL; the cell shows a thumb
+ * plus an "edit" affordance, and clicking the cell opens the modal
+ * picker (Library or Generate tabs).
+ */
+function ImageIconCell({
+  value,
+  onChange,
+  isAr,
+}: {
+  value: unknown;
+  onChange: (v: unknown) => void;
+  isAr: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  // Existing data may still hold legacy slug values (`"building"`, `"metro"`)
+  // from before the column type flipped. Resolve them to the library URL on
+  // read so the cell renders the right image regardless of stored shape.
+  // The first time the row is saved with a new pick, the URL gets persisted
+  // and the slug is gone for good.
+  const raw = typeof value === 'string' ? value : '';
+  const url = raw ? (resolveSlugToLibraryUrl(raw) ?? raw) : '';
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={`flex items-center gap-2 w-full px-2 py-1 rounded border border-sand/30 hover:border-copper/60 hover:bg-cream/40 transition-colors text-start ${
+          url ? '' : 'text-charcoal/40'
+        }`}
+        title={isAr ? 'تغيير الأيقونة' : 'Change icon'}
+      >
+        {url ? (
+          <img
+            src={url}
+            alt="icon"
+            className="w-7 h-7 object-contain bg-white rounded border border-sand/20"
+          />
+        ) : (
+          <span className="w-7 h-7 rounded border border-dashed border-sand/50 bg-cream/30 flex items-center justify-center">
+            <ImagePlus size={14} className="text-charcoal/40" />
+          </span>
+        )}
+        <span className="text-xs">
+          {url ? (isAr ? 'تغيير' : 'Change') : isAr ? 'اختيار أيقونة' : 'Pick icon'}
+        </span>
+      </button>
+      <IconPickerModal
+        open={open}
+        onClose={() => setOpen(false)}
+        selected={url || undefined}
+        onSelect={(next) => onChange(next)}
+      />
+    </>
   );
 }
 

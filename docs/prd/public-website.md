@@ -1,7 +1,7 @@
 # PRD: Public Marketing Website
 
 **Status:** Live
-**Last updated:** 2026-05-09
+**Last updated:** 2026-05-14
 **Related PRDs:** [model-builder.md](model-builder.md), [record-management.md](record-management.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
@@ -77,6 +77,17 @@ Marketing the company and the projects it manages without spinning up a separate
 | (External repo) `Wassel Website/map.html` | Public Google Maps with clustered pins + sidebar. |
 | (External repo) `Wassel Website/index.html` | Public homepage; hero/contact/social hydrate from `site_settings`. |
 | (External repo) `Wassel Website/js/wassel-data.js` | Supabase client wrapper, schema helpers, project shaper. |
+
+## Project detail page icons (added 2026-05-14)
+
+The `project_details` model has two repeating-row table fields — `features` and `landmarks` — whose `icon` column changed from a `dropdown` of slugs to the new `image_icon` column type. Storage shape:
+
+- The stored value is a **public URL** (always). Two flavors share the same column:
+  - **Library icons** — pre-rendered PNGs at `…/storage/v1/object/public/marketing-assets/icons/library/<slug>.png`. The 16 feature slugs + 11 landmark slugs are listed in `src/data/iconLibrary.ts`; the PNGs are produced once by `scripts/seed-icon-library.mjs` (re-runnable to refresh).
+  - **AI-generated icons** — PNGs uploaded by `/api/icons/generate` to `…/storage/v1/object/public/marketing-assets/icons/generated/<uuid>.png`. Each call goes through fal.ai's `recraft-v3` text-to-image model with a fixed Wassel-brand style prefix.
+- **Legacy slug rows are tolerated.** Rows saved before the migration still hold short slug strings (`"building"`, `"metro"`, …). The CRM resolves those to the library URL transparently at render time (`resolveSlugToLibraryUrl` in `src/data/iconLibrary.ts`) so they keep showing the right icon; the URL gets persisted on the next save.
+
+**Website contract:** the website must read `features[].icon` and `landmarks[].icon` as URLs and render with a plain `<img src>`. Until the website is updated, it can keep the existing slug→SVG map and additionally short-circuit `https://`-prefixed values straight to `<img>`. Tracking — separate PR against the `Wassel Website/` repo to update `js/project-icons.js`.
 
 ## Open questions / known limitations
 - **Short Google Maps URLs (`goo.gl/maps`)** don't resolve on the website. The CRM has `/api/resolve-maps-url` for this; the website doesn't. Workaround: paste the long-form URL or raw `lat,lng`.

@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 
-export type ImageFolder = 'raw' | 'cleaned' | 'final' | 'reference';
+export type ImageFolder = 'raw' | 'cleaned' | 'final' | 'reference' | 'icons/library' | 'icons/generated';
 
 const BUCKET = 'marketing-assets';
 

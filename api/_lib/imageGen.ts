@@ -38,6 +38,7 @@ const STUB_DELAY_MS = 2000;
 const STUB_CLEANED_URL = 'https://picsum.photos/seed/wassel-cleaned/1024/1024';
 const STUB_EDITED_URL = 'https://picsum.photos/seed/wassel-edited/1024/1024';
 const STUB_FINAL_URL = 'https://picsum.photos/seed/wassel-final/1024/1024';
+const STUB_ICON_URL = 'https://picsum.photos/seed/wassel-icon/512/512';
 
 export interface ImageGenStartResult {
   requestId: string;
@@ -66,6 +67,24 @@ function readEnv(): FalEnv {
     apiKey,
     baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
     modelId: process.env.FAL_MODEL_ID ?? 'fal-ai/nano-banana-pro/edit',
+  };
+}
+
+/**
+ * Read env vars specific to the icon-generation pipeline. Reuses
+ * FAL_KEY / FAL_BASE_URL but uses a separate model ID so the marketing-
+ * deck flow (nano-banana-pro/edit) and the icon flow (recraft-v3,
+ * text-to-image) don't fight over a single env var.
+ */
+function readIconEnv(): FalEnv {
+  const apiKey = process.env.FAL_KEY;
+  if (!apiKey) {
+    throw new Error('FAL_KEY is not set');
+  }
+  return {
+    apiKey,
+    baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
+    modelId: process.env.FAL_ICON_MODEL_ID ?? 'fal-ai/recraft-v3',
   };
 }
 
@@ -151,6 +170,97 @@ export async function imageGenDesign(opts: DesignOpts): Promise<ImageGenStartRes
     signal: opts.signal,
     phase: 'design',
   });
+}
+
+interface IconOpts {
+  /** Free-form description ("rooftop swimming pool") OR a curated noun. */
+  prompt: string;
+  /**
+   * Recraft style. Defaults to `vector_illustration` — clean line/shape
+   * vector graphics that read well at small sizes and pair with Wassel's
+   * flat copper-on-cream brand. Other valid recraft-v3 styles include
+   * `vector_illustration/line_art`, `digital_illustration`, etc.
+   * recraft-v3 rejects `icon/*` subtypes (validation error) — those live
+   * on a different recraft model.
+   */
+  style?: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Text-to-image generation tuned for the project_details icon picker.
+ * Wraps recraft-v3 (text-to-image, no input image) and returns the same
+ * tracking shape as the marketing-deck phases. The `imageGenIcon` /
+ * `pollImageGen` pair drives the `/api/icons/generate` endpoint.
+ *
+ * Per CLAUDE.md "Silent Failures": this throws loudly on any fal.ai
+ * non-2xx and returns `status: 'failed'` (with the error body) when the
+ * queue reports FAILED — never swallow.
+ */
+export async function imageGenIcon(opts: IconOpts): Promise<ImageGenStartResult> {
+  const env = readIconEnv();
+  if (env.apiKey === STUB_KEY) {
+    return stubStart('icon');
+  }
+  return startTextToImage(env, {
+    prompt: opts.prompt,
+    style: opts.style ?? 'vector_illustration',
+    signal: opts.signal,
+    phase: 'icon',
+  });
+}
+
+/**
+ * Submit a text-to-image request to fal.ai's queue (recraft-v3 shape:
+ * `{ prompt, style, image_size }`, no `image_urls`). Returns the same
+ * tracking URLs as the edit-flow `startGeneration`.
+ */
+async function startTextToImage(
+  env: FalEnv,
+  opts: {
+    prompt: string;
+    style: string;
+    signal?: AbortSignal;
+    phase: 'icon';
+  },
+): Promise<ImageGenStartResult> {
+  const modelPath = env.modelId.startsWith('/') ? env.modelId.slice(1) : env.modelId;
+  const url = `${env.baseUrl.replace(/\/$/, '')}/${modelPath}`;
+
+  const body = {
+    prompt: opts.prompt,
+    style: opts.style,
+    image_size: 'square_hd',
+  };
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: authHeader(env),
+    },
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Image-gen ${opts.phase} start failed (${res.status}): ${errBody.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    request_id?: string;
+    status_url?: string;
+    response_url?: string;
+  };
+  const requestId = json.request_id ?? '';
+  const statusUrl = json.status_url ?? '';
+  const responseUrl = json.response_url ?? '';
+  if (!requestId || !statusUrl || !responseUrl) {
+    throw new Error(
+      `Image-gen ${opts.phase} response missing request_id/status_url/response_url: ${JSON.stringify(json).slice(0, 200)}`,
+    );
+  }
+  return { requestId, statusUrl, responseUrl };
 }
 
 /**
@@ -240,6 +350,7 @@ export async function pollImageGen(
       cleanup: STUB_CLEANED_URL,
       editing: STUB_EDITED_URL,
       design: STUB_FINAL_URL,
+      icon: STUB_ICON_URL,
     };
     return {
       status: 'completed',
@@ -300,7 +411,7 @@ export async function pollImageGen(
   throw new Error('Image-gen poll timed out');
 }
 
-function stubStart(phase: 'cleanup' | 'editing' | 'design'): ImageGenStartResult {
+function stubStart(phase: 'cleanup' | 'editing' | 'design' | 'icon'): ImageGenStartResult {
   const id = `stub-${phase}-${crypto.randomUUID()}`;
   return {
     requestId: id,
