@@ -22,8 +22,16 @@ function salesPermissionsFor(modelName: string): ModelPermission[] {
 }
 
 // --- Profiles ---
-const adminProfileId = uuid();
-const salesProfileId = uuid();
+// IMPORTANT: these IDs are HARDCODED — do NOT replace with `uuid()`.
+// The backfill in `appStore.initialize()` checks "is a profile with this ID
+// already in Supabase?" If the seed ID changes every page load (which is
+// what `uuid()` would do — JS modules re-execute on every load), the answer
+// is always no and the backfill keeps inserting fresh copies. Hardcoded IDs
+// make the seed idempotent: the first install inserts these rows; every
+// subsequent load sees them already exist and skips. See bug postmortem in
+// the 2026-05-17 cleanup commit.
+const adminProfileId = 'ed8349bc-e083-46cb-9bcb-34727fb7fb78';
+const salesProfileId = 'b303acd7-eaea-47f2-a9b7-404d3dc79ea8';
 
 export const SEED_PROFILES: Profile[] = [
   {
@@ -60,8 +68,10 @@ export const SEED_PROFILES: Profile[] = [
 // Roles use the same schema shape as models (sections → fields). The seed
 // roles each have a single "General" section; admins can split into more
 // sections later just like in the model builder.
-const salesRepRoleId = uuid();
-const salesManagerRoleId = uuid();
+// Hardcoded for the same reason as adminProfileId / salesProfileId above —
+// the backfill is keyed by id, so stable ids make seeding idempotent.
+const salesRepRoleId = 'bc217747-73cf-4405-b176-1da43d8f972a';
+const salesManagerRoleId = 'c54976bb-d0ae-4c5c-a7a7-05ef5fd07551';
 
 function generalSection(fields: ModelSection['fields']): ModelSection {
   return {
@@ -199,7 +209,11 @@ void generalSection;
 // --- Users ---
 export const SEED_USERS: User[] = [
   {
-    id: uuid(),
+    // Hardcoded for the same reason as the profile/role ids above —
+    // the backfill is keyed by id, so stable ids make seeding idempotent.
+    // (The email also has a UNIQUE constraint in the DB, which is what
+    // partially limited duplication for users to begin with.)
+    id: 'a3374d65-9cee-4daa-8880-5e8ff23e7db0',
     name_ar: 'مدير النظام',
     name_en: 'System Admin',
     email: 'admin@wassel.sa',
