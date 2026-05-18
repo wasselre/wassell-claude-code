@@ -437,6 +437,20 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
     }
   };
 
+  // Heartbeat — keep the deck record's updated_at fresh even when no
+  // new tool-start event has fired in a while. Without this, Claude
+  // sitting inside one long `text_editor_code_execution` tool call for
+  // 5+ min (which happens routinely with the newer combined editor)
+  // makes the client-side stuck-detector fire a false alarm. We don't
+  // change `phase_detail` here so the UI text stays correct; just bump
+  // updated_at via a no-op patch.
+  const HEARTBEAT_INTERVAL_MS = 30_000;
+  const heartbeat = setInterval(() => {
+    void updateRecord({}).catch((err) => {
+      console.warn(`[run] heartbeat update failed (non-fatal): ${(err as Error).message}`);
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+
   try {
     for await (const event of turn) {
       eventCount++;
@@ -474,6 +488,15 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
       `[run] stream-iter-FAIL events=${eventCount} last_type=${lastEventType ?? 'none'} elapsed_ms=${Date.now() - iterStartedAtMs} error=${msg}`,
     );
     throw streamErr;
+  } finally {
+    // The for-await above is where the worker blocks the longest (often
+    // 3-10 min) — that's where the heartbeat earns its keep. After this
+    // point the remaining steps (finalMessage, byte extraction, storage
+    // upload, sign URL, record save) are all fast (~10-60s combined),
+    // so it's safe to drop the heartbeat here. Doing this in `finally`
+    // guarantees we never leak an interval, even on early throws inside
+    // the loop.
+    clearInterval(heartbeat);
   }
 
   console.log(`[run] final-message-start`);

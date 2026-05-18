@@ -35,8 +35,16 @@ type LanguageChoice = 'ar' | 'en' | 'mixed';
  * in this long, the worker is presumed dead. The UI shows the "looks
  * stuck — retry?" view instead of the spinner. The pg-side watchdog
  * (deck_jobs_watchdog) catches it at 20 min and flips it to 'failed'
- * for real, but the user shouldn't have to wait that long. */
-const STUCK_THRESHOLD_MS = 6 * 60 * 1000;
+ * for real, but the user shouldn't have to wait that long.
+ *
+ * 12 min on the SPA + 30 s worker heartbeat (see runDeckJob.ts) means a
+ * genuinely-alive worker bumps updated_at well within the threshold —
+ * the only way to trigger this view is an actually-dead worker. Before
+ * 2026-05-18 this was 6 min, which fired false alarms when Claude sat
+ * inside one `text_editor_code_execution` tool call for >6 min (which
+ * happens routinely with the newer combined editor tool).
+ */
+const STUCK_THRESHOLD_MS = 12 * 60 * 1000;
 
 /** UI-only superset of the wire `DeckAttachment` — adds local upload state
  * so the brief form can show progress / errors without persisting them
