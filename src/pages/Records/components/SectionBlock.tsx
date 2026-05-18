@@ -215,7 +215,12 @@ export default function SectionBlock({
   }
 
   // ── Regular section: expand section_mirror containers into inline children ──
-  const sortedFields = [...section.fields].sort((a, b) => a.order - b.order);
+  // `fired_at` on the followups model is system-managed: the on_due cron sweeper
+  // stamps it to prevent double-firing. It stays in the schema (visible in the
+  // Builder) but never renders in the user form.
+  const sortedFields = [...section.fields]
+    .filter((f) => f.name !== 'fired_at')
+    .sort((a, b) => a.order - b.order);
 
   if (collapsed) {
     return (
