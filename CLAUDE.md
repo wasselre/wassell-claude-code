@@ -116,6 +116,7 @@ workflows         — automation workflow definitions
 dashboards        — dashboard configurations (widgets as JSONB)
 chat_messages     — WhatsApp messages per conversation (Realtime-enabled)
 whatsapp_numbers  — local overlay on Haberchat devices: friendly name + default flag
+deck_jobs         — queue for the Fly.io deck generation worker (see "Decks generation pipeline")
 ```
 
 ## Frozen models (added 2026-05-05)
@@ -236,6 +237,53 @@ Every model in `models` has a corresponding `v_<name>` view in the `public` sche
 
 If you add a new field type to the codebase, update the type mapping in `regenerate_model_view` so the new type lands in views with an appropriate column type. Otherwise it falls through to `text` (still works, just not natively typed).
 
+## Decks generation pipeline (added 2026-05-17 — refactored off Vercel Edge)
+
+Deck generation runs on a Fly.io Node worker, NOT in `/api/generate-deck`. The endpoint just enqueues work.
+
+**Why:** The original Edge function held an SSE stream open for the full Anthropic call. Vercel Edge has a **300s hard ceiling on Pro** (`maxDuration: 300` is the max — can't go higher). Any deck that took >5 min was killed silently — record stuck on `status='generating'`, no `error_message`, UI spinner forever. Happened multiple times in production (record `867a049b-...` on 2026-05-14 + 2026-05-17 was the trigger).
+
+**Architecture:**
+
+```
+Browser ──POST /api/generate-deck (Edge, ≤1s)──▶ INSERT deck_jobs (pending) + best-effort POST /wake
+                                              └─ 202 { job_id }
+
+Fly.io worker (always-on Node, polls every 3s) ──claim via FOR UPDATE SKIP LOCKED──▶
+   Anthropic Skills + code_execution (3-12 min, no timeout)
+   writes status / phase to records.data
+        ──Realtime───▶ Browser (DeckRightPane reads phase from record, NOT SSE)
+   uploads .pptx to wassel-decks bucket → status='ready' + file_url
+```
+
+**Where everything lives:**
+- Migration:           `supabase/migrations/2026-05-17_deck_jobs_queue.sql` — table, RLS, RPCs, watchdog function
+- API endpoint:        `api/generate-deck.ts` (slim — just validates + inserts deck_jobs row)
+- Worker source:       `worker/src/index.ts` (poll loop + watchdog tick + `/healthz` + `/wake`)
+- Worker pipeline:     `worker/src/runDeckJob.ts` (the actual Claude+upload flow, ported from old Edge function)
+- Worker deploy guide: `worker/README.md`
+- Client helper:       `src/lib/decks/client.ts` (`enqueueGenerateDeck` replaces the old `streamGenerateDeck`)
+- UI:                  `src/pages/Decks/components/DeckRightPane.tsx` (drives view from `record.data.status` + `phase`, has a 6-min "looks stuck → Try again" detector)
+
+**Hard rules — never violate:**
+
+1. **Never re-introduce SSE for `/api/generate-deck`.** The whole point of the rewrite is that no HTTP request is held open for the long Anthropic call. If you find yourself wanting to add `text/event-stream`, you're about to recreate the bug. Status updates flow through Supabase Realtime on the deck record.
+
+2. **The worker uses service-role for Supabase.** It's the only place service-role is allowed (besides the activity-log writer). It enforces ownership by reading `deck_jobs.user_id` set by the API endpoint, which validated the caller's JWT before inserting. Never expose `SUPABASE_SERVICE_ROLE_KEY` to the browser.
+
+3. **`deck_job_complete` and `deck_job_fail` only update rows where `status='running'`.** This protects against the worker racing the watchdog: if the watchdog has already marked a stale job failed (worker took >20 min), the worker's late "I'm done" is a no-op, not an overwrite.
+
+4. **The watchdog only writes `status='failed'` to the deck record when current status is `'generating'`.** If the worker raced and wrote `'ready'` first, we leave that alone — the .pptx is real, the user gets their file.
+
+5. **pg_cron is NOT enabled on wassell-prod.** The watchdog cron `cron.schedule(...)` in the migration is wrapped in `IF EXISTS pg_extension` so it's a no-op. The Fly.io worker invokes `deck_jobs_watchdog()` every 5 min itself instead. If you ever enable pg_cron, both will run — that's fine (cheap UPDATE, idempotent).
+
+**When you need to debug a stuck deck:**
+
+1. `SELECT id, status, started_at, error, EXTRACT(EPOCH FROM (now() - started_at))/60 AS minutes FROM deck_jobs WHERE deck_record_id = '<uuid>' ORDER BY created_at DESC;`
+2. `fly logs --app wassel-deck-worker | grep <job_id>` — every job logs `[worker] claimed job=...` and a series of `[run] step=...` lines
+3. If status='running' but minutes > 20, the watchdog should sweep it on the next 5-min tick. If it doesn't, `SELECT public.deck_jobs_watchdog();` manually.
+4. To force-fail a stuck job and unblock the UI: `UPDATE records SET data = data || jsonb_build_object('status','failed','error_message','manual unstick') WHERE id = '<uuid>';` (Realtime pushes it to the browser instantly.)
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline
@@ -282,9 +330,13 @@ They are editable in the Builder but cannot be deleted (is_system: true).
 ```
 VITE_SUPABASE_URL=your-project-url
 VITE_SUPABASE_ANON_KEY=your-anon-key
-ANTHROPIC_API_KEY=sk-ant-...   # server-side only, powers /api/agent
+ANTHROPIC_API_KEY=sk-ant-...      # server-side only, powers /api/agent + decks
+SUPABASE_SERVICE_ROLE_KEY=...     # NEW 2026-05-17. Vercel-only env. Used by /api/generate-deck to insert deck_jobs (bypasses RLS) and by the Fly.io worker. NEVER expose to the browser.
+WASSEL_DECK_WORKER_URL=...        # NEW 2026-05-17. Vercel-only. URL of the Fly.io worker (e.g. https://wassel-deck-worker.fly.dev). Optional — /api/generate-deck uses it for a fire-and-forget /wake ping after enqueueing; the worker's 3s poll catches missing wakes.
 ```
 See `.env.example` for the full set including Haberchat + Hatif keys.
+
+The Fly.io deck worker has its own env (set via `fly secrets set`): same `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `ANTHROPIC_WASSEL_SKILL_ID`, and optional `ANTHROPIC_WASSEL_REVIEW_SKILL_ID`. See `worker/README.md`.
 
 ## Deployment Config (CRITICAL — `vercel.json`)
 The app deploys to Vercel. Its config (`vercel.json`) is validated against a **strict JSON schema** (`https://openapi.vercel.sh/vercel.json`) at deploy time — every object inside `headers[]`, `rewrites[]`, `redirects[]`, etc. is `additionalProperties: false`. Any unknown key makes the deploy error out **before the build runs** (duration shows blank in the Vercel dashboard).

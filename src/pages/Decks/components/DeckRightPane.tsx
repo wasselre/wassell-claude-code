@@ -20,7 +20,7 @@ import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import {
   signDeckUrl,
-  streamGenerateDeck,
+  enqueueGenerateDeck,
   uploadDeckAttachment,
   deleteDeckAttachment,
   type DeckAttachment,
@@ -30,6 +30,13 @@ import {
 type Phase = 'calling-claude' | 'downloading' | 'uploading' | 'finalizing';
 type ModelChoice = 'claude-opus-4-7' | 'claude-sonnet-4-6';
 type LanguageChoice = 'ar' | 'en' | 'mixed';
+
+/** If the record's `status='generating'` but `updated_at` hasn't moved
+ * in this long, the worker is presumed dead. The UI shows the "looks
+ * stuck — retry?" view instead of the spinner. The pg-side watchdog
+ * (deck_jobs_watchdog) catches it at 20 min and flips it to 'failed'
+ * for real, but the user shouldn't have to wait that long. */
+const STUCK_THRESHOLD_MS = 6 * 60 * 1000;
 
 /** UI-only superset of the wire `DeckAttachment` — adds local upload state
  * so the brief form can show progress / errors without persisting them
@@ -59,31 +66,54 @@ interface Props {
 }
 
 /**
- * Right pane for the Decks page. Renders one of four views based on the
- * deck record's status field, plus drives the SSE stream during a live
- * generation. Local state carries the phase + any error so the UI updates
- * faster than the store's realtime echo.
+ * Right pane for the Decks page. Renders one of four views based on
+ * the deck record's `status` field (and a brief optimistic flag when
+ * the user has just clicked Submit, so the GeneratingView appears
+ * before the worker's first Realtime echo lands). All progress
+ * updates flow through Supabase Realtime — no SSE here.
  */
 export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const recordsByModel = useAppStore((s) => s.records);
-  const saveRecord = useAppStore((s) => s.saveRecord);
 
   const record = useMemo<AppRecord | undefined>(
     () => (recordsByModel[modelId] ?? []).find((r) => r.id === recordId),
     [recordsByModel, modelId, recordId],
   );
 
-  const [livePhase, setLivePhase] = useState<Phase | null>(null);
-  const [liveError, setLiveError] = useState<string | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  // Optimistic flag: true between clicking Generate and the worker's
+  // first Realtime echo (which flips status to 'generating'). Cleared
+  // once the record actually transitions out of 'queued'.
+  const [submitted, setSubmitted] = useState(false);
+  const [enqueueError, setEnqueueError] = useState<string | null>(null);
 
-  // Cancel any in-flight stream when the record changes (user navigates away).
+  // Heartbeat for the stuck-detector. Ticks every 15s while a generation
+  // is active so the "stuck > 6 min" check re-evaluates on its own —
+  // otherwise a dead worker means no Realtime events means no re-renders.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  const status = (record?.data?.status as string | undefined) ?? 'queued';
+  const phase = (record?.data?.phase as Phase | undefined) ?? 'calling-claude';
+  const phaseDetail = (record?.data?.phase_detail as string | undefined) ?? '';
+  const errorMessage = (record?.data?.error_message as string | undefined) ?? '';
+
   useEffect(() => {
-    return () => {
-      abortRef.current?.abort();
-      abortRef.current = null;
-    };
+    if (status !== 'generating' && !submitted) return;
+    const t = setInterval(() => setNowTick(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [status, submitted]);
+
+  // Clear the optimistic flag once the worker has stamped 'generating',
+  // 'ready', or 'failed' on the record. The flag exists only to bridge
+  // the gap between submit and that first echo.
+  useEffect(() => {
+    if (submitted && status !== 'queued') setSubmitted(false);
+  }, [status, submitted]);
+
+  // Reset transient state when switching to a different deck record.
+  useEffect(() => {
+    setSubmitted(false);
+    setEnqueueError(null);
   }, [recordId]);
 
   if (!record) {
@@ -94,10 +124,6 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
     );
   }
 
-  const status = (record.data.status as string | undefined) ?? 'queued';
-  const isStreaming = livePhase !== null;
-  const effectiveStatus = isStreaming ? 'generating' : status;
-
   async function startGeneration(args: {
     brief: string;
     title: string;
@@ -107,52 +133,50 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
     attachments: DeckAttachment[];
   }) {
     const { brief, title, language, model, size, attachments } = args;
-    setLiveError(null);
-    setLivePhase('calling-claude');
-
-    // Save the brief / title / hints to the record FIRST so they survive a
-    // network failure mid-stream and so the list pane reflects the title
-    // immediately. The endpoint also stamps language + model_used, but we
-    // do it here too so the values appear before the first SSE tick.
-    // Attachments are persisted on the record so retries / reloads can
-    // reuse them without re-uploading.
+    setEnqueueError(null);
+    setSubmitted(true);
     if (record) {
-      const newData = {
-        ...record.data,
-        title,
-        brief,
-        language,
-        model_used: model,
-        size,
-        attachments,
-        status: 'queued', // endpoint flips to 'generating' on entry
-      };
-      await saveRecord({ ...record, data: newData });
+      // Persist the user-facing fields (title / brief / hints / attachments)
+      // straight away so the list pane reflects them and so a refresh
+      // mid-flight doesn't lose what they typed. Don't write status here
+      // — the worker stamps 'generating' on the first phase update.
+      try {
+        await useAppStore.getState().saveRecord({
+          ...record,
+          data: {
+            ...record.data,
+            title,
+            brief,
+            language,
+            model_used: model,
+            size,
+            attachments,
+            // Clear any prior error message + ready-state fields so the
+            // GeneratingView doesn't flash stale "ready" content during
+            // the retry. Keep status='queued' until the worker echoes.
+            status: 'queued',
+            phase: null,
+            phase_detail: null,
+            error_message: null,
+            file_url: null,
+            file_path: null,
+            filename: null,
+          },
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setEnqueueError(`Could not save brief: ${msg}`);
+        setSubmitted(false);
+        return;
+      }
     }
 
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
-
     try {
-      await streamGenerateDeck(
-        { recordId, brief, language, model, size, attachments },
-        (event) => {
-          if (event.type === 'status') setLivePhase(event.phase);
-          else if (event.type === 'error') setLiveError(event.message);
-          else if (event.type === 'done') {
-            setLivePhase(null);
-          }
-        },
-        ctrl.signal,
-      );
+      await enqueueGenerateDeck({ recordId, brief, language, model, size, attachments });
     } catch (err) {
-      if (!ctrl.signal.aborted) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setLiveError(msg);
-      }
-    } finally {
-      setLivePhase(null);
-      abortRef.current = null;
+      const msg = err instanceof Error ? err.message : String(err);
+      setEnqueueError(msg);
+      setSubmitted(false);
     }
   }
 
@@ -167,17 +191,53 @@ export default function DeckRightPane({ recordId, modelId, onNewDeck }: Props) {
     void startGeneration({ brief, title, language, model, size, attachments });
   }
 
-  if (effectiveStatus === 'generating' || isStreaming) {
-    return <GeneratingView isAr={isAr} phase={livePhase ?? 'calling-claude'} />;
-  }
-  if (effectiveStatus === 'ready') {
-    return <ReadyView isAr={isAr} record={record} onNewDeck={onNewDeck} onRetry={retry} />;
-  }
-  if (effectiveStatus === 'failed') {
+  // ── Stuck detection ──────────────────────────────────────────────────
+  // Only meaningful while the record claims to be generating. If the worker
+  // hasn't updated the record in over STUCK_THRESHOLD_MS, render the
+  // failed view with a clear "press Try again" message even though the
+  // DB still says 'generating' — the pg watchdog will eventually catch
+  // up but we give the user an immediate way out.
+  const updatedAtMs = new Date(record.updated_at).getTime();
+  const stalenessMs = nowTick - updatedAtMs;
+  const isStuck = status === 'generating' && stalenessMs > STUCK_THRESHOLD_MS && !submitted;
+
+  // ── View selection ───────────────────────────────────────────────────
+  if (enqueueError) {
     return (
       <FailedView
         isAr={isAr}
-        message={liveError ?? (record.data.error_message as string | undefined) ?? ''}
+        message={enqueueError}
+        onRetry={retry}
+        onNewDeck={onNewDeck}
+      />
+    );
+  }
+  if (isStuck) {
+    const minutes = Math.floor(stalenessMs / 60_000);
+    return (
+      <FailedView
+        isAr={isAr}
+        message={
+          isAr
+            ? `لم تصل أي تحديثات منذ ${minutes} دقيقة. يبدو أن الخادم توقّف. اضغط "إعادة المحاولة".`
+            : `No updates from the worker in ${minutes} min. Looks stuck — press Try again.`
+        }
+        onRetry={retry}
+        onNewDeck={onNewDeck}
+      />
+    );
+  }
+  if (status === 'generating' || submitted) {
+    return <GeneratingView isAr={isAr} phase={phase} detail={phaseDetail} />;
+  }
+  if (status === 'ready') {
+    return <ReadyView isAr={isAr} record={record} onNewDeck={onNewDeck} onRetry={retry} />;
+  }
+  if (status === 'failed') {
+    return (
+      <FailedView
+        isAr={isAr}
+        message={errorMessage}
         onRetry={retry}
         onNewDeck={onNewDeck}
       />
@@ -218,8 +278,8 @@ function BriefForm({
   const [model, setModel] = useState<ModelChoice>(
     // Default to Opus 4.7 — produces visibly better designs than Sonnet.
     // The earlier file_id capture issue with Opus is no longer blocking
-    // because the endpoint now returns bytes via the base64-stdout
-    // channel instead of relying on Anthropic's file capture.
+    // because the worker returns bytes via the base64-stdout channel
+    // instead of relying on Anthropic's file capture.
     ((record.data.model_used as ModelChoice | undefined) ?? 'claude-opus-4-7') as ModelChoice,
   );
   const [size, setSize] = useState<DeckSize>(
@@ -635,7 +695,7 @@ function pickAttachmentIcon(mimeType: string, name: string): typeof FileIcon {
 // Generating view
 // ────────────────────────────────────────────────────────────────────────
 
-function GeneratingView({ isAr, phase }: { isAr: boolean; phase: Phase }) {
+function GeneratingView({ isAr, phase, detail }: { isAr: boolean; phase: Phase; detail: string }) {
   const phases: Phase[] = ['calling-claude', 'downloading', 'uploading', 'finalizing'];
   const labels: Record<Phase, { ar: string; en: string }> = {
     'calling-claude': { ar: 'يفكر Claude في تصميم العرض…', en: 'Claude is composing the deck…' },
@@ -653,6 +713,11 @@ function GeneratingView({ isAr, phase }: { isAr: boolean; phase: Phase }) {
         <h2 className="text-lg font-semibold text-charcoal text-center mb-2">
           {isAr ? labels[phase].ar : labels[phase].en}
         </h2>
+        {detail && (
+          <p className="text-xs text-charcoal/50 text-center mb-2 truncate" title={detail}>
+            {detail}
+          </p>
+        )}
         <p className="text-sm text-charcoal/60 text-center mb-6">
           {isAr ? 'قد يستغرق هذا 1-3 دقائق.' : 'This may take 1–3 minutes.'}
         </p>

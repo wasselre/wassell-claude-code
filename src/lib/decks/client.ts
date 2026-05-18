@@ -1,35 +1,33 @@
 /**
  * Browser-side helpers for the Decks endpoints.
  *
- * `streamGenerateDeck` opens an SSE stream against /api/generate-deck and
- * invokes per-event callbacks until `done` or `error` arrives. The endpoint
- * updates the underlying `decks` record in-band, so live state can come
- * from either the SSE events (immediate) or the store's realtime echo
- * (canonical) — UI uses SSE for the active flow and the store for past decks.
+ * As of 2026-05-17 the generation pipeline runs on a Fly.io worker that
+ * polls the `deck_jobs` queue — no more SSE stream held open from the
+ * browser. `enqueueGenerateDeck` is a thin HTTP POST that returns
+ * immediately with a `job_id`; the SPA observes progress by watching
+ * the deck record itself via Supabase Realtime (already wired in
+ * appStore). All UI status (calling-claude / downloading / uploading /
+ * finalizing / ready / failed) is read from `record.data` fields:
+ *   - `status`       : queued | generating | ready | failed
+ *   - `phase`        : calling-claude | downloading | uploading | finalizing  (during 'generating')
+ *   - `phase_detail` : optional one-line detail under the phase
+ *   - `error_message`: failure reason (when status='failed')
+ *   - `file_url` / `file_path` / `filename` : populated when status='ready'
  *
- * `signDeckUrl` requests a fresh 7-day signed URL for an existing record's
- * stored .pptx, used when re-opening a deck whose URL has expired.
+ * `signDeckUrl`, `uploadDeckAttachment`, and `deleteDeckAttachment`
+ * are unchanged from the SSE era.
  */
 
 import { supabase } from '@/lib/supabase';
 
-export type GenerateDeckEvent =
-  | {
-      type: 'status';
-      phase: 'calling-claude' | 'downloading' | 'uploading' | 'finalizing';
-      detail?: string;
-    }
-  | { type: 'done'; file_url: string; file_path: string; filename: string }
-  | { type: 'error'; message: string };
-
 /** Aspect ratio of the generated deck. Maps to slide_width / slide_height
- * in python-pptx on the API side. */
+ * in python-pptx on the worker side. */
 export type DeckSize = '16:9' | '9:16' | '4:3' | '1:1';
 
 /** A user-uploaded attachment ready to be passed to Claude in the sandbox.
  * Lives at `<userId>/<deckId>/uploads/<storedName>` in `wassel-decks` bucket.
- * The API endpoint downloads each one with the user's JWT and forwards
- * it to the Anthropic Files API as `container.file_ids`. */
+ * The worker downloads each one with the service-role key and forwards
+ * it to the Anthropic Files API as a `container_upload` content block. */
 export interface DeckAttachment {
   /** Storage path (bucket-relative). */
   path: string;
@@ -37,7 +35,7 @@ export interface DeckAttachment {
    * filename Claude sees in `/mnt/user-data/uploads/`. */
   name: string;
   /** Browser-reported mime type. May be empty for unusual extensions
-   * (HEIC on Firefox); the endpoint falls back to extension sniffing. */
+   * (HEIC on Firefox); the worker falls back to extension sniffing. */
   mimeType: string;
   /** Bytes — used for UI size display + per-attachment size enforcement. */
   size: number;
@@ -113,11 +111,16 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function streamGenerateDeck(
+/**
+ * Enqueue a deck generation job. Returns immediately with the assigned
+ * job_id (the Fly.io worker picks it up within ~3 seconds). Throws on
+ * a 4xx/5xx response — the caller surfaces the error via the deck
+ * record's `error_message` (the worker writes it) or via a toast on
+ * this direct error path (network failure / auth bounce / 400).
+ */
+export async function enqueueGenerateDeck(
   payload: GenerateDeckRequest,
-  onEvent: (event: GenerateDeckEvent) => void,
-  signal?: AbortSignal,
-): Promise<void> {
+): Promise<{ jobId: string }> {
   const res = await fetch('/api/generate-deck', {
     method: 'POST',
     headers: {
@@ -125,36 +128,12 @@ export async function streamGenerateDeck(
       ...(await authHeader()),
     },
     body: JSON.stringify(payload),
-    signal,
   });
-
-  if (!res.ok || !res.body) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body?.error ?? `POST /api/generate-deck failed (${res.status})`);
+  const body = (await res.json().catch(() => ({}))) as { job_id?: string; error?: string };
+  if (!res.ok || !body.job_id) {
+    throw new Error(body.error ?? `POST /api/generate-deck failed (${res.status})`);
   }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split('\n\n');
-    buffer = chunks.pop() ?? '';
-    for (const raw of chunks) {
-      const line = raw.replace(/^data:\s?/, '').trim();
-      if (!line) continue;
-      let parsed: GenerateDeckEvent;
-      try {
-        parsed = JSON.parse(line) as GenerateDeckEvent;
-      } catch {
-        continue;
-      }
-      onEvent(parsed);
-    }
-  }
+  return { jobId: body.job_id };
 }
 
 export async function signDeckUrl(
