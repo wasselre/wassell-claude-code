@@ -8,7 +8,6 @@ import Button from '@/components/ui/Button';
 import SectionBlock from './SectionBlock';
 import { useAutoLink } from '../hooks/useAutoLink';
 import { useAutoFill } from '../hooks/useAutoFill';
-import { evaluateVisibleIf } from '@/lib/visibilityRules';
 import type { AppRecord } from '@/types';
 
 interface RecordFormModalProps {
@@ -18,14 +17,6 @@ interface RecordFormModalProps {
   recordId: string | null;
   /** Initial values applied on top of an empty new record. Ignored when `recordId` is set (edit mode reads from the store). */
   prefill?: Record<string, unknown>;
-  /**
-   * Optional whitelist of field slugs. When set, ONLY these fields render in
-   * the modal (everything else is hidden, both UI and required-validation).
-   * Section visibility (section_selector + visible_if) still applies on top
-   * of this filter. Used by buttons like "Schedule follow-up" that only need
-   * to ask for one or two fields.
-   */
-  visibleFieldNames?: string[];
   onClose: () => void;
   /** Called after a successful save with the saved record's id. The parent typically refreshes its data. */
   onSaved?: (recordId: string) => void;
@@ -46,7 +37,6 @@ export default function RecordFormModal({
   modelId,
   recordId,
   prefill,
-  visibleFieldNames,
   onClose,
   onSaved,
 }: RecordFormModalProps) {
@@ -110,12 +100,6 @@ export default function RecordFormModal({
     const missing = allFields.filter((f) => {
       if (!f.required) return false;
       if (f.type === 'mirror') return false;
-      // Hidden fields skip required-validation (same rule as RecordFormPage).
-      if (!evaluateVisibleIf(f.visible_if, formData)) return false;
-      // Fields outside the visibleFieldNames whitelist are also skipped — the
-      // user can't see them, so don't block save on a missing value. The
-      // button's prefill is responsible for populating anything that needs it.
-      if (visibleFieldNames && !visibleFieldNames.includes(f.name)) return false;
       const val = formData[f.name];
       if (f.type === 'lookup' && f.is_multi) {
         return !Array.isArray(val) || val.length === 0;
@@ -198,7 +182,6 @@ export default function RecordFormModal({
             onMirrorFieldChange={() => {
               /* noop — modal doesn't support mirrored-section sync-back in v1 */
             }}
-            visibleFieldNames={visibleFieldNames}
           />
         ))}
       </div>

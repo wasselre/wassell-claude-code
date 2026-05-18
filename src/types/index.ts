@@ -26,8 +26,7 @@ export type FieldType =
   | 'templates_picker'
   | 'generations_gallery'
   | 'whatsapp_history'
-  | 'call_history'
-  | 'related_records';
+  | 'call_history';
 
 // Column in a `table` field. The table's stored value on a record is an
 // array of row objects keyed by `name` (slug). Phase-1 storage mode is
@@ -96,31 +95,6 @@ export interface FieldOptionGroup {
   id: string;
   label_ar: string;
   label_en: string;
-}
-
-// Field-level conditional visibility. A field with a `visible_if` rule only
-// renders when every clause in `all` evaluates true against the current form
-// data. Missing/empty rule → always visible. Hidden fields keep their stored
-// values (we do NOT auto-clear on hide — toggling back should not lose data)
-// and skip required-validation while hidden.
-export type VisibleIfOperator =
-  | 'equals'
-  | 'not_equals'
-  | 'in'
-  | 'not_in'
-  | 'contains'      // array-valued field contains the literal value
-  | 'not_contains'  // array-valued field does NOT contain the literal value
-  | 'is_set'        // value is non-empty (non-null, non-'', non-[])
-  | 'is_not_set';
-
-export interface VisibleIfClause {
-  field_name: string; // refers to a sibling field's `name` (slug) on the same record
-  operator: VisibleIfOperator;
-  value?: string | string[]; // omit for is_set / is_not_set
-}
-
-export interface VisibleIfRule {
-  all: VisibleIfClause[]; // AND across clauses; OR would need branches (not in v1)
 }
 
 export interface ModelField {
@@ -251,19 +225,6 @@ export interface ModelField {
   // at render time; auto-fill writes once on change and the user can edit.
   auto_fill_from_lookup_field_id?: string | null;
   auto_fill_source_field_name?: string | null;
-  // Conditional visibility. When set, the field renders only if the rule
-  // evaluates true against the current record data. See VisibleIfRule above.
-  visible_if?: VisibleIfRule;
-  // Related-records field (type: 'related_records'). Renders a read-only list
-  // of records from `related_records_model_id` whose `data[match_field_name]`
-  // equals THIS record's `data[match_source_field_name]`. Used to show e.g.
-  // "all visits for this client" inside a follow-up form. Click a row → opens
-  // the target record in a nested RecordFormModal.
-  related_records_model_id?: string | null;
-  related_records_match_field_name?: string | null;       // slug on target model that links back
-  related_records_match_source_field_name?: string | null; // slug on THIS model whose value to match against
-  related_records_display_fields?: string[];               // target-model field slugs to show as columns
-  related_records_status_field?: string | null;            // optional: slug for status badge column
 }
 
 // Notes field (type: 'notes'). Stored value is a chronological list of entries.
@@ -430,14 +391,6 @@ export interface CustomButtonActionCreateRecord {
   type: 'create_record';
   target_model_id: string;
   prefill?: CustomButtonFieldMap[];
-  /**
-   * When set, the modal renders only fields whose `name` (slug) is in this
-   * array — everything else is hidden. Section visibility (section_selector +
-   * visible_if) still applies on top of this filter. Used to make
-   * "Schedule follow-up" / "Schedule an appointment" buttons ask for just
-   * the minimum required input while the rest is prefilled in the background.
-   */
-  visible_field_names?: string[];
 }
 
 /**
@@ -456,8 +409,6 @@ export interface CustomButtonActionFindOrCreateRecord {
   search_by: CustomButtonFieldMap[];
   order_by: 'created_at_desc' | 'updated_at_desc';
   prefill?: CustomButtonFieldMap[];
-  /** See CustomButtonActionCreateRecord.visible_field_names. */
-  visible_field_names?: string[];
 }
 
 export type CustomButtonAction =
@@ -700,17 +651,11 @@ export type ConditionOperator =
   | 'greater_than'
   | 'less_than'
   | 'is_empty'
-  | 'is_not_empty'
-  // Relationship-aware operators: test whether a related model has any
-  // record whose `related_match_field_id` value equals the trigger record's
-  // `field_id` value. `value` is ignored. `related_model_id` is required.
-  // Used for "does this client already have a visit?" branching.
-  | 'exists_related_record'
-  | 'not_exists_related_record';
+  | 'is_not_empty';
 
 export interface WorkflowCondition {
   id: string;
-  field_id: string; // field slug (name) — for relationship operators, this is the slug on the TRIGGER record whose value to match against
+  field_id: string; // field slug (name)
   operator: ConditionOperator;
   value: unknown;
   // When true, the condition passes only on the transition into the "true" state:
@@ -718,15 +663,6 @@ export interface WorkflowCondition {
   // - 'create' event: any first-time match counts as a transition (always passes if value matches)
   // - 'delete' event: ignored (behaves like a normal condition)
   only_on_change?: boolean;
-  // Relationship-operator config. When operator is `exists_related_record` /
-  // `not_exists_related_record`:
-  //   - `related_model_id` is the target model (e.g. visits)
-  //   - `related_match_field_id` is the slug on that target model that links
-  //     back (e.g. `client_id`)
-  // The condition passes iff `allRecords[related_model_id]` contains at least
-  // one row where `data[related_match_field_id] === triggerRecord.data[field_id]`.
-  related_model_id?: string;
-  related_match_field_id?: string;
 }
 
 export type FieldMappingSource = 'static' | 'trigger_field' | 'current_date' | 'current_user' | 'record_id' | 'role_variable' | 'date_expression' | 'formula';
