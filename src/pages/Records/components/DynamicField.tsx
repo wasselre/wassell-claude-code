@@ -11,6 +11,7 @@ import DynamicCell from './DynamicCell';
 import NotesField from './NotesField';
 import RangeField from './RangeField';
 import TableField from './TableField';
+import DateTimePicker from './DateTimePicker';
 import TemplateVariablesField from './TemplateVariablesField';
 import TemplatesPickerModal from './TemplatesPickerModal';
 import GenerationsGallery, { GENERATION_STATUS_LABELS, GenerationStatusBadge } from './GenerationsGallery';
@@ -221,21 +222,21 @@ export default function DynamicField({ field, value, onChange, recordData, compa
 
       case 'date':
         return (
-          <input
-            type="date"
-            value={(value as string) ?? ''}
-            onChange={(e) => onChange(e.target.value)}
-            className="form-input"
+          <DateTimePicker
+            mode="date"
+            value={value as string | null | undefined}
+            onChange={onChange}
+            placeholder={placeholder}
           />
         );
 
       case 'datetime':
         return (
-          <input
-            type="datetime-local"
-            value={(value as string) ?? ''}
-            onChange={(e) => onChange(e.target.value)}
-            className="form-input"
+          <DateTimePicker
+            mode="datetime"
+            value={value as string | null | undefined}
+            onChange={onChange}
+            placeholder={placeholder}
           />
         );
 
