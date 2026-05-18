@@ -55,14 +55,34 @@ async function main() {
 
   const files = [];
   let totalBytes = 0;
+  // Collect-then-sort so SKILL.md is the FIRST entry in the files array.
+  // Empirically the Anthropic Skills API validation prefers SKILL.md to be
+  // the first file in the multipart form. With the natural walk order
+  // (assets/, scripts/, SKILL.md) the API rejects the upload with
+  // "SKILL.md file must be exactly in the top-level folder." even though
+  // SKILL.md IS at the top level. Putting it first satisfies the check.
+  //
+  // Paths are kept inside a single top-level folder (`SKILL_ROOT_PREFIX`)
+  // per the SDK docs: "All files must be in the same top-level directory
+  // and must include a SKILL.md file at the root of that directory."
+  const collected = [];
   for (const f of walk(SKILL_DIR)) {
     const ext = path.extname(f.full).toLowerCase();
     const mime = MIME_BY_EXT[ext] ?? "application/octet-stream";
     const apiPath = `${SKILL_ROOT_PREFIX}/${f.rel}`;
-    const file = await toFile(createReadStream(f.full), apiPath, { type: mime });
+    collected.push({ ...f, ext, mime, apiPath });
+  }
+  collected.sort((a, b) => {
+    const aIsSkill = a.rel === "SKILL.md" ? 0 : 1;
+    const bIsSkill = b.rel === "SKILL.md" ? 0 : 1;
+    if (aIsSkill !== bIsSkill) return aIsSkill - bIsSkill;
+    return a.apiPath.localeCompare(b.apiPath);
+  });
+  for (const f of collected) {
+    const file = await toFile(createReadStream(f.full), f.apiPath, { type: f.mime });
     files.push(file);
     totalBytes += f.size;
-    console.log(`  + ${apiPath}  (${mime}, ${f.size} bytes)`);
+    console.log(`  + ${f.apiPath}  (${f.mime}, ${f.size} bytes)`);
   }
 
   if (totalBytes > 30 * 1024 * 1024) {
@@ -77,10 +97,39 @@ async function main() {
 
   let skill;
   if (versionOf) {
-    skill = await client.beta.skills.versions.create(versionOf, { files });
+    // The SDK's `client.beta.skills.versions.create()` strips the folder
+    // prefix from each file's name (it calls multipartFormRequestOptions
+    // WITHOUT the stripFilenames=false third arg that skills.create has).
+    // Result: every uploaded file ends up as just its basename, and the
+    // API rejects with "SKILL.md file must be exactly in the top-level
+    // folder." Bug confirmed in @anthropic-ai/sdk@0.91.0 by reading
+    // worker/node_modules/@anthropic-ai/sdk/resources/beta/skills/{skills,versions}.js.
+    //
+    // Workaround: skip the SDK and call the API directly with a multipart
+    // body where we control the Content-Disposition filename (including
+    // the folder prefix) ourselves.
+    const apiBase = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+    const form = new FormData();
+    for (const f of files) form.append("files[]", f, f.name);
+    const res = await fetch(`${apiBase}/v1/skills/${versionOf}/versions?beta=true`, {
+      method: "POST",
+      headers: {
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "anthropic-beta": "skills-2025-10-02",
+      },
+      body: form,
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const e = new Error(payload?.error?.message || `HTTP ${res.status}`);
+      // eslint-disable-next-line no-throw-literal
+      throw Object.assign(e, { status: res.status, error: payload?.error ?? payload });
+    }
+    skill = payload;
     console.log(`✓ New version created`);
     console.log(`  skill_id:       ${versionOf}`);
-    console.log(`  version:        ${skill.version ?? skill.id}`);
+    console.log(`  version:        ${skill.version ?? skill.id ?? "(unknown)"}`);
   } else {
     skill = await client.beta.skills.create({ display_title: DISPLAY_TITLE, files });
     console.log(`✓ Skill created`);
