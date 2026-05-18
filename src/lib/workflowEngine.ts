@@ -300,9 +300,9 @@ export async function executeWorkflows(
       // even in 'any' mode — users want to see what each condition resolved
       // to regardless of the join mode.
       const perResults = branch.conditions.map((c) => {
-        const passesNow = evaluateCondition(c, liveTriggerRecord.data);
+        const passesNow = evaluateCondition(c, liveTriggerRecord.data, { allRecords });
         const passedBefore = (c.only_on_change && event === 'update' && previousRecord)
-          ? evaluateCondition(c, previousRecord.data)
+          ? evaluateCondition(c, previousRecord.data, { allRecords })
           : undefined;
         const result = !c.only_on_change
           ? passesNow
@@ -471,8 +471,8 @@ export async function executeWebhookWorkflows(
       const ok = branch.conditions.length === 0
         ? true
         : (mode === 'any'
-          ? branch.conditions.some((c) => evaluateCondition(c, triggerRecord.data))
-          : branch.conditions.every((c) => evaluateCondition(c, triggerRecord.data)));
+          ? branch.conditions.some((c) => evaluateCondition(c, triggerRecord.data, { allRecords }))
+          : branch.conditions.every((c) => evaluateCondition(c, triggerRecord.data, { allRecords })));
       if (ok) winner = branch;
     }
     if (!winner) continue;
@@ -603,6 +603,7 @@ function resolveFieldMappingWithTrace(
           return evaluateCondition(
             { id: cond.id, field_id: cond.field_name, operator: cond.operator, value: compareValue },
             { [cond.field_name]: fieldValue },
+            { allRecords },
           );
         });
       });
@@ -932,6 +933,7 @@ async function executeAction(
               return evaluateCondition(
                 { id: cond.id, field_id: cond.field_name, operator: cond.operator, value: compareValue },
                 { [cond.field_name]: fieldValue },
+                { allRecords },
               );
             });
           });

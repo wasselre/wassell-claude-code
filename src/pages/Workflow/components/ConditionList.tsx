@@ -37,6 +37,8 @@ const OPERATOR_SYMBOL: Record<ConditionOperator, string> = {
   less_than: '<',
   is_empty: 'Ø',
   is_not_empty: '≠ Ø',
+  exists_related_record: '∃',
+  not_exists_related_record: '∄',
 };
 
 // One-line textual summary for a condition, used by ConditionNode on the

@@ -900,30 +900,61 @@ const fuBasicSectionId = uuid();
 export const fuPrefsSectionId = uuid();
 const fuCallSectionId = uuid();
 const fuAppointmentSectionId = uuid();
-const fuPostVisitSectionId = uuid();
-const fuWhatsAppSectionId = uuid();
+// Exported — referenced by the D1 workflow seed (create_record action sets
+// `followup_type = [<sectionId>]` to drop the created row into one of these types).
+export const fuPostVisitSectionId = uuid();
+export const fuWhatsAppSectionId = uuid();
+export const fuCallToBookSectionId = uuid();
 
 const fuClientFieldId = uuid();
 const fuTypeFieldId = uuid();
-const fuAppointmentFieldId = uuid();
+const fuAppointmentFieldId = uuid(); // appointment_id lookup — now in base section, gated by call_result == 'rescheduled'
+const fuCallResultFieldId = uuid();  // the consolidated `call_result` field — exported below for workflow seeding
+const fuStatusFieldId = uuid();      // `status` field used by D2 cascade-cancel (active / cancelled / completed)
 
-// Shared "call result" options — duplicated per-section with fresh IDs to keep option
-// instances independent in the builder.
+// Shared "call result" options — now the option list for the single
+// `call_result` field that replaced the four per-section result fields. Uses
+// English slugs to match the codebase convention (workflows / filters / scope
+// rules reference these slugs as literal strings). The seed extends the
+// original 6 values with three more slugs reused from `APPOINTMENT_STATUS_OPTIONS`
+// (`scheduled` / `confirmed` / `cancelled`) so the consolidated result field
+// can capture the full appointment lifecycle without introducing new slugs.
+// Duplicated per-call with fresh option IDs to keep instances independent.
 const CALL_RESULT_OPTIONS = (): FieldOption[] => [
-  { id: uuid(), label_ar: 'مهتم', label_en: 'Interested', value: 'interested', color: '#10B981' },
-  { id: uuid(), label_ar: 'غير مهتم', label_en: 'Not Interested', value: 'not_interested', color: '#EF4444' },
-  { id: uuid(), label_ar: 'لم يرد', label_en: 'No Answer', value: 'no_answer', color: '#6B7280' },
-  { id: uuid(), label_ar: 'مؤجل', label_en: 'Postponed', value: 'postponed', color: '#F59E0B' },
-  { id: uuid(), label_ar: 'تم تحديد موعد', label_en: 'Rescheduled', value: 'rescheduled', color: '#8B5CF6' },
-  { id: uuid(), label_ar: 'يحتاج متابعة', label_en: 'Needs Follow-Up', value: 'needs_followup', color: '#3B82F6' },
+  { id: uuid(), label_ar: 'مهتم',        label_en: 'Interested',         value: 'interested',     color: '#10B981' },
+  { id: uuid(), label_ar: 'غير مهتم',    label_en: 'Not Interested',     value: 'not_interested', color: '#EF4444' },
+  { id: uuid(), label_ar: 'لم يرد',      label_en: 'No Answer',          value: 'no_answer',      color: '#6B7280' },
+  { id: uuid(), label_ar: 'مؤجل',        label_en: 'Postponed',          value: 'postponed',      color: '#F59E0B' },
+  { id: uuid(), label_ar: 'يحتاج متابعة', label_en: 'Needs Follow-Up',   value: 'needs_followup', color: '#3B82F6' },
+  // Appointment lifecycle outcomes — referenced by B2/B3/B4/B6 visible_if rules.
+  { id: uuid(), label_ar: 'مجدول',       label_en: 'Scheduled',          value: 'scheduled',      color: '#3B82F6' },
+  { id: uuid(), label_ar: 'مؤكد',        label_en: 'Confirmed',          value: 'confirmed',      color: '#10B981' },
+  { id: uuid(), label_ar: 'ملغي',        label_en: 'Cancelled',          value: 'cancelled',      color: '#6B7280' },
+  { id: uuid(), label_ar: 'معاد جدولته', label_en: 'Rescheduled',        value: 'rescheduled',    color: '#8B5CF6' },
 ];
 
-const WHATSAPP_RESULT_OPTIONS: FieldOption[] = [
-  { id: uuid(), label_ar: 'تم الرد', label_en: 'Replied', value: 'replied', color: '#10B981' },
-  { id: uuid(), label_ar: 'لم يرد', label_en: 'No Reply', value: 'no_reply', color: '#6B7280' },
-  { id: uuid(), label_ar: 'يحتاج معلومات', label_en: 'Needs Info', value: 'needs_info', color: '#3B82F6' },
-  { id: uuid(), label_ar: 'غير مهتم', label_en: 'Not Interested', value: 'not_interested', color: '#EF4444' },
-  { id: uuid(), label_ar: 'سيرد لاحقاً', label_en: 'Will Reply Later', value: 'will_reply_later', color: '#F59E0B' },
+// WHATSAPP_RESULT_OPTIONS was deleted 2026-05-18 — there's now a single
+// `call_result` field on the base section that all follow-up types share.
+// Per-section results (`appt_call_result`, `pv_call_result`, `whatsapp_result`)
+// are gone. The data migration in `migration_10_to_11` consolidates legacy
+// values into `call_result`.
+
+// Status of an individual follow-up. Used by the appointment-date-change
+// cascade (D2) to mark follow-ups linked to the rescheduled appointment as
+// cancelled rather than deleting them — preserves the audit trail.
+const FOLLOWUP_STATUS_OPTIONS: FieldOption[] = [
+  { id: uuid(), label_ar: 'نشطة',  label_en: 'Active',    value: 'active',    color: '#10B981' },
+  { id: uuid(), label_ar: 'منجزة', label_en: 'Completed', value: 'completed', color: '#8B5CF6' },
+  { id: uuid(), label_ar: 'ملغاة', label_en: 'Cancelled', value: 'cancelled', color: '#6B7280' },
+];
+
+// Local options for the WhatsApp branch's `next_followup_type` field. Two
+// values only — picks whether the auto-created next follow-up is a recall or
+// another WhatsApp message. The D1 workflow branches on this value (and on
+// client visit history when 'recall').
+const NEXT_FOLLOWUP_TYPE_OPTIONS: FieldOption[] = [
+  { id: uuid(), label_ar: 'اتصال',  label_en: 'Recall',   value: 'recall',   color: '#3B82F6' },
+  { id: uuid(), label_ar: 'واتساب', label_en: 'WhatsApp', value: 'whatsapp', color: '#25D366' },
 ];
 
 const followupsModel: AppModel = {
@@ -1046,11 +1077,139 @@ const followupsModel: AppModel = {
             width: 'half',
             show_in_table: true,
             options: [
-              { id: fuCallSectionId, label_ar: 'مكالمة', label_en: 'Call', value: fuCallSectionId, color: '#3B82F6' },
-              { id: fuAppointmentSectionId, label_ar: 'تأكيد موعد', label_en: 'Appointment Confirmation', value: fuAppointmentSectionId, color: '#10B981' },
-              { id: fuPostVisitSectionId, label_ar: 'متابعة بعد الزيارة', label_en: 'Post-Visit Follow-Up', value: fuPostVisitSectionId, color: '#F59E0B' },
-              { id: fuWhatsAppSectionId, label_ar: 'متابعة واتساب', label_en: 'WhatsApp Follow-Up', value: fuWhatsAppSectionId, color: '#25D366' },
+              { id: fuCallSectionId,       label_ar: 'مكالمة',                label_en: 'Call',                     value: fuCallSectionId,       color: '#3B82F6', is_section_option: true },
+              { id: fuAppointmentSectionId,label_ar: 'تأكيد موعد',            label_en: 'Appointment Confirmation', value: fuAppointmentSectionId,color: '#10B981', is_section_option: true },
+              { id: fuPostVisitSectionId,  label_ar: 'متابعة بعد الزيارة',     label_en: 'Post-Visit Follow-Up',     value: fuPostVisitSectionId,  color: '#F59E0B', is_section_option: true },
+              { id: fuWhatsAppSectionId,   label_ar: 'متابعة واتساب',         label_en: 'WhatsApp Follow-Up',       value: fuWhatsAppSectionId,   color: '#25D366', is_section_option: true },
+              { id: fuCallToBookSectionId, label_ar: 'اتصال لحجز موعد',        label_en: 'Call to Book Appointment', value: fuCallToBookSectionId, color: '#0EA5E9', is_section_option: true },
             ],
+          },
+          {
+            // Single shared result field across every follow-up type. Moved
+            // from the Call section 2026-05-18; the per-type result fields
+            // (appt_call_result, pv_call_result, whatsapp_result) were deleted
+            // at the same time. Conditional fields (reason_*, next_followup_*,
+            // appointment_id) gate their visibility on this field's value.
+            id: fuCallResultFieldId,
+            name: 'call_result',
+            label_ar: 'النتيجة',
+            label_en: 'Result',
+            type: 'dropdown',
+            required: false,
+            order: 7,
+            section_id: fuBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            options: CALL_RESULT_OPTIONS(),
+          },
+          {
+            // Set by the D2 cascade workflow when the parent appointment's
+            // date changes — every linked follow-up gets status=cancelled so
+            // the user can re-fire the appointment workflow on the new date
+            // without dangling stale calls.
+            id: fuStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: false,
+            order: 8,
+            section_id: fuBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            options: FOLLOWUP_STATUS_OPTIONS,
+          },
+          {
+            // Conditional — shows only when result == 'not_interested'.
+            id: uuid(),
+            name: 'reason_not_interested',
+            label_ar: 'سبب عدم الاهتمام',
+            label_en: 'Reason for not interested',
+            type: 'textarea',
+            required: false,
+            order: 9,
+            section_id: fuBasicSectionId,
+            width: 'full',
+            show_in_table: false,
+            visible_if: { all: [{ field_name: 'call_result', operator: 'equals', value: 'not_interested' }] },
+          },
+          {
+            // Conditional — shows only when result == 'cancelled'.
+            id: uuid(),
+            name: 'reason_cancellation',
+            label_ar: 'سبب الإلغاء',
+            label_en: 'Reason for cancellation',
+            type: 'textarea',
+            required: false,
+            order: 10,
+            section_id: fuBasicSectionId,
+            width: 'full',
+            show_in_table: false,
+            visible_if: { all: [{ field_name: 'call_result', operator: 'equals', value: 'cancelled' }] },
+          },
+          {
+            // Rescheduling sub-flow: when the agent picks "rescheduled" as
+            // the result, they pick the appointment to reschedule via this
+            // lookup. Once selected, rescheduled_appointment_date /
+            // rescheduled_appointment_project below become visible — editing
+            // them triggers D3, which writes back to the appointment record
+            // and (via D2) cascades cancellation to all linked follow-ups.
+            //
+            // Moved here from the Appointment Confirmation section so it
+            // doesn't depend on the user having also picked that section in
+            // followup_type — `result == 'rescheduled'` is the only gate.
+            id: fuAppointmentFieldId,
+            name: 'appointment_id',
+            label_ar: 'الموعد',
+            label_en: 'Appointment',
+            type: 'lookup',
+            required: false,
+            order: 11,
+            section_id: fuBasicSectionId,
+            width: 'half',
+            show_in_table: false,
+            lookup_model_id: appointmentsId,
+            lookup_display_field: 'appointment_date',
+            visible_if: { all: [{ field_name: 'call_result', operator: 'equals', value: 'rescheduled' }] },
+          },
+          {
+            // The new date & time the appointment is being moved to. Written
+            // back to appointments.appointment_date by D3 on save.
+            id: uuid(),
+            name: 'rescheduled_appointment_date',
+            label_ar: 'تاريخ ووقت الموعد الجديد',
+            label_en: 'New Appointment Date & Time',
+            type: 'datetime',
+            required: false,
+            order: 12,
+            section_id: fuBasicSectionId,
+            width: 'half',
+            show_in_table: false,
+            visible_if: { all: [
+              { field_name: 'call_result',    operator: 'equals', value: 'rescheduled' },
+              { field_name: 'appointment_id', operator: 'is_set' },
+            ] },
+          },
+          {
+            // The (optionally new) project the customer wants for the
+            // rescheduled appointment. Written back to appointments.project_id
+            // by D3 on save.
+            id: uuid(),
+            name: 'rescheduled_appointment_project',
+            label_ar: 'مشروع الموعد الجديد',
+            label_en: 'New Appointment Project',
+            type: 'lookup',
+            required: false,
+            order: 13,
+            section_id: fuBasicSectionId,
+            width: 'half',
+            show_in_table: false,
+            lookup_model_id: allProjectsId,
+            lookup_display_field: 'project_name',
+            visible_if: { all: [
+              { field_name: 'call_result',    operator: 'equals', value: 'rescheduled' },
+              { field_name: 'appointment_id', operator: 'is_set' },
+            ] },
           },
           {
             // Set by the on_due sweeper (api/sweep-due-followups.ts) the
@@ -1084,27 +1243,17 @@ const followupsModel: AppModel = {
         mirror_source_section_id: clientsPrefsSectionId,
       },
       {
+        // "Call" type — section body is now empty; the consolidated
+        // `call_result` field on the base section captures the outcome.
+        // The section still exists so the user can pick "Call" as a
+        // follow-up type via the section_selector.
         id: fuCallSectionId,
         label_ar: 'مكالمة',
         label_en: 'Call',
         order: 2,
         is_base: false,
         color: '#3B82F6',
-        fields: [
-          {
-            id: uuid(),
-            name: 'call_result',
-            label_ar: 'نتيجة المكالمة',
-            label_en: 'Call Result',
-            type: 'dropdown',
-            required: false,
-            order: 0,
-            section_id: fuCallSectionId,
-            width: 'full',
-            show_in_table: true,
-            options: CALL_RESULT_OPTIONS(),
-          },
-        ],
+        fields: [],
       },
       {
         id: fuAppointmentSectionId,
@@ -1115,59 +1264,25 @@ const followupsModel: AppModel = {
         color: '#10B981',
         fields: [
           {
-            id: fuAppointmentFieldId,
-            name: 'appointment_id',
-            label_ar: 'الموعد',
-            label_en: 'Appointment',
-            type: 'lookup',
+            // Inline list of every appointment for this client. Click a row
+            // to open the appointment record in a nested modal. Read-only —
+            // for picking an appointment to reschedule, use the base-section
+            // `appointment_id` lookup which appears when result=rescheduled.
+            id: uuid(),
+            name: 'client_appointments',
+            label_ar: 'مواعيد العميل',
+            label_en: 'Client Appointments',
+            type: 'related_records',
             required: false,
             order: 0,
             section_id: fuAppointmentSectionId,
-            width: 'half',
+            width: 'full',
             show_in_table: false,
-            lookup_model_id: appointmentsId,
-            lookup_display_field: 'appointment_date',
-          },
-          {
-            id: uuid(),
-            name: 'appt_call_result',
-            label_ar: 'نتيجة المكالمة',
-            label_en: 'Call Result',
-            type: 'dropdown',
-            required: false,
-            order: 1,
-            section_id: fuAppointmentSectionId,
-            width: 'half',
-            show_in_table: false,
-            options: CALL_RESULT_OPTIONS(),
-          },
-          {
-            id: uuid(),
-            name: 'appointment_date',
-            label_ar: 'تاريخ الموعد',
-            label_en: 'Appointment Date',
-            type: 'mirror',
-            required: false,
-            order: 2,
-            section_id: fuAppointmentSectionId,
-            width: 'half',
-            show_in_table: false,
-            mirror_via_lookup_field_id: fuAppointmentFieldId,
-            mirror_target_field_name: 'appointment_date',
-          },
-          {
-            id: uuid(),
-            name: 'appointment_project',
-            label_ar: 'المشروع المجدول',
-            label_en: 'Scheduled Project',
-            type: 'mirror',
-            required: false,
-            order: 3,
-            section_id: fuAppointmentSectionId,
-            width: 'half',
-            show_in_table: false,
-            mirror_via_lookup_field_id: fuAppointmentFieldId,
-            mirror_target_field_name: 'project_id',
+            related_records_model_id: appointmentsId,
+            related_records_match_field_name: 'client_id',
+            related_records_match_source_field_name: 'client_id',
+            related_records_display_fields: ['appointment_date', 'project_id'],
+            related_records_status_field: 'status',
           },
         ],
       },
@@ -1208,17 +1323,23 @@ const followupsModel: AppModel = {
             lookup_display_field: 'unit_name',
           },
           {
+            // Inline list of every visit for this client. Click a row to
+            // open the visit record in a nested modal. Same UX as
+            // client_appointments above.
             id: uuid(),
-            name: 'pv_call_result',
-            label_ar: 'نتيجة المكالمة',
-            label_en: 'Call Result',
-            type: 'dropdown',
+            name: 'client_visits',
+            label_ar: 'زيارات العميل',
+            label_en: 'Client Visits',
+            type: 'related_records',
             required: false,
             order: 2,
             section_id: fuPostVisitSectionId,
             width: 'full',
             show_in_table: false,
-            options: CALL_RESULT_OPTIONS(),
+            related_records_model_id: visitsId,
+            related_records_match_field_name: 'client_id',
+            related_records_match_source_field_name: 'client_id',
+            related_records_display_fields: ['scheduled_datetime', 'project_id'],
           },
         ],
       },
@@ -1231,31 +1352,60 @@ const followupsModel: AppModel = {
         color: '#25D366',
         fields: [
           {
+            // The date & time the next follow-up is scheduled for. The D1
+            // workflow reads this on save and creates a new follow-up record.
+            // Hidden when `call_result` is one of the terminal outcomes
+            // (booked / confirmed / cancelled / not_interested) since those
+            // close the conversation.
             id: uuid(),
-            name: 'whatsapp_result',
-            label_ar: 'نتيجة الواتساب',
-            label_en: 'WhatsApp Result',
-            type: 'dropdown',
+            name: 'next_followup_datetime',
+            label_ar: 'تاريخ ووقت المتابعة التالية',
+            label_en: 'Next Follow-up Date & Time',
+            type: 'datetime',
             required: false,
             order: 0,
             section_id: fuWhatsAppSectionId,
             width: 'half',
             show_in_table: false,
-            options: WHATSAPP_RESULT_OPTIONS,
+            visible_if: { all: [
+              { field_name: 'followup_type', operator: 'contains', value: fuWhatsAppSectionId },
+              { field_name: 'call_result',   operator: 'not_in',   value: ['not_interested', 'scheduled', 'cancelled', 'confirmed'] },
+            ] },
           },
           {
+            // Type of the next follow-up — D1 reads this to decide what
+            // follow-up to create. `whatsapp` → another WhatsApp follow-up.
+            // `recall` → branches on client visit history: any visit →
+            // Post-Visit Follow-Up; no visit → Call to Book Appointment.
             id: uuid(),
-            name: 'next_followup_after_days',
-            label_ar: 'المتابعة التالية بعد (أيام)',
-            label_en: 'Next Follow-up After (days)',
-            type: 'number',
+            name: 'next_followup_type',
+            label_ar: 'نوع المتابعة التالية',
+            label_en: 'Next Follow-up Type',
+            type: 'dropdown',
             required: false,
             order: 1,
             section_id: fuWhatsAppSectionId,
             width: 'half',
             show_in_table: false,
+            options: NEXT_FOLLOWUP_TYPE_OPTIONS,
+            visible_if: { all: [
+              { field_name: 'followup_type', operator: 'contains', value: fuWhatsAppSectionId },
+              { field_name: 'call_result',   operator: 'not_in',   value: ['not_interested', 'scheduled', 'cancelled', 'confirmed'] },
+            ] },
           },
         ],
+      },
+      {
+        // "Call to Book Appointment" — the type that D1 creates for clients
+        // who have never visited. Section body is empty; the `call_result`
+        // field on the base section captures the outcome.
+        id: fuCallToBookSectionId,
+        label_ar: 'اتصال لحجز موعد',
+        label_en: 'Call to Book Appointment',
+        order: 6,
+        is_base: false,
+        color: '#0EA5E9',
+        fields: [],
       },
     ],
     // Three action buttons surfaced in the follow-up record form. All
@@ -1265,18 +1415,26 @@ const followupsModel: AppModel = {
     // client wins; if there is none, a blank visit form opens prefilled.
     custom_buttons: [
       {
+        // Was "Book a visit" → renamed 2026-05-18 to "Schedule an appointment"
+        // and re-targeted from visits to appointments. Only asks for the
+        // appointment date + project — client info flows in via prefill +
+        // the appointment model's own auto-fill from client_id.
         id: uuid(),
-        label_ar: 'حجز زيارة',
-        label_en: 'Book a visit',
+        label_ar: 'حجز موعد',
+        label_en: 'Schedule an appointment',
         icon: 'calendar-plus',
         locations: ['record_form'],
         action: {
           type: 'create_record',
-          target_model_id: visitsId,
+          target_model_id: appointmentsId,
           prefill: [{ target_field_name: 'client_id', source_field_name: 'client_id' }],
+          visible_field_names: ['appointment_date', 'project_id'],
         },
       },
       {
+        // Schedule follow-up — only asks for the scheduled date & time.
+        // Client info, follow-up type, etc. are all left to the agent to
+        // fill in on the resulting record (or via auto-link).
         id: uuid(),
         label_ar: 'جدولة متابعة',
         label_en: 'Schedule follow-up',
@@ -1286,9 +1444,12 @@ const followupsModel: AppModel = {
           type: 'create_record',
           target_model_id: followupsId,
           prefill: [{ target_field_name: 'client_id', source_field_name: 'client_id' }],
+          visible_field_names: ['scheduled_datetime'],
         },
       },
       {
+        // Unchanged — find-or-create on visits. Used after an actual visit
+        // happens so the agent can log it without leaving the follow-up.
         id: uuid(),
         label_ar: 'تسجيل زيارة',
         label_en: 'Register a visit',

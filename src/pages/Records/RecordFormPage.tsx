@@ -8,6 +8,7 @@ import * as lucideIcons from 'lucide-react';
 import { ArrowRight, Save, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
+import { evaluateVisibleIf } from '@/lib/visibilityRules';
 import { activityLogger } from '@/lib/activityLogger';
 import { supabase } from '@/lib/supabase';
 import type { CustomButton } from '@/types';
@@ -135,6 +136,8 @@ export default function RecordFormPage() {
     modelId: string;
     recordId: string | null;
     prefill?: Record<string, unknown>;
+    /** Filter from the custom button — only these slugs render in the modal. */
+    visibleFieldNames?: string[];
   } | null>(null);
 
   // Smart auto-link + auto-fill primitives. The hooks no-op when no field
@@ -490,6 +493,7 @@ export default function RecordFormPage() {
           modelId: button.action.target_model_id,
           recordId: null,
           prefill,
+          visibleFieldNames: button.action.visible_field_names,
         });
         return;
       } else if (button.action.type === 'find_or_create_record') {
@@ -515,12 +519,14 @@ export default function RecordFormPage() {
           setRecordModal({
             modelId: button.action.target_model_id,
             recordId: found.id,
+            visibleFieldNames: button.action.visible_field_names,
           });
         } else {
           setRecordModal({
             modelId: button.action.target_model_id,
             recordId: null,
             prefill: buildPrefill(button.action.prefill, formData),
+            visibleFieldNames: button.action.visible_field_names,
           });
         }
         return;
@@ -614,13 +620,17 @@ export default function RecordFormPage() {
       );
       return;
     }
-    // 1. Validate required fields on this record (skip derived mirror fields).
+    // 1. Validate required fields on this record (skip derived mirror fields and
+    // currently-hidden fields — a `visible_if` rule that hides a field also
+    // skips its required-check, otherwise the user can't save while the field
+    // is in a state where they can't see it).
     const allFields = model.schema.sections
       .filter((s) => !s.is_mirrored)
       .flatMap((s) => s.fields);
     const missing = allFields.filter((f) => {
       if (!f.required) return false;
       if (f.type === 'mirror') return false;
+      if (!evaluateVisibleIf(f.visible_if, formData)) return false;
       const val = formData[f.name];
       if (f.type === 'lookup' && f.is_multi) {
         return !Array.isArray(val) || val.length === 0;
@@ -953,6 +963,7 @@ export default function RecordFormPage() {
           modelId={recordModal.modelId}
           recordId={recordModal.recordId}
           prefill={recordModal.prefill}
+          visibleFieldNames={recordModal.visibleFieldNames}
           onClose={() => setRecordModal(null)}
         />
       )}

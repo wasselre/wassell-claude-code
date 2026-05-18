@@ -40,6 +40,7 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   generations_gallery: { icon: ImageIcon,       color: '#0D9488', bg: '#0D948812' },
   whatsapp_history: { icon: MessageSquare,      color: '#25D366', bg: '#25D36612' },
   call_history:     { icon: PhoneCall,          color: '#3B82F6', bg: '#3B82F612' },
+  related_records:  { icon: Layers,             color: '#0EA5E9', bg: '#0EA5E912' },
 };
 
 function detectMirrorMisconfig(field: ModelField, model: AppModel | null, allModels: AppModel[]): boolean {

@@ -8,7 +8,7 @@ import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine'
 import { assignAutoIdsAsync } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
-import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
+import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, healFollowupWorkflows, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient } from '@/lib/haberchat/normalize';
@@ -1840,6 +1840,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         ]),
       ).catch(() => { /* errors already toasted by supabaseDelete */ });
     }
+
+    // Always-run heal: ensure the seeded follow-up workflows (D1 / D3) are
+    // present. Idempotent — matches by `label_en` so user Builder edits
+    // survive. Lives outside `migration_10_to_11` because StrictMode
+    // double-mounts can race the version-gated migration.
+    const healedFollowupWorkflows = healFollowupWorkflows(prunedWorkflows);
+    if (healedFollowupWorkflows.changed) prunedWorkflows = healedFollowupWorkflows.workflows;
 
     saveLocal('wassell_models', models);
     saveLocal('wassell_workflows', prunedWorkflows);

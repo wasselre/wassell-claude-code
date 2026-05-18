@@ -535,6 +535,7 @@ export default function DynamicField({ field, value, onChange, recordData, compa
 
       case 'whatsapp_history':
       case 'call_history':
+      case 'related_records':
         // Display-only derived field types. The full panel lives in
         // SectionBlock (which has access to recordId / model phones); inside
         // DynamicField — which is also reused in compact / mirrored / table

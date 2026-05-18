@@ -70,12 +70,23 @@ export function applyDateExpression(base: Date, expression: string): Date {
 }
 
 /**
+ * Optional context for `evaluateCondition`. Required for relationship-aware
+ * operators (`exists_related_record` / `not_exists_related_record`) — the
+ * evaluator needs the full records map to check whether a matching row
+ * exists in another model. Other operators ignore it.
+ */
+export interface EvaluateConditionContext {
+  allRecords?: Record<string, AppRecord[]>;
+}
+
+/**
  * Evaluate a single workflow condition against a record's data. Pure
  * boolean check — same operator semantics as the client-side engine.
  */
 export function evaluateCondition(
   condition: WorkflowCondition,
   data: Record<string, unknown>,
+  context?: EvaluateConditionContext,
 ): boolean {
   const value = data[condition.field_id];
   const target = condition.value;
@@ -116,6 +127,26 @@ export function evaluateCondition(
       return !value || value === '';
     case 'is_not_empty':
       return !!value && value !== '';
+    case 'exists_related_record':
+    case 'not_exists_related_record': {
+      // Look up records in the related model whose `related_match_field_id`
+      // value equals THIS record's `field_id` value. Without context.allRecords
+      // we can't evaluate — fail closed (treat as no match) so the workflow
+      // doesn't fire incorrectly.
+      const relatedModelId = condition.related_model_id;
+      const relatedMatchFieldId = condition.related_match_field_id;
+      const triggerValue = value;
+      const hasMatch =
+        !!relatedModelId &&
+        !!relatedMatchFieldId &&
+        triggerValue !== undefined &&
+        triggerValue !== null &&
+        triggerValue !== '' &&
+        !!context?.allRecords?.[relatedModelId]?.some(
+          (r) => r.data[relatedMatchFieldId] === triggerValue,
+        );
+      return condition.operator === 'exists_related_record' ? hasMatch : !hasMatch;
+    }
     default:
       return true;
   }

@@ -5,9 +5,11 @@ import DynamicField from './DynamicField';
 import DynamicCell from './DynamicCell';
 import CallHistoryPanel from './CallHistoryPanel';
 import WhatsAppHistoryPanel from './WhatsAppHistoryPanel';
+import RelatedRecordsField from './RelatedRecordsField';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorField } from '@/lib/sectionMirrorFieldResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
+import { evaluateVisibleIf } from '@/lib/visibilityRules';
 import SectionMirrorComparison from './SectionMirrorComparison';
 import type { AppModel, FieldPermission, ModelField, ModelSection, ModelView } from '@/types';
 
@@ -51,6 +53,12 @@ interface SectionBlockProps {
    * render an empty state until the record is saved.
    */
   recordId?: string;
+  /**
+   * Optional whitelist of field slugs (from a custom button's
+   * `visible_field_names`). When set, only fields whose `name` is in this
+   * array render — visible_if still applies on top of that.
+   */
+  visibleFieldNames?: string[];
 }
 
 function widthClass(width: ModelField['width']): string {
@@ -94,6 +102,7 @@ export default function SectionBlock({
   formReadOnly,
   getFieldPermission,
   recordId,
+  visibleFieldNames,
 }: SectionBlockProps) {
   const { language, records, models } = useAppStore();
   const isAr = language === 'ar';
@@ -218,9 +227,26 @@ export default function SectionBlock({
   // `fired_at` on the followups model is system-managed: the on_due cron sweeper
   // stamps it to prevent double-firing. It stays in the schema (visible in the
   // Builder) but never renders in the user form.
+  //
+  // visible_if filter — fields with a rule that doesn't pass the current
+  // formData are removed from the layout entirely. Hidden field values are
+  // preserved on the record; they just don't render.
+  //
+  // visibleFieldNames whitelist — set by `create_record` custom buttons that
+  // only want to surface a subset of fields. Mirror fields are exempted because
+  // they typically render values needed for context (e.g. client_name shown
+  // alongside scheduled_datetime). Apply BEFORE visible_if so the whitelist
+  // is authoritative when set.
   const sortedFields = [...section.fields]
     .filter((f) => f.name !== 'fired_at')
+    .filter((f) => !visibleFieldNames || visibleFieldNames.includes(f.name))
+    .filter((f) => evaluateVisibleIf(f.visible_if, formData))
     .sort((a, b) => a.order - b.order);
+
+  // When a visibleFieldNames whitelist is in effect and no field on this
+  // section survives the filter, hide the whole section (header + body) so
+  // the modal doesn't show empty section headers.
+  if (visibleFieldNames && sortedFields.length === 0) return null;
 
   if (collapsed) {
     return (
@@ -235,6 +261,21 @@ export default function SectionBlock({
   // ungrouped fields AND each field group's members through the same path.
   const renderFieldNodes = (fieldsToRender: ModelField[]) =>
     fieldsToRender.flatMap((field) => {
+          // related_records — read-only list of records from another model
+          // filtered by a sibling-id match. Renders inline with a header label.
+          if (field.type === 'related_records') {
+            const fieldPerm = getFieldPermission ? getFieldPermission(field) : 'editable';
+            if (fieldPerm === 'hidden') return [];
+            return [(
+              <div key={field.id} className="col-span-12">
+                <label className="text-[11px] font-bold text-charcoal/60 mb-1 block">
+                  {isAr ? field.label_ar : field.label_en}
+                </label>
+                <RelatedRecordsField field={field} recordData={formData} />
+              </div>
+            )];
+          }
+
           // Display-only derived field types — render their own panel inside
           // the section, bypassing the standard label / input chrome. Always
           // full-width, never editable, no value stored.
