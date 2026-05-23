@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FolderPlus, Loader2, Upload } from 'lucide-react';
+import { FolderPlus, FolderUp, Loader2, Upload } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { FileRow, FolderRow } from '@/types';
 import {
@@ -170,9 +170,28 @@ export default function FilesPage({ forceShared = false }: Props) {
   // In "Shared with me" root we have no destination folder, so picker is off.
   const uploadEnabled = view !== 'shared';
 
-  const onUploaded = (rows: FileRow[]) => {
-    setFiles((prev) => [...rows, ...prev]);
-    addToast(`${rows.length} ${isAr ? 'ملف' : 'file(s)'}`, 'success');
+  const onUploaded = (rows: FileRow[], folders: FolderRow[]) => {
+    // Refresh from server so child-folder content + ancestor caches stay
+    // consistent (a folder-tree upload can create folders we don't yet
+    // show in this view's grid).
+    if (folders.length > 0) {
+      setFolderCache((cache) => mergeUniqueById(cache, folders));
+    }
+    if (rows.length > 0 || folders.length > 0) {
+      void reload();
+    }
+    const fileCount = rows.length;
+    const folderCount = folders.length;
+    if (folderCount > 0) {
+      addToast(
+        isAr
+          ? `${fileCount} ملف · ${folderCount} مجلد`
+          : `${fileCount} file(s) · ${folderCount} folder(s)`,
+        'success',
+      );
+    } else if (fileCount > 0) {
+      addToast(`${fileCount} ${isAr ? 'ملف' : 'file(s)'}`, 'success');
+    }
   };
 
   // ─── Render ──────────────────────────────────────────────────────────
@@ -193,6 +212,14 @@ export default function FilesPage({ forceShared = false }: Props) {
               >
                 <FolderPlus size={16} />
                 {t('files.new_folder.button')}
+              </button>
+              <button
+                onClick={() => window.dispatchEvent(new Event('files:open-folder-picker'))}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream font-bold text-sm transition-colors"
+                title={t('files.upload.folder_tooltip')}
+              >
+                <FolderUp size={16} />
+                {t('files.upload.folder_button')}
               </button>
               <button
                 onClick={() => window.dispatchEvent(new Event('files:open-picker'))}

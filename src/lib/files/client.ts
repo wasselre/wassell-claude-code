@@ -213,6 +213,198 @@ export async function uploadFile(file: File, opts: UploadOpts = {}): Promise<Fil
   return row as FileRow;
 }
 
+// ─── Folder-tree upload ─────────────────────────────────────────────────
+// Two input shapes:
+//   1. Drag-drop of directories — DataTransferItemList.webkitGetAsEntry()
+//      gives a FileSystemEntry tree we walk recursively.
+//   2. <input type="file" webkitdirectory> — gives a flat File[] where each
+//      File has webkitRelativePath like "Contracts/2024/draft.pdf".
+// Both are normalized into UploadItem[] then materialized as folders+files.
+
+export interface UploadItem {
+  file: File;
+  /** Directory path segments above the file, e.g. ['Contracts','2024'] for
+   *  'Contracts/2024/draft.pdf'. Empty array = root of the picked tree. */
+  pathSegments: string[];
+}
+
+interface ParsedTree {
+  items: UploadItem[];
+  /** Every folder path encountered (relative, slash-joined), including
+   *  empty directories so we still create them. */
+  folderPaths: Set<string>;
+}
+
+/** Walk webkitGetAsEntry() results from a DataTransfer.items list. */
+export async function readDataTransferTree(items: DataTransferItemList): Promise<ParsedTree> {
+  const folderPaths = new Set<string>();
+  const out: UploadItem[] = [];
+
+  const walk = async (entry: FileSystemEntry, parentSegs: string[]): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((resolve, reject) => {
+        (entry as FileSystemFileEntry).file(resolve, reject);
+      });
+      out.push({ file, pathSegments: parentSegs });
+    } else if (entry.isDirectory) {
+      const myPath = [...parentSegs, entry.name];
+      folderPaths.add(myPath.join('/'));
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      // readEntries() returns batches — call until empty.
+      const children: FileSystemEntry[] = [];
+      while (true) {
+        const batch: FileSystemEntry[] = await new Promise((resolve, reject) =>
+          reader.readEntries(resolve, reject),
+        );
+        if (batch.length === 0) break;
+        children.push(...batch);
+      }
+      for (const child of children) {
+        await walk(child, myPath);
+      }
+    }
+  };
+
+  const entries: FileSystemEntry[] = [];
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item) continue;
+    if (item.kind !== 'file') continue;
+    const entry = (item as DataTransferItem & {
+      webkitGetAsEntry?: () => FileSystemEntry | null;
+    }).webkitGetAsEntry?.();
+    if (entry) entries.push(entry);
+  }
+  for (const entry of entries) {
+    await walk(entry, []);
+  }
+  return { items: out, folderPaths };
+}
+
+/** Parse a flat File[] from <input webkitdirectory>. */
+export function readWebkitDirectoryFiles(files: FileList | File[]): ParsedTree {
+  const arr = Array.from(files);
+  const folderPaths = new Set<string>();
+  const items: UploadItem[] = [];
+
+  for (const f of arr) {
+    // webkitRelativePath looks like "Contracts/2024/draft.pdf" or just "name.pdf".
+    const rel = (f as File & { webkitRelativePath?: string }).webkitRelativePath ?? '';
+    const segs = rel.split('/').filter(Boolean);
+    if (segs.length <= 1) {
+      // No directory prefix → upload at the root of the picker.
+      items.push({ file: f, pathSegments: [] });
+    } else {
+      const parent = segs.slice(0, -1);
+      items.push({ file: f, pathSegments: parent });
+      // Record every ancestor directory so empty mid-folders still appear.
+      for (let i = 1; i <= parent.length; i++) {
+        folderPaths.add(parent.slice(0, i).join('/'));
+      }
+    }
+  }
+  return { items, folderPaths };
+}
+
+interface TreeProgress {
+  total: number;
+  done: number;
+  failed: number;
+  currentFile?: string;
+}
+
+/**
+ * Materialize a parsed tree under `rootParentFolderId`:
+ *   1. Create every folder along each path (parents before children).
+ *   2. Upload each file into its resolved folder.
+ *
+ * Failures on individual files don't abort the whole tree — the caller
+ * gets a TreeResult with both successes and failures.
+ */
+export async function uploadTree(
+  tree: ParsedTree,
+  rootParentFolderId: string | null,
+  onProgress?: (p: TreeProgress) => void,
+): Promise<{
+  uploadedFiles: FileRow[];
+  createdFolders: FolderRow[];
+  failures: Array<{ path: string; error: string }>;
+}> {
+  const uploadedFiles: FileRow[] = [];
+  const createdFolders: FolderRow[] = [];
+  const failures: Array<{ path: string; error: string }> = [];
+
+  // Collect every folder path we need — from explicit folderPaths AND from
+  // any item's parent chain (defensive).
+  const allFolderPaths = new Set<string>(tree.folderPaths);
+  for (const item of tree.items) {
+    for (let i = 1; i <= item.pathSegments.length; i++) {
+      allFolderPaths.add(item.pathSegments.slice(0, i).join('/'));
+    }
+  }
+  const sortedPaths = Array.from(allFolderPaths).sort(
+    (a, b) => a.split('/').length - b.split('/').length,
+  );
+
+  // Map "Contracts/2024" → folder_id. The empty-string key resolves to the
+  // root parent so children of a root-level dropped file land correctly.
+  const pathToFolderId = new Map<string, string | null>();
+  pathToFolderId.set('', rootParentFolderId);
+
+  for (const path of sortedPaths) {
+    const segs = path.split('/');
+    const name = segs[segs.length - 1] ?? '';
+    const parentPath = segs.slice(0, -1).join('/');
+    const parentId = pathToFolderId.get(parentPath) ?? rootParentFolderId;
+    try {
+      const folder = await createFolder(name, parentId);
+      pathToFolderId.set(path, folder.id);
+      createdFolders.push(folder);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      failures.push({ path, error: msg });
+      // Leave path unmapped — children files will land in the nearest mapped
+      // ancestor (or root). Better than silently dropping them.
+    }
+  }
+
+  let done = 0;
+  let failed = 0;
+  const total = tree.items.length;
+
+  for (const item of tree.items) {
+    const dirPath = item.pathSegments.join('/');
+    // Walk up until we find a mapped ancestor (or hit root).
+    let probe = dirPath;
+    let folderId: string | null = rootParentFolderId;
+    while (probe.length > 0) {
+      const hit = pathToFolderId.get(probe);
+      if (hit !== undefined) {
+        folderId = hit;
+        break;
+      }
+      const segs = probe.split('/');
+      probe = segs.slice(0, -1).join('/');
+    }
+
+    onProgress?.({ total, done, failed, currentFile: item.file.name });
+
+    try {
+      const row = await uploadFile(item.file, { folderId: folderId ?? null });
+      uploadedFiles.push(row);
+      done += 1;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const fullPath = dirPath ? `${dirPath}/${item.file.name}` : item.file.name;
+      failures.push({ path: fullPath, error: msg });
+      failed += 1;
+    }
+    onProgress?.({ total, done, failed, currentFile: item.file.name });
+  }
+
+  return { uploadedFiles, createdFolders, failures };
+}
+
 // ─── Listing ─────────────────────────────────────────────────────────────
 
 export async function listFolders(parentFolderId: string | null): Promise<FolderRow[]> {
