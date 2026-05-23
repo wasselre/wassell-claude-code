@@ -2,14 +2,46 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { Send, Loader2, Paperclip, X } from 'lucide-react';
 import { uploadImage } from '@/lib/imageUpload';
+import { signViewUrl } from '@/lib/files/client';
 import type { ChatAspectRatio, AttachmentSource } from '@/lib/imageChat/client';
 import BrandPresetDropdown from './BrandPresetDropdown';
 import PromptLibraryButton from './PromptLibraryButton';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 interface ComposerAttachment {
+  /** What `<img src>` renders. For legacy items this is the same as `value`.
+   *  For Files-System items it's a short-lived signed URL. */
   url: string;
+  /** What gets sent to the server. For Files-System items this is the raw
+   *  `files.id` UUID — the server resolves it to a fresh URL on receipt,
+   *  so we don't have to worry about the signed URL expiring. */
+  value: string;
   name: string;
   source: AttachmentSource;
+}
+
+/** A preset/snippet `images` field value is either a legacy public URL
+ *  (string starts with http) or a Files-System `files.id` UUID. */
+function looksLikeFileId(s: string): boolean {
+  return UUID_RE.test(s);
+}
+
+async function resolveImageFieldValue(
+  raw: string,
+  source: AttachmentSource,
+): Promise<ComposerAttachment | null> {
+  if (looksLikeFileId(raw)) {
+    try {
+      const { url, original_name } = await signViewUrl(raw);
+      return { url, value: raw, name: original_name || basename(url), source };
+    } catch {
+      // signViewUrl already toasts the failure; just drop the attachment so
+      // the composer stays usable.
+      return null;
+    }
+  }
+  return { url: raw, value: raw, name: basename(raw), source };
 }
 
 interface Props {
@@ -90,22 +122,28 @@ export default function Composer({
   // strip out any existing preset-source attachments and append the
   // new preset's images (if any). User + snippet attachments are
   // preserved exactly as the user left them.
+  //
+  // Preset `images` field values come from the new Files System (raw
+  // `files.id` UUIDs) — they need to be signed before we can show
+  // a thumbnail, and the original ID is what we send to the server.
   useEffect(() => {
-    setAttachments((prev) => {
-      const withoutPreset = prev.filter((a) => a.source !== 'preset');
-      if (!presetId) return withoutPreset;
-      const preset = presetRecords.find((r) => r.id === presetId);
-      if (!preset) return withoutPreset;
-      const presetImages = Array.isArray(preset.data.images)
-        ? (preset.data.images as unknown[]).filter((x): x is string => typeof x === 'string')
-        : [];
-      const presetAttachments: ComposerAttachment[] = presetImages.map((url) => ({
-        url,
-        name: basename(url),
-        source: 'preset',
-      }));
-      return [...withoutPreset, ...presetAttachments];
+    let cancelled = false;
+    setAttachments((prev) => prev.filter((a) => a.source !== 'preset'));
+    if (!presetId) return;
+    const preset = presetRecords.find((r) => r.id === presetId);
+    if (!preset) return;
+    const presetImages = Array.isArray(preset.data.images)
+      ? (preset.data.images as unknown[]).filter((x): x is string => typeof x === 'string')
+      : [];
+    if (presetImages.length === 0) return;
+    void Promise.all(presetImages.map((v) => resolveImageFieldValue(v, 'preset'))).then((resolved) => {
+      if (cancelled) return;
+      const fresh = resolved.filter((a): a is ComposerAttachment => a !== null);
+      setAttachments((prev) => [...prev.filter((a) => a.source !== 'preset'), ...fresh]);
     });
+    return () => {
+      cancelled = true;
+    };
     // intentionally only react to presetId — presetRecords identity
     // changes constantly via store updates; we don't want to keep
     // re-merging on every keystroke elsewhere in the app.
@@ -132,14 +170,10 @@ export default function Composer({
       ? (snippet.data.images as unknown[]).filter((x): x is string => typeof x === 'string')
       : [];
     if (imgs.length > 0) {
-      setAttachments((prev) => [
-        ...prev,
-        ...imgs.map<ComposerAttachment>((url) => ({
-          url,
-          name: basename(url),
-          source: 'snippet',
-        })),
-      ]);
+      void Promise.all(imgs.map((v) => resolveImageFieldValue(v, 'snippet'))).then((resolved) => {
+        const fresh = resolved.filter((a): a is ComposerAttachment => a !== null);
+        if (fresh.length > 0) setAttachments((prev) => [...prev, ...fresh]);
+      });
     }
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
@@ -160,7 +194,7 @@ export default function Composer({
           const url = await uploadImage(file, 'image-chats/uploads');
           setAttachments((prev) => [
             ...prev,
-            { url, name: file.name, source: 'user' },
+            { url, value: url, name: file.name, source: 'user' },
           ]);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -185,7 +219,7 @@ export default function Composer({
     if (!trimmed && attachments.length === 0) return;
     onSend({
       prompt: trimmed,
-      attachmentUrls: attachments.map((a) => a.url),
+      attachmentUrls: attachments.map((a) => a.value),
       attachmentSources: attachments.map((a) => a.source),
       aspectRatio,
       numVariations,

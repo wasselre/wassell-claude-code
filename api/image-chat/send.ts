@@ -54,6 +54,11 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
+import {
+  assertCanAccessFile,
+  getServiceClient,
+  loadFileBypassRls,
+} from '../_lib/files.js';
 import { imageGenChat, pollImageGen, type ChatAspectRatio } from '../_lib/imageGen.js';
 
 export const config = {
@@ -141,6 +146,12 @@ function isMarketingAssetsUrl(s: string, supabaseUrl: string): boolean {
   return s.startsWith(supabaseUrl) && s.includes(marker);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isFileId(s: string): boolean {
+  return UUID_RE.test(s);
+}
+
 function basenameFromUrl(url: string): string {
   try {
     const u = new URL(url);
@@ -149,6 +160,71 @@ function basenameFromUrl(url: string): string {
   } catch {
     return 'image';
   }
+}
+
+function extFromContentType(ct: string): string {
+  const m = ct.toLowerCase();
+  if (m.includes('jpeg') || m.includes('jpg')) return 'jpg';
+  if (m.includes('webp')) return 'webp';
+  if (m.includes('gif')) return 'gif';
+  return 'png';
+}
+
+/**
+ * Normalize one attachment-list item into a marketing-assets public URL.
+ *
+ * Accepts either:
+ *   - An already-valid marketing-assets URL (legacy paperclip uploads via
+ *     uploadImage land here) → returned unchanged.
+ *   - A bare `files.id` UUID (new image/multi_image fields on presets and
+ *     snippets store this) → the file is copied from the private
+ *     `wassel-files` bucket into `marketing-assets/image-chats/preset-copies/...`
+ *     so (a) fal.ai can fetch it with a stable public URL and (b) it can be
+ *     persisted into the message history without an expiring signed URL.
+ *
+ * Permission is gated under the caller's JWT via `wassell_can_access_file`
+ * before any service-role read happens.
+ */
+async function resolveAttachmentToMarketingUrl(
+  raw: string,
+  jwtClient: SupabaseClient,
+  supabaseUrl: string,
+  userId: string,
+  recordId: string,
+): Promise<string> {
+  if (isMarketingAssetsUrl(raw, supabaseUrl)) return raw;
+  if (!isFileId(raw)) {
+    throw new Error(`attachment must be a marketing-assets URL or a files.id UUID: ${raw}`);
+  }
+
+  await assertCanAccessFile(jwtClient, raw, 'view');
+  const file = await loadFileBypassRls(raw);
+  if (!file) throw new Error(`file not found: ${raw}`);
+  if (!file.mime_type.startsWith('image/')) {
+    throw new Error(`file is not an image: ${file.original_name} (${file.mime_type})`);
+  }
+
+  const svc = getServiceClient();
+  const { data: blob, error: dlErr } = await svc.storage
+    .from(file.storage_bucket)
+    .download(file.storage_path);
+  if (dlErr || !blob) {
+    throw new Error(`download from ${file.storage_bucket} failed: ${dlErr?.message ?? 'no body'}`);
+  }
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const contentType = file.mime_type || 'image/png';
+  const ext = extFromContentType(contentType);
+  const path = `image-chats/preset-copies/${userId}/${recordId}/${crypto.randomUUID()}.${ext}`;
+
+  const { error: upErr } = await jwtClient.storage
+    .from(BUCKET)
+    .upload(path, bytes, { contentType, upsert: false });
+  if (upErr) throw new Error(`re-host to ${BUCKET} failed: ${upErr.message}`);
+
+  const { data: pub } = jwtClient.storage.from(BUCKET).getPublicUrl(path);
+  const publicUrl = pub?.publicUrl;
+  if (!publicUrl) throw new Error('re-host succeeded but public URL not resolved');
+  return publicUrl;
 }
 
 /* ─── Record-update helpers ───────────────────────────────────────── */
@@ -242,15 +318,36 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       global: { headers: { Authorization: `Bearer ${jwt}` } },
     });
 
-    // Sanity-check attachment URLs come from our bucket — protects fal.ai
-    // (and us) from being asked to pull from arbitrary origins.
-    for (const u of attachmentUrls) {
-      if (!isMarketingAssetsUrl(u, supabaseUrl)) {
-        return jsonError(400, `attachment URL outside marketing-assets bucket: ${u}`);
-      }
-    }
-    if (prevImageUrl && !isMarketingAssetsUrl(prevImageUrl, supabaseUrl)) {
-      return jsonError(400, `prev_image_url outside marketing-assets bucket`);
+    // Normalize each attachment to a marketing-assets public URL. Items may
+    // arrive as either legacy marketing-assets URLs (paperclip uploads) or
+    // as bare `files.id` UUIDs (preset/snippet image fields, which now live
+    // in the Files System on the private `wassel-files` bucket). For file
+    // IDs we permission-check under the caller's JWT, then service-role
+    // copy the bytes into marketing-assets so fal.ai has a stable public
+    // URL and the message history stays valid forever (no signed-URL
+    // expiry). `prev_image_url` only ever comes from prior assistant
+    // outputs, which are already marketing-assets URLs — but we run it
+    // through the same resolver for symmetry.
+    let resolvedAttachmentUrls: string[];
+    let resolvedPrevImageUrl: string | null;
+    try {
+      resolvedAttachmentUrls = await Promise.all(
+        attachmentUrls.map((u) =>
+          resolveAttachmentToMarketingUrl(u, supabase, supabaseUrl, user.userId, recordId),
+        ),
+      );
+      resolvedPrevImageUrl = prevImageUrl
+        ? await resolveAttachmentToMarketingUrl(
+            prevImageUrl,
+            supabase,
+            supabaseUrl,
+            user.userId,
+            recordId,
+          )
+        : null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return jsonError(400, `attachment resolution failed: ${msg}`);
     }
 
     // ── Look up models + records ─────────────────────────────────────
@@ -326,8 +423,8 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // preset/snippet assets in the right slot of attachment_urls
     // when those were added.
     const mergedImageUrls: string[] = [
-      ...attachmentUrls,
-      ...(prevImageUrl ? [prevImageUrl] : []),
+      ...resolvedAttachmentUrls,
+      ...(resolvedPrevImageUrl ? [resolvedPrevImageUrl] : []),
     ];
 
     const nowIso = new Date().toISOString();
@@ -342,15 +439,15 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // wrong length we fall back to 'user' for everything.
     const rawSources = body.attachment_sources;
     const attachmentSources: Array<'user' | 'preset' | 'snippet'> =
-      Array.isArray(rawSources) && rawSources.length === attachmentUrls.length
+      Array.isArray(rawSources) && rawSources.length === resolvedAttachmentUrls.length
         ? rawSources.map((s) => (s === 'preset' || s === 'snippet' ? s : 'user'))
-        : attachmentUrls.map(() => 'user' as const);
+        : resolvedAttachmentUrls.map(() => 'user' as const);
 
     const userMessage: StoredMessage = {
       id: crypto.randomUUID(),
       role: 'user',
       text: userPrompt.trim() || undefined,
-      images: attachmentUrls.map<MessageImage>((url, i) => ({
+      images: resolvedAttachmentUrls.map<MessageImage>((url, i) => ({
         url,
         name: basenameFromUrl(url),
         source: attachmentSources[i] ?? 'user',
