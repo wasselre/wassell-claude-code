@@ -1,21 +1,31 @@
 /**
  * One-shot seeding of the Image Chats libraries.
  *
- * Runs the first time the page is opened on a fresh tenant. Inserts:
- *   - One "Wassel default" `image_presets` record (the brand-language
- *     starter — palette, mood, typography rules pulled from CLAUDE.md
- *     and the wassel-deck-review skill).
- *   - A small set of starter `prompt_snippets` covering the four
- *     categories defined on the model (property listing, launch,
- *     lifestyle, edit / cleanup, other).
+ * Inserts on a fresh tenant:
+ *   - One "Wassel default" `image_presets` record (palette, mood,
+ *     typography pulled from CLAUDE.md and the wassel-deck-review
+ *     skill).
+ *   - Five starter `prompt_snippets` across the model's categories
+ *     (property listing, launch, lifestyle, edit / cleanup).
  *
- * Idempotent at the call site: the caller passes the current record
- * counts and skips invocation when either library is non-empty.
- * Within this function, each insert is unconditional — the caller is
- * the gatekeeper, not us.
+ * **Idempotency.** Previously the caller passed in-memory record
+ * counts from the Zustand cache; that cache is empty during initial
+ * page mount (records load lazily *after* models), so every page
+ * load with empty cache → seed → duplicate records. Fixed by:
+ *
+ *   1. Querying Supabase directly for the live count BEFORE inserting.
+ *      The in-memory cache is no longer trusted.
+ *   2. Persisting a `wassell_image_chats_seeded:<userId>` flag in
+ *      localStorage as soon as the seed runs OR detects existing
+ *      records. Subsequent loads short-circuit on the flag, so the
+ *      Supabase round-trip only happens once per user per browser.
+ *
+ * The flag is per-user so multiple users on shared machines don't
+ * skip each other's checks.
  */
 
 import { v4 as uuid } from 'uuid';
+import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 
 const WASSEL_DEFAULT_PROMPT = `Maintain Wassel Real Estate's (وصل العقارية) visual identity:
@@ -82,16 +92,55 @@ const STARTER_SNIPPETS: StarterSnippet[] = [
 interface SeedInput {
   presetsModelId: string;
   snippetsModelId: string;
-  presetsCount: number;
-  snippetsCount: number;
+  userId: string | null;
   saveRecord: (record: AppRecord) => unknown;
   isAr: boolean;
 }
 
+const FLAG_PREFIX = 'wassell_image_chats_seeded:';
+
+/**
+ * Live count of records for a given model id by going straight to
+ * Supabase via the anon-key client (RLS-scoped to the caller). We
+ * deliberately avoid the in-memory Zustand cache because it's empty
+ * during initial page mount.
+ *
+ * Returns `null` on any failure — the caller treats that as "don't
+ * know, skip the seed" so we never duplicate on transient errors.
+ */
+async function liveCount(modelId: string): Promise<number | null> {
+  if (!supabase) return null;
+  const { count, error } = await supabase
+    .from('records')
+    .select('id', { count: 'exact', head: true })
+    .eq('model_id', modelId);
+  if (error || typeof count !== 'number') return null;
+  return count;
+}
+
 export async function seedDefaultLibrariesIfEmpty(input: SeedInput): Promise<void> {
+  // Per-user flag — once set, never query Supabase again on subsequent
+  // mounts. Unset only by `localStorage.removeItem('wassell_image_chats_seeded:<id>')`,
+  // which is fine for a manual reset.
+  const flagKey = `${FLAG_PREFIX}${input.userId ?? '_anon'}`;
+  if (typeof localStorage !== 'undefined' && localStorage.getItem(flagKey) === '1') {
+    return;
+  }
+
+  // Belt-and-suspenders authoritative check via Supabase. If either count
+  // returns null (network blip / RLS denial), abort without seeding AND
+  // without setting the flag — next page mount can retry cleanly.
+  const [presetCount, snippetCount] = await Promise.all([
+    liveCount(input.presetsModelId),
+    liveCount(input.snippetsModelId),
+  ]);
+  if (presetCount === null || snippetCount === null) {
+    return;
+  }
+
   const nowIso = new Date().toISOString();
 
-  if (input.presetsCount === 0) {
+  if (presetCount === 0) {
     const record: AppRecord = {
       id: uuid(),
       model_id: input.presetsModelId,
@@ -109,12 +158,12 @@ export async function seedDefaultLibrariesIfEmpty(input: SeedInput): Promise<voi
     try {
       await input.saveRecord(record);
     } catch {
-      // Failure is non-fatal — the user can always create a preset
-      // manually from the dropdown's "Manage" link.
+      // Non-fatal — the user can always create a preset manually
+      // from the dropdown's "Manage" link.
     }
   }
 
-  if (input.snippetsCount === 0) {
+  if (snippetCount === 0) {
     for (const s of STARTER_SNIPPETS) {
       const record: AppRecord = {
         id: uuid(),
@@ -131,9 +180,18 @@ export async function seedDefaultLibrariesIfEmpty(input: SeedInput): Promise<voi
       try {
         await input.saveRecord(record);
       } catch {
-        // Same posture — non-fatal; the user can curate the library
-        // manually if a particular insert errors.
+        // Same posture — non-fatal.
       }
     }
+  }
+
+  // Set the flag REGARDLESS of whether we actually inserted anything.
+  // If both counts were > 0 (libraries already populated), we still
+  // want to skip the Supabase round-trip on future mounts.
+  try {
+    localStorage.setItem(flagKey, '1');
+  } catch {
+    // localStorage may throw on quota / disabled storage; not fatal —
+    // worst case is we re-query Supabase next mount (cheap, idempotent).
   }
 }

@@ -36,10 +36,14 @@ export default function ImageChatsPage() {
     [models],
   );
 
-  // One-shot seed of "Wassel default" preset + starter prompt snippets
-  // when the libraries are completely empty AND the models exist. The
-  // ref prevents double-fires from rapid re-renders / Strict Mode while
-  // the records list is being optimistically updated.
+  // One-shot seed of "Wassel default" preset + starter prompt snippets.
+  // Authoritatively gated by `seedDefaultLibrariesIfEmpty` itself:
+  // it (a) short-circuits on a per-user localStorage flag, (b) queries
+  // Supabase directly (not the in-memory cache, which is empty before
+  // records finish loading), and (c) sets the flag whether or not it
+  // actually inserted. The ref here just prevents this effect from
+  // firing twice in the same mount (Strict Mode + transient store
+  // updates) before the flag has been written.
   const seedAttemptedRef = useRef(false);
   useEffect(() => {
     if (seedAttemptedRef.current) return;
@@ -50,12 +54,11 @@ export default function ImageChatsPage() {
     void seedDefaultLibrariesIfEmpty({
       presetsModelId: presetsModel.id,
       snippetsModelId: snippetsModel.id,
-      presetsCount: (recordsByModel[presetsModel.id] ?? []).length,
-      snippetsCount: (recordsByModel[snippetsModel.id] ?? []).length,
+      userId: currentUserId,
       saveRecord,
       isAr,
     });
-  }, [models, recordsByModel, saveRecord, isAr]);
+  }, [models, saveRecord, isAr, currentUserId]);
 
   const chats = useMemo<AppRecord[]>(() => {
     if (!imageChatsModel) return [];
