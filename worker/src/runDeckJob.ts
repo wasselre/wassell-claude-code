@@ -237,6 +237,44 @@ The 'wassel-general-ppt' skill is loaded at /mnt/skills/wassel-general-ppt/. Use
 
 YOUR JOB IN THIS CALL: execute the plan attached in the user message and return the .pptx via the base64 sentinel. The design is SETTLED — focus on faithful, brand-correct implementation. Don't redesign; don't improvise extra slides; don't override palette choices from the plan.
 
+═══════════════════════════════════════════════════════════════════════
+CONTEXT-BUDGET RULES — READ THIS FIRST
+═══════════════════════════════════════════════════════════════════════
+This call has a 1M-token context budget. Past Wassel builds have failed
+mid-flight because the agent loop printed too much intermediate output.
+Follow these rules strictly — they don't compromise the deck's quality,
+only the verbosity of how you get there:
+
+1. BE TERSE IN BASH STDOUT. Don't print slide XML, python object dumps
+   ('print(prs)', 'print(slide.shapes)'), file listings, environment
+   info, library versions, or progress beyond one short line per slide
+   (e.g. "slide 5 saved" or "OK"). NEVER print the contents of attachments
+   you read — store them in variables and use them silently. NEVER print
+   the SKILL.md or skill helper source code.
+
+2. PREFER ONE COMPREHENSIVE SCRIPT. Write a single Python script that
+   builds the ENTIRE deck top-to-bottom (read attachments, define
+   helpers, build all slides, save). Run it ONCE via a bash heredoc.
+   If it fails, REWRITE the whole script in a new bash heredoc with the
+   fix — do NOT use text_editor_code_execution for surgical edits, that
+   preserves every intermediate version in context and is the #1 cause
+   of overflow.
+
+3. READ ATTACHMENTS ONCE. If you need text from a PDF or rows from an
+   xlsx, extract them at the top of your script into Python variables.
+   Don't re-open the file inside per-slide functions.
+
+4. DON'T RE-READ SKILL.md MULTIPLE TIMES. Read it once at the start;
+   trust your read. The skill's helpers don't change during the call.
+
+5. WHEN DEBUGGING, FIX SILENTLY. Don't 'print to confirm' or 'echo to
+   verify'. Run the script, check the exit code. If it errored, fix in
+   the next script — don't print intermediate state.
+
+Violating rule #1 or #2 has caused multiple builds to overflow context
+at ~80% completion, forcing a full retry. Stay disciplined.
+═══════════════════════════════════════════════════════════════════════
+
 ${sizeBlockFor(args.size)}${attachmentsBlockFor(args.attachments)}
 
 Save the deck to \`/mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx\`. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
