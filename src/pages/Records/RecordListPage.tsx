@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { Plus, Search, Table2, LayoutGrid, MapPin, Trash2, Download, Upload, Pencil } from 'lucide-react';
+import { Plus, Search, Table2, LayoutGrid, MapPin, Trash2, Download, Upload, Pencil, FileDown } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import TableView from './components/TableView';
@@ -15,7 +15,7 @@ import ViewSelector from './components/ViewSelector';
 import ViewEditor from './components/ViewEditor';
 import AdvancedFilterPanel from './components/AdvancedFilterPanel';
 import { PageSizeSelector, PageNavigator } from './components/PaginationControls';
-import { exportToExcel } from '@/lib/excelUtils';
+import { exportToExcel, exportTemplate } from '@/lib/excelUtils';
 import { applyConditions } from '@/lib/dashboardUtils';
 import {
   adhocStorageKey,
@@ -370,6 +370,20 @@ export default function RecordListPage() {
                 <Button variant="ghost" onClick={() => exportToExcel(model, modelRecords, language, records, models)}>
                   <Download size={16} />
                   {isAr ? 'تصدير' : 'Export'}
+                </Button>
+              )}
+              {perms.has('import') && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    void exportTemplate(model, language, models).catch((e) => {
+                      console.error('[exportTemplate]', e);
+                      addToast(isAr ? 'تعذّر تنزيل القالب' : 'Could not download template', 'error');
+                    });
+                  }}
+                >
+                  <FileDown size={16} />
+                  {isAr ? 'قالب' : 'Template'}
                 </Button>
               )}
               {perms.has('import') && (

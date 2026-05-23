@@ -17,6 +17,7 @@
     "@react-google-maps/api": "^2.20.8",
     "@supabase/supabase-js": "^2.49.1",
     "@xyflow/react": "^12.10.2",
+    "exceljs": "^4.4.0",
     "html2canvas": "^1.4.1",
     "i18next": "^24.2.2",
     "jspdf": "^2.5.2",

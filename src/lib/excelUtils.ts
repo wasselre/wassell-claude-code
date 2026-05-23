@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { v4 as uuid } from 'uuid';
 import { resolveMirror } from './mirrorResolver';
 import { formatRangeValue } from '@/pages/Records/components/RangeField';
@@ -85,6 +86,296 @@ export function exportToExcel(
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, isAr ? model.label_ar : model.label_en);
   XLSX.writeFile(wb, `${model.name}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+}
+
+// Field types that can't be filled from a flat spreadsheet cell —
+// either derived/computed, auto-generated, file/UUID references, or
+// nested array structures.
+const TEMPLATE_SKIP_TYPES = new Set<string>([
+  'auto_id',
+  'mirror',
+  'section_mirror',
+  'notes',
+  'formula',
+  'assignee',
+  'table',
+  'image',
+  'multi_image',
+  'file',
+  'multi_file',
+  'attachment',
+  'template_variables',
+  'templates_picker',
+  'generations_gallery',
+  'whatsapp_history',
+  'call_history',
+]);
+
+// 1-indexed column number → Excel column letter (1 → A, 27 → AA, etc.).
+function numToColLetter(n: number): string {
+  let s = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+}
+
+const DROPDOWN_BACKED_TYPES = new Set(['dropdown', 'multiselect', 'section_selector']);
+
+/**
+ * Export a blank Excel template for a model — the "what to fill" companion
+ * to Import. Headers match the importer's auto-mapper exactly, so a user can
+ * download the template, paste data underneath the header row, and re-import
+ * without touching the column-mapping UI.
+ *
+ * Built with ExcelJS (not SheetJS) because the Community build of `xlsx`
+ * can't write data validations and the whole point of this export is that
+ * dropdown/multi-select/section_selector columns get **real in-cell Excel
+ * dropdowns** the user can click on.
+ *
+ * Workbook layout:
+ * 1. **Template** — header row + 5,000 rows of data-validated cells under
+ *    every dropdown/multi-select/section_selector column. Range fields split
+ *    into `<label> (min)` / `<label> (max)` columns (Arabic: `(أدنى)` /
+ *    `(أعلى)`) so each half maps cleanly on re-import.
+ * 2. **Field Guide** — one row per logical field with type, required Yes/No,
+ *    and notes. Dropdown/multi-select rows just say "use the in-cell
+ *    dropdown" because the options live in the Template now. Lookups still
+ *    name the target model + display field. Range, checkbox, date, phone,
+ *    currency get format hints.
+ * 3. **Options** (hidden) — backs the in-cell dropdowns. One column per
+ *    dropdown/multi-select field, options stacked vertically. Always
+ *    referenced (never inlined as `"a,b,c"`) so commas inside option labels
+ *    don't break the formula AND so long lists like "الأحياء المفضلة"
+ *    (hundreds of values, thousands of characters) sail past Excel's 255-
+ *    char inline limit.
+ *
+ * Field types that can't be expressed in a flat cell are excluded entirely
+ * (`TEMPLATE_SKIP_TYPES` — mirror/notes/formula/file refs/etc.).
+ */
+export async function exportTemplate(
+  model: AppModel,
+  language: Language,
+  allModels: AppModel[],
+): Promise<void> {
+  const isAr = language === 'ar';
+  const MIN_LABEL = isAr ? 'أدنى' : 'min';
+  const MAX_LABEL = isAr ? 'أعلى' : 'max';
+  const DATA_END_ROW = 5001; // 5,000 data rows (header is row 1)
+
+  const allFields = model.schema.sections
+    .flatMap((s) => s.fields)
+    .filter((f) => !TEMPLATE_SKIP_TYPES.has(f.type));
+
+  // ── Column layout for the Template sheet ────────────────────────────────
+  type Col = { header: string; field: ModelField };
+  const columns: Col[] = [];
+  for (const f of allFields) {
+    const base = isAr ? f.label_ar : f.label_en;
+    if (f.type === 'range') {
+      columns.push({ header: `${base} (${MIN_LABEL})`, field: f });
+      columns.push({ header: `${base} (${MAX_LABEL})`, field: f });
+    } else {
+      columns.push({ header: base, field: f });
+    }
+  }
+
+  // ── Pre-compute which fields back an in-cell dropdown ───────────────────
+  // field.id -> 1-indexed column on the hidden Options sheet
+  const fieldOptionsCol = new Map<string, number>();
+  let nextOptCol = 0;
+  for (const f of allFields) {
+    if (!DROPDOWN_BACKED_TYPES.has(f.type)) continue;
+    if ((f.options?.length ?? 0) === 0) continue;
+    nextOptCol += 1;
+    fieldOptionsCol.set(f.id, nextOptCol);
+  }
+
+  // ── Build workbook ──────────────────────────────────────────────────────
+  const wb = new ExcelJS.Workbook();
+  const templateName = isAr ? 'النموذج' : 'Template';
+  const guideName = isAr ? 'دليل الحقول' : 'Field Guide';
+  const optionsName = isAr ? 'الخيارات' : 'Options';
+
+  // Add in desired tab order. Hidden Options sheet last.
+  const templateSheet = wb.addWorksheet(templateName, {
+    views: isAr ? [{ rightToLeft: true }] : undefined,
+  });
+  const guideSheet = wb.addWorksheet(guideName, {
+    views: isAr ? [{ rightToLeft: true }] : undefined,
+  });
+  const optionsSheet = wb.addWorksheet(optionsName);
+  optionsSheet.state = 'hidden';
+
+  // ── Populate Options sheet ──────────────────────────────────────────────
+  for (const f of allFields) {
+    const col = fieldOptionsCol.get(f.id);
+    if (col === undefined) continue;
+    optionsSheet.getCell(1, col).value = isAr ? f.label_ar : f.label_en;
+    (f.options ?? []).forEach((opt, i) => {
+      optionsSheet.getCell(i + 2, col).value = isAr ? opt.label_ar : opt.label_en;
+    });
+  }
+
+  // ── Populate Template sheet ─────────────────────────────────────────────
+  templateSheet.columns = columns.map((c) => ({ header: c.header, width: 22 }));
+  // Bold the header row so it's visually distinct from data rows.
+  templateSheet.getRow(1).font = { bold: true };
+
+  columns.forEach((col, idx) => {
+    const optsColNum = fieldOptionsCol.get(col.field.id);
+    if (optsColNum === undefined) return;
+    const opts = col.field.options ?? [];
+    const optsLetter = numToColLetter(optsColNum);
+    const colLetter = numToColLetter(idx + 1);
+    // Quote the sheet name (works regardless of Arabic chars or spaces).
+    const sheetRef = `'${optionsName}'!$${optsLetter}$2:$${optsLetter}$${opts.length + 1}`;
+    // Single-value dropdown: warn on invalid input but don't block (the
+    //   importer is forgiving — substring matches and falls back to the raw
+    //   string — so a hard `errorStyle: 'stop'` would be more annoying than
+    //   useful).
+    // Multi-select / section_selector: explicitly DON'T show an error,
+    //   because the importer expects comma-separated values ("Opt1, Opt2")
+    //   and we want users to be able to type those out without Excel
+    //   complaining.
+    const isSingleDropdown = col.field.type === 'dropdown';
+    templateSheet.dataValidations.add(`${colLetter}2:${colLetter}${DATA_END_ROW}`, {
+      type: 'list',
+      allowBlank: true,
+      formulae: [sheetRef],
+      showErrorMessage: isSingleDropdown,
+      errorStyle: 'warning',
+      errorTitle: isAr ? 'قيمة غير صالحة' : 'Invalid value',
+      error: isAr
+        ? 'هذه القيمة ليست من الخيارات المتاحة. تابع إذا كنت متأكدًا.'
+        : 'This value is not in the allowed list. Continue if you are sure.',
+    });
+  });
+
+  // ── Populate Field Guide sheet ──────────────────────────────────────────
+  const TYPE_LABELS_EN: Record<string, string> = {
+    text: 'Text',
+    textarea: 'Long text',
+    number: 'Number',
+    email: 'Email',
+    phone: 'Phone',
+    date: 'Date',
+    datetime: 'Date & time',
+    currency: 'Currency (SAR)',
+    url: 'URL',
+    checkbox: 'Checkbox',
+    dropdown: 'Dropdown',
+    multiselect: 'Multi-select',
+    lookup: 'Lookup',
+    section_selector: 'Section selector',
+    range: 'Range',
+  };
+  const TYPE_LABELS_AR: Record<string, string> = {
+    text: 'نص',
+    textarea: 'نص طويل',
+    number: 'رقم',
+    email: 'بريد إلكتروني',
+    phone: 'هاتف',
+    date: 'تاريخ',
+    datetime: 'تاريخ ووقت',
+    currency: 'مبلغ (ر.س)',
+    url: 'رابط',
+    checkbox: 'مربع اختيار',
+    dropdown: 'قائمة منسدلة',
+    multiselect: 'اختيار متعدد',
+    lookup: 'بحث',
+    section_selector: 'محدد الأقسام',
+    range: 'نطاق',
+  };
+  const typeLabel = (type: string): string =>
+    (isAr ? TYPE_LABELS_AR[type] : TYPE_LABELS_EN[type]) ?? type;
+
+  const lookupHint = (f: ModelField): string => {
+    const target = allModels.find((m) => m.id === f.lookup_model_id);
+    const targetName = target
+      ? (isAr ? target.label_ar : target.label_en)
+      : (isAr ? '(غير محدد)' : '(unset)');
+    const displayField = target?.schema.sections
+      .flatMap((s) => s.fields)
+      .find((tf) => tf.name === f.lookup_display_field);
+    const displayLabel = displayField
+      ? (isAr ? displayField.label_ar : displayField.label_en)
+      : (f.lookup_display_field ?? (isAr ? '(غير محدد)' : '(unset)'));
+    const multi = f.is_multi
+      ? (isAr ? ' — متعدد، افصل بفواصل' : ' — multiple, separate with commas')
+      : '';
+    return isAr
+      ? `بحث ← ${targetName} — اكتب ${displayLabel}${multi}`
+      : `Lookup → ${targetName} — enter ${displayLabel}${multi}`;
+  };
+
+  const noteFor = (f: ModelField): string => {
+    const base = isAr ? f.label_ar : f.label_en;
+    switch (f.type) {
+      case 'dropdown':
+        return isAr
+          ? 'اختر من القائمة المنسدلة في عمود النموذج'
+          : 'Pick from the dropdown in the Template column';
+      case 'multiselect':
+      case 'section_selector':
+        return isAr
+          ? 'اختر من القائمة المنسدلة (يمكن إضافة قيم متعددة مفصولة بفواصل)'
+          : 'Pick from the dropdown (add more values separated by commas)';
+      case 'lookup':
+        return lookupHint(f);
+      case 'range': {
+        const minCol = `${base} (${MIN_LABEL})`;
+        const maxCol = `${base} (${MAX_LABEL})`;
+        return isAr
+          ? `عمودان رقميان: "${minCol}" و"${maxCol}"`
+          : `Two numeric columns: "${minCol}" and "${maxCol}"`;
+      }
+      case 'checkbox':
+        return isAr ? 'نعم / لا (أو Yes / No)' : 'Yes / No (or نعم / لا)';
+      case 'date':
+        return isAr ? 'مثال: 2026-05-23' : 'e.g. 2026-05-23';
+      case 'datetime':
+        return isAr ? 'مثال: 2026-05-23 14:30' : 'e.g. 2026-05-23 14:30';
+      case 'currency':
+        return isAr ? 'رقم بالريال السعودي' : 'Number (Saudi Riyal)';
+      case 'phone':
+        return isAr ? 'مثال: 0501234567' : 'e.g. 0501234567';
+      default:
+        return '';
+    }
+  };
+
+  const yes = isAr ? 'نعم' : 'Yes';
+  const no = isAr ? 'لا' : 'No';
+  guideSheet.columns = [
+    { header: isAr ? 'اسم العمود' : 'Column Name', width: 32 },
+    { header: isAr ? 'النوع' : 'Type', width: 18 },
+    { header: isAr ? 'مطلوب' : 'Required', width: 10 },
+    { header: isAr ? 'ملاحظات' : 'Notes', width: 70 },
+  ];
+  guideSheet.getRow(1).font = { bold: true };
+  for (const f of allFields) {
+    const base = isAr ? f.label_ar : f.label_en;
+    const columnName =
+      f.type === 'range' ? `${base} (${MIN_LABEL}) / (${MAX_LABEL})` : base;
+    guideSheet.addRow([columnName, typeLabel(f.type), f.required ? yes : no, noteFor(f)]);
+  }
+
+  // ── Write + trigger download ────────────────────────────────────────────
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${model.name}_template.xlsx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /**

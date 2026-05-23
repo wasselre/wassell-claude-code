@@ -1,7 +1,7 @@
 # PRD: Import / Export (Excel + PDF)
 
 **Status:** Live
-**Last updated:** 2026-04-19 (import now surfaces near-duplicate rows in a Review step — user decides per-row whether to Add or Skip each similar record; duplicate-check field per model skips exact matches; range fields now import from two source columns — one each for min and max — via `slug.min` / `slug.max` mapping targets)
+**Last updated:** 2026-05-23 (added blank Excel **Template** export — third button next to Export / Import on the record list, gated by `import` permission. Downloads a two-sheet workbook: Sheet 1 has header-only columns that auto-map cleanly on re-import; Sheet 2 is a Field Guide listing every field's type, required flag, and allowed values — full options list for dropdowns / multi-selects / section_selector, lookup target hint, range (min)/(max) explanation. Field types that can't be expressed in a flat cell — mirror, notes, formula, auto_id, assignee, table, file/image refs, whatsapp/call history, generations gallery — are excluded.)
 **Related PRDs:** record-management.md, model-builder.md
 
 ## What it is (in plain English)
@@ -22,6 +22,7 @@ Most teams already have data in Excel. Forcing manual re-entry is a non-starter.
 - **Lookup field resolution on import (new 2026-04-19):** when a mapped column targets a `lookup` field, the import matches the cell value against the target model's `lookup_display_field` (case-insensitive, whitespace-trimmed). If an existing record matches, its id is stored. If no match is found, a new record is auto-created in the target model with just the display field populated, and its id is stored. Repeated values within the same import dedupe to one auto-created record. Multi-select lookups (`is_multi: true`) split the cell on `,` or the Arabic comma `،` and resolve each part independently. A toast at the end reports both the imported row count and the number of auto-created linked records.
 - **Range fields split into two mapping targets (new 2026-04-19):** every `range` field appears in the mapping dropdown twice — once as `Label — Minimum` (maps to `slug.min`) and once as `Label — Maximum` (maps to `slug.max`). Each half consumes one source column and the two halves merge into a single `{ min, max }` value on the record. Mapping only one half is allowed — the other side stays empty. Auto-mapping recognizes common markers in header text (`min`/`max`/`minimum`/`maximum` in English, `أدنى`/`أعلى`/`من`/`إلى` in Arabic) and routes the column to the matching half; if the header matches a range field's label but has no marker, the column is left unmapped so the user picks explicitly. Non-numeric or empty cells for a half are silently skipped.
 - **Excel export** (`.xlsx`) — takes the current filtered record list (with whatever filters/search the user has applied) and downloads a file with one column per `show_in_table` field, AR or EN headers depending on current language.
+- **Excel template export (new 2026-05-23):** a third button between Export and Import labelled "Template" / "قالب" downloads a blank `<model>_template.xlsx` describing the model's importable schema. Headers in the first sheet match the importer's auto-map exactly — paste data rows underneath and re-import without touching the column-mapping step. Range fields split into two columns with `(min)` / `(max)` (or `(أدنى)` / `(أعلى)`) so the importer routes each half. **Dropdown, multi-select, and section-selector columns get real in-cell Excel dropdowns** for the first 5,000 data rows — click a cell and pick from the list. A hidden third sheet ("Options" / "الخيارات") backs those dropdowns via cell-range references (not inline `"a,b,c"` formulae, which max out at 255 characters and would silently truncate long lists like the districts multiselect's hundreds of values). A second visible sheet ("Field Guide" / "دليل الحقول") lists every importable field with its type, required Yes/No, and notes — dropdown/multi-select rows just point back to the in-cell dropdown, lookups still name the target model + display-field with a `(multiple, comma-separated)` note when `is_multi`, range explains the (min)/(max) pair, and checkbox/date/phone/currency get format hints. Field types that can't be expressed in a flat cell are excluded from the template entirely: `mirror`, `section_mirror`, `notes`, `formula`, `auto_id`, `assignee`, `table`, `image`, `multi_image`, `file`, `multi_file`, `attachment`, `template_variables`, `templates_picker`, `generations_gallery`, `whatsapp_history`, `call_history`. Button is gated by the `import` permission (the workflow leads into importing). Implementation uses **ExcelJS** rather than SheetJS — SheetJS Community can't write data validations, so the template export is the one path in the codebase that uses ExcelJS; all other Excel I/O still goes through SheetJS.
 - **PDF generation (jsPDF)** — creates PDFs with Arabic-RTL support. A custom font is registered so Arabic glyphs render correctly.
 - **Research PDF template** — for the `projects_research` model, a single record can be exported as a formatted multi-section PDF: header with project name/location, property details, images (if any), pricing, and notes. Layout is designed for RTL reading order.
 - Import errors per row (e.g. invalid dropdown value, missing required field) are surfaced in the preview step before confirmation.
@@ -30,7 +31,8 @@ Most teams already have data in Excel. Forcing manual re-entry is a non-starter.
 ## User flows
 1. **Import:** Record list → "Import" → upload `.xlsx` → column mapping UI → preview → "Import 42 records" → toast confirms success.
 2. **Export:** Record list → "Export" → `.xlsx` downloads immediately with current filtered rows.
-3. **Generate research PDF:** Open a research record → "Generate PDF" → PDF downloads with RTL-formatted sections.
+3. **Template:** Record list → "Template" → `.xlsx` downloads immediately with header-only Template sheet + Field Guide sheet — fill it in, hit Import, auto-mapping does the rest.
+4. **Generate research PDF:** Open a research record → "Generate PDF" → PDF downloads with RTL-formatted sections.
 
 ## Data touched
 - Reads: `records` (for export), `models.schema` (for mapping).
@@ -42,7 +44,7 @@ Most teams already have data in Excel. Forcing manual re-entry is a non-starter.
 |---|---|
 | `src/pages/Records/components/ImportModal.tsx` | Import wizard (upload → map → review near-duplicates → confirm) |
 | `src/lib/similarity.ts` | Pure helpers for near-duplicate detection: `normalizeBasic`, `normalizePhone`, `similarityRatio`, `findBestSimilarMatch` |
-| `src/lib/excelUtils.ts` | Excel parse + write helpers |
+| `src/lib/excelUtils.ts` | Excel parse + write helpers — `exportToExcel`, `exportTemplate`, `readExcelFile`, `mapImportedRows` |
 | `src/lib/pdfGenerator.ts` | PDF generation (Arabic RTL setup, font registration) |
 | `src/pages/Records/components/ResearchPDFTemplate.tsx` | Research PDF layout/content |
 
