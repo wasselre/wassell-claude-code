@@ -2446,6 +2446,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (Object.keys(formulaValues).length > 0) {
         enrichedData = { ...enrichedData, ...formulaValues };
       }
+      // Strip cross-record rollup fields (is_computed=true) before persist —
+      // their values are derived live at read time from related records
+      // (e.g. our_projects rollups walk the units model), so storing them
+      // would just persist a stale snapshot that gets overwritten on next
+      // load anyway. The strip also protects against a form that opened
+      // with rolled-up values in formData from re-writing them on every
+      // save. Formula / mirror / auto_id fields are NOT stripped — those
+      // are handled by their own code paths (formulas snapshot above,
+      // mirror resolved at render, auto_id stamped on create).
+      let strippedCount = 0;
+      for (const section of enrichedModel.schema.sections) {
+        for (const f of section.fields) {
+          if (f.is_computed && f.name in enrichedData) {
+            const { [f.name]: _omit, ...rest } = enrichedData;
+            void _omit;
+            enrichedData = rest;
+            strippedCount++;
+          }
+        }
+      }
+      void strippedCount;
     }
     // Stamp `created_by_user_id` on first save. Preserved across edits so the
     // value reflects who CREATED the record, not who last touched it. Records

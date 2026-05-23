@@ -29,7 +29,10 @@ const COMPUTED_FIELD_TYPES: ReadonlySet<ModelField['type']> = new Set([
 ]);
 
 function isComputedField(field: ModelField): boolean {
-  return COMPUTED_FIELD_TYPES.has(field.type);
+  // Any field with the type-level marker (formula / auto_id / mirror /
+  // section_mirror) OR the new cross-record rollup flag `is_computed`
+  // (our_projects → units rollups, see src/lib/ourProjectsRollup.ts).
+  return COMPUTED_FIELD_TYPES.has(field.type) || !!field.is_computed;
 }
 
 // ────────────────────────────────────────────────────────────────────

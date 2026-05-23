@@ -25,6 +25,7 @@ import {
   type AdhocFilterState,
 } from '@/lib/adhocFilterUtils';
 import { useApplyViewScope, useApplyVisibleViews, useModelPermissions } from '@/hooks/usePermission';
+import { useRolledUpRecordList } from '@/hooks/useRolledUpRecords';
 import type { AppRecord, ModelView } from '@/types';
 
 // Stable empty array reference. Returned when a model has no records yet
@@ -43,7 +44,12 @@ export default function RecordListPage() {
   const isAr = language === 'ar';
 
   const model = models.find((m) => m.name === modelName);
-  const allModelRecords = model ? (records[model.id] ?? EMPTY_RECORDS) : EMPTY_RECORDS;
+  const rawModelRecords = model ? (records[model.id] ?? EMPTY_RECORDS) : EMPTY_RECORDS;
+  // Inject cross-record rollup values (our_projects → units stats) BEFORE
+  // view-scope / search / filters run, so a profile can filter or sort by
+  // a rolled-up field the same way as a stored one. Identity-safe for
+  // models that don't have any rollups configured.
+  const allModelRecords = useRolledUpRecordList(model?.id, rawModelRecords) as AppRecord[];
   // Apply the profile's view-scope BEFORE any user-controlled filter runs.
   // Records that don't pass view-scope are invisible everywhere downstream:
   // counts, search, ad-hoc filters, exports, sort/pagination, prev/next nav.

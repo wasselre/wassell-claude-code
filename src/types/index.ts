@@ -261,7 +261,42 @@ export interface ModelField {
   // at render time; auto-fill writes once on change and the user can edit.
   auto_fill_from_lookup_field_id?: string | null;
   auto_fill_source_field_name?: string | null;
+  // Cross-record rollup. When `is_computed` is true the field's value is
+  // never user-edited; it's computed live at read time from related records
+  // (currently only the our_projects → units rollups — see
+  // src/lib/ourProjectsRollup.ts). `computed_kind` selects which rollup
+  // recipe runs and writes into this field's slug. The field's underlying
+  // `type` still controls rendering (a count uses `number`, a min/max uses
+  // `range`, a per-meter average uses `currency`) so the existing form +
+  // table cells render the value with no special casing — they only need
+  // to treat the input as read-only, which the permissions resolver
+  // already does for any `is_computed` field.
+  is_computed?: boolean;
+  computed_kind?: OurProjectsComputedKind;
 }
+
+// ── Computed-field rollup kinds ────────────────────────────────────────
+//
+// Hardcoded recipes for the our_projects → units rollups. Each kind has a
+// matching implementation in src/lib/ourProjectsRollup.ts. When you add
+// a new kind here you MUST also add a case to `computeOurProjectsRollups`
+// or the field's value silently stays `null` for every record. Kinds
+// follow snake_case so the value lines up with the slug we suggest in
+// the seed model (e.g. units_available_count → field slug
+// `units_available`). Slugs are NOT required to match kinds 1:1 — the
+// rollup engine writes to `field.name`, not to the kind's string.
+export type OurProjectsComputedKind =
+  | 'units_count'              // COUNT of units linked to this project
+  | 'units_available_count'    // COUNT where unit_status is the "available" option
+  | 'units_sold_count'         // COUNT where unit_status is the "sold" option
+  | 'units_reserved_count'     // COUNT where unit_status is the "reserved" option
+  | 'price_range'              // { min, max } of unit.price (range shape)
+  | 'area_range'               // { min, max } of unit.area_sqm (range shape)
+  | 'bedroom_range'            // { min, max } of unit.bedrooms (range shape)
+  | 'bathroom_range'           // { min, max } of unit.bathrooms (range shape)
+  | 'min_price_per_meter'      // MIN of (price / area_sqm), skipping units with area_sqm ≤ 0
+  | 'max_price_per_meter'      // MAX of (price / area_sqm), skipping units with area_sqm ≤ 0
+  | 'avg_price_per_meter';     // AVG of (price / area_sqm), skipping units with area_sqm ≤ 0
 
 // Notes field (type: 'notes'). Stored value is a chronological list of entries.
 // Each entry is append-only — edits write a new entry rather than mutate history.

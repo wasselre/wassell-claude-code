@@ -36,6 +36,7 @@ import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
+import { useRolledUpRecord } from '@/hooks/useRolledUpRecords';
 import { isButtonVisible } from '@/lib/permissions';
 
 export default function RecordFormPage() {
@@ -60,9 +61,14 @@ export default function RecordFormPage() {
   const canCreate = usePermission(model?.id ?? '', 'create');
   const canDelete = usePermission(model?.id ?? '', 'delete');
   const isNew = !recordId || recordId === 'new';
-  const existingRecord = model && !isNew
+  const rawExistingRecord = model && !isNew
     ? (records[model.id] ?? []).find((r) => r.id === recordId)
     : null;
+  // Inject cross-record rollup values (our_projects → units rollups) so
+  // the form shows live computed counts/ranges/per-meter stats. Pass-
+  // through for every other model. Computed values are render-only —
+  // the save path (appStore.saveRecord) strips them before persist.
+  const existingRecord = useRolledUpRecord(model?.id, rawExistingRecord);
   // For existing records, view/edit eligibility threads through view_scope and
   // edit_scope (canViewRecord/canEditRecord compose both with the model-level
   // perms). For new records, we still gate on the create permission only —
