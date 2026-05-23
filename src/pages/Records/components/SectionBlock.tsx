@@ -303,6 +303,8 @@ export default function SectionBlock({
                     value={formData[field.name]}
                     onChange={(val) => onChange(field.name, val)}
                     recordData={formData}
+                    modelId={currentModel.id}
+                    recordId={recordId}
                   />
                 )}
               </div>

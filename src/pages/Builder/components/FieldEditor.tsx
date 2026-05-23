@@ -26,7 +26,9 @@ import type {
 const FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'notes', 'number', 'range', 'email', 'phone', 'date', 'datetime',
   'currency', 'url', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'mirror', 'section_mirror', 'section_selector', 'assignee',
-  'auto_id', 'formula', 'table', 'whatsapp_history', 'call_history',
+  'auto_id', 'formula', 'table',
+  'image', 'multi_image', 'file', 'multi_file', 'attachment',
+  'whatsapp_history', 'call_history',
 ];
 
 // Field types that can be the scope of an auto_id counter — values we can use

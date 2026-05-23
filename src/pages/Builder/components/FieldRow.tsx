@@ -5,7 +5,8 @@ import {
   Type, AlignLeft, Hash, AtSign, Phone, CalendarDays, Clock, DollarSign,
   Link2, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
   StickyNote, SlidersHorizontal, Rows3, Fingerprint, Calculator, Table2,
-  Image as ImageIcon, MessageSquare, PhoneCall,
+  Image as ImageIcon, Images as MultiImagesIcon, File as FileFieldIcon,
+  Files as MultiFilesIcon, Paperclip as PaperclipIcon, MessageSquare, PhoneCall,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { validateFormula, findUnknownReferences } from '@/lib/formulaEngine';
@@ -35,7 +36,10 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   formula:          { icon: Calculator,        color: '#7E22CE', bg: '#7E22CE12' },
   table:            { icon: Table2,             color: '#B8734F', bg: '#B8734F12' },
   image:            { icon: ImageIcon,          color: '#0D9488', bg: '#0D948812' },
-  multi_image:      { icon: ImageIcon,          color: '#B8734F', bg: '#B8734F12' },
+  multi_image:      { icon: MultiImagesIcon,    color: '#10B981', bg: '#10B98112' },
+  file:             { icon: FileFieldIcon,      color: '#0EA5E9', bg: '#0EA5E912' },
+  multi_file:       { icon: MultiFilesIcon,     color: '#3B82F6', bg: '#3B82F612' },
+  attachment:       { icon: PaperclipIcon,      color: '#B8734F', bg: '#B8734F12' },
   template_variables: { icon: Layers,           color: '#7C3AED', bg: '#7C3AED12' },
   templates_picker:  { icon: Layers,            color: '#7C3AED', bg: '#7C3AED12' },
   generations_gallery: { icon: ImageIcon,       color: '#0D9488', bg: '#0D948812' },

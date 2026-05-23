@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { ExternalLink, Fingerprint, Calculator, Upload, X } from 'lucide-react';
+import { ExternalLink, Fingerprint, Calculator, X } from 'lucide-react';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
@@ -17,9 +17,14 @@ import TemplatesPickerModal from './TemplatesPickerModal';
 import GenerationsGallery, { GENERATION_STATUS_LABELS, GenerationStatusBadge } from './GenerationsGallery';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
-import { uploadImage, deleteImage, type ImageFolder } from '@/lib/imageUpload';
-import ImagePreview from '@/components/ui/ImagePreview';
-import type { FieldOption, ModelField } from '@/types';
+import {
+  ImageFieldInput,
+  MultiImageFieldInput,
+  FileFieldInput,
+  MultiFileFieldInput,
+} from './DriveFieldInputs';
+import AttachmentFieldInput from './AttachmentFieldInput';
+import type { AttachmentRef, FieldOption, ModelField } from '@/types';
 
 // Rotating palette used when the user inline-creates a new dropdown /
 // multiselect option from the record form. Matches the palette the Builder's
@@ -86,9 +91,20 @@ interface DynamicFieldProps {
    * column header already carries the field title and repeating it per row is noise.
    */
   compact?: boolean;
+  /**
+   * Used by the Drive-backed field types (image / multi_image / file / multi_file
+   * / attachment) to tag any new file uploaded through the field with the owning
+   * record. Without these, uploads still work but the file lands in the user's
+   * Drive untethered to any record. Optional everywhere — bulk-edit & table
+   * inline-edit callers don't carry these, and that's fine.
+   */
+  modelId?: string;
+  recordId?: string;
 }
 
-export default function DynamicField({ field, value, onChange, recordData, compact }: DynamicFieldProps) {
+export default function DynamicField({
+  field, value, onChange, recordData, compact, modelId, recordId,
+}: DynamicFieldProps) {
   const { t } = useTranslation();
   const { language, models, records, saveModel } = useAppStore();
   const isAr = language === 'ar';
@@ -443,10 +459,12 @@ export default function DynamicField({ field, value, onChange, recordData, compa
         return (
           <ImageFieldInput
             value={typeof value === 'string' ? value : ''}
-            folder={field.image_folder ?? 'reference'}
-            accept={field.image_accept ?? 'image/png,image/jpeg,image/webp'}
-            maxSizeMb={field.image_max_size_mb ?? 10}
-            onChange={onChange}
+            acceptMime={field.image_accept ?? 'image/*'}
+            maxSizeMb={field.image_max_size_mb ?? 25}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId ?? null}
+            recordId={recordId ?? null}
+            onChange={(v) => onChange(v)}
             isAr={isAr}
           />
         );
@@ -458,11 +476,69 @@ export default function DynamicField({ field, value, onChange, recordData, compa
         return (
           <MultiImageFieldInput
             value={list}
-            folder={field.image_folder ?? 'reference'}
-            accept={field.image_accept ?? 'image/png,image/jpeg,image/webp'}
-            maxSizeMb={field.image_max_size_mb ?? 10}
-            onChange={onChange}
+            acceptMime={field.image_accept ?? 'image/*'}
+            maxSizeMb={field.image_max_size_mb ?? 25}
+            maxItems={field.attachment_max_items}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId ?? null}
+            recordId={recordId ?? null}
+            onChange={(v) => onChange(v)}
             isAr={isAr}
+          />
+        );
+      }
+
+      case 'file':
+        return (
+          <FileFieldInput
+            value={typeof value === 'string' ? value : ''}
+            acceptMime={field.image_accept}
+            maxSizeMb={field.image_max_size_mb ?? 500}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId ?? null}
+            recordId={recordId ?? null}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        );
+
+      case 'multi_file': {
+        const list = Array.isArray(value)
+          ? value.filter((v): v is string => typeof v === 'string')
+          : [];
+        return (
+          <MultiFileFieldInput
+            value={list}
+            acceptMime={field.image_accept}
+            maxSizeMb={field.image_max_size_mb ?? 500}
+            maxItems={field.attachment_max_items}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId ?? null}
+            recordId={recordId ?? null}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        );
+      }
+
+      case 'attachment': {
+        // Tolerant parse — legacy/empty/malformed values become an empty list.
+        const refs: AttachmentRef[] = Array.isArray(value)
+          ? value.filter(
+              (r): r is AttachmentRef =>
+                !!r && typeof r === 'object' && 'type' in r && 'id' in r &&
+                (r.type === 'file' || r.type === 'folder') && typeof r.id === 'string',
+            )
+          : [];
+        return (
+          <AttachmentFieldInput
+            value={refs}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            maxItems={field.attachment_max_items}
+            modelId={modelId ?? null}
+            recordId={recordId ?? null}
           />
         );
       }
@@ -585,267 +661,12 @@ export default function DynamicField({ field, value, onChange, recordData, compa
   );
 }
 
-interface ImageFieldInputProps {
-  value: string;
-  folder: ImageFolder;
-  accept: string;
-  maxSizeMb: number;
-  onChange: (value: unknown) => void;
-  isAr: boolean;
-}
-
-/**
- * File picker + thumbnail for `type: 'image'`. Uploads to Supabase Storage
- * (`marketing-assets` bucket) and stores the public URL on the record.
- *
- * Errors surface via the global toast (per CLAUDE.md "Silent Failures"):
- * upload failure leaves the previous value untouched and shows a red toast.
- * Best-effort delete on clear; a delete failure is toasted but doesn't
- * block the user from typing a new URL into the field.
- */
-function ImageFieldInput({ value, folder, accept, maxSizeMb, onChange, isAr }: ImageFieldInputProps) {
-  const { addToast } = useAppStore();
-  const [uploading, setUploading] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
-
-  const handleFile = async (file: File) => {
-    if (file.size > maxSizeMb * 1024 * 1024) {
-      addToast(
-        isAr
-          ? `حجم الصورة يتجاوز ${maxSizeMb} ميجابايت`
-          : `Image exceeds ${maxSizeMb} MB`,
-        'error',
-      );
-      return;
-    }
-    setUploading(true);
-    try {
-      const url = await uploadImage(file, folder);
-      onChange(url);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addToast(isAr ? `فشل رفع الصورة: ${msg}` : `Upload failed: ${msg}`, 'error');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handleClear = async () => {
-    const previous = value;
-    onChange('');
-    if (previous) {
-      try {
-        await deleteImage(previous);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        addToast(
-          isAr
-            ? `تم مسح الحقل لكن تعذّر حذف الصورة من التخزين: ${msg}`
-            : `Field cleared but storage delete failed: ${msg}`,
-          'error',
-        );
-      }
-    }
-  };
-
-  if (value) {
-    return (
-      <>
-        <div className="relative inline-block">
-          <button
-            type="button"
-            onClick={() => setPreviewOpen(true)}
-            className="block cursor-zoom-in"
-            aria-label={isAr ? 'فتح الصورة' : 'Open image'}
-          >
-            <img
-              src={value}
-              alt=""
-              className="block max-w-xs max-h-48 rounded-lg border border-sand/40 object-cover bg-cream/40 hover:opacity-90 transition-opacity"
-            />
-          </button>
-          <button
-            type="button"
-            onClick={handleClear}
-            className="absolute top-2 end-2 p-1.5 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
-            aria-label={isAr ? 'إزالة الصورة' : 'Remove image'}
-          >
-            <X size={14} />
-          </button>
-        </div>
-        {previewOpen && <ImagePreview url={value} onClose={() => setPreviewOpen(false)} />}
-      </>
-    );
-  }
-
-  return (
-    <label className="form-input flex items-center gap-2 cursor-pointer hover:bg-cream/40 transition-colors">
-      <Upload size={16} className="text-copper/60 shrink-0" />
-      <span className="text-sm text-charcoal/60">
-        {uploading
-          ? (isAr ? 'جاري الرفع...' : 'Uploading...')
-          : (isAr ? 'انقر لاختيار صورة' : 'Click to upload an image')}
-      </span>
-      <input
-        type="file"
-        accept={accept}
-        disabled={uploading}
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void handleFile(file);
-          e.target.value = '';
-        }}
-        className="sr-only"
-      />
-    </label>
-  );
-}
-
-interface MultiImageFieldInputProps {
-  value: string[];
-  folder: ImageFolder;
-  accept: string;
-  maxSizeMb: number;
-  onChange: (value: unknown) => void;
-  isAr: boolean;
-}
-
-/**
- * Multi-image picker for `type: 'multi_image'`. Uploads each selected
- * file to Supabase Storage in turn and stores the resulting public URLs
- * as a `string[]` on the record. Mirrors `ImageFieldInput`'s error
- * surfacing — every failed upload toasts loudly and the original list
- * is preserved.
- *
- * Used by the Image Chats library models (`image_presets`,
- * `prompt_snippets`) so a brand preset can carry the Wassel logo +
- * a style reference alongside its prompt text.
- */
-function MultiImageFieldInput({
-  value,
-  folder,
-  accept,
-  maxSizeMb,
-  onChange,
-  isAr,
-}: MultiImageFieldInputProps) {
-  const { addToast } = useAppStore();
-  const [uploading, setUploading] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-
-  const handleFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    const oversize: string[] = [];
-    const valid: File[] = [];
-    for (const f of Array.from(files)) {
-      if (f.size > maxSizeMb * 1024 * 1024) oversize.push(f.name);
-      else valid.push(f);
-    }
-    if (oversize.length > 0) {
-      addToast(
-        isAr
-          ? `حجم الصورة يتجاوز ${maxSizeMb} ميجابايت: ${oversize.join(', ')}`
-          : `Image exceeds ${maxSizeMb} MB: ${oversize.join(', ')}`,
-        'error',
-      );
-    }
-    if (valid.length === 0) return;
-
-    setUploading(true);
-    const next = [...value];
-    try {
-      for (const file of valid) {
-        try {
-          const url = await uploadImage(file, folder);
-          next.push(url);
-          // Push incrementally so a long batch doesn't appear stuck.
-          onChange([...next]);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          addToast(
-            isAr ? `فشل رفع ${file.name}: ${msg}` : `Upload of ${file.name} failed: ${msg}`,
-            'error',
-          );
-        }
-      }
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const removeAt = async (idx: number) => {
-    const removed = value[idx];
-    if (!removed) return;
-    const next = value.filter((_, i) => i !== idx);
-    onChange(next);
-    // Best-effort delete from storage. Same posture as ImageFieldInput.
-    try {
-      await deleteImage(removed);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addToast(
-        isAr
-          ? `تمت إزالة الصورة من السجل لكن تعذّر حذفها من التخزين: ${msg}`
-          : `Removed from record but storage delete failed: ${msg}`,
-        'error',
-      );
-    }
-  };
-
-  return (
-    <div className="space-y-2">
-      {value.length > 0 && (
-        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
-          {value.map((url, idx) => (
-            <div
-              key={`${url}-${idx}`}
-              className="relative rounded-lg overflow-hidden border border-sand/40 bg-cream/40 aspect-square"
-            >
-              <button
-                type="button"
-                onClick={() => setPreviewUrl(url)}
-                className="absolute inset-0 cursor-zoom-in"
-                aria-label={isAr ? 'فتح' : 'Open'}
-              >
-                <img src={url} alt="" className="w-full h-full object-cover" />
-              </button>
-              <button
-                type="button"
-                onClick={() => void removeAt(idx)}
-                className="absolute top-1 end-1 p-1 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
-                aria-label={isAr ? 'إزالة' : 'Remove'}
-              >
-                <X size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      <label className="form-input flex items-center gap-2 cursor-pointer hover:bg-cream/40 transition-colors">
-        <Upload size={16} className="text-copper/60 shrink-0" />
-        <span className="text-sm text-charcoal/60">
-          {uploading
-            ? (isAr ? 'جاري الرفع...' : 'Uploading...')
-            : value.length === 0
-              ? (isAr ? 'انقر لاختيار صور (يمكن اختيار أكثر من واحدة)' : 'Click to upload images (multi-select OK)')
-              : (isAr ? 'إضافة المزيد' : 'Add more')}
-        </span>
-        <input
-          type="file"
-          accept={accept}
-          multiple
-          disabled={uploading}
-          onChange={(e) => {
-            void handleFiles(e.target.files);
-            e.target.value = '';
-          }}
-          className="sr-only"
-        />
-      </label>
-      {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
-    </div>
-  );
-}
+// `ImageFieldInput` and `MultiImageFieldInput` used to live inline here as
+// thin wrappers over the legacy `marketing-assets` Storage bucket. They
+// were rewritten on top of the Files System (wassel-files bucket + files
+// table) so uploads land in the user's Drive (/files) and can be tagged
+// to the owning record. New implementations live in `./DriveFieldInputs.tsx`
+// next to the file/multi_file/attachment inputs.
 
 interface TemplatesPickerInputProps {
   value: string[];

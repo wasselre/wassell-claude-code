@@ -1,8 +1,8 @@
 # PRD: Files System (Drive-style file library)
 
 **Status:** Live
-**Last updated:** 2026-05-23
-**Related PRDs:** [data-storage.md](data-storage.md), [access-control.md](access-control.md), [dashboards.md](dashboards.md) (public-link pattern), [logs.md](logs.md), [decks.md](decks.md) (storage bucket precedent)
+**Last updated:** 2026-05-23 (initial PRD + Drive-backed record fields: `image`, `multi_image`, `file`, `multi_file`, `attachment` field types now read/write the Files System instead of the legacy `marketing-assets` bucket — uploads through any record field land in the Drive and get tagged with `files.model_id` + `files.record_id` so they appear in both the Drive's normal view AND under the record. See model-builder.md "Drive-backed fields".)
+**Related PRDs:** [data-storage.md](data-storage.md), [access-control.md](access-control.md), [dashboards.md](dashboards.md) (public-link pattern), [logs.md](logs.md), [decks.md](decks.md) (storage bucket precedent), [model-builder.md](model-builder.md) (Drive-backed field types that consume this system), [record-management.md](record-management.md) (the form / cell rendering that displays Drive references)
 
 ## What it is (in plain English)
 A Google-Drive-style file library inside Wassell CRM, reachable from the sidebar at `/files`. Users can upload images, PDFs, videos, documents, and archives, organize them into nested folders, preview them inside the app, and either share them with other Wassel users by role (viewer / editor / owner) or generate a public `/share/:token` URL for external customers. Folders cascade: sharing a folder grants the recipient access to every file and subfolder inside, recursively. A dedicated "Shared with me" tab shows everything other Wassel users shared with the caller. Public share pages are heavily Wassel-branded — the customer who opens a link sees the Wassel castle logo, brand palette, and Amiri typography front-and-center.
@@ -16,6 +16,7 @@ Today users keep contracts, brochures, site photos, and references on Google Dri
 - **Permissions follow a three-rung ladder:** `viewer` < `editor` < `owner`. Owners can delete, regrant, and revoke. Editors can rename / move / share. Viewers can only see and download.
 - **Folder sharing cascades.** Granting `viewer` on a folder gives the recipient `viewer` on every file/subfolder inside, transitively. Direct file grants always override the cascade (so a folder-`viewer` can be promoted to `editor` on a single file).
 - **Frozen-model record attachments are soft FKs.** `files.record_id` can point at a row in `records` OR in a frozen-model table. No hard FK is enforced — UI handles "linked record gone" gracefully.
+- **Record fields can store pointers into the Drive.** The Model Builder offers five field types — `image`, `multi_image`, `file`, `multi_file`, and `attachment` — that store `files.id` (or `folders.id`) on the record instead of inlining bytes or URLs. Uploads through these fields hit `uploadFile` with `model_id` + `record_id` populated, so the file appears under both the record AND the Drive's normal view. The `attachment` type can reference whole folders (`{type:'folder', id}`) so a record can point at "all photos for this property" as a moving target rather than a frozen list. See model-builder.md "Drive-backed fields" for the field-side config.
 - **All file ops write to `activity_log`** with `category='file'` and `event_type` ∈ `upload | view | download | move | folder_create | folder_delete | permission_grant | permission_revoke | share_created | share_revoked | shared_view | delete`.
 - **External share links** support optional password (bcrypt-hashed via pgcrypto), optional expiry, allow_download toggle, view counter, and one-click revoke.
 - **MIME allowlist** (~25 common types: png/jpeg/webp/gif/heic/svg/bmp/tiff, pdf/doc/docx/xls/xlsx/ppt/pptx/txt/csv/md, zip/7z/rar/gz, mp4/webm/mov, mp3/wav/m4a/ogg). Executables and unknown types are rejected by the bucket itself.
@@ -76,6 +77,7 @@ Today users keep contracts, brochures, site photos, and references on Google Dri
 | `src/pages/Files/components/PermissionsPanel.tsx` | Grant/revoke per-file or per-folder permissions. |
 | `src/pages/Files/components/MoveToFolderModal.tsx` | Folder-tree picker with descendant guard. |
 | `src/pages/Files/components/CreateFolderModal.tsx` | New-folder prompt with duplicate guard. |
+| `src/pages/Files/components/DriveBrowserModal.tsx` | Reusable Drive picker used by the record-form Drive-backed field inputs. Three modes — `pick-folder`, `pick-files`, `pick-files-and-folders` — with inline Upload + New Folder buttons. Returns the selection via an `onSelect` callback. |
 | `src/pages/PublicShare/PublicShareFilePage.tsx` | The brand-heavy `/share/:token` page (loading / password / ready / not-found). |
 | `src/App.tsx` | Routes: `/share/:token` (public), `/files`, `/files/shared`, `/files/:folderId` (protected). |
 | `src/components/layout/Sidebar.tsx` | Sidebar "Files" entry with `FolderOpen` icon. |

@@ -1,15 +1,20 @@
-import { useState } from 'react';
 import { Phone, Copy, StickyNote, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Badge from '@/components/ui/Badge';
 import WhatsAppIcon from '@/components/ui/WhatsAppIcon';
-import ImagePreview from '@/components/ui/ImagePreview';
 import { telUrl, whatsappUrl } from '@/lib/phone';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { formatRangeValue } from './RangeField';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
-import type { ModelField, AppRecord, NoteEntry } from '@/types';
+import {
+  ImageCell,
+  MultiImageCell,
+  FileCell,
+  MultiFileCell,
+  AttachmentCell,
+} from './DriveCells';
+import type { ModelField, AppRecord, AttachmentRef, NoteEntry } from '@/types';
 
 interface DynamicCellProps {
   field: ModelField;
@@ -22,8 +27,6 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
   const { t } = useTranslation();
   const { language, addToast, models } = useAppStore();
   const isAr = language === 'ar';
-  // One preview state per cell. Cheap — most cells never open it.
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
   // Mirror fields resolve at render time by hopping through a sibling lookup.
   // Handle BEFORE the empty check so sibling-not-selected / deleted-record states render correctly.
@@ -129,71 +132,35 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
     case 'auto_id':
       return <span className="font-mono font-bold text-copper" dir="ltr">{String(value)}</span>;
 
-    case 'image': {
-      const url = String(value);
-      if (!/^https?:\/\//i.test(url)) {
-        return <span className="text-charcoal/30 italic text-xs">{isAr ? 'رابط غير صالح' : 'Invalid URL'}</span>;
-      }
-      return (
-        <>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setPreviewUrl(url);
-            }}
-            className="block cursor-zoom-in"
-            aria-label={isAr ? 'فتح الصورة' : 'Open image'}
-          >
-            <img
-              src={url}
-              alt=""
-              className="block w-10 h-10 rounded object-cover border border-sand/30 bg-cream/40 hover:opacity-80 transition-opacity"
-              loading="lazy"
-            />
-          </button>
-          {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
-        </>
-      );
-    }
+    case 'image':
+      return <ImageCell fileId={String(value)} isAr={isAr} />;
 
     case 'multi_image': {
-      // Compact table-cell view: first thumbnail + a "+N" badge if there
-      // are more. Click any thumbnail to preview at full size.
-      const urls = Array.isArray(value)
-        ? value.filter((v): v is string => typeof v === 'string' && /^https?:\/\//i.test(v))
+      const ids = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string' && v.length > 0)
         : [];
-      if (urls.length === 0) {
-        return <span className="text-charcoal/30 italic text-xs">—</span>;
-      }
-      const first = urls[0]!;
-      const extra = urls.length - 1;
-      return (
-        <>
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setPreviewUrl(first);
-            }}
-            className="relative inline-block cursor-zoom-in"
-            aria-label={isAr ? 'فتح الصور' : 'Open images'}
-          >
-            <img
-              src={first}
-              alt=""
-              className="block w-10 h-10 rounded object-cover border border-sand/30 bg-cream/40 hover:opacity-80 transition-opacity"
-              loading="lazy"
-            />
-            {extra > 0 && (
-              <span className="absolute -top-1 -end-1 text-[10px] font-bold bg-copper text-white rounded-full px-1.5 py-0.5">
-                +{extra}
-              </span>
-            )}
-          </button>
-          {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
-        </>
-      );
+      return <MultiImageCell fileIds={ids} isAr={isAr} />;
+    }
+
+    case 'file':
+      return <FileCell fileId={String(value)} isAr={isAr} />;
+
+    case 'multi_file': {
+      const ids = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string' && v.length > 0)
+        : [];
+      return <MultiFileCell fileIds={ids} isAr={isAr} />;
+    }
+
+    case 'attachment': {
+      const refs: AttachmentRef[] = Array.isArray(value)
+        ? value.filter(
+            (r): r is AttachmentRef =>
+              !!r && typeof r === 'object' && 'type' in r && 'id' in r &&
+              (r.type === 'file' || r.type === 'folder') && typeof r.id === 'string',
+          )
+        : [];
+      return <AttachmentCell refs={refs} isAr={isAr} />;
     }
 
     case 'template_variables': {

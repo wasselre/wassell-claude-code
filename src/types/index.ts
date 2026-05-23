@@ -23,11 +23,25 @@ export type FieldType =
   | 'table'
   | 'image'
   | 'multi_image'
+  | 'file'
+  | 'multi_file'
+  | 'attachment'
   | 'template_variables'
   | 'templates_picker'
   | 'generations_gallery'
   | 'whatsapp_history'
   | 'call_history';
+
+/**
+ * Reference to either a file row or folder row in the Files System (the
+ * /files page, backed by the `wassel-files` Storage bucket + `files` /
+ * `folders` tables). The `attachment` field type stores AttachmentRef[].
+ * `file` / `multi_file` / `image` / `multi_image` store the raw file id
+ * (or array of ids) instead — folders aren't valid targets for those.
+ */
+export type AttachmentRef =
+  | { type: 'file'; id: string }
+  | { type: 'folder'; id: string };
 
 // Column in a `table` field. The table's stored value on a record is an
 // array of row objects keyed by `name` (slug). Phase-1 storage mode is
@@ -181,12 +195,33 @@ export interface ModelField {
   table_columns?: TableColumn[];
   table_min_rows?: number; // validation hint; 0 = any
   table_max_rows?: number; // 0/undefined = unlimited
-  // Image field (type: 'image'). Stored value is a public URL string from
-  // the `marketing-assets` Supabase Storage bucket. Form input renders a
-  // drop-zone + thumbnail; uploads happen via `src/lib/imageUpload.ts`.
-  image_max_size_mb?: number; // default 10
-  image_accept?: string; // MIME pattern, default 'image/png,image/jpeg,image/webp'
-  image_folder?: 'raw' | 'cleaned' | 'final' | 'reference' | 'presets' | 'snippets' | 'image-chats/uploads'; // upload folder; default 'reference'
+  // Image / file / attachment fields (types: 'image', 'multi_image', 'file',
+  // 'multi_file', 'attachment'). Uploads land in the Files System
+  // (`wassel-files` Storage bucket + `files` table), NOT the legacy
+  // marketing-assets bucket. Stored value shapes:
+  //   image        → string (a `files.id` UUID)
+  //   multi_image  → string[] (array of `files.id`)
+  //   file         → string (a `files.id` UUID)
+  //   multi_file   → string[]
+  //   attachment   → AttachmentRef[] (file OR folder references; preserves order)
+  // The form input is a drop-zone + chip / thumbnail row that, on upload,
+  // opens a folder picker so the user chooses where in the Drive the
+  // bytes land. Click on a chip opens the existing FilePreviewModal.
+  image_max_size_mb?: number; // default 25; soft cap enforced client-side. Applies to image/file/multi_*/attachment.
+  image_accept?: string; // MIME pattern; default for `image` is 'image/*'; for `file` is everything in the FILES bucket allowlist.
+  // Preferred destination folder in the user's Drive when uploading through
+  // this field. `null` (or absent) = upload to Drive root. User can override
+  // at upload time via the folder picker. NOT a hard constraint — the user
+  // can also pre-existing files from anywhere in their Drive.
+  attachment_default_folder_id?: string | null;
+  // Soft cap on how many items a multi_image / multi_file / attachment field
+  // accepts. Absent / 0 = unlimited.
+  attachment_max_items?: number;
+  // Legacy props from the pre-files-system image field. Kept on the type so
+  // existing seed-model rows that wrote them still parse; never read by the
+  // current Files-system-backed inputs. Safe to omit on new fields.
+  /** @deprecated — the marketing-assets bucket is no longer used by record fields. */
+  image_folder?: 'raw' | 'cleaned' | 'final' | 'reference' | 'presets' | 'snippets' | 'image-chats/uploads';
   // Reverse-link primitive. When THIS field's value changes, the form
   // debounce-searches the sibling lookup's target model for a record where
   // `auto_link_target_field_name` matches this field's value, and on a
