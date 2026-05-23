@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { ArrowLeft, ArrowRight, AlertTriangle, Download, Loader2, Lock, Unlock } from 'lucide-react';
+import { ArrowLeft, ArrowRight, AlertTriangle, Download, ExternalLink, Loader2, Lock, Unlock } from 'lucide-react';
 import { fetchSharedFile, fetchSharedFileDownload } from '@/lib/files/client';
 import type { SharedFileResponse } from '@/types';
 import { useAppStore } from '@/stores/appStore';
@@ -511,8 +511,27 @@ function ReadyState({ data, onDownload, isAr }: ReadyProps) {
   );
 }
 
+/** Phone-or-narrow detector — drives PDF preview fallback because mobile
+ *  browsers don't render multi-page PDFs in <iframe> (they show only the
+ *  first page, no scroll/zoom). Tracks resize so a desktop browser the
+ *  user narrows still gets the friendly card.
+ */
+function useIsNarrow() {
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
+  );
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return narrow;
+}
+
 function SharePreviewBody({ data }: { data: SharedFileResponse }) {
   const { t } = useTranslation();
+  const isAr = useAppStore((s) => s.language === 'ar');
+  const isNarrow = useIsNarrow();
   if (!data.url) return null;
   const mime = (data.mime_type ?? '').toLowerCase();
   const kind = data.kind ?? 'other';
@@ -529,6 +548,30 @@ function SharePreviewBody({ data }: { data: SharedFileResponse }) {
     );
   }
   if (kind === 'pdf' || mime === 'application/pdf') {
+    if (isNarrow) {
+      const Icon = kindIcon.pdf;
+      return (
+        <div className="flex flex-col items-center justify-center px-6 py-12 text-center gap-5 bg-gradient-to-br from-[#F7F0E3]/40 to-[#EFE3D0]/40">
+          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-[#B87543]/20 to-[#8E4E3A]/15 ring-1 ring-[#B87543]/30 flex items-center justify-center shadow-inner">
+            <Icon size={48} className="text-[#B87543]" />
+          </div>
+          <p className="text-[#3C2A20]/70 text-sm max-w-sm leading-relaxed share-tajawal">
+            {isAr
+              ? 'افتح ملف PDF في عارض الجهاز للحصول على كامل الصفحات والتكبير.'
+              : 'Open the PDF in your device viewer for full pages and zoom.'}
+          </p>
+          <a
+            href={data.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-3 bg-[#B87543] text-white px-7 py-3.5 rounded-full font-bold text-sm hover:bg-[#8E4E3A] transition-all shadow-[0_10px_28px_-10px_rgba(184,117,67,0.7)]"
+          >
+            <ExternalLink size={16} />
+            <span>{isAr ? 'فتح ملف PDF' : 'Open PDF'}</span>
+          </a>
+        </div>
+      );
+    }
     return (
       <div className="p-3 lg:p-4 bg-[#F7F0E3]/40">
         <iframe

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, Loader2, Share2, Shield, X, Trash2 } from 'lucide-react';
+import { Download, ExternalLink, Loader2, Share2, Shield, X, Trash2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { FileRow } from '@/types';
 import { signDownloadUrl, signViewUrl } from '@/lib/files/client';
@@ -125,8 +125,24 @@ export default function FilePreviewModal({
   );
 }
 
+/** Phone-or-narrow detector — see PublicShareFilePage for rationale.
+ *  Mobile browsers don't render multi-page PDFs in <iframe>. */
+function useIsNarrow() {
+  const [narrow, setNarrow] = useState(() =>
+    typeof window !== 'undefined' ? window.innerWidth < 768 : false,
+  );
+  useEffect(() => {
+    const onResize = () => setNarrow(window.innerWidth < 768);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  return narrow;
+}
+
 function PreviewBody({ file, url, onDownload }: { file: FileRow; url: string; onDownload: () => void }) {
   const { t } = useTranslation();
+  const isAr = useAppStore((s) => s.language === 'ar');
+  const isNarrow = useIsNarrow();
   const Icon = kindIcon[file.kind];
 
   if (file.kind === 'image') {
@@ -135,6 +151,37 @@ function PreviewBody({ file, url, onDownload }: { file: FileRow; url: string; on
     );
   }
   if (file.kind === 'pdf') {
+    if (isNarrow) {
+      return (
+        <div className="bg-white rounded-2xl p-8 shadow-xl flex flex-col items-center gap-4 max-w-md w-full mx-4 text-center">
+          <Icon size={56} className="text-rose-500" />
+          <div className="font-bold text-charcoal">{file.original_name}</div>
+          <p className="text-charcoal/60 text-sm">
+            {isAr
+              ? 'افتح ملف PDF في عارض الجهاز للحصول على كامل الصفحات والتكبير.'
+              : 'Open the PDF in your device viewer for full pages and zoom.'}
+          </p>
+          <div className="flex flex-col gap-2 w-full">
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white hover:bg-terracotta transition-colors font-bold"
+            >
+              <ExternalLink size={16} />
+              {isAr ? 'فتح ملف PDF' : 'Open PDF'}
+            </a>
+            <button
+              onClick={onDownload}
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream transition-colors font-bold"
+            >
+              <Download size={16} />
+              {t('files.actions.download')}
+            </button>
+          </div>
+        </div>
+      );
+    }
     return <iframe src={url} title={file.original_name} className="w-full h-full bg-white" />;
   }
   if (file.kind === 'video') {
