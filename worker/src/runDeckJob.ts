@@ -75,19 +75,12 @@ const SIZE_TO_INCHES: Record<DeckSize, { width: number; height: number }> = {
 /** Vision-tier images get an additional `image` content block. */
 const MAX_VISION_IMAGES = 3;
 const VISION_IMAGE_BYTES_CAP = 5 * 1024 * 1024;
-/** Max PDF page-images we render and pass as image content blocks. We
- * render each page at a fixed long-edge pixel count (see
- * pdfToImages.PdfRenderOptions.longEdgePx — default 1200) so the per-page
- * vision token cost is the SAME whether the source is a Letter page or an
- * A3 brochure spread. At 1200px long edge each page is ~1k tokens, so 20
- * pages ≈ 20k tokens of vision budget — fits comfortably under the 1M
- * context window with room for the brief, skill, and Claude's response.
- * We render the FIRST 20 pages of each PDF. PDFs are always also
- * `container_upload`'d so the full doc is in the sandbox for Python
- * (pypdf/pdfplumber) to read in detail. Previously we used a fixed DPI
- * (120), which gave a fixed scale per inch and therefore a VARIABLE pixel
- * count per page — large-format brochures (record bdf9b0ed on 2026-05-23)
- * tokenized to ~2x Letter and overflowed context. */
+/** Max PDF page-images we render and pass as image content blocks. 20 pages
+ * × ~1.5k tokens each ≈ 30k tokens of vision budget — predictable, fits
+ * comfortably under the 1M context window with room for the brief,
+ * skill, and Claude's response. We render the FIRST 20 pages of each PDF.
+ * PDFs are always also `container_upload`'d so the full doc is in the
+ * sandbox for Python (pypdf/pdfplumber) to read in detail. */
 const MAX_PDF_PAGES_AS_IMAGES = 20;
 
 const ANTHROPIC_BETAS = [

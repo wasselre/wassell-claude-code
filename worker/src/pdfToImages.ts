@@ -30,25 +30,12 @@ export interface PdfPage {
 }
 
 export interface PdfRenderOptions {
-  /** Long-edge pixel count to render at. Uses pdftoppm's `-scale-to <N>`
-   *  which scales the LONGER axis to N px (the shorter axis follows aspect
-   *  ratio). This is the key knob for keeping vision-token cost predictable
-   *  regardless of source PDF page size — a Letter page and an A1
-   *  architectural plan both produce an image with the same long edge.
-   *
-   *  Default 1200. Token-cost back-of-envelope (Anthropic vision tiles each
-   *  ~512px region into ~170 tokens): 1200×900 page = ⌈1200/512⌉×⌈900/512⌉
-   *  = 3×2 = 6 tiles ≈ 1020 tokens/page → 20 pages ≈ 20k tokens. Fits with
-   *  comfortable headroom under the 1M context budget.
-   *
-   *  Previously this was `dpi` (default 120), which produced a fixed scale
-   *  per inch and therefore a VARIABLE pixel count per page — large-format
-   *  PDFs (A3 brochure spreads, architectural plans) tokenized to ~2x what
-   *  Letter pages did and could overflow context. Switched 2026-05-23. */
-  longEdgePx?: number;
+  /** DPI to render at. 100 = ~850x1100 for letter, ~600 KB PNG for image-heavy.
+   *  150 = noticeably crisper, ~1.5 MB. Anthropic auto-resizes for vision,
+   *  so DPI mainly controls our upload bandwidth. Default 120. */
+  dpi?: number;
   /** Maximum number of pages to render. Defaults to 20 to keep the vision
-   *  token cost bounded (~20k tokens for 20 page-images at default
-   *  longEdgePx). */
+   *  token cost bounded (~30k tokens for 20 page-images). */
   maxPages?: number;
   /** If the PDF has more than maxPages, take the first N pages (`'first'`)
    *  or sample evenly across the document (`'evenly'`). Default 'first' —
@@ -57,7 +44,7 @@ export interface PdfRenderOptions {
 }
 
 const DEFAULTS: Required<PdfRenderOptions> = {
-  longEdgePx: 1200,
+  dpi: 120,
   maxPages: 20,
   oversampleStrategy: 'first',
 };
@@ -95,7 +82,7 @@ export async function pdfToImages(
     // a non-contiguous subset when oversampleStrategy='evenly'.
     const pages: PdfPage[] = [];
     for (const pageNum of pagesToRender) {
-      await runPdftoppm(pdfPath, outPrefix, pageNum, o.longEdgePx);
+      await runPdftoppm(pdfPath, outPrefix, pageNum, o.dpi);
       const file = await locatePngForPage(dir, pageNum);
       if (!file) {
         throw new Error(`pdftoppm produced no PNG for page ${pageNum}`);
@@ -159,11 +146,7 @@ async function getPageCount(pdfPath: string): Promise<number> {
 }
 
 /**
- * Spawn `pdftoppm -scale-to <N> -png -f P -l P pdfPath outPrefix`.
- * `-scale-to N` scales the LONGER dimension to N pixels (shorter follows
- * aspect ratio). This is what keeps the vision token cost predictable
- * across heterogeneous source PDFs — see PdfRenderOptions.longEdgePx.
- *
+ * Spawn `pdftoppm -r <dpi> -png -f N -l N pdfPath outPrefix`.
  * Output file lands at `<outPrefix>-NNN.png` (pdftoppm zero-pads to the
  * width of the total page count by default; -f/-l with a single page tends
  * to produce a 1-2 digit suffix, hence `locatePngForPage` afterwards).
@@ -172,10 +155,10 @@ async function runPdftoppm(
   pdfPath: string,
   outPrefix: string,
   pageNum: number,
-  longEdgePx: number,
+  dpi: number,
 ): Promise<void> {
   await runCommand('pdftoppm', [
-    '-scale-to', String(longEdgePx),
+    '-r', String(dpi),
     '-png',
     '-f', String(pageNum),
     '-l', String(pageNum),
