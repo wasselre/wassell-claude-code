@@ -270,13 +270,14 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     if (chatErr || !chatRecord) {
       return jsonError(404, `image_chats record not found: ${chatErr?.message ?? recordId}`);
     }
-    // RLS already scoped to records the user can read; belt-and-suspenders
-    // re-check that the caller owns this chat. created_by_user_id may be
-    // null on legacy rows — treat null as "anyone authenticated can write".
-    const ownerId = (chatRecord as { created_by_user_id: string | null }).created_by_user_id;
-    if (ownerId && ownerId !== user.userId) {
-      return jsonError(403, 'You do not own this image_chats record.');
-    }
+    // No explicit ownership check here — RLS on `records` already enforces
+    // it: this SELECT runs with the caller's JWT, and the record_save RPC
+    // below also runs under the same JWT. If we successfully read the row,
+    // the user can write to it. (A previous version compared
+    // `chatRecord.created_by_user_id` to `user.userId`, but the former is a
+    // public.users.id stamped client-side via `state.currentUserId` and the
+    // latter is an auth.users.id from Supabase auth — different identifier
+    // namespaces. The comparison fired a false 403 every single time.)
 
     // ── Resolve brand preset (if any) ────────────────────────────────
     // The CLIENT owns the image list for this turn — preset auto-
