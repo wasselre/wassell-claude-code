@@ -364,20 +364,30 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
           maxPages: MAX_PDF_PAGES_AS_IMAGES,
           oversampleStrategy: 'first',
         });
-        for (const page of pages) {
+
+        // Upload each page-PNG to the Anthropic Files API in parallel.
+        // Inline base64 (what we did first) blew past Anthropic's 32 MB
+        // HTTP body cap when total page bytes > ~24 MB raw (×1.33 base64
+        // = 32 MB). Files API has a 5 MB per-image cap that all our
+        // realistic pages fit under (largest observed: 4.4 MB hero page).
+        const pageUploads = await Promise.all(
+          pages.map(async (page) => {
+            const file = new File([page.bytes], page.filename, { type: 'image/png' });
+            const uploaded = await (anthropic.beta.files as unknown as {
+              upload: (args: Record<string, unknown>) => Promise<{ id: string }>;
+            }).upload({ file, betas: ANTHROPIC_BETAS });
+            return uploaded.id;
+          }),
+        );
+        for (const fileId of pageUploads) {
           pdfPageImageBlocks.push({
             type: 'image',
-            source: {
-              type: 'base64',
-              media_type: 'image/png',
-              // Buffer.from(Uint8Array) zero-copies; toString('base64') is fast.
-              data: Buffer.from(page.bytes).toString('base64'),
-            },
+            source: { type: 'file', file_id: fileId },
           });
         }
         console.log(
-          `[run] rendered ${pages.length} page(s) from ${pdf.name} (${pdf.sizeBytes}B) ` +
-          `in ${Date.now() - startedAt}ms`,
+          `[run] rendered ${pages.length} page(s) from ${pdf.name} (${pdf.sizeBytes}B), ` +
+          `uploaded as ${pageUploads.length} file(s) — total ${Date.now() - startedAt}ms`,
         );
 
         // Best-effort: also upload the rendered pages to Supabase storage
