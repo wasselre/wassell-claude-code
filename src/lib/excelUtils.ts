@@ -241,7 +241,17 @@ export async function exportTemplate(
     //   and we want users to be able to type those out without Excel
     //   complaining.
     const isSingleDropdown = col.field.type === 'dropdown';
-    templateSheet.dataValidations.add(`${colLetter}2:${colLetter}${DATA_END_ROW}`, {
+    // `Worksheet.dataValidations.add(range, dv)` is the runtime API, but
+    // ExcelJS's bundled `index.d.ts` only exposes the per-cell setter
+    // (`Cell.dataValidation`). Cast through a minimal interface so we keep
+    // the efficient range-based call without `any`-leakage. Verified working
+    // by round-tripping the produced .xlsx through ExcelJS's reader.
+    const dvSheet = templateSheet as ExcelJS.Worksheet & {
+      dataValidations: {
+        add: (range: string, validation: ExcelJS.DataValidation) => void;
+      };
+    };
+    dvSheet.dataValidations.add(`${colLetter}2:${colLetter}${DATA_END_ROW}`, {
       type: 'list',
       allowBlank: true,
       formulae: [sheetRef],
