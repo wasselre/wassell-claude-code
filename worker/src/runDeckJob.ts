@@ -29,6 +29,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
+import { pdfToImages } from './pdfToImages.js';
 
 export interface DeckJob {
   /** deck_jobs.id */
@@ -74,8 +75,13 @@ const SIZE_TO_INCHES: Record<DeckSize, { width: number; height: number }> = {
 /** Vision-tier images get an additional `image` content block. */
 const MAX_VISION_IMAGES = 3;
 const VISION_IMAGE_BYTES_CAP = 5 * 1024 * 1024;
-/** First PDF also gets a `document` content block for native PDF reading. */
-const MAX_DOCUMENT_PDFS = 1;
+/** Max PDF page-images we render and pass as image content blocks. 20 pages
+ * × ~1.5k tokens each ≈ 30k tokens of vision budget — predictable, fits
+ * comfortably under the 1M context window with room for the brief,
+ * skill, and Claude's response. We render the FIRST 20 pages of each PDF.
+ * PDFs are always also `container_upload`'d so the full doc is in the
+ * sandbox for Python (pypdf/pdfplumber) to read in detail. */
+const MAX_PDF_PAGES_AS_IMAGES = 20;
 
 const ANTHROPIC_BETAS = [
   'skills-2025-10-02',
@@ -252,13 +258,19 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
   try {
     await runGeneration();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    // The UI shows error_message verbatim in a red box. Raw Anthropic JSON
+    // errors look terrible there — translate the known cases to plain
+    // English the user can act on. Always preserve the original message
+    // in the logs (and append it to the friendly text in parens) so we
+    // can still debug.
+    const friendlyMsg = humanizeErrorMessage(rawMsg);
     try {
       await updateRecord({
         status: 'failed',
         phase: null,
         phase_detail: null,
-        error_message: msg,
+        error_message: friendlyMsg,
       });
     } catch (recErr) {
       console.error('[run] could not mark deck record failed:', (recErr as Error).message);
@@ -274,12 +286,17 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
   const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
   // ── Upload attachments to Anthropic Files API ───────────────────────
-  const uploadedAttachments: Array<{
+  // We capture the raw bytes for PDFs so we can render them to per-page
+  // PNGs after the upload loop without re-downloading from Supabase.
+  interface UploadedAttachment {
     fileId: string;
     name: string;
     mimeType: string;
     sizeBytes: number;
-  }> = [];
+    /** Captured ONLY for PDFs — used by the page-rendering step below. */
+    pdfBytes: Uint8Array | null;
+  }
+  const uploadedAttachments: UploadedAttachment[] = [];
 
   if (attachments.length > 0) {
     await updateRecord({
@@ -287,7 +304,7 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
       phase_detail: `uploading ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}…`,
     });
     const uploads = await Promise.all(
-      attachments.map(async (att) => {
+      attachments.map(async (att): Promise<UploadedAttachment> => {
         const { data: blob, error: dlErr } = await supabase.storage
           .from(STORAGE_BUCKET)
           .download(att.path);
@@ -297,12 +314,12 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
           );
         }
         const arrayBuf = await blob.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuf);
+        const mimeType = att.mimeType || (blob.type ?? 'application/octet-stream');
         // Wrap in Uint8Array — Node's File constructor (node:buffer) expects
         // BinaryLike, which doesn't include raw ArrayBuffer in older
         // @types/node releases. Uint8Array is unambiguously accepted.
-        const file = new File([new Uint8Array(arrayBuf)], att.name, {
-          type: att.mimeType || (blob.type ?? 'application/octet-stream'),
-        });
+        const file = new File([bytes], att.name, { type: mimeType });
         const uploaded = await (anthropic.beta.files as unknown as {
           upload: (args: Record<string, unknown>) => Promise<{
             id: string;
@@ -313,8 +330,9 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
         return {
           fileId: uploaded.id,
           name: att.name,
-          mimeType: att.mimeType || (blob.type ?? 'application/octet-stream'),
+          mimeType,
           sizeBytes: arrayBuf.byteLength,
+          pdfBytes: mimeType === 'application/pdf' ? bytes : null,
         };
       }),
     );
@@ -324,13 +342,61 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
     );
   }
 
+  // ── Render PDF pages to inline images ───────────────────────────────
+  // PDF document content blocks tokenize unpredictably with image-heavy
+  // PDFs — a 6.5 MB real estate brochure hit the 1M token ceiling on
+  // 2026-05-18 (record bdf9b0ed). Per-page image blocks have predictable
+  // ~1.5k tokens each, and the original PDF stays available in the
+  // sandbox via container_upload so Python can still read the full doc.
+  // Loose type — userContentBlocks is `Record<string, unknown>` and TS
+  // can't see structural compatibility on heterogeneous arrays without it.
+  const pdfPageImageBlocks: Array<Record<string, unknown>> = [];
+  const pdfAttachments = uploadedAttachments.filter((a) => a.pdfBytes !== null);
+  if (pdfAttachments.length > 0) {
+    await updateRecord({
+      phase: 'calling-claude',
+      phase_detail: `rendering PDF pages…`,
+    });
+    for (const pdf of pdfAttachments) {
+      const startedAt = Date.now();
+      try {
+        const pages = await pdfToImages(pdf.pdfBytes!, {
+          maxPages: MAX_PDF_PAGES_AS_IMAGES,
+          oversampleStrategy: 'first',
+        });
+        for (const page of pages) {
+          pdfPageImageBlocks.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: 'image/png',
+              // Buffer.from(Uint8Array) zero-copies; toString('base64') is fast.
+              data: Buffer.from(page.bytes).toString('base64'),
+            },
+          });
+        }
+        console.log(
+          `[run] rendered ${pages.length} page(s) from ${pdf.name} (${pdf.sizeBytes}B) ` +
+          `in ${Date.now() - startedAt}ms`,
+        );
+      } catch (err) {
+        // Non-fatal — the PDF is still in the sandbox via container_upload,
+        // and Claude can still build something from text extraction even
+        // without the visual pages. Log loudly and continue.
+        console.error(
+          `[run] pdfToImages failed for ${pdf.name} (non-fatal — sandbox still has the PDF): ${(err as Error).message}`,
+        );
+      } finally {
+        // Free the captured bytes — we don't need them after rendering.
+        pdf.pdfBytes = null;
+      }
+    }
+  }
+
   // ── Build user message ──────────────────────────────────────────────
   const visionImages = uploadedAttachments
     .filter((a) => a.mimeType.startsWith('image/') && a.sizeBytes <= VISION_IMAGE_BYTES_CAP)
     .slice(0, MAX_VISION_IMAGES);
-  const documentPdfs = uploadedAttachments
-    .filter((a) => a.mimeType === 'application/pdf')
-    .slice(0, MAX_DOCUMENT_PDFS);
 
   const userContentBlocks: Array<Record<string, unknown>> = [
     {
@@ -349,6 +415,9 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
           ? `\n\nAttachments mounted at /mnt/user-data/uploads/:\n${uploadedAttachments
               .map((u) => `  • ${u.name} (${u.mimeType})`)
               .join('\n')}`
+          : '') +
+        (pdfPageImageBlocks.length > 0
+          ? `\n\nThe ${pdfPageImageBlocks.length} image${pdfPageImageBlocks.length === 1 ? '' : 's'} attached below ${pdfPageImageBlocks.length === 1 ? 'is' : 'are'} the rendered page${pdfPageImageBlocks.length === 1 ? '' : 's'} of the PDF, in order. Use ${pdfPageImageBlocks.length === 1 ? 'it' : 'them'} for visual reference (layout, color, typography); read the full PDF via the sandbox for detailed text.`
           : ''),
     },
     ...uploadedAttachments.map((a) => ({
@@ -359,10 +428,7 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
       type: 'image',
       source: { type: 'file', file_id: a.fileId },
     })),
-    ...documentPdfs.map((a) => ({
-      type: 'document',
-      source: { type: 'file', file_id: a.fileId },
-    })),
+    ...pdfPageImageBlocks,
   ];
 
   // ── Call Anthropic (streaming) ──────────────────────────────────────
@@ -741,3 +807,92 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
   console.log(`[run] DONE record=${job.deckRecordId} filename=${filename}`);
   } // end runGeneration()
 } // end runDeckJob()
+
+/**
+ * Translate raw worker error messages to human-readable text for the UI's
+ * red error box. The user is expected to read this and decide what to do
+ * (try a smaller file, shorten the brief, etc.) — raw Anthropic JSON
+ * blobs are useless for that. Always include the original wording at the
+ * end so we can debug from a screenshot.
+ */
+function humanizeErrorMessage(raw: string): string {
+  // 1) Anthropic returns a JSON-string error like:
+  //    {"type":"error","error":{"type":"invalid_request_error",
+  //     "message":"prompt is too long: 1021176 tokens > 1000000 maximum"}}
+  // Try to parse out the inner message + type.
+  let inner: { type?: string; message?: string } | null = null;
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart !== -1) {
+    try {
+      const parsed = JSON.parse(raw.slice(jsonStart));
+      if (parsed?.error && typeof parsed.error === 'object') {
+        inner = parsed.error as { type?: string; message?: string };
+      }
+    } catch {
+      // Not JSON — fall through to string matching below.
+    }
+  }
+
+  const lowerMsg = (inner?.message ?? raw).toLowerCase();
+
+  // 2) Specific case: prompt-too-long (the 1M-token context limit). Almost
+  //    always caused by a large image-heavy PDF or a deck brief with too
+  //    many huge attachments.
+  if (lowerMsg.includes('prompt is too long')) {
+    const toksMatch = lowerMsg.match(/(\d+)\s*tokens?\s*>/);
+    const overBy = toksMatch
+      ? ` (${parseInt(toksMatch[1]!, 10).toLocaleString()} tokens, ~${Math.round((parseInt(toksMatch[1]!, 10) - 1_000_000) / 1000)}k over the 1M limit)`
+      : '';
+    return [
+      `Your attachments are too large to fit in Claude's context window${overBy}.`,
+      ``,
+      `Try one of:`,
+      `  • Upload a shorter PDF (fewer pages, or a lower-resolution export).`,
+      `  • Drop the PDF entirely and describe the brochure in the brief instead.`,
+      `  • If you have multiple attachments, remove the largest one and try again.`,
+      ``,
+      `Note: PDF page-images are capped at 20 pages — beyond that, additional pages aren't sent to Claude visually (the PDF is still in the sandbox for text extraction).`,
+      ``,
+      `Original error: ${inner?.message ?? raw}`,
+    ].join('\n');
+  }
+
+  // 3) Specific case: rate limit.
+  if (lowerMsg.includes('rate_limit') || lowerMsg.includes('rate limit') || lowerMsg.includes('429')) {
+    return [
+      `Anthropic rate-limited this request. Other decks are running in parallel.`,
+      `Wait 30-60 seconds and click Try Again — it usually clears on the next attempt.`,
+      ``,
+      `Original error: ${inner?.message ?? raw}`,
+    ].join('\n');
+  }
+
+  // 4) Specific case: max_tokens. Claude ran out of output tokens before
+  //    finishing the .pptx. Already has a friendly message at the throw
+  //    site — pass through.
+  if (lowerMsg.includes('ran out of output tokens')) {
+    return raw;
+  }
+
+  // 5) Specific case: no file_id surfaced (the original message from
+  //    runGeneration includes its own user-readable guidance). Pass through.
+  if (raw.includes('Claude finished without surfacing a file_id')) {
+    return raw;
+  }
+
+  // 6) Specific case: Storage upload / signed URL failures — operational,
+  //    not user-actionable. Surface verbatim so admin can debug.
+  if (raw.startsWith('Storage upload failed') || raw.startsWith('signed URL creation failed')) {
+    return [
+      `Saving the generated deck to storage failed. This is a server-side issue, not your input.`,
+      `Please try again in a minute; if it persists, ping admin.`,
+      ``,
+      `Original error: ${raw}`,
+    ].join('\n');
+  }
+
+  // 7) Default: prepend a one-liner and include the raw error so the user
+  //    at least sees the original Anthropic/Supabase/etc. text for
+  //    troubleshooting.
+  return `Deck generation failed: ${inner?.message ?? raw}`;
+}

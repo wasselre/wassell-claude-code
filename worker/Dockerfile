@@ -22,6 +22,14 @@ FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
+# poppler-utils gives us pdftoppm — used by pdfToImages.ts to render PDF
+# pages to PNGs before sending them to Anthropic as image content blocks
+# (PDF document blocks balloon unpredictably with image-heavy PDFs; image
+# blocks have a predictable ~1.5k tokens each). Adds ~10 MB to the image
+# but skips Node-native PDF rendering (pdfjs + node-canvas) which would
+# add ~30 MB and need extra system libs anyway.
+RUN apk add --no-cache poppler-utils
+
 # Install production deps only — keeps the image small.
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev && npm cache clean --force
