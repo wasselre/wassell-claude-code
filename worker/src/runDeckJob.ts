@@ -379,6 +379,32 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
           `[run] rendered ${pages.length} page(s) from ${pdf.name} (${pdf.sizeBytes}B) ` +
           `in ${Date.now() - startedAt}ms`,
         );
+
+        // Best-effort: also upload the rendered pages to Supabase storage
+        // so the user can verify what Claude actually saw. Lands at
+        //   wassel-decks/<user>/<deckId>/pdf-pages/<pdfName>/page-NNN.png
+        // Browseable via the Supabase dashboard or signed URL. Failure is
+        // logged but doesn't block the deck — the rendered pages are
+        // already passed to Claude inline, so the deck can still build.
+        const pdfBaseName = pdf.name.replace(/\.pdf$/i, '').replace(/[^\w\-. ]/g, '_');
+        const pagesPathPrefix = `${job.userId}/${job.deckRecordId}/pdf-pages/${pdfBaseName}`;
+        await Promise.all(
+          pages.map(async (page) => {
+            const path = `${pagesPathPrefix}/${page.filename}`;
+            const { error } = await supabase.storage
+              .from(STORAGE_BUCKET)
+              .upload(path, page.bytes, {
+                contentType: 'image/png',
+                upsert: true,
+              });
+            if (error) {
+              console.warn(
+                `[run] pdf-page upload failed for ${path} (non-fatal): ${error.message}`,
+              );
+            }
+          }),
+        );
+        console.log(`[run] saved ${pages.length} rendered page(s) to ${pagesPathPrefix}/`);
       } catch (err) {
         // Non-fatal — the PDF is still in the sandbox via container_upload,
         // and Claude can still build something from text extraction even
