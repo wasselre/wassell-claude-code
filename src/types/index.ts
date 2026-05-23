@@ -1200,7 +1200,19 @@ export type ActivityLogCategory =
   | 'ai_agent'  // every Claude turn + every tool call
   | 'api'       // every server-side API hit
   | 'webhook'   // incoming webhook receipt
-  | 'system';   // initialize, migrations, fatal errors
+  | 'system'    // initialize, migrations, fatal errors
+  | 'file';     // file uploads, views, downloads, share-link events
+
+export type {
+  FilePreviewKind,
+  FilePermissionRole,
+  FolderRow,
+  FileRow,
+  FilePermission,
+  FolderPermission,
+  SharedLink,
+  SharedFileResponse,
+} from './files';
 
 export type ActivityLogStatus = 'success' | 'error' | 'warning' | 'info';
 

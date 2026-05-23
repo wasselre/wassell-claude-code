@@ -37,6 +37,8 @@ import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
+import FilesPage from '@/pages/Files/FilesPage';
+import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
@@ -194,6 +196,7 @@ export default function App() {
         <Route path="/auth/reset-password" element={<ResetPassword />} />
         <Route path="/auth/mfa-setup" element={<MfaSetup />} />
         <Route path="/public/dashboard/:token" element={<PublicDashboardPage />} />
+        <Route path="/share/:token" element={<PublicShareFilePage />} />
 
         {/* ── Protected app routes (auth required, inside layout) ────── */}
         <Route
@@ -204,6 +207,9 @@ export default function App() {
           }
         >
           <Route path="/" element={<HomePage />} />
+          <Route path="/files" element={<FilesPage />} />
+          <Route path="/files/shared" element={<FilesPage forceShared />} />
+          <Route path="/files/:folderId" element={<FilesPage />} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />

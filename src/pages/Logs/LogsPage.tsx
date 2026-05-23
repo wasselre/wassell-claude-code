@@ -33,6 +33,7 @@ import {
   Info,
   XCircle,
   Code2,
+  FolderOpen,
 } from 'lucide-react';
 import type { ActivityLogEntry, ActivityLogCategory, ActivityLogStatus } from '@/types';
 
@@ -46,6 +47,7 @@ const CATEGORY_META: Record<ActivityLogCategory, { ar: string; en: string; bg: s
   api:      { ar: 'واجهات API',       en: 'API',          bg: 'bg-sky-50',     fg: 'text-sky-700',     Icon: Server },
   webhook:  { ar: 'Webhooks',         en: 'Webhooks',     bg: 'bg-rose-50',    fg: 'text-rose-700',    Icon: Webhook },
   system:   { ar: 'النظام',           en: 'System',       bg: 'bg-charcoal/5', fg: 'text-charcoal/70', Icon: SettingsIcon },
+  file:     { ar: 'الملفات',          en: 'Files',        bg: 'bg-copper/10',  fg: 'text-copper',      Icon: FolderOpen },
 };
 
 const STATUS_META: Record<ActivityLogStatus, { dot: string; fg: string; ar: string; en: string; Icon: typeof CheckCircle2 }> = {
@@ -122,7 +124,7 @@ export default function LogsPage() {
   }, [activityLog, categoryFilter, statusFilter, userFilter, modelFilter, search]);
 
   const stats = useMemo(() => {
-    const out = { total: activityLog.length, auth: 0, record: 0, workflow: 0, ai_agent: 0, api: 0, webhook: 0, system: 0 };
+    const out = { total: activityLog.length, auth: 0, record: 0, workflow: 0, ai_agent: 0, api: 0, webhook: 0, system: 0, file: 0 };
     for (const e of activityLog) out[e.category]++;
     return out;
   }, [activityLog]);

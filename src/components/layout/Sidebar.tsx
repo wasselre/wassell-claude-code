@@ -18,6 +18,7 @@ import {
   Database,
   Globe,
   Folder,
+  FolderOpen,
   Briefcase,
   Calendar,
   Mail,
@@ -249,6 +250,16 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           >
             <SquarePen size={20} />
             {!railCollapsed && <span>{t('nav.whiteboard')}</span>}
+          </NavLink>
+
+          {/* Files (Drive-style library — uploads, folders, share links) */}
+          <NavLink
+            to="/files"
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            title={railCollapsed ? t('nav.files') : undefined}
+          >
+            <FolderOpen size={20} />
+            {!railCollapsed && <span>{t('nav.files')}</span>}
           </NavLink>
 
           {/* Divider label */}

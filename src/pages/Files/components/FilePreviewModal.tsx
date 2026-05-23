@@ -1,0 +1,190 @@
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Download, Loader2, Share2, Shield, X, Trash2 } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import type { FileRow } from '@/types';
+import { signDownloadUrl, signViewUrl } from '@/lib/files/client';
+import { useAppStore } from '@/stores/appStore';
+import { formatBytes, kindIcon, kindLabel } from '@/lib/files/format';
+
+interface Props {
+  file: FileRow | null;
+  open: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  onClose: () => void;
+  onShare: (f: FileRow) => void;
+  onPermissions: (f: FileRow) => void;
+  onDelete: (f: FileRow) => void;
+}
+
+/**
+ * Full-screen file viewer. Branches by MIME:
+ *   image/*           → <img> lightbox
+ *   application/pdf   → <iframe> (browsers render PDFs natively)
+ *   video/*           → <video controls>
+ *   audio/*           → <audio controls>
+ *   else              → metadata card + Download button
+ */
+export default function FilePreviewModal({
+  file,
+  open,
+  canEdit,
+  canDelete,
+  onClose,
+  onShare,
+  onPermissions,
+  onDelete,
+}: Props) {
+  const { t } = useTranslation();
+  const isAr = useAppStore((s) => s.language === 'ar');
+  const addToast = useAppStore((s) => s.addToast);
+  const [url, setUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open || !file) {
+      setUrl(null);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    void signViewUrl(file.id)
+      .then((res) => {
+        if (!cancelled) setUrl(res.url);
+      })
+      .catch(() => {
+        if (!cancelled) setUrl(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, file]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  if (!open || !file) return null;
+
+  const Icon = kindIcon[file.kind];
+
+  const handleDownload = async () => {
+    try {
+      const res = await signDownloadUrl(file.id);
+      window.location.href = res.url;
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    }
+  };
+
+  return createPortal(
+    <div className="fixed inset-0 z-50 bg-charcoal/80 backdrop-blur-sm flex flex-col" onClick={onClose}>
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 bg-charcoal/90 text-white" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 min-w-0">
+          <Icon size={20} className="text-white/80 shrink-0" />
+          <div className="min-w-0">
+            <div className="font-bold truncate">{file.original_name}</div>
+            <div className="text-xs text-white/50">
+              {kindLabel(file.kind, isAr)} · {formatBytes(file.size_bytes, isAr)}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1">
+          <HeaderBtn icon={Download} label={t('files.actions.download')} onClick={handleDownload} />
+          {canEdit && (
+            <>
+              <HeaderBtn icon={Share2} label={t('files.actions.share')} onClick={() => onShare(file)} />
+              <HeaderBtn icon={Shield} label={t('files.actions.permissions')} onClick={() => onPermissions(file)} />
+            </>
+          )}
+          {canDelete && (
+            <HeaderBtn icon={Trash2} label={t('files.actions.delete')} danger onClick={() => onDelete(file)} />
+          )}
+          <HeaderBtn icon={X} label={t('common.close')} onClick={onClose} />
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 flex items-center justify-center overflow-auto" onClick={(e) => e.stopPropagation()}>
+        {loading && <Loader2 size={32} className="animate-spin text-white/70" />}
+        {!loading && url && <PreviewBody file={file} url={url} onDownload={handleDownload} />}
+        {!loading && !url && <div className="text-white/70">{t('files.upload.failed')}</div>}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function PreviewBody({ file, url, onDownload }: { file: FileRow; url: string; onDownload: () => void }) {
+  const { t } = useTranslation();
+  const Icon = kindIcon[file.kind];
+
+  if (file.kind === 'image') {
+    return (
+      <img src={url} alt={file.original_name} className="max-w-full max-h-[85vh] object-contain shadow-2xl" />
+    );
+  }
+  if (file.kind === 'pdf') {
+    return <iframe src={url} title={file.original_name} className="w-full h-full bg-white" />;
+  }
+  if (file.kind === 'video') {
+    return (
+      <video src={url} controls autoPlay className="max-w-full max-h-[85vh] shadow-2xl rounded-lg" />
+    );
+  }
+  if (file.kind === 'audio') {
+    return (
+      <div className="bg-white rounded-2xl p-8 shadow-xl flex flex-col items-center gap-4 max-w-md w-full mx-4">
+        <Icon size={48} className="text-purple-500" />
+        <div className="font-bold text-charcoal text-center">{file.original_name}</div>
+        <audio src={url} controls autoPlay className="w-full" />
+      </div>
+    );
+  }
+  // document / archive / other → big card with download button.
+  return (
+    <div className="bg-white rounded-2xl p-10 shadow-xl flex flex-col items-center gap-4 max-w-md w-full mx-4">
+      <Icon size={64} className="text-charcoal/40" />
+      <div className="font-bold text-charcoal text-center text-lg">{file.original_name}</div>
+      <button
+        onClick={onDownload}
+        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white hover:bg-terracotta transition-colors font-bold"
+      >
+        <Download size={16} />
+        {t('files.actions.download')}
+      </button>
+    </div>
+  );
+}
+
+interface HBProps {
+  icon: typeof Download;
+  label: string;
+  onClick: () => void;
+  danger?: boolean;
+}
+
+function HeaderBtn({ icon: Icon, label, onClick, danger }: HBProps) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`p-2 rounded-lg transition-colors ${
+        danger ? 'text-red-400 hover:bg-red-500/20' : 'text-white/80 hover:bg-white/10'
+      }`}
+    >
+      <Icon size={18} />
+    </button>
+  );
+}

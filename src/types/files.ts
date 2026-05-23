@@ -1,0 +1,87 @@
+/**
+ * Types for the Files System (Google Drive-style file library inside Wassell CRM).
+ * See docs/prd/files.md.
+ */
+
+export type FilePreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+export type FilePermissionRole = 'viewer' | 'editor' | 'owner';
+
+export interface FolderRow {
+  id: string;
+  parent_folder_id: string | null;
+  name: string;
+  created_by_user_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FileRow {
+  id: string;
+  folder_id: string | null;
+  /** Optional record attachment — file → record (model + record id). */
+  model_id: string | null;
+  /** Soft pointer; may reference a frozen-model row outside `records`. */
+  record_id: string | null;
+  uploaded_by_user_id: string;
+  /** Display name, user-facing. Never used in the storage path. */
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+  storage_bucket: string;
+  /** Server-generated path: `<auth.uid()>/<file_id>.<safe_ext>`. */
+  storage_path: string;
+  kind: FilePreviewKind;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FilePermission {
+  id: string;
+  file_id: string;
+  user_id: string;
+  role: FilePermissionRole;
+  granted_by_user_id: string;
+  created_at: string;
+}
+
+export interface FolderPermission {
+  id: string;
+  folder_id: string;
+  user_id: string;
+  role: FilePermissionRole;
+  granted_by_user_id: string;
+  created_at: string;
+}
+
+export interface SharedLink {
+  id: string;
+  file_id: string;
+  token: string;
+  created_by_user_id: string;
+  expires_at: string | null;
+  /** Always null when exposed to the public; only populated for owner/admin reads. */
+  password_hash: string | null;
+  allow_download: boolean;
+  is_active: boolean;
+  view_count: number;
+  last_viewed_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Payload returned to the anonymous `/share/:token` page.
+ * When `requires_password=true`, all other detail fields are absent — the
+ * caller must POST again with the password.
+ */
+export interface SharedFileResponse {
+  /** Short-lived signed URL for inline preview. Absent until password (if any) is satisfied. */
+  url?: string;
+  original_name?: string;
+  mime_type?: string;
+  size_bytes?: number;
+  kind?: FilePreviewKind;
+  allow_download: boolean;
+  requires_password?: boolean;
+  /** ISO timestamp; when the signed URL stops working. */
+  expires_at?: string;
+}
