@@ -35,6 +35,7 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   formula:          { icon: Calculator,        color: '#7E22CE', bg: '#7E22CE12' },
   table:            { icon: Table2,             color: '#B8734F', bg: '#B8734F12' },
   image:            { icon: ImageIcon,          color: '#0D9488', bg: '#0D948812' },
+  multi_image:      { icon: ImageIcon,          color: '#B8734F', bg: '#B8734F12' },
   template_variables: { icon: Layers,           color: '#7C3AED', bg: '#7C3AED12' },
   templates_picker:  { icon: Layers,            color: '#7C3AED', bg: '#7C3AED12' },
   generations_gallery: { icon: ImageIcon,       color: '#0D9488', bg: '#0D948812' },

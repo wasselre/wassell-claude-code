@@ -36,6 +36,7 @@ import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import DecksPage from '@/pages/Decks/DecksPage';
+import ImageChatsPage from '@/pages/ImageChats/ImageChatsPage';
 import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import FilesPage from '@/pages/Files/FilesPage';
 import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
@@ -98,6 +99,11 @@ function RecordDetailDispatcher() {
     // handles brief form / progress / ready / failed states internally.
     return <DecksPage />;
   }
+  if (modelName === 'image_chats') {
+    // ImageChatsPage is a split-pane "mini Higgsfield" chat UI — reads
+    // :recordId itself, handles its own message-thread mount keying.
+    return <ImageChatsPage />;
+  }
   if (modelName === 'chat_templates') {
     // Custom editor — generic record form doesn't handle the file upload
     // + preview flow well. Keyed on recordId so prev/next nav across
@@ -133,6 +139,9 @@ function RecordListDispatcher() {
   }
   if (modelName === 'decks') {
     return <DecksPage />;
+  }
+  if (modelName === 'image_chats') {
+    return <ImageChatsPage />;
   }
   if (modelName === 'design_templates') {
     // Card-grid library instead of the generic record-list table — each

@@ -22,6 +22,7 @@ export type FieldType =
   | 'formula'
   | 'table'
   | 'image'
+  | 'multi_image'
   | 'template_variables'
   | 'templates_picker'
   | 'generations_gallery'
@@ -185,7 +186,7 @@ export interface ModelField {
   // drop-zone + thumbnail; uploads happen via `src/lib/imageUpload.ts`.
   image_max_size_mb?: number; // default 10
   image_accept?: string; // MIME pattern, default 'image/png,image/jpeg,image/webp'
-  image_folder?: 'raw' | 'cleaned' | 'final' | 'reference'; // upload folder; default 'reference'
+  image_folder?: 'raw' | 'cleaned' | 'final' | 'reference' | 'presets' | 'snippets' | 'image-chats/uploads'; // upload folder; default 'reference'
   // Reverse-link primitive. When THIS field's value changes, the form
   // debounce-searches the sibling lookup's target model for a record where
   // `auto_link_target_field_name` matches this field's value, and on a

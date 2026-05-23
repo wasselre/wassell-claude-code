@@ -157,6 +157,45 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
       );
     }
 
+    case 'multi_image': {
+      // Compact table-cell view: first thumbnail + a "+N" badge if there
+      // are more. Click any thumbnail to preview at full size.
+      const urls = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string' && /^https?:\/\//i.test(v))
+        : [];
+      if (urls.length === 0) {
+        return <span className="text-charcoal/30 italic text-xs">—</span>;
+      }
+      const first = urls[0]!;
+      const extra = urls.length - 1;
+      return (
+        <>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewUrl(first);
+            }}
+            className="relative inline-block cursor-zoom-in"
+            aria-label={isAr ? 'فتح الصور' : 'Open images'}
+          >
+            <img
+              src={first}
+              alt=""
+              className="block w-10 h-10 rounded object-cover border border-sand/30 bg-cream/40 hover:opacity-80 transition-opacity"
+              loading="lazy"
+            />
+            {extra > 0 && (
+              <span className="absolute -top-1 -end-1 text-[10px] font-bold bg-copper text-white rounded-full px-1.5 py-0.5">
+                +{extra}
+              </span>
+            )}
+          </button>
+          {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
+        </>
+      );
+    }
+
     case 'template_variables': {
       // Two-level map: { [templateId]: { [varName]: { value } } }.
       // Sum across templates for the compact table-cell summary.

@@ -30,6 +30,7 @@ This folder contains the **living source of truth** for what every section of th
 | 20 | [decks.md](decks.md) | AI-generated Wassel-branded PowerPoints — brief form + Anthropic Skills API + code_execution + Supabase Storage. New section under sidebar "Decks" |
 | 21 | [clients.md](clients.md) | Clients model + Client 360 view — WhatsApp / Calls inline sections, tab strip on every record that references a client, cross-model Related Records panel |
 | 22 | [files.md](files.md) | Drive-style file library — uploads to private `wassel-files` bucket, nested folders, file + folder permissions (viewer/editor/owner) with folder cascade, brand-heavy public `/share/:token` external links with password + expiry + view counter |
+| 23 | [image-chats.md](image-chats.md) | "Mini Higgsfield" image-design chat — fal.ai Nano Banana 2, per-turn aspect ratio / variations / brand preset, image + prompt libraries with auto-attach |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 

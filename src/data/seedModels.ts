@@ -3654,6 +3654,206 @@ const decksModel: AppModel = {
 };
 
 // ============================================================
+// IMAGE PRESETS (brand-preset library for the Image Chats UI)
+// ============================================================
+// Library of named brand presets the Image Chats composer offers in
+// its `[Brand: …]` dropdown. Picking one prepends `prompt_text` to the
+// user's prompt before fal.ai sees it, AND auto-attaches the preset's
+// `images` (logos, layout refs) as additional inputs to nano-banana-pro/edit.
+// Edited via the standard record form. Records here are shared across
+// the org — same RLS posture as design_templates.
+const imagePresetsId = uuid();
+const imagePresetsBaseId = uuid();
+const imagePresetsModel: AppModel = {
+  id: imagePresetsId,
+  name: 'image_presets',
+  label_ar: 'إعدادات العلامة التجارية',
+  label_en: 'Brand Presets',
+  icon: 'sparkles',
+  color: '#B8734F',
+  group_id: DESIGNS_GROUP_ID,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: { title_field_id: null, shown_field_ids: [] },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: imagePresetsBaseId,
+        label_ar: 'الإعداد',
+        label_en: 'Preset',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          { id: uuid(), name: 'name',        label_ar: 'الاسم',          label_en: 'Name',        type: 'text',     required: true,  order: 0, section_id: imagePresetsBaseId, width: 'half', show_in_table: true },
+          { id: uuid(), name: 'description', label_ar: 'الوصف المختصر', label_en: 'Description', type: 'text',     required: false, order: 1, section_id: imagePresetsBaseId, width: 'half', show_in_table: true },
+          { id: uuid(), name: 'prompt_text', label_ar: 'نص الإعداد',     label_en: 'Brand prompt', type: 'textarea', required: true,  order: 2, section_id: imagePresetsBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'images',      label_ar: 'الأصول',         label_en: 'Assets',      type: 'multi_image', required: false, order: 3, section_id: imagePresetsBaseId, width: 'full', show_in_table: false, image_folder: 'presets', image_max_size_mb: 10 },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
+// PROMPT SNIPPETS (prompt-template library for the Image Chats UI)
+// ============================================================
+// Library of reusable user-prompt templates surfaced via the 📚
+// picker in the Image Chats composer. Picking a snippet fills the
+// textarea (user can edit before sending) AND auto-attaches any
+// `images` on the snippet to the current turn's input list.
+const promptSnippetsId = uuid();
+const promptSnippetsBaseId = uuid();
+const promptSnippetsModel: AppModel = {
+  id: promptSnippetsId,
+  name: 'prompt_snippets',
+  label_ar: 'مكتبة التعليمات',
+  label_en: 'Prompt Library',
+  icon: 'file-text',
+  color: '#B8734F',
+  group_id: DESIGNS_GROUP_ID,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: { title_field_id: null, shown_field_ids: [] },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: promptSnippetsBaseId,
+        label_ar: 'التعليمة',
+        label_en: 'Snippet',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          { id: uuid(), name: 'title',    label_ar: 'العنوان', label_en: 'Title',    type: 'text',     required: true,  order: 0, section_id: promptSnippetsBaseId, width: 'half', show_in_table: true },
+          { id: uuid(), name: 'category', label_ar: 'التصنيف', label_en: 'Category', type: 'dropdown', required: false, order: 1, section_id: promptSnippetsBaseId, width: 'half', show_in_table: true,
+            options: [
+              opt('عرض عقار',        'Property listing'),
+              opt('إعلان إطلاق',     'Launch announcement'),
+              opt('نمط حياة',        'Lifestyle'),
+              opt('تحرير / تنظيف',   'Edit / cleanup'),
+              opt('متفرقات',         'Other'),
+            ] },
+          { id: uuid(), name: 'text',     label_ar: 'النص',     label_en: 'Prompt text', type: 'textarea',    required: true,  order: 2, section_id: promptSnippetsBaseId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'images',   label_ar: 'صور مرفقة', label_en: 'Attached images', type: 'multi_image', required: false, order: 3, section_id: promptSnippetsBaseId, width: 'full', show_in_table: false, image_folder: 'snippets', image_max_size_mb: 10 },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
+// IMAGE CHATS (Nano Banana 2 chat UI — "mini Higgsfield" inside Wassell)
+// ============================================================
+// Each record is one design conversation. Messages live inline in
+// `record.data.messages` as a JSONB array of `{ id, role, text?,
+// images[], aspect_ratio, created_at, num_variations?, preset_id? }`.
+// The list / detail routes are overridden to render ImageChatsPage
+// instead of the generic record table/form — see App.tsx dispatcher.
+// fal.ai-orchestrated turns flow through POST /api/image-chat/send;
+// the user message is appended client-side, the assistant message is
+// appended server-side once nano-banana-pro/edit returns and the
+// result is re-hosted in marketing-assets/image-chats/outputs/.
+const imageChatsId = uuid();
+const imageChatsBaseId = uuid();
+const imageChatsTitleFieldId = uuid();
+const imageChatsStatusFieldId = uuid();
+const imageChatsLastMessageFieldId = uuid();
+const imageChatsModel: AppModel = {
+  id: imageChatsId,
+  name: 'image_chats',
+  label_ar: 'محادثات التصميم',
+  label_en: 'Image Chats',
+  icon: 'sparkles',
+  color: '#B8734F',
+  group_id: DESIGNS_GROUP_ID,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: imageChatsTitleFieldId,
+    subtitle_field_id: null,
+    badge_field_id: imageChatsStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: imageChatsBaseId,
+        label_ar: 'المحادثة',
+        label_en: 'Conversation',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          {
+            id: imageChatsTitleFieldId,
+            name: 'title',
+            label_ar: 'العنوان',
+            label_en: 'Title',
+            type: 'text',
+            required: false,
+            order: 0,
+            section_id: imageChatsBaseId,
+            width: 'full',
+            show_in_table: true,
+          },
+          {
+            id: imageChatsStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: false,
+            order: 1,
+            section_id: imageChatsBaseId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'خامل',       label_en: 'Idle',       value: 'idle',       color: '#9ca3af' },
+              { id: uuid(), label_ar: 'قيد التوليد', label_en: 'Generating', value: 'generating', color: '#3b82f6' },
+              { id: uuid(), label_ar: 'فشل',         label_en: 'Failed',     value: 'failed',     color: '#ef4444' },
+            ],
+          },
+          {
+            id: uuid(),
+            name: 'message_count',
+            label_ar: 'عدد الرسائل',
+            label_en: 'Messages',
+            type: 'number',
+            required: false,
+            order: 2,
+            section_id: imageChatsBaseId,
+            width: 'third',
+            show_in_table: true,
+          },
+          {
+            id: imageChatsLastMessageFieldId,
+            name: 'last_message_at',
+            label_ar: 'آخر رسالة',
+            label_en: 'Last message',
+            type: 'datetime',
+            required: false,
+            order: 3,
+            section_id: imageChatsBaseId,
+            width: 'third',
+            show_in_table: true,
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 export const SEED_MODELS: AppModel[] = [
@@ -3676,6 +3876,10 @@ export const SEED_MODELS: AppModel[] = [
   competitorsModel,
   designTemplatesModel,
   marketingOperationsModel,
+  // Image Chats (2026-05-23): "mini Higgsfield" — fal.ai Nano Banana 2 chat UI.
+  imagePresetsModel,
+  promptSnippetsModel,
+  imageChatsModel,
   // Website (2026-05-09): backs the public marketing site at /, /projects, /map.
   siteSettingsModel,
 ];

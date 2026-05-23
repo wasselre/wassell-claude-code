@@ -451,6 +451,22 @@ export default function DynamicField({ field, value, onChange, recordData, compa
           />
         );
 
+      case 'multi_image': {
+        const list = Array.isArray(value)
+          ? value.filter((v): v is string => typeof v === 'string')
+          : [];
+        return (
+          <MultiImageFieldInput
+            value={list}
+            folder={field.image_folder ?? 'reference'}
+            accept={field.image_accept ?? 'image/png,image/jpeg,image/webp'}
+            maxSizeMb={field.image_max_size_mb ?? 10}
+            onChange={onChange}
+            isAr={isAr}
+          />
+        );
+      }
+
       case 'template_variables': {
         const owningModel = models.find((m) =>
           m.schema.sections.some((s) => s.fields.some((f) => f.id === field.id)),
@@ -682,6 +698,152 @@ function ImageFieldInput({ value, folder, accept, maxSizeMb, onChange, isAr }: I
         className="sr-only"
       />
     </label>
+  );
+}
+
+interface MultiImageFieldInputProps {
+  value: string[];
+  folder: ImageFolder;
+  accept: string;
+  maxSizeMb: number;
+  onChange: (value: unknown) => void;
+  isAr: boolean;
+}
+
+/**
+ * Multi-image picker for `type: 'multi_image'`. Uploads each selected
+ * file to Supabase Storage in turn and stores the resulting public URLs
+ * as a `string[]` on the record. Mirrors `ImageFieldInput`'s error
+ * surfacing — every failed upload toasts loudly and the original list
+ * is preserved.
+ *
+ * Used by the Image Chats library models (`image_presets`,
+ * `prompt_snippets`) so a brand preset can carry the Wassel logo +
+ * a style reference alongside its prompt text.
+ */
+function MultiImageFieldInput({
+  value,
+  folder,
+  accept,
+  maxSizeMb,
+  onChange,
+  isAr,
+}: MultiImageFieldInputProps) {
+  const { addToast } = useAppStore();
+  const [uploading, setUploading] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const handleFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const oversize: string[] = [];
+    const valid: File[] = [];
+    for (const f of Array.from(files)) {
+      if (f.size > maxSizeMb * 1024 * 1024) oversize.push(f.name);
+      else valid.push(f);
+    }
+    if (oversize.length > 0) {
+      addToast(
+        isAr
+          ? `حجم الصورة يتجاوز ${maxSizeMb} ميجابايت: ${oversize.join(', ')}`
+          : `Image exceeds ${maxSizeMb} MB: ${oversize.join(', ')}`,
+        'error',
+      );
+    }
+    if (valid.length === 0) return;
+
+    setUploading(true);
+    const next = [...value];
+    try {
+      for (const file of valid) {
+        try {
+          const url = await uploadImage(file, folder);
+          next.push(url);
+          // Push incrementally so a long batch doesn't appear stuck.
+          onChange([...next]);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          addToast(
+            isAr ? `فشل رفع ${file.name}: ${msg}` : `Upload of ${file.name} failed: ${msg}`,
+            'error',
+          );
+        }
+      }
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeAt = async (idx: number) => {
+    const removed = value[idx];
+    if (!removed) return;
+    const next = value.filter((_, i) => i !== idx);
+    onChange(next);
+    // Best-effort delete from storage. Same posture as ImageFieldInput.
+    try {
+      await deleteImage(removed);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addToast(
+        isAr
+          ? `تمت إزالة الصورة من السجل لكن تعذّر حذفها من التخزين: ${msg}`
+          : `Removed from record but storage delete failed: ${msg}`,
+        'error',
+      );
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      {value.length > 0 && (
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+          {value.map((url, idx) => (
+            <div
+              key={`${url}-${idx}`}
+              className="relative rounded-lg overflow-hidden border border-sand/40 bg-cream/40 aspect-square"
+            >
+              <button
+                type="button"
+                onClick={() => setPreviewUrl(url)}
+                className="absolute inset-0 cursor-zoom-in"
+                aria-label={isAr ? 'فتح' : 'Open'}
+              >
+                <img src={url} alt="" className="w-full h-full object-cover" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void removeAt(idx)}
+                className="absolute top-1 end-1 p-1 rounded-full bg-charcoal/70 text-white hover:bg-charcoal transition-colors"
+                aria-label={isAr ? 'إزالة' : 'Remove'}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      <label className="form-input flex items-center gap-2 cursor-pointer hover:bg-cream/40 transition-colors">
+        <Upload size={16} className="text-copper/60 shrink-0" />
+        <span className="text-sm text-charcoal/60">
+          {uploading
+            ? (isAr ? 'جاري الرفع...' : 'Uploading...')
+            : value.length === 0
+              ? (isAr ? 'انقر لاختيار صور (يمكن اختيار أكثر من واحدة)' : 'Click to upload images (multi-select OK)')
+              : (isAr ? 'إضافة المزيد' : 'Add more')}
+        </span>
+        <input
+          type="file"
+          accept={accept}
+          multiple
+          disabled={uploading}
+          onChange={(e) => {
+            void handleFiles(e.target.files);
+            e.target.value = '';
+          }}
+          className="sr-only"
+        />
+      </label>
+      {previewUrl && <ImagePreview url={previewUrl} onClose={() => setPreviewUrl(null)} />}
+    </div>
   );
 }
 

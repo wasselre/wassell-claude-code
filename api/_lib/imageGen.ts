@@ -95,6 +95,25 @@ function readIconEditEnv(): FalEnv {
   return { ...env, modelId: process.env.FAL_ICON_EDIT_MODEL_ID ?? 'fal-ai/nano-banana-pro/edit' };
 }
 
+/**
+ * Env for the Image Chats ("mini Higgsfield") flow. Uses the same Nano
+ * Banana 2 edit model, but the model id is broken out so it can be
+ * swapped independently of the marketing-deck flow if the user wants to
+ * try a different fal.ai variant (Seedream, Imagen 4, Flux, etc.) in
+ * the chat without disturbing the design pipeline.
+ */
+function readChatEnv(): FalEnv {
+  const apiKey = process.env.FAL_KEY;
+  if (!apiKey) {
+    throw new Error('FAL_KEY is not set');
+  }
+  return {
+    apiKey,
+    baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
+    modelId: process.env.FAL_CHAT_MODEL_ID ?? 'fal-ai/nano-banana-pro/edit',
+  };
+}
+
 function authHeader(env: FalEnv): string {
   return `Key ${env.apiKey}`;
 }
@@ -249,6 +268,99 @@ export async function imageGenIconEdit(opts: IconEditOpts): Promise<ImageGenStar
   });
 }
 
+export type ChatAspectRatio = '1:1' | '9:16' | '16:9' | '4:3' | '3:4';
+
+interface ChatGenOpts {
+  /** The full prompt (already-prepended brand preset text + user message). */
+  prompt: string;
+  /**
+   * Ordered list of input image URLs. Order matters — fal.ai forwards
+   * the array as-is and the model treats the first image as the
+   * primary subject. The Image Chats client merges in this order:
+   * preset auto-attachments → user uploads this turn → previous
+   * assistant image (for the auto-chain).
+   */
+  imageUrls: string[];
+  aspectRatio: ChatAspectRatio;
+  /** 1 by default, up to 4. Maps to fal.ai `num_images`. */
+  numVariations: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * Image Chats entry point. Submits one fal.ai Nano Banana 2 job for
+ * this turn and returns the queue tracking URLs. Pair with
+ * `pollImageGen` to retrieve the image URL(s) when the queue is done.
+ *
+ * Notes:
+ *   - The model is `nano-banana-pro/edit` whether or not images are
+ *     attached. The /edit variant accepts an empty image_urls array
+ *     and falls back to pure text-to-image behavior, so we don't have
+ *     to branch the model id based on attachment count.
+ *   - num_images=1 is the default. The caller is responsible for
+ *     clamping to [1,4]; out-of-range values are passed through to
+ *     fal.ai and rejected upstream (with a clear error message).
+ */
+export async function imageGenChat(opts: ChatGenOpts): Promise<ImageGenStartResult> {
+  const env = readChatEnv();
+  if (env.apiKey === STUB_KEY) {
+    return stubStart('chat');
+  }
+  return startChatGeneration(env, opts);
+}
+
+/**
+ * Internal: submit a chat-flow generation. Differs from
+ * `startGeneration` in that it forwards `aspect_ratio` and `num_images`
+ * from the caller instead of hardcoding them.
+ */
+async function startChatGeneration(
+  env: FalEnv,
+  opts: ChatGenOpts,
+): Promise<ImageGenStartResult> {
+  const modelPath = env.modelId.startsWith('/') ? env.modelId.slice(1) : env.modelId;
+  const url = `${env.baseUrl.replace(/\/$/, '')}/${modelPath}`;
+
+  const body: Record<string, unknown> = {
+    prompt: opts.prompt,
+    num_images: Math.max(1, Math.min(4, opts.numVariations)),
+    aspect_ratio: opts.aspectRatio,
+    output_format: 'png',
+  };
+  if (opts.imageUrls.length > 0) {
+    body.image_urls = opts.imageUrls;
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: authHeader(env),
+    },
+    body: JSON.stringify(body),
+    signal: opts.signal,
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Image-gen chat start failed (${res.status}): ${errBody.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    request_id?: string;
+    status_url?: string;
+    response_url?: string;
+  };
+  const requestId = json.request_id ?? '';
+  const statusUrl = json.status_url ?? '';
+  const responseUrl = json.response_url ?? '';
+  if (!requestId || !statusUrl || !responseUrl) {
+    throw new Error(
+      `Image-gen chat response missing request_id/status_url/response_url: ${JSON.stringify(json).slice(0, 200)}`,
+    );
+  }
+  return { requestId, statusUrl, responseUrl };
+}
+
 /**
  * Submit a Nano Banana 2 request to fal.ai's queue. Same body shape as
  * the marketing-deck startGeneration but accepts an empty imageUrls
@@ -395,6 +507,7 @@ export async function pollImageGen(
       editing: STUB_EDITED_URL,
       design: STUB_FINAL_URL,
       icon: STUB_ICON_URL,
+      chat: STUB_FINAL_URL,
     };
     return {
       status: 'completed',
@@ -455,7 +568,7 @@ export async function pollImageGen(
   throw new Error('Image-gen poll timed out');
 }
 
-function stubStart(phase: 'cleanup' | 'editing' | 'design' | 'icon'): ImageGenStartResult {
+function stubStart(phase: 'cleanup' | 'editing' | 'design' | 'icon' | 'chat'): ImageGenStartResult {
   const id = `stub-${phase}-${crypto.randomUUID()}`;
   return {
     requestId: id,

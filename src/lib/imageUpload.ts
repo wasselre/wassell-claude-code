@@ -1,6 +1,20 @@
 import { supabase } from './supabase';
 
-export type ImageFolder = 'raw' | 'cleaned' | 'final' | 'reference' | 'icons/library' | 'icons/generated';
+export type ImageFolder =
+  | 'raw'
+  | 'cleaned'
+  | 'final'
+  | 'reference'
+  | 'icons/library'
+  | 'icons/generated'
+  // Image-Chats (Nano Banana 2 chat UI). Preset / snippet libraries store
+  // any number of attached reference assets (logos, layout refs) here;
+  // chat-side uploads land under image-chats/uploads. fal.ai-generated
+  // outputs are written by the server-side endpoint to image-chats/outputs
+  // (not user-facing and so not in this client-side enum).
+  | 'presets'
+  | 'snippets'
+  | 'image-chats/uploads';
 
 const BUCKET = 'marketing-assets';
 
