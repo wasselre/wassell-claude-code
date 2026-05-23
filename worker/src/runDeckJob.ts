@@ -277,12 +277,42 @@ at ~80% completion, forcing a full retry. Stay disciplined.
 
 ${sizeBlockFor(args.size)}${attachmentsBlockFor(args.attachments)}
 
-Save the deck to \`/mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx\`. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
+═══════════════════════════════════════════════════════════════════════
+HOW TO RETURN THE FINAL .pptx (READ CAREFULLY)
+═══════════════════════════════════════════════════════════════════════
+The PRIMARY delivery channel is the filesystem. Save the deck to
+this exact directory:
+
+    /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx
+
+Anthropic auto-tracks anything in \`/mnt/user-data/outputs/\` via the
+Files API — the receiver retrieves your .pptx from there. As long as
+the file lands in that directory and the build script exits cleanly,
+the receiver gets the deck. You do NOT need to do anything else.
+
+After saving, run one short confirmation bash:
+
+    ls -la /mnt/user-data/outputs/*.pptx && echo "saved OK"
+
+That's it. Stop. The receiver takes it from there.
+
+DO NOT try to deliver the .pptx by base64-echoing it to stdout — for a
+typical Wassel deck (1-3 MB), the bash tool truncates the stdout to a
+middle slice, losing both the file's start and the marker lines. We've
+seen this fail mid-flight. The filesystem path is the only reliable
+channel.
+
+If for some reason you cannot save to outputs/ (write-protected, etc.),
+THEN as a last resort emit the file as base64 between these markers in
+ONE final bash, knowing it may be truncated for large files:
 
     echo "${B64_MARKER_START}"
     base64 -w0 /mnt/user-data/outputs/<FILE>
     echo
     echo "${B64_MARKER_END}"
+
+But again: filesystem save is the default. Don't reach for base64 first.
+═══════════════════════════════════════════════════════════════════════
 
 If the plan references imagery from attachments, open the attachment with PIL/pypdf and use \`slide.shapes.add_picture(...)\` to embed it.
 
@@ -313,14 +343,13 @@ report = review_deck(input_path=raw_path, output_path=reviewed_path, fix=True)
 print(report.markdown())  # useful in the log
 \`\`\`
 
-Then run ONE final bash that prints the **reviewed** file as base64 between sentinel lines:
+The reviewed .pptx must land in \`/mnt/user-data/outputs/\` — Anthropic auto-tracks files there via the Files API and the receiver retrieves it from that directory. Once \`reviewed_path\` is written, you're done; run a short confirmation bash:
 
-    echo "${B64_MARKER_START}"
-    base64 -w0 /mnt/user-data/outputs/wassel-deck-<unix_ms>_reviewed.pptx
-    echo
-    echo "${B64_MARKER_END}"
+    ls -la /mnt/user-data/outputs/*_reviewed.pptx && echo "saved OK"
 
-If the review skill exposes a different entrypoint than \`review_deck\`, follow its SKILL.md. The goal is one reviewed .pptx returned via the sentinel.`;
+DO NOT base64-echo the reviewed file to stdout — for typical decks the bash output gets truncated to a middle slice and the file is lost. The filesystem path is the reliable channel. (If you literally cannot save to outputs/, fall back to base64 between ${B64_MARKER_START} / ${B64_MARKER_END} in one bash, but this is a last resort.)
+
+If the review skill exposes a different entrypoint than \`review_deck\`, follow its SKILL.md. The goal is one reviewed .pptx saved in /mnt/user-data/outputs/.`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -1116,15 +1145,24 @@ async function renderPdfPageImageBlocks(args: {
 /**
  * Last-resort scan of recent Anthropic Files entries for a .pptx we lost
  * track of (the captured file_id was missing and the base64 sentinel
- * didn't fire). Used by the Build phase only; review never lands here
- * because review failures are non-fatal.
+ * didn't fire or got truncated). Used by the Build phase only; review
+ * never lands here because review failures are non-fatal.
+ *
+ * Limit was 30 originally — caused a recovery miss on 2026-05-23 because
+ * a single job uploads ~25 files (PDF + 20 page renders + built pptx +
+ * reviewed pptx). With limit=30, the built .pptx could get pushed out of
+ * the top page by the page images we'd just uploaded. Bumped to 200 and
+ * we break out of the scan loop as soon as we step past the time window
+ * (Files API returns by created_at desc, so we don't waste round-trips
+ * scanning ancient files).
  */
 async function scanFilesApiForRecentPptx(
   anthropic: Anthropic,
 ): Promise<{ bytes: Uint8Array; filename: string } | null> {
-  // Look back 1 hour to cover even the slowest deck runs.
   const sinceMs = Date.now() - 60 * 60 * 1000;
   const candidates: Array<{ id: string; filename: string; created_at: string }> = [];
+  let scanned = 0;
+  let stoppedAtTimeWindow = false;
   try {
     const listIter = (anthropic.beta.files as unknown as {
       list: (a: Record<string, unknown>) => AsyncIterable<{
@@ -1132,10 +1170,18 @@ async function scanFilesApiForRecentPptx(
         filename?: string;
         created_at?: string;
       }>;
-    }).list({ limit: 30 });
+    }).list({ limit: 200 });
     for await (const f of listIter) {
+      scanned++;
       const ts = f.created_at ? new Date(f.created_at).getTime() : 0;
-      if (ts >= sinceMs && (f.filename ?? '').endsWith('.pptx')) {
+      if (ts && ts < sinceMs) {
+        // Files API returns desc by created_at; once we cross the
+        // window boundary we can stop without scanning the user's
+        // entire history.
+        stoppedAtTimeWindow = true;
+        break;
+      }
+      if ((f.filename ?? '').endsWith('.pptx')) {
         candidates.push({
           id: f.id,
           filename: f.filename ?? `deck-${Date.now()}.pptx`,
@@ -1143,6 +1189,9 @@ async function scanFilesApiForRecentPptx(
         });
       }
     }
+    console.log(
+      `[run] files-api-scan scanned=${scanned} candidates=${candidates.length} stopped_at_window=${stoppedAtTimeWindow}`,
+    );
     candidates.sort((a, b) => b.created_at.localeCompare(a.created_at));
     const top = candidates[0];
     if (!top) return null;
