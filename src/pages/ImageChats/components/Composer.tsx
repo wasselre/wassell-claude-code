@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { Send, Loader2, Paperclip, X } from 'lucide-react';
+import { Send, Loader2, Paperclip, FolderOpen, X } from 'lucide-react';
 import { uploadImage } from '@/lib/imageUpload';
 import { signViewUrl } from '@/lib/files/client';
+import DriveBrowserModal, {
+  type DrivePickerResult,
+} from '@/pages/Files/components/DriveBrowserModal';
 import type { ChatAspectRatio, AttachmentSource } from '@/lib/imageChat/client';
 import BrandPresetDropdown from './BrandPresetDropdown';
 import PromptLibraryButton from './PromptLibraryButton';
@@ -102,6 +105,7 @@ export default function Composer({
   const [numVariations, setNumVariations] = useState<1 | 4>(1);
   const [presetId, setPresetId] = useState<string | null>(initialPresetId);
   const [uploading, setUploading] = useState(false);
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Look up presets / snippets from the store for both the dropdown and
@@ -204,6 +208,32 @@ export default function Composer({
           );
         }
       }
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  /**
+   * "From Files" picker — invoked by the FolderOpen button next to the
+   * Paperclip. Lets the user pick existing images from the user's Drive
+   * (`/files` page) instead of uploading from their device.
+   *
+   * Each picked file's UUID is fed through `resolveImageFieldValue` so
+   * the attachment carries `{ url: signedURL, value: fileId }` — same
+   * shape as preset/snippet image refs. The server-side `api/image-chat/send`
+   * endpoint then permission-checks the file id and copies the bytes into
+   * `marketing-assets/image-chats/preset-copies/` so the chat history
+   * carries a non-expiring URL going forward (no broken thumbnails).
+   */
+  async function handlePickFromDrive(result: DrivePickerResult) {
+    if (result.kind !== 'files' || result.files.length === 0) return;
+    setUploading(true);
+    try {
+      const resolved = await Promise.all(
+        result.files.map((f) => resolveImageFieldValue(f.id, 'user')),
+      );
+      const fresh = resolved.filter((a): a is ComposerAttachment => a !== null);
+      if (fresh.length > 0) setAttachments((prev) => [...prev, ...fresh]);
     } finally {
       setUploading(false);
     }
@@ -349,6 +379,20 @@ export default function Composer({
 
         <div className="flex-1" />
 
+        {/* From Files — pick existing images from the user's Drive (/files) */}
+        <button
+          type="button"
+          onClick={() => setDrivePickerOpen(true)}
+          disabled={disabled || uploading}
+          className={`inline-flex items-center justify-center w-9 h-9 rounded-lg border border-sand/40 bg-white hover:bg-cream transition-colors ${
+            disabled || uploading ? 'opacity-50 cursor-not-allowed' : ''
+          }`}
+          title={isAr ? 'اختيار من الملفات' : 'Pick from Files'}
+          aria-label={isAr ? 'اختيار من الملفات' : 'Pick from Files'}
+        >
+          <FolderOpen size={16} className="text-charcoal/70" />
+        </button>
+
         {/* Paperclip — file upload */}
         <label
           className={`inline-flex items-center justify-center w-9 h-9 rounded-lg border border-sand/40 bg-white hover:bg-cream cursor-pointer transition-colors ${
@@ -386,6 +430,15 @@ export default function Composer({
           <span>{isAr ? 'إرسال' : 'Send'}</span>
         </button>
       </div>
+
+      {/* Files-Drive picker — opened by the FolderOpen button */}
+      <DriveBrowserModal
+        open={drivePickerOpen}
+        mode="pick-files"
+        acceptMime="image/png,image/jpeg,image/webp"
+        onClose={() => setDrivePickerOpen(false)}
+        onSelect={(result) => void handlePickFromDrive(result)}
+      />
     </div>
   );
 }
