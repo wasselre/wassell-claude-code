@@ -1,29 +1,48 @@
 /**
- * runDeckJob — ported from api/generate-deck.ts.
+ * runDeckJob — 3-phase Wassel deck pipeline.
  *
- * This is the long-running half of deck generation:
- *   1. Resolves the decks model id from Postgres (one round-trip)
- *   2. Stamps the deck record with the chosen model/language/size/attachments
- *      and status='generating' (so any browser already watching gets an
- *      instant "now generating" view via Realtime)
- *   3. Downloads each user-uploaded attachment from Supabase Storage and
- *      forwards it to the Anthropic Files API
- *   4. Calls Anthropic with the wassel-general-ppt skill (+ optionally
- *      wassel-deck-review) and the code_execution tool
- *   5. Extracts the .pptx bytes via the base64-stdout sentinel channel
- *      (primary) or Files API list scan (fallback)
- *   6. Uploads to the `wassel-decks` Supabase Storage bucket at
- *      `<user.id>/<record.id>/<filename>` and creates a 7-day signed URL
- *   7. Writes `status='ready'` + `file_url` + `file_path` + `filename`
- *      back to the deck record (Realtime fan-out → SPA download card)
+ * Phases (each is a separate Anthropic call with its own 1M context budget):
+ *   1. Plan    — Claude reads brief + attachments + page images, outputs
+ *                a structured markdown plan covering every design decision.
+ *                Includes code execution so Claude can sample non-PDF
+ *                attachments (xlsx/docx/etc.) but no .pptx is built.
+ *   2. Build   — Claude reads the PLAN + brand skill + attachments mounted
+ *                in the sandbox, writes python-pptx code, produces .pptx
+ *                bytes via the base64 sentinel.
+ *   3. Review  — Claude reads the built .pptx + the review skill, auto-
+ *                patches brand-compliance issues, returns reviewed .pptx.
+ *                Skipped if ANTHROPIC_WASSEL_REVIEW_SKILL_ID is unset.
+ *                If the review call itself fails, we ship the unreviewed
+ *                build rather than failing the whole job — the user still
+ *                gets a deck.
  *
- * Errors bubble out to index.ts which marks the deck_jobs row failed
- * AND writes status='failed' / error_message to the deck record (also
- * via Realtime).
+ * Why three calls instead of one? Each call gets its own 1M context budget.
+ * The previous single-call flow accumulated ~50 agent turns of tool calls
+ * and thinking into one context that hit the 1M ceiling at ~10 min in
+ * (record bdf9b0ed, 2026-05-23). Splitting gives each phase enough room to
+ * think hard without truncation. Total reasoning ACROSS the pipeline is
+ * HIGHER than the old single call, not lower — each phase keeps the same
+ * model + adaptive thinking + effort settings as before.
  *
- * Auth model: service-role Supabase client — bypasses RLS. We enforce
- * ownership by reading the deck record's `created_by_user_id` and
- * comparing against job.userId before any writes.
+ * The SPA shows `phase = 'calling-claude'` for all three calls and reads
+ * `phase_detail` for the sub-step label ("planning the design…" /
+ * "building slides…" / "reviewing & auto-patching…"). No SPA-side changes
+ * were needed; the existing 4-step progress bar (calling-claude →
+ * downloading → uploading → finalizing) still applies, the Claude step
+ * just internally has three legs.
+ *
+ * Carried-over invariants (unchanged from the 1-call version):
+ *   • record_save RPC with p_expected_version=null (worker is sole writer)
+ *   • created_by_user_id preserved on every update (never NULL the FK)
+ *   • errors humanized via humanizeErrorMessage for the UI's red box
+ *   • base64 stdout sentinel is the primary .pptx return path
+ *   • Files API list scan is the fallback when the sentinel didn't fire
+ *   • heartbeat every 30s during each stream so the client stuck-detector
+ *     doesn't false-fire during long tool turns
+ *
+ * Auth model: service-role Supabase client — bypasses RLS. Ownership is
+ * enforced by reading the deck record's `created_by_user_id` and comparing
+ * against job.userId before any writes.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
@@ -72,22 +91,16 @@ const SIZE_TO_INCHES: Record<DeckSize, { width: number; height: number }> = {
   '1:1': { width: 7.5, height: 7.5 },
 };
 
-/** Vision-tier images get an additional `image` content block. */
+/** Vision-tier images (regular image attachments) added as image blocks. */
 const MAX_VISION_IMAGES = 3;
 const VISION_IMAGE_BYTES_CAP = 5 * 1024 * 1024;
-/** Max PDF page-images we render and pass as image content blocks. We
- * render each page at a fixed long-edge pixel count (see
- * pdfToImages.PdfRenderOptions.longEdgePx — default 1200) so the per-page
- * vision token cost is the SAME whether the source is a Letter page or an
- * A3 brochure spread. At 1200px long edge each page is ~1k tokens, so 20
- * pages ≈ 20k tokens of vision budget — fits comfortably under the 1M
- * context window with room for the brief, skill, and Claude's response.
- * We render the FIRST 20 pages of each PDF. PDFs are always also
- * `container_upload`'d so the full doc is in the sandbox for Python
- * (pypdf/pdfplumber) to read in detail. Previously we used a fixed DPI
- * (120), which gave a fixed scale per inch and therefore a VARIABLE pixel
- * count per page — large-format brochures (record bdf9b0ed on 2026-05-23)
- * tokenized to ~2x Letter and overflowed context. */
+/** Max PDF page-images we render and pass as image content blocks. See
+ * pdfToImages.PdfRenderOptions.longEdgePx (default 1200) for token-cost
+ * math. Visual page images are passed ONLY to the Plan phase — the Build
+ * phase works from the plan, the Review phase works from the built .pptx.
+ * The original PDF is also `container_upload`'d to every phase that needs
+ * sandbox access so Python (pypdf/pdfplumber) can still read the full
+ * doc. */
 const MAX_PDF_PAGES_AS_IMAGES = 20;
 
 const ANTHROPIC_BETAS = [
@@ -100,33 +113,43 @@ const ANTHROPIC_BETAS = [
 // sandbox has no outbound internet (DNS blocked) so we can't curl
 // directly to Supabase. Asking Claude to base64 the saved file between
 // these markers in a FINAL bash works around it. Tested with 200KB+
-// payloads — stdout returns all bytes intact. See the original
-// /api/generate-deck for the history.
+// payloads — stdout returns all bytes intact.
 const B64_MARKER_START = '===WASSEL_DECK_B64_START===';
 const B64_MARKER_END = '===WASSEL_DECK_B64_END===';
 
-/**
- * Same system prompt as the old Edge function. The skill's own SKILL.md
- * drives the design workflow — we keep this wrapper deliberately thin
- * (stacking a workflow prompt on top made Claude rush the design pass
- * in older runs).
- */
-function buildSystemPrompt(args: {
-  size: DeckSize;
-  attachments: ReadonlyArray<{ name: string; mimeType: string }>;
-  reviewEnabled: boolean;
-}): string {
-  const dims = SIZE_TO_INCHES[args.size];
-  const sizeBlock = `Slide size: ${args.size} (${dims.width}" × ${dims.height}"). When initializing the python-pptx Presentation, set:
+interface RunArgs {
+  supabase: SupabaseClient;
+  env: WorkerEnv;
+  job: DeckJob;
+}
+
+interface UploadedAttachment {
+  fileId: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  /** Captured ONLY for PDFs — used by the page-rendering step. */
+  pdfBytes: Uint8Array | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// System prompts — one per phase.
+// ═══════════════════════════════════════════════════════════════════════
+
+function sizeBlockFor(size: DeckSize): string {
+  const dims = SIZE_TO_INCHES[size];
+  return `Slide size: ${size} (${dims.width}" × ${dims.height}"). When initializing the python-pptx Presentation, set:
     prs.slide_width  = Inches(${dims.width})
     prs.slide_height = Inches(${dims.height})
 Compose every layout for this aspect ratio — don't reuse 16:9 grids on a 9:16 deck.`;
+}
 
-  const attachmentsBlock =
-    args.attachments.length === 0
-      ? ''
-      : `\n\nUser attachments are mounted at /mnt/user-data/uploads/ — inspect them BEFORE designing because the user expects you to use them:
-${args.attachments.map((a) => `  • ${a.name}${a.mimeType ? ` (${a.mimeType})` : ''}`).join('\n')}
+function attachmentsBlockFor(
+  attachments: ReadonlyArray<{ name: string; mimeType: string }>,
+): string {
+  if (attachments.length === 0) return '';
+  return `\n\nUser attachments are mounted at /mnt/user-data/uploads/ — inspect them BEFORE making any decision because the user expects you to use them:
+${attachments.map((a) => `  • ${a.name}${a.mimeType ? ` (${a.mimeType})` : ''}`).join('\n')}
 
 Read the right tool per type:
   • .xlsx / .xls / .csv → pandas / openpyxl: extract the rows the user is referring to and turn them into slides (charts, tables, callouts)
@@ -134,50 +157,359 @@ Read the right tool per type:
   • .pptx               → python-pptx: read existing slides; copy structure / typography / brand if asked
   • .docx               → python-docx: read paragraphs as deck content
   • images              → PIL for dimensions; embed via slide.shapes.add_picture(path, ...). Some images were also passed visually above — use them for layout decisions`;
+}
 
-  const finalSaveBlock = args.reviewEnabled
-    ? `Save the raw build to \`/mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx\`.
+/**
+ * PHASE 1 system prompt: produce a structured markdown plan. No .pptx
+ * is built in this call — Claude outputs the plan as its final text
+ * response, which the Build phase parses to drive python-pptx code.
+ */
+function buildPlanSystemPrompt(args: {
+  size: DeckSize;
+  attachments: ReadonlyArray<{ name: string; mimeType: string }>;
+}): string {
+  return `You are designing a Wassel-branded PowerPoint deck (وصل العقارية).
 
-Then run the 'wassel-deck-review' skill (loaded at /mnt/skills/wassel-deck-review/) to auto-patch brand-compliance + typography bugs. This is the same final-gate that runs locally before delivery — it fixes broken RTL on tables, missing complex-script font slots (which makes Arabic render as theme default), blue hyperlink color, double-spaced separators, missing LRM marks on numbers inside Arabic text, parens-in-body, etc. Do not skip it.
+The 'wassel-general-ppt' skill is loaded at /mnt/skills/wassel-general-ppt/. Read its SKILL.md NOW so the brand system (palette, typography, RTL rules, layout primitives) is in your head before you plan.
+
+YOUR JOB IN THIS CALL: produce a complete slide-by-slide MARKDOWN PLAN. Make EVERY design decision now — palette choices, layouts, exact Arabic/English copy, imagery placement, chart types. Another Claude session receives this plan and translates it directly into python-pptx; they will not re-do design work or fill gaps.
+
+DO NOT build a .pptx in this call. Do not run python-pptx. Do not base64 anything. Your final output is the plan as a text response.
+
+${sizeBlockFor(args.size)}${attachmentsBlockFor(args.attachments)}
+
+Plan format — use this exact markdown structure (the Build phase parses by these headings):
+
+# Wassel Deck Plan
+
+## Meta
+- Project: <name from brief>
+- Language: <ar | en | mixed>
+- Size: <e.g. 16:9>
+- Slide count: <N>
+
+## Brand decisions
+- Palette emphasis: <which Wassel colors dominate this deck>
+- Typography: <Amiri default; any role-specific weight/size choices>
+- Visual motif: <1-2 sentences on the overall visual feel>
+
+## Slide 1 — <short name like "Cover" or "Market overview">
+- Layout: <hero | section-divider | data-card | image-text-split | bullet-list | comparison-table | chart | quote | timeline | cta>
+- Background: <#hex or named brand color>
+- Title (ar): "<exact text>"
+- Title (en): "<exact text, or 'omit' if Arabic-only>"
+- Subtitle: "<exact text, or 'none'>"
+- Body / bullets:
+  - <bullet 1>
+  - <bullet 2>
+- Imagery: <none | description + source (e.g. "page 3 of brochure.pdf, top-right rendering") + placement>
+- Charts/tables: <none | spec with data source>
+- Notes: <quirks, alignment hints, custom typography>
+
+## Slide 2 — …
+
+(continue for every slide)
+
+## Build hints
+- <cross-slide meta-instructions, e.g. "use the brochure's terracotta as accent on slides 3-6", "embed cover image from page 1 on slide 1 top-right">
+
+Quality bar:
+  • Be thorough: typical deck is 8-15 slides; never fewer than 5.
+  • Every slide section must list ALL fields (use "none" where applicable).
+  • If language hint is 'ar', write copy in Arabic. If 'en', English. If 'mixed', choose per-slide.
+  • Use specific brand hex codes from the skill's palette, not generic color names.
+  • Imagery instructions must reference attachments by name + page/cell where applicable.
+
+End your response with the plan ONLY — no preamble like "Here is the plan:", no postamble like "Let me know if…". The Build phase reads your text verbatim and acts on it.`;
+}
+
+/**
+ * PHASE 2 system prompt: execute the plan in python-pptx, return .pptx via
+ * the base64 sentinel. The plan is in the user message.
+ */
+function buildBuildSystemPrompt(args: {
+  size: DeckSize;
+  attachments: ReadonlyArray<{ name: string; mimeType: string }>;
+}): string {
+  return `You are implementing a Wassel-branded PowerPoint deck (وصل العقارية) per a pre-written design plan.
+
+The 'wassel-general-ppt' skill is loaded at /mnt/skills/wassel-general-ppt/. Use its drawing primitives, brand colors, font helpers, and Arabic typography helpers as documented in its SKILL.md.
+
+YOUR JOB IN THIS CALL: execute the plan attached in the user message and return the .pptx via the base64 sentinel. The design is SETTLED — focus on faithful, brand-correct implementation. Don't redesign; don't improvise extra slides; don't override palette choices from the plan.
+
+${sizeBlockFor(args.size)}${attachmentsBlockFor(args.attachments)}
+
+Save the deck to \`/mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx\`. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
+
+    echo "${B64_MARKER_START}"
+    base64 -w0 /mnt/user-data/outputs/<FILE>
+    echo
+    echo "${B64_MARKER_END}"
+
+If the plan references imagery from attachments, open the attachment with PIL/pypdf and use \`slide.shapes.add_picture(...)\` to embed it.
+
+Don't skip slides or shorten the plan. If a slide spec looks light, render it as specified — the planner chose that for a reason. If a field says "none", don't add anything for it.`;
+}
+
+/**
+ * PHASE 3 system prompt: review the built .pptx via the wassel-deck-review
+ * skill and return the reviewed .pptx via the base64 sentinel.
+ */
+function buildReviewSystemPrompt(args: { inputFilename: string }): string {
+  return `You are reviewing a freshly-built Wassel PowerPoint for brand compliance and typography bugs (وصل العقارية).
+
+The 'wassel-deck-review' skill is loaded at /mnt/skills/wassel-deck-review/. Use its review_deck() routine — it auto-patches the mechanical issues (broken RTL on tables, missing complex-script font slots that make Arabic render as theme default, blue hyperlink color, double-spaced separators, missing LRM marks on numbers inside Arabic text, parens-in-body, banned phrases like "Wassel CRM", etc.).
+
+The deck to review is mounted at /mnt/user-data/uploads/${args.inputFilename}.
+
+YOUR JOB: run review_deck() with fix=True, then return the reviewed .pptx via the base64 sentinel. Don't redesign — don't change copy, layouts, or colors. Just lint and auto-patch.
 
 \`\`\`python
 import sys
 sys.path.insert(0, "/mnt/skills/wassel-deck-review/scripts")
 from review import review_deck
 
-raw_path = "/mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx"
+raw_path = "/mnt/user-data/uploads/${args.inputFilename}"
 reviewed_path = "/mnt/user-data/outputs/wassel-deck-<unix_ms>_reviewed.pptx"
 report = review_deck(input_path=raw_path, output_path=reviewed_path, fix=True)
-print(report.markdown())  # optional but useful for the log
+print(report.markdown())  # useful in the log
 \`\`\`
 
-Then run ONE final bash that prints the **reviewed** file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
+Then run ONE final bash that prints the **reviewed** file as base64 between sentinel lines:
 
     echo "${B64_MARKER_START}"
     base64 -w0 /mnt/user-data/outputs/wassel-deck-<unix_ms>_reviewed.pptx
     echo
-    echo "${B64_MARKER_END}"`
-    : `Save to /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx. After saving, run ONE final bash that prints the file as base64 between sentinel lines (this is how the file reaches the user — the receiver scans bash stdouts for these exact markers):
+    echo "${B64_MARKER_END}"
 
-    echo "${B64_MARKER_START}"
-    base64 -w0 /mnt/user-data/outputs/<FILE>
-    echo
-    echo "${B64_MARKER_END}"`;
-
-  return `Build a Wassel-branded PowerPoint (.pptx) per the user's brief.
-
-The 'wassel-general-ppt' skill is loaded at /mnt/skills/wassel-general-ppt/. Read its SKILL.md and follow that workflow as written.
-
-${sizeBlock}${attachmentsBlock}
-
-${finalSaveBlock}`;
+If the review skill exposes a different entrypoint than \`review_deck\`, follow its SKILL.md. The goal is one reviewed .pptx returned via the sentinel.`;
 }
 
-interface RunArgs {
-  supabase: SupabaseClient;
-  env: WorkerEnv;
-  job: DeckJob;
+// ═══════════════════════════════════════════════════════════════════════
+// Shared stream-runner helper. Each phase calls this with its own params.
+// ═══════════════════════════════════════════════════════════════════════
+
+interface AnthropicStreamResult {
+  content: unknown[];
+  outputFileId: string | null;
+  eventCount: number;
 }
+
+/**
+ * Run one Anthropic streaming turn end-to-end:
+ *   • iterate the stream (with heartbeat + phase_detail throttling + logs)
+ *   • capture any file_id deep in tool results
+ *   • return the final message's content blocks
+ *
+ * Errors during stream iteration propagate out — the caller decides
+ * whether to humanize + persist to the deck record (top-level) or to
+ * swallow (e.g. review phase failures don't kill the job).
+ */
+async function runAnthropicStream(args: {
+  anthropic: Anthropic;
+  /** Used as a log prefix: 'plan' | 'build' | 'review'. */
+  label: string;
+  /** User-visible substep label written to record.data.phase_detail. */
+  phaseDetailUi: string;
+  /** Raw params handed straight to `anthropic.beta.messages.stream`. */
+  streamParams: Record<string, unknown>;
+  updateRecord: (patch: Record<string, unknown>) => Promise<void>;
+}): Promise<AnthropicStreamResult> {
+  const { anthropic, label, phaseDetailUi, streamParams, updateRecord } = args;
+
+  await updateRecord({ phase: 'calling-claude', phase_detail: phaseDetailUi });
+
+  const turn = (anthropic.beta.messages as unknown as {
+    stream: (params: Record<string, unknown>) => {
+      [Symbol.asyncIterator]: () => AsyncIterator<{ type: string; [k: string]: unknown }>;
+      finalMessage: () => Promise<{ content: unknown[] }>;
+    };
+  }).stream(streamParams);
+
+  console.log(`[run][${label}] stream-created`);
+  const iterStartedAtMs = Date.now();
+  let eventCount = 0;
+  let lastEventType: string | null = null;
+  let outputFileId: string | null = null;
+  let lastPhaseWriteAt = 0;
+
+  const captureFileId = (root: unknown): void => {
+    const seen = new Set<unknown>();
+    const stack: unknown[] = [root];
+    while (stack.length > 0) {
+      const node = stack.pop();
+      if (!node || typeof node !== 'object' || seen.has(node)) continue;
+      seen.add(node);
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        if (k === 'file_id' && typeof v === 'string') outputFileId = v;
+        else if (v && typeof v === 'object') stack.push(v);
+      }
+    }
+  };
+
+  const tryWritePhaseDetail = async (sub: string) => {
+    const now = Date.now();
+    if (now - lastPhaseWriteAt < 2000) return;
+    lastPhaseWriteAt = now;
+    try {
+      await updateRecord({
+        phase: 'calling-claude',
+        phase_detail: `${phaseDetailUi} · ${sub}`,
+      });
+    } catch (err) {
+      console.warn(
+        `[run][${label}] phase_detail update failed (non-fatal): ${(err as Error).message}`,
+      );
+    }
+  };
+
+  // Heartbeat — bumps updated_at every 30s so the SPA's stuck-detector
+  // doesn't false-fire while Claude is mid-tool-call. Cleaned up in
+  // `finally` so an early throw never leaks the interval.
+  const HEARTBEAT_INTERVAL_MS = 30_000;
+  const heartbeat = setInterval(() => {
+    void updateRecord({}).catch((err) => {
+      console.warn(
+        `[run][${label}] heartbeat failed (non-fatal): ${(err as Error).message}`,
+      );
+    });
+  }, HEARTBEAT_INTERVAL_MS);
+
+  try {
+    for await (const event of turn) {
+      eventCount++;
+      lastEventType = event.type;
+      if (eventCount === 1) {
+        console.log(
+          `[run][${label}] stream-first-event type=${event.type} elapsed_ms=${Date.now() - iterStartedAtMs}`,
+        );
+      }
+      if (eventCount % 50 === 0) {
+        console.log(
+          `[run][${label}] stream-progress events=${eventCount} last_type=${event.type} elapsed_ms=${Date.now() - iterStartedAtMs}`,
+        );
+      }
+      captureFileId(event);
+      if (event.type === 'content_block_start') {
+        const cb = (event as unknown as { content_block?: { type?: string; name?: string } })
+          .content_block;
+        const cbType = cb?.type ?? 'unknown';
+        console.log(`[run][${label}] content_block_start type=${cbType} name=${cb?.name ?? 'n/a'}`);
+        if (cbType === 'server_tool_use') {
+          await tryWritePhaseDetail(`tool: ${cb?.name ?? 'unknown'}`);
+        }
+      }
+      if (event.type === 'message_stop' || event.type === 'error') {
+        console.log(`[run][${label}] stream-terminal type=${event.type}`);
+      }
+    }
+    console.log(
+      `[run][${label}] stream-iter-done events=${eventCount} last_type=${lastEventType ?? 'none'} elapsed_ms=${Date.now() - iterStartedAtMs}`,
+    );
+  } catch (streamErr) {
+    const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
+    console.error(
+      `[run][${label}] stream-iter-FAIL events=${eventCount} last_type=${lastEventType ?? 'none'} elapsed_ms=${Date.now() - iterStartedAtMs} error=${msg}`,
+    );
+    throw streamErr;
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  console.log(`[run][${label}] final-message-start`);
+  const finalStartedAtMs = Date.now();
+  const response = await turn.finalMessage();
+  console.log(
+    `[run][${label}] final-message-OK elapsed_ms=${Date.now() - finalStartedAtMs} blocks=${response.content.length}`,
+  );
+  captureFileId(response.content);
+
+  return { content: response.content, outputFileId, eventCount };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Extractors — pull plan text / .pptx bytes / filename out of a stream's
+// final content blocks.
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Concatenate all text blocks in the response (excludes thinking blocks). */
+function extractPlanFromContent(content: unknown[]): string {
+  return content
+    .filter((b) => (b as { type?: string }).type === 'text')
+    .map((b) => ((b as { text?: string }).text ?? '').trim())
+    .filter((s) => s.length > 0)
+    .join('\n\n');
+}
+
+/**
+ * Extract .pptx bytes from a bash_code_execution_tool_result via the base64
+ * sentinel, plus best-effort filename detection. Returns null if no
+ * sentinel-bounded base64 with PK zip magic was found.
+ */
+function extractPptxFromContent(
+  content: unknown[],
+): { bytes: Uint8Array; filename: string | null } | null {
+  let extractedBytes: Uint8Array | null = null;
+  for (const block of content) {
+    const b = block as { type?: string; content?: unknown };
+    if (b.type !== 'bash_code_execution_tool_result') continue;
+    const stdout = ((b.content as { stdout?: string } | undefined)?.stdout) ?? '';
+    const start = stdout.indexOf(B64_MARKER_START);
+    const end = stdout.indexOf(B64_MARKER_END);
+    if (start === -1 || end === -1 || end <= start) continue;
+    const lineEnd = stdout.indexOf('\n', start);
+    if (lineEnd === -1) continue;
+    const b64 = stdout.slice(lineEnd + 1, end).replace(/\s+/g, '');
+    if (b64.length < 100) continue;
+    try {
+      const buf = Buffer.from(b64, 'base64');
+      const out = new Uint8Array(buf);
+      // .pptx files start with PK\x03\x04 (zip magic).
+      if (
+        out.length >= 4 &&
+        out[0] === 0x50 &&
+        out[1] === 0x4b &&
+        out[2] === 0x03 &&
+        out[3] === 0x04
+      ) {
+        extractedBytes = out;
+        console.log(
+          `[run] extracted ${out.byteLength} bytes from bash stdout via base64 markers`,
+        );
+      } else {
+        console.warn(
+          `[run] base64 decoded ${out.byteLength} bytes but missing PK zip magic — discarding`,
+        );
+      }
+      break;
+    } catch (e) {
+      console.error('[run] base64 decode failed:', e);
+    }
+  }
+  if (!extractedBytes) return null;
+
+  // Best-effort: recover filename printed in any tool stdout.
+  let reviewedName: string | null = null;
+  let rawName: string | null = null;
+  for (const block of content) {
+    const b = block as { type?: string; content?: unknown };
+    const stdout = ((b.content as { stdout?: string } | undefined)?.stdout) ?? '';
+    if (!reviewedName) {
+      const m = stdout.match(/wassel-deck-\d+_reviewed\.pptx/);
+      if (m) reviewedName = m[0];
+    }
+    if (!rawName) {
+      const m = stdout.match(/wassel-deck-\d+(?!_reviewed)\.pptx/);
+      if (m) rawName = m[0];
+    }
+    if (reviewedName) break;
+  }
+  return { bytes: extractedBytes, filename: reviewedName ?? rawName };
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// runDeckJob — top-level entrypoint.
+// ═══════════════════════════════════════════════════════════════════════
 
 export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void> {
   // ── Parse / validate payload ────────────────────────────────────────
@@ -218,9 +550,9 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
   // ── Record-update helper ────────────────────────────────────────────
   // Mirrors the api/generate-deck pattern: read current data + created_by,
   // merge patch, write through record_save RPC with p_expected_version=null
-  // (worker is the sole writer during a generation, version-conflict
-  // doesn't apply). Preserves created_by_user_id (never overwrites with
-  // service-role NULL — that would break the FK to public.users).
+  // (worker is the sole writer during a generation). Preserves
+  // created_by_user_id (never overwrites with service-role NULL — that
+  // would break the FK to public.users).
   const updateRecord = async (patch: Record<string, unknown>) => {
     const { data: current, error: readErr } = await supabase
       .from('records')
@@ -244,12 +576,13 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
     }
   };
 
-  // Stamp initial state. `phase` is the new field the SPA reads to
-  // render the GeneratingView's progress dots (replaces SSE).
+  // Stamp initial state. `phase = 'calling-claude'` and a thin
+  // `phase_detail` get the SPA's progress UI showing immediately via
+  // Realtime. The three Claude phases will each refine phase_detail.
   await updateRecord({
     status: 'generating',
     phase: 'calling-claude',
-    phase_detail: model,
+    phase_detail: 'starting…',
     model_used: model,
     language,
     size,
@@ -257,20 +590,14 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
     error_message: null,
   });
 
-  // From here on, any thrown error MUST also write status='failed' to
-  // the deck record so the UI's spinner exits via Realtime. The catch
-  // in index.ts marks the deck_jobs row failed but doesn't touch the
-  // deck record — that's our job. Bubble the original error after the
-  // record write so the job row also reflects the same message.
+  // From here, any throw MUST also write status='failed' to the record
+  // so the UI's spinner exits via Realtime. The catch in index.ts marks
+  // the deck_jobs row failed but doesn't touch the deck record — that's
+  // our job.
   try {
     await runGeneration();
   } catch (err) {
     const rawMsg = err instanceof Error ? err.message : String(err);
-    // The UI shows error_message verbatim in a red box. Raw Anthropic JSON
-    // errors look terrible there — translate the known cases to plain
-    // English the user can act on. Always preserve the original message
-    // in the logs (and append it to the friendly text in parens) so we
-    // can still debug.
     const friendlyMsg = humanizeErrorMessage(rawMsg);
     try {
       await updateRecord({
@@ -285,584 +612,568 @@ export async function runDeckJob({ supabase, env, job }: RunArgs): Promise<void>
     throw err;
   }
 
-  // ── End of runDeckJob top-level ─────────────────────────────────────
-  // Body moved into runGeneration() below so the try/catch above can
-  // wrap all the heavy work without sprawling indent.
-
   async function runGeneration(): Promise<void> {
-  const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+    const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
 
-  // ── Upload attachments to Anthropic Files API ───────────────────────
-  // We capture the raw bytes for PDFs so we can render them to per-page
-  // PNGs after the upload loop without re-downloading from Supabase.
-  interface UploadedAttachment {
-    fileId: string;
-    name: string;
-    mimeType: string;
-    sizeBytes: number;
-    /** Captured ONLY for PDFs — used by the page-rendering step below. */
-    pdfBytes: Uint8Array | null;
-  }
-  const uploadedAttachments: UploadedAttachment[] = [];
-
-  if (attachments.length > 0) {
-    await updateRecord({
-      phase: 'calling-claude',
-      phase_detail: `uploading ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}…`,
+    // ── Upload attachments + render PDF page-images (shared) ──────────
+    // Done ONCE; the resulting file_ids are reused across all three
+    // phases via container_upload blocks. Page-image blocks go ONLY to
+    // the Plan phase (Build & Review work from the plan / .pptx
+    // respectively, not from raw page renders).
+    const uploadedAttachments = await uploadAttachmentsToAnthropic({
+      anthropic,
+      supabase,
+      attachments,
+      updateRecord,
     });
-    const uploads = await Promise.all(
-      attachments.map(async (att): Promise<UploadedAttachment> => {
-        const { data: blob, error: dlErr } = await supabase.storage
-          .from(STORAGE_BUCKET)
-          .download(att.path);
-        if (dlErr || !blob) {
-          throw new Error(
-            `Failed to read attachment "${att.name}" from storage: ${dlErr?.message ?? 'unknown'}`,
-          );
-        }
-        const arrayBuf = await blob.arrayBuffer();
-        const bytes = new Uint8Array(arrayBuf);
-        const mimeType = att.mimeType || (blob.type ?? 'application/octet-stream');
-        // Wrap in Uint8Array — Node's File constructor (node:buffer) expects
-        // BinaryLike, which doesn't include raw ArrayBuffer in older
-        // @types/node releases. Uint8Array is unambiguously accepted.
-        const file = new File([bytes], att.name, { type: mimeType });
-        const uploaded = await (anthropic.beta.files as unknown as {
-          upload: (args: Record<string, unknown>) => Promise<{
-            id: string;
-            filename?: string;
-            size_bytes?: number;
-          }>;
-        }).upload({ file, betas: ANTHROPIC_BETAS });
-        return {
-          fileId: uploaded.id,
-          name: att.name,
-          mimeType,
-          sizeBytes: arrayBuf.byteLength,
-          pdfBytes: mimeType === 'application/pdf' ? bytes : null,
-        };
-      }),
-    );
-    uploadedAttachments.push(...uploads);
-    console.log(
-      `[run] uploaded ${uploads.length} attachment(s) to Anthropic Files API: ${uploads.map((u) => u.fileId).join(', ')}`,
-    );
-  }
-
-  // ── Render PDF pages to inline images ───────────────────────────────
-  // PDF document content blocks tokenize unpredictably with image-heavy
-  // PDFs — a 6.5 MB real estate brochure hit the 1M token ceiling on
-  // 2026-05-18 (record bdf9b0ed). Per-page image blocks have predictable
-  // ~1.5k tokens each, and the original PDF stays available in the
-  // sandbox via container_upload so Python can still read the full doc.
-  // Loose type — userContentBlocks is `Record<string, unknown>` and TS
-  // can't see structural compatibility on heterogeneous arrays without it.
-  const pdfPageImageBlocks: Array<Record<string, unknown>> = [];
-  const pdfAttachments = uploadedAttachments.filter((a) => a.pdfBytes !== null);
-  if (pdfAttachments.length > 0) {
-    await updateRecord({
-      phase: 'calling-claude',
-      phase_detail: `rendering PDF pages…`,
+    const pdfPageImageBlocks = await renderPdfPageImageBlocks({
+      anthropic,
+      supabase,
+      uploadedAttachments,
+      job,
+      updateRecord,
     });
-    for (const pdf of pdfAttachments) {
-      const startedAt = Date.now();
-      try {
-        const pages = await pdfToImages(pdf.pdfBytes!, {
-          maxPages: MAX_PDF_PAGES_AS_IMAGES,
-          oversampleStrategy: 'first',
-        });
-
-        // Upload each page-PNG to the Anthropic Files API in parallel.
-        // Inline base64 (what we did first) blew past Anthropic's 32 MB
-        // HTTP body cap when total page bytes > ~24 MB raw (×1.33 base64
-        // = 32 MB). Files API has a 5 MB per-image cap that all our
-        // realistic pages fit under (largest observed: 4.4 MB hero page).
-        const pageUploads = await Promise.all(
-          pages.map(async (page) => {
-            const file = new File([page.bytes], page.filename, { type: 'image/png' });
-            const uploaded = await (anthropic.beta.files as unknown as {
-              upload: (args: Record<string, unknown>) => Promise<{ id: string }>;
-            }).upload({ file, betas: ANTHROPIC_BETAS });
-            return uploaded.id;
-          }),
-        );
-        for (const fileId of pageUploads) {
-          pdfPageImageBlocks.push({
-            type: 'image',
-            source: { type: 'file', file_id: fileId },
-          });
-        }
-        console.log(
-          `[run] rendered ${pages.length} page(s) from ${pdf.name} (${pdf.sizeBytes}B), ` +
-          `uploaded as ${pageUploads.length} file(s) — total ${Date.now() - startedAt}ms`,
-        );
-
-        // Best-effort: also upload the rendered pages to Supabase storage
-        // so the user can verify what Claude actually saw. Lands at
-        //   wassel-decks/<user>/<deckId>/pdf-pages/<pdfName>/page-NNN.png
-        // Browseable via the Supabase dashboard or signed URL. Failure is
-        // logged but doesn't block the deck — the rendered pages are
-        // already passed to Claude inline, so the deck can still build.
-        const pdfBaseName = pdf.name.replace(/\.pdf$/i, '').replace(/[^\w\-. ]/g, '_');
-        const pagesPathPrefix = `${job.userId}/${job.deckRecordId}/pdf-pages/${pdfBaseName}`;
-        await Promise.all(
-          pages.map(async (page) => {
-            const path = `${pagesPathPrefix}/${page.filename}`;
-            const { error } = await supabase.storage
-              .from(STORAGE_BUCKET)
-              .upload(path, page.bytes, {
-                contentType: 'image/png',
-                upsert: true,
-              });
-            if (error) {
-              console.warn(
-                `[run] pdf-page upload failed for ${path} (non-fatal): ${error.message}`,
-              );
-            }
-          }),
-        );
-        console.log(`[run] saved ${pages.length} rendered page(s) to ${pagesPathPrefix}/`);
-      } catch (err) {
-        // Non-fatal — the PDF is still in the sandbox via container_upload,
-        // and Claude can still build something from text extraction even
-        // without the visual pages. Log loudly and continue.
-        console.error(
-          `[run] pdfToImages failed for ${pdf.name} (non-fatal — sandbox still has the PDF): ${(err as Error).message}`,
-        );
-      } finally {
-        // Free the captured bytes — we don't need them after rendering.
-        pdf.pdfBytes = null;
-      }
-    }
-  }
-
-  // ── Build user message ──────────────────────────────────────────────
-  const visionImages = uploadedAttachments
-    .filter((a) => a.mimeType.startsWith('image/') && a.sizeBytes <= VISION_IMAGE_BYTES_CAP)
-    .slice(0, MAX_VISION_IMAGES);
-
-  const userContentBlocks: Array<Record<string, unknown>> = [
-    {
-      type: 'text',
-      text:
-        `Brief:\n${brief}\n\n` +
-        `Language hint: ${
-          language === 'ar'
-            ? 'Arabic preferred — default the deck to Arabic RTL with Amiri.'
-            : language === 'en'
-              ? 'English preferred — Latin layout with Amiri throughout.'
-              : 'Mixed — choose per-slide based on what the content implies.'
-        }\n\n` +
-        `Slide size: ${size}.` +
-        (uploadedAttachments.length > 0
-          ? `\n\nAttachments mounted at /mnt/user-data/uploads/:\n${uploadedAttachments
-              .map((u) => `  • ${u.name} (${u.mimeType})`)
-              .join('\n')}`
-          : '') +
-        (pdfPageImageBlocks.length > 0
-          ? `\n\nThe ${pdfPageImageBlocks.length} image${pdfPageImageBlocks.length === 1 ? '' : 's'} attached below ${pdfPageImageBlocks.length === 1 ? 'is' : 'are'} the rendered page${pdfPageImageBlocks.length === 1 ? '' : 's'} of the PDF, in order. Use ${pdfPageImageBlocks.length === 1 ? 'it' : 'them'} for visual reference (layout, color, typography); read the full PDF via the sandbox for detailed text.`
-          : ''),
-    },
-    ...uploadedAttachments.map((a) => ({
+    const visionImageBlocks = uploadedAttachments
+      .filter((a) => a.mimeType.startsWith('image/') && a.sizeBytes <= VISION_IMAGE_BYTES_CAP)
+      .slice(0, MAX_VISION_IMAGES)
+      .map((a) => ({
+        type: 'image',
+        source: { type: 'file', file_id: a.fileId },
+      }));
+    const containerUploads = uploadedAttachments.map((a) => ({
       type: 'container_upload',
       file_id: a.fileId,
-    })),
-    ...visionImages.map((a) => ({
-      type: 'image',
-      source: { type: 'file', file_id: a.fileId },
-    })),
-    ...pdfPageImageBlocks,
-  ];
+    }));
 
-  // ── Call Anthropic (streaming) ──────────────────────────────────────
-  const turn = (anthropic.beta.messages as unknown as {
-    stream: (args: Record<string, unknown>) => {
-      [Symbol.asyncIterator]: () => AsyncIterator<{ type: string; [k: string]: unknown }>;
-      finalMessage: () => Promise<{ content: unknown[] }>;
-    };
-  }).stream({
-    model,
-    max_tokens: 32000,
-    ...(model === 'claude-opus-4-7'
-      ? {
-          thinking: { type: 'adaptive' },
-          output_config: { effort: 'high' },
-        }
-      : {}),
-    betas: ANTHROPIC_BETAS,
-    container: {
-      skills: [
-        { type: 'custom', skill_id: env.ANTHROPIC_WASSEL_SKILL_ID, version: 'latest' },
-        ...(env.ANTHROPIC_WASSEL_REVIEW_SKILL_ID
-          ? [{ type: 'custom', skill_id: env.ANTHROPIC_WASSEL_REVIEW_SKILL_ID, version: 'latest' }]
-          : []),
-      ],
-    },
-    system: buildSystemPrompt({
-      size,
-      attachments: uploadedAttachments.map((u) => ({ name: u.name, mimeType: u.mimeType })),
-      reviewEnabled: env.ANTHROPIC_WASSEL_REVIEW_SKILL_ID !== null,
-    }),
-    messages: [{ role: 'user', content: userContentBlocks }],
-    tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
-  });
-  console.log(
-    `[run] stream-created model=${model} content_blocks=${userContentBlocks.length} attachments=${uploadedAttachments.length}`,
-  );
+    // ════════════════════════════════════════════════════════════════
+    // PHASE 1 — PLAN
+    // ════════════════════════════════════════════════════════════════
+    const planUserBlocks: Array<Record<string, unknown>> = [
+      {
+        type: 'text',
+        text:
+          `Brief:\n${brief}\n\n` +
+          `Language hint: ${
+            language === 'ar'
+              ? 'Arabic preferred — default the deck to Arabic RTL with Amiri.'
+              : language === 'en'
+                ? 'English preferred — Latin layout with Amiri throughout.'
+                : 'Mixed — choose per-slide based on what the content implies.'
+          }\n\n` +
+          `Slide size: ${size}.` +
+          (uploadedAttachments.length > 0
+            ? `\n\nAttachments mounted at /mnt/user-data/uploads/:\n${uploadedAttachments
+                .map((u) => `  • ${u.name} (${u.mimeType})`)
+                .join('\n')}`
+            : '') +
+          (pdfPageImageBlocks.length > 0
+            ? `\n\nThe ${pdfPageImageBlocks.length} image${pdfPageImageBlocks.length === 1 ? '' : 's'} attached below ${pdfPageImageBlocks.length === 1 ? 'is' : 'are'} the rendered page${pdfPageImageBlocks.length === 1 ? '' : 's'} of the PDF, in order. Use ${pdfPageImageBlocks.length === 1 ? 'it' : 'them'} for visual reference (layout, color, typography); read the full PDF via the sandbox for detailed text.`
+            : '') +
+          `\n\nNow produce the markdown plan as your final text response. Do not build a .pptx in this call.`,
+      },
+      ...containerUploads,
+      ...visionImageBlocks,
+      ...pdfPageImageBlocks,
+    ];
 
-  let outputFileId: string | null = null;
-  const captureFileId = (root: unknown): void => {
-    const seen = new Set<unknown>();
-    const stack: unknown[] = [root];
-    while (stack.length > 0) {
-      const node = stack.pop();
-      if (!node || typeof node !== 'object' || seen.has(node)) continue;
-      seen.add(node);
-      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
-        if (k === 'file_id' && typeof v === 'string') outputFileId = v;
-        else if (v && typeof v === 'object') stack.push(v);
-      }
-    }
-  };
+    const planResp = await runAnthropicStream({
+      anthropic,
+      label: 'plan',
+      phaseDetailUi: 'planning the design…',
+      updateRecord,
+      streamParams: {
+        model,
+        max_tokens: 16_000,
+        ...(model === 'claude-opus-4-7'
+          ? { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }
+          : {}),
+        betas: ANTHROPIC_BETAS,
+        container: {
+          skills: [
+            { type: 'custom', skill_id: env.ANTHROPIC_WASSEL_SKILL_ID, version: 'latest' },
+          ],
+        },
+        system: buildPlanSystemPrompt({
+          size,
+          attachments: uploadedAttachments.map((u) => ({ name: u.name, mimeType: u.mimeType })),
+        }),
+        messages: [{ role: 'user', content: planUserBlocks }],
+        tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
+      },
+    });
 
-  const requestStartedAtMs = Date.now() - 5000;
-  let eventCount = 0;
-  let lastEventType: string | null = null;
-  const iterStartedAtMs = Date.now();
-  // Throttle phase_detail writes — every content_block_start emits one,
-  // but we don't want to hammer the records table. Update at most every
-  // 2 seconds.
-  let lastPhaseWriteAt = 0;
-  const tryWritePhaseDetail = async (detail: string) => {
-    const now = Date.now();
-    if (now - lastPhaseWriteAt < 2000) return;
-    lastPhaseWriteAt = now;
-    try {
-      await updateRecord({ phase: 'calling-claude', phase_detail: detail });
-    } catch (err) {
-      console.warn(
-        `[run] phase_detail update failed (non-fatal): ${(err as Error).message}`,
+    const planMd = extractPlanFromContent(planResp.content);
+    if (planMd.trim().length < 200) {
+      throw new Error(
+        `Plan phase returned no usable plan (got ${planMd.length} chars).`,
       );
     }
-  };
+    console.log(`[run][plan] extracted plan length=${planMd.length} chars`);
 
-  // Heartbeat — keep the deck record's updated_at fresh even when no
-  // new tool-start event has fired in a while. Without this, Claude
-  // sitting inside one long `text_editor_code_execution` tool call for
-  // 5+ min (which happens routinely with the newer combined editor)
-  // makes the client-side stuck-detector fire a false alarm. We don't
-  // change `phase_detail` here so the UI text stays correct; just bump
-  // updated_at via a no-op patch.
-  const HEARTBEAT_INTERVAL_MS = 30_000;
-  const heartbeat = setInterval(() => {
-    void updateRecord({}).catch((err) => {
-      console.warn(`[run] heartbeat update failed (non-fatal): ${(err as Error).message}`);
+    // Surface the plan in the record so it's visible in the Supabase
+    // dashboard for debugging. Truncate to keep the record JSONB small —
+    // the in-memory `planMd` is still passed to Build at full length.
+    await updateRecord({ plan_markdown: planMd.slice(0, 30_000) });
+
+    // ════════════════════════════════════════════════════════════════
+    // PHASE 2 — BUILD
+    // ════════════════════════════════════════════════════════════════
+    const buildUserBlocks: Array<Record<string, unknown>> = [
+      {
+        type: 'text',
+        text:
+          `DESIGN PLAN — execute this faithfully:\n\n` +
+          `${planMd}\n\n` +
+          `---\n\n` +
+          `Slide size: ${size}.\n` +
+          (uploadedAttachments.length > 0
+            ? `Attachments mounted at /mnt/user-data/uploads/:\n${uploadedAttachments
+                .map((u) => `  • ${u.name} (${u.mimeType})`)
+                .join('\n')}\n`
+            : '') +
+          `\nBuild the .pptx now. Save it to /mnt/user-data/outputs/wassel-deck-<unix_ms>.pptx, then return it via the ${B64_MARKER_START} / ${B64_MARKER_END} base64 sentinel.`,
+      },
+      ...containerUploads,
+    ];
+
+    const buildResp = await runAnthropicStream({
+      anthropic,
+      label: 'build',
+      phaseDetailUi: 'building slides…',
+      updateRecord,
+      streamParams: {
+        model,
+        max_tokens: 32_000,
+        ...(model === 'claude-opus-4-7'
+          ? { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }
+          : {}),
+        betas: ANTHROPIC_BETAS,
+        container: {
+          skills: [
+            { type: 'custom', skill_id: env.ANTHROPIC_WASSEL_SKILL_ID, version: 'latest' },
+          ],
+        },
+        system: buildBuildSystemPrompt({
+          size,
+          attachments: uploadedAttachments.map((u) => ({ name: u.name, mimeType: u.mimeType })),
+        }),
+        messages: [{ role: 'user', content: buildUserBlocks }],
+        tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
+      },
     });
-  }, HEARTBEAT_INTERVAL_MS);
 
-  try {
-    for await (const event of turn) {
-      eventCount++;
-      lastEventType = event.type;
-      if (eventCount === 1) {
-        console.log(
-          `[run] stream-first-event type=${event.type} elapsed_ms=${Date.now() - iterStartedAtMs}`,
-        );
-      }
-      if (eventCount % 50 === 0) {
-        console.log(
-          `[run] stream-progress events=${eventCount} last_type=${event.type} elapsed_ms=${Date.now() - iterStartedAtMs}`,
-        );
-      }
-      captureFileId(event);
-      if (event.type === 'content_block_start') {
-        const cb = (event as unknown as { content_block?: { type?: string; name?: string } })
-          .content_block;
-        const cbType = cb?.type ?? 'unknown';
-        console.log(`[run] content_block_start type=${cbType} name=${cb?.name ?? 'n/a'}`);
-        if (cbType === 'server_tool_use') {
-          await tryWritePhaseDetail(`tool: ${cb?.name ?? 'unknown'}`);
-        }
-      }
-      if (event.type === 'message_stop' || event.type === 'error') {
-        console.log(`[run] stream-terminal type=${event.type}`);
-      }
+    let extracted = extractPptxFromContent(buildResp.content);
+
+    // Files API fallback if the base64 sentinel didn't fire.
+    if (!extracted && buildResp.outputFileId) {
+      console.log('[run][build] no base64 bytes, downloading by captured file_id');
+      const meta = await anthropic.beta.files.retrieveMetadata(buildResp.outputFileId);
+      const dlResponse = await anthropic.beta.files.download(buildResp.outputFileId);
+      const arrayBuffer = await dlResponse.arrayBuffer();
+      extracted = {
+        bytes: new Uint8Array(arrayBuffer),
+        filename: meta.filename ?? null,
+      };
+    } else if (!extracted) {
+      // Last resort: scan recent Files API entries.
+      const scanned = await scanFilesApiForRecentPptx(anthropic);
+      if (scanned) extracted = scanned;
+    }
+
+    if (!extracted) {
+      throw buildNoFileIdError(buildResp.content);
     }
     console.log(
-      `[run] stream-iter-done events=${eventCount} last_type=${lastEventType ?? 'none'} elapsed_ms=${Date.now() - iterStartedAtMs}`,
+      `[run][build] bytes=${extracted.bytes.byteLength} filename=${extracted.filename ?? '(unset)'}`,
     );
-  } catch (streamErr) {
-    const msg = streamErr instanceof Error ? streamErr.message : String(streamErr);
-    console.error(
-      `[run] stream-iter-FAIL events=${eventCount} last_type=${lastEventType ?? 'none'} elapsed_ms=${Date.now() - iterStartedAtMs} error=${msg}`,
+
+    let finalBytes = extracted.bytes;
+    let finalFilename = (extracted.filename ?? `wassel-deck-${Date.now()}.pptx`).replace(
+      /[^\w\-. ]/g,
+      '_',
     );
-    throw streamErr;
-  } finally {
-    // The for-await above is where the worker blocks the longest (often
-    // 3-10 min) — that's where the heartbeat earns its keep. After this
-    // point the remaining steps (finalMessage, byte extraction, storage
-    // upload, sign URL, record save) are all fast (~10-60s combined),
-    // so it's safe to drop the heartbeat here. Doing this in `finally`
-    // guarantees we never leak an interval, even on early throws inside
-    // the loop.
-    clearInterval(heartbeat);
-  }
+    let buildFileId: string | null = buildResp.outputFileId;
 
-  console.log(`[run] final-message-start`);
-  const finalStartedAtMs = Date.now();
-  const response = await turn.finalMessage();
-  console.log(
-    `[run] final-message-OK elapsed_ms=${Date.now() - finalStartedAtMs} blocks=${response.content.length}`,
-  );
-  captureFileId(response.content);
+    // ════════════════════════════════════════════════════════════════
+    // PHASE 3 — REVIEW (optional, non-fatal on failure)
+    // ════════════════════════════════════════════════════════════════
+    if (env.ANTHROPIC_WASSEL_REVIEW_SKILL_ID) {
+      try {
+        // Upload the built .pptx to Anthropic so the review call can
+        // mount it in the sandbox.
+        const builtFile = new File([finalBytes], finalFilename, { type: PPTX_MIME });
+        const builtUpload = await (anthropic.beta.files as unknown as {
+          upload: (a: Record<string, unknown>) => Promise<{ id: string; filename?: string }>;
+        }).upload({ file: builtFile, betas: ANTHROPIC_BETAS });
+        console.log(`[run][review] uploaded built pptx file_id=${builtUpload.id}`);
 
-  // ── Extract bytes from bash stdout base64 sentinel channel ──────────
-  let extractedBytes: Uint8Array | null = null;
-  let extractedFilename: string | null = null;
-  for (const block of response.content) {
-    const b = block as { type?: string; content?: unknown };
-    if (b.type !== 'bash_code_execution_tool_result') continue;
-    const stdout = ((b.content as { stdout?: string } | undefined)?.stdout) ?? '';
-    const start = stdout.indexOf(B64_MARKER_START);
-    const end = stdout.indexOf(B64_MARKER_END);
-    if (start === -1 || end === -1 || end <= start) continue;
-    const lineEnd = stdout.indexOf('\n', start);
-    if (lineEnd === -1) continue;
-    const b64 = stdout.slice(lineEnd + 1, end).replace(/\s+/g, '');
-    if (b64.length < 100) continue;
-    try {
-      const buf = Buffer.from(b64, 'base64');
-      const out = new Uint8Array(buf);
-      // .pptx files start with PK\x03\x04 (zip magic).
-      if (
-        out.length >= 4 &&
-        out[0] === 0x50 &&
-        out[1] === 0x4b &&
-        out[2] === 0x03 &&
-        out[3] === 0x04
-      ) {
-        extractedBytes = out;
-        console.log(`[run] extracted ${out.byteLength} bytes from bash stdout via base64 markers`);
-      } else {
-        console.warn(
-          `[run] base64 decoded ${out.byteLength} bytes but missing PK zip magic — discarding`,
+        const reviewUserBlocks: Array<Record<string, unknown>> = [
+          {
+            type: 'text',
+            text:
+              `The deck built in the previous step is mounted at /mnt/user-data/uploads/${finalFilename}.\n\n` +
+              `Run the wassel-deck-review skill with fix=True and return the reviewed .pptx via the ${B64_MARKER_START} / ${B64_MARKER_END} base64 sentinel. Don't redesign — just apply the auto-patches.`,
+          },
+          {
+            type: 'container_upload',
+            file_id: builtUpload.id,
+          },
+        ];
+
+        const reviewResp = await runAnthropicStream({
+          anthropic,
+          label: 'review',
+          phaseDetailUi: 'reviewing & auto-patching…',
+          updateRecord,
+          streamParams: {
+            model,
+            max_tokens: 16_000,
+            ...(model === 'claude-opus-4-7'
+              ? { thinking: { type: 'adaptive' }, output_config: { effort: 'high' } }
+              : {}),
+            betas: ANTHROPIC_BETAS,
+            container: {
+              skills: [
+                {
+                  type: 'custom',
+                  skill_id: env.ANTHROPIC_WASSEL_REVIEW_SKILL_ID,
+                  version: 'latest',
+                },
+              ],
+            },
+            system: buildReviewSystemPrompt({ inputFilename: finalFilename }),
+            messages: [{ role: 'user', content: reviewUserBlocks }],
+            tools: [{ type: 'code_execution_20250825', name: 'code_execution' }],
+          },
+        });
+
+        const reviewed = extractPptxFromContent(reviewResp.content);
+        if (reviewed) {
+          finalBytes = reviewed.bytes;
+          finalFilename = (
+            reviewed.filename ?? finalFilename.replace(/\.pptx$/i, '_reviewed.pptx')
+          ).replace(/[^\w\-. ]/g, '_');
+          if (reviewResp.outputFileId) buildFileId = reviewResp.outputFileId;
+          console.log(
+            `[run][review] reviewed bytes=${finalBytes.byteLength} filename=${finalFilename}`,
+          );
+        } else {
+          console.warn(
+            `[run][review] no reviewed bytes returned — shipping unreviewed build`,
+          );
+        }
+      } catch (reviewErr) {
+        // Review failures are NON-FATAL — we still have a perfectly good
+        // unreviewed build. Log loudly and ship it.
+        console.error(
+          `[run][review] review phase failed (non-fatal — shipping unreviewed build): ${(reviewErr as Error).message}`,
         );
       }
-      break;
-    } catch (e) {
-      console.error('[run] base64 decode failed:', e);
+    } else {
+      console.log(`[run] review skill not configured; shipping unreviewed build`);
     }
-  }
-  if (extractedBytes) {
-    let reviewedName: string | null = null;
-    let rawName: string | null = null;
-    for (const block of response.content) {
-      const b = block as { type?: string; content?: unknown };
-      const stdout = ((b.content as { stdout?: string } | undefined)?.stdout) ?? '';
-      if (!reviewedName) {
-        const m = stdout.match(/wassel-deck-\d+_reviewed\.pptx/);
-        if (m) reviewedName = m[0];
-      }
-      if (!rawName) {
-        const m = stdout.match(/wassel-deck-\d+(?!_reviewed)\.pptx/);
-        if (m) rawName = m[0];
-      }
-      if (reviewedName) break;
-    }
-    extractedFilename = reviewedName ?? rawName;
-  }
 
-  // ── Files API fallback ──────────────────────────────────────────────
-  if (!outputFileId && !extractedBytes) {
-    console.log('[run] no file_id in response, scanning Files API');
-    const scanFilesApi = async () => {
-      const candidates: Array<{ id: string; filename: string; created_at: string }> = [];
-      const listIter = (anthropic.beta.files as unknown as {
-        list: (args: Record<string, unknown>) => AsyncIterable<{
+    // ════════════════════════════════════════════════════════════════
+    // Upload to Supabase + sign URL + write ready (unchanged from 1-call)
+    // ════════════════════════════════════════════════════════════════
+    await updateRecord({
+      phase: 'uploading',
+      phase_detail: `${(finalBytes.byteLength / 1024).toFixed(0)} KB`,
+    });
+    const path = `${job.userId}/${job.deckRecordId}/${finalFilename}`;
+
+    const withTimeout = async <T>(label: string, ms: number, p: Promise<T>): Promise<T> => {
+      return Promise.race([
+        p,
+        new Promise<T>((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+        ),
+      ]);
+    };
+
+    console.log(`[run] storage-upload-start path=${path}`);
+    const uploadStartedAt = Date.now();
+    const { error: uploadErr } = await withTimeout(
+      'storage upload',
+      60_000,
+      supabase.storage.from(STORAGE_BUCKET).upload(path, finalBytes, {
+        contentType: PPTX_MIME,
+        upsert: true,
+      }),
+    );
+    if (uploadErr) {
+      console.error(`[run] storage-upload-FAIL path=${path} error=${uploadErr.message}`);
+      throw new Error(`Storage upload failed: ${uploadErr.message}`);
+    }
+    console.log(`[run] storage-upload-OK path=${path} elapsed_ms=${Date.now() - uploadStartedAt}`);
+
+    await updateRecord({ phase: 'finalizing' });
+
+    console.log(`[run] sign-url-start`);
+    const signStartedAt = Date.now();
+    const { data: signed, error: signErr } = await withTimeout(
+      'signed URL creation',
+      15_000,
+      supabase.storage.from(STORAGE_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SECONDS),
+    );
+    if (signErr || !signed) {
+      console.error(`[run] sign-url-FAIL error=${signErr?.message ?? 'unknown'}`);
+      throw new Error(`signed URL creation failed: ${signErr?.message ?? 'unknown'}`);
+    }
+    console.log(`[run] sign-url-OK elapsed_ms=${Date.now() - signStartedAt}`);
+
+    console.log(`[run] record-save-ready-start`);
+    const recordStartedAt = Date.now();
+    await withTimeout(
+      'record_save (ready)',
+      15_000,
+      updateRecord({
+        status: 'ready',
+        phase: null,
+        phase_detail: null,
+        file_url: signed.signedUrl,
+        file_path: path,
+        filename: finalFilename,
+        anthropic_file_id: buildFileId,
+        error_message: null,
+      }),
+    );
+    console.log(
+      `[run] record-save-ready-OK elapsed_ms=${Date.now() - recordStartedAt} record=${job.deckRecordId}`,
+    );
+    console.log(`[run] DONE record=${job.deckRecordId} filename=${finalFilename}`);
+  } // end runGeneration()
+} // end runDeckJob()
+
+// ═══════════════════════════════════════════════════════════════════════
+// Per-attachment helpers (kept outside runGeneration so they're easier to
+// reason about; pass-through of the closures they need).
+// ═══════════════════════════════════════════════════════════════════════
+
+async function uploadAttachmentsToAnthropic(args: {
+  anthropic: Anthropic;
+  supabase: SupabaseClient;
+  attachments: ReadonlyArray<DeckAttachmentRef>;
+  updateRecord: (patch: Record<string, unknown>) => Promise<void>;
+}): Promise<UploadedAttachment[]> {
+  const { anthropic, supabase, attachments, updateRecord } = args;
+  if (attachments.length === 0) return [];
+  await updateRecord({
+    phase: 'calling-claude',
+    phase_detail: `uploading ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}…`,
+  });
+  const uploads = await Promise.all(
+    attachments.map(async (att): Promise<UploadedAttachment> => {
+      const { data: blob, error: dlErr } = await supabase.storage
+        .from(STORAGE_BUCKET)
+        .download(att.path);
+      if (dlErr || !blob) {
+        throw new Error(
+          `Failed to read attachment "${att.name}" from storage: ${dlErr?.message ?? 'unknown'}`,
+        );
+      }
+      const arrayBuf = await blob.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      const mimeType = att.mimeType || (blob.type ?? 'application/octet-stream');
+      // Wrap bytes in Uint8Array — Node's File constructor expects
+      // BinaryLike; older @types/node releases don't accept raw
+      // ArrayBuffer. Uint8Array is unambiguously accepted.
+      const file = new File([bytes], att.name, { type: mimeType });
+      const uploaded = await (anthropic.beta.files as unknown as {
+        upload: (a: Record<string, unknown>) => Promise<{
           id: string;
           filename?: string;
-          created_at?: string;
           size_bytes?: number;
         }>;
-      }).list({ limit: 30 });
-      for await (const f of listIter) {
-        const ts = f.created_at ? new Date(f.created_at).getTime() : 0;
-        if (ts >= requestStartedAtMs && (f.filename ?? '').endsWith('.pptx')) {
-          candidates.push({
-            id: f.id,
-            filename: f.filename ?? `deck-${Date.now()}.pptx`,
-            created_at: f.created_at ?? '',
-          });
-        }
-      }
-      candidates.sort((a, b) => b.created_at.localeCompare(a.created_at));
-      return candidates;
-    };
-    try {
-      for (let attempt = 0; attempt < 3 && !outputFileId; attempt++) {
-        if (attempt > 0) {
-          console.log(`[run] fallback retry ${attempt + 1}/3 after 2s`);
-          await new Promise((r) => setTimeout(r, 2000));
-        }
-        const candidates = await scanFilesApi();
-        console.log(`[run] fallback attempt ${attempt + 1}: ${candidates.length} candidates`);
-        if (candidates.length > 0 && candidates[0]) {
-          outputFileId = candidates[0].id;
-          console.log(
-            `[run] fallback recovered file_id=${outputFileId} filename=${candidates[0].filename}`,
-          );
-          break;
-        }
-      }
-    } catch (listErr) {
-      console.error('[run] Files API list fallback failed:', listErr);
-    }
-  }
-
-  if (!outputFileId && !extractedBytes) {
-    const stopReason = (response as unknown as { stop_reason?: string }).stop_reason;
-    const lastText = response.content
-      .filter((b) => (b as { type?: string }).type === 'text')
-      .map((b) => (b as { text?: string }).text ?? '')
-      .pop();
-    let lastBash: { stdout?: string; stderr?: string; return_code?: number } | null = null;
-    for (const b of response.content) {
-      const bb = b as {
-        type?: string;
-        content?: { stdout?: string; stderr?: string; return_code?: number } | unknown;
+      }).upload({ file, betas: ANTHROPIC_BETAS });
+      return {
+        fileId: uploaded.id,
+        name: att.name,
+        mimeType,
+        sizeBytes: arrayBuf.byteLength,
+        pdfBytes: mimeType === 'application/pdf' ? bytes : null,
       };
-      if (bb.type === 'bash_code_execution_tool_result' && bb.content && typeof bb.content === 'object') {
-        lastBash = bb.content as { stdout?: string; stderr?: string; return_code?: number };
-      }
-    }
-    if (stopReason === 'max_tokens') {
-      throw new Error(
-        `Claude ran out of output tokens before saving the .pptx. Try a shorter brief.\n\nLast note: ${lastText ?? '(empty)'}`,
-      );
-    }
-    const lines: string[] = [
-      `Claude finished without surfacing a file_id (Anthropic-side intermittent issue with Skills + code_execution).`,
-      ``,
-      `stop_reason: ${stopReason ?? 'unknown'}`,
-      ``,
-      `Claude's final note:`,
-      lastText ?? '(empty)',
-    ];
-    if (lastBash) {
-      lines.push(``, `Last bash result: rc=${lastBash.return_code ?? '?'}`);
-      if (lastBash.stdout) lines.push(`stdout: ${lastBash.stdout.slice(0, 600)}`);
-      if (lastBash.stderr) lines.push(`stderr: ${lastBash.stderr.slice(0, 600)}`);
-    }
-    lines.push(``, `Try clicking "إعادة المحاولة" again — this is intermittent and usually works on the second or third try.`);
-    throw new Error(lines.join('\n'));
-  }
-
-  // ── Source the bytes ────────────────────────────────────────────────
-  let bytes: Uint8Array;
-  let filename: string;
-  if (extractedBytes) {
-    bytes = extractedBytes;
-    filename = (extractedFilename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
-    console.log(`[run] source-bytes route=base64 size=${bytes.byteLength}B filename=${filename}`);
-    await updateRecord({
-      phase: 'uploading',
-      phase_detail: `${(bytes.byteLength / 1024).toFixed(0)} KB (via base64 stream)`,
-    });
-  } else if (outputFileId) {
-    await updateRecord({ phase: 'downloading' });
-    console.log(`[run] files-api-download file_id=${outputFileId}`);
-    const meta = await anthropic.beta.files.retrieveMetadata(outputFileId);
-    const dlResponse = await anthropic.beta.files.download(outputFileId);
-    const arrayBuffer = await dlResponse.arrayBuffer();
-    bytes = new Uint8Array(arrayBuffer);
-    filename = (meta.filename ?? `wassel-deck-${Date.now()}.pptx`).replace(/[^\w\-. ]/g, '_');
-    console.log(`[run] source-bytes route=files-api size=${bytes.byteLength}B filename=${filename}`);
-    await updateRecord({
-      phase: 'uploading',
-      phase_detail: `${(bytes.byteLength / 1024).toFixed(0)} KB`,
-    });
-  } else {
-    throw new Error('internal: reached upload branch without bytes or file_id');
-  }
-  const path = `${job.userId}/${job.deckRecordId}/${filename}`;
-
-  // ── Upload to Supabase Storage ──────────────────────────────────────
-  const withTimeout = async <T>(label: string, ms: number, p: Promise<T>): Promise<T> => {
-    return Promise.race([
-      p,
-      new Promise<T>((_, reject) =>
-        setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
-      ),
-    ]);
-  };
-
-  console.log(`[run] storage-upload-start path=${path}`);
-  const uploadStartedAt = Date.now();
-  const { error: uploadErr } = await withTimeout(
-    'storage upload',
-    60_000,
-    supabase.storage.from(STORAGE_BUCKET).upload(path, bytes, {
-      contentType: PPTX_MIME,
-      upsert: true,
-    }),
-  );
-  if (uploadErr) {
-    console.error(`[run] storage-upload-FAIL path=${path} error=${uploadErr.message}`);
-    throw new Error(`Storage upload failed: ${uploadErr.message}`);
-  }
-  console.log(`[run] storage-upload-OK path=${path} elapsed_ms=${Date.now() - uploadStartedAt}`);
-
-  await updateRecord({ phase: 'finalizing' });
-
-  console.log(`[run] sign-url-start`);
-  const signStartedAt = Date.now();
-  const { data: signed, error: signErr } = await withTimeout(
-    'signed URL creation',
-    15_000,
-    supabase.storage.from(STORAGE_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_SECONDS),
-  );
-  if (signErr || !signed) {
-    console.error(`[run] sign-url-FAIL error=${signErr?.message ?? 'unknown'}`);
-    throw new Error(`signed URL creation failed: ${signErr?.message ?? 'unknown'}`);
-  }
-  console.log(`[run] sign-url-OK elapsed_ms=${Date.now() - signStartedAt}`);
-
-  // ── Write ready state ───────────────────────────────────────────────
-  console.log(`[run] record-save-ready-start`);
-  const recordStartedAt = Date.now();
-  await withTimeout(
-    'record_save (ready)',
-    15_000,
-    updateRecord({
-      status: 'ready',
-      phase: null,
-      phase_detail: null,
-      file_url: signed.signedUrl,
-      file_path: path,
-      filename,
-      anthropic_file_id: outputFileId,
-      error_message: null,
     }),
   );
   console.log(
-    `[run] record-save-ready-OK elapsed_ms=${Date.now() - recordStartedAt} record=${job.deckRecordId}`,
+    `[run] uploaded ${uploads.length} attachment(s) to Anthropic Files API: ${uploads.map((u) => u.fileId).join(', ')}`,
   );
-  console.log(`[run] DONE record=${job.deckRecordId} filename=${filename}`);
-  } // end runGeneration()
-} // end runDeckJob()
+  return uploads;
+}
+
+async function renderPdfPageImageBlocks(args: {
+  anthropic: Anthropic;
+  supabase: SupabaseClient;
+  uploadedAttachments: UploadedAttachment[];
+  job: DeckJob;
+  updateRecord: (patch: Record<string, unknown>) => Promise<void>;
+}): Promise<Array<Record<string, unknown>>> {
+  const { anthropic, supabase, uploadedAttachments, job, updateRecord } = args;
+  const blocks: Array<Record<string, unknown>> = [];
+  const pdfAttachments = uploadedAttachments.filter((a) => a.pdfBytes !== null);
+  if (pdfAttachments.length === 0) return blocks;
+  await updateRecord({
+    phase: 'calling-claude',
+    phase_detail: `rendering PDF pages…`,
+  });
+  for (const pdf of pdfAttachments) {
+    const startedAt = Date.now();
+    try {
+      const pages = await pdfToImages(pdf.pdfBytes!, {
+        maxPages: MAX_PDF_PAGES_AS_IMAGES,
+        oversampleStrategy: 'first',
+      });
+      // Upload each page-PNG to Anthropic Files API in parallel.
+      // Inline base64 blew past the 32 MB HTTP body cap; Files API has a
+      // 5 MB per-image cap that all our realistic pages fit under.
+      const pageUploads = await Promise.all(
+        pages.map(async (page) => {
+          const file = new File([page.bytes], page.filename, { type: 'image/png' });
+          const uploaded = await (anthropic.beta.files as unknown as {
+            upload: (a: Record<string, unknown>) => Promise<{ id: string }>;
+          }).upload({ file, betas: ANTHROPIC_BETAS });
+          return uploaded.id;
+        }),
+      );
+      for (const fileId of pageUploads) {
+        blocks.push({ type: 'image', source: { type: 'file', file_id: fileId } });
+      }
+      console.log(
+        `[run] rendered ${pages.length} page(s) from ${pdf.name} (${pdf.sizeBytes}B), ` +
+          `uploaded as ${pageUploads.length} file(s) — total ${Date.now() - startedAt}ms`,
+      );
+
+      // Best-effort: store rendered pages in Supabase so the user can
+      // verify what Claude actually saw. Failure logged, not fatal.
+      const pdfBaseName = pdf.name.replace(/\.pdf$/i, '').replace(/[^\w\-. ]/g, '_');
+      const pagesPathPrefix = `${job.userId}/${job.deckRecordId}/pdf-pages/${pdfBaseName}`;
+      await Promise.all(
+        pages.map(async (page) => {
+          const path = `${pagesPathPrefix}/${page.filename}`;
+          const { error } = await supabase.storage
+            .from(STORAGE_BUCKET)
+            .upload(path, page.bytes, { contentType: 'image/png', upsert: true });
+          if (error) {
+            console.warn(
+              `[run] pdf-page upload failed for ${path} (non-fatal): ${error.message}`,
+            );
+          }
+        }),
+      );
+      console.log(`[run] saved ${pages.length} rendered page(s) to ${pagesPathPrefix}/`);
+    } catch (err) {
+      // Non-fatal — the PDF is still in the sandbox via container_upload
+      // and Claude can still build from text extraction.
+      console.error(
+        `[run] pdfToImages failed for ${pdf.name} (non-fatal — sandbox still has the PDF): ${(err as Error).message}`,
+      );
+    } finally {
+      // Free the captured bytes — not needed after rendering.
+      pdf.pdfBytes = null;
+    }
+  }
+  return blocks;
+}
+
+/**
+ * Last-resort scan of recent Anthropic Files entries for a .pptx we lost
+ * track of (the captured file_id was missing and the base64 sentinel
+ * didn't fire). Used by the Build phase only; review never lands here
+ * because review failures are non-fatal.
+ */
+async function scanFilesApiForRecentPptx(
+  anthropic: Anthropic,
+): Promise<{ bytes: Uint8Array; filename: string } | null> {
+  // Look back 1 hour to cover even the slowest deck runs.
+  const sinceMs = Date.now() - 60 * 60 * 1000;
+  const candidates: Array<{ id: string; filename: string; created_at: string }> = [];
+  try {
+    const listIter = (anthropic.beta.files as unknown as {
+      list: (a: Record<string, unknown>) => AsyncIterable<{
+        id: string;
+        filename?: string;
+        created_at?: string;
+      }>;
+    }).list({ limit: 30 });
+    for await (const f of listIter) {
+      const ts = f.created_at ? new Date(f.created_at).getTime() : 0;
+      if (ts >= sinceMs && (f.filename ?? '').endsWith('.pptx')) {
+        candidates.push({
+          id: f.id,
+          filename: f.filename ?? `deck-${Date.now()}.pptx`,
+          created_at: f.created_at ?? '',
+        });
+      }
+    }
+    candidates.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    const top = candidates[0];
+    if (!top) return null;
+    console.log(`[run] fallback recovered file_id=${top.id} filename=${top.filename}`);
+    const dl = await anthropic.beta.files.download(top.id);
+    const buf = await dl.arrayBuffer();
+    return { bytes: new Uint8Array(buf), filename: top.filename };
+  } catch (e) {
+    console.error('[run] Files API list fallback failed:', e);
+    return null;
+  }
+}
+
+/**
+ * Build the user-facing error when Build finishes with no .pptx in any
+ * channel. Includes Claude's final note + last bash result to make
+ * troubleshooting from a screenshot possible.
+ */
+function buildNoFileIdError(content: unknown[]): Error {
+  const lastText = content
+    .filter((b) => (b as { type?: string }).type === 'text')
+    .map((b) => (b as { text?: string }).text ?? '')
+    .pop();
+  let lastBash: { stdout?: string; stderr?: string; return_code?: number } | null = null;
+  for (const b of content) {
+    const bb = b as {
+      type?: string;
+      content?: { stdout?: string; stderr?: string; return_code?: number } | unknown;
+    };
+    if (
+      bb.type === 'bash_code_execution_tool_result' &&
+      bb.content &&
+      typeof bb.content === 'object'
+    ) {
+      lastBash = bb.content as { stdout?: string; stderr?: string; return_code?: number };
+    }
+  }
+  const lines: string[] = [
+    `Build phase finished without surfacing a .pptx (no base64 sentinel, no captured file_id, no recent Files-API candidate).`,
+    ``,
+    `Claude's final note:`,
+    lastText ?? '(empty)',
+  ];
+  if (lastBash) {
+    lines.push(``, `Last bash result: rc=${lastBash.return_code ?? '?'}`);
+    if (lastBash.stdout) lines.push(`stdout: ${lastBash.stdout.slice(0, 600)}`);
+    if (lastBash.stderr) lines.push(`stderr: ${lastBash.stderr.slice(0, 600)}`);
+  }
+  lines.push(
+    ``,
+    `Try clicking "إعادة المحاولة" again — this is intermittent and usually works on the second or third try.`,
+  );
+  return new Error(lines.join('\n'));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Error humanization — extended for the 3-phase pipeline.
+// ═══════════════════════════════════════════════════════════════════════
 
 /**
  * Translate raw worker error messages to human-readable text for the UI's
  * red error box. The user is expected to read this and decide what to do
- * (try a smaller file, shorten the brief, etc.) — raw Anthropic JSON
- * blobs are useless for that. Always include the original wording at the
- * end so we can debug from a screenshot.
+ * (try a smaller file, shorten the brief, etc.). Always include the
+ * original wording at the end so we can debug from a screenshot.
  */
 function humanizeErrorMessage(raw: string): string {
   // 1) Anthropic returns a JSON-string error like:
   //    {"type":"error","error":{"type":"invalid_request_error",
   //     "message":"prompt is too long: 1021176 tokens > 1000000 maximum"}}
-  // Try to parse out the inner message + type.
   let inner: { type?: string; message?: string } | null = null;
   const jsonStart = raw.indexOf('{');
   if (jsonStart !== -1) {
@@ -872,36 +1183,40 @@ function humanizeErrorMessage(raw: string): string {
         inner = parsed.error as { type?: string; message?: string };
       }
     } catch {
-      // Not JSON — fall through to string matching below.
+      // Not JSON — fall through.
     }
   }
 
   const lowerMsg = (inner?.message ?? raw).toLowerCase();
 
-  // 2) Specific case: prompt-too-long (the 1M-token context limit). Almost
-  //    always caused by a large image-heavy PDF or a deck brief with too
-  //    many huge attachments.
+  // 2) prompt-too-long. With the 3-phase pipeline this is rarer (each
+  //    phase has its own 1M budget) but still possible on extreme
+  //    attachments.
   if (lowerMsg.includes('prompt is too long')) {
     const toksMatch = lowerMsg.match(/(\d+)\s*tokens?\s*>/);
     const overBy = toksMatch
       ? ` (${parseInt(toksMatch[1]!, 10).toLocaleString()} tokens, ~${Math.round((parseInt(toksMatch[1]!, 10) - 1_000_000) / 1000)}k over the 1M limit)`
       : '';
     return [
-      `Your attachments are too large to fit in Claude's context window${overBy}.`,
+      `One phase of the deck pipeline exceeded Claude's context window${overBy}.`,
+      ``,
+      `The pipeline already splits the work across plan / build / review calls; if a single phase still overflows, the brief or an attachment is unusually large.`,
       ``,
       `Try one of:`,
       `  • Upload a shorter PDF (fewer pages, or a lower-resolution export).`,
       `  • Drop the PDF entirely and describe the brochure in the brief instead.`,
       `  • If you have multiple attachments, remove the largest one and try again.`,
       ``,
-      `Note: PDF page-images are capped at 20 pages — beyond that, additional pages aren't sent to Claude visually (the PDF is still in the sandbox for text extraction).`,
-      ``,
       `Original error: ${inner?.message ?? raw}`,
     ].join('\n');
   }
 
-  // 3) Specific case: rate limit.
-  if (lowerMsg.includes('rate_limit') || lowerMsg.includes('rate limit') || lowerMsg.includes('429')) {
+  // 3) Rate limit.
+  if (
+    lowerMsg.includes('rate_limit') ||
+    lowerMsg.includes('rate limit') ||
+    lowerMsg.includes('429')
+  ) {
     return [
       `Anthropic rate-limited this request. Other decks are running in parallel.`,
       `Wait 30-60 seconds and click Try Again — it usually clears on the next attempt.`,
@@ -910,22 +1225,32 @@ function humanizeErrorMessage(raw: string): string {
     ].join('\n');
   }
 
-  // 4) Specific case: max_tokens. Claude ran out of output tokens before
-  //    finishing the .pptx. Already has a friendly message at the throw
-  //    site — pass through.
+  // 4) max_tokens — runGeneration's own message is already user-readable.
   if (lowerMsg.includes('ran out of output tokens')) {
     return raw;
   }
 
-  // 5) Specific case: no file_id surfaced (the original message from
-  //    runGeneration includes its own user-readable guidance). Pass through.
-  if (raw.includes('Claude finished without surfacing a file_id')) {
+  // 5) Build phase no-output — already user-readable.
+  if (raw.includes('Build phase finished without surfacing a .pptx')) {
     return raw;
   }
 
-  // 6) Specific case: Storage upload / signed URL failures — operational,
-  //    not user-actionable. Surface verbatim so admin can debug.
-  if (raw.startsWith('Storage upload failed') || raw.startsWith('signed URL creation failed')) {
+  // 6) Plan phase returned nothing usable.
+  if (raw.includes('Plan phase returned no usable plan')) {
+    return [
+      `The planning phase didn't produce a usable design plan.`,
+      ``,
+      `This is usually intermittent — click Try Again. If it persists, try a more specific brief (mention the project type, audience, key data points).`,
+      ``,
+      `Original error: ${raw}`,
+    ].join('\n');
+  }
+
+  // 7) Storage / signed URL — operational, surface verbatim.
+  if (
+    raw.startsWith('Storage upload failed') ||
+    raw.startsWith('signed URL creation failed')
+  ) {
     return [
       `Saving the generated deck to storage failed. This is a server-side issue, not your input.`,
       `Please try again in a minute; if it persists, ping admin.`,
@@ -934,8 +1259,6 @@ function humanizeErrorMessage(raw: string): string {
     ].join('\n');
   }
 
-  // 7) Default: prepend a one-liner and include the raw error so the user
-  //    at least sees the original Anthropic/Supabase/etc. text for
-  //    troubleshooting.
+  // 8) Default.
   return `Deck generation failed: ${inner?.message ?? raw}`;
 }
