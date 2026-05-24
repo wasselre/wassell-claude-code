@@ -602,12 +602,30 @@ async function supabaseUpsert(
     try {
       // Supabase's .upsert() accepts a record-shaped object; the cast
       // here mirrors the cast-once pattern.
-      const { error } = await supabase!.from(table).upsert(rowReadable);
+      //
+      // Ask for `.select()` back so we can detect the silent-RLS-denial
+      // case: PostgREST does NOT raise an error when an UPDATE's USING
+      // clause filters the row out — it returns 200 OK with zero rows
+      // affected. This is exactly how the 2026-05-06 auth_uid binding
+      // deadlock hid for 18 days. Surfacing zero-rows as a loud error
+      // forces the same class of bug to fail loudly next time, in line
+      // with CLAUDE.md → "Silent Failures".
+      const { data, error } = await supabase!.from(table).upsert(rowReadable).select();
       if (error) {
         reportSupabaseError(table, 'upsert', error.message ?? String(error));
         // Queue for retry on next initialize so the local edit isn't lost
         // when Supabase load runs and overwrites localStorage.
         enqueuePendingWrite({ op: 'upsert', table, row, parent });
+      } else if (id && (!data || data.length === 0)) {
+        // RLS silently filtered the upsert. Don't enqueue — a retry
+        // won't help if the policy is what's denying. Surface so the
+        // user knows the write didn't land, and the dev can fix the
+        // RLS policy (or the caller's assumption).
+        reportSupabaseError(
+          table,
+          'upsert',
+          `RLS silently filtered the upsert on ${table}/${id} (0 rows returned). The write did not land. Check the table's RLS policies — this is the class of bug that hid the auth_uid deadlock from 2026-05-06 to 2026-05-24.`,
+        );
       } else if (id) {
         // Echo dedup: tell the RealtimeOrchestrator this row id was
         // just written by us so it skips the inevitable echo from the
@@ -1606,8 +1624,55 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Helper: persist auth_uid back to the users row the first time we see
     // it. RLS policies key off this column; without it every authenticated
     // query returns an empty set. Idempotent — re-runs are no-ops once set.
-    const bindAuthUidToUser = (user: User): User => {
+    //
+    // Implementation note (fixes the 2026-05-06 regression):
+    // We DELIBERATELY do not call supabaseUpsert here, even though the
+    // local user object has auth_uid populated. The users_write RLS
+    // policy is `USING (wassell_is_admin(...) OR users.auth_uid = ...)`,
+    // and for a brand-new invited user both legs evaluate to false
+    // against the OLD row (NULL auth_uid + not yet admin), so PostgREST
+    // silently filters the UPDATE to zero rows. Instead we call the
+    // SECURITY DEFINER RPC `bind_my_auth_uid()` which runs as the
+    // function owner and bypasses RLS, with its own guards (NULL slot
+    // only, email match against the JWT, is_active = true). See
+    // supabase/migrations/2026-05-24_bind_my_auth_uid.sql.
+    const bindAuthUidToUser = async (user: User): Promise<User> => {
       if (!authUid || user.auth_uid === authUid) return user;
+      // No Supabase client → local-only mode; just mirror the bind
+      // into the in-memory store so frontend permission checks still
+      // resolve. RLS isn't in play here.
+      if (!supabase) {
+        const localOnly: User = {
+          ...user,
+          auth_uid: authUid,
+          updated_at: new Date().toISOString(),
+        };
+        users = users.map((u) => (u.id === localOnly.id ? localOnly : u));
+        saveLocal('wassell_users', users);
+        return localOnly;
+      }
+      const { data: boundId, error } = await supabase.rpc('bind_my_auth_uid');
+      if (error) {
+        reportSupabaseError('users', 'rpc', `bind_my_auth_uid: ${error.message ?? String(error)}`);
+        // Don't return early — keep the local mirror so the rest of
+        // initialize() can resolve currentUserId. Records will still be
+        // empty until the bind succeeds on a future load, but at least
+        // the sidebar / chrome render with the right identity.
+        const localMirror: User = {
+          ...user,
+          auth_uid: authUid,
+          updated_at: new Date().toISOString(),
+        };
+        users = users.map((u) => (u.id === localMirror.id ? localMirror : u));
+        saveLocal('wassell_users', users);
+        return localMirror;
+      }
+      // boundId === null means the JWT email had no match in public.users.
+      // That's an access-denied condition the caller already handles by
+      // setting currentUserId = null further down — nothing extra to do
+      // here. If boundId is set, the row now has auth_uid bound in
+      // Supabase; mirror that into the local store so the rest of the
+      // session is consistent without waiting for a realtime echo.
       const updated: User = {
         ...user,
         auth_uid: authUid,
@@ -1615,11 +1680,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
       users = users.map((u) => (u.id === updated.id ? updated : u));
       saveLocal('wassell_users', users);
-      supabaseUpsert(
-        'users',
-        updated,
-        { table: 'users', id: updated.id },
-      );
+      // Mark the row as recently-written so the realtime echo from the
+      // RPC's UPDATE doesn't trigger a redundant local refresh.
+      markRecentlyWritten('users', updated.id, updated.updated_at);
+      void boundId; // returned for diagnostic / future use
       return updated;
     };
 
@@ -1645,7 +1709,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           );
           return;
         }
-        const bound = bindAuthUidToUser(match);
+        const bound = await bindAuthUidToUser(match);
         currentUserId = bound.id;
       } else {
         // Bootstrap: if the only existing user is the default seed admin,

@@ -98,12 +98,47 @@ Deno.serve(async (req) => {
   // auth.users row (or returns the existing one) and emails them a magic
   // link that lands on `redirect_to` after click. Idempotent — re-inviting
   // an existing user just emails a fresh link.
-  const { error: inviteErr } = await adminClient.auth.admin.inviteUserByEmail(
+  const { data: inviteData, error: inviteErr } = await adminClient.auth.admin.inviteUserByEmail(
     email,
     { redirectTo: redirect },
   );
   if (inviteErr) {
     return json({ ok: false, error: inviteErr.message }, 400);
+  }
+
+  // Atomically bind public.users.auth_uid → auth.users.id while we still
+  // hold service-role access. Without this, the invitee's first sign-in
+  // has to bind itself via the bind_my_auth_uid() RPC — that works too
+  // and is the heal-on-reload path for users invited before this fix
+  // landed, but binding here means the magic link works immediately
+  // without depending on the client running RPC successfully.
+  //
+  // Guard: only fill NULL slots (`.is('auth_uid', null)`). Re-invites
+  // are no-ops on the binding. We never overwrite an existing auth_uid
+  // — that would allow account hijack via a recycled email.
+  //
+  // The match is by email (the only thing public.users + auth.users
+  // share at this point). If the admin hasn't yet created a row in
+  // public.users with this email, the UPDATE touches zero rows and
+  // the invite still works — the user will get an access-denied state
+  // on first sign-in, which is the correct behavior (an admin must
+  // provision them first).
+  const invitedAuthId = inviteData?.user?.id;
+  if (invitedAuthId) {
+    const { error: bindErr } = await adminClient
+      .from("users")
+      .update({ auth_uid: invitedAuthId, updated_at: new Date().toISOString() })
+      .eq("email", email)
+      .is("auth_uid", null);
+    if (bindErr) {
+      // Don't fail the invite over the bind — the magic link is already
+      // out. The bind_my_auth_uid() RPC will heal on first sign-in.
+      // Log so an operator can investigate (visible in Edge Function
+      // logs under the Supabase dashboard).
+      console.error(
+        `invite-user: bind auth_uid failed for ${email} (auth_uid=${invitedAuthId}): ${bindErr.message}`,
+      );
+    }
   }
 
   return json({ ok: true });

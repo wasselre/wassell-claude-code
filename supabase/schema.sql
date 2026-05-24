@@ -459,6 +459,50 @@ DROP POLICY IF EXISTS "Public dashboard read" ON dashboards;
 -- empty DB produces an identical setup. Functions are SECURITY DEFINER
 -- so they read profiles/users from inside an RLS-restricted session.
 
+-- bind_my_auth_uid — closes the chicken-and-egg in the user-binding
+-- flow. Every newly-invited user has users.auth_uid = NULL until first
+-- sign-in. The client cannot UPDATE its own auth_uid because the
+-- users_write policy (USING wassell_is_admin OR users.auth_uid =
+-- auth.uid()) evaluates the OLD row's NULL — both legs fail and the
+-- UPDATE is silently filtered to zero rows. SECURITY DEFINER bypasses
+-- that check by running as the function owner. Guards: caller must
+-- have a session + email claim; we only fill NULL slots (never
+-- overwrite an existing binding, which would allow account hijack via
+-- a recycled email); target row must be active. Idempotent — a re-bind
+-- of an already-bound caller returns the existing id without writing.
+-- Mirrored from supabase/migrations/2026-05-24_bind_my_auth_uid.sql.
+CREATE OR REPLACE FUNCTION public.bind_my_auth_uid()
+RETURNS uuid
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  caller_uid uuid := auth.uid();
+  caller_email text := lower(coalesce((auth.jwt() ->> 'email'), ''));
+  bound_user_id uuid;
+BEGIN
+  IF caller_uid IS NULL THEN
+    RAISE EXCEPTION 'no_session' USING ERRCODE = '28000';
+  END IF;
+  IF caller_email = '' THEN
+    RAISE EXCEPTION 'no_email_claim' USING ERRCODE = '28000';
+  END IF;
+
+  SELECT id INTO bound_user_id FROM public.users
+   WHERE auth_uid = caller_uid AND is_active = true LIMIT 1;
+  IF bound_user_id IS NOT NULL THEN RETURN bound_user_id; END IF;
+
+  UPDATE public.users
+     SET auth_uid = caller_uid, updated_at = now()
+   WHERE auth_uid IS NULL
+     AND lower(email) = caller_email
+     AND is_active = true
+   RETURNING id INTO bound_user_id;
+
+  RETURN bound_user_id;
+END $$;
+REVOKE ALL ON FUNCTION public.bind_my_auth_uid() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.bind_my_auth_uid() FROM anon;
+GRANT  EXECUTE ON FUNCTION public.bind_my_auth_uid() TO authenticated;
+
 CREATE OR REPLACE FUNCTION wassell_app_user_id(auth_user_id UUID)
 RETURNS UUID
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$

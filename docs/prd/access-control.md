@@ -1,8 +1,36 @@
 # PRD: Access Control (Users, Roles, Profiles)
 
 **Status:** Live (user-management feature complete; locked for ~6 months)
-**Last updated:** 2026-05-07
+**Last updated:** 2026-05-24
 **Related PRDs:** model-builder.md, record-management.md, workflow-automation.md, data-storage.md, logs.md
+
+> **2026-05-24 — `auth_uid` binding deadlock fixed.**
+>
+> The Phase 1 (2026-05-06) RLS pass shipped with a chicken-and-egg in the
+> `users_write` policy: `USING (wassell_is_admin(...) OR users.auth_uid =
+> auth.uid())`. A newly-invited user's row has `auth_uid = NULL` and they
+> aren't admin yet, so both legs evaluate false and PostgREST silently
+> filtered their first-sign-in `bindAuthUidToUser` UPDATE to zero rows.
+> From RLS's perspective the user then didn't exist, and every records
+> query returned `[]` — invited users saw empty workspaces for 18 days
+> before this was caught.
+>
+> The fix lands two complementary paths so the same bug can't return
+> through a different door:
+>
+> - **`bind_my_auth_uid()`** — SECURITY DEFINER RPC (`public`) that
+>   atomically binds the caller's `auth.uid()` to the matching
+>   `public.users` row (case-insensitive email match, `auth_uid IS NULL`
+>   guard so existing bindings can't be hijacked, `is_active = true`).
+>   Called from `initialize()` instead of the broken upsert. Heals every
+>   existing broken user on their next page load — no manual SQL needed.
+> - **`invite-user` Edge Function** also binds `auth_uid` atomically via
+>   service role right after `auth.admin.inviteUserByEmail` succeeds.
+>   New invites land pre-bound; the RPC is the heal/backstop path.
+> - **`supabaseUpsert` now detects zero-rows-returned** on an upsert
+>   that targeted a known id and surfaces it as a loud error toast
+>   (CLAUDE.md → "Silent Failures"). The same class of bug now fails
+>   loudly instead of hiding for weeks.
 
 > **2026-05-07 — Production RLS + privilege hardening (Phases A.1, A.4, B.1–B.4, B-followup).**
 >
@@ -137,7 +165,8 @@ Real-estate offices have clear hierarchies (researchers, salespeople, managers, 
 ## Key behaviors
 - **Sign-in ↔ in-app user binding:** Supabase Auth owns credentials and sessions (`src/lib/auth.ts`). After sign-in, `initialize()` in `appStore` matches `session.user.email` (lowercased) against `users.email` and sets `currentUserId`. No match → `currentUserId = null` and the app renders a fail-closed state (permissions evaluate to false). The header shows a read-only name pill when auth is configured; the dev-only dropdown switcher only appears when Supabase is not configured.
 - **First-admin bootstrap:** if a fresh install has exactly one user row AND it is the default seed admin (`admin@wassel.sa`), the first sign-in rewrites that row's email to the signed-in address and claims it. This removes the chicken-and-egg problem for the first admin.
-- **Invite flow:** creating a user in `/settings/users` ships with a "Send invite email" checkbox (checked by default when Supabase is configured). On save, after the `users` row is created, the app calls `supabase.auth.signInWithOtp({ email, shouldCreateUser: true, emailRedirectTo: '<origin>/auth/reset-password' })` which emails the invitee a one-click sign-in link. Clicking it creates the Supabase Auth account (if absent), signs them in, and lands them on `/auth/reset-password` so they pick a password — this turns every subsequent login into a plain email + password flow on the Login page. The email→user binding in `initialize()` picks up the row the admin just created as soon as the invitee is signed in. Every existing user row has a **Resend invite** button (mail icon) that re-sends the same magic link; safe to click repeatedly (Supabase rate-limits it). Invite failures are surfaced in a toast but do NOT roll back the saved user row — the admin can retry via the row button.
+- **Invite flow:** creating a user in `/settings/users` ships with a "Send invite email" checkbox (checked by default when Supabase is configured). On save, after the `users` row is created, the app calls the `invite-user` Edge Function (`src/lib/auth.ts` → `inviteUser`) which, using the service-role key, calls `auth.admin.inviteUserByEmail(email, { redirectTo: '<origin>/auth/reset-password' })` AND atomically `UPDATE public.users SET auth_uid = <new auth.users.id> WHERE email = ? AND auth_uid IS NULL` in the same call. Because both writes happen with service-role access, the chicken-and-egg in the `users_write` RLS policy is avoided — the row is bound *before* the invitee clicks anything. Clicking the link creates the Supabase Auth session and lands them on `/auth/reset-password` to pick a password. The email→user binding in `initialize()` picks up the row immediately. Every existing user row has a **Resend invite** button (mail icon) that re-runs the same Edge Function call; idempotent — re-invites are no-ops on the binding and just refresh the magic link. Invite failures are surfaced in a toast but do NOT roll back the saved user row — the admin can retry via the row button. Project-level "Allow new users to sign up" should be OFF so this Edge-Function path is the only door in.
+- **First-sign-in `auth_uid` heal:** for users invited BEFORE the 2026-05-24 fix (whose rows are still NULL because the Edge Function didn't yet bind), `initialize()` calls the `bind_my_auth_uid()` SECURITY DEFINER RPC after the email match succeeds. The RPC reads `auth.uid()` + the JWT's email claim server-side, atomically fills any NULL `auth_uid` whose email matches (case-insensitive) and whose `is_active = true`, and returns the bound id (or NULL if no app user matches the JWT email — the caller treats that as access-denied). Idempotent: a re-bind of an already-bound caller returns the existing id without writing. This is the heal-on-reload path; every stuck user unsticks themselves by loading the app once. Never overwrites an existing binding (defense against hijack via a recycled email).
 - **Users** (`/settings/users`) — list, create, edit, delete users. Each user has email, bilingual name, an `is_active` flag, a single profile, and zero or more role assignments. Role checkboxes AND their field values are edited together in one modal.
 - **Profiles** (`/settings/profiles`, `/settings/profiles/:profileId`) — manage the 6-action × N-models permission matrix. Two seeded profiles: `Administrator` (full access, `is_admin: true`, `is_system: true`) and `Sales` (client-facing models only). The `is_admin` and `is_system` flags are displayed as badges — they are read-only in the UI.
 - **Roles** (`/settings/roles`, `/settings/roles/:roleId`) — define role schemas with **sections + all 21 field types** (text, textarea, number, email, phone, date, datetime, currency, url, checkbox, dropdown, multiselect, lookup, mirror, section_mirror, section_selector, assignee, notes, range, auto_id, formula). Same builder UX as models: drag-and-drop sections, per-field options (required, width, show-in-table, API name, color-coded dropdown options, lookup source + display field, formula expressions, etc.), plus the field template catalog. The Members tab is a read-only directory showing who holds the role and the current values of their role-fields. Field types that don't operate on records (auto_id, mirror, section_mirror, assignee, section_selector) render a disabled "not applicable in role context" placeholder in the user editor.
@@ -211,7 +240,7 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | File | What it does |
 |---|---|
 | `src/pages/Settings/UsersPage.tsx` | User list, create/edit modal with inline role-field editor, delete + deactivate confirmations, Send-invite checkbox on create, Resend-invite button per row |
-| `src/lib/auth.ts` | Supabase Auth wrapper — `signIn`, `signOut`, `getSession`, `onAuthChange`, `sendPasswordResetEmail`, `updatePassword`, `inviteUser` (magic-link invite via `signInWithOtp`) |
+| `src/lib/auth.ts` | Supabase Auth wrapper — `signIn`, `signOut`, `getSession`, `getSessionUid`, `onAuthChange`, `sendPasswordResetEmail`, `updatePassword`, `inviteUser` (calls the `invite-user` Edge Function), TOTP MFA helpers |
 | `src/pages/Login.tsx`, `src/pages/auth/ResetPassword.tsx` | Sign-in page and password-recovery landing page |
 | `src/pages/Settings/ProfilesPage.tsx` | Profile list and editor; system badge; delete guard UI |
 | `src/pages/Settings/components/PermissionMatrix.tsx` | Per-model expandable card: 6 action toggles + view/edit scope editors + per-field hidden/readonly/editable rules |
@@ -220,7 +249,8 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | `src/pages/Settings/AuditLogPage.tsx` | Admin-only audit-log viewer: filter by entity type, free-text search on actor + entity, expandable rows show before/after JSONB |
 | `src/pages/ProfilePage.tsx` | Self-service /profile page: change name, change password, manage MFA factor |
 | `src/pages/auth/MfaSetup.tsx` | TOTP enrollment + challenge page; gated by RequireAdmin via `getCurrentAal()` |
-| `supabase/functions/invite-user/index.ts` | Edge Function that uses the service-role key + `auth.admin.inviteUserByEmail` to invite. Verifies the caller is an admin via `wassell_is_admin(auth.uid())` |
+| `supabase/functions/invite-user/index.ts` | Edge Function that uses the service-role key to verify the caller is an admin (`wassell_is_admin(auth.uid())`), then issues `auth.admin.inviteUserByEmail` AND atomically writes `public.users.auth_uid` for the matching email (skips if `auth_uid` is already set — never clobbers). |
+| `supabase/migrations/2026-05-24_bind_my_auth_uid.sql` | SECURITY DEFINER RPC `bind_my_auth_uid()` — closes the 2026-05-06 chicken-and-egg in `users_write` for users invited before the Edge-Function fix. Called from `initialize()` on every sign-in; idempotent. |
 | `src/pages/Settings/RolesPage.tsx` | Role list + editor. Wraps each role as an `AppModel`-shaped object and delegates to `SectionManager` with `ownerKind='role'` for the full builder UX. Read-only Members table supports all field-type displays. |
 | `src/pages/Builder/components/SectionManager.tsx` | Shared builder (used by both models and roles). `ownerKind` prop gates rename propagation. |
 | `src/pages/Builder/components/FieldEditor.tsx` | Shared field editor. `ownerKind='role'` skips `renameField` propagation (role-field slugs aren't referenced in records/workflows/views). |
