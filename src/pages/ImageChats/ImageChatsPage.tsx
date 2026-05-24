@@ -194,8 +194,8 @@ function EmptyPane({ isAr, onStart }: { isAr: boolean; onStart: () => void }) {
       </h2>
       <p className="text-sm text-charcoal/70 max-w-md mb-6">
         {isAr
-          ? 'صمم منشورات ولافتات وصور ترويجية عبر محادثة مع نموذج Nano Banana. اختر الإعداد التجاري، حدد المقاس، أرفق صورة، ثم اكتب ما تريد.'
-          : 'Design posts, banners, and promo images through a chat with Nano Banana. Pick a brand preset, set the aspect ratio, attach an image, then describe what you want.'}
+          ? 'صمم منشورات ولافتات وصور ترويجية عبر محادثة مع نموذج صور (Nano Banana 2 أو GPT Image 2). اختر النموذج والإعداد التجاري والمقاس، أرفق صورة، ثم اكتب ما تريد.'
+          : 'Design posts, banners, and promo images through a chat with an image model (Nano Banana 2 or GPT Image 2). Pick a model, brand preset, and aspect ratio, attach an image, then describe what you want.'}
       </p>
       <button
         onClick={onStart}

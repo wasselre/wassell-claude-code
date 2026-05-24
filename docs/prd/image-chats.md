@@ -1,12 +1,12 @@
 # PRD: Image Chats
 
 **Status:** Live
-**Last updated:** 2026-05-23
+**Last updated:** 2026-05-23 (added composer model picker — Nano Banana 2 vs GPT Image 2)
 **Related PRDs:** [marketing-operations.md](marketing-operations.md), [templates-library.md](templates-library.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English)
 
-A "mini Higgsfield" chat interface inside Wassell. The user picks a Wassel-branded conversation, types or attaches images, picks an aspect ratio + brand preset, and hits Send — Nano Banana 2 (Google's Gemini 3 Pro Image, via fal.ai) generates the image and posts it back into the conversation. Each new turn can iterate on the previous result, so the workflow feels like ChatGPT / Gemini's image-editing chat, but routed through our fal.ai integration and styled with our brand presets.
+A "mini Higgsfield" chat interface inside Wassell. The user picks a Wassel-branded conversation, types or attaches images, picks an aspect ratio + brand preset + image model, and hits Send — fal.ai generates the image and posts it back into the conversation. Two models are exposed in the composer: **Nano Banana 2** (Google's Gemini 3 Pro Image, default — fast, multi-image, strong with Arabic) and **GPT Image 2** (OpenAI — best in-image text rendering, photorealism-first). Each new turn can iterate on the previous result, so the workflow feels like ChatGPT / Gemini's image-editing chat, but routed through our fal.ai integration and styled with our brand presets.
 
 Two supporting libraries sit underneath:
 - **Brand Presets** — named bundles of brand-language prompt text + reusable assets (logos, layout references). Picking one prepends the prompt to your message and auto-attaches its images.
@@ -24,9 +24,10 @@ The team wants to design on-brand marketing imagery (Instagram posts, story pane
   2. **Textarea** + prompt-library button (📚).
   3. **Aspect-ratio chips** — 1:1, 9:16, 16:9, 4:3, 3:4. Active choice is sent to fal.ai as `aspect_ratio`. Choice is **remembered** on the record (`last_aspect_ratio`) so the next turn starts on the same setting.
   4. **Brand preset dropdown** — `[Brand: <name> ▼]`. "None" at the top means raw prompt, no brand language. "Manage presets…" at the bottom routes to `/model/image_presets`.
-  5. **Variations toggle** — `[1 | 4]`. 1 = one image per turn (cheap, fast). 4 = generate four variations in a 2×2 grid (4× cost).
-  6. **Paperclip** — uploads images to `marketing-assets/image-chats/uploads/`. Multi-select OK.
-  7. **Send** — disabled while a turn is in flight. ⌘/Ctrl+Enter also sends.
+  5. **Model dropdown** — `[Model: <name> ▼]`. Two options: **Nano Banana 2** (default) and **GPT Image 2**. Choice is a **per-user-global preference** persisted to `localStorage` under `wassell_image_chat_model` — it survives reloads and applies across all chats. The server also stamps `last_model` on the record after every send, which feeds the header subtitle and "thinking…" copy.
+  6. **Variations toggle** — `[1 | 4]`. 1 = one image per turn (cheap, fast). 4 = generate four variations in a 2×2 grid (4× cost).
+  7. **Paperclip** — uploads images to `marketing-assets/image-chats/uploads/`. Multi-select OK.
+  8. **Send** — disabled while a turn is in flight. ⌘/Ctrl+Enter also sends.
 - **Auto-chain.** Each new turn implicitly carries the **previous assistant message's primary image** as a reference (the `prev_image_url` field on the API). That's what makes it feel like a conversation — "make the sky more orange" iterates on what you just generated, without re-uploading.
 - **Brand preset auto-attach.** Picking a preset adds its `images` array to the composer's attachment row (marked source: 'preset' with the ✦ badge). The user can remove any of them for a single turn — the preset's prompt text still applies; only the image is dropped for that send. Preset/snippet image fields are `multi_image` on the new Files System, so values are `files.id` UUIDs (not URLs); the composer signs a short-lived view URL for the chip thumbnail, and the raw ID is what gets sent to the server (which resolves it fresh — see "Persistent re-host" below).
 - **Snippet auto-fill.** Picking a snippet from the 📚 popover fills the textarea (appending if the user already typed something) and adds the snippet's images to the attachment row (source: 'snippet').
@@ -68,9 +69,10 @@ The team wants to design on-brand marketing imagery (Instagram posts, story pane
 ## Data touched
 
 - **Reads:** `models` (resolves `image_chats`, `image_presets`, `prompt_snippets` ids), `records` (lists chats, presets, snippets via the SPA store).
-- **Writes:** `records.data` (JSONB) for `image_chats` rows — appends to `messages`, updates `status` / `error_message` / `last_aspect_ratio` / `last_preset_id` / `message_count` / `last_message_at` / `title` (first-message-derived). Server writes via the `record_save` RPC; client writes via the standard store actions.
+- **Writes:** `records.data` (JSONB) for `image_chats` rows — appends to `messages`, updates `status` / `error_message` / `last_aspect_ratio` / `last_preset_id` / `last_model` / `message_count` / `last_message_at` / `title` (first-message-derived). Server writes via the `record_save` RPC; client writes via the standard store actions.
 - **Storage:** `marketing-assets` bucket — `image-chats/uploads/<user_id>/<record_id>/...` for paperclip uploads in the composer, `image-chats/outputs/<user_id>/<record_id>/...` for persisted fal.ai outputs, `image-chats/preset-copies/<user_id>/<record_id>/...` for per-turn copies of preset/snippet attachments pulled out of the Files System. The preset/snippet `images` fields themselves live on the `wassel-files` private bucket via the Files System (`files` table) — the server resolves those IDs on send.
-- **External:** fal.ai (`fal-ai/nano-banana-pro/edit`) queue API — POST → poll the status URL → fetch the response URL.
+- **localStorage:** `wassell_image_chat_model` — the user's preferred image model id (`'nano-banana' | 'gpt-image-2'`). Read on Composer mount, written on every model change.
+- **External:** fal.ai queue API on one of two endpoints depending on the picked model: `fal-ai/nano-banana-pro/edit` (default) or `openai/gpt-image-2/edit`. POST → poll the status URL → fetch the response URL. Both endpoints accept an empty `image_urls` array so they degrade to pure text-to-image when no attachments are present.
 
 ## Key files
 
@@ -81,19 +83,21 @@ The team wants to design on-brand marketing imagery (Instagram posts, story pane
 | `src/pages/ImageChats/components/Composer.tsx` | The Higgsfield-style bottom composer. Owns the per-turn state for prompt, attachments, aspect ratio, variations, preset id. |
 | `src/pages/ImageChats/components/MessageBubble.tsx` | Single message rendering — user text + thumbnails / assistant image grid at the saved aspect ratio with download buttons. |
 | `src/pages/ImageChats/components/BrandPresetDropdown.tsx` | `[Brand: …]` dropdown with None at the top, presets in the middle, "Manage" link at the bottom. |
+| `src/pages/ImageChats/components/ModelDropdown.tsx` | `[Model: …]` dropdown — Nano Banana 2 vs GPT Image 2. Owns the `CHAT_MODELS` catalog + `chatModelDisplayName` helper used by the thread header. |
 | `src/pages/ImageChats/components/PromptLibraryButton.tsx` | 📚 popover trigger — filterable list of snippets, "Manage" link. |
 | `src/pages/ImageChats/lib/seedDefaults.ts` | First-visit seed of the Wassel default preset + 5 starter prompt snippets. |
 | `src/lib/imageChat/client.ts` | Browser-side `sendImageChatTurn()` — wraps `POST /api/image-chat/send`. |
 | `src/data/seedModels.ts` | Defines the three system models: `image_chats`, `image_presets`, `prompt_snippets`. |
 | `src/pages/Records/components/DynamicField.tsx` | Hosts the new `multi_image` field type (drag-drop thumbnail picker) used by the library models' `images` field. |
 | `api/image-chat/send.ts` | The server orchestrator — auth → preset lookup → fal.ai → re-host → record update. |
-| `api/_lib/imageGen.ts` | `imageGenChat()` helper that submits to fal.ai's `nano-banana-pro/edit` with the chat-flow parameters. |
+| `api/_lib/imageGen.ts` | `imageGenChat()` helper that submits to fal.ai with the chat-flow parameters. Houses `resolveChatModelSlug()` which maps `'nano-banana' \| 'gpt-image-2'` to the actual fal endpoint slug (env-overridable via `FAL_CHAT_MODEL_ID` / `FAL_CHAT_GPT_IMAGE_2_MODEL_ID`). |
 | `src/App.tsx` | Routes `/model/image_chats` and `/model/image_chats/:recordId` to `ImageChatsPage`. |
 
 ## Open questions / known limitations
 
 - **Single-tenant seed race.** First-visit auto-seeding doesn't lock — if two users open the page simultaneously on a fresh tenant they could each create a duplicate "Wassel default" preset. Acceptable for v1; the duplicates can be deleted manually.
-- **No multi-model picker.** All turns go through Nano Banana 2 — fal.ai supports Seedream, Imagen 4, Flux Pro, Ideogram, etc., but exposing a model dropdown in the composer was deferred to v2. The env var `FAL_CHAT_MODEL_ID` lets ops swap globally without code changes.
+- **Two-model picker only.** The composer exposes Nano Banana 2 and GPT Image 2. fal.ai also supports Seedream, Imagen 4, Flux Pro, Ideogram, etc. — adding more is a one-line change in `CHAT_MODELS` (`ModelDropdown.tsx`) plus a matching case in `resolveChatModelSlug` (`api/_lib/imageGen.ts`).
+- **No per-model parameter mapping.** The same body (`{ prompt, num_images, aspect_ratio, output_format, image_urls? }`) is sent to both endpoints. fal.ai's wrappers normalize these across model families; if a future model needs different fields (mask, quality, etc.) we'll need to branch in `startChatGeneration`.
 - **No separate "style reference" slot.** Higgsfield distinguishes subject ref vs. style ref. We currently bundle everything into one attachment list — fal.ai's nano-banana-pro/edit figures roles out from the prompt. If users start wanting explicit slot semantics, that's v2.
 - **No per-conversation preset override.** The Brand dropdown choice is per-turn (remembered on the record as `last_preset_id`), not "this whole chat always uses X". Could be added later as a chat-level setting.
 - **Variations grid is fixed 2×2.** When the user picks 4 variations the four results render in a 2×2 grid. No drag-to-reorder or "lock this one as the next auto-chain target" yet — the most recent generation always becomes the next turn's reference.

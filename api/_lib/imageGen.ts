@@ -96,13 +96,39 @@ function readIconEditEnv(): FalEnv {
 }
 
 /**
- * Env for the Image Chats ("mini Higgsfield") flow. Uses the same Nano
- * Banana 2 edit model, but the model id is broken out so it can be
- * swapped independently of the marketing-deck flow if the user wants to
- * try a different fal.ai variant (Seedream, Imagen 4, Flux, etc.) in
- * the chat without disturbing the design pipeline.
+ * Stable identifiers for the image models the chat composer exposes.
+ * Kept in sync with the `CHAT_MODELS` list in
+ * src/pages/ImageChats/components/ModelDropdown.tsx.
  */
-function readChatEnv(): FalEnv {
+export type ChatModelId = 'nano-banana' | 'gpt-image-2';
+
+/**
+ * Map a `ChatModelId` to its fal.ai endpoint slug. Each slug is
+ * env-overridable so we can re-point a model to a different fal variant
+ * (or a future fal-hosted model) without a code change.
+ *
+ * Both models use their `/edit` variant unconditionally — the edit
+ * variants accept an empty `image_urls` array and degrade to pure
+ * text-to-image, so the API endpoint doesn't have to branch on
+ * attachment count.
+ */
+function resolveChatModelSlug(id: ChatModelId): string {
+  switch (id) {
+    case 'gpt-image-2':
+      return process.env.FAL_CHAT_GPT_IMAGE_2_MODEL_ID ?? 'openai/gpt-image-2/edit';
+    case 'nano-banana':
+    default:
+      return process.env.FAL_CHAT_MODEL_ID ?? 'fal-ai/nano-banana-pro/edit';
+  }
+}
+
+/**
+ * Env for the Image Chats ("mini Higgsfield") flow. The model id defaults
+ * to the Nano Banana 2 edit slug; callers that want a different model
+ * pass `modelId` into `imageGenChat` and the slug gets resolved via
+ * `resolveChatModelSlug`.
+ */
+function readChatEnv(modelId: ChatModelId = 'nano-banana'): FalEnv {
   const apiKey = process.env.FAL_KEY;
   if (!apiKey) {
     throw new Error('FAL_KEY is not set');
@@ -110,7 +136,7 @@ function readChatEnv(): FalEnv {
   return {
     apiKey,
     baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
-    modelId: process.env.FAL_CHAT_MODEL_ID ?? 'fal-ai/nano-banana-pro/edit',
+    modelId: resolveChatModelSlug(modelId),
   };
 }
 
@@ -284,6 +310,8 @@ interface ChatGenOpts {
   aspectRatio: ChatAspectRatio;
   /** 1 by default, up to 4. Maps to fal.ai `num_images`. */
   numVariations: number;
+  /** Which fal-hosted image model to run on. Defaults to 'nano-banana'. */
+  modelId?: ChatModelId;
   signal?: AbortSignal;
 }
 
@@ -302,7 +330,7 @@ interface ChatGenOpts {
  *     fal.ai and rejected upstream (with a clear error message).
  */
 export async function imageGenChat(opts: ChatGenOpts): Promise<ImageGenStartResult> {
-  const env = readChatEnv();
+  const env = readChatEnv(opts.modelId ?? 'nano-banana');
   if (env.apiKey === STUB_KEY) {
     return stubStart('chat');
   }

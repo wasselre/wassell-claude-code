@@ -59,7 +59,12 @@ import {
   getServiceClient,
   loadFileBypassRls,
 } from '../_lib/files.js';
-import { imageGenChat, pollImageGen, type ChatAspectRatio } from '../_lib/imageGen.js';
+import {
+  imageGenChat,
+  pollImageGen,
+  type ChatAspectRatio,
+  type ChatModelId,
+} from '../_lib/imageGen.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -77,6 +82,10 @@ interface RequestBody {
   aspect_ratio?: string;
   num_variations?: number;
   preset_id?: string | null;
+  /** Which image model to run this turn on. Validated against the
+   *  allow-list below; unknown / missing values fall back to
+   *  'nano-banana'. */
+  model_id?: string;
   prev_image_url?: string | null;
 }
 
@@ -106,6 +115,12 @@ const ASPECTS: readonly ChatAspectRatio[] = ['1:1', '9:16', '16:9', '4:3', '3:4'
 
 function isAspectRatio(s: unknown): s is ChatAspectRatio {
   return typeof s === 'string' && (ASPECTS as readonly string[]).includes(s);
+}
+
+const CHAT_MODELS: readonly ChatModelId[] = ['nano-banana', 'gpt-image-2'];
+
+function isChatModelId(s: unknown): s is ChatModelId {
+  return typeof s === 'string' && (CHAT_MODELS as readonly string[]).includes(s);
 }
 
 /* ─── Node ↔ Web Request adapter (mirrors icons/generate.ts) ──────── */
@@ -295,6 +310,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const aspectRatio: ChatAspectRatio = isAspectRatio(body.aspect_ratio) ? body.aspect_ratio : '1:1';
     const numVariations = Math.max(1, Math.min(4, Number(body.num_variations) || 1));
     const presetId = body.preset_id && typeof body.preset_id === 'string' ? body.preset_id : null;
+    const modelId: ChatModelId = isChatModelId(body.model_id) ? body.model_id : 'nano-banana';
     const prevImageUrl = body.prev_image_url && typeof body.prev_image_url === 'string'
       ? body.prev_image_url
       : null;
@@ -475,6 +491,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         last_message_at: nowIso,
         last_aspect_ratio: aspectRatio,
         last_preset_id: presetId,
+        last_model: modelId,
         status: 'generating',
         error_message: null,
         ...(titleFromFirst ? { title: titleFromFirst } : {}),
@@ -489,6 +506,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         imageUrls: mergedImageUrls,
         aspectRatio,
         numVariations,
+        modelId,
       });
       const result = await pollImageGen(start, { intervalMs: 2500, timeoutMs: 230_000 });
       if (result.status !== 'completed' || !result.imageUrls || result.imageUrls.length === 0) {

@@ -12,6 +12,11 @@ import { supabase } from '@/lib/supabase';
 
 export type ChatAspectRatio = '1:1' | '9:16' | '16:9' | '4:3' | '3:4';
 
+/** Which fal.ai image model the turn runs on. The actual fal slug is
+ *  resolved server-side in api/_lib/imageGen.ts so the wire format
+ *  stays stable even if we re-point a model to a different fal endpoint. */
+export type ChatModelId = 'nano-banana' | 'gpt-image-2';
+
 export type AttachmentSource = 'user' | 'preset' | 'snippet';
 
 export interface MessageImage {
@@ -40,6 +45,9 @@ export interface SendTurnInput {
   aspectRatio: ChatAspectRatio;
   numVariations: number;
   presetId: string | null;
+  /** Which image model to run this turn on. Defaults to 'nano-banana'
+   *  server-side if omitted. */
+  modelId: ChatModelId;
   /** Auto-chain: the previous assistant image to iterate on. Null on
    * the first turn or after the user explicitly clears context. */
   prevImageUrl: string | null;
@@ -75,6 +83,7 @@ export async function sendImageChatTurn(
       aspect_ratio: input.aspectRatio,
       num_variations: input.numVariations,
       preset_id: input.presetId,
+      model_id: input.modelId,
       prev_image_url: input.prevImageUrl,
     }),
     signal,

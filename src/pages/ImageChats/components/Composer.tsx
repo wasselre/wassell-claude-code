@@ -6,9 +6,24 @@ import { signViewUrl } from '@/lib/files/client';
 import DriveBrowserModal, {
   type DrivePickerResult,
 } from '@/pages/Files/components/DriveBrowserModal';
-import type { ChatAspectRatio, AttachmentSource } from '@/lib/imageChat/client';
+import type { ChatAspectRatio, AttachmentSource, ChatModelId } from '@/lib/imageChat/client';
 import BrandPresetDropdown from './BrandPresetDropdown';
+import ModelDropdown, { DEFAULT_CHAT_MODEL, isChatModelId } from './ModelDropdown';
 import PromptLibraryButton from './PromptLibraryButton';
+
+const MODEL_STORAGE_KEY = 'wassell_image_chat_model';
+
+function readPersistedModel(): ChatModelId {
+  try {
+    const raw = localStorage.getItem(MODEL_STORAGE_KEY);
+    if (isChatModelId(raw)) return raw;
+  } catch {
+    // localStorage can throw in private mode / disabled cookies. Fall
+    // through to the default — picking a model again will persist when
+    // localStorage is back.
+  }
+  return DEFAULT_CHAT_MODEL;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -58,6 +73,7 @@ interface Props {
     aspectRatio: ChatAspectRatio;
     numVariations: number;
     presetId: string | null;
+    modelId: ChatModelId;
   }) => void;
 }
 
@@ -104,8 +120,21 @@ export default function Composer({
   const [aspectRatio, setAspectRatio] = useState<ChatAspectRatio>(initialAspectRatio);
   const [numVariations, setNumVariations] = useState<1 | 4>(1);
   const [presetId, setPresetId] = useState<string | null>(initialPresetId);
+  // Model is a per-user-global preference (not per-record) — read from
+  // localStorage on mount, write back on every change so the user's
+  // pick survives reloads and applies across chats.
+  const [modelId, setModelIdState] = useState<ChatModelId>(() => readPersistedModel());
   const [uploading, setUploading] = useState(false);
   const [drivePickerOpen, setDrivePickerOpen] = useState(false);
+
+  function handleModelChange(next: ChatModelId) {
+    setModelIdState(next);
+    try {
+      localStorage.setItem(MODEL_STORAGE_KEY, next);
+    } catch {
+      // Best-effort persistence — see readPersistedModel.
+    }
+  }
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Look up presets / snippets from the store for both the dropdown and
@@ -254,6 +283,7 @@ export default function Composer({
       aspectRatio,
       numVariations,
       presetId,
+      modelId,
     });
     // Optimistic reset. Server is the source of truth for history.
     setPrompt('');
@@ -354,6 +384,9 @@ export default function Composer({
           value={presetId}
           onChange={setPresetId}
         />
+
+        {/* Model picker — Nano Banana 2 vs GPT Image 2 */}
+        <ModelDropdown value={modelId} onChange={handleModelChange} />
 
         {/* Variations toggle */}
         <div className="flex items-center rounded-lg border border-sand/40 bg-white p-0.5">

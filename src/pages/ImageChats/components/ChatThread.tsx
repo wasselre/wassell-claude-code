@@ -5,10 +5,12 @@ import type { AppRecord } from '@/types';
 import {
   sendImageChatTurn,
   type ChatAspectRatio,
+  type ChatModelId,
   type StoredMessage,
 } from '@/lib/imageChat/client';
 import MessageBubble from './MessageBubble';
 import Composer from './Composer';
+import { chatModelDisplayName } from './ModelDropdown';
 
 interface Props {
   recordId: string;
@@ -40,8 +42,10 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
     (record?.data.last_aspect_ratio as ChatAspectRatio | undefined) ?? '1:1';
   const lastPresetId =
     (record?.data.last_preset_id as string | undefined | null) ?? null;
+  const lastModelId = record?.data.last_model as string | undefined | null;
   const recordStatus = (record?.data.status as string | undefined) ?? 'idle';
   const recordError = (record?.data.error_message as string | undefined) ?? null;
+  const headerModelName = chatModelDisplayName(lastModelId, isAr);
 
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -73,6 +77,7 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
     aspectRatio: ChatAspectRatio;
     numVariations: number;
     presetId: string | null;
+    modelId: ChatModelId;
   }) {
     if (sending) return;
     setSending(true);
@@ -86,6 +91,7 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
         aspectRatio: params.aspectRatio,
         numVariations: params.numVariations,
         presetId: params.presetId,
+        modelId: params.modelId,
         prevImageUrl,
       });
       // Realtime fan-out (records publication, see schema.sql) pushes
@@ -123,7 +129,7 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
               (isAr ? 'محادثة' : 'Conversation')}
           </div>
           <div className="text-xs text-charcoal/60">
-            {isAr ? 'Nano Banana 2 • وصل العقارية' : 'Nano Banana 2 • Wassel'}
+            {isAr ? `${headerModelName} • وصل العقارية` : `${headerModelName} • Wassel`}
           </div>
         </div>
         <button
@@ -149,8 +155,8 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
             <Sparkles size={14} className="text-copper animate-pulse" />
             <span>
               {isAr
-                ? 'Nano Banana يفكر... قد تستغرق العملية حتى دقيقتين.'
-                : 'Nano Banana is thinking… this can take up to two minutes.'}
+                ? `${headerModelName} يفكر... قد تستغرق العملية حتى دقيقتين.`
+                : `${headerModelName} is thinking… this can take up to two minutes.`}
             </span>
           </div>
         )}
