@@ -155,8 +155,12 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
             <Sparkles size={14} className="text-copper animate-pulse" />
             <span>
               {isAr
-                ? `${headerModelName} يفكر... قد تستغرق العملية حتى دقيقتين.`
-                : `${headerModelName} is thinking… this can take up to two minutes.`}
+                ? lastModelId === 'gpt-image-2'
+                  ? `${headerModelName} يفكر... قد تستغرق العملية حتى خمس دقائق.`
+                  : `${headerModelName} يفكر... قد تستغرق العملية حتى دقيقتين.`
+                : lastModelId === 'gpt-image-2'
+                  ? `${headerModelName} is thinking… this can take up to five minutes.`
+                  : `${headerModelName} is thinking… this can take up to two minutes.`}
             </span>
           </div>
         )}

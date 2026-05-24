@@ -66,9 +66,16 @@ import {
   type ChatModelId,
 } from '../_lib/imageGen.js';
 
+// maxDuration bumped from 240→300 (2026-05-23) when GPT Image 2 was added
+// to the model picker. OpenAI's quality-first model regularly takes 3-5
+// minutes per turn vs Nano Banana's 30-90s, and the prior 240s ceiling +
+// 230s poll budget were triggering "Image-gen poll timed out" on the
+// first real GPT Image 2 send. 300s is the documented safe Vercel ceiling
+// per CLAUDE.md "Decks generation pipeline" — anything longer needs to
+// move to the Fly.io worker pattern.
 export const config = {
   runtime: 'nodejs',
-  maxDuration: 240,
+  maxDuration: 300,
 };
 
 interface RequestBody {
@@ -508,7 +515,11 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         numVariations,
         modelId,
       });
-      const result = await pollImageGen(start, { intervalMs: 2500, timeoutMs: 230_000 });
+      // Poll budget = function maxDuration (300s) minus a 10s tail for
+      // the post-poll work (output re-host loop + final record_save).
+      // GPT Image 2 routinely takes 3-5 min; Nano Banana 2 finishes in
+      // 30-90s, so the longer budget only matters for the slow path.
+      const result = await pollImageGen(start, { intervalMs: 2500, timeoutMs: 290_000 });
       if (result.status !== 'completed' || !result.imageUrls || result.imageUrls.length === 0) {
         const detail = result.rawError ? `: ${result.rawError}` : '';
         throw new Error(`image generation ${result.status}${detail}`);
