@@ -1,7 +1,7 @@
 # PRD: Import / Export (Excel + PDF)
 
 **Status:** Live
-**Last updated:** 2026-05-23 (added blank Excel **Template** export — third button next to Export / Import on the record list, gated by `import` permission. Downloads a two-sheet workbook: Sheet 1 has header-only columns that auto-map cleanly on re-import; Sheet 2 is a Field Guide listing every field's type, required flag, and allowed values — full options list for dropdowns / multi-selects / section_selector, lookup target hint, range (min)/(max) explanation. Field types that can't be expressed in a flat cell — mirror, notes, formula, auto_id, assignee, table, file/image refs, whatsapp/call history, generations gallery — are excluded.)
+**Last updated:** 2026-05-25 (multi-select / section-selector import now splits cell values on either the Latin `,` or the Arabic comma `،` — previously only `,` was recognised, so an Arabic-comma-separated cell like `صالة جلوس، مجلس` was stored as a single unsplit label, didn't match any option, and the form's MultiSelect filtered it out at render time so the field appeared empty after import even though the data was "saved". Brings multi-select in line with the lookup path, which already handled both separators. Existing broken records in production were backfilled by re-splitting on `،`.)
 **Related PRDs:** record-management.md, model-builder.md
 
 ## What it is (in plain English)

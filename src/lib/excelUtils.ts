@@ -538,7 +538,14 @@ export function mapImportedRows(
           }
           case 'multiselect':
           case 'section_selector': {
-            const parts = cellValue.split(',').map((s) => s.trim());
+            // Split on either the Latin `,` or the Arabic comma `،` (U+060C).
+            // Arabic spreadsheets commonly use `،`; without this, a cell like
+            // `صالة جلوس، مجلس` was treated as ONE unsplit string, didn't match
+            // any option, and got stored as a single raw-label entry which the
+            // MultiSelect form then dropped at render time (it filters values
+            // not present in the option list) — making the field appear empty
+            // after import even though the data was technically "saved".
+            const parts = cellValue.split(/[,،]/).map((s) => s.trim()).filter(Boolean);
             data[fieldName] = parts.map((part) => {
               const opt = field.options?.find(
                 (o) => o.value === part || o.label_ar === part || o.label_en === part,
