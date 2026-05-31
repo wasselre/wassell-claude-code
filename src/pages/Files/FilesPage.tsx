@@ -104,8 +104,14 @@ export default function FilesPage({ forceShared = false }: Props) {
    *  click event on the card under the cursor is suppressed (otherwise a
    *  drag that ends on a card would open its preview). */
   const dragStartRef = useRef<{
-    x: number;
-    y: number;
+    /** Anchor stored in GRID-RELATIVE coords (clientX/Y minus the grid's
+     *  viewport top-left), NOT viewport coords. Grid-relative space scrolls
+     *  with the content, so the anchor stays pinned to the tile the user
+     *  started on even after the page auto-scrolls far down. Storing it in
+     *  viewport space was what made the box drift onto the wrong tiles when
+     *  the page scrolled mid-drag. */
+    gx: number;
+    gy: number;
     mode: 'replace' | 'add' | 'toggle';
     /** True when the mousedown landed on a card (vs blank grid area). Used
      *  to decide click-vs-clear behavior on a no-drag mouseup. */
@@ -117,11 +123,27 @@ export default function FilesPage({ forceShared = false }: Props) {
   const justFinishedDragRef = useRef(false);
   const DRAG_THRESHOLD = 5; // px — typical drag-vs-click threshold
 
+  /** Latest pointer position in VIEWPORT coords, updated on every mousemove.
+   *  The auto-scroll rAF loop and the scroll listener re-run the marquee math
+   *  from this when there's no fresh mouse event (mouse held still at the edge
+   *  while the page keeps scrolling). */
+  const lastPointerRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  /** Auto-scroll state: current velocity (px/frame, signed) + the live rAF id.
+   *  vel !== 0 means the cursor is in a top/bottom edge band and the page
+   *  should keep scrolling even if the mouse stops moving. */
+  const autoScrollRef = useRef<{ vel: number; raf: number | null }>({ vel: 0, raf: null });
+  const EDGE_BAND = 64; // px from the top/bottom viewport edge that triggers auto-scroll
+  const MAX_SCROLL_SPEED = 20; // px/frame at the very edge (ramps with proximity)
+
   /** Hit-test every [data-selectable-id] under the grid container against the
-   *  current rectangle. Returns the items whose bbox intersects. */
+   *  current rectangle. `rect` is in GRID-RELATIVE coords; element bboxes
+   *  (viewport, from getBoundingClientRect) are converted to the same space
+   *  using the grid's current box, so the comparison is consistent regardless
+   *  of how far the page has scrolled. Returns the items whose bbox intersects. */
   const hitTest = useCallback((rect: { x: number; y: number; w: number; h: number }): SelectableItem[] => {
     const root = gridRef.current;
     if (!root) return [];
+    const gridBox = root.getBoundingClientRect();
     const nodes = root.querySelectorAll<HTMLElement>('[data-selectable-id]');
     const hits: SelectableItem[] = [];
     const rL = rect.x;
@@ -130,7 +152,11 @@ export default function FilesPage({ forceShared = false }: Props) {
     const rB = rect.y + rect.h;
     nodes.forEach((el) => {
       const b = el.getBoundingClientRect();
-      const intersects = !(b.right < rL || b.left > rR || b.bottom < rT || b.top > rB);
+      const left = b.left - gridBox.left;
+      const right = b.right - gridBox.left;
+      const top = b.top - gridBox.top;
+      const bottom = b.bottom - gridBox.top;
+      const intersects = !(right < rL || left > rR || bottom < rT || top > rB);
       if (intersects) {
         const id = el.getAttribute('data-selectable-id');
         const kind = el.getAttribute('data-selectable-kind') as 'folder' | 'file' | null;
@@ -159,14 +185,17 @@ export default function FilesPage({ forceShared = false }: Props) {
       : 'replace';
     const cur = selectionRef.current;
     const onCard = !!target.closest('[data-selectable-id]');
+    // Anchor in grid-relative coords so it survives auto-scroll (see ref docs).
+    const gridBox = gridRef.current?.getBoundingClientRect();
     dragStartRef.current = {
-      x: e.clientX,
-      y: e.clientY,
+      gx: e.clientX - (gridBox?.left ?? 0),
+      gy: e.clientY - (gridBox?.top ?? 0),
       mode,
       onCard,
       baseFolders: new Set(cur.selectedFolderIds),
       baseFiles: new Set(cur.selectedFileIds),
     };
+    lastPointerRef.current = { x: e.clientX, y: e.clientY };
     draggingRef.current = false;
     // Don't pre-clear or pre-render the marquee — the click might never
     // become a drag. We wait until the threshold is crossed.
@@ -204,11 +233,21 @@ export default function FilesPage({ forceShared = false }: Props) {
       ]);
     };
 
-    const onMove = (e: MouseEvent) => {
+    /** Build the marquee rect from a viewport pointer + the current scroll
+     *  position, then update the overlay + selection. Works in grid-relative
+     *  space (see hitTest / dragStartRef docs) so it stays correct no matter
+     *  how far the page has scrolled. Called from mousemove, the auto-scroll
+     *  rAF tick, and the scroll listener. */
+    const computeAndApply = (clientX: number, clientY: number) => {
       const start = dragStartRef.current;
       if (!start) return;
-      const dx = e.clientX - start.x;
-      const dy = e.clientY - start.y;
+      const root = gridRef.current;
+      if (!root) return;
+      const gridBox = root.getBoundingClientRect();
+      const curGX = clientX - gridBox.left;
+      const curGY = clientY - gridBox.top;
+      const dx = curGX - start.gx;
+      const dy = curGY - start.gy;
       if (!draggingRef.current) {
         // Below threshold → still pending click vs drag.
         if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
@@ -218,11 +257,12 @@ export default function FilesPage({ forceShared = false }: Props) {
           selectionRef.current.clear();
         }
       }
-      const x = Math.min(start.x, e.clientX);
-      const y = Math.min(start.y, e.clientY);
-      const w = Math.abs(dx);
-      const h = Math.abs(dy);
-      const rect = { x, y, w, h };
+      const rect = {
+        x: Math.min(start.gx, curGX),
+        y: Math.min(start.gy, curGY),
+        w: Math.abs(dx),
+        h: Math.abs(dy),
+      };
       setMarquee(rect);
       const hits = hitTest(rect);
       applyMarqueeSelection(hits, start.mode, {
@@ -231,11 +271,69 @@ export default function FilesPage({ forceShared = false }: Props) {
       });
     };
 
+    // ── Edge auto-scroll ────────────────────────────────────────────────
+    // While dragging, if the cursor enters the top/bottom edge band the page
+    // scrolls on a rAF loop so the marquee can reach content past the fold —
+    // and keeps scrolling even when the mouse is held still at the edge.
+    const tick = () => {
+      const st = autoScrollRef.current;
+      if (st.vel === 0 || !dragStartRef.current) {
+        st.raf = null;
+        return;
+      }
+      window.scrollBy(0, st.vel);
+      const p = lastPointerRef.current;
+      computeAndApply(p.x, p.y); // re-evaluate against the new scroll position
+      st.raf = requestAnimationFrame(tick);
+    };
+    const updateAutoScroll = (clientY: number) => {
+      const vh = window.innerHeight;
+      let vel = 0;
+      if (clientY > vh - EDGE_BAND) {
+        const intensity = Math.min(1, (clientY - (vh - EDGE_BAND)) / EDGE_BAND);
+        vel = Math.max(1, Math.round(intensity * MAX_SCROLL_SPEED));
+      } else if (clientY < EDGE_BAND) {
+        const intensity = Math.min(1, (EDGE_BAND - clientY) / EDGE_BAND);
+        vel = -Math.max(1, Math.round(intensity * MAX_SCROLL_SPEED));
+      }
+      autoScrollRef.current.vel = vel;
+      if (vel !== 0 && autoScrollRef.current.raf == null) {
+        autoScrollRef.current.raf = requestAnimationFrame(tick);
+      }
+    };
+    const stopAutoScroll = () => {
+      autoScrollRef.current.vel = 0;
+      if (autoScrollRef.current.raf != null) {
+        cancelAnimationFrame(autoScrollRef.current.raf);
+        autoScrollRef.current.raf = null;
+      }
+    };
+
+    const onMove = (e: MouseEvent) => {
+      if (!dragStartRef.current) return;
+      lastPointerRef.current = { x: e.clientX, y: e.clientY };
+      computeAndApply(e.clientX, e.clientY);
+      // Only arm auto-scroll once we're actually dragging (past threshold), so
+      // a click that happens to land in the edge band doesn't scroll the page.
+      if (draggingRef.current) updateAutoScroll(e.clientY);
+    };
+
+    // Manual wheel/trackpad scroll mid-drag (cursor not in an edge band, so
+    // auto-scroll isn't running): recompute from the last pointer so the box
+    // still tracks the content under the cursor.
+    const onScroll = () => {
+      if (!dragStartRef.current || !draggingRef.current) return;
+      if (autoScrollRef.current.vel !== 0) return; // tick already handles it
+      const p = lastPointerRef.current;
+      computeAndApply(p.x, p.y);
+    };
+
     const onUp = () => {
       const wasDragging = draggingRef.current;
       const start = dragStartRef.current;
       dragStartRef.current = null;
       draggingRef.current = false;
+      stopAutoScroll();
       setMarquee(null);
       if (wasDragging) {
         // Suppress the upcoming click on whatever card we dragged off of,
@@ -256,9 +354,12 @@ export default function FilesPage({ forceShared = false }: Props) {
 
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('scroll', onScroll, { passive: true });
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('scroll', onScroll);
+      stopAutoScroll();
     };
   }, [hitTest]);
 
@@ -668,21 +769,28 @@ export default function FilesPage({ forceShared = false }: Props) {
               </div>
             </section>
           )}
-        </div>
-      )}
 
-      {/* Marquee overlay (drawn at viewport coords so it survives scroll) */}
-      {marquee && (marquee.w > 2 || marquee.h > 2) && (
-        <div
-          aria-hidden
-          className="fixed pointer-events-none z-30 border border-copper/70 bg-copper/10 rounded-sm"
-          style={{
-            left: marquee.x,
-            top: marquee.y,
-            width: marquee.w,
-            height: marquee.h,
-          }}
-        />
+          {/* Marquee overlay — absolutely positioned INSIDE the grid (which is
+              position:relative and scrolls with the page), in grid-relative
+              coords. Living in the scrolling content means the box stays pinned
+              to the tiles it covers while the page auto-scrolls down. */}
+          {marquee && (marquee.w > 2 || marquee.h > 2) && (
+            <div
+              aria-hidden
+              // !mt-0 is load-bearing: the grid uses `space-y-6`, which injects
+              // margin-top onto every non-first child. As a later child the
+              // overlay would inherit a 24px top margin that shifts the visible
+              // box down from where `top: marquee.y` places it. Reset it.
+              className="absolute pointer-events-none z-30 border border-copper/70 bg-copper/10 rounded-sm !mt-0"
+              style={{
+                left: marquee.x,
+                top: marquee.y,
+                width: marquee.w,
+                height: marquee.h,
+              }}
+            />
+          )}
+        </div>
       )}
 
       {/* Dropzone (renders nothing visible until a drag enters) */}
