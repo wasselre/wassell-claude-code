@@ -4,10 +4,11 @@ import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { v4 as uuid } from 'uuid';
-import { GripVertical, Trash2, Plus, ChevronDown, ChevronRight, FolderPlus, Folder, Pencil, Lock, Check, List } from 'lucide-react';
+import { GripVertical, Trash2, Plus, ChevronDown, ChevronRight, FolderPlus, Folder, Pencil, Lock, Check, List, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { slugify } from '@/lib/autoTranslate';
-import { translateLabel } from '@/lib/translateLabel';
+import { translateLabel, type TranslatedLabel } from '@/lib/translateLabel';
+import { useDebouncedTranslation } from '@/hooks/useDebouncedTranslation';
 import Modal from '@/components/ui/Modal';
 import type { FieldOption, FieldOptionGroup } from '@/types';
 
@@ -136,9 +137,8 @@ function OptionRow({
   onDelete: () => void;
   locked?: boolean;
 }) {
-  const { language, addToast } = useAppStore();
+  const { language } = useAppStore();
   const isAr = language === 'ar';
-  const [translating, setTranslating] = useState(false);
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: option.id,
@@ -151,13 +151,77 @@ function OptionRow({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  // While the user is typing, just update the label + seed the slug from the
-  // sync slugify (works for Latin input). The opposite-language fill happens
-  // on blur via fillOppositeOnBlur — translating on every keystroke would
-  // burn API calls and feel laggy in a tight grid of options.
+  // Which label the user is actively editing — drives the live-translation
+  // source so we translate FROM the language being typed and fill the other.
+  // null until the user touches a label, so simply opening the editor on an
+  // existing option never kicks off a translation (and never rewrites a slug).
+  const [editingLang, setEditingLang] = useState<'ar' | 'en' | null>(null);
+
+  // A bare UUID (or empty) is machine-junk, never a deliberate api_name — e.g.
+  // an orphaned section_selector option still carrying its old section id.
+  // Those are eligible for auto-derivation; a real slug (snake_case, or even an
+  // Arabic inline slug a user/record already relies on) is left alone.
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const isAutoFillableValue = (v?: string) => {
+    const trimmed = (v ?? '').trim();
+    return !trimmed || UUID_RE.test(trimmed);
+  };
+
+  // Sticky once the slug is a deliberate value: don't let live translation
+  // overwrite it. Mirrors FieldEditor, which never auto-rewrites an existing
+  // field's api_name. A manual edit to the api_name input also pins it.
+  const [slugTouched, setSlugTouched] = useState(() => !isAutoFillableValue(option.value));
+
+  // Live, debounced translation of whichever label is being edited — the same
+  // flow FieldEditor uses for field api_names, so an option gets an English-
+  // derived slug as you type instead of being left with a raw id.
+  const source =
+    editingLang === 'ar' ? (option.label_ar ?? '') :
+    editingLang === 'en' ? (option.label_en ?? '') : '';
+  // Only translate when something is actually fillable — a missing label or a
+  // not-yet-pinned slug. A complete option (both labels + a real slug) skips
+  // the network entirely when its label is edited, like FieldEditor disables
+  // translation for already-saved fields.
+  const needsFill =
+    !(option.label_ar ?? '').trim() ||
+    !(option.label_en ?? '').trim() ||
+    (!slugTouched && isAutoFillableValue(option.value));
+  const translation = useDebouncedTranslation(source, {
+    kind: 'option',
+    enabled: !locked && needsFill,
+  });
+
+  // Always reach the freshest onUpdate from the result effect — the parent
+  // passes a new closure each render and a stale one could write against an
+  // outdated options array.
+  const onUpdateRef = useRef(onUpdate);
+  onUpdateRef.current = onUpdate;
+
+  // Fill the opposite-language label (when empty) and the api_name slug (unless
+  // pinned) from a resolved translation.
+  const applyTranslation = (out: TranslatedLabel) => {
+    const patch: Partial<FieldOption> = {};
+    if (!(option.label_ar ?? '').trim()) patch.label_ar = out.label_ar;
+    if (!(option.label_en ?? '').trim()) patch.label_en = out.label_en;
+    if (!slugTouched && out.name) patch.value = out.name;
+    if (Object.keys(patch).length > 0) onUpdateRef.current(patch);
+  };
+
+  useEffect(() => {
+    if (translation.result) applyTranslation(translation.result);
+    // Apply once per new translation result. Depending on `option`/`onUpdate`
+    // would re-run every keystroke and risk a fill loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translation.result]);
+
+  // While typing, seed the slug instantly from the sync slugify for Latin input
+  // (snappy, no network); Arabic input gets its slug from the live translation
+  // above once it resolves. Both gated on `!slugTouched` so a deliberate slug
+  // is never clobbered mid-edit.
   const handleLabelArChange = (val: string) => {
+    setEditingLang('ar');
     const patch: Partial<FieldOption> = { label_ar: val };
-    if (!option.value && val.trim()) {
+    if (!slugTouched && val.trim()) {
       const sync = slugify(val);
       if (sync) patch.value = sync;
     }
@@ -165,48 +229,34 @@ function OptionRow({
   };
 
   const handleLabelEnChange = (val: string) => {
+    setEditingLang('en');
     const patch: Partial<FieldOption> = { label_en: val };
-    if (!option.value && val.trim()) {
+    if (!slugTouched && val.trim()) {
       const sync = slugify(val);
       if (sync) patch.value = sync;
     }
     onUpdate(patch);
   };
 
-  // On blur of the AR or EN input: if one side has content and the other is
-  // empty, translate. Also derive a slug if `value` is still empty. This
-  // gives "type one side, get the other for free" without the cost of
-  // translating mid-keystroke.
-  const fillOppositeOnBlur = async () => {
-    if (translating) return;
-    const ar = (option.label_ar ?? '').trim();
-    const en = (option.label_en ?? '').trim();
-    const slug = (option.value ?? '').trim();
-    const arMissing = !ar;
-    const enMissing = !en;
-    if (arMissing === enMissing && slug) return; // nothing to do
-    const source = ar || en;
-    if (!source) return;
-    setTranslating(true);
+  // Safety net for fast typers who blur before the debounce settles: force the
+  // translation to resolve and apply it. No-op when nothing is missing.
+  const handleBlur = async () => {
+    if (!source.trim()) return;
+    const needsOpposite =
+      !(option.label_ar ?? '').trim() || !(option.label_en ?? '').trim();
+    const needsSlug = !slugTouched && isAutoFillableValue(option.value);
+    if (!needsOpposite && !needsSlug) return;
+    if (translation.result) { applyTranslation(translation.result); return; }
     try {
-      const labels = await translateLabel(source, 'option');
-      const patch: Partial<FieldOption> = {};
-      if (arMissing) patch.label_ar = labels.label_ar;
-      if (enMissing) patch.label_en = labels.label_en;
-      if (!slug) patch.value = labels.name;
-      if (Object.keys(patch).length > 0) onUpdate(patch);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      addToast(
-        isAr ? `تعذرت ترجمة الخيار: ${msg}` : `Option translation failed: ${msg}`,
-        'error',
-      );
-    } finally {
-      setTranslating(false);
+      applyTranslation(await translation.translateNow());
+    } catch {
+      // Failure is already surfaced as a toast by the hook; keep the typed
+      // input so the user can retry without losing it.
     }
   };
 
   const handleApiNameChange = (raw: string) => {
+    setSlugTouched(true);
     onUpdate({ value: slugify(raw) });
   };
 
@@ -239,31 +289,37 @@ function OptionRow({
       <input
         value={option.label_ar}
         onChange={(e) => handleLabelArChange(e.target.value)}
-        onBlur={fillOppositeOnBlur}
+        onBlur={handleBlur}
         className="form-input text-sm py-1.5 flex-1 min-w-0"
         placeholder="عربي"
         dir="rtl"
-        disabled={translating}
       />
       <input
         value={option.label_en}
         onChange={(e) => handleLabelEnChange(e.target.value)}
-        onBlur={fillOppositeOnBlur}
+        onBlur={handleBlur}
         className="form-input text-sm py-1.5 flex-1 min-w-0"
         placeholder="English"
         dir="ltr"
-        disabled={translating}
       />
-      <input
-        value={option.value}
-        onChange={(e) => handleApiNameChange(e.target.value)}
-        className="form-input text-xs py-1.5 flex-1 min-w-0 font-mono text-charcoal/60"
-        placeholder="api_name"
-        dir="ltr"
-        title={isAr
-          ? 'اسم الخيار داخل النظام — القيمة التي تُحفظ في السجلات ويقارن عليها سير العمل والكود. لا تعدّله بعد إنشاء سجلات تستخدم هذا الخيار إلا إذا كنت تعلم ما تفعل.'
-          : 'API name — the string stored on records and matched by workflows + code. Leave it alone after records use this option unless you know what you are doing.'}
-      />
+      <div className="relative flex-1 min-w-0">
+        <input
+          value={option.value}
+          onChange={(e) => handleApiNameChange(e.target.value)}
+          className="form-input text-xs py-1.5 w-full font-mono text-charcoal/60 pe-6"
+          placeholder="api_name"
+          dir="ltr"
+          title={isAr
+            ? 'اسم الخيار داخل النظام — القيمة التي تُحفظ في السجلات ويقارن عليها سير العمل والكود. يُترجم تلقائياً من الاسم أثناء الكتابة. لا تعدّله بعد إنشاء سجلات تستخدم هذا الخيار إلا إذا كنت تعلم ما تفعل.'
+            : 'API name — the string stored on records and matched by workflows + code. Auto-translated from the label as you type. Leave it alone after records use this option unless you know what you are doing.'}
+        />
+        {translation.status === 'pending' && (
+          <Loader2
+            size={11}
+            className="animate-spin text-copper/60 absolute top-1/2 -translate-y-1/2 end-2 pointer-events-none"
+          />
+        )}
+      </div>
       {groups.length > 0 && (
         <GroupPickerButton
           groups={groups}
