@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, ExternalLink, Loader2, Share2, Shield, X, Trash2 } from 'lucide-react';
+import { Check, Download, ExternalLink, Loader2, Pencil, Share2, Shield, X, Trash2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import type { FileRow } from '@/types';
-import { signDownloadUrl, signViewUrl } from '@/lib/files/client';
+import { renameFile, signDownloadUrl, signViewUrl } from '@/lib/files/client';
 import { useAppStore } from '@/stores/appStore';
 import { formatBytes, kindIcon, kindLabel } from '@/lib/files/format';
 
@@ -16,6 +16,8 @@ interface Props {
   onShare: (f: FileRow) => void;
   onPermissions: (f: FileRow) => void;
   onDelete: (f: FileRow) => void;
+  /** Called after a successful rename so callers can refresh their lists. */
+  onRenamed?: (file: FileRow) => void;
 }
 
 /**
@@ -35,19 +37,28 @@ export default function FilePreviewModal({
   onShare,
   onPermissions,
   onDelete,
+  onRenamed,
 }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  /** Local override for the displayed name so a successful rename is visible
+   *  immediately without waiting for the parent to refresh the FileRow. */
+  const [displayName, setDisplayName] = useState<string>('');
+  const [renaming, setRenaming] = useState(false);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [renameBusy, setRenameBusy] = useState(false);
 
   useEffect(() => {
     if (!open || !file) {
       setUrl(null);
+      setRenaming(false);
       return;
     }
     let cancelled = false;
+    setDisplayName(file.original_name);
     setLoading(true);
     void signViewUrl(file.id)
       .then((res) => {
@@ -86,32 +97,88 @@ export default function FilePreviewModal({
     }
   };
 
+  const handleStartRename = () => {
+    setRenameDraft(displayName || file.original_name);
+    setRenaming(true);
+  };
+
+  const handleCommitRename = async () => {
+    const next = renameDraft.trim();
+    if (!next || next === (displayName || file.original_name)) {
+      setRenaming(false);
+      return;
+    }
+    setRenameBusy(true);
+    try {
+      const updated = await renameFile(file.id, next);
+      setDisplayName(updated.original_name);
+      setRenaming(false);
+      onRenamed?.(updated);
+    } catch {
+      /* surfaceError already toasted */
+    } finally {
+      setRenameBusy(false);
+    }
+  };
+
   return createPortal(
     <div className="fixed inset-0 z-50 bg-charcoal/80 backdrop-blur-sm flex flex-col" onClick={onClose}>
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 bg-charcoal/90 text-white" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center gap-3 min-w-0">
+      <div className="flex items-center justify-between px-6 py-4 bg-charcoal/90 text-white gap-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 min-w-0 flex-1">
           <Icon size={20} className="text-white/80 shrink-0" />
-          <div className="min-w-0">
-            <div className="font-bold truncate">{file.original_name}</div>
+          <div className="min-w-0 flex-1">
+            {renaming ? (
+              <div className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={renameDraft}
+                  onChange={(e) => setRenameDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void handleCommitRename();
+                    if (e.key === 'Escape') setRenaming(false);
+                  }}
+                  disabled={renameBusy}
+                  dir="auto"
+                  className="flex-1 min-w-0 bg-white/10 border border-white/20 rounded-md px-2 py-1 text-sm font-bold text-white placeholder-white/40 focus:outline-none focus:border-copper"
+                />
+                <HeaderBtn
+                  icon={Check}
+                  label={t('common.save')}
+                  onClick={() => void handleCommitRename()}
+                />
+                <HeaderBtn
+                  icon={X}
+                  label={t('common.cancel')}
+                  onClick={() => setRenaming(false)}
+                />
+              </div>
+            ) : (
+              <div className="font-bold truncate" title={displayName || file.original_name}>
+                {displayName || file.original_name}
+              </div>
+            )}
             <div className="text-xs text-white/50">
               {kindLabel(file.kind, isAr)} · {formatBytes(file.size_bytes, isAr)}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          <HeaderBtn icon={Download} label={t('files.actions.download')} onClick={handleDownload} />
-          {canEdit && (
-            <>
-              <HeaderBtn icon={Share2} label={t('files.actions.share')} onClick={() => onShare(file)} />
-              <HeaderBtn icon={Shield} label={t('files.actions.permissions')} onClick={() => onPermissions(file)} />
-            </>
-          )}
-          {canDelete && (
-            <HeaderBtn icon={Trash2} label={t('files.actions.delete')} danger onClick={() => onDelete(file)} />
-          )}
-          <HeaderBtn icon={X} label={t('common.close')} onClick={onClose} />
-        </div>
+        {!renaming && (
+          <div className="flex items-center gap-1">
+            <HeaderBtn icon={Download} label={t('files.actions.download')} onClick={handleDownload} />
+            {canEdit && (
+              <>
+                <HeaderBtn icon={Pencil} label={t('files.actions.rename')} onClick={handleStartRename} />
+                <HeaderBtn icon={Share2} label={t('files.actions.share')} onClick={() => onShare(file)} />
+                <HeaderBtn icon={Shield} label={t('files.actions.permissions')} onClick={() => onPermissions(file)} />
+              </>
+            )}
+            {canDelete && (
+              <HeaderBtn icon={Trash2} label={t('files.actions.delete')} danger onClick={() => onDelete(file)} />
+            )}
+            <HeaderBtn icon={X} label={t('common.close')} onClick={onClose} />
+          </div>
+        )}
       </div>
 
       {/* Body */}

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, Eye, FolderInput, MoreVertical, Share2, Shield, Trash2 } from 'lucide-react';
+import { Check, Download, Eye, FolderInput, MoreVertical, Pencil, Share2, Shield, Trash2 } from 'lucide-react';
 import type { FileRow } from '@/types';
 import { kindAccent, kindIcon, formatBytes } from '@/lib/files/format';
 import { useAppStore } from '@/stores/appStore';
@@ -11,12 +11,23 @@ interface Props {
   shared?: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  /** Currently selected in the bulk-select UI. */
+  selected: boolean;
+  /** True if anything is selected — switches plain click from "preview" to
+   *  "replace selection with this item". */
+  selectionActive: boolean;
+  /** Click forwarder; returns true if selection logic consumed the click and
+   *  the card should suppress its default preview action. */
+  onSelectClick: (e: ReactMouseEvent) => boolean;
+  /** Explicit click on the hover-revealed circular checkbox. */
+  onToggleCheckbox: (e: ReactMouseEvent) => void;
   onPreview: (f: FileRow) => void;
   onDownload: (f: FileRow) => void;
   onMove: (f: FileRow) => void;
   onShare: (f: FileRow) => void;
   onPermissions: (f: FileRow) => void;
   onDelete: (f: FileRow) => void;
+  onRename: (f: FileRow) => void;
 }
 
 export default function FileCard({
@@ -24,12 +35,17 @@ export default function FileCard({
   shared,
   canEdit,
   canDelete,
+  selected,
+  selectionActive,
+  onSelectClick,
+  onToggleCheckbox,
   onPreview,
   onDownload,
   onMove,
   onShare,
   onPermissions,
   onDelete,
+  onRename,
 }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -67,9 +83,37 @@ export default function FileCard({
 
   return (
     <div
-      onClick={() => onPreview(file)}
-      className="group relative bg-white border border-sand/30 rounded-2xl overflow-hidden cursor-pointer hover:border-copper/30 hover:shadow-md hover:shadow-copper/5 transition-all flex flex-col"
+      data-selectable-kind="file"
+      data-selectable-id={file.id}
+      onClick={(e) => {
+        const consumed = onSelectClick(e);
+        if (!consumed) onPreview(file);
+      }}
+      className={`group relative bg-white border rounded-2xl overflow-hidden cursor-pointer transition-all flex flex-col ${
+        selected
+          ? 'border-copper ring-2 ring-copper/40 shadow-md shadow-copper/10'
+          : 'border-sand/30 hover:border-copper/30 hover:shadow-md hover:shadow-copper/5'
+      }`}
     >
+      {/* Hover-revealed selection checkbox (Google Drive style). Always visible
+          when selected so users see what's picked even after mouseout. */}
+      <button
+        type="button"
+        onClick={onToggleCheckbox}
+        onMouseDown={(e) => e.stopPropagation()}
+        aria-label={t('files.bulk.toggle_select_aria')}
+        aria-pressed={selected}
+        className={`absolute z-10 top-2 end-2 w-6 h-6 rounded-full flex items-center justify-center transition-all ${
+          selected
+            ? 'bg-copper text-white opacity-100 shadow-sm'
+            : selectionActive
+            ? 'bg-white/90 text-charcoal/40 border border-sand/50 opacity-100 hover:text-copper'
+            : 'bg-white/90 text-charcoal/40 border border-sand/50 opacity-0 group-hover:opacity-100 hover:text-copper'
+        }`}
+      >
+        <Check size={14} strokeWidth={3} className={selected ? 'opacity-100' : 'opacity-0 group-hover:opacity-60'} />
+      </button>
+
       {/* Thumb area */}
       <div className={`aspect-[4/3] flex items-center justify-center relative ${accent.bg}`}>
         {file.kind === 'image' && thumbUrl ? (
@@ -103,6 +147,7 @@ export default function FileCard({
               e.stopPropagation();
               setMenuOpen((v) => !v);
             }}
+            onMouseDown={(e) => e.stopPropagation()}
             className="p-1.5 rounded-lg text-charcoal/40 hover:text-charcoal hover:bg-cream"
             aria-label={t('common.actions')}
           >
@@ -117,6 +162,7 @@ export default function FileCard({
               <MenuItem icon={Download} label={t('files.actions.download')} onClick={() => { setMenuOpen(false); onDownload(file); }} />
               {canEdit && (
                 <>
+                  <MenuItem icon={Pencil} label={t('files.actions.rename')} onClick={() => { setMenuOpen(false); onRename(file); }} />
                   <MenuItem icon={FolderInput} label={t('files.actions.move')} onClick={() => { setMenuOpen(false); onMove(file); }} />
                   <MenuItem icon={Share2} label={t('files.actions.share')} onClick={() => { setMenuOpen(false); onShare(file); }} />
                   <MenuItem icon={Shield} label={t('files.actions.permissions')} onClick={() => { setMenuOpen(false); onPermissions(file); }} />
