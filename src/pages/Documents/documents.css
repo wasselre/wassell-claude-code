@@ -1,0 +1,227 @@
+/* ============================================================================
+ * Amiri font enforcement for Wassel documents.
+ *
+ * Documents must render in Amiri ONLY — at the editor surface, in saved
+ * content rendering, in previews, and in any future export path. We enforce
+ * this with a high-specificity selector keyed off `.wassel-doc-surface`
+ * (added to every editor + render container) and `!important` so pasted
+ * HTML with inline `style="font-family: ..."` can't override us.
+ *
+ * The paste sanitizer in DocumentEditor.tsx also strips font-family from
+ * incoming HTML before TipTap sees it, so this CSS rule is a backstop —
+ * not the primary defense.
+ * ========================================================================= */
+
+.wassel-doc-surface,
+.wassel-doc-surface *:not(svg):not(svg *) {
+  font-family: 'Amiri', serif !important;
+}
+
+/* ── Google-Docs-style page on a canvas ────────────────────────────────────
+ * The editor sits on a neutral "canvas" (the area around the page) with a
+ * centered "page" rectangle — a defined width, internal margins, and a soft
+ * shadow — so it reads like a real document page instead of text floating in
+ * an open field. Used in both normal and fullscreen views. */
+.wassel-doc-canvas {
+  background: #E9E2D5; /* warm light gray — clearly NOT the page */
+}
+
+/* When a doc is fullscreen the overlay is z-60 (over the z-50 app sidebar).
+ * Lift the global modal + toast layers above it so Share/Move dialogs and
+ * error toasts still reach the user. Scoped to `html.doc-fullscreen` so the
+ * Files page and everywhere else keep their normal z-50. */
+html.doc-fullscreen .modal-overlay {
+  z-index: 70;
+}
+html.doc-fullscreen .wassel-toasts {
+  z-index: 71;
+}
+
+.wassel-doc-page {
+  background: #ffffff;
+  width: 100%;
+  /* ~8.5in (Google-Docs Letter width). Reads as an A4-ish page; the canvas
+   * around it makes the non-typable area obviously "off the page". */
+  max-width: 816px;
+  /* A full page tall even when empty, so short docs still look like a page.
+   * Grows with content. */
+  min-height: 1056px;
+  margin-inline: auto;
+  box-shadow:
+    0 1px 2px rgba(74, 44, 42, 0.10),
+    0 12px 36px rgba(74, 44, 42, 0.12);
+  /* Page margins (Google Docs ≈ 1in). Scales down on small screens so the
+   * page never overflows its canvas. */
+  padding: clamp(48px, 6vw, 84px) clamp(28px, 8vw, 96px);
+  /* Make the inner editor fill the page so a click anywhere on the page
+   * lands the caret (not just on top of existing text). */
+  display: flex;
+  flex-direction: column;
+}
+/* Flex chain so the editable ProseMirror fills the page's content box —
+ * .wassel-doc-surface wraps EditorContent's own <div>, which wraps the
+ * .ProseMirror, so every link in the chain must be a flex column for the
+ * flex:1 at the bottom to stretch the editable area to the full page. */
+.wassel-doc-page .wassel-doc-surface,
+.wassel-doc-page .wassel-doc-surface > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ProseMirror's default focus outline fights our editor design. Hide it; the
+ * page rectangle conveys the editing surface. flex:1 makes the editable area
+ * fill the page's content box (min-height is the floor when content is short
+ * and the flex chain isn't present, e.g. a future non-page render). */
+.wassel-doc-surface .ProseMirror {
+  outline: none;
+  flex: 1;
+  min-height: 50vh;
+  line-height: 1.7;
+  font-size: 1.0625rem; /* 17px — a touch larger than body for reading comfort */
+  color: #4A4E54; /* charcoal */
+}
+
+/* Default paragraph spacing. TipTap renders <p> with no margin by default. */
+.wassel-doc-surface .ProseMirror p {
+  margin: 0 0 0.6em 0;
+}
+
+/* Headings — generous but not Word-doc-loud. */
+.wassel-doc-surface .ProseMirror h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin: 1.2em 0 0.5em;
+  color: #4A2C2A; /* rich chocolate brown for heading contrast */
+}
+.wassel-doc-surface .ProseMirror h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 1em 0 0.4em;
+  color: #4A2C2A;
+}
+.wassel-doc-surface .ProseMirror h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  margin: 0.9em 0 0.35em;
+  color: #4A2C2A;
+}
+
+/* Tailwind's preflight resets `ul, ol { list-style: none }` globally, which
+ * wipes the bullet markers inside the editor (the "minus sign disappears"
+ * bug). Re-assert real markers here — higher specificity beats the reset.
+ * Bullet lists use a dash glyph to match the Google-Docs "- " muscle memory;
+ * nested levels keep the same dash (the user's docs are flat dashes, not the
+ * disc/circle/square cascade). */
+.wassel-doc-surface .ProseMirror ul,
+.wassel-doc-surface .ProseMirror ol {
+  margin: 0 0 0.7em 0;
+  padding-inline-start: 1.5em;
+  list-style-position: outside;
+}
+.wassel-doc-surface .ProseMirror ul {
+  list-style-type: "–  "; /* en-dash + spacing as the bullet marker */
+}
+.wassel-doc-surface .ProseMirror ol {
+  list-style-type: decimal;
+}
+.wassel-doc-surface .ProseMirror li {
+  margin: 0.15em 0;
+}
+.wassel-doc-surface .ProseMirror li::marker {
+  color: #4A4E54; /* charcoal — keep the dash/number on-brand and legible */
+}
+.wassel-doc-surface .ProseMirror li > p {
+  margin: 0;
+}
+
+.wassel-doc-surface .ProseMirror blockquote {
+  border-inline-start: 3px solid #B8734F; /* copper */
+  padding-inline-start: 1em;
+  margin: 0.6em 0;
+  color: #4A4E54;
+  opacity: 0.85;
+  font-style: italic;
+}
+
+.wassel-doc-surface .ProseMirror code {
+  background: rgba(74, 78, 84, 0.08);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.95em;
+}
+.wassel-doc-surface .ProseMirror pre {
+  background: rgba(74, 78, 84, 0.05);
+  padding: 0.8em 1em;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 0.6em 0;
+}
+.wassel-doc-surface .ProseMirror pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.wassel-doc-surface .ProseMirror a {
+  color: #8E4E3A; /* terracotta — NOT default blue, per branding */
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.wassel-doc-surface .ProseMirror a:hover {
+  color: #B8734F; /* copper */
+}
+
+.wassel-doc-surface .ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 0.4em 0;
+}
+
+.wassel-doc-surface .ProseMirror hr {
+  border: none;
+  border-top: 1px solid rgba(212, 184, 150, 0.6); /* sand */
+  margin: 1.2em 0;
+}
+
+/* Placeholder — shown when the doc is empty. TipTap's Placeholder ext adds a
+ * data-placeholder attr to the first empty paragraph. */
+.wassel-doc-surface .ProseMirror p.is-editor-empty:first-child::before {
+  color: rgba(74, 78, 84, 0.35);
+  content: attr(data-placeholder);
+  float: inline-start;
+  pointer-events: none;
+  height: 0;
+}
+
+/* RTL/LTR auto-handling per block. The editor root carries a base `dir`
+ * (from the app language) so lists, indentation, and markers stay anchored
+ * to one side; each text block then auto-detects its own direction from its
+ * leading strong characters via `unicode-bidi: plaintext`.
+ *
+ * NOTE: `li` is intentionally NOT in this list. Putting plaintext on the
+ * list item makes the marker jump sides per-item based on content direction,
+ * which looks like a broken staircase. The marker follows the list's base
+ * direction (consistent), while the inner `<p>` still auto-detects. */
+.wassel-doc-surface .ProseMirror p,
+.wassel-doc-surface .ProseMirror h1,
+.wassel-doc-surface .ProseMirror h2,
+.wassel-doc-surface .ProseMirror h3,
+.wassel-doc-surface .ProseMirror blockquote {
+  unicode-bidi: plaintext;
+}
+
+/* Text-align utility classes that TipTap's TextAlign extension emits as
+ * inline style — but we set them via the extension's `defaultAlignment`
+ * fallback on the rendered HTML side too. */
+.wassel-doc-surface .ProseMirror [style*="text-align: center"] {
+  text-align: center;
+}
+.wassel-doc-surface .ProseMirror [style*="text-align: right"] {
+  text-align: right;
+}
+.wassel-doc-surface .ProseMirror [style*="text-align: left"] {
+  text-align: left;
+}

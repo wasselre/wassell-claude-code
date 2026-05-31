@@ -39,6 +39,7 @@ import DecksPage from '@/pages/Decks/DecksPage';
 import ImageChatsPage from '@/pages/ImageChats/ImageChatsPage';
 import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import FilesPage from '@/pages/Files/FilesPage';
+import DocumentEditorPage from '@/pages/Documents/DocumentEditorPage';
 import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import Login from '@/pages/Login';
@@ -218,6 +219,11 @@ export default function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/files" element={<FilesPage />} />
           <Route path="/files/shared" element={<FilesPage forceShared />} />
+          {/* Document editor — full-page, lives at /files/doc/:fileId so the
+              breadcrumb back-arrow stays inside the Files hierarchy. Must
+              come BEFORE /files/:folderId so the literal "doc" segment
+              doesn't get matched as a folder id. */}
+          <Route path="/files/doc/:fileId" element={<DocumentEditorPage />} />
           <Route path="/files/:folderId" element={<FilesPage />} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />

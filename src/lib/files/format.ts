@@ -9,6 +9,7 @@ import {
   Music,
   FileArchive,
   File,
+  FileEdit,
   type LucideIcon,
 } from 'lucide-react';
 import type { FilePreviewKind } from '@/types';
@@ -31,19 +32,23 @@ export const kindIcon: Record<FilePreviewKind, LucideIcon> = {
   video: Film,
   audio: Music,
   document: FileText,
+  wassel_doc: FileEdit,
   archive: FileArchive,
   other: File,
 };
 
 /** Brand-aware accent color per file kind, used for card tile backgrounds. */
 export const kindAccent: Record<FilePreviewKind, { bg: string; fg: string }> = {
-  image:    { bg: 'bg-emerald-500/10',  fg: 'text-emerald-700' },
-  pdf:      { bg: 'bg-rose-500/10',     fg: 'text-rose-700' },
-  video:    { bg: 'bg-indigo-500/10',   fg: 'text-indigo-700' },
-  audio:    { bg: 'bg-purple-500/10',   fg: 'text-purple-700' },
-  document: { bg: 'bg-blue-500/10',     fg: 'text-blue-700' },
-  archive:  { bg: 'bg-amber-500/10',    fg: 'text-amber-700' },
-  other:    { bg: 'bg-charcoal/10',     fg: 'text-charcoal' },
+  image:      { bg: 'bg-emerald-500/10',  fg: 'text-emerald-700' },
+  pdf:        { bg: 'bg-rose-500/10',     fg: 'text-rose-700' },
+  video:      { bg: 'bg-indigo-500/10',   fg: 'text-indigo-700' },
+  audio:      { bg: 'bg-purple-500/10',   fg: 'text-purple-700' },
+  document:   { bg: 'bg-blue-500/10',     fg: 'text-blue-700' },
+  // Wassel docs use the brand copper so they read as a first-class native
+  // type, not "another generic document upload".
+  wassel_doc: { bg: 'bg-copper/10',       fg: 'text-copper' },
+  archive:    { bg: 'bg-amber-500/10',    fg: 'text-amber-700' },
+  other:      { bg: 'bg-charcoal/10',     fg: 'text-charcoal' },
 };
 
 /** Human-friendly file kind label. */
@@ -55,6 +60,7 @@ export function kindLabel(kind: FilePreviewKind, isAr: boolean): string {
       video: 'فيديو',
       audio: 'صوت',
       document: 'مستند',
+      wassel_doc: 'مستند وصل',
       archive: 'أرشيف',
       other: 'ملف',
     }[kind];
@@ -65,6 +71,7 @@ export function kindLabel(kind: FilePreviewKind, isAr: boolean): string {
     video: 'Video',
     audio: 'Audio',
     document: 'Document',
+    wassel_doc: 'Wassel Doc',
     archive: 'Archive',
     other: 'File',
   }[kind];

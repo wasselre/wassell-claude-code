@@ -1292,6 +1292,7 @@ export type {
   FolderPermission,
   SharedLink,
   SharedFileResponse,
+  WasselDocumentRow,
 } from './files';
 
 export type ActivityLogStatus = 'success' | 'error' | 'warning' | 'info';

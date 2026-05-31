@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FolderPlus, FolderUp, Loader2, Upload } from 'lucide-react';
+import { FilePlus, FolderPlus, FolderUp, Loader2, Upload } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { FileRow, FolderRow } from '@/types';
 import {
@@ -15,6 +15,7 @@ import {
   renameFolder,
   signDownloadUrl,
 } from '@/lib/files/client';
+import { createDocument } from '@/lib/documents/client';
 import FilesTabs from './components/FilesTabs';
 import FilesBreadcrumb from './components/FilesBreadcrumb';
 import FolderTile from './components/FolderTile';
@@ -320,7 +321,27 @@ export default function FilesPage({ forceShared = false }: Props) {
 
   // ─── Handlers ────────────────────────────────────────────────────────
 
-  const onPreview = (f: FileRow) => setPreviewFile(f);
+  /** Wassel documents bypass the preview modal — they have a full-page
+   *  editor at /files/doc/:id. Other kinds open in the lightbox/iframe modal. */
+  const onPreview = (f: FileRow) => {
+    if (f.kind === 'wassel_doc') {
+      navigate(`/files/doc/${f.id}`);
+      return;
+    }
+    setPreviewFile(f);
+  };
+
+  const onCreateDocument = async () => {
+    try {
+      const row = await createDocument({
+        title: isAr ? 'مستند بدون عنوان' : 'Untitled document',
+        folderId: currentFolderId,
+      });
+      navigate(`/files/doc/${row.id}`);
+    } catch {
+      /* surfaced */
+    }
+  };
   const onShare = (f: FileRow) => setShareFile(f);
   const onPermissionsFile = (f: FileRow) => setPermsTarget({ kind: 'file', row: f });
   const onPermissionsFolder = (f: FolderRow) => setPermsTarget({ kind: 'folder', row: f });
@@ -516,6 +537,13 @@ export default function FilesPage({ forceShared = false }: Props) {
         <div className="flex items-center gap-2">
           {uploadEnabled && (
             <>
+              <button
+                onClick={() => void onCreateDocument()}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream font-bold text-sm transition-colors"
+              >
+                <FilePlus size={16} />
+                {t('files.new_doc.button')}
+              </button>
               <button
                 onClick={() => setCreateOpen(true)}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream font-bold text-sm transition-colors"

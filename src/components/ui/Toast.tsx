@@ -20,7 +20,7 @@ export default function ToastContainer() {
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed bottom-4 end-4 z-50 space-y-2">
+    <div className="wassel-toasts fixed bottom-4 end-4 z-50 space-y-2">
       {toasts.map((toast) => {
         const Icon = icons[toast.type];
         return (

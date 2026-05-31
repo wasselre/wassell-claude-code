@@ -3,7 +3,17 @@
  * See docs/prd/files.md.
  */
 
-export type FilePreviewKind = 'image' | 'pdf' | 'video' | 'audio' | 'document' | 'archive' | 'other';
+export type FilePreviewKind =
+  | 'image'
+  | 'pdf'
+  | 'video'
+  | 'audio'
+  | 'document'
+  /** Native Wassel rich-text document (Google-Docs-style). Stored in
+   *  public.wassel_documents — never has a Storage object. */
+  | 'wassel_doc'
+  | 'archive'
+  | 'other';
 export type FilePermissionRole = 'viewer' | 'editor' | 'owner';
 
 export interface FolderRow {
@@ -51,6 +61,20 @@ export interface FolderPermission {
   role: FilePermissionRole;
   granted_by_user_id: string;
   created_at: string;
+}
+
+/**
+ * The body of a Wassel native document. 1:1 with a files row whose kind is
+ * 'wassel_doc'. `content_json` is the TipTap document state; `content_html`
+ * is the rendered HTML used by preview/export paths that can't run TipTap.
+ */
+export interface WasselDocumentRow {
+  file_id: string;
+  content_json: Record<string, unknown>;
+  content_html: string;
+  version: number;
+  last_edited_by_user_id: string | null;
+  updated_at: string;
 }
 
 export interface SharedLink {
