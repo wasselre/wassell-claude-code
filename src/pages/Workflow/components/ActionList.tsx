@@ -6,6 +6,7 @@ import { Plus, Trash2, Play, UserCheck, ChevronDown, ChevronUp, Phone, Upload, L
 import FieldValueInput from './FieldValueInput';
 import PaseetQueryConfig from './PaseetQueryConfig';
 import { supabase } from '@/lib/supabase';
+import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 import type { WorkflowAction, WorkflowActionAssignUser, WorkflowActionCreateRecord, WorkflowActionHttpRequest, WorkflowActionOutboundIvr, WorkflowActionSendWhatsAppMessage, WorkflowActionPaseetQuery, WorkflowIvrOption, OutboundIvrDestination, HttpMethod, HttpHeaderPair, FieldMapping, ModelField, RoleFieldCondition, ConditionOperator, AppModel } from '@/types';
 
 type DateOffsetUnit = 'min' | 'h' | 'd' | 'w' | 'mo' | 'y';
@@ -1014,14 +1015,15 @@ function AssignUserConfig({
   // Detect assignee field constraints
   const assigneeField = triggerFields.find((f) => f.name === action.assignment_field_id && f.type === 'assignee');
   const constrainedRoleIds = assigneeField?.assignee_role_ids ?? [];
+  // For role-based assignment we still pivot on the field's role constraints —
+  // empty role list (all-users mode, or profile-only restriction) means any
+  // role is fair game for the user-picks-a-role flow.
   const availableRoles = constrainedRoleIds.length > 0 ? roles.filter((r) => constrainedRoleIds.includes(r.id)) : roles;
 
-  // Filter users by assignee field's role constraints
-  const activeUsers = users.filter((u) => {
-    if (!u.is_active) return false;
-    if (constrainedRoleIds.length === 0) return true;
-    return u.role_assignments.some((ra) => constrainedRoleIds.includes(ra.role_id));
-  });
+  // Filter users by the field's full constraint set (mode + roles + profiles).
+  const activeUsers = assigneeField
+    ? filterEligibleAssignees(assigneeField, users)
+    : users.filter((u) => u.is_active);
 
   const selectedRole = roles.find((r) => r.id === action.role_id);
   const roleIsDangling = action.mode === 'role_based' && !!action.role_id && !selectedRole;

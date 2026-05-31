@@ -130,6 +130,14 @@ export interface ModelField {
   is_multi?: boolean; // When type: 'lookup', allows picking multiple records (value becomes string[]).
   lookup_max_records?: number; // When type: 'lookup', caps how many records show in the combobox dropdown (default 20).
   assignee_role_ids?: string[];
+  assignee_profile_ids?: string[];
+  // 'all'        — any active user is eligible (role/profile lists ignored)
+  // 'restricted' — eligible users = active users whose profile is in
+  //                assignee_profile_ids OR who hold any role in
+  //                assignee_role_ids (union, not intersection)
+  // Missing/undefined is inferred for backward compat: empty role_ids
+  // (and no profile_ids) means 'all'; otherwise 'restricted'.
+  assignee_user_filter_mode?: 'all' | 'restricted';
   default_country_code?: string; // e.g. "+966". Used for type: 'phone'.
   mirror_via_lookup_field_id?: string | null; // UUID of the sibling lookup field to hop through (type: 'mirror').
   mirror_target_field_name?: string | null; // Slug of the field on the sibling's target model to display (type: 'mirror').

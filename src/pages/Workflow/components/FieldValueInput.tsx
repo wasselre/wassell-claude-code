@@ -1,4 +1,5 @@
 import { useAppStore } from '@/stores/appStore';
+import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 import type { ModelField } from '@/types';
 
 interface FieldValueInputProps {
@@ -188,14 +189,9 @@ export default function FieldValueInput({ field, value, onChange, className = ''
         />
       );
 
-    // Assignee — show users filtered by the field's role constraints
+    // Assignee — show users filtered by the field's role + profile constraints
     case 'assignee': {
-      const roleIds = field.assignee_role_ids ?? [];
-      const eligibleUsers = users.filter((u) => {
-        if (!u.is_active) return false;
-        if (roleIds.length === 0) return true;
-        return u.role_assignments.some((ra) => roleIds.includes(ra.role_id));
-      });
+      const eligibleUsers = filterEligibleAssignees(field, users);
       return (
         <select
           value={String(value ?? '')}

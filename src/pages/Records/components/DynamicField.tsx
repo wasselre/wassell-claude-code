@@ -15,6 +15,7 @@ import DateTimePicker from './DateTimePicker';
 import TemplateVariablesField from './TemplateVariablesField';
 import TemplatesPickerModal from './TemplatesPickerModal';
 import GenerationsGallery, { GENERATION_STATUS_LABELS, GenerationStatusBadge } from './GenerationsGallery';
+import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 import { resolveMirror } from '@/lib/mirrorResolver';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import {
@@ -602,10 +603,7 @@ export default function DynamicField({
 
       case 'assignee': {
         const { users: allUsers } = useAppStore.getState();
-        const roleIds = field.assignee_role_ids ?? [];
-        const eligibleUsers = allUsers.filter((u) =>
-          u.is_active && u.role_assignments.some((ra) => roleIds.includes(ra.role_id)),
-        );
+        const eligibleUsers = filterEligibleAssignees(field, allUsers);
         return (
           <select
             value={(value as string) ?? ''}

@@ -85,7 +85,7 @@ interface FieldEditorProps {
 export default function FieldEditor({ field, sectionId, model, defaultType, onSave, ownerKind = 'model' }: FieldEditorProps) {
   const { t } = useTranslation();
   const {
-    models, language, roles, records, workflows, views,
+    models, language, roles, profiles, records, workflows, views,
     saveModel, saveRecord, renameField, addToast, applyFallbackToExistingRecords,
   } = useAppStore();
   const isAr = language === 'ar';
@@ -106,6 +106,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [isMulti, setIsMulti] = useState<boolean>(false);
   const [lookupMaxRecords, setLookupMaxRecords] = useState<number>(20);
   const [assigneeRoleIds, setAssigneeRoleIds] = useState<string[]>([]);
+  const [assigneeProfileIds, setAssigneeProfileIds] = useState<string[]>([]);
+  const [assigneeFilterMode, setAssigneeFilterMode] = useState<'all' | 'restricted'>('all');
   const [defaultCountryCode, setDefaultCountryCode] = useState<string>(DEFAULT_COUNTRY_CODE);
   const [mirrorViaLookupFieldId, setMirrorViaLookupFieldId] = useState<string | null>(null);
   const [mirrorTargetFieldName, setMirrorTargetFieldName] = useState<string | null>(null);
@@ -209,6 +211,17 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setIsMulti(field.is_multi ?? false);
       setLookupMaxRecords(field.lookup_max_records ?? 20);
       setAssigneeRoleIds(field.assignee_role_ids ?? []);
+      setAssigneeProfileIds(field.assignee_profile_ids ?? []);
+      {
+        const savedRoleIds = field.assignee_role_ids ?? [];
+        const savedProfileIds = field.assignee_profile_ids ?? [];
+        // Backward compat: a field saved before the mode flag existed is
+        // 'restricted' only if it has any constraints; otherwise 'all'.
+        setAssigneeFilterMode(
+          field.assignee_user_filter_mode ??
+            (savedRoleIds.length === 0 && savedProfileIds.length === 0 ? 'all' : 'restricted'),
+        );
+      }
       setDefaultCountryCode(field.default_country_code ?? DEFAULT_COUNTRY_CODE);
       setMirrorViaLookupFieldId(field.mirror_via_lookup_field_id ?? null);
       setMirrorTargetFieldName(field.mirror_target_field_name ?? null);
@@ -394,7 +407,9 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       lookup_display_field: type === 'lookup' ? lookupDisplayField : null,
       is_multi: type === 'lookup' ? isMulti : undefined,
       lookup_max_records: type === 'lookup' ? lookupMaxRecords : undefined,
-      assignee_role_ids: type === 'assignee' ? assigneeRoleIds : undefined,
+      assignee_role_ids: type === 'assignee' ? (assigneeFilterMode === 'restricted' ? assigneeRoleIds : []) : undefined,
+      assignee_profile_ids: type === 'assignee' ? (assigneeFilterMode === 'restricted' ? assigneeProfileIds : []) : undefined,
+      assignee_user_filter_mode: type === 'assignee' ? assigneeFilterMode : undefined,
       default_country_code: type === 'phone' ? defaultCountryCode : undefined,
       mirror_via_lookup_field_id: type === 'mirror' ? mirrorViaLookupFieldId : null,
       mirror_target_field_name: type === 'mirror' ? mirrorTargetFieldName : null,
@@ -1201,48 +1216,131 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
           </>
         )}
 
-        {/* Assignee roles */}
+        {/* Assignee — who can be picked */}
         {type === 'assignee' && (
           <>
             <div className="border-t border-sand/10" />
             <div>
-              <label className="block text-xs font-bold text-charcoal/50 mb-1">
-                {t('fields.assignee_roles')}
+              <label className="block text-xs font-bold text-charcoal/50 mb-2">
+                {t('fields.assignee_filter_mode')}
               </label>
-              <p className="text-[11px] text-charcoal/30 mb-3">{t('fields.assignee_roles_hint')}</p>
-              <div className="space-y-1">
-                {roles.map((role) => {
-                  const checked = assigneeRoleIds.includes(role.id);
+              <div className="space-y-1.5 mb-3">
+                {(['all', 'restricted'] as const).map((mode) => {
+                  const selected = assigneeFilterMode === mode;
                   return (
                     <label
-                      key={role.id}
-                      className={`flex items-center gap-2.5 cursor-pointer py-2 px-3 rounded-lg transition-colors ${
-                        checked ? 'bg-copper/[0.05]' : 'hover:bg-sand/[0.06]'
+                      key={mode}
+                      className={`flex items-start gap-2.5 cursor-pointer py-2 px-3 rounded-lg transition-colors ${
+                        selected ? 'bg-copper/[0.05]' : 'hover:bg-sand/[0.06]'
                       }`}
                     >
                       <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => {
-                          setAssigneeRoleIds((prev) =>
-                            prev.includes(role.id) ? prev.filter((id) => id !== role.id) : [...prev, role.id],
-                          );
-                        }}
-                        className="w-3.5 h-3.5 rounded border-sand/50 text-copper focus:ring-copper/20"
+                        type="radio"
+                        name="assignee_filter_mode"
+                        checked={selected}
+                        onChange={() => setAssigneeFilterMode(mode)}
+                        className="mt-0.5 w-3.5 h-3.5 border-sand/50 text-copper focus:ring-copper/20"
                       />
-                      <span className={`text-[13px] font-semibold flex-1 ${checked ? 'text-charcoal' : 'text-charcoal/60'}`}>
-                        {isAr ? role.label_ar : role.label_en}
-                      </span>
-                      <span className="text-[10px] text-charcoal/25 bg-sand/10 px-1.5 py-0.5 rounded-full">
-                        {role.schema.sections.reduce((acc, s) => acc + s.fields.length, 0)}
-                      </span>
+                      <div className="flex-1">
+                        <div className={`text-[13px] font-semibold ${selected ? 'text-charcoal' : 'text-charcoal/60'}`}>
+                          {t(`fields.assignee_filter_mode_${mode}`)}
+                        </div>
+                        <div className="text-[11px] text-charcoal/40 mt-0.5">
+                          {t(`fields.assignee_filter_mode_${mode}_hint`)}
+                        </div>
+                      </div>
                     </label>
                   );
                 })}
-                {roles.length === 0 && (
-                  <p className="text-xs text-charcoal/25 py-2">{isAr ? 'لا توجد أدوار بعد' : 'No roles yet'}</p>
-                )}
               </div>
+
+              {assigneeFilterMode === 'restricted' && (
+                <div className="space-y-4 ps-2 border-s-2 border-copper/15">
+                  {/* Profiles */}
+                  <div>
+                    <label className="block text-xs font-bold text-charcoal/50 mb-1">
+                      {t('fields.assignee_profiles')}
+                    </label>
+                    <p className="text-[11px] text-charcoal/30 mb-2">{t('fields.assignee_profiles_hint')}</p>
+                    <div className="space-y-1">
+                      {profiles.map((p) => {
+                        const checked = assigneeProfileIds.includes(p.id);
+                        return (
+                          <label
+                            key={p.id}
+                            className={`flex items-center gap-2.5 cursor-pointer py-2 px-3 rounded-lg transition-colors ${
+                              checked ? 'bg-copper/[0.05]' : 'hover:bg-sand/[0.06]'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setAssigneeProfileIds((prev) =>
+                                  prev.includes(p.id) ? prev.filter((id) => id !== p.id) : [...prev, p.id],
+                                );
+                              }}
+                              className="w-3.5 h-3.5 rounded border-sand/50 text-copper focus:ring-copper/20"
+                            />
+                            <span className={`text-[13px] font-semibold flex-1 ${checked ? 'text-charcoal' : 'text-charcoal/60'}`}>
+                              {isAr ? p.label_ar : p.label_en}
+                            </span>
+                            {p.is_admin && (
+                              <span className="text-[10px] text-copper/80 bg-copper/10 px-1.5 py-0.5 rounded-full">
+                                {isAr ? 'مدير' : 'admin'}
+                              </span>
+                            )}
+                          </label>
+                        );
+                      })}
+                      {profiles.length === 0 && (
+                        <p className="text-xs text-charcoal/25 py-2">{isAr ? 'لا توجد ملفات تعريفية بعد' : 'No profiles yet'}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Roles */}
+                  <div>
+                    <label className="block text-xs font-bold text-charcoal/50 mb-1">
+                      {t('fields.assignee_roles')}
+                    </label>
+                    <p className="text-[11px] text-charcoal/30 mb-2">{t('fields.assignee_roles_hint')}</p>
+                    <div className="space-y-1">
+                      {roles.map((role) => {
+                        const checked = assigneeRoleIds.includes(role.id);
+                        return (
+                          <label
+                            key={role.id}
+                            className={`flex items-center gap-2.5 cursor-pointer py-2 px-3 rounded-lg transition-colors ${
+                              checked ? 'bg-copper/[0.05]' : 'hover:bg-sand/[0.06]'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => {
+                                setAssigneeRoleIds((prev) =>
+                                  prev.includes(role.id) ? prev.filter((id) => id !== role.id) : [...prev, role.id],
+                                );
+                              }}
+                              className="w-3.5 h-3.5 rounded border-sand/50 text-copper focus:ring-copper/20"
+                            />
+                            <span className={`text-[13px] font-semibold flex-1 ${checked ? 'text-charcoal' : 'text-charcoal/60'}`}>
+                              {isAr ? role.label_ar : role.label_en}
+                            </span>
+                            <span className="text-[10px] text-charcoal/25 bg-sand/10 px-1.5 py-0.5 rounded-full">
+                              {role.schema.sections.reduce((acc, s) => acc + s.fields.length, 0)}
+                            </span>
+                          </label>
+                        );
+                      })}
+                      {roles.length === 0 && (
+                        <p className="text-xs text-charcoal/25 py-2">{isAr ? 'لا توجد أدوار بعد' : 'No roles yet'}</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}

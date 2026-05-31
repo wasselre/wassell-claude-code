@@ -5,6 +5,7 @@ import { Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { ModelField } from '@/types';
 import { adhocKindFor, type AdhocFieldFilter } from '@/lib/adhocFilterUtils';
+import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 
 interface FieldFilterPopoverProps {
   anchorEl: HTMLElement | null;
@@ -172,12 +173,7 @@ function ValuesPicker({
       }));
     }
     if (field.type === 'assignee') {
-      const roleIds = field.assignee_role_ids ?? [];
-      const eligible = users.filter((u) => {
-        if (!u.is_active) return false;
-        if (roleIds.length === 0) return true;
-        return u.role_assignments.some((ra) => roleIds.includes(ra.role_id));
-      });
+      const eligible = filterEligibleAssignees(field, users);
       return eligible.map((u) => ({ value: u.id, label: isAr ? u.name_ar : u.name_en }));
     }
     return (field.options ?? []).map((o) => ({
