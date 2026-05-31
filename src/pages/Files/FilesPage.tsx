@@ -601,7 +601,11 @@ export default function FilesPage({ forceShared = false }: Props) {
         <div
           ref={gridRef}
           onMouseDown={onGridMouseDown}
-          className="space-y-6 relative select-none"
+          // Extra bottom padding while a selection is active so the floating
+          // BulkActionBar (fixed, bottom-center) never sits on top of the last
+          // row. Padding only grows the scroll area below the tiles — it does
+          // NOT move existing tiles, so the marquee hit-test stays aligned.
+          className={`space-y-6 relative select-none ${selection.totalSelected > 0 ? 'pb-24' : ''}`}
           style={bulkBusy ? { pointerEvents: 'none', opacity: 0.7 } : undefined}
         >
           {folders.length > 0 && (

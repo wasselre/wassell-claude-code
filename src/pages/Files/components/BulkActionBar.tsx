@@ -16,9 +16,16 @@ interface Props {
 }
 
 /**
- * Sticky bar shown above the file grid whenever the user has at least one
- * item selected. Mirrors Google Drive's compact toolbar: count on one end,
- * action buttons on the other, X to clear.
+ * Floating action bar shown whenever the user has at least one item selected.
+ *
+ * CRITICAL — this is pinned to the bottom-center of the viewport (position:
+ * fixed) ON PURPOSE. It used to be an in-flow `sticky` bar rendered directly
+ * above the grid, which meant the instant the first item got selected the bar
+ * mounted and pushed every tile down ~60px. That shift desynced the marquee
+ * hit-test (the rubber-band grabbed different tiles than the box covered) and
+ * made checkbox / tile clicks land on the wrong row. Keeping the bar OUT of
+ * the document flow is what makes selection stable — do not move it back into
+ * flow. Mirrors the Gmail/Drive multi-select pill.
  */
 export default function BulkActionBar({
   count,
@@ -36,7 +43,7 @@ export default function BulkActionBar({
     <div
       role="toolbar"
       aria-label={t('files.bulk.selected_count', { count })}
-      className="sticky top-2 z-20 mb-4 flex items-center gap-2 bg-charcoal text-white rounded-2xl px-3 py-2 shadow-lg shadow-charcoal/20"
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 bg-charcoal text-white rounded-2xl px-3 py-2 shadow-lg shadow-charcoal/30 max-w-[calc(100vw-2rem)]"
     >
       <button
         type="button"
