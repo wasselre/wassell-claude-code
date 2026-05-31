@@ -8,9 +8,16 @@ import {
   DEFAULT_MAP_ZOOM,
   buildPillIcon,
   parseMapStyleJson,
+  resolveMapStyles,
 } from '@/lib/locationUtils';
+import { resolveMirrorTargetField } from '@/lib/mirrorResolver';
 import { useResolvedLocations } from '@/hooks/useResolvedLocations';
 import type { AppModel, MapsConfig, ModelField } from '@/types';
+
+// A mirror field can stand in as the location source when it ultimately
+// surfaces a string holding a Google Maps link — i.e. its target field is a
+// url or text field (e.g. a project's location mirrored from All Projects).
+const LOCATION_MIRROR_TARGET_TYPES = new Set(['url', 'text']);
 
 const PILL_DEFAULT_COLOR = '#4A4E54';
 
@@ -25,14 +32,28 @@ const mapContainerStyle = { width: '100%', height: '400px', borderRadius: '12px'
 
 export default function MapsBuilder({ model, onChange, readOnly = false }: MapsBuilderProps) {
   const { t } = useTranslation();
-  const { language, records } = useAppStore();
+  const { language, records, models } = useAppStore();
   const isAr = language === 'ar';
 
   const allFields = useMemo(
     () => model.schema.sections.flatMap((s) => s.fields).filter((f) => f.type !== 'section_mirror'),
     [model],
   );
-  const urlFields = allFields.filter((f) => f.type === 'url' || f.type === 'text');
+  // Location source = a url/text field directly, OR a `mirror` field that
+  // surfaces a url/text field on another model (so a project can pin from its
+  // master All Projects location without storing the link locally).
+  const urlFields = useMemo(
+    () =>
+      allFields.filter((f) => {
+        if (f.type === 'url' || f.type === 'text') return true;
+        if (f.type === 'mirror') {
+          const target = resolveMirrorTargetField(f, model, models);
+          return !!target && LOCATION_MIRROR_TARGET_TYPES.has(target.type);
+        }
+        return false;
+      }),
+    [allFields, model, models],
+  );
   const numberFields = allFields.filter((f) => f.type === 'number');
   const dropdownFields = allFields.filter((f) => f.type === 'dropdown' || f.type === 'multiselect');
 
@@ -94,7 +115,7 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
       ? { lat: cfg.default_center_lat, lng: cfg.default_center_lng }
       : DEFAULT_MAP_CENTER);
   const zoom = cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
-  const styles = parseMapStyleJson(cfg.map_style_json) ?? undefined;
+  const styles = resolveMapStyles(cfg.map_style_json);
 
   return (
     <div

@@ -11,7 +11,7 @@ import {
   DEFAULT_MAP_ZOOM,
   buildClusterIcon,
   buildPillIcon,
-  parseMapStyleJson,
+  resolveMapStyles,
 } from '@/lib/locationUtils';
 import { useResolvedLocations, type ResolvedPin } from '@/hooks/useResolvedLocations';
 import { resolveMirror } from '@/lib/mirrorResolver';
@@ -213,7 +213,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
   const keyMissing = !isMapsKeyConfigured();
 
-  const styles = parseMapStyleJson(cfg.map_style_json) ?? undefined;
+  const styles = resolveMapStyles(cfg.map_style_json);
   const center = persisted?.center
     ? persisted.center
     : resolved[0]

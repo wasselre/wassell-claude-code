@@ -5,7 +5,9 @@ import {
   resolveMapsUrlAsync,
   resolvePinColor,
   type LatLng,
+  type LocationResolveCtx,
 } from '@/lib/locationUtils';
+import { useAppStore } from '@/stores/appStore';
 import type { AppModel, AppRecord } from '@/types';
 
 export interface ResolvedPin {
@@ -36,12 +38,29 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
   const cfg = model.maps_config;
   const allFields = useMemo(() => model.schema.sections.flatMap((s) => s.fields), [model]);
 
+  // Cross-model context is only needed when the location field is a `mirror`
+  // (its live value lives on another model's record, reached via the sibling
+  // lookup — e.g. a project's location mirrored from the master All Projects
+  // record). For plain url/text location fields we keep `ctx` undefined so
+  // resolution stays local and pins don't recompute when unrelated records
+  // elsewhere change.
+  const allRecords = useAppStore((s) => s.records);
+  const allModels = useAppStore((s) => s.models);
+  const locationIsMirror = useMemo(() => {
+    if (!cfg.location_url_field_id) return false;
+    return allFields.find((f) => f.id === cfg.location_url_field_id)?.type === 'mirror';
+  }, [cfg.location_url_field_id, allFields]);
+  const ctx = useMemo<LocationResolveCtx | undefined>(
+    () => (locationIsMirror ? { allRecords, allModels } : undefined),
+    [locationIsMirror, allRecords, allModels],
+  );
+
   // Bumps when a batch of async resolutions finishes — forces recompute.
   const [tick, setTick] = useState(0);
   const [resolvingCount, setResolvingCount] = useState(0);
 
   useEffect(() => {
-    const urls = collectUrlsNeedingResolution(records, cfg, allFields);
+    const urls = collectUrlsNeedingResolution(records, cfg, allFields, ctx);
     if (urls.length === 0) return;
 
     let cancelled = false;
@@ -78,15 +97,16 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
       cancelled = true;
     };
     // `records` identity changes when the filter pipeline re-runs upstream;
-    // `cfg` and `allFields` change when the model is edited in the Builder.
+    // `cfg` and `allFields` change when the model is edited in the Builder;
+    // `ctx` changes only for mirror-location models when the source records do.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, cfg, allFields]);
+  }, [records, cfg, allFields, ctx]);
 
   const { resolved, unresolved } = useMemo(() => {
     const res: ResolvedPin[] = [];
     const unres: AppRecord[] = [];
     for (const rec of records) {
-      const loc: LatLng | null = resolveLocationWithCache(rec, cfg, allFields);
+      const loc: LatLng | null = resolveLocationWithCache(rec, cfg, allFields, ctx);
       if (loc) {
         res.push({
           record: rec,
@@ -101,7 +121,7 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
     return { resolved: res, unresolved: unres };
     // `tick` is the signal that async resolutions finished — deliberately in deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, cfg, allFields, model.color, tick]);
+  }, [records, cfg, allFields, model.color, tick, ctx]);
 
   return {
     resolved,

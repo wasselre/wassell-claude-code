@@ -97,3 +97,35 @@ export function resolveMirror(
     targetRecord,
   };
 }
+
+/**
+ * Schema-only resolution of a `mirror` field's target field definition — no
+ * record needed. Walks mirror → sibling lookup → lookup's target model → the
+ * named field, and returns that `ModelField` (or null if the mirror is
+ * misconfigured / the sibling isn't a lookup / the target field is gone).
+ *
+ * Used by the Map Builder to decide whether a mirror field can serve as a
+ * location source (i.e. it ultimately surfaces a url/text field holding a
+ * Google Maps link). Kept separate from `resolveMirror` because that one needs
+ * a record's data to read the live value; here we only care about the type.
+ */
+export function resolveMirrorTargetField(
+  field: ModelField,
+  currentModel: AppModel,
+  allModels: AppModel[],
+): ModelField | null {
+  if (field.type !== 'mirror' || !field.mirror_via_lookup_field_id || !field.mirror_target_field_name) {
+    return null;
+  }
+  const sibling = currentModel.schema.sections
+    .flatMap((s) => s.fields)
+    .find((f) => f.id === field.mirror_via_lookup_field_id);
+  if (!sibling || sibling.type !== 'lookup' || !sibling.lookup_model_id) return null;
+  const targetModel = allModels.find((m) => m.id === sibling.lookup_model_id);
+  if (!targetModel) return null;
+  return (
+    targetModel.schema.sections
+      .flatMap((s) => s.fields)
+      .find((f) => f.name === field.mirror_target_field_name) ?? null
+  );
+}

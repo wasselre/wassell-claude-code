@@ -1,7 +1,58 @@
-import type { AppRecord, MapsConfig, ModelField } from '@/types';
+import type { AppModel, AppRecord, MapsConfig, ModelField } from '@/types';
+import { resolveMirror } from './mirrorResolver';
 
 export const DEFAULT_MAP_CENTER = { lat: 24.7136, lng: 46.6753 } as const;
 export const DEFAULT_MAP_ZOOM = 11;
+
+/**
+ * The official Wassel-branded Google Maps theme — soft cream geometry, chocolate
+ * labels, copper highways, sand arterials. This is the canonical map look used
+ * across every model's map. It becomes the DEFAULT for any model whose
+ * `maps_config.map_style_json` is null/empty (see `resolveMapStyles`), so the
+ * All Projects map and every other model's map render identically out of the box.
+ *
+ * A model can still override per-map by pasting its own style JSON in the Map
+ * Builder, or paste `[]` to fall back to Google's stock theme.
+ *
+ * NOTE: the `all_projects` model also carries an identical copy in its stored
+ * `maps_config.map_style_json` (set before this default existed). That copy is
+ * harmless — it resolves to the same styles — and is left in place. This
+ * constant is the single source of truth going forward.
+ */
+export const WASSEL_MAP_STYLE: google.maps.MapTypeStyle[] = [
+  { featureType: 'all', elementType: 'geometry', stylers: [{ color: '#F5EDE0' }] },
+  { featureType: 'all', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
+  { featureType: 'all', elementType: 'labels.text.stroke', stylers: [{ color: '#F5EDE0' }, { weight: 3 }] },
+  { featureType: 'all', elementType: 'labels.icon', stylers: [{ saturation: -40 }, { lightness: 10 }] },
+  { featureType: 'administrative.country', elementType: 'geometry.stroke', stylers: [{ color: '#8E4E3A' }, { weight: 1.2 }] },
+  { featureType: 'administrative.province', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }] },
+  { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
+  { featureType: 'administrative.neighborhood', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#F5EDE0' }] },
+  { featureType: 'landscape.man_made', elementType: 'geometry', stylers: [{ color: '#F0E3D0' }] },
+  { featureType: 'landscape.natural', elementType: 'geometry', stylers: [{ color: '#F5EDE0' }] },
+  { featureType: 'poi', elementType: 'geometry', stylers: [{ color: '#E8D5B7' }] },
+  { featureType: 'poi', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
+  { featureType: 'poi.business', elementType: 'labels.icon', stylers: [{ hue: '#B8734F' }, { saturation: -20 }] },
+  { featureType: 'poi.park', elementType: 'geometry', stylers: [{ color: '#D4B896' }] },
+  { featureType: 'poi.park', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'road', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
+  { featureType: 'road', elementType: 'labels.text.stroke', stylers: [{ color: '#F5EDE0' }, { weight: 2 }] },
+  { featureType: 'road.highway', elementType: 'geometry.fill', stylers: [{ color: '#B8734F' }] },
+  { featureType: 'road.highway', elementType: 'geometry.stroke', stylers: [{ color: '#8E4E3A' }] },
+  { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'road.highway', elementType: 'labels.text.stroke', stylers: [{ color: '#4A2C2A' }, { weight: 2 }] },
+  { featureType: 'road.arterial', elementType: 'geometry.fill', stylers: [{ color: '#D4B896' }] },
+  { featureType: 'road.arterial', elementType: 'geometry.stroke', stylers: [{ color: '#C09B5F' }] },
+  { featureType: 'road.local', elementType: 'geometry', stylers: [{ color: '#FFFFFF' }] },
+  { featureType: 'transit', elementType: 'geometry', stylers: [{ color: '#D4B896' }] },
+  { featureType: 'transit.line', elementType: 'geometry', stylers: [{ color: '#8E4E3A' }] },
+  { featureType: 'transit.station', elementType: 'labels.text.fill', stylers: [{ color: '#8E4E3A' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#C09B5F' }] },
+  { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#4A2C2A' }] },
+  { featureType: 'water', elementType: 'labels.text.stroke', stylers: [{ color: '#F5EDE0' }, { weight: 2 }] },
+];
 
 // localStorage key for cached server-resolved coordinates. Keyed by raw URL
 // string → LatLng or null (known-unresolvable). Cached forever because a
@@ -69,21 +120,66 @@ function toLatLng(latStr: string | undefined, lngStr: string | undefined): LatLn
 }
 
 /**
+ * Cross-model context needed to resolve a `mirror` location field — the live
+ * value lives on a record in another model, reached via the sibling lookup.
+ * Optional everywhere: when the configured location field is a plain url/text
+ * field, no context is required (resolution stays local to `record`).
+ */
+export interface LocationResolveCtx {
+  allRecords: Record<string, AppRecord[]>;
+  allModels: AppModel[];
+}
+
+/**
+ * Read the configured location field's raw string for a record. For a plain
+ * url/text field that's just `record.data[field.name]`. For a `mirror` field
+ * (e.g. a project's location mirrored from the master All Projects record) we
+ * hop through the sibling lookup via `resolveMirror` — which is why mirror
+ * resolution needs `ctx`. A multi-value mirror yields the first non-empty link.
+ */
+function readLocationString(
+  record: AppRecord,
+  field: ModelField,
+  ctx?: LocationResolveCtx,
+): string | null {
+  const pickString = (v: unknown): string | null =>
+    typeof v === 'string' && v.trim() ? v.trim() : null;
+
+  if (field.type === 'mirror') {
+    if (!ctx) return null; // mirror needs cross-model context — caller didn't supply it
+    const res = resolveMirror(field, record.data, ctx.allRecords, ctx.allModels);
+    if (res.status !== 'ok') return null;
+    if (Array.isArray(res.value)) {
+      for (const v of res.value) {
+        const s = pickString(v);
+        if (s) return s;
+      }
+      return null;
+    }
+    return pickString(res.value);
+  }
+
+  return pickString(record.data[field.name]);
+}
+
+/**
  * Resolve a record to lat/lng using the MapsConfig's configured sources.
- * URL-parse first, then manual lat/lng number fields, else null.
+ * URL-parse first (following a `mirror` field through to its source when the
+ * location field is mirrored), then manual lat/lng number fields, else null.
  */
 export function resolveLocation(
   record: AppRecord,
   cfg: MapsConfig,
   fields: ModelField[],
+  ctx?: LocationResolveCtx,
 ): LatLng | null {
   const byId = new Map(fields.map((f) => [f.id, f]));
 
   if (cfg.location_url_field_id) {
     const field = byId.get(cfg.location_url_field_id);
     if (field) {
-      const raw = record.data[field.name];
-      if (typeof raw === 'string' && raw.trim()) {
+      const raw = readLocationString(record, field, ctx);
+      if (raw) {
         const parsed = parseGoogleMapsUrl(raw);
         if (parsed) return parsed;
       }
@@ -120,6 +216,20 @@ export function parseMapStyleJson(raw: string | null | undefined): google.maps.M
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the map styles to apply for a model's map. A valid per-model style
+ * JSON wins (including an explicit `[]` to opt back into Google's stock theme);
+ * null/empty/invalid falls back to the shared Wassel theme so every model's map
+ * matches the All Projects formatting by default.
+ *
+ * Always returns an array (never undefined) — pass straight to GoogleMap's
+ * `options.styles`.
+ */
+export function resolveMapStyles(rawJson: string | null | undefined): google.maps.MapTypeStyle[] {
+  const parsed = parseMapStyleJson(rawJson);
+  return parsed ?? WASSEL_MAP_STYLE;
 }
 
 /**
@@ -327,17 +437,18 @@ export function resolveLocationWithCache(
   record: AppRecord,
   cfg: MapsConfig,
   fields: ModelField[],
+  ctx?: LocationResolveCtx,
 ): LatLng | null {
-  const direct = resolveLocation(record, cfg, fields);
+  const direct = resolveLocation(record, cfg, fields, ctx);
   if (direct) return direct;
 
   if (!cfg.location_url_field_id) return null;
   const field = fields.find((f) => f.id === cfg.location_url_field_id);
   if (!field) return null;
-  const raw = record.data[field.name];
-  if (typeof raw !== 'string' || !raw.trim()) return null;
+  const raw = readLocationString(record, field, ctx);
+  if (!raw) return null;
 
-  const cached = getCachedResolution(raw.trim());
+  const cached = getCachedResolution(raw);
   return cached ?? null;
 }
 
@@ -352,6 +463,7 @@ export function collectUrlsNeedingResolution(
   records: AppRecord[],
   cfg: MapsConfig,
   fields: ModelField[],
+  ctx?: LocationResolveCtx,
 ): string[] {
   if (!cfg.location_url_field_id) return [];
   const urlField = fields.find((f) => f.id === cfg.location_url_field_id);
@@ -360,10 +472,8 @@ export function collectUrlsNeedingResolution(
   const cache = loadUrlCache();
   const out = new Set<string>();
   for (const rec of records) {
-    if (resolveLocation(rec, cfg, fields)) continue; // sync path worked
-    const raw = rec.data[urlField.name];
-    if (typeof raw !== 'string') continue;
-    const trimmed = raw.trim();
+    if (resolveLocation(rec, cfg, fields, ctx)) continue; // sync path worked
+    const trimmed = readLocationString(rec, urlField, ctx); // follows mirror fields
     if (!trimmed) continue;
     if (parseGoogleMapsUrl(trimmed)) continue; // sync parse works
     if (cache[trimmed]) continue; // successfully cached — skip; null/missing retries
