@@ -8,6 +8,7 @@ import Button from '@/components/ui/Button';
 import SectionBlock from './SectionBlock';
 import { useAutoLink } from '../hooks/useAutoLink';
 import { useAutoFill } from '../hooks/useAutoFill';
+import { applyFollowupAutoStamp } from '../utils/followupAutoStamp';
 import type { AppRecord } from '@/types';
 
 interface RecordFormModalProps {
@@ -87,7 +88,11 @@ export default function RecordFormModal({
     : `${t('records.edit_record')} — ${isAr ? model.label_ar : model.label_en}`;
 
   const handleFieldChange = (fieldName: string, value: unknown) => {
-    setFormData((prev) => ({ ...prev, [fieldName]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [fieldName]: value };
+      applyFollowupAutoStamp(model.name, fieldName, value, next);
+      return next;
+    });
   };
 
   const handleSave = async () => {

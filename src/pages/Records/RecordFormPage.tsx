@@ -37,6 +37,7 @@ import { Users, Home } from 'lucide-react';
 import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
+import { applyFollowupAutoStamp } from './utils/followupAutoStamp';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
 import { useRolledUpRecord } from '@/hooks/useRolledUpRecords';
 import { isButtonVisible } from '@/lib/permissions';
@@ -380,7 +381,11 @@ export default function RecordFormPage() {
   const Icon = getIconComponent(model.icon);
 
   const handleFieldChange = (fieldName: string, value: unknown) => {
-    setFormData((prev) => ({ ...prev, [fieldName]: value }));
+    setFormData((prev) => {
+      const next = { ...prev, [fieldName]: value };
+      applyFollowupAutoStamp(model.name, fieldName, value, next);
+      return next;
+    });
     setIsDirty(true);
   };
 
