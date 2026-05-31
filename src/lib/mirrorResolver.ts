@@ -197,7 +197,8 @@ export function resolveMirrorValueWithTarget(
       : [];
     if (ids.length === 0) return undefined;
     if (target.multiMode === 'first') {
-      return targetIndex.get(ids[0])?.data[target.targetField.name];
+      const firstId = ids[0];
+      return firstId === undefined ? undefined : targetIndex.get(firstId)?.data[target.targetField.name];
     }
     return ids.map((id) => targetIndex.get(id)?.data[target.targetField.name]);
   }
