@@ -42,6 +42,7 @@ export default function FilePreviewModal({
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
+  const currentUserId = useAppStore((s) => s.currentUserId);
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   /** Local override for the displayed name so a successful rename is visible
@@ -87,6 +88,13 @@ export default function FilePreviewModal({
   if (!open || !file) return null;
 
   const Icon = kindIcon[file.kind];
+  // Rename only changes the display name — it never breaks a record's pointer
+  // (records reference files by id, not name) — so it's safe to expose wherever
+  // the user owns the file, even in record-field previews that pass
+  // canEdit=false to hide share/permissions/delete. Owner check mirrors the
+  // Files-page logic; the server's RLS is still the authoritative gate.
+  const ownsFile = !!currentUserId && file.uploaded_by_user_id === currentUserId;
+  const showRename = canEdit || ownsFile;
 
   const handleDownload = async () => {
     try {
@@ -166,9 +174,11 @@ export default function FilePreviewModal({
         {!renaming && (
           <div className="flex items-center gap-1">
             <HeaderBtn icon={Download} label={t('files.actions.download')} onClick={handleDownload} />
+            {showRename && (
+              <HeaderBtn icon={Pencil} label={t('files.actions.rename')} onClick={handleStartRename} />
+            )}
             {canEdit && (
               <>
-                <HeaderBtn icon={Pencil} label={t('files.actions.rename')} onClick={handleStartRename} />
                 <HeaderBtn icon={Share2} label={t('files.actions.share')} onClick={() => onShare(file)} />
                 <HeaderBtn icon={Shield} label={t('files.actions.permissions')} onClick={() => onPermissions(file)} />
               </>

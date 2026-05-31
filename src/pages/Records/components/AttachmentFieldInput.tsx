@@ -8,7 +8,7 @@ import DriveBrowserModal, {
   type DrivePickerResult,
 } from '@/pages/Files/components/DriveBrowserModal';
 import type { AttachmentRef, FileRow, FolderRow } from '@/types';
-import { useFileRowMap } from './useFileRowMap';
+import { useFileRowMap, updateFileRowCache } from './useFileRowMap';
 
 interface Props {
   value: AttachmentRef[];
@@ -187,6 +187,10 @@ export default function AttachmentFieldInput({
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={(updated) => {
+          updateFileRowCache(updated);
+          setPreviewFile(updated);
+        }}
       />
     </div>
   );

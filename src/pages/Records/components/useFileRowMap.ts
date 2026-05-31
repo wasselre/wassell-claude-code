@@ -4,10 +4,11 @@
  * `multi_file`, and `attachment` field inputs so multiple fields on the
  * same form don't re-query for the same id.
  *
- * The cache is process-lifetime (no TTL). If a file is renamed in the Files
- * page during the user's session, the chip in the record form will show the
- * stale name until the page reloads — acceptable for a low-write surface
- * like file metadata.
+ * The cache is process-lifetime (no TTL). Renames done anywhere in the app
+ * (Files page, Drive picker, or a record-field preview) call
+ * `updateFileRowCache`, which both refreshes the cached row AND notifies every
+ * mounted `useFileRowMap` so chips/labels re-render with the new name live —
+ * no reload needed.
  */
 import { useEffect, useMemo, useState } from 'react';
 import { getFile } from '@/lib/files/client';
@@ -15,6 +16,8 @@ import type { FileRow } from '@/types';
 
 const fileRowCache = new Map<string, FileRow>();
 const fileRowInflight = new Map<string, Promise<FileRow | null>>();
+/** Mounted hooks subscribe here so a cache update can re-render them. */
+const cacheSubscribers = new Set<() => void>();
 
 export async function loadFileRow(id: string): Promise<FileRow | null> {
   const cached = fileRowCache.get(id);
@@ -31,6 +34,16 @@ export async function loadFileRow(id: string): Promise<FileRow | null> {
     });
   fileRowInflight.set(id, p);
   return p;
+}
+
+/**
+ * Replace a cached file row (e.g. after a rename) and notify every mounted
+ * `useFileRowMap` so the new metadata shows immediately. Safe to call with a
+ * row whose id isn't cached yet — it just primes the cache.
+ */
+export function updateFileRowCache(row: FileRow): void {
+  fileRowCache.set(row.id, row);
+  cacheSubscribers.forEach((fn) => fn());
 }
 
 export function useFileRowMap(ids: readonly string[]): {
@@ -87,6 +100,30 @@ export function useFileRowMap(ids: readonly string[]): {
     });
     return () => {
       cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+
+  // Re-render when a cached row this hook cares about is updated elsewhere
+  // (e.g. renamed via a preview modal). Pulls the fresh row from the cache.
+  useEffect(() => {
+    const onCacheChange = () => {
+      setRows((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const id of ids) {
+          const cached = fileRowCache.get(id);
+          if (cached && next.get(id) !== cached) {
+            next.set(id, cached);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    };
+    cacheSubscribers.add(onCacheChange);
+    return () => {
+      cacheSubscribers.delete(onCacheChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);

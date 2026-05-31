@@ -16,7 +16,7 @@ import DriveBrowserModal, {
   type DrivePickerResult,
 } from '@/pages/Files/components/DriveBrowserModal';
 import type { FileRow } from '@/types';
-import { useFileRowMap } from './useFileRowMap';
+import { useFileRowMap, updateFileRowCache } from './useFileRowMap';
 
 /** Tiny thumbnail loader for image files. Hits /api/files/sign-view-url so
  *  the URL is bound to the caller's identity (RLS-gated) and short-lived. */
@@ -225,6 +225,7 @@ export function ImageFieldInput({
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={updateFileRowCache}
       />
     </div>
   );
@@ -333,6 +334,10 @@ export function MultiImageFieldInput({
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={(updated) => {
+          updateFileRowCache(updated);
+          setPreviewFile(updated);
+        }}
       />
     </div>
   );
@@ -434,6 +439,7 @@ export function FileFieldInput({
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={updateFileRowCache}
       />
     </div>
   );
@@ -534,6 +540,10 @@ export function MultiFileFieldInput({
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={(updated) => {
+          updateFileRowCache(updated);
+          setPreviewFile(updated);
+        }}
       />
     </div>
   );

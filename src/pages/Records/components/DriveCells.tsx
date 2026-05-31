@@ -20,7 +20,7 @@ import { signViewUrl, getFolder } from '@/lib/files/client';
 import { kindAccent, kindIcon } from '@/lib/files/format';
 import FilePreviewModal from '@/pages/Files/components/FilePreviewModal';
 import type { AttachmentRef, FileRow, FolderRow } from '@/types';
-import { useFileRowMap } from './useFileRowMap';
+import { useFileRowMap, updateFileRowCache } from './useFileRowMap';
 
 /* ────────────────────────────────────────────────────────────────────────
  * IMAGE CELL — `image` type
@@ -99,6 +99,10 @@ export function ImageCell({ fileId, isAr }: { fileId: string; isAr: boolean }) {
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={(updated) => {
+          updateFileRowCache(updated);
+          setPreviewFile(updated);
+        }}
       />
     </>
   );
@@ -222,6 +226,10 @@ export function FileCell({ fileId, isAr: _isAr }: { fileId: string; isAr: boolea
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={(updated) => {
+          updateFileRowCache(updated);
+          setPreviewFile(updated);
+        }}
       />
     </>
   );
@@ -278,6 +286,10 @@ export function MultiFileCell({ fileIds, isAr }: { fileIds: string[]; isAr: bool
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={(updated) => {
+          updateFileRowCache(updated);
+          setPreviewFile(updated);
+        }}
       />
     </>
   );
@@ -370,6 +382,10 @@ export function AttachmentCell({ refs }: { refs: AttachmentRef[]; isAr?: boolean
         onShare={() => {}}
         onPermissions={() => {}}
         onDelete={() => {}}
+        onRenamed={(updated) => {
+          updateFileRowCache(updated);
+          setPreviewFile(updated);
+        }}
       />
     </>
   );
