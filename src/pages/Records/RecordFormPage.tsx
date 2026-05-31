@@ -127,8 +127,13 @@ export default function RecordFormPage() {
   );
   const [showDelete, setShowDelete] = useState(false);
   // Tracks whether the form has unsaved user edits. Used to guard prev/next
-  // navigation with a confirm prompt.
+  // navigation and the back button with a Save / Discard / Cancel prompt.
   const [isDirty, setIsDirty] = useState(false);
+  // When the user attempts to leave a dirty form, we stash the navigation
+  // action here and open the unsaved-changes modal. Null when no exit is
+  // pending. Wrapped in `{ run }` so React's setState doesn't invoke the
+  // function (setState treats top-level functions as updaters).
+  const [pendingExit, setPendingExit] = useState<{ run: () => void } | null>(null);
   // True while the All Projects "Research project" button is firing the
   // Claude Code routine via /api/research-project.
   const [isResearching, setIsResearching] = useState(false);
@@ -174,6 +179,7 @@ export default function RecordFormPage() {
     setMirrorEdits({});
     setShowDelete(false);
     setIsDirty(false);
+    setPendingExit(null);
     // Audit fix H5/C1: clear the per-target snapshots on navigation.
     // The main versionSnapshotRef is keyed on navKey and re-captures
     // automatically during render when navKey changes — no reset here.
@@ -336,9 +342,20 @@ export default function RecordFormPage() {
     setIsDirty(true);
   };
 
+  // Unsaved-changes gate. When the form has pending edits, prompt the user
+  // with Save / Discard / Cancel before running `action`. Otherwise run it
+  // immediately. Centralized so every exit path (back button, prev, next)
+  // goes through the same guard.
+  const tryExit = (action: () => void) => {
+    if (isDirty) {
+      setPendingExit({ run: action });
+    } else {
+      action();
+    }
+  };
+
   const goToRecord = (targetId: string) => {
-    if (isDirty && !window.confirm(t('records.discard_changes_confirm'))) return;
-    navigate(`/model/${model!.name}/${targetId}`);
+    tryExit(() => navigate(`/model/${model!.name}/${targetId}`));
   };
 
   // Fires the Claude Code "Research Project" routine for an All Projects
@@ -605,7 +622,12 @@ export default function RecordFormPage() {
     }
   };
 
-  const handleSave = async () => {
+  // Saves the record. Returns true on success so callers can decide what to
+  // do next (the toolbar Save button navigates to the list; the unsaved-
+  // changes modal's "Save & Exit" runs the deferred prev/next/back target).
+  // Returns false on any validation or conflict failure — handleSave has
+  // already toasted the user in that case.
+  const handleSave = async (): Promise<boolean> => {
     // Audit fix M2: refuse to save if the schema changed under us.
     // The form's slugs / required-field map / lookup config are bound
     // to the model state at mount. If an admin edited the model mid-form
@@ -618,7 +640,7 @@ export default function RecordFormPage() {
           : 'The model schema changed while this form was open. Reload before saving to avoid losing data.',
         'error',
       );
-      return;
+      return false;
     }
     // 1. Validate required fields on this record (skip derived mirror fields).
     const allFields = model.schema.sections
@@ -637,7 +659,7 @@ export default function RecordFormPage() {
     if (missing.length > 0) {
       const label = isAr ? missing[0]!.label_ar : missing[0]!.label_en;
       addToast(`${isAr ? 'الحقل مطلوب: ' : 'Required field: '}${label}`, 'error');
-      return;
+      return false;
     }
 
     // 2. Validate required fields inside mirrored sections (using overlaid effective values).
@@ -660,7 +682,7 @@ export default function RecordFormPage() {
       if (missingMirror.length > 0) {
         const label = isAr ? missingMirror[0]!.label_ar : missingMirror[0]!.label_en;
         addToast(`${isAr ? 'الحقل مطلوب في السجل المرتبط: ' : 'Required field on linked record: '}${label}`, 'error');
-        return;
+        return false;
       }
     }
 
@@ -691,7 +713,7 @@ export default function RecordFormPage() {
           if (missingOverlay.length > 0) {
             const label = isAr ? missingOverlay[0]!.label_ar : missingOverlay[0]!.label_en;
             addToast(`${isAr ? 'الحقل مطلوب في السجل المرتبط: ' : 'Required field on linked record: '}${label}`, 'error');
-            return;
+            return false;
           }
         }
       }
@@ -721,7 +743,7 @@ export default function RecordFormPage() {
       }
       if (!hostModelId || !target) {
         addToast(isAr ? 'تعذّر حفظ السجل المرتبط: تم حذفه.' : 'Could not save linked record: it was deleted.', 'error');
-        return;
+        return false;
       }
       const updatedTarget = {
         ...target,
@@ -742,7 +764,7 @@ export default function RecordFormPage() {
             : 'A linked record was just edited by another user — reload before saving.',
           'error',
         );
-        return;
+        return false;
       }
       // `queued` is OK: the local state still reflects the user's
       // intent and the retry queue will replay on the next reload.
@@ -765,7 +787,7 @@ export default function RecordFormPage() {
           : 'This record was just edited by another user — reload to see their changes before re-saving.',
         'error',
       );
-      return;
+      return false;
     }
     setIsDirty(false);
     if (result.status === 'queued') {
@@ -778,7 +800,31 @@ export default function RecordFormPage() {
     } else {
       addToast(t('toast.saved'), 'success');
     }
-    navigate(`/model/${model.name}`);
+    return true;
+  };
+
+  // Save & Exit: runs handleSave, and if it succeeds, runs the deferred
+  // navigation the user originally attempted (back to list, prev record,
+  // or next record). If save fails (validation, conflict, etc.) handleSave
+  // toasts the user and we leave the modal open so they can fix it.
+  const handleSaveAndExit = async () => {
+    const exit = pendingExit;
+    const ok = await handleSave();
+    if (ok) {
+      setPendingExit(null);
+      if (exit) {
+        exit.run();
+      } else {
+        navigate(`/model/${model.name}`);
+      }
+    }
+  };
+
+  const handleDiscardAndExit = () => {
+    const exit = pendingExit;
+    setIsDirty(false);
+    setPendingExit(null);
+    exit?.run();
   };
 
   const handleDelete = () => {
@@ -796,7 +842,7 @@ export default function RecordFormPage() {
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate(`/model/${model.name}`)}
+            onClick={() => tryExit(() => navigate(`/model/${model.name}`))}
             className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors"
           >
             <ArrowRight size={20} className="rtl:rotate-0 ltr:rotate-180" />
@@ -881,7 +927,10 @@ export default function RecordFormPage() {
             </Button>
           )}
           {!readOnly && (
-          <Button onClick={handleSave}>
+          <Button onClick={async () => {
+            const ok = await handleSave();
+            if (ok) navigate(`/model/${model.name}`);
+          }}>
             <Save size={16} />
             {t('common.save')}
           </Button>
@@ -979,6 +1028,33 @@ export default function RecordFormPage() {
         }
       >
         <p className="text-charcoal">{t('records.delete_confirm')}</p>
+      </Modal>
+
+      {/* Unsaved-changes guard — fires whenever the user tries to leave a
+        * dirty form via the back button or prev/next nav. Three options:
+        * Save & Exit (saves then completes the navigation), Discard & Exit
+        * (navigates without saving), Cancel (stays). Closing via the X or
+        * backdrop is treated the same as Cancel. */}
+      <Modal
+        open={pendingExit !== null}
+        onClose={() => setPendingExit(null)}
+        title={t('records.unsaved_changes_title')}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setPendingExit(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="danger" onClick={handleDiscardAndExit}>
+              {t('records.discard_and_exit')}
+            </Button>
+            <Button onClick={() => void handleSaveAndExit()}>
+              <Save size={16} />
+              {t('records.save_and_exit')}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-charcoal">{t('records.unsaved_changes_message')}</p>
       </Modal>
     </div>
   );
