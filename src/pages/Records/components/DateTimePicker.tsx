@@ -213,6 +213,24 @@ export default function DateTimePicker({ value, onChange, mode, placeholder }: D
     if (mode === 'date') setOpen(false);
   };
 
+  /** Quick shortcut: set value to today's date. For datetime mode we keep
+   * the existing time-of-day if one was already chosen, otherwise we fill
+   * in the current wall-clock time so the result is a meaningful "now". */
+  const pickToday = () => {
+    const now = todayParts();
+    const base: ParsedValue = {
+      year: now.year,
+      month: now.month,
+      day: now.day,
+      hour: parsed?.hour ?? now.hour,
+      minute: parsed?.minute ?? now.minute,
+    };
+    onChange(serialize(base, mode));
+    setViewYear(now.year);
+    setViewMonth(now.month);
+    if (mode === 'date') setOpen(false);
+  };
+
   /** Update only the time portion. Requires a selected date — falls back to today. */
   const setTime = (hour24: number, minute: number) => {
     const base: ParsedValue = parsed ?? { ...today, hour: 0, minute: 0 };
@@ -281,6 +299,13 @@ export default function DateTimePicker({ value, onChange, mode, placeholder }: D
               {monthNames[viewMonth - 1]} {viewYear !== today.year ? viewYear : ''}
             </h3>
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={pickToday}
+                className="px-2.5 py-1 me-1 text-xs font-bold text-copper hover:bg-copper/10 rounded-md transition-colors"
+              >
+                {isAr ? 'اليوم' : 'Today'}
+              </button>
               <button
                 type="button"
                 onClick={goNextMonth}
