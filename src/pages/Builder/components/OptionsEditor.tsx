@@ -167,9 +167,15 @@ function OptionRow({
     return !trimmed || UUID_RE.test(trimmed);
   };
 
-  // Sticky once the slug is a deliberate value: don't let live translation
-  // overwrite it. Mirrors FieldEditor, which never auto-rewrites an existing
-  // field's api_name. A manual edit to the api_name input also pins it.
+  // "Touched" = a deliberate value we must not auto-overwrite. Seeded from the
+  // option's state at mount so opening an existing option never clobbers its
+  // labels or slug, then flipped true the moment the user types into that
+  // input. Anything NOT touched is re-derived from the LATEST translation on
+  // every result (see applyTranslation) — so a mid-word partial ("إتصال" →
+  // "Call") gets overwritten by the full-phrase translation instead of
+  // sticking, and re-editing a label re-translates instead of going stale.
+  const [arTouched, setArTouched] = useState(() => !!(option.label_ar ?? '').trim());
+  const [enTouched, setEnTouched] = useState(() => !!(option.label_en ?? '').trim());
   const [slugTouched, setSlugTouched] = useState(() => !isAutoFillableValue(option.value));
 
   // Live, debounced translation of whichever label is being edited — the same
@@ -178,17 +184,18 @@ function OptionRow({
   const source =
     editingLang === 'ar' ? (option.label_ar ?? '') :
     editingLang === 'en' ? (option.label_en ?? '') : '';
-  // Only translate when something is actually fillable — a missing label or a
-  // not-yet-pinned slug. A complete option (both labels + a real slug) skips
-  // the network entirely when its label is edited, like FieldEditor disables
-  // translation for already-saved fields.
-  const needsFill =
-    !(option.label_ar ?? '').trim() ||
-    !(option.label_en ?? '').trim() ||
-    (!slugTouched && isAutoFillableValue(option.value));
+  // What a fresh translation may fill: the OPPOSITE-language label (only when
+  // the user hasn't typed it) and the slug (only when not pinned). When neither
+  // applies — e.g. a complete option whose label is merely being tweaked — we
+  // skip the network entirely, like FieldEditor disables translation for saved
+  // fields. Crucially this stays enabled across re-edits as long as a target is
+  // still auto-fillable, so translating twice in one option keeps working.
+  const canFillOpposite =
+    (editingLang === 'ar' && !enTouched) || (editingLang === 'en' && !arTouched);
+  const canFillSlug = !slugTouched;
   const translation = useDebouncedTranslation(source, {
     kind: 'option',
-    enabled: !locked && needsFill,
+    enabled: !locked && !!source.trim() && (canFillOpposite || canFillSlug),
   });
 
   // Always reach the freshest onUpdate from the result effect — the parent
@@ -197,12 +204,13 @@ function OptionRow({
   const onUpdateRef = useRef(onUpdate);
   onUpdateRef.current = onUpdate;
 
-  // Fill the opposite-language label (when empty) and the api_name slug (unless
-  // pinned) from a resolved translation.
+  // Apply a resolved translation. Overwrites (not just fill-when-empty) so the
+  // full-phrase result replaces an earlier mid-word partial; gated by the
+  // touched flags so a label or slug the user actually typed is never clobbered.
   const applyTranslation = (out: TranslatedLabel) => {
     const patch: Partial<FieldOption> = {};
-    if (!(option.label_ar ?? '').trim()) patch.label_ar = out.label_ar;
-    if (!(option.label_en ?? '').trim()) patch.label_en = out.label_en;
+    if (editingLang === 'ar' && !enTouched && out.label_en) patch.label_en = out.label_en;
+    if (editingLang === 'en' && !arTouched && out.label_ar) patch.label_ar = out.label_ar;
     if (!slugTouched && out.name) patch.value = out.name;
     if (Object.keys(patch).length > 0) onUpdateRef.current(patch);
   };
@@ -220,6 +228,7 @@ function OptionRow({
   // is never clobbered mid-edit.
   const handleLabelArChange = (val: string) => {
     setEditingLang('ar');
+    setArTouched(true);
     const patch: Partial<FieldOption> = { label_ar: val };
     if (!slugTouched && val.trim()) {
       const sync = slugify(val);
@@ -230,6 +239,7 @@ function OptionRow({
 
   const handleLabelEnChange = (val: string) => {
     setEditingLang('en');
+    setEnTouched(true);
     const patch: Partial<FieldOption> = { label_en: val };
     if (!slugTouched && val.trim()) {
       const sync = slugify(val);
@@ -239,13 +249,9 @@ function OptionRow({
   };
 
   // Safety net for fast typers who blur before the debounce settles: force the
-  // translation to resolve and apply it. No-op when nothing is missing.
+  // latest translation to resolve and apply it. No-op when nothing's fillable.
   const handleBlur = async () => {
-    if (!source.trim()) return;
-    const needsOpposite =
-      !(option.label_ar ?? '').trim() || !(option.label_en ?? '').trim();
-    const needsSlug = !slugTouched && isAutoFillableValue(option.value);
-    if (!needsOpposite && !needsSlug) return;
+    if (!source.trim() || (!canFillOpposite && !canFillSlug)) return;
     if (translation.result) { applyTranslation(translation.result); return; }
     try {
       applyTranslation(await translation.translateNow());
