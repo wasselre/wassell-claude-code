@@ -27,9 +27,17 @@ interface TableViewProps {
   selectedIds?: Set<string>;
   onToggleSelect?: (id: string) => void;
   onToggleSelectAll?: () => void;
+  /**
+   * Read-only overview mode. When true: clicking a row calls `onRowClick`
+   * (instead of starting inline edit), and the per-row actions column (open /
+   * delete) is hidden. Columns are still sortable. Used by the Client Details
+   * "Related Records" tables, which are a read-only 360 view — edits happen on
+   * each record's own page.
+   */
+  readOnly?: boolean;
 }
 
-export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll }: TableViewProps) {
+export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll, readOnly = false }: TableViewProps) {
   const { t } = useTranslation();
   const { language, records: allRecords, saveRecord, addToast, models, currentUserId, users, profiles, roles } = useAppStore();
   const isAr = language === 'ar';
@@ -265,7 +273,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                 </th>
               );
             })}
-            <th className="w-28">{t('common.actions')}</th>
+            {!readOnly && <th className="w-28">{t('common.actions')}</th>}
           </tr>
         </thead>
         <tbody>
@@ -278,6 +286,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                 key={record.id}
                 className={`cursor-pointer ${isEditing ? 'bg-copper/[0.03]' : isSelected ? 'bg-copper/[0.06]' : ''}`}
                 onClick={() => {
+                  if (readOnly) { onRowClick(record); return; }
                   if (!isEditing) startEdit(record);
                 }}
               >
@@ -323,6 +332,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                     </td>
                   );
                 })}
+                {!readOnly && (
                 <td>
                   <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                     {isEditing ? (
@@ -363,6 +373,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                     )}
                   </div>
                 </td>
+                )}
               </tr>
             );
           })}

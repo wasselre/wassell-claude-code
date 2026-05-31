@@ -1,19 +1,7 @@
 import { useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import * as lucideIcons from 'lucide-react';
-import { ChevronRight, Sparkles, type LucideIcon } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import RelatedModelTable from './RelatedModelTable';
 import type { AppModel, AppRecord, ModelField } from '@/types';
-
-// Match the kebab-case → PascalCase mapping `RecordFormPage.tsx:21` uses for
-// model icons. Falls back to Sparkles when the name doesn't resolve.
-function resolveLucideIcon(name?: string): LucideIcon {
-  const pascal = (name ?? 'sparkles')
-    .trim()
-    .replace(/(^|-)(\w)/g, (_, _dash, c: string) => c.toUpperCase());
-  const Icon = (lucideIcons as unknown as Record<string, LucideIcon>)[pascal];
-  return Icon ?? Sparkles;
-}
 
 interface RelatedRecordsPanelProps {
   clientId: string;
@@ -34,13 +22,17 @@ interface ModelMatch {
  * stored value for that field references this client. Multi-value lookups are
  * matched by array `.includes`.
  *
+ * Each related model is rendered as a full table (`RelatedModelTable` wraps the
+ * same `TableView` the Records list uses) with per-user adjustable columns and
+ * column-header sorting — read-only, no filter. Clicking a row opens that
+ * record on its own page.
+ *
  * Pure client-side: reads from the in-memory `models` + `records` slices.
  * No SQL, no extra fetches. Memoized on `[clientId, models, records]` —
  * Zustand returns stable references for unchanged slices, so re-renders are
  * cheap.
  */
 export default function RelatedRecordsPanel({ clientId, excludeModelName = 'clients' }: RelatedRecordsPanelProps) {
-  const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
@@ -123,97 +115,15 @@ export default function RelatedRecordsPanel({ clientId, excludeModelName = 'clie
   }
 
   return (
-    <section className="card">
+    <section>
       <h3 className="text-base font-semibold text-charcoal mb-3">
         {isAr ? 'السجلات المرتبطة' : 'Related Records'}
       </h3>
-      <div className="space-y-4">
+      <div className="space-y-6">
         {matchesByModel.map(({ model, matches }) => (
-          <ModelGroup
-            key={model.id}
-            model={model}
-            matches={matches}
-            isAr={isAr}
-            onOpen={(name, id) => navigate(`/model/${name}/${id}`)}
-          />
+          <RelatedModelTable key={model.id} model={model} matches={matches} isAr={isAr} />
         ))}
       </div>
     </section>
   );
-}
-
-function ModelGroup({
-  model,
-  matches,
-  isAr,
-  onOpen,
-}: {
-  model: AppModel;
-  matches: AppRecord[];
-  isAr: boolean;
-  onOpen: (modelName: string, recordId: string) => void;
-}) {
-  const Icon = resolveLucideIcon(model.icon);
-  const titleFieldId = model.card_config?.title_field_id;
-  const subtitleFieldId = model.card_config?.subtitle_field_id;
-  const allFields = model.schema.sections.flatMap((s) => s.fields);
-  const titleField = titleFieldId ? allFields.find((f) => f.id === titleFieldId) : null;
-  const subtitleField = subtitleFieldId ? allFields.find((f) => f.id === subtitleFieldId) : null;
-
-  return (
-    <div>
-      <header className="flex items-center gap-2 mb-2">
-        <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center"
-          style={{ backgroundColor: `${model.color}15` }}
-        >
-          <Icon size={14} style={{ color: model.color }} />
-        </div>
-        <span className="font-bold text-sm text-charcoal">
-          {isAr ? model.label_ar : model.label_en}
-        </span>
-        <span className="text-xs text-charcoal/50">({matches.length})</span>
-      </header>
-      <ul className="space-y-1.5 ms-9">
-        {matches.map((r) => (
-          <li key={r.id}>
-            <button
-              type="button"
-              onClick={() => onOpen(model.name, r.id)}
-              className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg hover:bg-sand/30 transition-colors text-start"
-            >
-              <div className="flex flex-col min-w-0 flex-1">
-                <span className="text-sm font-medium text-charcoal truncate">
-                  {pickFieldLabel(r, titleField) ?? r.id.slice(0, 8)}
-                </span>
-                {subtitleField && pickFieldLabel(r, subtitleField) && (
-                  <span className="text-xs text-charcoal/50 truncate">
-                    {pickFieldLabel(r, subtitleField)}
-                  </span>
-                )}
-              </div>
-              <ChevronRight size={14} className="text-charcoal/30 flex-shrink-0 rtl:rotate-180" />
-            </button>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-function pickFieldLabel(record: AppRecord, field: ModelField | null | undefined): string | null {
-  if (!field) return null;
-  const v = (record.data as Record<string, unknown>)[field.name];
-  if (v === null || v === undefined || v === '') return null;
-  if (Array.isArray(v)) {
-    return v.length === 0 ? null : v.map(String).join(', ');
-  }
-  if (typeof v === 'object') {
-    if ('min' in v || 'max' in v) {
-      const r = v as { min?: number; max?: number };
-      return `${r.min ?? ''} – ${r.max ?? ''}`;
-    }
-    return null;
-  }
-  return String(v);
 }
