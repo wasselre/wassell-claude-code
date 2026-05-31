@@ -80,18 +80,41 @@ export default function FilesPage({ forceShared = false }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, currentFolderId]);
 
-  // ─── Marquee (rubber-band) selection ────────────────────────────────
+  // ─── Marquee (rubber-band) selection — Google Drive style ───────────
+  // Drag-threshold model: mousedown anywhere in the grid (including on top
+  // of a card) starts TRACKING. If the cursor moves more than DRAG_THRESHOLD
+  // pixels before mouseup we promote to a marquee originating at the mousedown
+  // point. Otherwise it's a normal click and the card's onClick runs.
+  // This fixes the previous "can only start from above a card" + "must drag
+  // to the far edge" issues — now any mousedown + drag in the grid area
+  // starts a real rectangle, with cards-as-target supported.
   const gridRef = useRef<HTMLDivElement | null>(null);
-  // Marquee rectangle in viewport coords (null = not active).
   const [marquee, setMarquee] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  /** Selection snapshot at mousedown, so additive/toggle modes can compute
-   *  the union or symmetric difference live as the rectangle changes. */
-  const baseSelectionRef = useRef<{ folders: Set<string>; files: Set<string> }>({
-    folders: new Set(),
-    files: new Set(),
-  });
-  const marqueeOriginRef = useRef<{ x: number; y: number } | null>(null);
-  const marqueeModeRef = useRef<'replace' | 'add' | 'toggle'>('replace');
+
+  /** Latest selection from the hook — held in a ref so the window-level
+   *  mousemove/mouseup handlers (attached once) read fresh helpers without
+   *  re-attaching on every render. */
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+
+  /** Mousedown bookkeeping. dragStartRef is non-null while the user holds
+   *  the button down; draggingRef flips true once we cross the threshold.
+   *  justFinishedDragRef stays true for a tick after mouseup so the upcoming
+   *  click event on the card under the cursor is suppressed (otherwise a
+   *  drag that ends on a card would open its preview). */
+  const dragStartRef = useRef<{
+    x: number;
+    y: number;
+    mode: 'replace' | 'add' | 'toggle';
+    /** True when the mousedown landed on a card (vs blank grid area). Used
+     *  to decide click-vs-clear behavior on a no-drag mouseup. */
+    onCard: boolean;
+    baseFolders: Set<string>;
+    baseFiles: Set<string>;
+  } | null>(null);
+  const draggingRef = useRef(false);
+  const justFinishedDragRef = useRef(false);
+  const DRAG_THRESHOLD = 5; // px — typical drag-vs-click threshold
 
   /** Hit-test every [data-selectable-id] under the grid container against the
    *  current rectangle. Returns the items whose bbox intersects. */
@@ -118,102 +141,132 @@ export default function FilesPage({ forceShared = false }: Props) {
     return hits;
   }, []);
 
-  const onGridMouseDown = useCallback(
-    (e: ReactMouseEvent<HTMLDivElement>) => {
-      if (e.button !== 0) return; // left button only
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      // Don't start a marquee on a card, button, link, or any interactive elt.
-      if (target.closest('[data-selectable-id], button, a, input, textarea, [role="button"], [data-no-marquee]')) {
+  const onGridMouseDown = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return; // left button only
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    // Skip if mousedown is on an interactive element (button, link, input,
+    // role=button, or an explicit opt-out). Cards ARE allowed — the threshold
+    // model differentiates click-on-card from drag-from-card.
+    if (target.closest('button, a, input, textarea, [role="button"], [data-no-marquee]')) {
+      return;
+    }
+    const mode: 'replace' | 'add' | 'toggle' = e.shiftKey
+      ? 'add'
+      : e.ctrlKey || e.metaKey
+      ? 'toggle'
+      : 'replace';
+    const cur = selectionRef.current;
+    const onCard = !!target.closest('[data-selectable-id]');
+    dragStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      mode,
+      onCard,
+      baseFolders: new Set(cur.selectedFolderIds),
+      baseFiles: new Set(cur.selectedFileIds),
+    };
+    draggingRef.current = false;
+    // Don't pre-clear or pre-render the marquee — the click might never
+    // become a drag. We wait until the threshold is crossed.
+  }, []);
+
+  // Attach window-level mousemove / mouseup ONCE — refs let us read latest
+  // selection methods without re-attaching on every render (which the old
+  // [marquee, selection] deps did, churning each frame).
+  useEffect(() => {
+    const applyMarqueeSelection = (
+      hits: SelectableItem[],
+      mode: 'replace' | 'add' | 'toggle',
+      base: { folders: Set<string>; files: Set<string> },
+    ) => {
+      const sel = selectionRef.current;
+      if (mode === 'replace') {
+        sel.replace(hits);
         return;
       }
-      // Mode based on modifier keys at mousedown.
-      const mode: 'replace' | 'add' | 'toggle' = e.shiftKey
-        ? 'add'
-        : e.ctrlKey || e.metaKey
-        ? 'toggle'
-        : 'replace';
-      marqueeModeRef.current = mode;
-      baseSelectionRef.current = {
-        folders: new Set(selection.selectedFolderIds),
-        files: new Set(selection.selectedFileIds),
-      };
-      if (mode === 'replace') {
-        // Pre-clear so blank-drag visually starts from zero.
-        selection.clear();
-      }
-      marqueeOriginRef.current = { x: e.clientX, y: e.clientY };
-      setMarquee({ x: e.clientX, y: e.clientY, w: 0, h: 0 });
-    },
-    [selection],
-  );
-
-  // Window-level mousemove / mouseup so the drag survives the cursor leaving
-  // the grid. We attach only when an origin exists.
-  useEffect(() => {
-    if (!marquee) return;
-    const onMove = (e: MouseEvent) => {
-      const origin = marqueeOriginRef.current;
-      if (!origin) return;
-      const x = Math.min(origin.x, e.clientX);
-      const y = Math.min(origin.y, e.clientY);
-      const w = Math.abs(e.clientX - origin.x);
-      const h = Math.abs(e.clientY - origin.y);
-      const rect = { x, y, w, h };
-      setMarquee(rect);
-      // Live update selection inside the rectangle.
-      const hits = hitTest(rect);
-      const mode = marqueeModeRef.current;
-      if (mode === 'replace') {
-        selection.replace(hits);
-      } else if (mode === 'add') {
-        // Union of base + hits.
-        const base = baseSelectionRef.current;
-        const fo = new Set(base.folders);
-        const fi = new Set(base.files);
+      const fo = new Set(base.folders);
+      const fi = new Set(base.files);
+      if (mode === 'add') {
         hits.forEach((h) => (h.kind === 'folder' ? fo.add(h.id) : fi.add(h.id)));
-        selection.replace([
-          ...Array.from(fo).map((id) => ({ kind: 'folder' as const, id })),
-          ...Array.from(fi).map((id) => ({ kind: 'file' as const, id })),
-        ]);
       } else {
-        // toggle — symmetric difference of base and hits.
-        const base = baseSelectionRef.current;
-        const fo = new Set(base.folders);
-        const fi = new Set(base.files);
+        // toggle — symmetric difference of base and hits
         hits.forEach((h) => {
           const set = h.kind === 'folder' ? fo : fi;
           if (set.has(h.id)) set.delete(h.id);
           else set.add(h.id);
         });
-        selection.replace([
-          ...Array.from(fo).map((id) => ({ kind: 'folder' as const, id })),
-          ...Array.from(fi).map((id) => ({ kind: 'file' as const, id })),
-        ]);
+      }
+      sel.replace([
+        ...Array.from(fo).map((id) => ({ kind: 'folder' as const, id })),
+        ...Array.from(fi).map((id) => ({ kind: 'file' as const, id })),
+      ]);
+    };
+
+    const onMove = (e: MouseEvent) => {
+      const start = dragStartRef.current;
+      if (!start) return;
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (!draggingRef.current) {
+        // Below threshold → still pending click vs drag.
+        if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        // First crossing — commit to a drag and clear if replace mode.
+        draggingRef.current = true;
+        if (start.mode === 'replace') {
+          selectionRef.current.clear();
+        }
+      }
+      const x = Math.min(start.x, e.clientX);
+      const y = Math.min(start.y, e.clientY);
+      const w = Math.abs(dx);
+      const h = Math.abs(dy);
+      const rect = { x, y, w, h };
+      setMarquee(rect);
+      const hits = hitTest(rect);
+      applyMarqueeSelection(hits, start.mode, {
+        folders: start.baseFolders,
+        files: start.baseFiles,
+      });
+    };
+
+    const onUp = () => {
+      const wasDragging = draggingRef.current;
+      const start = dragStartRef.current;
+      dragStartRef.current = null;
+      draggingRef.current = false;
+      setMarquee(null);
+      if (wasDragging) {
+        // Suppress the upcoming click on whatever card we dragged off of,
+        // so the drag doesn't double as a preview-open. 150ms is enough
+        // for the synthetic click to dispatch and be swallowed.
+        justFinishedDragRef.current = true;
+        window.setTimeout(() => {
+          justFinishedDragRef.current = false;
+        }, 150);
+      } else if (start && !start.onCard) {
+        // Mousedown on blank grid area, no drag → "click on background",
+        // clear the selection. (If mousedown was ON a card we DON'T clear
+        // here — the card's onClick fires next and handles selection.)
+        const sel = selectionRef.current;
+        if (sel.totalSelected > 0) sel.clear();
       }
     };
-    const onUp = () => {
-      marqueeOriginRef.current = null;
-      setMarquee(null);
-    };
+
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [marquee, hitTest, selection]);
+  }, [hitTest]);
 
-  // Click on empty grid background (mouseup with no drag) → clear selection.
-  // We treat a marquee with zero size as a "click on background."
-  const onGridClickBackground = useCallback(
-    (e: ReactMouseEvent<HTMLDivElement>) => {
-      const target = e.target as HTMLElement | null;
-      if (!target) return;
-      if (target.closest('[data-selectable-id], button, a, input, textarea, [role="button"], [data-no-marquee]')) {
-        return;
-      }
-      if (selection.totalSelected > 0) selection.clear();
+  /** Wrap selection.onItemClick so a card's click that came from the END of
+   *  a drag (not a real click) gets suppressed before opening preview. */
+  const onCardClick = useCallback(
+    (item: SelectableItem, e: ReactMouseEvent): boolean => {
+      if (justFinishedDragRef.current) return true; // consumed → suppress
+      return selection.onItemClick(item, clickMode(e));
     },
     [selection],
   );
@@ -520,7 +573,6 @@ export default function FilesPage({ forceShared = false }: Props) {
         <div
           ref={gridRef}
           onMouseDown={onGridMouseDown}
-          onClick={onGridClickBackground}
           className="space-y-6 relative select-none"
           style={bulkBusy ? { pointerEvents: 'none', opacity: 0.7 } : undefined}
         >
@@ -538,7 +590,7 @@ export default function FilesPage({ forceShared = false }: Props) {
                     canManage={canManageFolder(f)}
                     selected={selection.isSelected('folder', f.id)}
                     selectionActive={selection.totalSelected > 0}
-                    onSelectClick={(e) => selection.onItemClick({ kind: 'folder', id: f.id }, clickMode(e))}
+                    onSelectClick={(e) => onCardClick({ kind: 'folder', id: f.id }, e)}
                     onToggleCheckbox={(e) => {
                       e.stopPropagation();
                       selection.toggleMany([{ kind: 'folder', id: f.id }]);
@@ -567,7 +619,7 @@ export default function FilesPage({ forceShared = false }: Props) {
                     canDelete={canDeleteFile(f)}
                     selected={selection.isSelected('file', f.id)}
                     selectionActive={selection.totalSelected > 0}
-                    onSelectClick={(e) => selection.onItemClick({ kind: 'file', id: f.id }, clickMode(e))}
+                    onSelectClick={(e) => onCardClick({ kind: 'file', id: f.id }, e)}
                     onToggleCheckbox={(e) => {
                       e.stopPropagation();
                       selection.toggleMany([{ kind: 'file', id: f.id }]);
