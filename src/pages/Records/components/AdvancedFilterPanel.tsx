@@ -4,7 +4,7 @@ import { ChevronDown, ChevronUp, Filter, Plus, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import FieldFilterPopover from './FieldFilterPopover';
 import {
-  adhocKindFor,
+  getAdhocFilterableFields,
   isAdhocActive,
   summarizeAdhoc,
   type AdhocFieldFilter,
@@ -19,8 +19,9 @@ interface AdvancedFilterPanelProps {
   /** localStorage key used to persist collapsed/expanded between visits. */
   collapseKey: string;
   /** Initial collapsed state when no localStorage entry exists yet. Defaults
-   * to false (expanded). The maps view passes true so the floating filter
-   * lands as a chip rather than a wide panel on first entry. */
+   * to true (collapsed) so every module opens with the filter tucked away;
+   * the user's per-model expand/collapse choice is still remembered after
+   * the first toggle. */
   defaultCollapsed?: boolean;
 }
 
@@ -34,10 +35,10 @@ export default function AdvancedFilterPanel({
   state,
   onChange,
   collapseKey,
-  defaultCollapsed = false,
+  defaultCollapsed = true,
 }: AdvancedFilterPanelProps) {
   const { t } = useTranslation();
-  const { language, records, users } = useAppStore();
+  const { language, records, users, models } = useAppStore();
   const isAr = language === 'ar';
 
   const [collapsed, setCollapsed] = useState<boolean>(() => {
@@ -59,12 +60,13 @@ export default function AdvancedFilterPanel({
     try { localStorage.setItem(collapseKey, next ? '1' : '0'); } catch { /* ignore */ }
   };
 
-  // All filterable fields (skip field types with no useful filter input).
+  // All filterable entries (skip field types with no useful filter input).
+  // Mirrored values — scalar `mirror` fields, mirrored sections, and
+  // section_mirror fields — are surfaced alongside the model's own fields so
+  // users can filter by them too. See getAdhocFilterableFields.
   const filterableFields = useMemo(
-    () => model.schema.sections
-      .flatMap((s) => s.fields)
-      .filter((f) => adhocKindFor(f.type) !== null),
-    [model],
+    () => getAdhocFilterableFields(model, models),
+    [model, models],
   );
 
   const activeCount = useMemo(
@@ -81,7 +83,7 @@ export default function AdvancedFilterPanel({
 
   const clearAll = () => onChange({});
 
-  const openField = filterableFields.find((f) => f.id === openFieldId) ?? null;
+  const openField = filterableFields.find((e) => e.field.id === openFieldId)?.field ?? null;
 
   return (
     <div className="mb-4 rounded-xl border border-sand/40 bg-white/50">
@@ -124,7 +126,7 @@ export default function AdvancedFilterPanel({
             <p className="text-xs text-charcoal/40 py-2 text-center">{t('adhoc.no_filterable_fields')}</p>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-              {filterableFields.map((field) => (
+              {filterableFields.map(({ field }) => (
                 <FieldChip
                   key={field.id}
                   ref={(el) => { anchorsRef.current[field.id] = el; }}

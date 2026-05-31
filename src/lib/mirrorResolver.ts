@@ -129,3 +129,78 @@ export function resolveMirrorTargetField(
       .find((f) => f.name === field.mirror_target_field_name) ?? null
   );
 }
+
+/** Schema-only resolution of a mirror field's hop: the sibling lookup, the target model, and the target field. */
+export interface MirrorTarget {
+  /** The sibling `lookup` field on the current model that the mirror hops through. */
+  sibling: ModelField;
+  /** The model the sibling lookup points at. */
+  targetModel: AppModel;
+  /** The field on the target model whose value the mirror surfaces. */
+  targetField: ModelField;
+  /**
+   * How to collapse a multi-valued sibling lookup when reading the mirrored value:
+   * - 'all' (default): return an array of every linked record's value — matches the scalar
+   *   `mirror` field, which renders all linked values.
+   * - 'first': return only the first linked record's value — matches mirrored sections and
+   *   `section_mirror` fields, which render the first linked record inline.
+   */
+  multiMode?: 'all' | 'first';
+}
+
+/**
+ * Resolve a `mirror` field's target from schema alone (no record needed). Returns null when the
+ * mirror is misconfigured, the sibling/model/field can't be found, or the target is itself a mirror
+ * (chained mirrors are not allowed). Used by the ad-hoc filter system to treat a mirror field as if
+ * it were its target field for filtering purposes.
+ */
+export function resolveMirrorTarget(
+  field: ModelField,
+  currentModel: AppModel,
+  allModels: AppModel[],
+): MirrorTarget | null {
+  if (field.type !== 'mirror') return null;
+  if (!field.mirror_via_lookup_field_id || !field.mirror_target_field_name) return null;
+
+  const sibling = currentModel.schema.sections
+    .flatMap((s) => s.fields)
+    .find((f) => f.id === field.mirror_via_lookup_field_id);
+  if (!sibling || sibling.type !== 'lookup' || !sibling.lookup_model_id) return null;
+
+  const targetModel = allModels.find((m) => m.id === sibling.lookup_model_id);
+  if (!targetModel) return null;
+
+  const targetField = targetModel.schema.sections
+    .flatMap((s) => s.fields)
+    .find((f) => f.name === field.mirror_target_field_name) ?? null;
+  if (!targetField || targetField.type === 'mirror') return null;
+
+  return { sibling, targetModel, targetField };
+}
+
+/**
+ * Resolve a mirror field's live value for one record using a precomputed {@link MirrorTarget} and a
+ * prebuilt id→record index for the target model. Returns an array of values when the sibling lookup
+ * is multi-valued (mirroring `resolveMirror`'s multi behavior), or a scalar otherwise. Returns
+ * `undefined` when the sibling has no selection. Kept separate from `resolveMirror` so callers that
+ * filter thousands of rows resolve the schema hop once and index target records once.
+ */
+export function resolveMirrorValueWithTarget(
+  target: MirrorTarget,
+  recordData: Record<string, unknown> | null | undefined,
+  targetIndex: Map<string, AppRecord>,
+): unknown {
+  const siblingValue = recordData?.[target.sibling.name];
+  if (target.sibling.is_multi) {
+    const ids = Array.isArray(siblingValue)
+      ? (siblingValue as unknown[]).filter((v): v is string => typeof v === 'string' && !!v)
+      : [];
+    if (ids.length === 0) return undefined;
+    if (target.multiMode === 'first') {
+      return targetIndex.get(ids[0])?.data[target.targetField.name];
+    }
+    return ids.map((id) => targetIndex.get(id)?.data[target.targetField.name]);
+  }
+  if (typeof siblingValue !== 'string' || !siblingValue) return undefined;
+  return targetIndex.get(siblingValue)?.data[target.targetField.name];
+}

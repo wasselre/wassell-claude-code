@@ -183,7 +183,9 @@ export default function RecordListPage() {
       : modelRecords;
 
     // 2. Ad-hoc faceted filters (OR within field, AND across fields).
-    out = applyAdhocFilters(out, adhocFilters, allFields);
+    //    Pass the model + all models/records so mirror fields can resolve
+    //    their live value through the sibling lookup at filter time.
+    out = applyAdhocFilters(out, adhocFilters, model, models, records);
 
     // 3. Text search (top-of-page search box).
     if (search.trim()) {
@@ -197,7 +199,7 @@ export default function RecordListPage() {
       );
     }
     return out;
-  }, [search, modelRecords, model, activeView, adhocFilters]);
+  }, [search, modelRecords, model, models, records, activeView, adhocFilters]);
 
   // Apply the active view's default sort before pagination. Mirrors the
   // comparator in TableView so prev/next in the record form matches the
@@ -407,7 +409,7 @@ export default function RecordListPage() {
             model={model}
             state={adhocFilters}
             onChange={updateAdhocFilters}
-            collapseKey={`wassell_adhoc_collapsed_${model.id}`}
+            collapseKey={`wassell_adhoc_collapsed_v2_${model.id}`}
           />
 
           {/* Search + View selector + View-mode toggle */}
@@ -546,7 +548,7 @@ export default function RecordListPage() {
                 model={model}
                 state={adhocFilters}
                 onChange={updateAdhocFilters}
-                collapseKey={`wassell_adhoc_collapsed_${model.id}`}
+                collapseKey={`wassell_adhoc_collapsed_v2_${model.id}`}
                 defaultCollapsed
               />
             </div>
