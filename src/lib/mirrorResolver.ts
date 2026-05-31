@@ -205,3 +205,58 @@ export function resolveMirrorValueWithTarget(
   if (typeof siblingValue !== 'string' || !siblingValue) return undefined;
   return targetIndex.get(siblingValue)?.data[target.targetField.name];
 }
+
+/** Extra context a {@link resolveLookupDisplayValue} caller supplies so a `mirror`
+ *  display field can be resolved. All three are required to resolve a mirror;
+ *  when any is missing the helper degrades to the raw stored read. */
+export interface LookupDisplayContext {
+  /** The model the lookup points at — i.e. the model that owns the display field. */
+  targetModel?: AppModel | null;
+  /** Full models list, needed only to follow a mirror display field's sibling-lookup hop. */
+  allModels?: AppModel[];
+  /** Full records map keyed by model id, needed only to follow a mirror display field's hop. */
+  allRecords?: Record<string, AppRecord[]>;
+}
+
+/**
+ * Resolve the value a lookup field should DISPLAY for one linked record.
+ *
+ * For an ordinary (stored) display field this returns `targetRecord.data[displaySlug]`
+ * — byte-for-byte the same as the old direct read every call site used to do.
+ *
+ * A `mirror` display field stores NO data (it's computed at render time), so when
+ * the chosen display field is a mirror we resolve it through {@link resolveMirror},
+ * hopping the mirror's sibling lookup on the *target* model. A multi-valued mirror
+ * is collapsed to a ", "-joined string so it renders as a single label (display
+ * surfaces expect a scalar). A misconfigured / empty / chained mirror yields
+ * `undefined`, letting each caller apply its own empty handling.
+ *
+ * Degrades gracefully: resolving a mirror needs `targetModel` + `allModels` +
+ * `allRecords` in `ctx`. When any is absent — or the display field isn't a mirror —
+ * we fall back to the raw stored read, so callers that lack full scope keep working
+ * exactly as before (they just can't surface a mirror's live value).
+ */
+export function resolveLookupDisplayValue(
+  targetRecord: { data: Record<string, unknown> },
+  displaySlug: string,
+  ctx: LookupDisplayContext = {},
+): unknown {
+  const { targetModel, allModels, allRecords } = ctx;
+  if (targetModel && allModels && allRecords) {
+    const displayField = targetModel.schema.sections
+      .flatMap((s) => s.fields)
+      .find((f) => f.name === displaySlug);
+    if (displayField?.type === 'mirror') {
+      const res = resolveMirror(displayField, targetRecord.data, allRecords, allModels);
+      if (res.status !== 'ok') return undefined;
+      if (Array.isArray(res.value)) {
+        return res.value
+          .filter((v) => v !== null && v !== undefined && typeof v !== 'object')
+          .map((v) => String(v))
+          .join(', ');
+      }
+      return res.value;
+    }
+  }
+  return targetRecord.data[displaySlug];
+}

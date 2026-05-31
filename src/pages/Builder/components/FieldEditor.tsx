@@ -45,8 +45,11 @@ const MIRROR_TARGET_TYPES: FieldType[] = [
 ];
 
 // Target-field types a lookup's display_field can be (relaxed from text/email/phone).
+// `mirror` is included so a lookup can surface a value the target model itself mirrors
+// from a further-linked record. Mirror values aren't stored — they're resolved at
+// display time via `resolveLookupDisplayValue` (see src/lib/mirrorResolver.ts).
 const LOOKUP_DISPLAY_TYPES: FieldType[] = [
-  'text', 'email', 'phone', 'number', 'currency', 'date', 'datetime', 'url', 'dropdown', 'auto_id',
+  'text', 'email', 'phone', 'number', 'currency', 'date', 'datetime', 'url', 'dropdown', 'auto_id', 'mirror',
 ];
 
 // Field types that can HAVE a fallback-when-empty source. Excludes types where

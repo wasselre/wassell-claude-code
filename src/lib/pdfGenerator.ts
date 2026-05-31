@@ -1,6 +1,6 @@
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
-import { resolveMirror } from './mirrorResolver';
+import { resolveMirror, resolveLookupDisplayValue } from './mirrorResolver';
 import type { AppModel, AppRecord, ModelField, ModelView } from '@/types';
 import type {
   ResearchComparisonData,
@@ -82,6 +82,7 @@ function resolveTargetLabel(
   fallbackId: string,
   lookupField: ModelField,
   allModels: AppModel[],
+  allRecords: Record<string, AppRecord[]>,
 ): string {
   if (!targetRecord) return 'سجل محذوف';
   const targetModel = allModels.find((m) => m.id === lookupField.lookup_model_id);
@@ -91,7 +92,8 @@ function resolveTargetLabel(
     : null;
   const displayFieldName = titleField?.name ?? lookupField.lookup_display_field ?? null;
   if (displayFieldName) {
-    const v = targetRecord.data[displayFieldName];
+    // displayFieldName may name a mirror on the target model (computed at runtime).
+    const v = resolveLookupDisplayValue(targetRecord, displayFieldName, { targetModel, allModels, allRecords });
     if (typeof v === 'string' || typeof v === 'number') return String(v);
   }
   return `#${fallbackId.slice(0, 6)}`;
@@ -169,7 +171,7 @@ function buildComparisonData(
   }));
 
   const projectLabels = primaryLookup
-    ? projectRecords.map((p) => resolveTargetLabel(p.record, p.id, primaryLookup, allModels))
+    ? projectRecords.map((p) => resolveTargetLabel(p.record, p.id, primaryLookup, allModels, allRecords))
     : [];
 
   // Build the full ordered column spec list by walking every field in the model.

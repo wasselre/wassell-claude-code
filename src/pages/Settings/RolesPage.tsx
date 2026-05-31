@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { emptyRoleSchema, roleFields } from '@/lib/roleSchema';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { Briefcase, Plus, Pencil, Users, ArrowRight, Trash2, Settings, Save, Lock } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -291,7 +292,7 @@ function MembersTable({
   role: Role;
   members: ReturnType<typeof useAppStore.getState>['users'];
 }) {
-  const { language, records } = useAppStore();
+  const { language, records, models } = useAppStore();
   const isAr = language === 'ar';
   const navigate = useNavigate();
 
@@ -370,11 +371,14 @@ function MembersTable({
                         (() => {
                           if (!field.lookup_model_id || !field.lookup_display_field) return <span className="text-charcoal/20">—</span>;
                           const lookupRecords = records[field.lookup_model_id] ?? [];
+                          const targetModel = models.find((m) => m.id === field.lookup_model_id);
                           const ids = Array.isArray(val) ? (val as string[]) : val ? [val as string] : [];
                           if (ids.length === 0) return <span className="text-charcoal/20">—</span>;
                           const labels = ids.map((id) => {
                             const rec = lookupRecords.find((r) => r.id === id);
-                            const display = rec?.data[field.lookup_display_field!];
+                            const display = rec
+                              ? resolveLookupDisplayValue(rec, field.lookup_display_field!, { targetModel, allModels: models, allRecords: records })
+                              : undefined;
                             return display !== undefined && display !== null && String(display).trim() !== '' ? String(display) : '—';
                           });
                           return <span className="text-sm text-charcoal">{labels.join(', ')}</span>;

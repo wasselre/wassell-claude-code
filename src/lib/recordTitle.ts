@@ -1,4 +1,5 @@
 import type { AppModel, AppRecord, ModelField } from '@/types';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 
 /**
  * Resolve a human-readable title for a record, handling the same field types
@@ -21,19 +22,20 @@ export function resolveRecordTitle(
   model: AppModel,
   rec: AppRecord,
   records: Record<string, AppRecord[]>,
+  allModels?: AppModel[],
 ): string | null {
   const allFields = model.schema.sections.flatMap((s) => s.fields);
 
   const titleId = model.card_config.title_field_id;
   const titleField = titleId ? allFields.find((f) => f.id === titleId) ?? null : null;
   if (titleField) {
-    const v = readField(titleField, rec, records);
+    const v = readField(titleField, rec, records, allModels);
     if (v !== null) return v;
   }
 
   for (const f of allFields) {
     if (f.type !== 'text' && f.type !== 'textarea' && f.type !== 'number' && f.type !== 'lookup') continue;
-    const v = readField(f, rec, records);
+    const v = readField(f, rec, records, allModels);
     if (v !== null) return v;
   }
 
@@ -44,6 +46,7 @@ function readField(
   field: ModelField,
   rec: AppRecord,
   records: Record<string, AppRecord[]>,
+  allModels?: AppModel[],
 ): string | null {
   const raw = rec.data[field.name];
   if (raw === undefined || raw === null || raw === '') return null;
@@ -67,7 +70,13 @@ function readField(
     if (!targetModelId || !displaySlug) return null;
     const target = (records[targetModelId] ?? []).find((r) => r.id === targetId);
     if (!target) return null;
-    const v = target.data[displaySlug];
+    // `displaySlug` may name a mirror field on the target model (computed at
+    // runtime); resolve it when the full models list is available, else read raw.
+    const v = resolveLookupDisplayValue(target, displaySlug, {
+      targetModel: allModels?.find((m) => m.id === targetModelId),
+      allModels,
+      allRecords: records,
+    });
     if (typeof v === 'string' && v.trim()) return v;
     if (typeof v === 'number') return String(v);
     return null;

@@ -14,7 +14,7 @@ import {
   resolveMapStyles,
 } from '@/lib/locationUtils';
 import { useResolvedLocations, type ResolvedPin } from '@/hooks/useResolvedLocations';
-import { resolveMirror } from '@/lib/mirrorResolver';
+import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { formatNumberWithCommas, formatRangeValue } from './RangeField';
@@ -87,11 +87,12 @@ export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx
       if (!field.lookup_model_id || !field.lookup_display_field) return '—';
       const linked = allRecords[field.lookup_model_id] ?? [];
       const displayName = field.lookup_display_field;
+      const targetModel = models.find((m) => m.id === field.lookup_model_id);
       const resolveOne = (id: unknown): string => {
         if (typeof id !== 'string' || !id) return '';
         const rec = linked.find((r) => r.id === id);
         if (!rec) return isAr ? 'سجل محذوف' : 'Deleted record';
-        const dv = rec.data[displayName];
+        const dv = resolveLookupDisplayValue(rec, displayName, { targetModel, allModels: models, allRecords });
         if (dv === null || dv === undefined || typeof dv === 'object') return id.slice(0, 8);
         const s = String(dv);
         return s.trim() === '' ? id.slice(0, 8) : s;

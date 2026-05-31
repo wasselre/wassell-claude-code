@@ -3,8 +3,9 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { Search, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { ModelField } from '@/types';
+import type { ModelField, AppModel } from '@/types';
 import { adhocKindFor, type AdhocFieldFilter } from '@/lib/adhocFilterUtils';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 
 interface FieldFilterPopoverProps {
@@ -27,7 +28,7 @@ export default function FieldFilterPopover({
   onClose,
 }: FieldFilterPopoverProps) {
   const { t } = useTranslation();
-  const { language, records, users } = useAppStore();
+  const { language, records, users, models } = useAppStore();
   const isAr = language === 'ar';
 
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -105,6 +106,7 @@ export default function FieldFilterPopover({
           }
           isAr={isAr}
           recordsByModel={records}
+          allModels={models}
           users={users}
         />
       )}
@@ -151,6 +153,7 @@ function ValuesPicker({
   onChange,
   isAr,
   recordsByModel,
+  allModels,
   users,
 }: {
   field: ModelField;
@@ -159,6 +162,7 @@ function ValuesPicker({
   onChange: (values: string[], mode: 'is' | 'is_not') => void;
   isAr: boolean;
   recordsByModel: Record<string, import('@/types').AppRecord[]>;
+  allModels: AppModel[];
   users: import('@/types').User[];
 }) {
   const { t } = useTranslation();
@@ -167,9 +171,16 @@ function ValuesPicker({
   const options = useMemo(() => {
     if (field.type === 'lookup' && field.lookup_model_id && field.lookup_display_field) {
       const recs = recordsByModel[field.lookup_model_id] ?? [];
+      const targetModel = allModels.find((m) => m.id === field.lookup_model_id);
       return recs.map((r) => ({
         value: r.id,
-        label: String(r.data[field.lookup_display_field!] ?? r.id.slice(0, 8)),
+        label: String(
+          resolveLookupDisplayValue(r, field.lookup_display_field!, {
+            targetModel,
+            allModels,
+            allRecords: recordsByModel,
+          }) ?? r.id.slice(0, 8),
+        ),
       }));
     }
     if (field.type === 'assignee') {
@@ -180,7 +191,7 @@ function ValuesPicker({
       value: o.value,
       label: isAr ? o.label_ar : o.label_en,
     }));
-  }, [field, recordsByModel, users, isAr]);
+  }, [field, recordsByModel, allModels, users, isAr]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return options;

@@ -4,7 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import Badge from '@/components/ui/Badge';
 import WhatsAppIcon from '@/components/ui/WhatsAppIcon';
 import { telUrl, whatsappUrl } from '@/lib/phone';
-import { resolveMirror } from '@/lib/mirrorResolver';
+import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { formatRangeValue } from './RangeField';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import {
@@ -367,13 +367,17 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
       }
       const linkedRecords = allRecords[field.lookup_model_id] ?? [];
       const displayFieldName = field.lookup_display_field;
+      // Pass the target model + full models/records so a `mirror` display field
+      // resolves through its sibling-lookup hop; non-mirror fields read raw.
+      const linkedModel = models.find((m) => m.id === field.lookup_model_id);
+      const displayCtx = { targetModel: linkedModel, allModels: models, allRecords };
 
       const renderOne = (id: string) => {
         const linkedRecord = linkedRecords.find((r) => r.id === id);
         if (!linkedRecord) {
           return <span key={id} className="text-charcoal/30 italic text-xs">{isAr ? 'سجل محذوف' : 'Deleted record'}</span>;
         }
-        const displayVal = linkedRecord.data[displayFieldName];
+        const displayVal = resolveLookupDisplayValue(linkedRecord, displayFieldName, displayCtx);
         const text = displayVal !== null && displayVal !== undefined && typeof displayVal !== 'object'
           ? String(displayVal)
           : (displayVal ? String(displayVal) : id.slice(0, 8));
@@ -390,7 +394,7 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
               <Badge key={id} label={(() => {
                 const linkedRecord = linkedRecords.find((r) => r.id === id);
                 if (!linkedRecord) return isAr ? 'سجل محذوف' : 'Deleted';
-                const dv = linkedRecord.data[displayFieldName];
+                const dv = resolveLookupDisplayValue(linkedRecord, displayFieldName, displayCtx);
                 return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
               })()} />
             ))}

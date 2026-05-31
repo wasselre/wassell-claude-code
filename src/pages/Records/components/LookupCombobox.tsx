@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { Search, X, Plus } from 'lucide-react';
 
 interface LookupComboboxProps {
@@ -37,16 +38,30 @@ export default function LookupCombobox({
   const allLinkedRecords = records[lookupModelId] ?? [];
   const linkedRecords = useApplyViewScope(linkedModel, allLinkedRecords);
 
+  // The display field may be a `mirror` on the target model (value computed at
+  // render time, never stored). Inline-create writes the typed value to the
+  // display field, which is impossible for a computed mirror — so creation is
+  // disabled below when the display field is a mirror.
+  const displayIsMirror =
+    linkedModel?.schema.sections
+      .flatMap((s) => s.fields)
+      .find((f) => f.name === lookupDisplayField)?.type === 'mirror';
+
   // Resolve a record's display label. Primary source is the configured display
-  // field; if that's empty (record was created before the field existed, or the
-  // user just hasn't filled it in), fall back to the first non-empty scalar on
-  // the record in schema order, and finally to an id suffix.
+  // field (resolving a mirror display field through its sibling-lookup hop); if
+  // that's empty (record was created before the field existed, the user hasn't
+  // filled it in, or the mirror's source isn't selected), fall back to the first
+  // non-empty scalar on the record in schema order, and finally to an id suffix.
   const labelFor = useMemo(() => {
     const orderedSlugs = linkedModel
       ? linkedModel.schema.sections.flatMap((s) => s.fields.map((f) => f.name))
       : [];
     return (rec: { id: string; data: Record<string, unknown> }): string => {
-      const primary = rec.data[lookupDisplayField];
+      const primary = resolveLookupDisplayValue(rec, lookupDisplayField, {
+        targetModel: linkedModel,
+        allModels: models,
+        allRecords: records,
+      });
       if (primary !== null && primary !== undefined && String(primary).trim() !== '') {
         return String(primary);
       }
@@ -58,7 +73,7 @@ export default function LookupCombobox({
       }
       return rec.id.slice(0, 8);
     };
-  }, [linkedModel, lookupDisplayField]);
+  }, [linkedModel, lookupDisplayField, models, records]);
 
   // Normalize value: in multi mode always string[]; in single mode a string or undefined.
   const selectedIds = useMemo<string[]>(() => {
@@ -120,6 +135,7 @@ export default function LookupCombobox({
   const canCreate =
     trimmedQuery.length > 0 &&
     !!lookupDisplayField &&
+    !displayIsMirror &&
     !filteredRecords.some((r) => labelFor(r).toLowerCase() === trimmedQuery.toLowerCase());
 
   const createAndPick = () => {

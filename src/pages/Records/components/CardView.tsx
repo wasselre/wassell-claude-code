@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Badge from '@/components/ui/Badge';
 import DynamicCell from './DynamicCell';
-import { resolveMirror } from '@/lib/mirrorResolver';
+import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import type { AppModel, AppRecord, ModelField, FieldOption } from '@/types';
 
@@ -26,12 +26,13 @@ function resolveFieldDisplay(
   if (field.type === 'lookup') {
     if (!field.lookup_model_id || !field.lookup_display_field) return '—';
     const linkedRecords = allRecords[field.lookup_model_id] ?? [];
+    const targetModel = allModels.find((m) => m.id === field.lookup_model_id);
     const raw = record.data[field.name];
     const resolveOne = (id: unknown): string | null => {
       if (typeof id !== 'string' || !id) return null;
       const linked = linkedRecords.find((r) => r.id === id);
       if (!linked) return null;
-      const v = linked.data[field.lookup_display_field!];
+      const v = resolveLookupDisplayValue(linked, field.lookup_display_field!, { targetModel, allModels, allRecords });
       return v !== null && v !== undefined && typeof v !== 'object' ? String(v) : null;
     };
     if (Array.isArray(raw)) {
@@ -107,11 +108,12 @@ function displayExpandedField(
   if (field.type === 'lookup') {
     if (!field.lookup_model_id || !field.lookup_display_field) return '—';
     const linkedRecords = allRecords[field.lookup_model_id] ?? [];
+    const targetModel = allModels.find((m) => m.id === field.lookup_model_id);
     const resolveOne = (id: unknown): string | null => {
       if (typeof id !== 'string' || !id) return null;
       const linked = linkedRecords.find((r) => r.id === id);
       if (!linked) return null;
-      const v = linked.data[field.lookup_display_field!];
+      const v = resolveLookupDisplayValue(linked, field.lookup_display_field!, { targetModel, allModels, allRecords });
       return v !== null && v !== undefined && typeof v !== 'object' ? String(v) : null;
     };
     if (Array.isArray(value)) {

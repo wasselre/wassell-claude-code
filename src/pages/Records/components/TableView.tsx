@@ -9,6 +9,7 @@ import LookupCombobox from './LookupCombobox';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import type { AppModel, AppRecord, ModelField, ModelView } from '@/types';
@@ -394,7 +395,7 @@ function InlineInput({
   value: unknown;
   onChange: (value: unknown) => void;
 }) {
-  const { language, records, users } = useAppStore();
+  const { language, records, users, models } = useAppStore();
   const isAr = language === 'ar';
 
   const cls = 'form-input text-sm py-1 px-2';
@@ -560,6 +561,7 @@ function InlineInput({
         );
       }
       const linkedRecords = records[field.lookup_model_id] ?? [];
+      const targetModel = models.find((m) => m.id === field.lookup_model_id);
       return (
         <select
           value={typeof value === 'string' ? value : ''}
@@ -569,7 +571,7 @@ function InlineInput({
         >
           <option value="">—</option>
           {linkedRecords.map((rec) => {
-            const display = rec.data[field.lookup_display_field!];
+            const display = resolveLookupDisplayValue(rec, field.lookup_display_field!, { targetModel, allModels: models, allRecords: records });
             return (
               <option key={rec.id} value={rec.id}>
                 {display ? String(display) : rec.id.slice(0, 8)}

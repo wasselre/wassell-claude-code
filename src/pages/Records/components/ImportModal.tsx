@@ -31,7 +31,7 @@ interface NearDuplicate {
 
 export default function ImportModal({ open, onClose, model }: ImportModalProps) {
   const { t } = useTranslation();
-  const { saveRecord, addToast, language, records } = useAppStore();
+  const { saveRecord, addToast, language, records, models } = useAppStore();
   const isAr = language === 'ar';
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -136,7 +136,7 @@ export default function ImportModal({ open, onClose, model }: ImportModalProps) 
   // When no duplicate-check field is set OR no similar matches are found, we
   // bypass the review step and go straight to `done`.
   const handleImport = () => {
-    const { data: mappedData, newLookupRecords } = mapImportedRows(rows, mappings, allFields, records);
+    const { data: mappedData, newLookupRecords } = mapImportedRows(rows, mappings, allFields, records, models);
 
     const dupFieldId = model.schema.duplicate_check_field_id ?? null;
     const dupField = dupFieldId ? allFields.find((f) => f.id === dupFieldId) : null;

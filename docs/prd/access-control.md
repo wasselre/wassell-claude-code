@@ -1,7 +1,7 @@
 # PRD: Access Control (Users, Roles, Profiles)
 
 **Status:** Live (user-management feature complete; locked for ~6 months)
-**Last updated:** 2026-05-24
+**Last updated:** 2026-05-31 (role-field display values (`RolesPage`) and scope-rule record pickers (`ScopeConditionEditor`) now resolve a lookup's `mirror` display field via the shared `resolveLookupDisplayValue` helper — purely a label-rendering consistency change following the model-builder feature; no access-control behavior changed. See model-builder.md. Prior: 2026-05-24)
 **Related PRDs:** model-builder.md, record-management.md, workflow-automation.md, data-storage.md, logs.md
 
 > **2026-05-24 — `auth_uid` binding deadlock fixed.**

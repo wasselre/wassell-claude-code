@@ -17,6 +17,7 @@
 import { v4 as uuid } from 'uuid';
 import { Plus, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import type {
   AppModel,
   ModelField,
@@ -378,7 +379,9 @@ function LiteralValueInput({ fieldRef, targetField, value, isAr, onChange }: Lit
         ? (records[targetField.lookup_model_id] ?? []).slice(0, 200)
         : [];
       const labelFor = (rec: { id: string; data: Record<string, unknown> }) => {
-        const primary = displaySlug ? rec.data[displaySlug] : null;
+        const primary = displaySlug
+          ? resolveLookupDisplayValue(rec, displaySlug, { targetModel: linkedModel, allModels: models, allRecords: records })
+          : null;
         if (typeof primary === 'string' && primary.trim() !== '') return primary;
         if (typeof primary === 'number' && Number.isFinite(primary)) return String(primary);
         return rec.id.slice(0, 8);

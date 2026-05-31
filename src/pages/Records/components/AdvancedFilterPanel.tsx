@@ -134,6 +134,7 @@ export default function AdvancedFilterPanel({
                   isAr={isAr}
                   filter={state[field.id]}
                   recordsByModel={records}
+                  allModels={models}
                   users={users}
                   onClick={() => setOpenFieldId(openFieldId === field.id ? null : field.id)}
                   onClear={() => updateFilter(field.id, undefined)}
@@ -162,13 +163,14 @@ interface FieldChipProps {
   isAr: boolean;
   filter: AdhocFieldFilter | undefined;
   recordsByModel: Record<string, import('@/types').AppRecord[]>;
+  allModels: import('@/types').AppModel[];
   users: import('@/types').User[];
   onClick: () => void;
   onClear: () => void;
 }
 
 const FieldChip = forwardRef<HTMLButtonElement, FieldChipProps>(function FieldChip(
-  { field, isAr, filter, recordsByModel, users, onClick, onClear },
+  { field, isAr, filter, recordsByModel, allModels, users, onClick, onClear },
   ref,
 ) {
     const label = isAr ? field.label_ar : field.label_en;
@@ -179,7 +181,13 @@ const FieldChip = forwardRef<HTMLButtonElement, FieldChipProps>(function FieldCh
           field,
           isAr,
           field.lookup_model_id
-            ? { records: recordsByModel[field.lookup_model_id] ?? [], displayField: field.lookup_display_field ?? null }
+            ? {
+                records: recordsByModel[field.lookup_model_id] ?? [],
+                displayField: field.lookup_display_field ?? null,
+                targetModel: allModels.find((m) => m.id === field.lookup_model_id),
+                allModels,
+                allRecords: recordsByModel,
+              }
             : undefined,
           users,
         )

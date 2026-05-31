@@ -1,5 +1,6 @@
 import { useAppStore } from '@/stores/appStore';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import type { ModelField } from '@/types';
 
 interface FieldValueInputProps {
@@ -121,7 +122,11 @@ export default function FieldValueInput({ field, value, onChange, className = ''
         >
           <option value="">— {isAr ? 'اختر سجل' : 'Select record'} —</option>
           {linkedRecords.map((rec) => {
-            const display = rec.data[displayField];
+            const display = resolveLookupDisplayValue(rec, displayField, {
+              targetModel: linkedModel,
+              allModels: models,
+              allRecords: records,
+            });
             return (
               <option key={rec.id} value={rec.id}>
                 {display ? String(display) : rec.id.slice(0, 8)}

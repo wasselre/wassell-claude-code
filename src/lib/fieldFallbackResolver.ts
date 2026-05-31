@@ -53,7 +53,14 @@ const DISALLOWED_SOURCE_TYPES = new Set<ModelField['type']>([
   'section_mirror',
 ]);
 
-/** Resolve a lookup source's stored UUID(s) to the linked record's display value. */
+/** Resolve a lookup source's stored UUID(s) to the linked record's display value.
+ *
+ * If the lookup's `lookup_display_field` is itself a `mirror` on the target model,
+ * its value is computed at render time and not stored, so the raw read below is
+ * empty and the fallback safely SKIPS (leaves the target empty — never writes a
+ * UUID or junk). Resolving a mirror here would need the full models list + records
+ * map, which this save-time pass deliberately doesn't carry; skipping is the safe
+ * v1 behavior for this niche combination. */
 function resolveLookupDisplay(
   sourceField: ModelField,
   sourceValue: unknown,

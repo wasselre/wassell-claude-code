@@ -1,7 +1,7 @@
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
 import { v4 as uuid } from 'uuid';
-import { resolveMirror } from './mirrorResolver';
+import { resolveMirror, resolveLookupDisplayValue } from './mirrorResolver';
 import { formatRangeValue } from '@/pages/Records/components/RangeField';
 import type { AppModel, AppRecord, ModelField, Language, NoteEntry } from '@/types';
 
@@ -440,6 +440,7 @@ export function mapImportedRows(
   columnMappings: Record<number, string | null>, // col index -> field name or null (skip)
   allFields: ModelField[],
   allRecords: Record<string, AppRecord[]>,
+  allModels: AppModel[],
 ): MapImportedRowsResult {
   const newLookupRecords: AppRecord[] = [];
   // modelId -> (normalizedValue -> recordId). Covers both pre-existing matches
@@ -455,12 +456,25 @@ export function mapImportedRows(
     if (!normalized) return null;
     const key = normalized.toLowerCase();
 
+    // A `mirror` display field is computed at runtime and stores nothing, so we
+    // can neither warm the cache from raw data nor auto-create by writing to it.
+    // Match existing records against their RESOLVED mirror value, and on a miss
+    // leave the cell unlinked (return null) rather than create a junk record
+    // with an orphan data key — see CLAUDE.md "never silently corrupt data".
+    const targetModel = allModels.find((m) => m.id === modelId);
+    const displayIsMirror =
+      targetModel?.schema.sections
+        .flatMap((s) => s.fields)
+        .find((f) => f.name === displayField)?.type === 'mirror';
+
     let cache = lookupCache.get(modelId);
     if (!cache) {
       cache = new Map();
       // Warm with existing records so we don't re-scan for every row.
       for (const rec of allRecords[modelId] ?? []) {
-        const v = rec.data[displayField];
+        const v = displayIsMirror
+          ? resolveLookupDisplayValue(rec, displayField, { targetModel, allModels, allRecords })
+          : rec.data[displayField];
         if (v === null || v === undefined) continue;
         const k = String(v).trim().toLowerCase();
         if (k && !cache.has(k)) cache.set(k, rec.id);
@@ -470,6 +484,9 @@ export function mapImportedRows(
 
     const existing = cache.get(key);
     if (existing) return existing;
+
+    // Can't auto-create a target record keyed on a computed mirror field.
+    if (displayIsMirror) return null;
 
     const now = new Date().toISOString();
     const newRec: AppRecord = {

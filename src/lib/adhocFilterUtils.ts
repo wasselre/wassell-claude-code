@@ -1,5 +1,5 @@
 import type { AppModel, AppRecord, ModelField, ModelSection } from '@/types';
-import { resolveMirrorTarget, resolveMirrorValueWithTarget, type MirrorTarget } from './mirrorResolver';
+import { resolveMirrorTarget, resolveMirrorValueWithTarget, resolveLookupDisplayValue, type MirrorTarget } from './mirrorResolver';
 
 /**
  * Ad-hoc (faceted) per-field filters shown in the Advanced Filter panel above the table.
@@ -363,6 +363,11 @@ export function summarizeAdhoc(
   lookup?: {
     records: AppRecord[];
     displayField: string | null;
+    // Supplied so a `mirror` display field can be resolved (computed at runtime).
+    // Optional — without them a mirror display field reads raw (i.e. empty).
+    targetModel?: AppModel | null;
+    allModels?: AppModel[];
+    allRecords?: Record<string, AppRecord[]>;
   },
   users?: { id: string; name_ar: string; name_en: string }[],
 ): string {
@@ -373,7 +378,13 @@ export function summarizeAdhoc(
         if (field.type === 'lookup' && lookup) {
           const rec = lookup.records.find((r) => r.id === v);
           if (rec && lookup.displayField) {
-            return String(rec.data[lookup.displayField] ?? v);
+            return String(
+              resolveLookupDisplayValue(rec, lookup.displayField, {
+                targetModel: lookup.targetModel,
+                allModels: lookup.allModels,
+                allRecords: lookup.allRecords,
+              }) ?? v,
+            );
           }
           return v;
         }
