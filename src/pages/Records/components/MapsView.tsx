@@ -15,6 +15,7 @@ import {
 } from '@/lib/locationUtils';
 import { useResolvedLocations, type ResolvedPin } from '@/hooks/useResolvedLocations';
 import { resolveMirror } from '@/lib/mirrorResolver';
+import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import { formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { formatNumberWithCommas, formatRangeValue } from './RangeField';
 import type { AppModel, AppRecord, MapsConfig, ModelField, NoteEntry, User } from '@/types';
@@ -197,9 +198,15 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   const isAr = language === 'ar';
 
   const cfg = model.maps_config;
-  const allFields = useMemo(() => model.schema.sections.flatMap((s) => s.fields), [model]);
-  const fieldsById = useMemo(() => new Map(allFields.map((f) => [f.id, f])), [allFields]);
-  const labelField = cfg.pin_label_field_id ? fieldsById.get(cfg.pin_label_field_id) : undefined;
+  // Expanded field set keyed by id — local fields PLUS section-mirror children,
+  // so pin labels and the popup can reference data mirrored in from a linked
+  // record (e.g. a project's master fields). Mirrored ids are `container::child`.
+  const expandedById = useMemo(() => {
+    const m = new Map<string, ExpandedField>();
+    for (const ef of collectViewFields(model, models)) m.set(ef.id, ef);
+    return m;
+  }, [model, models]);
+  const labelEf = cfg.pin_label_field_id ? expandedById.get(cfg.pin_label_field_id) : undefined;
 
   const { resolved, unresolved, resolving, resolvingCount } = useResolvedLocations(model, records);
 
@@ -228,15 +235,16 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   // only.
   const pinLabels = useMemo<Record<string, string>>(() => {
     const out: Record<string, string> = {};
-    if (!labelField) return out;
+    if (!labelEf) return out;
     const ctx: Omit<FormatCtx, 'recordData'> = { isAr, t, allRecords, models, users };
     for (const p of resolved) {
-      const text = formatFieldValue(labelField, p.record.data[labelField.name], { ...ctx, recordData: p.record.data });
+      const value = readExpandedValue(labelEf, p.record, allRecords, model);
+      const text = formatFieldValue(labelEf.field, value, { ...ctx, recordData: p.record.data });
       out[p.record.id] = text === '—' ? '' : text;
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, labelField, isAr, allRecords, models, users]);
+  }, [resolved, labelEf, isAr, allRecords, models, users, model]);
 
   // Persist selection changes — onIdle only fires on pan/zoom, not on
   // pin clicks, so we mirror selectedId into the store separately.
@@ -387,7 +395,8 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
             <PopupCard
               pin={selectedPin}
               cfg={cfg}
-              fieldsById={fieldsById}
+              model={model}
+              expandedById={expandedById}
               isAr={isAr}
               t={t}
               allRecords={allRecords}
@@ -431,7 +440,8 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
 interface PopupCardProps {
   pin: ResolvedPin;
   cfg: MapsConfig;
-  fieldsById: Map<string, ModelField>;
+  model: AppModel;
+  expandedById: Map<string, ExpandedField>;
   isAr: boolean;
   t: TFunction;
   allRecords: Record<string, AppRecord[]>;
@@ -445,7 +455,8 @@ interface PopupCardProps {
 function PopupCard({
   pin,
   cfg,
-  fieldsById,
+  model,
+  expandedById,
   isAr,
   t,
   allRecords,
@@ -456,22 +467,27 @@ function PopupCard({
   onClose,
 }: PopupCardProps) {
   const record = pin.record;
-  const titleField = cfg.popup_title_field_id ? fieldsById.get(cfg.popup_title_field_id) : undefined;
-  const subtitleField = cfg.popup_subtitle_field_id ? fieldsById.get(cfg.popup_subtitle_field_id) : undefined;
-  const badgeField = cfg.popup_badge_field_id ? fieldsById.get(cfg.popup_badge_field_id) : undefined;
-  const shownFields = cfg.popup_shown_field_ids
-    .map((id) => fieldsById.get(id))
-    .filter((f): f is ModelField => Boolean(f));
+  const titleEf = cfg.popup_title_field_id ? expandedById.get(cfg.popup_title_field_id) : undefined;
+  const subtitleEf = cfg.popup_subtitle_field_id ? expandedById.get(cfg.popup_subtitle_field_id) : undefined;
+  const badgeEf = cfg.popup_badge_field_id ? expandedById.get(cfg.popup_badge_field_id) : undefined;
+  const shownEfs = cfg.popup_shown_field_ids
+    .map((id) => expandedById.get(id))
+    .filter((ef): ef is ExpandedField => Boolean(ef));
 
   const ctx: FormatCtx = { isAr, t, allRecords, models, users, recordData: record.data };
-  const renderValue = (field: ModelField): string => formatFieldValue(field, record.data[field.name], ctx);
+  // Read the value through the section mirror for mirrored children; for local
+  // fields readExpandedValue returns record.data[field.name], so the path is
+  // identical to before for the common case.
+  const valueOf = (ef: ExpandedField): unknown => readExpandedValue(ef, record, allRecords, model);
+  const renderValue = (ef: ExpandedField): string => formatFieldValue(ef.field, valueOf(ef), ctx);
 
   // URL fields render as a clickable "Open link" pill so the popup never
   // shows a raw URL overflowing the card. Mirrors DynamicCell's url case.
   // Returns either a string (default) or a JSX node (URL fields).
-  const renderFieldNode = (field: ModelField): React.ReactNode => {
+  const renderFieldNode = (ef: ExpandedField): React.ReactNode => {
+    const field = ef.field;
     if (field.type === 'multi_link') {
-      const raw = record.data[field.name];
+      const raw = valueOf(ef);
       const links = Array.isArray(raw)
         ? (raw as unknown[]).filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
         : [];
@@ -499,7 +515,7 @@ function PopupCard({
       );
     }
     if (field.type === 'url') {
-      const raw = record.data[field.name];
+      const raw = valueOf(ef);
       if (typeof raw !== 'string' || !raw.trim()) return '—';
       const safeHref = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
       return (
@@ -525,18 +541,18 @@ function PopupCard({
         </a>
       );
     }
-    return renderValue(field);
+    return renderValue(ef);
   };
 
-  const title = titleField ? renderValue(titleField) : `#${record.id.slice(0, 8)}`;
-  const subtitle = subtitleField ? renderValue(subtitleField) : null;
+  const title = titleEf ? renderValue(titleEf) : `#${record.id.slice(0, 8)}`;
+  const subtitle = subtitleEf ? renderValue(subtitleEf) : null;
 
   let badgeLabel: string | null = null;
   let badgeColor: string | undefined;
-  if (badgeField) {
-    const raw = record.data[badgeField.name];
+  if (badgeEf) {
+    const raw = valueOf(badgeEf);
     const selected = Array.isArray(raw) ? raw[0] : raw;
-    const option = badgeField.options?.find((o) => o.value === selected || o.id === selected);
+    const option = badgeEf.field.options?.find((o) => o.value === selected || o.id === selected);
     if (option) {
       badgeLabel = isAr ? option.label_ar : option.label_en;
       badgeColor = option.color;
@@ -545,8 +561,8 @@ function PopupCard({
 
   // Compact-pin layout — first 3 shown fields go in chips, the rest become
   // single-line rows below. Mirrors variation B in the design canvas.
-  const chipFields = shownFields.slice(0, 3);
-  const restFields = shownFields.slice(3);
+  const chipFields = shownEfs.slice(0, 3);
+  const restFields = shownEfs.slice(3);
 
   return (
     <div
@@ -629,18 +645,18 @@ function PopupCard({
         {/* Stat chips — first three shown fields, 3-column grid on cream. */}
         {chipFields.length > 0 && (
           <div className="grid grid-cols-3 gap-1.5 mb-3">
-            {chipFields.map((f) => (
+            {chipFields.map((ef) => (
               <div
-                key={f.id}
+                key={ef.id}
                 className="flex items-start gap-1.5 px-2 py-2 bg-cream rounded-md min-w-0"
               >
                 <span className="text-copper text-[11px] leading-none mt-1 shrink-0">●</span>
                 <div className="flex flex-col min-w-0">
                   <span className="text-[10px] text-charcoal/60 tracking-wide truncate">
-                    {isAr ? f.label_ar : f.label_en}
+                    {isAr ? ef.field.label_ar : ef.field.label_en}
                   </span>
                   <span className="text-[12px] font-bold text-chocolate truncate">
-                    {renderFieldNode(f)}
+                    {renderFieldNode(ef)}
                   </span>
                 </div>
               </div>
@@ -651,11 +667,11 @@ function PopupCard({
         {/* Remaining shown fields — compact label/value rows. */}
         {restFields.length > 0 && (
           <div className="space-y-1 mb-3 text-xs">
-            {restFields.map((f) => (
-              <div key={f.id} className="flex justify-between gap-3 items-center">
-                <span className="text-charcoal/60 shrink-0">{isAr ? f.label_ar : f.label_en}</span>
+            {restFields.map((ef) => (
+              <div key={ef.id} className="flex justify-between gap-3 items-center">
+                <span className="text-charcoal/60 shrink-0">{isAr ? ef.field.label_ar : ef.field.label_en}</span>
                 <span className="font-medium text-charcoal text-end break-words min-w-0">
-                  {renderFieldNode(f)}
+                  {renderFieldNode(ef)}
                 </span>
               </div>
             ))}

@@ -1,7 +1,9 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Badge from '@/components/ui/Badge';
-import type { AppModel, ModelField } from '@/types';
+import { collectViewFields, type ExpandedField } from '@/lib/sectionMirrorExpand';
+import type { AppModel } from '@/types';
 
 interface CardBuilderProps {
   model: AppModel;
@@ -12,16 +14,15 @@ interface CardBuilderProps {
 
 export default function CardBuilder({ model, onChange, readOnly = false }: CardBuilderProps) {
   const { t } = useTranslation();
-  const { language } = useAppStore();
+  const { language, models } = useAppStore();
   const isAr = language === 'ar';
 
-  // Filter out section_mirror containers — they have no displayable single value
-  // (their value is an object of child overrides). Mirrored children aren't
-  // surfaced in the card builder yet.
-  const allFields = model.schema.sections
-    .flatMap((s) => s.fields)
-    .filter((f) => f.type !== 'section_mirror');
-  const dropdownFields = allFields.filter((f) => f.type === 'dropdown' || f.type === 'multiselect');
+  // Every selectable "field" — local fields PLUS the child fields surfaced
+  // through each `section_mirror` container (so cards can show data mirrored in
+  // from a linked record, e.g. a project's master fields). `section_mirror`
+  // containers themselves are replaced by their children.
+  const viewFields = useMemo(() => collectViewFields(model, models), [model, models]);
+  const badgeFields = viewFields.filter((ef) => ef.field.type === 'dropdown' || ef.field.type === 'multiselect');
 
   const { card_config } = model;
 
@@ -29,12 +30,12 @@ export default function CardBuilder({ model, onChange, readOnly = false }: CardB
     onChange({ ...model, card_config: { ...card_config, ...updates } });
   };
 
-  const titleField = allFields.find((f) => f.id === card_config.title_field_id);
-  const subtitleField = allFields.find((f) => f.id === card_config.subtitle_field_id);
-  const badgeField = allFields.find((f) => f.id === card_config.badge_field_id);
+  const titleField = viewFields.find((ef) => ef.id === card_config.title_field_id);
+  const subtitleField = viewFields.find((ef) => ef.id === card_config.subtitle_field_id);
+  const badgeField = viewFields.find((ef) => ef.id === card_config.badge_field_id);
   const shownFields = card_config.shown_field_ids
-    .map((id) => allFields.find((f) => f.id === id))
-    .filter(Boolean) as ModelField[];
+    .map((id) => viewFields.find((ef) => ef.id === id))
+    .filter((ef): ef is ExpandedField => Boolean(ef));
 
   const toggleShownField = (fieldId: string) => {
     const ids = card_config.shown_field_ids.includes(fieldId)
@@ -60,8 +61,11 @@ export default function CardBuilder({ model, onChange, readOnly = false }: CardB
             className="form-input text-sm"
           >
             <option value="">—</option>
-            {allFields.map((f) => (
-              <option key={f.id} value={f.id}>{isAr ? f.label_ar : f.label_en}</option>
+            {viewFields.map((ef) => (
+              <option key={ef.id} value={ef.id}>
+                {(isAr ? ef.field.label_ar : ef.field.label_en) +
+                  (ef.kind === 'mirrored' ? (isAr ? ' — مرآة' : ' — mirrored') : '')}
+              </option>
             ))}
           </select>
         </div>
@@ -74,8 +78,11 @@ export default function CardBuilder({ model, onChange, readOnly = false }: CardB
             className="form-input text-sm"
           >
             <option value="">—</option>
-            {allFields.map((f) => (
-              <option key={f.id} value={f.id}>{isAr ? f.label_ar : f.label_en}</option>
+            {viewFields.map((ef) => (
+              <option key={ef.id} value={ef.id}>
+                {(isAr ? ef.field.label_ar : ef.field.label_en) +
+                  (ef.kind === 'mirrored' ? (isAr ? ' — مرآة' : ' — mirrored') : '')}
+              </option>
             ))}
           </select>
         </div>
@@ -88,8 +95,11 @@ export default function CardBuilder({ model, onChange, readOnly = false }: CardB
             className="form-input text-sm"
           >
             <option value="">—</option>
-            {dropdownFields.map((f) => (
-              <option key={f.id} value={f.id}>{isAr ? f.label_ar : f.label_en}</option>
+            {badgeFields.map((ef) => (
+              <option key={ef.id} value={ef.id}>
+                {(isAr ? ef.field.label_ar : ef.field.label_en) +
+                  (ef.kind === 'mirrored' ? (isAr ? ' — مرآة' : ' — mirrored') : '')}
+              </option>
             ))}
           </select>
         </div>
@@ -97,17 +107,22 @@ export default function CardBuilder({ model, onChange, readOnly = false }: CardB
         <div>
           <label className="block text-sm font-bold text-charcoal mb-2">{t('card.additional_fields')}</label>
           <div className="space-y-1 max-h-48 overflow-y-auto">
-            {allFields
-              .filter((f) => f.id !== card_config.title_field_id && f.id !== card_config.subtitle_field_id && f.id !== card_config.badge_field_id)
-              .map((f) => (
-                <label key={f.id} className="flex items-center gap-2 cursor-pointer py-0.5">
+            {viewFields
+              .filter((ef) => ef.id !== card_config.title_field_id && ef.id !== card_config.subtitle_field_id && ef.id !== card_config.badge_field_id)
+              .map((ef) => (
+                <label key={ef.id} className="flex items-center gap-2 cursor-pointer py-0.5">
                   <input
                     type="checkbox"
-                    checked={card_config.shown_field_ids.includes(f.id)}
-                    onChange={() => toggleShownField(f.id)}
+                    checked={card_config.shown_field_ids.includes(ef.id)}
+                    onChange={() => toggleShownField(ef.id)}
                     className="w-4 h-4 rounded border-sand text-copper focus:ring-copper/30"
                   />
-                  <span className="text-sm text-charcoal">{isAr ? f.label_ar : f.label_en}</span>
+                  <span className="text-sm text-charcoal">{isAr ? ef.field.label_ar : ef.field.label_en}</span>
+                  {ef.kind === 'mirrored' && (
+                    <span className="text-[9px] text-chocolate/60 bg-chocolate/8 px-1 py-0.5 rounded-full font-bold">
+                      {isAr ? 'مرآة' : 'mirrored'}
+                    </span>
+                  )}
                 </label>
               ))}
           </div>
@@ -122,29 +137,29 @@ export default function CardBuilder({ model, onChange, readOnly = false }: CardB
           <div
             className="h-1"
             style={{
-              backgroundColor: badgeField?.options?.[0]?.color ?? model.color,
+              backgroundColor: badgeField?.field.options?.[0]?.color ?? model.color,
             }}
           />
           <div className="p-4">
             {/* Badge */}
-            {badgeField && badgeField.options?.[0] && (
+            {badgeField && badgeField.field.options?.[0] && (
               <div className="mb-2">
                 <Badge
-                  label={isAr ? badgeField.options[0].label_ar : badgeField.options[0].label_en}
-                  color={badgeField.options[0].color}
+                  label={isAr ? badgeField.field.options[0].label_ar : badgeField.field.options[0].label_en}
+                  color={badgeField.field.options[0].color}
                 />
               </div>
             )}
             {/* Title */}
             <div className="text-base font-bold text-charcoal mb-0.5">
               {titleField
-                ? (isAr ? titleField.label_ar : titleField.label_en)
+                ? (isAr ? titleField.field.label_ar : titleField.field.label_en)
                 : (isAr ? 'العنوان' : 'Title')}
             </div>
             {/* Subtitle */}
             {subtitleField && (
               <div className="text-sm text-charcoal/50">
-                {isAr ? subtitleField.label_ar : subtitleField.label_en}
+                {isAr ? subtitleField.field.label_ar : subtitleField.field.label_en}
               </div>
             )}
             {/* Divider + additional fields */}
@@ -152,9 +167,9 @@ export default function CardBuilder({ model, onChange, readOnly = false }: CardB
               <>
                 <hr className="my-3 border-sand/40" />
                 <div className="space-y-1.5">
-                  {shownFields.map((f) => (
-                    <div key={f.id} className="flex justify-between text-sm">
-                      <span className="text-charcoal/50">{isAr ? f.label_ar : f.label_en}</span>
+                  {shownFields.map((ef) => (
+                    <div key={ef.id} className="flex justify-between text-sm">
+                      <span className="text-charcoal/50">{isAr ? ef.field.label_ar : ef.field.label_en}</span>
                       <span className="text-charcoal font-bold">—</span>
                     </div>
                   ))}

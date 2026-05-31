@@ -13,7 +13,8 @@ import {
 import { resolveMirrorTargetField } from '@/lib/mirrorResolver';
 import { useResolvedLocations } from '@/hooks/useResolvedLocations';
 import { formatFieldValue } from '@/pages/Records/components/MapsView';
-import type { AppModel, MapsConfig, ModelField } from '@/types';
+import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
+import type { AppModel, MapsConfig } from '@/types';
 
 // A mirror field can stand in as the location source when it ultimately
 // surfaces a string holding a Google Maps link — i.e. its target field is a
@@ -36,16 +37,23 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
   const { language, records, models, users } = useAppStore();
   const isAr = language === 'ar';
 
-  const allFields = useMemo(
-    () => model.schema.sections.flatMap((s) => s.fields).filter((f) => f.type !== 'section_mirror'),
-    [model],
-  );
+  // Every selectable "field" — local fields PLUS the child fields surfaced
+  // through each `section_mirror` container (e.g. the All Projects fields a
+  // project mirrors in), so popup/label pickers can reference mirrored data.
+  // `section_mirror` containers themselves are replaced by their children.
+  const viewFields = useMemo(() => collectViewFields(model, models), [model, models]);
+  // Local-only fields (plain ids). Used where the picked field must be resolved
+  // by the location/color pipelines, which don't follow section-mirror children.
+  const localFields = useMemo(() => viewFields.filter((ef) => ef.kind === 'local'), [viewFields]);
+
   // Location source = a url/text field directly, OR a `mirror` field that
   // surfaces a url/text field on another model (so a project can pin from its
-  // master All Projects location without storing the link locally).
+  // master All Projects location without storing the link locally). Local only —
+  // the resolver reads the value off this record, not through a section mirror.
   const urlFields = useMemo(
     () =>
-      allFields.filter((f) => {
+      localFields.filter((ef) => {
+        const f = ef.field;
         if (f.type === 'url' || f.type === 'text') return true;
         if (f.type === 'mirror') {
           const target = resolveMirrorTargetField(f, model, models);
@@ -53,10 +61,21 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
         }
         return false;
       }),
-    [allFields, model, models],
+    [localFields, model, models],
   );
-  const numberFields = allFields.filter((f) => f.type === 'number');
-  const dropdownFields = allFields.filter((f) => f.type === 'dropdown' || f.type === 'multiselect');
+  const numberFields = useMemo(() => localFields.filter((ef) => ef.field.type === 'number'), [localFields]);
+  // Pin color is resolved by the location pipeline (resolvePinColor), which
+  // reads a local dropdown — keep it local-only.
+  const colorFields = useMemo(
+    () => localFields.filter((ef) => ef.field.type === 'dropdown' || ef.field.type === 'multiselect'),
+    [localFields],
+  );
+  // Popup badge is rendered through readExpandedValue, so it CAN use a mirrored
+  // dropdown child — include the full view-field set here.
+  const badgeFields = useMemo(
+    () => viewFields.filter((ef) => ef.field.type === 'dropdown' || ef.field.type === 'multiselect'),
+    [viewFields],
+  );
 
   const cfg = model.maps_config;
   const update = (updates: Partial<MapsConfig>) => {
@@ -83,17 +102,18 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
   // Show up to 5 pins in the preview. Short URLs that require server-side
   // resolution populate asynchronously via the same cache the Maps view uses.
   const { resolved: allResolved } = useResolvedLocations(model, modelRecords);
-  const labelField = cfg.pin_label_field_id
-    ? allFields.find((f) => f.id === cfg.pin_label_field_id)
+  const labelEf = cfg.pin_label_field_id
+    ? viewFields.find((ef) => ef.id === cfg.pin_label_field_id)
     : undefined;
   const previewPins = useMemo(
     () =>
       allResolved.slice(0, 5).map((p) => {
         // Resolve the label through the same type-aware resolver the live Maps
-        // view uses, so a lookup / mirror / dropdown label field renders as its
-        // display value (e.g. the project name) instead of a raw record id.
-        const label = labelField
-          ? formatFieldValue(labelField, p.record.data[labelField.name], {
+        // view uses, reading the value via readExpandedValue so a lookup / mirror
+        // / section-mirror-child label renders its display value (e.g. the
+        // project name) instead of a raw record id.
+        const label = labelEf
+          ? formatFieldValue(labelEf.field, readExpandedValue(labelEf, p.record, records, model), {
               isAr,
               t,
               allRecords: records,
@@ -110,7 +130,7 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
           label: label === '—' ? '' : label,
         };
       }),
-    [allResolved, labelField, isAr, t, records, models, users],
+    [allResolved, labelEf, isAr, t, records, models, users, model],
   );
 
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
@@ -138,8 +158,8 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
           <Select label={t('maps.manual_lng_field')} value={cfg.manual_lng_field_id ?? ''} onChange={(v) => update({ manual_lng_field_id: v || null })} fields={numberFields} isAr={isAr} />
         </div>
         <p className="text-xs text-charcoal/50 -mt-3">{t('maps.manual_latlng_hint')}</p>
-        <Select label={t('maps.pin_color_field')} hint={t('maps.pin_color_hint')} value={cfg.pin_color_field_id ?? ''} onChange={(v) => update({ pin_color_field_id: v || null })} fields={dropdownFields} isAr={isAr} />
-        <Select label={t('maps.pin_label_field')} value={cfg.pin_label_field_id ?? ''} onChange={(v) => update({ pin_label_field_id: v || null })} fields={allFields} isAr={isAr} />
+        <Select label={t('maps.pin_color_field')} hint={t('maps.pin_color_hint')} value={cfg.pin_color_field_id ?? ''} onChange={(v) => update({ pin_color_field_id: v || null })} fields={colorFields} isAr={isAr} />
+        <Select label={t('maps.pin_label_field')} value={cfg.pin_label_field_id ?? ''} onChange={(v) => update({ pin_label_field_id: v || null })} fields={viewFields} isAr={isAr} />
 
         <div>
           <label className="block text-sm font-bold text-charcoal mb-1">{t('maps.click_action')}</label>
@@ -161,29 +181,34 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
           </div>
         </div>
 
-        <Select label={t('maps.popup_title_field')} value={cfg.popup_title_field_id ?? ''} onChange={(v) => update({ popup_title_field_id: v || null })} fields={allFields} isAr={isAr} />
-        <Select label={t('maps.popup_subtitle_field')} value={cfg.popup_subtitle_field_id ?? ''} onChange={(v) => update({ popup_subtitle_field_id: v || null })} fields={allFields} isAr={isAr} />
-        <Select label={t('maps.popup_badge_field')} value={cfg.popup_badge_field_id ?? ''} onChange={(v) => update({ popup_badge_field_id: v || null })} fields={dropdownFields} isAr={isAr} />
+        <Select label={t('maps.popup_title_field')} value={cfg.popup_title_field_id ?? ''} onChange={(v) => update({ popup_title_field_id: v || null })} fields={viewFields} isAr={isAr} />
+        <Select label={t('maps.popup_subtitle_field')} value={cfg.popup_subtitle_field_id ?? ''} onChange={(v) => update({ popup_subtitle_field_id: v || null })} fields={viewFields} isAr={isAr} />
+        <Select label={t('maps.popup_badge_field')} value={cfg.popup_badge_field_id ?? ''} onChange={(v) => update({ popup_badge_field_id: v || null })} fields={badgeFields} isAr={isAr} />
 
         <div>
           <label className="block text-sm font-bold text-charcoal mb-2">{t('maps.popup_shown_fields')}</label>
           <div className="space-y-1 max-h-48 overflow-y-auto border border-sand/30 rounded-lg p-2">
-            {allFields
+            {viewFields
               .filter(
-                (f) =>
-                  f.id !== cfg.popup_title_field_id &&
-                  f.id !== cfg.popup_subtitle_field_id &&
-                  f.id !== cfg.popup_badge_field_id,
+                (ef) =>
+                  ef.id !== cfg.popup_title_field_id &&
+                  ef.id !== cfg.popup_subtitle_field_id &&
+                  ef.id !== cfg.popup_badge_field_id,
               )
-              .map((f) => (
-                <label key={f.id} className="flex items-center gap-2 cursor-pointer py-0.5">
+              .map((ef) => (
+                <label key={ef.id} className="flex items-center gap-2 cursor-pointer py-0.5">
                   <input
                     type="checkbox"
-                    checked={cfg.popup_shown_field_ids.includes(f.id)}
-                    onChange={() => togglePopupField(f.id)}
+                    checked={cfg.popup_shown_field_ids.includes(ef.id)}
+                    onChange={() => togglePopupField(ef.id)}
                     className="w-4 h-4 rounded border-sand text-copper focus:ring-copper/30"
                   />
-                  <span className="text-sm text-charcoal">{isAr ? f.label_ar : f.label_en}</span>
+                  <span className="text-sm text-charcoal">{isAr ? ef.field.label_ar : ef.field.label_en}</span>
+                  {ef.kind === 'mirrored' && (
+                    <span className="text-[9px] text-chocolate/60 bg-chocolate/8 px-1 py-0.5 rounded-full font-bold">
+                      {isAr ? 'مرآة' : 'mirrored'}
+                    </span>
+                  )}
                 </label>
               ))}
           </div>
@@ -291,7 +316,7 @@ interface SelectProps {
   hint?: string;
   value: string;
   onChange: (v: string) => void;
-  fields: ModelField[];
+  fields: ExpandedField[];
   isAr: boolean;
 }
 
@@ -302,9 +327,10 @@ function Select({ label, hint, value, onChange, fields, isAr }: SelectProps) {
       {hint && <p className="text-xs text-charcoal/50 mb-1">{hint}</p>}
       <select value={value} onChange={(e) => onChange(e.target.value)} className="form-input text-sm">
         <option value="">—</option>
-        {fields.map((f) => (
-          <option key={f.id} value={f.id}>
-            {isAr ? f.label_ar : f.label_en}
+        {fields.map((ef) => (
+          <option key={ef.id} value={ef.id}>
+            {(isAr ? ef.field.label_ar : ef.field.label_en) +
+              (ef.kind === 'mirrored' ? (isAr ? ' — مرآة' : ' — mirrored') : '')}
           </option>
         ))}
       </select>

@@ -1,8 +1,10 @@
+import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import Badge from '@/components/ui/Badge';
 import DynamicCell from './DynamicCell';
 import { resolveMirror } from '@/lib/mirrorResolver';
+import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import type { AppModel, AppRecord, ModelField, FieldOption } from '@/types';
 
 /**
@@ -85,6 +87,56 @@ function resolveBadgeOption(
   return field.options?.find((o) => o.value === record.data[field.name]) ?? null;
 }
 
+/**
+ * Display string for an ExpandedField (local OR a section-mirror child). Local
+ * fields keep the existing record-based resolution; mirrored children read their
+ * value through the section mirror (readExpandedValue) and then format it,
+ * resolving lookups against the child's own target model.
+ */
+function displayExpandedField(
+  ef: ExpandedField,
+  record: AppRecord,
+  allRecords: Record<string, AppRecord[]>,
+  allModels: AppModel[],
+  model: AppModel,
+  isAr: boolean,
+): string {
+  if (ef.kind === 'local') return resolveFieldDisplay(ef.field, record, allRecords, allModels, isAr);
+  const value = readExpandedValue(ef, record, allRecords, model);
+  const field = ef.field;
+  if (field.type === 'lookup') {
+    if (!field.lookup_model_id || !field.lookup_display_field) return '—';
+    const linkedRecords = allRecords[field.lookup_model_id] ?? [];
+    const resolveOne = (id: unknown): string | null => {
+      if (typeof id !== 'string' || !id) return null;
+      const linked = linkedRecords.find((r) => r.id === id);
+      if (!linked) return null;
+      const v = linked.data[field.lookup_display_field!];
+      return v !== null && v !== undefined && typeof v !== 'object' ? String(v) : null;
+    };
+    if (Array.isArray(value)) {
+      const labels = value.map(resolveOne).filter((x): x is string => !!x);
+      return labels.length > 0 ? labels.join(isAr ? '، ' : ', ') : '—';
+    }
+    return resolveOne(value) ?? '—';
+  }
+  return formatScalar(field, value, isAr);
+}
+
+/** Badge option for an ExpandedField — mirrored children read the value through the section mirror. */
+function badgeOptionForExpanded(
+  ef: ExpandedField,
+  record: AppRecord,
+  allRecords: Record<string, AppRecord[]>,
+  allModels: AppModel[],
+  model: AppModel,
+): FieldOption | null {
+  if (ef.kind === 'local') return resolveBadgeOption(ef.field, record, allRecords, allModels);
+  const value = readExpandedValue(ef, record, allRecords, model);
+  const v = Array.isArray(value) ? value[0] : value;
+  return ef.field.options?.find((o) => o.value === v) ?? null;
+}
+
 interface CardViewProps {
   model: AppModel;
   records: AppRecord[];
@@ -102,13 +154,20 @@ export default function CardView({ model, records, onCardClick, selectedIds, onT
   const selectionEnabled = !!selectedIds && !!onToggleSelect && !!onToggleSelectAll;
   const allSelected = selectionEnabled && records.length > 0 && records.every((r) => selectedIds!.has(r.id));
 
-  const allFields = model.schema.sections.flatMap((s) => s.fields);
-  const titleField = allFields.find((f) => f.id === model.card_config.title_field_id);
-  const subtitleField = allFields.find((f) => f.id === model.card_config.subtitle_field_id);
-  const badgeField = allFields.find((f) => f.id === model.card_config.badge_field_id);
-  const shownFields = model.card_config.shown_field_ids
-    .map((id) => allFields.find((f) => f.id === id))
-    .filter(Boolean);
+  // Resolve config field ids against the expanded field set (local fields PLUS
+  // section-mirror children) so cards can show mirrored data the same way the
+  // table view does.
+  const expandedById = useMemo(() => {
+    const m = new Map<string, ExpandedField>();
+    for (const ef of collectViewFields(model, models)) m.set(ef.id, ef);
+    return m;
+  }, [model, models]);
+  const titleEf = model.card_config.title_field_id ? expandedById.get(model.card_config.title_field_id) : undefined;
+  const subtitleEf = model.card_config.subtitle_field_id ? expandedById.get(model.card_config.subtitle_field_id) : undefined;
+  const badgeEf = model.card_config.badge_field_id ? expandedById.get(model.card_config.badge_field_id) : undefined;
+  const shownEfs = model.card_config.shown_field_ids
+    .map((id) => expandedById.get(id))
+    .filter((ef): ef is ExpandedField => Boolean(ef));
 
   if (records.length === 0) {
     return (
@@ -134,7 +193,7 @@ export default function CardView({ model, records, onCardClick, selectedIds, onT
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       {records.map((record) => {
-        const badgeOption = badgeField ? resolveBadgeOption(badgeField, record, allRecords, models) : null;
+        const badgeOption = badgeEf ? badgeOptionForExpanded(badgeEf, record, allRecords, models, model) : null;
         const stripColor = badgeOption?.color ?? model.color;
         const isSelected = selectionEnabled && selectedIds!.has(record.id);
 
@@ -173,39 +232,36 @@ export default function CardView({ model, records, onCardClick, selectedIds, onT
 
               {/* Title */}
               <div className="text-base font-bold text-charcoal mb-0.5">
-                {titleField
-                  ? resolveFieldDisplay(titleField, record, allRecords, models, isAr)
+                {titleEf
+                  ? displayExpandedField(titleEf, record, allRecords, models, model, isAr)
                   : `#${record.id.slice(0, 8)}`}
               </div>
 
               {/* Subtitle */}
-              {subtitleField && (
+              {subtitleEf && (
                 <div className="text-sm text-charcoal/50">
-                  {resolveFieldDisplay(subtitleField, record, allRecords, models, isAr)}
+                  {displayExpandedField(subtitleEf, record, allRecords, models, model, isAr)}
                 </div>
               )}
 
               {/* Additional fields */}
-              {shownFields.length > 0 && (
+              {shownEfs.length > 0 && (
                 <>
                   <hr className="my-3 border-sand/40" />
                   <div className="space-y-1.5">
-                    {shownFields.map((f) => {
-                      if (!f) return null;
-                      return (
-                        <div key={f.id} className="flex justify-between text-sm">
-                          <span className="text-charcoal/50">
-                            {isAr ? f.label_ar : f.label_en}
-                          </span>
-                          <DynamicCell
-                            field={f}
-                            value={record.data[f.name]}
-                            allRecords={allRecords}
-                            recordData={record.data}
-                          />
-                        </div>
-                      );
-                    })}
+                    {shownEfs.map((ef) => (
+                      <div key={ef.id} className="flex justify-between text-sm">
+                        <span className="text-charcoal/50">
+                          {isAr ? ef.field.label_ar : ef.field.label_en}
+                        </span>
+                        <DynamicCell
+                          field={ef.field}
+                          value={readExpandedValue(ef, record, allRecords, model)}
+                          allRecords={allRecords}
+                          recordData={record.data}
+                        />
+                      </div>
+                    ))}
                   </div>
                 </>
               )}
