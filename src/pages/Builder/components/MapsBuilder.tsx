@@ -12,6 +12,7 @@ import {
 } from '@/lib/locationUtils';
 import { resolveMirrorTargetField } from '@/lib/mirrorResolver';
 import { useResolvedLocations } from '@/hooks/useResolvedLocations';
+import { formatFieldValue } from '@/pages/Records/components/MapsView';
 import type { AppModel, MapsConfig, ModelField } from '@/types';
 
 // A mirror field can stand in as the location source when it ultimately
@@ -32,7 +33,7 @@ const mapContainerStyle = { width: '100%', height: '400px', borderRadius: '12px'
 
 export default function MapsBuilder({ model, onChange, readOnly = false }: MapsBuilderProps) {
   const { t } = useTranslation();
-  const { language, records, models } = useAppStore();
+  const { language, records, models, users } = useAppStore();
   const isAr = language === 'ar';
 
   const allFields = useMemo(
@@ -88,22 +89,28 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
   const previewPins = useMemo(
     () =>
       allResolved.slice(0, 5).map((p) => {
-        const raw = labelField ? p.record.data[labelField.name] : undefined;
-        const label =
-          typeof raw === 'string' && raw.trim()
-            ? raw
-            : typeof raw === 'number'
-              ? String(raw)
-              : '';
+        // Resolve the label through the same type-aware resolver the live Maps
+        // view uses, so a lookup / mirror / dropdown label field renders as its
+        // display value (e.g. the project name) instead of a raw record id.
+        const label = labelField
+          ? formatFieldValue(labelField, p.record.data[labelField.name], {
+              isAr,
+              t,
+              allRecords: records,
+              models,
+              users,
+              recordData: p.record.data,
+            })
+          : '';
         return {
           id: p.record.id,
           lat: p.lat,
           lng: p.lng,
           color: p.color || PILL_DEFAULT_COLOR,
-          label,
+          label: label === '—' ? '' : label,
         };
       }),
-    [allResolved, labelField],
+    [allResolved, labelField, isAr, t, records, models, users],
   );
 
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));

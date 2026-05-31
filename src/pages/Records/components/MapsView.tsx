@@ -32,7 +32,7 @@ const mapContainerStyle = { width: '100%', height: '100%' };
 // overrides take effect when a `pin_color_field_id` is configured.
 const PILL_DEFAULT_COLOR = '#4A4E54';
 
-interface FormatCtx {
+export interface FormatCtx {
   isAr: boolean;
   t: TFunction;
   allRecords: Record<string, AppRecord[]>;
@@ -49,7 +49,7 @@ interface FormatCtx {
  * Used for both popup field rendering and pill marker labels, so the same
  * "what does this field render as" answer is consistent everywhere.
  */
-function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx): string {
+export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx): string {
   const { isAr, t, allRecords, models, users, recordData } = ctx;
   const joinSep = isAr ? '، ' : ', ';
 
