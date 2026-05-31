@@ -8,6 +8,7 @@ import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
 import PhoneInput from './PhoneInput';
 import DynamicCell from './DynamicCell';
+import AutoGrowTextarea from './AutoGrowTextarea';
 import NotesField from './NotesField';
 import RangeField from './RangeField';
 import TableField from './TableField';
@@ -186,7 +187,7 @@ export default function DynamicField({
 
       case 'textarea':
         return (
-          <textarea
+          <AutoGrowTextarea
             value={(value as string) ?? ''}
             onChange={(e) => onChange(e.target.value)}
             className="form-input"

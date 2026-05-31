@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { User as UserIcon, Clock, Send } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import AutoGrowTextarea from './AutoGrowTextarea';
 import type { NoteEntry } from '@/types';
 
 interface NotesFieldProps {
@@ -68,7 +69,7 @@ export default function NotesField({ value, onChange }: NotesFieldProps) {
     <div className="space-y-3">
       {/* Composer */}
       <div className="flex flex-col gap-2 p-3 rounded-xl bg-sand/10 border border-sand/20">
-        <textarea
+        <AutoGrowTextarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
@@ -79,7 +80,7 @@ export default function NotesField({ value, onChange }: NotesFieldProps) {
           }}
           rows={2}
           placeholder={t('fields.notes_add_placeholder')}
-          className="form-input resize-none"
+          className="form-input"
         />
         <div className="flex justify-end">
           <button

@@ -5,6 +5,7 @@ import type { ModelField, TableColumn } from '@/types';
 import { evaluateFormula, isFormulaErrorValue } from '@/lib/formulaEngine';
 import { formatNumberWithCommas, parseFormattedNumber } from './RangeField';
 import IconPickerModal from './IconPickerModal';
+import AutoGrowTextarea from './AutoGrowTextarea';
 import { resolveSlugToLibraryUrl } from '@/data/iconLibrary';
 
 type Row = Record<string, unknown>;
@@ -141,11 +142,11 @@ function CellInput({
   switch (column.type) {
     case 'textarea':
       return (
-        <textarea
+        <AutoGrowTextarea
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
           rows={1}
-          className={commonClass + ' resize-y'}
+          className={commonClass}
         />
       );
     case 'number':
