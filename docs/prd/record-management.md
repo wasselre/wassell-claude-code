@@ -236,9 +236,10 @@ Once models exist, the real day-to-day work of the business happens here — sal
 | `src/components/ResearchPromptModal.tsx` | Global research-link prompt; consumes `pendingResearchPromptTargetedIds` queue and renders one chooser row per queued Targeted Projects record |
 | `src/pages/Records/components/ViewSelector.tsx` | Saved-view dropdown above the table |
 | `src/pages/Records/components/ViewEditor.tsx` | Modal for creating/editing a saved view (columns, sort, filters, sharing) |
-| `src/pages/Records/components/AdvancedFilterPanel.tsx` | Collapsible faceted filter panel above the toolbar |
+| `src/pages/Records/components/AdvancedFilterPanel.tsx` | Collapsible faceted filter panel above the toolbar (chips incl. mirrored values; collapsed by default) |
 | `src/pages/Records/components/FieldFilterPopover.tsx` | Type-aware popover rendered by a filter chip |
-| `src/lib/adhocFilterUtils.ts` | Ad-hoc filter shape, evaluator, localStorage helpers |
+| `src/lib/adhocFilterUtils.ts` | Ad-hoc filter shape, evaluator, localStorage helpers; `getAdhocFilterableFields` enumerates own + mirrored fields, `applyAdhocFilters` resolves mirrored values |
+| `src/lib/mirrorResolver.ts` | Resolves a `mirror` field's live value via a sibling lookup; `resolveMirrorTarget` / `resolveMirrorValueWithTarget` power mirror filtering |
 | `src/pages/Records/components/ResearchPDFTemplate.tsx` | Research PDF comparison-table layout (landscape when ≥2 projects) |
 | `src/lib/pdfGenerator.ts` | Walks the research model's fields dynamically, resolves per-project values via mirror + section_mirror, renders to A4 via html2canvas |
 | `src/lib/schemaMigrations.ts` | `SCHEMA_VERSION`, per-version migrations, and always-run heals — including `healResearchMultiProject` (flips `project_name.is_multi` + wraps scalar values) |
