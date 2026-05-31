@@ -32,7 +32,8 @@ import SectionBlock from './components/SectionBlock';
 import RecordFormModal from './components/RecordFormModal';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
-import { Users } from 'lucide-react';
+import UnitsTabPane from './components/UnitsTabPane';
+import { Users, Home } from 'lucide-react';
 import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
@@ -248,37 +249,94 @@ export default function RecordFormPage() {
     return out;
   }, [model, formData, clientsModelId, existingRecord]);
 
+  // ─── Units tab ───────────────────────────────────────────────────
+  // Same logic as the Client Details tab, but for the All Projects model:
+  // show a "Units" tab when this record either IS an All Projects record (so
+  // the tab lists that project's units) or has at least one populated `lookup`
+  // field pointing at the All Projects model. Multi-project case: surface every
+  // populated candidate so the user can switch between them via the
+  // `?project=<id>` query param. Default to the first.
+  const allProjectsModelId = useMemo(
+    () => models.find((m) => m.name === 'all_projects')?.id ?? null,
+    [models],
+  );
+
+  const projectCandidateIds = useMemo<string[]>(() => {
+    if (!model) return [];
+    if (model.name === 'all_projects' && existingRecord) return [existingRecord.id];
+    if (!allProjectsModelId) return [];
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const sec of model.schema.sections) {
+      for (const f of sec.fields) {
+        if (f.type !== 'lookup' || f.lookup_model_id !== allProjectsModelId) continue;
+        const v = formData[f.name];
+        if (Array.isArray(v)) {
+          for (const id of v) {
+            if (typeof id === 'string' && id && !seen.has(id)) { seen.add(id); out.push(id); }
+          }
+        } else if (typeof v === 'string' && v && !seen.has(v)) {
+          seen.add(v);
+          out.push(v);
+        }
+      }
+    }
+    return out;
+  }, [model, formData, allProjectsModelId, existingRecord]);
+
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeTab = searchParams.get('tab') === 'client' && clientCandidateIds.length > 0
-    ? 'client'
-    : 'form';
+  const tabParam = searchParams.get('tab');
+  const activeTab =
+    tabParam === 'client' && clientCandidateIds.length > 0
+      ? 'client'
+      : tabParam === 'units' && projectCandidateIds.length > 0
+        ? 'units'
+        : 'form';
   const activeClientId = (() => {
     const param = searchParams.get('client');
     if (param && clientCandidateIds.includes(param)) return param;
     return clientCandidateIds[0] ?? null;
   })();
+  const activeProjectId = (() => {
+    const param = searchParams.get('project');
+    if (param && projectCandidateIds.includes(param)) return param;
+    return projectCandidateIds[0] ?? null;
+  })();
 
   const tabs = useMemo<RecordTab[]>(() => {
-    if (clientCandidateIds.length === 0) return [];
-    return [
-      { id: 'form', label_ar: 'النموذج', label_en: 'Form' },
-      {
+    if (clientCandidateIds.length === 0 && projectCandidateIds.length === 0) return [];
+    const out: RecordTab[] = [{ id: 'form', label_ar: 'النموذج', label_en: 'Form' }];
+    if (clientCandidateIds.length > 0) {
+      out.push({
         id: 'client',
         label_ar: 'تفاصيل العميل',
         label_en: 'Client Details',
         icon: <Users size={14} />,
-      },
-    ];
-  }, [clientCandidateIds]);
+      });
+    }
+    if (projectCandidateIds.length > 0) {
+      out.push({
+        id: 'units',
+        label_ar: 'الوحدات',
+        label_en: 'Units',
+        icon: <Home size={14} />,
+      });
+    }
+    return out;
+  }, [clientCandidateIds, projectCandidateIds]);
 
   const handleTabChange = (next: string) => {
     const sp = new URLSearchParams(searchParams);
+    // Tabs are mutually exclusive; clear all tab params, then set the picked one.
+    sp.delete('tab');
+    sp.delete('client');
+    sp.delete('project');
     if (next === 'client') {
       sp.set('tab', 'client');
       if (activeClientId) sp.set('client', activeClientId);
-    } else {
-      sp.delete('tab');
-      sp.delete('client');
+    } else if (next === 'units') {
+      sp.set('tab', 'units');
+      if (activeProjectId) sp.set('project', activeProjectId);
     }
     setSearchParams(sp, { replace: true });
   };
@@ -287,6 +345,15 @@ export default function RecordFormPage() {
     const sp = new URLSearchParams(searchParams);
     sp.set('tab', 'client');
     sp.set('client', id);
+    sp.delete('project');
+    setSearchParams(sp, { replace: true });
+  };
+
+  const handleProjectSwitch = (id: string) => {
+    const sp = new URLSearchParams(searchParams);
+    sp.set('tab', 'units');
+    sp.set('project', id);
+    sp.delete('client');
     setSearchParams(sp, { replace: true });
   };
 
@@ -953,7 +1020,8 @@ export default function RecordFormPage() {
         </div>
       </div>
 
-      {/* Tabs — visible whenever this record references a client or IS a client */}
+      {/* Tabs — visible whenever this record references (or IS) a client or an
+        * All Projects record: Form + Client Details and/or Units. */}
       <RecordTabBar tabs={tabs} active={activeTab} onChange={handleTabChange} />
 
       {/* When multiple client lookups are populated on a non-clients record,
@@ -989,8 +1057,43 @@ export default function RecordFormPage() {
         </div>
       )}
 
+      {/* When multiple All Projects lookups are populated on a record, surface
+        * a switcher chip strip so the user can flip between the linked projects
+        * inside the same Units tab. Mirrors the client chip strip above. */}
+      {activeTab === 'units' && projectCandidateIds.length > 1 && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs text-charcoal/50">
+            {isAr ? 'المشروع:' : 'Project:'}
+          </span>
+          <div className="flex flex-wrap gap-1.5">
+            {projectCandidateIds.map((pid) => {
+              const r = (records[allProjectsModelId ?? ''] ?? []).find((rr) => rr.id === pid);
+              const label = (r?.data as Record<string, unknown> | undefined)?.project_name;
+              const displayLabel = (typeof label === 'string' && label.trim()) || pid.slice(0, 8);
+              const selected = activeProjectId === pid;
+              return (
+                <button
+                  key={pid}
+                  type="button"
+                  onClick={() => handleProjectSwitch(pid)}
+                  className={`text-xs font-bold px-2.5 py-1 rounded-full transition-colors ${
+                    selected
+                      ? 'bg-copper text-cream'
+                      : 'bg-sand/30 text-charcoal/70 hover:bg-sand/50'
+                  }`}
+                >
+                  {displayLabel}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {activeTab === 'client' && activeClientId ? (
         <ClientDetailsTabPane clientId={activeClientId} />
+      ) : activeTab === 'units' && activeProjectId ? (
+        <UnitsTabPane projectId={activeProjectId} />
       ) : (
       /* Sections */
       <div className="space-y-6">
