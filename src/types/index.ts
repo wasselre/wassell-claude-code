@@ -8,6 +8,7 @@ export type FieldType =
   | 'datetime'
   | 'currency'
   | 'url'
+  | 'multi_link'
   | 'checkbox'
   | 'dropdown'
   | 'multiselect'

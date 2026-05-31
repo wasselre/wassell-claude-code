@@ -74,6 +74,14 @@ function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx): stri
         .join(joinSep);
     }
 
+    case 'multi_link': {
+      const links = Array.isArray(raw)
+        ? (raw as unknown[]).filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        : [];
+      if (links.length === 0) return '—';
+      return links.join(joinSep);
+    }
+
     case 'lookup': {
       if (!field.lookup_model_id || !field.lookup_display_field) return '—';
       const linked = allRecords[field.lookup_model_id] ?? [];
@@ -462,6 +470,34 @@ function PopupCard({
   // shows a raw URL overflowing the card. Mirrors DynamicCell's url case.
   // Returns either a string (default) or a JSX node (URL fields).
   const renderFieldNode = (field: ModelField): React.ReactNode => {
+    if (field.type === 'multi_link') {
+      const raw = record.data[field.name];
+      const links = Array.isArray(raw)
+        ? (raw as unknown[]).filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        : [];
+      if (links.length === 0) return '—';
+      return (
+        <span className="inline-flex flex-wrap gap-1">
+          {links.map((link, i) => {
+            const safeHref = /^https?:\/\//i.test(link) ? link : `https://${link}`;
+            return (
+              <a
+                key={i}
+                href={safeHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                dir="ltr"
+                title={link}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-copper/10 hover:bg-copper/20 text-copper text-[11px] font-bold transition-colors"
+              >
+                {isAr ? 'زر' : 'Button'} {i + 1}
+              </a>
+            );
+          })}
+        </span>
+      );
+    }
     if (field.type === 'url') {
       const raw = record.data[field.name];
       if (typeof raw !== 'string' || !raw.trim()) return '—';

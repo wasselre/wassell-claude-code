@@ -22,6 +22,10 @@ function formatCell(field: ModelField, val: unknown, isAr: boolean): string | nu
         })
         .join(', ');
     }
+    case 'multi_link': {
+      if (!Array.isArray(val)) return String(val);
+      return (val as unknown[]).filter((v): v is string => typeof v === 'string' && v.length > 0).join('\n');
+    }
     case 'checkbox':
       return val ? (isAr ? 'نعم' : 'Yes') : (isAr ? 'لا' : 'No');
     case 'currency':
@@ -103,6 +107,7 @@ const TEMPLATE_SKIP_TYPES = new Set<string>([
   'multi_image',
   'file',
   'multi_file',
+  'multi_link',
   'attachment',
   'template_variables',
   'templates_picker',

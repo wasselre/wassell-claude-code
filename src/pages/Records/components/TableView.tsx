@@ -418,6 +418,19 @@ function InlineInput({
     case 'url':
       return <UrlInlineEditor value={value} onChange={onChange} isAr={isAr} />;
 
+    case 'multi_link':
+      // Variable-length link list — edited in the full form page. Inline table
+      // edit shows a read-only hint (like notes) so the default text input
+      // never clobbers the string[] with a stringified value.
+      return (
+        <span
+          className="text-xs text-charcoal/40 italic"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {isAr ? 'افتح السجل للتعديل' : 'Open record to edit'}
+        </span>
+      );
+
     case 'phone':
       return (
         <PhoneInput

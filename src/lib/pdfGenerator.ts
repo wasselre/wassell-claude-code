@@ -59,6 +59,10 @@ function formatScalar(field: ModelField, v: unknown): string {
     }
     case 'checkbox':
       return v ? 'نعم' : 'لا';
+    case 'multi_link': {
+      if (!Array.isArray(v)) return String(v);
+      return (v as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0).join('، ');
+    }
     default:
       return String(v);
   }

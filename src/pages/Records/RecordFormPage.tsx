@@ -654,6 +654,9 @@ export default function RecordFormPage() {
       if (f.type === 'lookup' && f.is_multi) {
         return !Array.isArray(val) || val.length === 0;
       }
+      if (f.type === 'multi_link') {
+        return !Array.isArray(val) || (val as unknown[]).every((x) => typeof x !== 'string' || x.trim() === '');
+      }
       return val === undefined || val === null || val === '';
     });
 
@@ -677,6 +680,9 @@ export default function RecordFormPage() {
         const val = effective[f.name];
         if (f.type === 'lookup' && f.is_multi) {
           return !Array.isArray(val) || val.length === 0;
+        }
+        if (f.type === 'multi_link') {
+          return !Array.isArray(val) || (val as unknown[]).every((x) => typeof x !== 'string' || x.trim() === '');
         }
         return val === undefined || val === null || val === '';
       });

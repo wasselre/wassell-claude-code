@@ -129,6 +129,35 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
       );
     }
 
+    case 'multi_link': {
+      const links = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        : [];
+      if (links.length === 0) return <span className="text-charcoal/20">—</span>;
+      return (
+        <div className="flex flex-wrap gap-1">
+          {links.map((link, i) => {
+            const safeHref = /^https?:\/\//i.test(link) ? link : `https://${link}`;
+            return (
+              <a
+                key={i}
+                href={safeHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-copper/10 hover:bg-copper/20 text-copper text-xs font-bold transition-colors"
+                title={link}
+                dir="ltr"
+              >
+                <ExternalLink size={12} />
+                {isAr ? 'زر' : 'Button'} {i + 1}
+              </a>
+            );
+          })}
+        </div>
+      );
+    }
+
     case 'auto_id':
       return <span className="font-mono font-bold text-copper" dir="ltr">{String(value)}</span>;
 

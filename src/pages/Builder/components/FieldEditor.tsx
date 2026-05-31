@@ -25,7 +25,7 @@ import type {
 
 const FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'notes', 'number', 'range', 'email', 'phone', 'date', 'datetime',
-  'currency', 'url', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'mirror', 'section_mirror', 'section_selector', 'assignee',
+  'currency', 'url', 'multi_link', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'mirror', 'section_mirror', 'section_selector', 'assignee',
   'auto_id', 'formula', 'table',
   'image', 'multi_image', 'file', 'multi_file', 'attachment',
   'whatsapp_history', 'call_history',

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { ExternalLink, Fingerprint, Calculator, X } from 'lucide-react';
+import { ExternalLink, Fingerprint, Calculator, X, Plus } from 'lucide-react';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
@@ -297,6 +297,13 @@ export default function DynamicField({
             )}
           </div>
         );
+
+      case 'multi_link': {
+        const links = Array.isArray(value)
+          ? value.filter((v): v is string => typeof v === 'string')
+          : [];
+        return <MultiLinkFieldInput value={links} onChange={(v) => onChange(v)} isAr={isAr} />;
+      }
 
       case 'checkbox':
         return (
@@ -666,6 +673,94 @@ export default function DynamicField({
 // table) so uploads land in the user's Drive (/files) and can be tagged
 // to the owning record. New implementations live in `./DriveFieldInputs.tsx`
 // next to the file/multi_file/attachment inputs.
+
+// Prefix a bare host with https:// so the open-affordance always points at an
+// absolute URL (mirrors DynamicCell's url-cell normalization).
+function normalizeLinkHref(raw: string): string {
+  return /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+}
+
+interface MultiLinkFieldInputProps {
+  value: string[];
+  onChange: (value: string[]) => void;
+  isAr: boolean;
+}
+
+/**
+ * Editable list of links for a `multi_link` field. Each row is an editable
+ * URL input with an open-in-new-tab affordance and a remove button; an "Add
+ * link" button appends a fresh empty row. Stored value is `string[]`.
+ */
+function MultiLinkFieldInput({ value, onChange, isAr }: MultiLinkFieldInputProps) {
+  const { t } = useTranslation();
+
+  const updateAt = (i: number, v: string) => {
+    const next = value.slice();
+    next[i] = v;
+    onChange(next);
+  };
+  const removeAt = (i: number) => {
+    const next = value.slice();
+    next.splice(i, 1);
+    onChange(next);
+  };
+
+  return (
+    <div className="space-y-2">
+      {value.length === 0 && (
+        <p className="text-xs text-charcoal/40 italic">{t('fields.multi_link.empty')}</p>
+      )}
+      {value.map((link, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="shrink-0 inline-flex items-center justify-center h-9 px-2.5 rounded-lg bg-copper/10 text-copper text-xs font-bold whitespace-nowrap">
+            {isAr ? 'زر' : 'Button'} {i + 1}
+          </span>
+          <input
+            type="url"
+            value={link}
+            onChange={(e) => updateAt(i, e.target.value)}
+            className="form-input flex-1"
+            placeholder="https://..."
+            dir="ltr"
+          />
+          {link.trim() ? (
+            <a
+              href={normalizeLinkHref(link)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 p-2 text-copper hover:text-terracotta transition-colors"
+              title={t('fields.multi_link.open')}
+              aria-label={t('fields.multi_link.open')}
+            >
+              <ExternalLink size={16} />
+            </a>
+          ) : (
+            <span className="shrink-0 p-2 text-charcoal/20" aria-hidden>
+              <ExternalLink size={16} />
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => removeAt(i)}
+            className="shrink-0 p-2 text-charcoal/40 hover:text-red-500 transition-colors"
+            title={t('fields.multi_link.remove')}
+            aria-label={t('fields.multi_link.remove')}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...value, ''])}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-sand/60 text-charcoal/60 hover:text-copper hover:border-copper/40 text-xs font-bold transition-colors"
+      >
+        <Plus size={14} />
+        {t('fields.multi_link.add')}
+      </button>
+    </div>
+  );
+}
 
 interface TemplatesPickerInputProps {
   value: string[];

@@ -58,6 +58,12 @@ function formatScalar(field: ModelField, value: unknown, isAr: boolean): string 
       return String(value);
     }
   }
+  if (field.type === 'multi_link') {
+    const links = Array.isArray(value)
+      ? value.filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      : [];
+    return links.length ? links.join(isAr ? '، ' : ', ') : '—';
+  }
   return String(value);
 }
 

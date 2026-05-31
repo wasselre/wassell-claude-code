@@ -3,7 +3,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Trash2, AlertTriangle } from 'lucide-react';
 import {
   Type, AlignLeft, Hash, AtSign, Phone, CalendarDays, Clock, DollarSign,
-  Link2, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
+  Link2, Link, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
   StickyNote, SlidersHorizontal, Rows3, Fingerprint, Calculator, Table2,
   Image as ImageIcon, Images as MultiImagesIcon, File as FileFieldIcon,
   Files as MultiFilesIcon, Paperclip as PaperclipIcon, MessageSquare, PhoneCall,
@@ -24,6 +24,7 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   datetime:         { icon: Clock,             color: '#A855F7', bg: '#A855F712' },
   currency:         { icon: DollarSign,        color: '#059669', bg: '#05966912' },
   url:              { icon: Link2,             color: '#0EA5E9', bg: '#0EA5E912' },
+  multi_link:       { icon: Link,              color: '#0284C7', bg: '#0284C712' },
   checkbox:         { icon: ToggleLeft,        color: '#EC4899', bg: '#EC489912' },
   dropdown:         { icon: ChevronDown,       color: '#EF4444', bg: '#EF444412' },
   multiselect:      { icon: List,              color: '#F97316', bg: '#F9731612' },
