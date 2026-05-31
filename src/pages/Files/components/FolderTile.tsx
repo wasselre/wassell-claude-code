@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Check, Folder, MoreVertical, Pencil, Share2, Shield, Trash2 } from 'lucide-react';
-import { useState, useRef, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
+import { useState, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import type { FolderRow } from '@/types';
 import { useAppStore } from '@/stores/appStore';
+import TileMenu from './TileMenu';
 
 interface Props {
   folder: FolderRow;
@@ -36,16 +37,7 @@ export default function FolderTile({
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [menuOpen]);
+  const kebabRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div
@@ -95,8 +87,9 @@ export default function FolderTile({
           )}
         </div>
         {canManage && !selectionActive && (
-          <div ref={menuRef} className="relative">
+          <div className="relative">
             <button
+              ref={kebabRef}
               onClick={(e) => {
                 e.stopPropagation();
                 setMenuOpen((v) => !v);
@@ -107,18 +100,13 @@ export default function FolderTile({
             >
               <MoreVertical size={16} />
             </button>
-            {menuOpen && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                className={`absolute top-full mt-1 z-20 ${isAr ? 'start-0' : 'end-0'} min-w-[10rem] bg-white border border-sand/30 rounded-xl shadow-lg shadow-charcoal/10 py-1`}
-              >
-                <MenuItem icon={Pencil} label={t('files.actions.rename')} onClick={() => { setMenuOpen(false); onRename(folder); }} />
-                <MenuItem icon={Share2} label={t('files.actions.share')} onClick={() => { setMenuOpen(false); onPermissions(folder); }} />
-                <MenuItem icon={Shield} label={t('files.actions.permissions')} onClick={() => { setMenuOpen(false); onPermissions(folder); }} />
-                <div className="my-1 border-t border-sand/30" />
-                <MenuItem icon={Trash2} label={t('files.actions.delete')} danger onClick={() => { setMenuOpen(false); onDelete(folder); }} />
-              </div>
-            )}
+            <TileMenu open={menuOpen} anchorRef={kebabRef} onClose={() => setMenuOpen(false)} isAr={isAr} width={160}>
+              <MenuItem icon={Pencil} label={t('files.actions.rename')} onClick={() => { setMenuOpen(false); onRename(folder); }} />
+              <MenuItem icon={Share2} label={t('files.actions.share')} onClick={() => { setMenuOpen(false); onPermissions(folder); }} />
+              <MenuItem icon={Shield} label={t('files.actions.permissions')} onClick={() => { setMenuOpen(false); onPermissions(folder); }} />
+              <div className="my-1 border-t border-sand/30" />
+              <MenuItem icon={Trash2} label={t('files.actions.delete')} danger onClick={() => { setMenuOpen(false); onDelete(folder); }} />
+            </TileMenu>
           </div>
         )}
       </div>

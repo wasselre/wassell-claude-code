@@ -31,6 +31,7 @@ import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import { useAppStore } from '@/stores/appStore';
 import type { AttachmentRef, FileRow, FolderRow } from '@/types';
 import FilePreviewModal from './FilePreviewModal';
+import TileMenu from './TileMenu';
 
 export type DrivePickerMode = 'pick-folder' | 'pick-files' | 'pick-files-and-folders';
 
@@ -666,15 +667,7 @@ function PickerFolderTile({
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [menuOpen]);
+  const kebabRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div
@@ -691,8 +684,9 @@ function PickerFolderTile({
         </label>
       )}
       {canManage && !isRenaming && (
-        <div ref={menuRef} className="absolute top-1 end-1 z-10">
+        <div className="absolute top-1 end-1 z-10">
           <button
+            ref={kebabRef}
             type="button"
             onClick={(e) => {
               e.stopPropagation();
@@ -703,31 +697,26 @@ function PickerFolderTile({
           >
             <MoreVertical size={14} />
           </button>
-          {menuOpen && (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className={`absolute top-full mt-1 ${isAr ? 'start-0' : 'end-0'} min-w-[9rem] bg-white border border-sand/40 rounded-lg shadow-lg shadow-charcoal/10 py-1 z-20`}
-            >
-              <PickerMenuItem
-                icon={Pencil}
-                label={t('files.actions.rename')}
-                onClick={() => {
-                  setMenuOpen(false);
-                  onStartRename();
-                }}
-              />
-              <div className="my-1 border-t border-sand/30" />
-              <PickerMenuItem
-                icon={Trash2}
-                label={t('files.actions.delete')}
-                danger
-                onClick={() => {
-                  setMenuOpen(false);
-                  onDelete();
-                }}
-              />
-            </div>
-          )}
+          <TileMenu open={menuOpen} anchorRef={kebabRef} onClose={() => setMenuOpen(false)} isAr={isAr} width={160}>
+            <PickerMenuItem
+              icon={Pencil}
+              label={t('files.actions.rename')}
+              onClick={() => {
+                setMenuOpen(false);
+                onStartRename();
+              }}
+            />
+            <div className="my-1 border-t border-sand/30" />
+            <PickerMenuItem
+              icon={Trash2}
+              label={t('files.actions.delete')}
+              danger
+              onClick={() => {
+                setMenuOpen(false);
+                onDelete();
+              }}
+            />
+          </TileMenu>
         </div>
       )}
 
@@ -829,7 +818,7 @@ function PickerFileTile({
   const accent = kindAccent[file.kind];
   const isDisabled = !showSelector;
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const kebabRef = useRef<HTMLButtonElement>(null);
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
 
   // Lazy-fetch a signed view URL for image kinds so the tile shows the actual
@@ -849,15 +838,6 @@ function PickerFileTile({
     };
   }, [file.id, file.kind]);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [menuOpen]);
-
   return (
     <div
       className={`relative group rounded-xl border bg-white overflow-hidden transition-all ${checked ? 'border-copper ring-2 ring-copper/20' : 'border-sand/40 hover:border-sand/70'} ${isDisabled ? 'opacity-50' : ''}`}
@@ -873,8 +853,9 @@ function PickerFileTile({
         </label>
       )}
       {!isRenaming && (
-        <div ref={menuRef} className="absolute top-1 end-1 z-10">
+        <div className="absolute top-1 end-1 z-10">
           <button
+            ref={kebabRef}
             type="button"
             onClick={(e) => {
               e.stopPropagation();
@@ -885,43 +866,38 @@ function PickerFileTile({
           >
             <MoreVertical size={14} />
           </button>
-          {menuOpen && (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className={`absolute top-full mt-1 ${isAr ? 'start-0' : 'end-0'} min-w-[9rem] bg-white border border-sand/40 rounded-lg shadow-lg shadow-charcoal/10 py-1 z-20`}
-            >
-              <PickerMenuItem
-                icon={Eye}
-                label={t('files.actions.preview')}
-                onClick={() => {
-                  setMenuOpen(false);
-                  onPreview();
-                }}
-              />
-              {canEdit && (
-                <>
-                  <PickerMenuItem
-                    icon={Pencil}
-                    label={t('files.actions.rename')}
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onStartRename();
-                    }}
-                  />
-                  <div className="my-1 border-t border-sand/30" />
-                  <PickerMenuItem
-                    icon={Trash2}
-                    label={t('files.actions.delete')}
-                    danger
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onDelete();
-                    }}
-                  />
-                </>
-              )}
-            </div>
-          )}
+          <TileMenu open={menuOpen} anchorRef={kebabRef} onClose={() => setMenuOpen(false)} isAr={isAr} width={160}>
+            <PickerMenuItem
+              icon={Eye}
+              label={t('files.actions.preview')}
+              onClick={() => {
+                setMenuOpen(false);
+                onPreview();
+              }}
+            />
+            {canEdit && (
+              <>
+                <PickerMenuItem
+                  icon={Pencil}
+                  label={t('files.actions.rename')}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onStartRename();
+                  }}
+                />
+                <div className="my-1 border-t border-sand/30" />
+                <PickerMenuItem
+                  icon={Trash2}
+                  label={t('files.actions.delete')}
+                  danger
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onDelete();
+                  }}
+                />
+              </>
+            )}
+          </TileMenu>
         </div>
       )}
 

@@ -5,6 +5,7 @@ import type { FileRow } from '@/types';
 import { kindAccent, kindIcon, formatBytes } from '@/lib/files/format';
 import { useAppStore } from '@/stores/appStore';
 import { signViewUrl } from '@/lib/files/client';
+import TileMenu from './TileMenu';
 
 interface Props {
   file: FileRow;
@@ -51,7 +52,7 @@ export default function FileCard({
   const isAr = useAppStore((s) => s.language === 'ar');
   const [thumbUrl, setThumbUrl] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const kebabRef = useRef<HTMLButtonElement>(null);
 
   // Lazy-load a thumbnail for image kinds.
   useEffect(() => {
@@ -68,15 +69,6 @@ export default function FileCard({
       cancelled = true;
     };
   }, [file.id, file.kind]);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, [menuOpen]);
 
   const accent = kindAccent[file.kind];
   const Icon = kindIcon[file.kind];
@@ -141,8 +133,9 @@ export default function FileCard({
           </div>
           <div className="text-xs text-charcoal/40 mt-0.5">{formatBytes(file.size_bytes, isAr)}</div>
         </div>
-        <div ref={menuRef} className="relative">
+        <div className="relative">
           <button
+            ref={kebabRef}
             onClick={(e) => {
               e.stopPropagation();
               setMenuOpen((v) => !v);
@@ -153,29 +146,24 @@ export default function FileCard({
           >
             <MoreVertical size={16} />
           </button>
-          {menuOpen && (
-            <div
-              onClick={(e) => e.stopPropagation()}
-              className={`absolute bottom-full mb-1 z-20 ${isAr ? 'start-0' : 'end-0'} min-w-[12rem] bg-white border border-sand/30 rounded-xl shadow-lg shadow-charcoal/10 py-1`}
-            >
-              <MenuItem icon={Eye} label={t('files.actions.preview')} onClick={() => { setMenuOpen(false); onPreview(file); }} />
-              <MenuItem icon={Download} label={t('files.actions.download')} onClick={() => { setMenuOpen(false); onDownload(file); }} />
-              {canEdit && (
-                <>
-                  <MenuItem icon={Pencil} label={t('files.actions.rename')} onClick={() => { setMenuOpen(false); onRename(file); }} />
-                  <MenuItem icon={FolderInput} label={t('files.actions.move')} onClick={() => { setMenuOpen(false); onMove(file); }} />
-                  <MenuItem icon={Share2} label={t('files.actions.share')} onClick={() => { setMenuOpen(false); onShare(file); }} />
-                  <MenuItem icon={Shield} label={t('files.actions.permissions')} onClick={() => { setMenuOpen(false); onPermissions(file); }} />
-                </>
-              )}
-              {canDelete && (
-                <>
-                  <div className="my-1 border-t border-sand/30" />
-                  <MenuItem icon={Trash2} label={t('files.actions.delete')} danger onClick={() => { setMenuOpen(false); onDelete(file); }} />
-                </>
-              )}
-            </div>
-          )}
+          <TileMenu open={menuOpen} anchorRef={kebabRef} onClose={() => setMenuOpen(false)} isAr={isAr} width={192}>
+            <MenuItem icon={Eye} label={t('files.actions.preview')} onClick={() => { setMenuOpen(false); onPreview(file); }} />
+            <MenuItem icon={Download} label={t('files.actions.download')} onClick={() => { setMenuOpen(false); onDownload(file); }} />
+            {canEdit && (
+              <>
+                <MenuItem icon={Pencil} label={t('files.actions.rename')} onClick={() => { setMenuOpen(false); onRename(file); }} />
+                <MenuItem icon={FolderInput} label={t('files.actions.move')} onClick={() => { setMenuOpen(false); onMove(file); }} />
+                <MenuItem icon={Share2} label={t('files.actions.share')} onClick={() => { setMenuOpen(false); onShare(file); }} />
+                <MenuItem icon={Shield} label={t('files.actions.permissions')} onClick={() => { setMenuOpen(false); onPermissions(file); }} />
+              </>
+            )}
+            {canDelete && (
+              <>
+                <div className="my-1 border-t border-sand/30" />
+                <MenuItem icon={Trash2} label={t('files.actions.delete')} danger onClick={() => { setMenuOpen(false); onDelete(file); }} />
+              </>
+            )}
+          </TileMenu>
         </div>
       </div>
     </div>
