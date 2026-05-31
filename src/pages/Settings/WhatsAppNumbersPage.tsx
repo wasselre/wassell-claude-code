@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { MessageCircle, RefreshCw, Star, Eye, EyeOff, Check, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
+import BackToSettings from './components/BackToSettings';
 import type { HaberchatDevice, WhatsAppNumber } from '@/types';
 
 /**
@@ -59,6 +60,7 @@ export default function WhatsAppNumbersPage() {
 
   return (
     <div className="p-6 md:p-8 max-w-5xl mx-auto">
+      <BackToSettings />
       <div className="flex items-center gap-3 mb-6">
         <div className="w-12 h-12 rounded-2xl bg-charcoal/5 flex items-center justify-center">
           <MessageCircle size={24} className="text-charcoal/60" />

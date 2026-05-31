@@ -1,7 +1,7 @@
 # PRD: Navigation & Layout
 
 **Status:** Live
-**Last updated:** 2026-05-09 (**Sidebar groups now collapse by default:** model groups in the sidebar (Projects, Marketing, etc.) start collapsed on every load. Click the group header to expand. Per-group state is not persisted — reload returns all groups to collapsed.) 2026-04-27 (**Presentations feature removed:** the top-level Presentations nav entry, its sub-links to Templates and Brands, and the related routes were deleted. The sidebar now goes Home → Whiteboard directly. Whiteboard nav entry added 2026-04-24.)
+**Last updated:** 2026-05-31 (**Back-to-Settings link on every settings sub-page:** each `/settings/*` page now renders a shared "← Settings" link (`BackToSettings.tsx`) at the top of its content that returns to the Settings hub. Applied to Translations, Profiles, Roles, Users, Webhooks, WhatsApp Numbers, Audit Log, Menu Arrangement, and Project Details; the two pages that already had ad-hoc back controls were unified onto the shared component.) 2026-05-09 (**Sidebar groups now collapse by default:** model groups in the sidebar (Projects, Marketing, etc.) start collapsed on every load. Click the group header to expand. Per-group state is not persisted — reload returns all groups to collapsed.) 2026-04-27 (**Presentations feature removed:** the top-level Presentations nav entry, its sub-links to Templates and Brands, and the related routes were deleted. The sidebar now goes Home → Whiteboard directly. Whiteboard nav entry added 2026-04-24.)
 **Related PRDs:** model-builder.md, internationalization.md, home-dashboard.md, whiteboard.md
 
 ## What it is (in plain English)
@@ -26,7 +26,7 @@ A consistent, always-visible shell orients the user no matter how many models ex
   - Current user indicator.
   - **Mobile hamburger** (visible only below 768px) that opens the sidebar drawer.
   - Padding and font size scale down on mobile (`px-4 md:px-8`, `text-lg md:text-xl`).
-- **Settings hub** (`/settings`): a page with cards linking to Translations, Profiles, Roles, Users.
+- **Settings hub** (`/settings`): a page with cards linking to Translations, Profiles, Roles, Users, and more. Every settings sub-page renders a shared **"← Settings" back link** (`src/pages/Settings/components/BackToSettings.tsx`) at the top of its content to return here without using the sidebar or browser back button.
 - **Public dashboard** route (`/public/dashboard/:token`) intentionally skips the layout — no sidebar, no header.
 - **Model groups** come from the `model_groups` table and can be reordered; sidebar respects that order.
 - **RTL support** — margins/padding use logical properties so the sidebar position flips automatically.
@@ -51,6 +51,7 @@ A consistent, always-visible shell orients the user no matter how many models ex
 | `src/components/layout/Sidebar.tsx` | Sidebar navigation |
 | `src/components/layout/Header.tsx` | Top bar, language toggle |
 | `src/pages/Settings/SettingsPage.tsx` | Settings hub page |
+| `src/pages/Settings/components/BackToSettings.tsx` | Shared "← Settings" back link shown on every settings sub-page |
 | `src/index.css` | `.sidebar`, `.main-content`, `.nav-item` styles |
 | `tailwind.config.js` | Brand color and font setup |
 

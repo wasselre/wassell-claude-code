@@ -11,6 +11,7 @@ import {
   type MigrationOutcome,
 } from '@/lib/migrateLegacyLabels';
 import { Languages, Search, AlertTriangle, Check, ChevronDown, Wand2, Loader2, X } from 'lucide-react';
+import BackToSettings from './components/BackToSettings';
 // types used indirectly through store data
 
 type TranslationItem = {
@@ -376,6 +377,7 @@ export default function TranslationSettingsPage() {
 
   return (
     <div className="max-w-4xl">
+      <BackToSettings />
       {/* Header */}
       <div className="flex items-center gap-3 mb-8">
         <div className="w-12 h-12 rounded-2xl bg-copper/10 flex items-center justify-center">

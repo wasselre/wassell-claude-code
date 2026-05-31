@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft, LayoutTemplate, MapPin, ImageOff,
+  LayoutTemplate, MapPin, ImageOff,
   Sparkles, ExternalLink, Plus, X, Search,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import BackToSettings from './components/BackToSettings';
 
 /**
  * Project Details Pages — picker.
@@ -125,13 +126,7 @@ export default function ProjectDetailsListPage() {
   return (
     <div className="max-w-6xl">
       {/* Back link */}
-      <button
-        onClick={() => navigate('/settings')}
-        className="inline-flex items-center gap-1.5 text-xs text-charcoal/50 hover:text-copper transition mb-4"
-      >
-        <ArrowLeft size={14} className="rtl:rotate-180" />
-        <span>{isAr ? 'الإعدادات' : 'Settings'}</span>
-      </button>
+      <BackToSettings />
 
       {/* Header — title + "+ Add" button */}
       <div className="flex items-start gap-3 mb-6">

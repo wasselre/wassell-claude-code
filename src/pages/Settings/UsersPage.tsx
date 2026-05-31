@@ -9,6 +9,7 @@ import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import Badge from '@/components/ui/Badge';
 import UserRoleFields from './components/UserRoleFields';
+import BackToSettings from './components/BackToSettings';
 import type { User, UserRoleAssignment, StoreMutationReason } from '@/types';
 
 function reasonToKey(reason: StoreMutationReason): string {
@@ -173,6 +174,7 @@ export default function UsersPage() {
 
   return (
     <div className="max-w-4xl">
+      <BackToSettings />
       <div className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-3">
           <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center">

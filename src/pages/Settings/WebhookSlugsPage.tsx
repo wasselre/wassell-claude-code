@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { v4 as uuid } from 'uuid';
 import { Plus, Trash2, Copy, Check, Eye, EyeOff, RefreshCw, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import BackToSettings from './components/BackToSettings';
 import type { WebhookSlug } from '@/types';
 
 // Project URL for displaying the full inbox URL next to each slug. Pulled
@@ -72,6 +73,7 @@ export default function WebhookSlugsPage() {
 
   return (
     <div className="p-6 md:p-8 max-w-5xl mx-auto space-y-5">
+      <BackToSettings className="!mb-0" />
       <div className="flex items-start justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-charcoal mb-1">

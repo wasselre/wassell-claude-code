@@ -14,10 +14,8 @@
  * localStorage and Supabase in one atomic pass.
  */
 import { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import {
-  ChevronLeft,
   Plus,
   Trash2,
   Pencil,
@@ -32,6 +30,7 @@ import {
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import { getIconComponent } from '@/components/layout/Sidebar';
+import BackToSettings from './components/BackToSettings';
 import type { AppModel, ModelGroup } from '@/types';
 
 // Sentinel "group id" for the ungrouped bucket. Kept outside the UUID space
@@ -40,7 +39,6 @@ import type { AppModel, ModelGroup } from '@/types';
 const UNGROUPED_ID = '__ungrouped__';
 
 export default function MenuArrangementPage() {
-  const navigate = useNavigate();
   const { language, models, groups, reorderMenu, addToast } = useAppStore();
   const isAr = language === 'ar';
 
@@ -268,16 +266,10 @@ export default function MenuArrangementPage() {
 
   return (
     <div className="max-w-3xl">
+      <BackToSettings />
       {/* Header */}
       <div className="flex items-start justify-between mb-6 gap-3">
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/settings')}
-            className="p-2 rounded-lg hover:bg-cream text-charcoal/50 hover:text-charcoal transition-colors"
-            aria-label={isAr ? 'عودة' : 'Back'}
-          >
-            <ChevronLeft size={18} className={isAr ? 'rotate-180' : ''} />
-          </button>
           <div>
             <h1 className="text-2xl font-bold text-chocolate">
               {isAr ? 'ترتيب القائمة' : 'Menu Arrangement'}

@@ -17,6 +17,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
 import { ChevronDown, ChevronRight, Loader2, Search, ScrollText } from 'lucide-react';
+import BackToSettings from './components/BackToSettings';
 
 interface AuditRow {
   id: number;
@@ -119,6 +120,7 @@ export default function AuditLogPage() {
 
   return (
     <div className="space-y-4">
+      <BackToSettings className="!mb-0" />
       <div className="flex items-center gap-3">
         <ScrollText size={22} className="text-copper" />
         <h1 className="text-xl font-bold text-chocolate">
