@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import ModelList from './components/ModelList';
 import ModelEditor from './components/ModelEditor';
+import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import { Hammer, PanelLeftOpen, PanelLeftClose } from 'lucide-react';
 
 export default function ModelBuilderPage() {
@@ -51,10 +52,11 @@ export default function ModelBuilderPage() {
 
       {/* Editor area */}
       <div className="flex-1 p-4 md:p-6 flex flex-col overflow-hidden">
+        <BackToSettings />
         {selectedModel ? (
           <ModelEditor model={selectedModel} />
         ) : (
-          <div className="flex flex-col items-center justify-center py-16 md:py-0 md:h-full text-charcoal/40">
+          <div className="flex flex-1 flex-col items-center justify-center py-16 md:py-0 text-charcoal/40">
             <Hammer size={48} className="mb-4" />
             <p className="text-lg font-bold text-center px-4">{t('builder.select_empty')}</p>
           </div>

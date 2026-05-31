@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { Plus, Pencil, Trash2, LayoutDashboard, Copy, Globe, Lock } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import BackToSettings from '@/pages/Settings/components/BackToSettings';
 
 export default function DashboardListPage() {
   const { t } = useTranslation();
@@ -41,6 +42,7 @@ export default function DashboardListPage() {
 
   return (
     <div>
+      <BackToSettings />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold text-charcoal">{t('dashboard.title')}</h1>
         <Button onClick={createDashboard}>

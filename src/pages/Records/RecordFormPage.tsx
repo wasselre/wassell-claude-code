@@ -27,6 +27,7 @@ function resolveLucideIcon(name?: string): LucideIcon {
 }
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
+import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import SectionBlock from './components/SectionBlock';
 import RecordFormModal from './components/RecordFormModal';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
@@ -836,13 +837,21 @@ export default function RecordFormPage() {
     navigate(`/model/${model.name}`);
   };
 
+  // `site_settings` is a settings-only singleton reached from the Settings
+  // hub (Website Settings card). It has no meaningful list view — navigating
+  // to /model/site_settings just redirects back here — so its exits return
+  // to the Settings hub instead, and we show the shared "← Settings" link.
+  const isSettingsOnly = model.name === 'site_settings';
+  const exitTarget = isSettingsOnly ? '/settings' : `/model/${model.name}`;
+
   return (
     <div>
+      {isSettingsOnly && <BackToSettings />}
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => tryExit(() => navigate(`/model/${model.name}`))}
+            onClick={() => tryExit(() => navigate(exitTarget))}
             className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors"
           >
             <ArrowRight size={20} className="rtl:rotate-0 ltr:rotate-180" />

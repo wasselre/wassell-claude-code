@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { Plus, Pencil, Trash2, Zap, ScrollText, Sparkles, Folder, FolderPlus, ChevronDown, ChevronRight, Check, X, FolderInput } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import type { Workflow, WorkflowGroup } from '@/types';
 
 // Sentinel id for the implicit "ungrouped" bucket. Workflows whose
@@ -281,6 +282,7 @@ export default function WorkflowListPage() {
 
   return (
     <div>
+      <BackToSettings />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold text-charcoal">{t('workflow.title')}</h1>
         <div className="flex items-center gap-2">

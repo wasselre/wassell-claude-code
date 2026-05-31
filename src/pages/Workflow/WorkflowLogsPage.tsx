@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { ScrollText, ChevronRight, Trash2, RefreshCw, Search } from 'lucide-react';
+import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import type { WorkflowRun, WorkflowRunStatus } from '@/types';
 
 type StatusFilter = 'all' | WorkflowRunStatus;
@@ -72,6 +73,7 @@ export default function WorkflowLogsPage() {
 
   return (
     <div>
+      <BackToSettings />
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
