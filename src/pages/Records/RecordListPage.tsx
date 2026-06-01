@@ -17,6 +17,8 @@ import AdvancedFilterPanel from './components/AdvancedFilterPanel';
 import { PageSizeSelector, PageNavigator } from './components/PaginationControls';
 import { exportToExcel, exportTemplate } from '@/lib/excelUtils';
 import { applyConditions } from '@/lib/dashboardUtils';
+import { buildRecordSearchText, buildExpandedFieldSearchText, normalizeForSearch } from '@/lib/recordSearch';
+import { collectViewFields, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import {
   adhocStorageKey,
   applyAdhocFilters,
@@ -81,6 +83,7 @@ export default function RecordListPage() {
     (storedView as 'table' | 'cards' | 'maps') ?? 'table',
   );
   const [search, setSearch] = useState('');
+  const [searchField, setSearchField] = useState<string>('all'); // 'all' or an expanded field id
   const [deletingRecord, setDeletingRecord] = useState<AppRecord | null>(null);
   const [showImport, setShowImport] = useState(false);
 
@@ -187,9 +190,11 @@ export default function RecordListPage() {
     if (modelName) localStorage.setItem(`view_mode_${modelName}`, mode);
   };
 
-  // Reset selection when the model changes.
+  // Reset selection + search scope when the model changes (field ids are
+  // model-specific, so a carried-over scope would be meaningless).
   useEffect(() => {
     setSelectedIds(new Set());
+    setSearchField('all');
   }, [model?.id]);
 
   // Chats-specific: on every mount of /model/chats, pull fresh conversations
@@ -202,6 +207,41 @@ export default function RecordListPage() {
   }, [model?.id, model?.name, loadChatsFromHaberchat]);
 
   // Filter pipeline: view conditions → ad-hoc faceted filters → text search.
+  // Scope options for the search box: local fields + mirrored children (so search
+  // can target a lookup or a mirrored field). Same expansion the table columns use.
+  const expandedSearchFields = useMemo<ExpandedField[]>(
+    () => (model ? collectViewFields(model, models) : []),
+    [model, models],
+  );
+
+  // Per-record searchable text, built once per data/scope change (NOT per
+  // keystroke — resolving lookups/mirrors is O(linked rows)). Scope is a single
+  // picked field, or ALL fields (resolving dropdown labels + lookup/mirror
+  // display values + Arabic/ASCII digits). The keystroke filter below just does
+  // a Map lookup + substring test, so typing stays fast even on large models.
+  const searchIndex = useMemo(() => {
+    const idx = new Map<string, string>();
+    if (!model) return idx;
+    const ctx = { models, records };
+    const scopedField =
+      searchField === 'all' ? null : expandedSearchFields.find((f) => f.id === searchField) ?? null;
+    for (const rec of modelRecords) {
+      const text = scopedField
+        ? buildExpandedFieldSearchText(scopedField, rec, model, ctx)
+        : buildRecordSearchText(rec, model, ctx);
+      idx.set(rec.id, normalizeForSearch(text));
+    }
+    return idx;
+  }, [modelRecords, model, models, records, searchField, expandedSearchFields]);
+
+  const searchPlaceholder = (() => {
+    if (searchField === 'all') return t('records.search_placeholder');
+    const ef = expandedSearchFields.find((f) => f.id === searchField);
+    if (!ef) return t('records.search_placeholder');
+    const label = isAr ? ef.field.label_ar : ef.field.label_en;
+    return isAr ? `بحث في «${label}»…` : `Search ${label}…`;
+  })();
+
   const filteredRecords = useMemo(() => {
     if (!model) return modelRecords;
     const allFields = model.schema.sections.flatMap((s) => s.fields);
@@ -216,19 +256,15 @@ export default function RecordListPage() {
     //    their live value through the sibling lookup at filter time.
     out = applyAdhocFilters(out, adhocFilters, model, models, records);
 
-    // 3. Text search (top-of-page search box).
+    // 3. Text search (top-of-page search box) — matches the scoped field, or ALL
+    //    fields, via the prebuilt `searchIndex` (resolves dropdown labels,
+    //    lookup/mirror display values, and normalizes Arabic/ASCII digits).
     if (search.trim()) {
-      const q = search.toLowerCase();
-      const searchableFields = allFields.filter((f) => ['text', 'email', 'phone'].includes(f.type));
-      out = out.filter((rec) =>
-        searchableFields.some((f) => {
-          const val = rec.data[f.name];
-          return val && String(val).toLowerCase().includes(q);
-        }),
-      );
+      const q = normalizeForSearch(search.trim());
+      out = out.filter((rec) => (searchIndex.get(rec.id) ?? '').includes(q));
     }
     return out;
-  }, [search, modelRecords, model, models, records, activeView, adhocFilters]);
+  }, [search, modelRecords, model, models, records, activeView, adhocFilters, searchIndex]);
 
   // Sort the FULL filtered list before pagination, using the lifted
   // column-header sort (seeded from the active view's default sort). This is
@@ -430,17 +466,34 @@ export default function RecordListPage() {
             collapseKey={`wassell_adhoc_collapsed_v2_${model.id}`}
           />
 
-          {/* Search + View selector + View-mode toggle */}
+          {/* Search (scope selector + query) + View selector + View-mode toggle */}
           <div className="flex items-center gap-3 mb-4">
-            <div className="relative flex-1 max-w-md">
-              <Search size={16} className="absolute start-3 top-1/2 -translate-y-1/2 text-charcoal/30" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t('records.search_placeholder')}
-                className="form-input ps-9 text-sm"
-              />
+            <div className="flex items-center gap-2 flex-1 max-w-2xl min-w-0">
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value)}
+                className="form-input text-sm w-auto max-w-[12rem] shrink-0"
+                title={isAr ? 'نطاق البحث' : 'Search scope'}
+                aria-label={isAr ? 'نطاق البحث' : 'Search scope'}
+              >
+                <option value="all">{isAr ? 'كل الحقول' : 'All fields'}</option>
+                {expandedSearchFields.map((ef) => (
+                  <option key={ef.id} value={ef.id}>
+                    {(isAr ? ef.field.label_ar : ef.field.label_en) +
+                      (ef.kind === 'mirrored' ? (isAr ? ' (مرآة)' : ' (mirror)') : '')}
+                  </option>
+                ))}
+              </select>
+              <div className="relative flex-1 min-w-0">
+                <Search size={16} className="absolute start-3 top-1/2 -translate-y-1/2 text-charcoal/30" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="form-input ps-9 text-sm"
+                />
+              </div>
             </div>
             {viewMode === 'table' && (
               <ViewSelector
