@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
@@ -45,6 +45,7 @@ import { isButtonVisible } from '@/lib/permissions';
 export default function RecordFormPage() {
   const { modelName, recordId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { t } = useTranslation();
   const {
     models,
@@ -894,7 +895,7 @@ export default function RecordFormPage() {
       if (exit) {
         exit.run();
       } else {
-        navigate(`/model/${model.name}`);
+        navigate(exitTarget);
       }
     }
   };
@@ -912,7 +913,7 @@ export default function RecordFormPage() {
       addToast(t('toast.deleted'), 'success');
     }
     setShowDelete(false);
-    navigate(`/model/${model.name}`);
+    navigate(exitTarget);
   };
 
   // `site_settings` is a settings-only singleton reached from the Settings
@@ -920,7 +921,13 @@ export default function RecordFormPage() {
   // to /model/site_settings just redirects back here — so its exits return
   // to the Settings hub instead, and we show the shared "← Settings" link.
   const isSettingsOnly = model.name === 'site_settings';
-  const exitTarget = isSettingsOnly ? '/settings' : `/model/${model.name}`;
+  // When this record was opened from an embedded context — e.g. clicking a unit
+  // in the Units tab on a project page, which passes `state.backTo` — the back
+  // button and the post-save / delete exits return THERE instead of this model's
+  // own list. Falls back to the model list (or the Settings hub for the
+  // site_settings singleton) when there's no origin to return to.
+  const backTo = (location.state as { backTo?: string } | null)?.backTo ?? null;
+  const exitTarget = backTo ?? (isSettingsOnly ? '/settings' : `/model/${model.name}`);
 
   return (
     <div>
@@ -1016,7 +1023,7 @@ export default function RecordFormPage() {
           {!readOnly && (
           <Button onClick={async () => {
             const ok = await handleSave();
-            if (ok) navigate(`/model/${model.name}`);
+            if (ok) navigate(exitTarget);
           }}>
             <Save size={16} />
             {t('common.save')}
