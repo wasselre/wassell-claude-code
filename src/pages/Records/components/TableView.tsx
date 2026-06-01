@@ -13,6 +13,7 @@ import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import type { AppModel, AppRecord, ModelField, ModelView } from '@/types';
+import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
 
 interface TableViewProps {
   model: AppModel;
@@ -36,9 +37,22 @@ interface TableViewProps {
    * each record's own page.
    */
   readOnly?: boolean;
+  /**
+   * Controlled sort. The paginated list pages (Records list, Units tab) own the
+   * sort so it applies to the FULL dataset before pagination — otherwise a
+   * column-header click would only reorder the visible page, and computed
+   * rollup columns (e.g. All Projects' Project Details) couldn't sort globally.
+   * When `onToggleSort` is provided, TableView renders `records` as-is (already
+   * sorted upstream) and reports header clicks via `onToggleSort`. When omitted,
+   * TableView sorts internally — used by the read-only Related-Records tables,
+   * which receive the full unpaginated match set.
+   */
+  sortField?: string | null;
+  sortDir?: 'asc' | 'desc';
+  onToggleSort?: (fieldName: string) => void;
 }
 
-export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll, readOnly = false }: TableViewProps) {
+export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll, readOnly = false, sortField: controlledSortField, sortDir: controlledSortDir, onToggleSort }: TableViewProps) {
   const { t } = useTranslation();
   const { language, records: allRecords, saveRecord, addToast, models, currentUserId, users, profiles, roles } = useAppStore();
   const isAr = language === 'ar';
@@ -70,15 +84,23 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
     return ef.field.name;
   };
 
-  const [sortField, setSortField] = useState<string | null>(resolveSortName(view?.sort_field_id));
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(view?.sort_direction ?? 'asc');
+  // Sort is CONTROLLED when the parent passes onToggleSort (paginated list
+  // pages — so the sort drives the full dataset before pagination), otherwise
+  // UNCONTROLLED with local state (read-only Related-Records tables, which get
+  // the full unpaginated set so a local sort covers everything).
+  const controlledSort = !!onToggleSort;
+  const [localSortField, setLocalSortField] = useState<string | null>(resolveSortName(view?.sort_field_id));
+  const [localSortDir, setLocalSortDir] = useState<'asc' | 'desc'>(view?.sort_direction ?? 'asc');
+  const sortField = controlledSort ? (controlledSortField ?? null) : localSortField;
+  const sortDir = controlledSort ? (controlledSortDir ?? 'asc') : localSortDir;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editData, setEditData] = useState<Record<string, unknown>>({});
 
-  // When the active view changes, reset the sort to the view's sort.
+  // When the active view changes, reset the LOCAL sort to the view's sort.
+  // (Controlled mode ignores local state — the parent owns + resets its sort.)
   useEffect(() => {
-    setSortField(resolveSortName(view?.sort_field_id));
-    setSortDir(view?.sort_direction ?? 'asc');
+    setLocalSortField(resolveSortName(view?.sort_field_id));
+    setLocalSortDir(view?.sort_direction ?? 'asc');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [viewId, view?.sort_field_id, view?.sort_direction]);
 
@@ -106,11 +128,15 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
   });
 
   const toggleSort = (fieldName: string) => {
-    if (sortField === fieldName) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    if (controlledSort) {
+      onToggleSort!(fieldName);
+      return;
+    }
+    if (localSortField === fieldName) {
+      setLocalSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
-      setSortField(fieldName);
-      setSortDir('asc');
+      setLocalSortField(fieldName);
+      setLocalSortDir('asc');
     }
   };
 
@@ -124,16 +150,13 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
     }
   }, [allSelected, someSelected]);
 
-  const sortedRecords = [...records].sort((a, b) => {
-    if (!sortField) return 0;
-    const va = a.data[sortField];
-    const vb = b.data[sortField];
-    if (va === vb) return 0;
-    if (va === undefined || va === null) return 1;
-    if (vb === undefined || vb === null) return -1;
-    const cmp = String(va).localeCompare(String(vb), isAr ? 'ar' : 'en', { numeric: true });
-    return sortDir === 'asc' ? cmp : -cmp;
-  });
+  const sortedRecords = useMemo(() => {
+    // Controlled: the parent already sorted the full list (and paginated), so
+    // render rows in the order received.
+    if (controlledSort) return records;
+    const ctx: SortCtx = { isAr, allRecords, models, users };
+    return sortRecordsByFieldName(records, model, sortField, sortDir, ctx);
+  }, [controlledSort, records, model, sortField, sortDir, isAr, allRecords, models, users]);
 
   const startEdit = (record: AppRecord) => {
     // Inline-edit is gated by the same edit-scope check the form page uses.

@@ -26,6 +26,7 @@ import {
 } from '@/lib/adhocFilterUtils';
 import { useApplyViewScope, useApplyVisibleViews, useModelPermissions } from '@/hooks/usePermission';
 import { useRolledUpRecordList } from '@/hooks/useRolledUpRecords';
+import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
 import type { AppRecord, ModelView } from '@/types';
 
 // Stable empty array reference. Returned when a model has no records yet
@@ -40,7 +41,7 @@ export default function RecordListPage() {
   const { modelName } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { models, records, views, language, currentUserId, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
+  const { models, records, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
   const isAr = language === 'ar';
 
   const model = models.find((m) => m.name === modelName);
@@ -96,6 +97,34 @@ export default function RecordListPage() {
   // own views; admins see everything; otherwise filter by hidden_view_ids.
   const modelViews = useApplyVisibleViews(rawModelViews);
   const activeView = modelViews.find((v) => v.id === activeViewId) ?? null;
+
+  // Column-header sort, lifted out of TableView so it sorts the FULL filtered
+  // list before pagination — otherwise a header click would only reorder the
+  // visible page, and computed rollup columns (e.g. All Projects' Project
+  // Details) couldn't sort across all pages. Seeded from the active view's
+  // default sort; reset whenever the active view changes.
+  const resolveViewSortName = (v: ModelView | null): string | null => {
+    const id = v?.sort_field_id ?? null;
+    if (!id || !model) return null;
+    const f = model.schema.sections.flatMap((s) => s.fields).find((x) => x.id === id);
+    return f ? f.name : null;
+  };
+  const [sortFieldName, setSortFieldName] = useState<string | null>(() => resolveViewSortName(activeView));
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(activeView?.sort_direction ?? 'asc');
+  useEffect(() => {
+    setSortFieldName(resolveViewSortName(activeView));
+    setSortDir(activeView?.sort_direction ?? 'asc');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeViewId, activeView?.sort_field_id, activeView?.sort_direction]);
+  const toggleColumnSort = (fieldName: string) => {
+    setCurrentPage(1);
+    if (sortFieldName === fieldName) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortFieldName(fieldName);
+      setSortDir('asc');
+    }
+  };
 
   // If the previously-active view becomes hidden after a permission change,
   // reset to the Default view so the table doesn't render against a view
@@ -201,30 +230,19 @@ export default function RecordListPage() {
     return out;
   }, [search, modelRecords, model, models, records, activeView, adhocFilters]);
 
-  // Apply the active view's default sort before pagination. Mirrors the
-  // comparator in TableView so prev/next in the record form matches the
-  // order the user sees here. Column-header sorts inside TableView live in
-  // local state and aren't reflected in nav context — v1 tradeoff.
+  // Sort the FULL filtered list before pagination, using the lifted
+  // column-header sort (seeded from the active view's default sort). This is
+  // what makes a header click reorder the whole dataset (not just the visible
+  // page) and what lets computed rollup columns sort — their values are
+  // injected into record.data by useRolledUpRecordList above, so the shared
+  // type-aware comparator keys them by field type just like stored values.
+  // Also drives prev/next nav context, so the record form's arrows follow
+  // whatever the user sorted by here.
   const orderedFilteredRecords = useMemo(() => {
     if (!model) return filteredRecords;
-    const sortFieldId = activeView?.sort_field_id ?? null;
-    if (!sortFieldId) return filteredRecords;
-    const sortField = model.schema.sections
-      .flatMap((s) => s.fields)
-      .find((f) => f.id === sortFieldId);
-    if (!sortField) return filteredRecords;
-    const dir = activeView?.sort_direction ?? 'asc';
-    const name = sortField.name;
-    return [...filteredRecords].sort((a, b) => {
-      const va = a.data[name];
-      const vb = b.data[name];
-      if (va === vb) return 0;
-      if (va === undefined || va === null) return 1;
-      if (vb === undefined || vb === null) return -1;
-      const cmp = String(va).localeCompare(String(vb), isAr ? 'ar' : 'en', { numeric: true });
-      return dir === 'asc' ? cmp : -cmp;
-    });
-  }, [filteredRecords, model, activeView, isAr]);
+    const ctx: SortCtx = { isAr, allRecords: records, models, users };
+    return sortRecordsByFieldName(filteredRecords, model, sortFieldName, sortDir, ctx);
+  }, [filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users]);
 
   // Publish the currently-visible, sorted record IDs so the record form can
   // offer prev/next navigation in the same order the user was browsing.
@@ -509,6 +527,9 @@ export default function RecordListPage() {
           onRowClick={(rec) => navigate(`/model/${model.name}/${rec.id}`)}
           onDelete={setDeletingRecord}
           view={activeView}
+          sortField={sortFieldName}
+          sortDir={sortDir}
+          onToggleSort={toggleColumnSort}
           selectedIds={selectedIds}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={toggleSelectAll}

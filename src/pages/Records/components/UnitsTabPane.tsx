@@ -12,6 +12,7 @@ import TableView from './TableView';
 import ViewSelector from './ViewSelector';
 import ViewEditor from './ViewEditor';
 import { PageSizeSelector, PageNavigator } from './PaginationControls';
+import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
 import type { AppRecord, ModelField, ModelView } from '@/types';
 
 interface UnitsTabPaneProps {
@@ -41,6 +42,7 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
   const currentUserId = useAppStore((s) => s.currentUserId);
   const deleteRecord = useAppStore((s) => s.deleteRecord);
   const addToast = useAppStore((s) => s.addToast);
+  const users = useAppStore((s) => s.users);
 
   const allProjectsModel = useMemo(
     () => models.find((m) => m.name === 'all_projects') ?? null,
@@ -139,10 +141,44 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
   useEffect(() => {
     setCurrentPage(1);
   }, [searchedUnits.length, activeViewId, searchField]);
+
+  // Column-header sort, lifted out of TableView so it sorts the full unit set
+  // before pagination (a header click reorders every page, not just the one on
+  // screen). Seeded from the active view's default sort; reset on view change.
+  const resolveViewSortName = (v: ModelView | null): string | null => {
+    const id = v?.sort_field_id ?? null;
+    if (!id || !unitsModel) return null;
+    const f = unitsModel.schema.sections.flatMap((s) => s.fields).find((x) => x.id === id);
+    return f ? f.name : null;
+  };
+  const [sortFieldName, setSortFieldName] = useState<string | null>(() => resolveViewSortName(activeView));
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>(activeView?.sort_direction ?? 'asc');
+  useEffect(() => {
+    setSortFieldName(resolveViewSortName(activeView));
+    setSortDir(activeView?.sort_direction ?? 'asc');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeViewId, activeView?.sort_field_id, activeView?.sort_direction]);
+  const toggleColumnSort = (fieldName: string) => {
+    setCurrentPage(1);
+    if (sortFieldName === fieldName) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortFieldName(fieldName);
+      setSortDir('asc');
+    }
+  };
+
+  // Sort the searched set (after view-scope + text search) before pagination.
+  const sortedUnits = useMemo(() => {
+    if (!unitsModel) return searchedUnits;
+    const ctx: SortCtx = { isAr, allRecords: records, models, users };
+    return sortRecordsByFieldName(searchedUnits, unitsModel, sortFieldName, sortDir, ctx);
+  }, [searchedUnits, unitsModel, sortFieldName, sortDir, isAr, records, models, users]);
+
   const pagedUnits = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
-    return searchedUnits.slice(start, start + pageSize);
-  }, [searchedUnits, currentPage, pageSize]);
+    return sortedUnits.slice(start, start + pageSize);
+  }, [sortedUnits, currentPage, pageSize]);
 
   // If the active view becomes hidden after a permission change, fall back to
   // the Default view so the table doesn't render against a missing view.
@@ -271,6 +307,9 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
                 }
                 onDelete={setDeletingRecord}
                 view={activeView}
+                sortField={sortFieldName}
+                sortDir={sortDir}
+                onToggleSort={toggleColumnSort}
               />
               <PageNavigator
                 totalCount={searchedUnits.length}
