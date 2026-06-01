@@ -2802,10 +2802,13 @@ GRANT SELECT ON TABLE public.auto_id_counters TO authenticated;
 -- not choose the best candidate function" error blocks every save
 -- with an auto_id field. The 2026-05-09_drop_auto_id_bigint_overload
 -- migration drops the legacy bigint overload on existing installs.
+-- Body reflects the deployed function: M13 permission gate
+-- (2026-05-07_h_audit_followups.sql) + the 2026-06-01 self-heal
+-- (2026-06-01_auto_id_selfheal_rpc.sql).
 CREATE OR REPLACE FUNCTION public.record_assign_auto_id(
   p_model_id  uuid,
   p_field_id  uuid,
-  p_scope_key text DEFAULT '',
+  p_scope_key text,
   p_start     int DEFAULT 1
 )
 RETURNS int
@@ -2814,8 +2817,19 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $fn$
 DECLARE
-  v_value int;
+  v_value        int;
+  v_field_name   text;
+  v_max_existing bigint;
 BEGIN
+  -- M13: gate behind the same model-level 'create' permission that gates
+  -- record creation, so a low-privilege user can't inflate counters.
+  IF NOT public.wassell_user_has_action((SELECT auth.uid()), p_model_id, 'create') THEN
+    RAISE EXCEPTION 'record_assign_auto_id: caller lacks create permission on model %', p_model_id
+      USING ERRCODE = 'insufficient_privilege';
+  END IF;
+
+  -- Atomic increment: Postgres serializes the row-level op so two concurrent
+  -- callers can never read the same value.
   INSERT INTO public.auto_id_counters (model_id, field_id, scope_key, current_value)
   VALUES (p_model_id, p_field_id, COALESCE(p_scope_key, ''), GREATEST(p_start, 1))
   ON CONFLICT (model_id, field_id, scope_key) DO UPDATE
@@ -2823,11 +2837,43 @@ BEGIN
         updated_at = now()
   RETURNING current_value INTO v_value;
 
+  -- Self-heal: the atomic counter only stops two SIMULTANEOUS saves from
+  -- colliding with each other; it does NOT stop the counter from drifting
+  -- below ids already in use (import / duplicate / pre-filled saves never
+  -- call this RPC). For the GLOBAL scope, never return a value at or below
+  -- the highest numeric id already present in the model's records. Scoped
+  -- counters are skipped (deriving per-row scope in SQL would duplicate the
+  -- client slugify; every auto_id field today is global scope).
+  IF COALESCE(p_scope_key, '') IN ('', '__global__') THEN
+    SELECT (f->>'name') INTO v_field_name
+    FROM public.models m
+    CROSS JOIN LATERAL jsonb_array_elements(m.schema->'sections') s
+    CROSS JOIN LATERAL jsonb_array_elements(s->'fields') f
+    WHERE m.id = p_model_id AND (f->>'id') = p_field_id::text
+    LIMIT 1;
+
+    IF v_field_name IS NOT NULL THEN
+      SELECT MAX(NULLIF(regexp_replace(ur.data->>v_field_name, '\D', '', 'g'), '')::bigint)
+        INTO v_max_existing
+      FROM public.unified_records ur
+      WHERE ur.model_id = p_model_id;
+
+      IF v_max_existing IS NOT NULL AND v_max_existing >= v_value THEN
+        v_value := (v_max_existing + 1)::int;
+        UPDATE public.auto_id_counters
+           SET current_value = v_value, updated_at = now()
+         WHERE model_id = p_model_id
+           AND field_id = p_field_id
+           AND scope_key = COALESCE(p_scope_key, '');
+      END IF;
+    END IF;
+  END IF;
+
   RETURN v_value;
 END;
 $fn$;
 
-REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) FROM anon;
 GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.record_assign_auto_id(uuid, uuid, text, int) TO service_role;
