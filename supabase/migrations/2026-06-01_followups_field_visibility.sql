@@ -6,7 +6,7 @@
 -- (see src/types FieldVisibilityRule + src/lib/fieldVisibility.ts) so each set
 -- of fields shows only for its follow-up type:
 --
---   appointment_confirmation_call → appointment_id, appointment_date, appointment_project
+--   appointment_confirmation_call → appointment_id, appointment_date, appointment_project, reschedule_contact_date
 --   follow_up_call_after_visit    → visit, visited_projects
 --   whatsapp_follow_up            → next_followup_after_days
 --
@@ -39,7 +39,7 @@ SET
             (
               SELECT jsonb_agg(
                 CASE
-                  WHEN fld->>'name' IN ('appointment_id', 'appointment_date', 'appointment_project')
+                  WHEN fld->>'name' IN ('appointment_id', 'appointment_date', 'appointment_project', 'reschedule_contact_date')
                     THEN fld || jsonb_build_object(
                       'visible_when',
                       jsonb_build_object(
