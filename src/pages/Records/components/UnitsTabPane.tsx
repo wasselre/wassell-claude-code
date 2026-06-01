@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Search, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope, useApplyVisibleViews } from '@/hooks/usePermission';
+import { buildRecordSearchText, normalizeForSearch } from '@/lib/recordSearch';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import TableView from './TableView';
@@ -95,21 +96,26 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
   const [deletingRecord, setDeletingRecord] = useState<AppRecord | null>(null);
   const [search, setSearch] = useState('');
 
-  // Text search over the project's units (text / email / phone fields), mirroring
-  // the Records list-page search box. Applied after view-scope, before pagination.
+  // Pre-build a searchable string per unit spanning ALL fields (dropdown labels,
+  // lookup display values, digit-script-normalized). Built once per data change —
+  // not per keystroke — since resolving lookups is O(linked-model rows).
+  const unitSearchIndex = useMemo(() => {
+    const idx = new Map<string, string>();
+    if (!unitsModel) return idx;
+    const ctx = { models, records };
+    for (const rec of scopedUnits) {
+      idx.set(rec.id, normalizeForSearch(buildRecordSearchText(rec, unitsModel, ctx)));
+    }
+    return idx;
+  }, [scopedUnits, unitsModel, models, records]);
+
+  // Text search over the project's units — matches ANY field via the index above.
+  // Applied after view-scope, before pagination.
   const searchedUnits = useMemo<AppRecord[]>(() => {
-    const q = search.trim().toLowerCase();
-    if (!q || !unitsModel) return scopedUnits;
-    const searchable = unitsModel.schema.sections
-      .flatMap((s) => s.fields)
-      .filter((f) => ['text', 'email', 'phone'].includes(f.type));
-    return scopedUnits.filter((rec) =>
-      searchable.some((f) => {
-        const val = (rec.data as Record<string, unknown>)[f.name];
-        return val != null && String(val).toLowerCase().includes(q);
-      }),
-    );
-  }, [search, scopedUnits, unitsModel]);
+    const q = normalizeForSearch(search.trim());
+    if (!q) return scopedUnits;
+    return scopedUnits.filter((rec) => (unitSearchIndex.get(rec.id) ?? '').includes(q));
+  }, [search, scopedUnits, unitSearchIndex]);
 
   // Pagination — local to the tab. Reset to page 1 whenever the visible set size
   // changes (project switch, view filter, search, add/delete).
