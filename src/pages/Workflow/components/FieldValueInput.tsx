@@ -1,3 +1,4 @@
+import { X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
@@ -65,34 +66,69 @@ export default function FieldValueInput({ field, value, onChange, className = ''
       const selected = Array.isArray(value)
         ? (value as string[])
         : value ? [String(value)] : [];
+      // "Fail loudly" (see CLAUDE.md "Silent Failures"): values stored here that
+      // match no current option — e.g. an option whose value drifted (inline-
+      // create UUID drift) or was deleted — used to be invisible in this picker
+      // (no checkbox renders for them) yet were silently re-saved on every edit,
+      // letting orphaned values accumulate. Surface them as removable chips so
+      // they can be seen and dropped instead of riding along unnoticed.
+      const knownValues = new Set(options.map((o) => o.value));
+      const unknownValues = [...new Set(selected.filter((v) => !knownValues.has(v)))];
       return (
-        <div className={`p-2 rounded-xl border border-sand/30 bg-white space-y-1 max-h-32 overflow-y-auto ${className}`}>
-          {options.length === 0 && (
-            <span className="text-xs text-charcoal/30">{isAr ? 'لا توجد خيارات' : 'No options'}</span>
+        <div className={`space-y-1 ${className}`}>
+          <div className="p-2 rounded-xl border border-sand/30 bg-white space-y-1 max-h-32 overflow-y-auto">
+            {options.length === 0 && (
+              <span className="text-xs text-charcoal/30">{isAr ? 'لا توجد خيارات' : 'No options'}</span>
+            )}
+            {options.map((opt) => {
+              const checked = selected.includes(opt.value);
+              return (
+                <label key={opt.id} className="flex items-center gap-2 cursor-pointer py-0.5 px-1 rounded hover:bg-cream/50">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => {
+                      const next = checked
+                        ? selected.filter((v) => v !== opt.value)
+                        : [...selected, opt.value];
+                      onChange(next);
+                    }}
+                    className="w-3.5 h-3.5 rounded border-sand text-copper focus:ring-copper/30"
+                  />
+                  <div
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: opt.color ?? '#6B7280' }}
+                  />
+                  <span className="text-xs">{isAr ? opt.label_ar : opt.label_en}</span>
+                </label>
+              );
+            })}
+          </div>
+          {unknownValues.length > 0 && (
+            <div className="p-2 rounded-xl border border-red-200 bg-red-50/60 space-y-1.5">
+              <span className="block text-[11px] font-bold text-red-600/90">
+                {isAr ? '⚠ قيم غير معروفة لا تطابق أي خيار:' : '⚠ Unknown values (match no current option):'}
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {unknownValues.map((val) => (
+                  <span
+                    key={val}
+                    className="inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md bg-white text-red-700 border border-red-200"
+                  >
+                    <span className="font-mono break-all">{val}</span>
+                    <button
+                      type="button"
+                      onClick={() => onChange(selected.filter((v) => v !== val))}
+                      className="text-red-400 hover:text-red-700 shrink-0"
+                      aria-label={isAr ? 'إزالة القيمة' : 'Remove value'}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
           )}
-          {options.map((opt) => {
-            const checked = selected.includes(opt.value);
-            return (
-              <label key={opt.id} className="flex items-center gap-2 cursor-pointer py-0.5 px-1 rounded hover:bg-cream/50">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  onChange={() => {
-                    const next = checked
-                      ? selected.filter((v) => v !== opt.value)
-                      : [...selected, opt.value];
-                    onChange(next);
-                  }}
-                  className="w-3.5 h-3.5 rounded border-sand text-copper focus:ring-copper/30"
-                />
-                <div
-                  className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: opt.color ?? '#6B7280' }}
-                />
-                <span className="text-xs">{isAr ? opt.label_ar : opt.label_en}</span>
-              </label>
-            );
-          })}
         </div>
       );
     }
