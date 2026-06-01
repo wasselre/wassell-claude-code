@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown,
@@ -44,6 +44,27 @@ export default function ViewSelector({
   const [open, setOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ModelView | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+  // Horizontal offset (relative to the trigger) that keeps the 320px menu fully
+  // on-screen. A fixed right-0/left-0 alignment pushed the menu — and its
+  // edit/delete controls, which live at the menu's far edge — off the viewport
+  // when the trigger sits near a screen edge (e.g. the Units tab puts this
+  // selector at the far-left of the header in RTL, so the menu overflowed left
+  // and the controls landed off-screen). Recomputed on open.
+  const [menuLeft, setMenuLeft] = useState(0);
+  useLayoutEffect(() => {
+    if (!open || !rootRef.current) return;
+    const MENU_W = 320; // matches w-80
+    const MARGIN = 8;
+    const r = rootRef.current.getBoundingClientRect();
+    // Preferred anchor: RTL aligns the menu's right edge to the trigger, LTR its
+    // left edge. Then clamp so the whole menu stays within [MARGIN, vw-MARGIN].
+    const preferredViewportLeft = isAr ? r.right - MENU_W : r.left;
+    const clampedViewportLeft = Math.max(
+      MARGIN,
+      Math.min(preferredViewportLeft, window.innerWidth - MENU_W - MARGIN),
+    );
+    setMenuLeft(clampedViewportLeft - r.left);
+  }, [open, isAr]);
 
   useEffect(() => {
     if (!open) return;
@@ -100,7 +121,8 @@ export default function ViewSelector({
 
       {open && (
         <div
-          className={`absolute top-full mt-1 ${isAr ? 'right-0' : 'left-0'} z-20 w-80 bg-white rounded-xl shadow-lg border border-sand/40 py-2 max-h-[28rem] overflow-y-auto`}
+          style={{ left: menuLeft }}
+          className="absolute top-full mt-1 z-20 w-80 bg-white rounded-xl shadow-lg border border-sand/40 py-2 max-h-[28rem] overflow-y-auto"
         >
           {/* Default option — show_in_table fallback */}
           <button
@@ -241,8 +263,9 @@ function ViewRow({
       {canEdit && (
         // Always visible (not hover-gated) so edit / delete / set-default are
         // discoverable — in a dropdown (especially RTL) hover-only controls
-        // read as "missing". Muted at rest, full-strength on row hover.
-        <div className="flex items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
+        // read as "missing". `shrink-0` so they never get squeezed/clipped; the
+        // label (flex-1 min-w-0 truncate) absorbs any width pressure instead.
+        <div className="flex items-center gap-0.5 shrink-0">
           {onToggleDefault && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleDefault(); }}
