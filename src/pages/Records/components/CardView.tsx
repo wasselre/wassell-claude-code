@@ -103,7 +103,7 @@ function displayExpandedField(
   isAr: boolean,
 ): string {
   if (ef.kind === 'local') return resolveFieldDisplay(ef.field, record, allRecords, allModels, isAr);
-  const value = readExpandedValue(ef, record, allRecords, model);
+  const value = readExpandedValue(ef, record, allRecords, model, allModels);
   const field = ef.field;
   if (field.type === 'lookup') {
     if (!field.lookup_model_id || !field.lookup_display_field) return '—';
@@ -134,7 +134,7 @@ function badgeOptionForExpanded(
   model: AppModel,
 ): FieldOption | null {
   if (ef.kind === 'local') return resolveBadgeOption(ef.field, record, allRecords, allModels);
-  const value = readExpandedValue(ef, record, allRecords, model);
+  const value = readExpandedValue(ef, record, allRecords, model, allModels);
   const v = Array.isArray(value) ? value[0] : value;
   return ef.field.options?.find((o) => o.value === v) ?? null;
 }
@@ -258,7 +258,7 @@ export default function CardView({ model, records, onCardClick, selectedIds, onT
                         </span>
                         <DynamicCell
                           field={ef.field}
-                          value={readExpandedValue(ef, record, allRecords, model)}
+                          value={readExpandedValue(ef, record, allRecords, model, models)}
                           allRecords={allRecords}
                           recordData={record.data}
                         />

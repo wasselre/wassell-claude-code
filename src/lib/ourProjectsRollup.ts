@@ -314,6 +314,29 @@ export function applyOurProjectsRollups(
 }
 
 /**
+ * Roll up a single record for use as a mirror / display SOURCE. The mirror and
+ * section-mirror resolvers read `sourceRecord.data[field]` straight from the
+ * store, but rollup fields are never stored (computed at render) — so a
+ * mirrored rollup field would otherwise read the empty stored slot. This
+ * applies the source model's rollups so the mirrored field surfaces its live
+ * computed value. Identity (same reference) for any model without unit rollups,
+ * or when the units model isn't loaded — so non-rollup mirrors are unchanged.
+ *
+ * `allModels` is needed only to locate the units model by name. Pure.
+ */
+export function rollupRecordForMirror(
+  record: AppRecord,
+  sourceModel: AppModel | null | undefined,
+  allModels: AppModel[],
+  allRecords: Record<string, AppRecord[]>,
+): AppRecord {
+  if (!modelHasUnitRollups(sourceModel)) return record;
+  const unitsModel = allModels.find((m) => m.name === 'units');
+  if (!unitsModel) return record;
+  return applyProjectRollups(record, sourceModel!, allRecords[unitsModel.id] ?? []);
+}
+
+/**
  * Helper used by the field-permission resolver / form save path:
  * returns true when the field is one of our hardcoded rollups and so
  * must never be written back to the record by user edits.

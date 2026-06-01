@@ -1,4 +1,5 @@
 import { computeEditAndSync } from './sectionMirrorExpand';
+import { rollupRecordForMirror } from './ourProjectsRollup';
 import type { AppModel, AppRecord, ModelField, ModelSection } from '@/types';
 
 export type SectionMirrorFieldStatus =
@@ -94,10 +95,14 @@ export function resolveSectionMirrorField(
     return { ...EMPTY, status: 'sibling_not_selected', sourceSection, targetModel, sibling };
   }
 
-  const targetRecord = allRecords[targetModel.id]?.find((r) => r.id === targetId) ?? null;
-  if (!targetRecord) {
+  const rawTarget = allRecords[targetModel.id]?.find((r) => r.id === targetId) ?? null;
+  if (!rawTarget) {
     return { ...EMPTY, status: 'target_record_missing', sourceSection, targetModel, sibling };
   }
+  // Roll up the source record so mirrored COMPUTED fields (e.g. all_projects'
+  // unit rollups) surface their live values — they're never stored, so a raw
+  // read would show empty. Identity for non-rollup source models.
+  const targetRecord = rollupRecordForMirror(rawTarget, targetModel, allModels, allRecords);
 
   // Apply field-mode filter.
   const candidates = [...sourceSection.fields]

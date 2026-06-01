@@ -305,7 +305,7 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                   const field = ef.field;
                   const value = ef.kind === 'local'
                     ? record.data[field.name]
-                    : readExpandedValue(ef, record, allRecords, model);
+                    : readExpandedValue(ef, record, allRecords, model, models);
                   const effectiveData = ef.kind === 'local' ? (isEditing ? editData : record.data) : record.data;
                   // Inline-edit is disabled for virtual mirrored columns (wiring edits
                   // back to the source record from a table row is v2 work) AND for

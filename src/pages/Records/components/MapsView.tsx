@@ -239,7 +239,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
     if (!labelEf) return out;
     const ctx: Omit<FormatCtx, 'recordData'> = { isAr, t, allRecords, models, users };
     for (const p of resolved) {
-      const value = readExpandedValue(labelEf, p.record, allRecords, model);
+      const value = readExpandedValue(labelEf, p.record, allRecords, model, models);
       const text = formatFieldValue(labelEf.field, value, { ...ctx, recordData: p.record.data });
       out[p.record.id] = text === '—' ? '' : text;
     }
@@ -479,7 +479,7 @@ function PopupCard({
   // Read the value through the section mirror for mirrored children; for local
   // fields readExpandedValue returns record.data[field.name], so the path is
   // identical to before for the common case.
-  const valueOf = (ef: ExpandedField): unknown => readExpandedValue(ef, record, allRecords, model);
+  const valueOf = (ef: ExpandedField): unknown => readExpandedValue(ef, record, allRecords, model, models);
   const renderValue = (ef: ExpandedField): string => formatFieldValue(ef.field, valueOf(ef), ctx);
 
   // URL fields render as a clickable "Open link" pill so the popup never

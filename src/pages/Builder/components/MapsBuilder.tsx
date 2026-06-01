@@ -113,7 +113,7 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
         // / section-mirror-child label renders its display value (e.g. the
         // project name) instead of a raw record id.
         const label = labelEf
-          ? formatFieldValue(labelEf.field, readExpandedValue(labelEf, p.record, records, model), {
+          ? formatFieldValue(labelEf.field, readExpandedValue(labelEf, p.record, records, model, models), {
               isAr,
               t,
               allRecords: records,
