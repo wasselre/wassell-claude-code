@@ -139,6 +139,27 @@ export function unitsForOurProject(
 }
 
 /**
+ * Filter the full units list to those that belong DIRECTLY to an
+ * all_projects record. Unlike our_projects (which hops through the
+ * `project` lookup to reach the master record), an all_projects record IS
+ * the master that units point at, so we match units whose `project_id`
+ * equals this record's own id. Returns [] when no unit matches.
+ */
+export function unitsForAllProject(
+  allProjectRecord: AppRecord,
+  allUnits: readonly AppRecord[],
+): AppRecord[] {
+  const targetId = allProjectRecord.id;
+  if (!targetId) return [];
+  return allUnits.filter((u) => {
+    const linked = u.data?.project_id;
+    if (typeof linked === 'string') return linked === targetId;
+    if (Array.isArray(linked)) return linked.includes(targetId);
+    return false;
+  });
+}
+
+/**
  * Compute one rollup kind against the given units list. Returns the
  * value in the shape the matching field type expects:
  *   - count kinds      → number (always finite, 0 when no units)
@@ -189,21 +210,27 @@ export function computeRollupKind(
 }
 
 /**
- * Walk the our_projects model's schema, find every field flagged
- * `is_computed` with a known `computed_kind`, compute its value against
- * the matching units, and return a Record<fieldSlug, value> partial
- * patch. Callers merge this over the record's `data` before rendering.
- *
- * Pure: never mutates the record, the model, or the units list.
+ * Names of the models that participate in the units → project rollups.
+ * Both compute the same eleven `computed_kind` values; they only differ in
+ * how they find their matching units (see `matchingUnitsForProject`).
  */
-export function computeOurProjectsRollups(
-  ourProjectRecord: AppRecord,
-  ourProjectsModel: AppModel,
-  allUnits: readonly AppRecord[],
+export function modelHasUnitRollups(model: AppModel | null | undefined): boolean {
+  return !!model && (model.name === 'our_projects' || model.name === 'all_projects');
+}
+
+/**
+ * Walk a project model's schema, find every field flagged `is_computed`
+ * with a known `computed_kind`, compute its value against the supplied
+ * units, and return a Record<fieldSlug, value> partial patch. Shared by
+ * the our_projects (lookup-hop) and all_projects (direct) rollup paths.
+ * Pure: never mutates the model or the units list.
+ */
+function computeRollupPatch(
+  model: AppModel,
+  matchingUnits: readonly AppRecord[],
 ): Record<string, unknown> {
-  const matchingUnits = unitsForOurProject(ourProjectRecord, allUnits);
   const patch: Record<string, unknown> = {};
-  for (const section of ourProjectsModel.schema.sections) {
+  for (const section of model.schema.sections) {
     for (const f of section.fields) {
       if (!f.is_computed || !f.computed_kind) continue;
       patch[f.name] = computeRollupKind(f.computed_kind, matchingUnits);
@@ -213,24 +240,77 @@ export function computeOurProjectsRollups(
 }
 
 /**
- * Convenience: returns a NEW record object whose `data` already has the
- * rollup values merged in. Use this at every render-time consumer that
- * surfaces an our_projects record's data to the UI (RecordFormPage,
- * generic list / table / card views, mirror resolvers). Stored data
- * always wins over computed values for non-computed fields — only the
- * fields flagged `is_computed` get overwritten.
+ * Explicit our_projects entry point — computes the rollup patch using the
+ * our_projects → all_projects → units lookup hop. Kept for callers/tests
+ * that want this path by name; render-time consumers should use
+ * `applyProjectRollups`, which dispatches by model.
+ *
+ * Pure: never mutates the record, the model, or the units list.
+ */
+export function computeOurProjectsRollups(
+  ourProjectRecord: AppRecord,
+  ourProjectsModel: AppModel,
+  allUnits: readonly AppRecord[],
+): Record<string, unknown> {
+  return computeRollupPatch(ourProjectsModel, unitsForOurProject(ourProjectRecord, allUnits));
+}
+
+/**
+ * Resolve the units that roll up into a given project record, dispatching
+ * on the model name:
+ *   - our_projects → hop through its `project` lookup to the all_projects
+ *     master, then match units by `project_id`
+ *   - all_projects → match units directly by `project_id`
+ * Returns null for any other model (no rollups configured) so callers can
+ * cheaply fall through to the identity path.
+ */
+function matchingUnitsForProject(
+  record: AppRecord,
+  model: AppModel,
+  allUnits: readonly AppRecord[],
+): AppRecord[] | null {
+  if (model.name === 'our_projects') return unitsForOurProject(record, allUnits);
+  if (model.name === 'all_projects') return unitsForAllProject(record, allUnits);
+  return null;
+}
+
+/**
+ * Returns a NEW record whose `data` already has the model's computed rollup
+ * values merged in. Use this at every render-time consumer that surfaces a
+ * project record's data to the UI (RecordFormPage, generic list / table /
+ * card views, mirror resolvers). Works for both our_projects and
+ * all_projects; returns the SAME reference for any other model or when no
+ * rollup fields are configured. Stored data always wins for non-computed
+ * fields — only the fields flagged `is_computed` get overwritten.
+ *
+ * Pure: never mutates inputs, never persists.
+ */
+export function applyProjectRollups(
+  record: AppRecord,
+  model: AppModel,
+  allUnits: readonly AppRecord[],
+): AppRecord {
+  const matchingUnits = matchingUnitsForProject(record, model, allUnits);
+  if (!matchingUnits) return record;
+  const patch = computeRollupPatch(model, matchingUnits);
+  if (Object.keys(patch).length === 0) return record;
+  return {
+    ...record,
+    data: { ...record.data, ...patch },
+  };
+}
+
+/**
+ * Back-compat wrapper for the our_projects rollups. New code should call
+ * `applyProjectRollups`, which dispatches by model name (our_projects +
+ * all_projects).
  */
 export function applyOurProjectsRollups(
   ourProjectRecord: AppRecord,
   ourProjectsModel: AppModel,
   allUnits: readonly AppRecord[],
 ): AppRecord {
-  const patch = computeOurProjectsRollups(ourProjectRecord, ourProjectsModel, allUnits);
-  if (Object.keys(patch).length === 0) return ourProjectRecord;
-  return {
-    ...ourProjectRecord,
-    data: { ...ourProjectRecord.data, ...patch },
-  };
+  return applyProjectRollups(ourProjectRecord, ourProjectsModel, allUnits);
 }
 
 /**

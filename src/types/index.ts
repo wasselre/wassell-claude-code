@@ -272,8 +272,8 @@ export interface ModelField {
   auto_fill_source_field_name?: string | null;
   // Cross-record rollup. When `is_computed` is true the field's value is
   // never user-edited; it's computed live at read time from related records
-  // (currently only the our_projects → units rollups — see
-  // src/lib/ourProjectsRollup.ts). `computed_kind` selects which rollup
+  // (the units → project rollups on both our_projects and all_projects —
+  // see src/lib/ourProjectsRollup.ts). `computed_kind` selects which rollup
   // recipe runs and writes into this field's slug. The field's underlying
   // `type` still controls rendering (a count uses `number`, a min/max uses
   // `range`, a per-meter average uses `currency`) so the existing form +
@@ -286,8 +286,9 @@ export interface ModelField {
 
 // ── Computed-field rollup kinds ────────────────────────────────────────
 //
-// Hardcoded recipes for the our_projects → units rollups. Each kind has a
-// matching implementation in src/lib/ourProjectsRollup.ts. When you add
+// Hardcoded recipes for the units → project rollups (used by both
+// our_projects and all_projects). Each kind has a matching implementation
+// in src/lib/ourProjectsRollup.ts. When you add
 // a new kind here you MUST also add a case to `computeOurProjectsRollups`
 // or the field's value silently stays `null` for every record. Kinds
 // follow snake_case so the value lines up with the slug we suggest in

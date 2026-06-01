@@ -1,16 +1,17 @@
 // Hooks that apply cross-record rollup computations to records before
-// they're consumed by the UI. Today this is the our_projects → units
-// rollups (see src/lib/ourProjectsRollup.ts); future rollups for other
-// models would extend the dispatch below.
+// they're consumed by the UI. These are the units → project rollups for
+// BOTH our_projects and all_projects (see src/lib/ourProjectsRollup.ts);
+// `applyProjectRollups` dispatches by model name and is the identity for
+// every other model.
 //
 // Subscribe to BOTH the consumed model's records AND the units records
 // so the rolled-up values stay live: when a unit is added / edited /
-// deleted, every our_projects row visible on screen recomputes through
+// deleted, every project row visible on screen recomputes through
 // React's normal re-render cycle.
 
 import { useMemo } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { applyOurProjectsRollups } from '@/lib/ourProjectsRollup';
+import { applyProjectRollups, modelHasUnitRollups } from '@/lib/ourProjectsRollup';
 import type { AppRecord } from '@/types';
 
 /**
@@ -28,11 +29,11 @@ export function useRolledUpRecordList(
   return useMemo(() => {
     if (!modelId) return rawList;
     const model = models.find((m) => m.id === modelId);
-    if (!model || model.name !== 'our_projects') return rawList;
+    if (!modelHasUnitRollups(model)) return rawList;
     const unitsModel = models.find((m) => m.name === 'units');
     if (!unitsModel) return rawList;
     const units = allRecords[unitsModel.id] ?? [];
-    return rawList.map((r) => applyOurProjectsRollups(r, model, units));
+    return rawList.map((r) => applyProjectRollups(r, model!, units));
   }, [modelId, rawList, models, allRecords]);
 }
 
@@ -51,10 +52,10 @@ export function useRolledUpRecord(
     if (!rawRecord) return null;
     if (!modelId) return rawRecord;
     const model = models.find((m) => m.id === modelId);
-    if (!model || model.name !== 'our_projects') return rawRecord;
+    if (!modelHasUnitRollups(model)) return rawRecord;
     const unitsModel = models.find((m) => m.name === 'units');
     if (!unitsModel) return rawRecord;
     const units = allRecords[unitsModel.id] ?? [];
-    return applyOurProjectsRollups(rawRecord, model, units);
+    return applyProjectRollups(rawRecord, model!, units);
   }, [modelId, rawRecord, models, allRecords]);
 }
