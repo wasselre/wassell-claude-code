@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
@@ -79,6 +79,32 @@ export default function ViewEditor({
   const [isShared, setIsShared] = useState<boolean>(view?.is_shared ?? false);
   const [isDefault, setIsDefault] = useState<boolean>(view?.is_default ?? false);
   const [error, setError] = useState<string | null>(null);
+
+  // Re-seed the form every time the editor opens (or the target view changes
+  // while open). The `useState` initializers above only run on the first
+  // mount, and this component stays mounted across opens (the parent toggles
+  // `open`). Without this effect, clicking "Edit" on a saved view would show
+  // the values from whenever the editor first mounted — usually the blank
+  // "create" state — so edits never loaded and users worked around it by
+  // creating duplicate views. Guarded on `open` so it doesn't clobber edits
+  // while the modal is already open.
+  useEffect(() => {
+    if (!open) return;
+    setLabelAr(view?.label_ar ?? '');
+    setLabelEn(view?.label_en ?? '');
+    setFieldIds(
+      view?.field_ids
+        ?? initialFieldIds
+        ?? localFields.filter((f) => f.show_in_table).map((f) => f.id),
+    );
+    setSortFieldId(view?.sort_field_id ?? initialSort?.field_id ?? null);
+    setSortDir((view?.sort_direction ?? initialSort?.direction ?? 'asc') as 'asc' | 'desc');
+    setConditions(view?.conditions ?? []);
+    setIsShared(view?.is_shared ?? false);
+    setIsDefault(view?.is_default ?? false);
+    setError(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, view]);
 
   const orderedSelected: ExpandedField[] = fieldIds
     .map((id) => expandedFields.find((f) => f.id === id))

@@ -239,7 +239,10 @@ function ViewRow({
       {view.is_shared && canEdit && <Users size={11} className="text-charcoal/40 shrink-0" />}
 
       {canEdit && (
-        <div className="hidden group-hover:flex items-center gap-0.5">
+        // Always visible (not hover-gated) so edit / delete / set-default are
+        // discoverable — in a dropdown (especially RTL) hover-only controls
+        // read as "missing". Muted at rest, full-strength on row hover.
+        <div className="flex items-center gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
           {onToggleDefault && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleDefault(); }}
