@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { Search, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope, useApplyVisibleViews } from '@/hooks/usePermission';
-import { buildRecordSearchText, normalizeForSearch } from '@/lib/recordSearch';
+import { buildExpandedFieldSearchText, buildRecordSearchText, normalizeForSearch } from '@/lib/recordSearch';
+import { collectViewFields, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import TableView from './TableView';
@@ -95,19 +96,33 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
   const [editingView, setEditingView] = useState<ModelView | null>(null);
   const [deletingRecord, setDeletingRecord] = useState<AppRecord | null>(null);
   const [search, setSearch] = useState('');
+  const [searchField, setSearchField] = useState<string>('all'); // 'all' = every field
 
-  // Pre-build a searchable string per unit spanning ALL fields (dropdown labels,
-  // lookup display values, digit-script-normalized). Built once per data change —
-  // not per keystroke — since resolving lookups is O(linked-model rows).
+  // Options for the search-scope picker: local fields + mirrored children
+  // (section_mirror). Lets search be scoped to a single field — including a
+  // mirrored or lookup one.
+  const expandedFields = useMemo<ExpandedField[]>(
+    () => (unitsModel ? collectViewFields(unitsModel, models) : []),
+    [unitsModel, models],
+  );
+
+  // Pre-build the searchable string per unit, once per data change (not per
+  // keystroke — resolving lookups/mirrors is O(linked rows)). Scope is either a
+  // single picked field or ALL fields; rebuilds when the scope changes.
   const unitSearchIndex = useMemo(() => {
     const idx = new Map<string, string>();
     if (!unitsModel) return idx;
     const ctx = { models, records };
+    const scopedField =
+      searchField === 'all' ? null : expandedFields.find((f) => f.id === searchField) ?? null;
     for (const rec of scopedUnits) {
-      idx.set(rec.id, normalizeForSearch(buildRecordSearchText(rec, unitsModel, ctx)));
+      const text = scopedField
+        ? buildExpandedFieldSearchText(scopedField, rec, unitsModel, ctx)
+        : buildRecordSearchText(rec, unitsModel, ctx);
+      idx.set(rec.id, normalizeForSearch(text));
     }
     return idx;
-  }, [scopedUnits, unitsModel, models, records]);
+  }, [scopedUnits, unitsModel, models, records, searchField, expandedFields]);
 
   // Text search over the project's units — matches ANY field via the index above.
   // Applied after view-scope, before pagination.
@@ -123,7 +138,7 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
   const [currentPage, setCurrentPage] = useState(1);
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchedUnits.length, activeViewId]);
+  }, [searchedUnits.length, activeViewId, searchField]);
   const pagedUnits = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return searchedUnits.slice(start, start + pageSize);
@@ -158,6 +173,17 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
     addToast(t('toast.deleted'), 'success');
     setDeletingRecord(null);
   };
+
+  const selectedFieldLabel =
+    searchField === 'all'
+      ? null
+      : (() => {
+          const ef = expandedFields.find((f) => f.id === searchField);
+          return ef ? (isAr ? ef.field.label_ar : ef.field.label_en) : null;
+        })();
+  const searchPlaceholder = selectedFieldLabel
+    ? (isAr ? `بحث في «${selectedFieldLabel}»…` : `Search ${selectedFieldLabel}…`)
+    : (isAr ? 'بحث في كل الحقول…' : 'Search all fields…');
 
   return (
     <div className="space-y-4">
@@ -196,17 +222,34 @@ export default function UnitsTabPane({ projectId }: UnitsTabPaneProps) {
         </div>
       ) : (
         <>
-          {/* Toolbar: text search + page size — mirrors the Records list page. */}
+          {/* Toolbar: search scope (all fields / one field) + query + page size. */}
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="relative flex-1 max-w-xs">
-              <Search size={16} className="absolute start-3 top-1/2 -translate-y-1/2 text-charcoal/30" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={isAr ? 'بحث في الوحدات...' : 'Search units...'}
-                className="form-input ps-9 text-sm"
-              />
+            <div className="flex items-center gap-2 flex-1 min-w-0">
+              <select
+                value={searchField}
+                onChange={(e) => setSearchField(e.target.value)}
+                className="form-input text-sm w-auto max-w-[11rem] shrink-0"
+                title={isAr ? 'نطاق البحث' : 'Search scope'}
+                aria-label={isAr ? 'نطاق البحث' : 'Search scope'}
+              >
+                <option value="all">{isAr ? 'كل الحقول' : 'All fields'}</option>
+                {expandedFields.map((ef) => (
+                  <option key={ef.id} value={ef.id}>
+                    {(isAr ? ef.field.label_ar : ef.field.label_en) +
+                      (ef.kind === 'mirrored' ? (isAr ? ' (مرآة)' : ' (mirror)') : '')}
+                  </option>
+                ))}
+              </select>
+              <div className="relative flex-1 min-w-0 max-w-xs">
+                <Search size={16} className="absolute start-3 top-1/2 -translate-y-1/2 text-charcoal/30" />
+                <input
+                  type="text"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder={searchPlaceholder}
+                  className="form-input ps-9 text-sm"
+                />
+              </div>
             </div>
             <PageSizeSelector pageSize={pageSize} onChange={(n) => { setPageSize(n); setCurrentPage(1); }} />
           </div>

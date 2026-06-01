@@ -1,5 +1,6 @@
 import type { AppModel, AppRecord, ModelField } from '@/types';
-import { resolveLookupDisplayValue } from './mirrorResolver';
+import { resolveLookupDisplayValue, resolveMirror } from './mirrorResolver';
+import { collectViewFields, readExpandedValue, type ExpandedField } from './sectionMirrorExpand';
 
 /**
  * Convert Arabic-Indic (٠-٩, U+0660–U+0669) and Extended / Persian Arabic-Indic
@@ -23,33 +24,68 @@ export interface RecordSearchContext {
 }
 
 /**
- * Build a single searchable string for a record spanning ALL of its fields —
- * not just text/email/phone. Resolves the human-readable value wherever the
- * stored value differs from what the user sees:
- *   - dropdown / multiselect / section_selector → option labels (ar + en) + slug
- *   - lookup → the linked record's display value (mirror-aware)
- *   - range → "min max"
- *   - checkbox → نعم/لا + yes/no
- *   - table → every cell's text; notes → each entry's text
- *   - everything else (text / number / currency / date / auto_id / …) → stringified
- *
- * Callers normalize the result (and the query) with {@link normalizeForSearch}
- * and substring-match. Resolving lookups is O(linked-model rows); build this once
- * per record and reuse across keystrokes rather than calling it inside a filter.
+ * Resolve one expanded field's effective value for a record, plus the field
+ * definition to FORMAT it with. Handles the three shapes uniformly:
+ *   - mirrored child (`section_mirror`)  → value resolved through the sibling
+ *     lookup; format with the source child field (so its dropdown/lookup
+ *     options resolve too).
+ *   - single `mirror` field              → resolved via `resolveMirror`; format
+ *     with the mirror's *target* field (so a mirror of a dropdown/lookup still
+ *     resolves to a label).
+ *   - ordinary local field               → raw stored value; format with itself.
+ */
+function resolveExpanded(
+  ef: ExpandedField,
+  record: AppRecord,
+  model: AppModel,
+  ctx: RecordSearchContext,
+): { value: unknown; field: ModelField } {
+  if (ef.kind === 'mirrored') {
+    return { value: readExpandedValue(ef, record, ctx.records, model, ctx.models), field: ef.field };
+  }
+  if (ef.field.type === 'mirror') {
+    const res = resolveMirror(ef.field, record.data, ctx.records, ctx.models);
+    return { value: res.status === 'ok' ? res.value : undefined, field: res.targetField ?? ef.field };
+  }
+  return { value: record.data[ef.field.name], field: ef.field };
+}
+
+/**
+ * Searchable string for ONE expanded field of a record (local, mirrored child,
+ * single mirror, lookup, dropdown, …). Used by field-scoped search.
+ */
+export function buildExpandedFieldSearchText(
+  ef: ExpandedField,
+  record: AppRecord,
+  model: AppModel,
+  ctx: RecordSearchContext,
+): string {
+  const { value, field } = resolveExpanded(ef, record, model, ctx);
+  if (value === null || value === undefined || value === '') return '';
+  const parts: string[] = [];
+  collectFieldSearchParts(field, value, ctx, parts);
+  return parts.join(' ');
+}
+
+/**
+ * Searchable string for a record spanning ALL of its fields — local fields,
+ * single `mirror` fields, AND `section_mirror` children — resolving the
+ * human-readable value wherever the stored value differs from what the user
+ * sees (dropdown/multiselect → labels, lookup → linked display value, range →
+ * "min max", checkbox → نعم/لا + yes/no). Callers normalize the result (and the
+ * query) with {@link normalizeForSearch} and substring-match. Resolving
+ * lookups/mirrors is O(linked rows); build this once per record and reuse
+ * across keystrokes rather than calling it inside a filter.
  */
 export function buildRecordSearchText(
   record: AppRecord,
   model: AppModel,
   ctx: RecordSearchContext,
 ): string {
-  const data = record.data as Record<string, unknown>;
   const parts: string[] = [];
-  for (const section of model.schema.sections) {
-    for (const field of section.fields) {
-      const v = data[field.name];
-      if (v === null || v === undefined || v === '') continue;
-      collectFieldSearchParts(field, v, ctx, parts);
-    }
+  for (const ef of collectViewFields(model, ctx.models)) {
+    const text = buildExpandedFieldSearchText(ef, record, model, ctx);
+    if (text) parts.push(text);
   }
   return parts.join(' ');
 }
