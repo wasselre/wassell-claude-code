@@ -550,6 +550,7 @@ export default function RecordListPage() {
                 onChange={updateAdhocFilters}
                 collapseKey={`wassell_adhoc_collapsed_v2_${model.id}`}
                 defaultCollapsed
+                solid
               />
             </div>
           </div>

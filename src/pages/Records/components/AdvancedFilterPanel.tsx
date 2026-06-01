@@ -23,6 +23,11 @@ interface AdvancedFilterPanelProps {
    * the user's per-model expand/collapse choice is still remembered after
    * the first toggle. */
   defaultCollapsed?: boolean;
+  /** Use a fully opaque white background instead of the default translucent
+   * `bg-white/50`. Set when the panel floats over the map view, where a
+   * 50%-transparent panel let the map bleed through and made the text
+   * unreadable. Over a solid page background the translucent default is fine. */
+  solid?: boolean;
 }
 
 /**
@@ -36,6 +41,7 @@ export default function AdvancedFilterPanel({
   onChange,
   collapseKey,
   defaultCollapsed = true,
+  solid = false,
 }: AdvancedFilterPanelProps) {
   const { t } = useTranslation();
   const { language, records, users, models } = useAppStore();
@@ -86,7 +92,7 @@ export default function AdvancedFilterPanel({
   const openField = filterableFields.find((e) => e.field.id === openFieldId)?.field ?? null;
 
   return (
-    <div className="mb-4 rounded-xl border border-sand/40 bg-white/50">
+    <div className={`mb-4 rounded-xl border border-sand/40 ${solid ? 'bg-white' : 'bg-white/50'}`}>
       {/* Header (clickable to collapse/expand) */}
       <button
         onClick={toggleCollapsed}
