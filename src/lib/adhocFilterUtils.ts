@@ -96,21 +96,15 @@ function effectiveMirrorFilterField(field: ModelField, target: MirrorTarget): Mo
 
 /**
  * Build a synthetic filter field for a child field surfaced by a mirrored section or a
- * `section_mirror`. Identity comes from the source field (its type/options/lookup drive matching) but
- * the `id` is made unique with the container prefix and the label is prefixed with the container's
- * label so the chip reads e.g. "Client info · City".
+ * `section_mirror`. Identity comes from the source field — its labels are kept as-is so the chip
+ * reads as just the field name (e.g. "City"), not "Client info · City". Only the `id` is made unique
+ * with the container prefix, so two mirrors of the same source field never collide in the filter
+ * state (the prefix never surfaces in the UI).
  */
-function mirroredChildFilterField(
-  sourceField: ModelField,
-  keyPrefix: string,
-  containerLabelAr: string,
-  containerLabelEn: string,
-): ModelField {
+function mirroredChildFilterField(sourceField: ModelField, keyPrefix: string): ModelField {
   return {
     ...sourceField,
     id: `${keyPrefix}::${sourceField.id}`,
-    label_ar: `${containerLabelAr} · ${sourceField.label_ar}`,
-    label_en: `${containerLabelEn} · ${sourceField.label_en}`,
   };
 }
 
@@ -167,7 +161,7 @@ export function getAdhocFilterableFields(model: AppModel, allModels: AppModel[])
       for (const sf of mirroredChildFields(resolved.sourceSection)) {
         if (adhocKindFor(sf.type) === null) continue;
         out.push({
-          field: mirroredChildFilterField(sf, section.id, section.label_ar, section.label_en),
+          field: mirroredChildFilterField(sf, section.id),
           target: { sibling: resolved.sibling, targetModel: resolved.targetModel, targetField: sf, multiMode: 'first' },
         });
       }
@@ -193,7 +187,7 @@ export function getAdhocFilterableFields(model: AppModel, allModels: AppModel[])
           if (customMode && !picked.has(sf.name)) continue;
           if (adhocKindFor(sf.type) === null) continue;
           out.push({
-            field: mirroredChildFilterField(sf, field.id, field.label_ar, field.label_en),
+            field: mirroredChildFilterField(sf, field.id),
             target: { sibling: resolved.sibling, targetModel: resolved.targetModel, targetField: sf, multiMode: 'first' },
           });
         }

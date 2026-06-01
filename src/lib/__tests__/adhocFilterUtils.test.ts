@@ -139,7 +139,7 @@ describe('getAdhocFilterableFields', () => {
     const cityEntry = getAdhocFilterableFields(fu, [fu, makeClients()]).find((e) => e.field.id === 'fu_mirror_sec::cli_city');
     expect(cityEntry).toBeDefined();
     expect(cityEntry!.field.type).toBe('dropdown');
-    expect(cityEntry!.field.label_en).toBe('Client info · city'); // container label prefixed
+    expect(cityEntry!.field.label_en).toBe('city'); // label is the source field name; only the id carries the container prefix
     expect(cityEntry!.target?.multiMode).toBe('first');
   });
 
