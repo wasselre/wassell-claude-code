@@ -8,6 +8,7 @@ import * as lucideIcons from 'lucide-react';
 import { ArrowRight, Save, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
+import { isFieldVisible } from '@/lib/fieldVisibility';
 import { activityLogger } from '@/lib/activityLogger';
 import { supabase } from '@/lib/supabase';
 import type { CustomButton } from '@/types';
@@ -723,6 +724,9 @@ export default function RecordFormPage() {
     const missing = allFields.filter((f) => {
       if (!f.required) return false;
       if (f.type === 'mirror') return false;
+      // A field hidden by its `visible_when` rule can't be filled, so it must
+      // not block the save (mirrors the form, which doesn't render it).
+      if (!isFieldVisible(f, formData, model)) return false;
       const val = formData[f.name];
       if (f.type === 'lookup' && f.is_multi) {
         return !Array.isArray(val) || val.length === 0;

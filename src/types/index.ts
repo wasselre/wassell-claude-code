@@ -113,6 +113,20 @@ export interface FieldOptionGroup {
   label_en: string;
 }
 
+/**
+ * Field-level conditional visibility. When a field carries a `visible_when`
+ * rule, it renders in the record form ONLY if the controlling field's current
+ * value matches one of `values` (membership test — the controller value may be
+ * a scalar OR an array, as with dropdown / multiselect / section_selector).
+ * `field_id` references the controlling field by id (stable across renames).
+ * Display-only: it does not change storage, table columns, exports, or the
+ * field's own behavior. See `isFieldVisible` in src/lib/fieldVisibility.ts.
+ */
+export interface FieldVisibilityRule {
+  field_id: string; // controlling field's id (any sibling on the same model)
+  values: string[]; // show this field when the controller's value is one of these
+}
+
 export interface ModelField {
   id: string;
   name: string; // snake_case slug
@@ -189,6 +203,12 @@ export interface ModelField {
   // inside the same section render under a collapsible sub-header. Display
   // only — doesn't change storage or field behavior.
   field_group_id?: string | null;
+  // Conditional visibility. When set, this field only renders in the record
+  // form if the controlling field's value matches the rule (see
+  // FieldVisibilityRule). Null/absent = always visible. A field that already
+  // holds a value is shown regardless, so toggling the controller never hides
+  // data the user already entered.
+  visible_when?: FieldVisibilityRule | null;
   // Fallback source field. When set and this field's value is empty at save
   // time, `saveRecord` copies the referenced field's current value into this
   // field. User-editable afterward (not a derived/computed snapshot). Disallowed

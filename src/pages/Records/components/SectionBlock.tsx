@@ -5,6 +5,7 @@ import DynamicField from './DynamicField';
 import DynamicCell from './DynamicCell';
 import CallHistoryPanel from './CallHistoryPanel';
 import WhatsAppHistoryPanel from './WhatsAppHistoryPanel';
+import { isFieldVisible } from '@/lib/fieldVisibility';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorField } from '@/lib/sectionMirrorFieldResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
@@ -220,6 +221,11 @@ export default function SectionBlock({
   // Builder) but never renders in the user form.
   const sortedFields = [...section.fields]
     .filter((f) => f.name !== 'fired_at')
+    // Field-level conditional visibility — drop fields whose `visible_when`
+    // rule doesn't match the current record. Done here (not inside
+    // renderFieldNodes) so the grouped/ungrouped split and empty-group
+    // collapse below all see the already-filtered list.
+    .filter((f) => isFieldVisible(f, formData, currentModel))
     .sort((a, b) => a.order - b.order);
 
   if (collapsed) {

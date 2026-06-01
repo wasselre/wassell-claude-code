@@ -102,6 +102,11 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [width, setWidth] = useState<FieldWidth>('half');
   const [showInTable, setShowInTable] = useState(true);
   const [fieldGroupId, setFieldGroupId] = useState<string | null>(null);
+  // Conditional visibility — show this field only when a sibling controlling
+  // field's value matches one of the picked values. Empty controller / no
+  // values = always visible.
+  const [visibleWhenFieldId, setVisibleWhenFieldId] = useState<string | null>(null);
+  const [visibleWhenValues, setVisibleWhenValues] = useState<string[]>([]);
   const [options, setOptions] = useState<FieldOption[]>([]);
   const [optionGroups, setOptionGroups] = useState<FieldOptionGroup[]>([]);
   const [lookupModelId, setLookupModelId] = useState<string | null>(null);
@@ -183,6 +188,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setWidth(field.width);
       setShowInTable(field.show_in_table);
       setFieldGroupId(field.field_group_id ?? null);
+      setVisibleWhenFieldId(field.visible_when?.field_id ?? null);
+      setVisibleWhenValues(field.visible_when?.values ?? []);
       // Normalize section_selector options on load so legacy data — which
       // pre-dates the `is_section_option` flag — doesn't render duplicates
       // (one locked row from the auto-generated section options, plus the
@@ -262,6 +269,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setWidth('half');
       setShowInTable(true);
       setFieldGroupId(null);
+      setVisibleWhenFieldId(null);
+      setVisibleWhenValues([]);
       setOptions([]);
       setOptionGroups([]);
       setLookupModelId(null);
@@ -404,6 +413,10 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       width,
       show_in_table: (type === 'section_mirror' || type === 'whatsapp_history' || type === 'call_history') ? false : showInTable,
       field_group_id: fieldGroupId,
+      visible_when:
+        visibleWhenFieldId && visibleWhenValues.length > 0
+          ? { field_id: visibleWhenFieldId, values: visibleWhenValues }
+          : null,
       options: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector') ? options : undefined,
       option_groups: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector') && optionGroups.length > 0 ? optionGroups : undefined,
       lookup_model_id: type === 'lookup' ? lookupModelId : null,
@@ -613,6 +626,22 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
     ? smCandidateFields.map((f) => f.name)
     : smCandidateFields.filter((f) => smFieldNames.includes(f.name)).map((f) => f.name);
 
+  // ── Conditional-visibility derivations ──
+  // Controller candidates are sibling fields with a discrete, enumerable value
+  // set (dropdown / multiselect / section_selector). Exclude this field itself.
+  const visibilityControllerCandidates = model.schema.sections
+    .flatMap((s) => s.fields)
+    .filter(
+      (f) =>
+        f.id !== field?.id &&
+        (f.type === 'dropdown' || f.type === 'multiselect' || f.type === 'section_selector') &&
+        (f.options?.length ?? 0) > 0,
+    );
+  const visibilityController = visibleWhenFieldId
+    ? visibilityControllerCandidates.find((f) => f.id === visibleWhenFieldId) ?? null
+    : null;
+  const visibilityControllerOptions = visibilityController?.options ?? [];
+
   return (
     <div className="h-full flex flex-col bg-[#FDFCFA]">
       {/* ── Header ── */}
@@ -818,6 +847,81 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
             <p className="text-[11px] text-charcoal/30 mt-1.5 sr-only">{t('fields.width')}</p>
           </div>
         )}
+
+        <div className="border-t border-sand/10" />
+
+        {/* ─── Conditional visibility ─── */}
+        <div>
+          <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
+            {isAr ? 'إظهار مشروط' : 'Conditional visibility'}
+          </label>
+          {visibilityControllerCandidates.length === 0 ? (
+            <p className="text-[11px] text-charcoal/40">
+              {isAr
+                ? 'أضف حقل قائمة (اختيار / اختيار متعدد / محدِّد الأقسام) في هذا النموذج لاستخدامه كشرط لإظهار هذا الحقل.'
+                : 'Add a dropdown, multiselect, or section-selector field on this model to control when this field shows.'}
+            </p>
+          ) : (
+            <>
+              <select
+                value={visibleWhenFieldId ?? ''}
+                onChange={(e) => {
+                  setVisibleWhenFieldId(e.target.value || null);
+                  setVisibleWhenValues([]);
+                }}
+                className="form-input text-sm"
+              >
+                <option value="">{isAr ? 'يظهر دائماً' : 'Always visible'}</option>
+                {visibilityControllerCandidates.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {isAr ? f.label_ar : f.label_en}
+                  </option>
+                ))}
+              </select>
+              {visibilityController && (
+                <div className="mt-2">
+                  <p className="text-[11px] text-charcoal/40 mb-1.5">
+                    {isAr
+                      ? 'يظهر هذا الحقل فقط عندما تكون قيمة الحقل المختار إحدى:'
+                      : 'Show this field only when the selected field’s value is one of:'}
+                  </p>
+                  <div className="space-y-0.5 rounded-xl border border-sand/25 p-2 max-h-44 overflow-y-auto">
+                    {visibilityControllerOptions.map((opt) => {
+                      const checked = visibleWhenValues.includes(opt.value);
+                      return (
+                        <label
+                          key={opt.id ?? opt.value}
+                          className="flex items-center gap-2.5 cursor-pointer py-1 px-1.5 rounded-lg hover:bg-sand/10"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setVisibleWhenValues((prev) =>
+                                checked ? prev.filter((v) => v !== opt.value) : [...prev, opt.value],
+                              )
+                            }
+                            className="w-4 h-4 rounded border-sand/50 text-copper focus:ring-copper/20"
+                          />
+                          <span className="text-[13px] text-charcoal/70">
+                            {isAr ? opt.label_ar : opt.label_en}
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {visibleWhenValues.length === 0 && (
+                    <p className="text-[11px] text-amber-500 mt-1.5">
+                      {isAr
+                        ? 'اختر قيمة واحدة على الأقل، وإلا سيبقى الحقل ظاهراً دائماً.'
+                        : 'Pick at least one value, otherwise the field stays always visible.'}
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
 
         {/* ─── Type-specific config ─── */}
 
