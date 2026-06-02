@@ -238,3 +238,54 @@ export async function countField(input: {
   }
   return body.counts;
 }
+
+export interface EnrichColumnResult {
+  header: string;
+  values: string[];
+}
+
+/**
+ * "Ask the AI to get more information" — fill blank cells from other columns,
+ * pull a column out of the uploaded files, or add a column from the model's
+ * knowledge. Returns columns to add/fill (the caller merges). Throws on failure.
+ */
+export async function enrichTable(input: {
+  instruction: string;
+  headers: string[];
+  rows: string[][];
+  /** the migration's uploaded source files — minted into signed URLs so the AI
+   * can read them (for "extract a column from the brochure"). */
+  uploads?: MigrationUpload[];
+  language?: 'ar' | 'en';
+}): Promise<{ columns: EnrichColumnResult[]; notes?: string; truncated: boolean }> {
+  const files: { name: string; mimeType: string; url: string }[] = [];
+  if (input.uploads && input.uploads.length > 0 && supabase) {
+    for (const u of input.uploads) {
+      const { data } = await supabase.storage.from(MIGRATIONS_BUCKET).createSignedUrl(u.path, 600);
+      if (data?.signedUrl) files.push({ name: u.name, mimeType: u.mimeType, url: data.signedUrl });
+    }
+  }
+  const res = await fetchWithTimeout('/api/migrate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({
+      action: 'enrich',
+      instruction: input.instruction,
+      headers: input.headers,
+      rows: input.rows,
+      files,
+      language: input.language ?? 'ar',
+    }),
+  }, 300_000);
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    columns?: EnrichColumnResult[];
+    notes?: string;
+    truncated?: boolean;
+    error?: string;
+  };
+  if (!res.ok || !body.ok || !Array.isArray(body.columns)) {
+    throw new Error(body.error ?? `Enrichment failed (${res.status})`);
+  }
+  return { columns: body.columns, notes: body.notes, truncated: Boolean(body.truncated) };
+}

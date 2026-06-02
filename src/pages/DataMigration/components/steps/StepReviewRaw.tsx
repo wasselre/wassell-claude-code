@@ -1,19 +1,44 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { readExcelFile, exportRawTable } from '@/lib/excelUtils';
-import { Download, Upload, ArrowRight, ArrowLeft, Info } from 'lucide-react';
+import { Download, Upload, ArrowRight, ArrowLeft, Info, Sparkles, Loader2 } from 'lucide-react';
 import EditableRawGrid from '../EditableRawGrid';
+import { enrichTable, type MigrationUpload } from '../../lib/client';
 import type { RawTable } from '../../lib/types';
 
 interface StepReviewRawProps {
   isAr: boolean;
   table: RawTable;
+  /** uploaded source files — let "Ask AI" re-read the brochure for a missed column. */
+  sourceFiles?: MigrationUpload[];
   /** Persist edits (debounced by this component). */
   onChange: (t: RawTable) => void;
   /** Re-upload replaces the table AND resets downstream mappings/standardization. */
   onReplace: (t: RawTable) => void;
   onContinue: () => void;
   onBack: () => void;
+}
+
+/** Merge AI-returned columns into the table: existing header → fill blanks only
+ * (never overwrite); unknown header → append a new column. */
+function mergeEnrichment(table: RawTable, columns: { header: string; values: string[] }[]): RawTable {
+  const headers = [...table.headers];
+  const rows = table.rows.map((r) => [...r]);
+  for (const col of columns) {
+    let idx = headers.findIndex((h) => h.trim() === col.header.trim());
+    const isNew = idx === -1;
+    if (isNew) {
+      headers.push(col.header);
+      idx = headers.length - 1;
+    }
+    rows.forEach((r, i) => {
+      while (r.length <= idx) r.push('');
+      const val = (col.values[i] ?? '').trim();
+      if (!val) return;
+      if (isNew || (r[idx] ?? '') === '') r[idx] = val; // fill blanks / new column
+    });
+  }
+  return { ...table, headers, rows };
 }
 
 /**
@@ -30,6 +55,7 @@ interface StepReviewRawProps {
 export default function StepReviewRaw({
   isAr,
   table,
+  sourceFiles,
   onChange,
   onReplace,
   onContinue,
@@ -38,10 +64,50 @@ export default function StepReviewRaw({
   const addToast = useAppStore((s) => s.addToast);
   const fileRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<RawTable>(table);
+  const [aiInstruction, setAiInstruction] = useState('');
+  const [aiBusy, setAiBusy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<RawTable>(table);
   const Next = isAr ? ArrowLeft : ArrowRight;
   const Back = isAr ? ArrowRight : ArrowLeft;
+
+  const runAsk = async () => {
+    const instruction = aiInstruction.trim();
+    if (!instruction) return;
+    setAiBusy(true);
+    try {
+      const { columns, notes, truncated } = await enrichTable({
+        instruction,
+        headers: draft.headers,
+        rows: draft.rows,
+        uploads: sourceFiles,
+        language: isAr ? 'ar' : 'en',
+      });
+      if (columns.length === 0) {
+        addToast(isAr ? 'لم يُضِف الذكاء أي بيانات' : 'AI returned nothing to add', 'info');
+        return;
+      }
+      const next = mergeEnrichment(draft, columns);
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+      setDraft(next);
+      latest.current = next;
+      onChange(next); // persist immediately
+      setAiInstruction('');
+      addToast(
+        (isAr ? `أضاف/عبّأ الذكاء ${columns.length} عمود` : `AI added/filled ${columns.length} column(s)`) +
+          (notes ? ` — ${notes}` : '') +
+          (truncated ? (isAr ? ' (أول 250 صف)' : ' (first 250 rows)') : ''),
+        'success',
+      );
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setAiBusy(false);
+    }
+  };
 
   const flush = () => {
     if (timer.current) {
@@ -138,6 +204,33 @@ export default function StepReviewRaw({
           <span>{draft.notes}</span>
         </div>
       )}
+
+      {/* Ask AI — fill blanks from other columns, pull a column from the
+          uploaded files, or add a column from the AI's knowledge. */}
+      <div className="mb-3 flex items-center gap-2">
+        <input
+          value={aiInstruction}
+          onChange={(e) => setAiInstruction(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !aiBusy && aiInstruction.trim()) void runAsk();
+          }}
+          placeholder={
+            isAr
+              ? 'اطلب من الذكاء: عبّئ المدينة من الحي، أو أضف تاريخ التسليم من الكتيّب…'
+              : 'Ask AI: fill city from district, add delivery date from the brochure…'
+          }
+          disabled={aiBusy}
+          className="form-input flex-1 text-sm py-1.5"
+        />
+        <button
+          onClick={() => void runAsk()}
+          disabled={aiBusy || !aiInstruction.trim()}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-copper/10 text-copper font-medium text-sm hover:bg-copper/20 disabled:opacity-50 transition-colors shrink-0"
+        >
+          {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+          {isAr ? 'اسأل الذكاء' : 'Ask AI'}
+        </button>
+      </div>
 
       <div className="flex-1 min-h-0">
         <EditableRawGrid table={draft} onChange={handleGridChange} isAr={isAr} />

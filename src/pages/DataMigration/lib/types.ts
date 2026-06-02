@@ -82,6 +82,9 @@ export interface MigrationData {
   /** Realtime progress sub-phase for the async (worker) steps. */
   phase?: string;
   raw_table?: RawTable;
+  /** Uploaded source files (storage paths) — kept so the "Ask AI" enrich step
+   * can re-read the brochure to extract a missed column. */
+  source_files?: { path: string; name: string; mimeType: string; size: number }[];
   /** Column index → target field slug (`slug` or range `slug.min`/`slug.max`), or null to skip. */
   mappings?: Record<number, string | null>;
   /** Raw AI suggestions (confidence/reason) shown next to each column in the mapping step. */

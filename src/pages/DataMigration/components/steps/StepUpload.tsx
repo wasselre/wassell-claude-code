@@ -22,7 +22,7 @@ import type { RawTable } from '../../lib/types';
 interface StepUploadProps {
   isAr: boolean;
   recordId: string;
-  onTable: (table: RawTable) => void;
+  onTable: (table: RawTable, sourceFiles?: MigrationUpload[]) => void;
 }
 
 const EXCEL_EXT = /\.(xlsx|xls|csv)$/i;
@@ -119,13 +119,16 @@ export default function StepUpload({ isAr, recordId, onTable }: StepUploadProps)
           'info',
         );
       }
-      onTable({
-        headers: result.headers,
-        rows: result.rows,
-        notes: result.notes,
-        truncated: result.truncated,
-        source: 'ai_extract',
-      });
+      onTable(
+        {
+          headers: result.headers,
+          rows: result.rows,
+          notes: result.notes,
+          truncated: result.truncated,
+          source: 'ai_extract',
+        },
+        uploads,
+      );
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     } finally {

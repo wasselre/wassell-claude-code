@@ -114,37 +114,25 @@ function fileExtensionMime(name: string): string | null {
 }
 
 /**
- * Fetch each signed-URL file, build Claude content blocks, and ask the model
- * to emit one unified raw table. Falls back from opus to sonnet on a model
- * error. Throws on a hard failure (caller surfaces a loud error).
+ * Fetch each signed-URL file (image/PDF) and build Claude content blocks.
+ * Skips unsupported/oversized files (reported, never silently dropped).
+ * Shared by extract + enrich.
  */
-export async function runExtract(
-  apiKey: string,
+async function buildFileBlocks(
   files: ExtractFileInput[],
-  language: AgentLanguage = 'ar',
-): Promise<RawTableResult> {
+): Promise<{ blocks: Anthropic.ContentBlockParam[]; skipped: { name: string; reason: string }[]; truncated: boolean; used: number }> {
   const skipped: { name: string; reason: string }[] = [];
-  const blocks: Anthropic.ContentBlockParam[] = [
-    {
-      type: 'text',
-      text:
-        'Extract every record from the following file(s) into one unified table. ' +
-        'Preserve all values verbatim.',
-    },
-  ];
-
+  const blocks: Anthropic.ContentBlockParam[] = [];
   let totalBytes = 0;
   let used = 0;
-  let truncatedInput = false;
+  let truncated = false;
 
   for (const file of files) {
     if (used >= MAX_FILES) {
-      truncatedInput = true;
+      truncated = true;
       skipped.push({ name: file.name, reason: 'file limit reached' });
       continue;
     }
-    // Trust the browser mime, fall back to extension sniffing (HEIC on Firefox
-    // reports empty type; odd screenshot exports too).
     const mime = (file.mimeType && file.mimeType !== 'application/octet-stream')
       ? file.mimeType
       : (fileExtensionMime(file.name) ?? file.mimeType);
@@ -152,10 +140,7 @@ export async function runExtract(
     const isImage = IMAGE_MEDIA_TYPES.has(mime);
     const isPdf = mime === 'application/pdf';
     if (!isImage && !isPdf) {
-      skipped.push({
-        name: file.name,
-        reason: `unsupported type "${mime || 'unknown'}" — convert to PNG/JPG/PDF`,
-      });
+      skipped.push({ name: file.name, reason: `unsupported type "${mime || 'unknown'}" — convert to PNG/JPG/PDF` });
       continue;
     }
 
@@ -173,7 +158,7 @@ export async function runExtract(
     }
 
     if (totalBytes + bytes.byteLength > MAX_TOTAL_BYTES) {
-      truncatedInput = true;
+      truncated = true;
       skipped.push({ name: file.name, reason: 'total upload size limit reached' });
       continue;
     }
@@ -182,24 +167,41 @@ export async function runExtract(
 
     blocks.push({ type: 'text', text: `File: ${file.name}` });
     if (isImage) {
-      blocks.push({
-        type: 'image',
-        source: { type: 'base64', media_type: mime as 'image/png', data },
-      });
+      blocks.push({ type: 'image', source: { type: 'base64', media_type: mime as 'image/png', data } });
     } else {
-      blocks.push({
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data },
-      });
+      blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } });
     }
     used += 1;
   }
 
+  return { blocks, skipped, truncated, used };
+}
+
+/**
+ * Fetch each signed-URL file, build Claude content blocks, and ask the model
+ * to emit one unified raw table. Falls back from opus to sonnet on a model
+ * error. Throws on a hard failure (caller surfaces a loud error).
+ */
+export async function runExtract(
+  apiKey: string,
+  files: ExtractFileInput[],
+  language: AgentLanguage = 'ar',
+): Promise<RawTableResult> {
+  const { blocks: fileBlocks, skipped, truncated: truncatedInput, used } = await buildFileBlocks(files);
   if (used === 0) {
     throw new Error(
       `No extractable files. ${skipped.map((s) => `${s.name}: ${s.reason}`).join('; ') || 'No files provided.'}`,
     );
   }
+  const blocks: Anthropic.ContentBlockParam[] = [
+    {
+      type: 'text',
+      text:
+        'Extract every record from the following file(s) into one unified table. ' +
+        'Preserve all values verbatim.',
+    },
+    ...fileBlocks,
+  ];
 
   const client = new Anthropic({ apiKey });
   const call = (model: string) =>
@@ -551,4 +553,121 @@ export async function runCountField(
     }
   }
   return out;
+}
+
+// ============================================================================
+// enrich — "ask the AI to get more information": fill blank cells from other
+// columns, add a column pulled from the uploaded files, or add a column from
+// the model's own knowledge. Returns columns to add/fill (the client merges).
+// ============================================================================
+
+export interface EnrichColumn {
+  header: string;
+  values: string[]; // one per table row, in row order; '' = unknown
+}
+
+const ENRICH_ROW_CAP = 250;
+
+const ENRICH_TOOL: Anthropic.Tool = {
+  name: 'emit_table_enrichment',
+  description: 'Return the column(s) to add or fill, per the user instruction.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      columns: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            header: { type: 'string', description: 'Existing header (to fill that column) or a new header (to add a column).' },
+            values: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'One value per table row, in the SAME ORDER as the rows given (row 0 first). "" where unknown.',
+            },
+          },
+          required: ['header', 'values'],
+        },
+      },
+      notes: { type: 'string', description: 'Optional one-line note about what you did / assumptions.' },
+    },
+    required: ['columns'],
+  },
+};
+
+const ENRICH_SYSTEM = `You extend a raw data table for a Saudi Arabian real-estate CRM (Wassel / وصل العقارية) per the user's instruction. Always call the emit_table_enrichment tool. You can:
+(a) FILL BLANK cells of an EXISTING column by reasoning from the other columns in each row;
+(b) ADD a NEW column whose values you extract from the attached source file(s);
+(c) ADD a NEW column from your general knowledge.
+
+Return the column(s) to add or fill. For each: "header" = the EXACT existing header to fill that column, or a new header to add one; "values" = one string per table row, in the SAME ORDER as the rows given (row 0 first).
+
+Rules:
+- Use "" for any row you cannot determine — NEVER fabricate or guess.
+- Keep values concise and consistent across rows (same unit/format).
+- Preserve the data: do not return columns the instruction doesn't ask about.
+- Answer in the language of the data (Arabic data → Arabic values).`;
+
+export async function runEnrich(
+  apiKey: string,
+  input: { instruction: string; headers: string[]; rows: string[][]; files?: ExtractFileInput[]; language?: AgentLanguage },
+): Promise<{ columns: EnrichColumn[]; notes?: string; truncated: boolean }> {
+  const rowsForAi = input.rows.slice(0, ENRICH_ROW_CAP);
+  const truncated = input.rows.length > ENRICH_ROW_CAP;
+
+  const tableText =
+    `| # | ${input.headers.join(' | ')} |\n` +
+    rowsForAi
+      .map((r, i) => `| ${i} | ${input.headers.map((_, c) => (r[c] ?? '').replace(/\|/g, '/')).join(' | ')} |`)
+      .join('\n');
+
+  const fileResult = input.files && input.files.length > 0 ? await buildFileBlocks(input.files) : null;
+  const fileBlocks = fileResult?.blocks ?? [];
+
+  const blocks: Anthropic.ContentBlockParam[] = [
+    {
+      type: 'text',
+      text:
+        `INSTRUCTION: ${input.instruction}\n\n` +
+        `TABLE (${rowsForAi.length} rows; values must align to these row numbers):\n${tableText}` +
+        (fileBlocks.length > 0 ? '\n\nSource file(s) are attached below — use them for any "extract from the file" request.' : ''),
+    },
+    ...fileBlocks,
+  ];
+
+  const client = new Anthropic({ apiKey });
+  // Vision model when files are attached (reading the brochure); else Sonnet.
+  const model = fileBlocks.length > 0 ? EXTRACT_MODEL : MAP_MODEL;
+  const call = (m: string) =>
+    client.messages.create({
+      model: m,
+      max_tokens: 8000,
+      system: ENRICH_SYSTEM + langLine(input.language ?? 'ar', 'notes'),
+      tools: [ENRICH_TOOL],
+      tool_choice: { type: 'tool', name: 'emit_table_enrichment' },
+      messages: [{ role: 'user', content: blocks }],
+    });
+
+  let response;
+  try {
+    response = await call(model);
+  } catch {
+    response = await call(EXTRACT_FALLBACK_MODEL);
+  }
+
+  const tb = response.content.find((b) => b.type === 'tool_use');
+  if (!tb || tb.type !== 'tool_use') throw new Error('Enrichment model did not respond');
+  const out = tb.input as { columns?: unknown; notes?: unknown };
+  const rawCols = Array.isArray(out.columns) ? out.columns : [];
+  const columns: EnrichColumn[] = rawCols
+    .map((c) => {
+      const o = c as Record<string, unknown>;
+      return {
+        header: typeof o.header === 'string' ? o.header.trim() : '',
+        values: Array.isArray(o.values) ? o.values.map((v) => String(v ?? '')) : [],
+      };
+    })
+    .filter((c) => c.header);
+
+  return { columns, notes: typeof out.notes === 'string' ? out.notes : undefined, truncated };
 }

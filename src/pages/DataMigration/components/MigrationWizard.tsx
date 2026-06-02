@@ -99,7 +99,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
             <StepUpload
               isAr={isAr}
               recordId={recordId}
-              onTable={(table) => patch({ raw_table: table, step: 'review_raw' })}
+              onTable={(table, sourceFiles) => patch({ raw_table: table, step: 'review_raw', source_files: sourceFiles })}
             />
           </div>
         )}
@@ -110,6 +110,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               <StepReviewRaw
                 isAr={isAr}
                 table={data.raw_table}
+                sourceFiles={data.source_files}
                 onChange={(t) => patch({ raw_table: t })}
                 onReplace={(t) => patch({ raw_table: t, mappings: undefined, count_results: undefined })}
                 onContinue={() => patch({ step: 'mapping' })}
@@ -121,7 +122,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               <StepUpload
                 isAr={isAr}
                 recordId={recordId}
-                onTable={(table) => patch({ raw_table: table, step: 'review_raw' })}
+                onTable={(table, sourceFiles) => patch({ raw_table: table, step: 'review_raw', source_files: sourceFiles })}
               />
             </div>
           ))}

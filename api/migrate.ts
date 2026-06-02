@@ -20,6 +20,7 @@ import {
   runSuggestMappings,
   runStandardize,
   runCountField,
+  runEnrich,
   type ExtractFileInput,
   type TargetFieldLite,
   type StandardizeCandidate,
@@ -58,7 +59,7 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
 }
 
 interface MigrateRequestBody {
-  action?: 'extract' | 'suggest_mappings' | 'standardize' | 'count_field';
+  action?: 'extract' | 'suggest_mappings' | 'standardize' | 'count_field' | 'enrich';
   // UI language for the model's human-readable text (notes / reasons).
   language?: 'ar' | 'en';
   // extract
@@ -74,6 +75,9 @@ interface MigrateRequestBody {
   rawValues?: string[];
   // count_field
   countRows?: CountInputRow[];
+  // enrich
+  instruction?: string;
+  rows?: string[][];
 }
 
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
@@ -158,6 +162,25 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           return jsonOk({ ok: true, counts });
         } catch (err) {
           return jsonError(502, `Counting failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      case 'enrich': {
+        const instruction = (body.instruction ?? '').trim();
+        const headers = Array.isArray(body.headers) ? body.headers : [];
+        if (!instruction || headers.length === 0) {
+          return jsonError(400, 'enrich: instruction and headers[] are required');
+        }
+        try {
+          const result = await runEnrich(apiKey, {
+            instruction,
+            headers,
+            rows: Array.isArray(body.rows) ? body.rows : [],
+            files: Array.isArray(body.files) ? body.files : undefined,
+            language: body.language ?? 'ar',
+          });
+          return jsonOk({ ok: true, ...result });
+        } catch (err) {
+          return jsonError(502, `Enrichment failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       default:
