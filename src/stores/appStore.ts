@@ -788,6 +788,61 @@ function serializeRecord(record: AppRecord): SupabaseRecordsRow {
   };
 }
 
+// ─────────────────────────────────────────────────────────────────
+// record_save conflict circuit breaker (incident 2026-06-02)
+//
+// `record_save` rejects a write whose `p_expected_version` is behind the
+// row's current version (SQLSTATE 40001 / "version_mismatch"). If a client's
+// local `version` falls behind the server — which used to happen whenever
+// Realtime dropped the client's own version bump (see the version-advance fix
+// in `saveRecord`) — every retry re-sends the SAME stale version and is
+// rejected again. A wizard that auto-saves the same record (Data Migration)
+// then hammers `record_save` indefinitely; combined with re-render reloads it
+// saturated Postgres CPU until compute was bumped 4×.
+//
+// This breaker bounds the blast radius: count consecutive conflicts per record
+// id within a short window; once a record trips the limit, STOP issuing saves
+// for it and surface ONE loud toast telling the user to reload (CLAUDE.md:
+// fail loudly, never spin silently). A successful save — or a page reload,
+// which resets this module state — clears the breaker.
+const RECORD_CONFLICT_LIMIT = 4;
+const RECORD_CONFLICT_WINDOW_MS = 10_000;
+const recordConflicts = new Map<string, { count: number; first: number; tripped: boolean }>();
+
+/** Returns true the moment a record crosses the conflict threshold (so the
+ *  caller can fire exactly one toast). */
+function noteRecordConflict(id: string): boolean {
+  const now = Date.now();
+  const cur = recordConflicts.get(id);
+  if (!cur || now - cur.first > RECORD_CONFLICT_WINDOW_MS) {
+    recordConflicts.set(id, { count: 1, first: now, tripped: false });
+    return false;
+  }
+  cur.count += 1;
+  if (cur.count >= RECORD_CONFLICT_LIMIT && !cur.tripped) {
+    cur.tripped = true;
+    return true;
+  }
+  return false;
+}
+
+/** Whether saves for this record are currently short-circuited (breaker tripped
+ *  and still inside the window). Expired windows auto-clear. */
+function recordSaveBlocked(id: string): boolean {
+  const cur = recordConflicts.get(id);
+  if (!cur) return false;
+  if (Date.now() - cur.first > RECORD_CONFLICT_WINDOW_MS) {
+    recordConflicts.delete(id);
+    return false;
+  }
+  return cur.tripped;
+}
+
+/** Clear the breaker for a record (called after any successful save). */
+function clearRecordConflict(id: string): void {
+  recordConflicts.delete(id);
+}
+
 // Phase F.2 fix (audit H5): the second arg lets the caller override which
 // version to send as p_expected_version. Form pages snapshot the version
 // at mount time and pass it here so the check is against the version the
@@ -855,6 +910,19 @@ async function supabaseRecordUpsert(
         // Block on any in-flight model write so the FK exists when we land.
         const prior = pendingWrites.get(writeKey('models', record.model_id));
         if (prior) { try { await prior; } catch { /* parent error */ } }
+        // Circuit breaker (incident 2026-06-02): if this record is wedged in a
+        // version-conflict loop, stop hitting the DB until the page reloads.
+        // Protects Postgres from a stale-version retry storm (the Data
+        // Migration wizard auto-saved the same record after its local version
+        // froze behind the server's, pinning DB CPU). No-op for the common case
+        // — only trips after repeated rapid conflicts on the same record.
+        if (recordSaveBlocked(id)) {
+          outcome = {
+            status: 'conflict',
+            message: 'save paused after repeated version conflicts — reload the page to continue',
+          };
+          return;
+        }
         // Phase F.2: route unfrozen writes through `record_save` so the
         // optimistic-concurrency check applies. Pass the caller-supplied
         // `expectedVersion` (form-mount snapshot) when available; otherwise
@@ -874,8 +942,25 @@ async function supabaseRecordUpsert(
           const isVersionConflict =
             error.code === '40001' || (error.message ?? '').includes('version_mismatch');
           if (isVersionConflict) {
+            const tripped = noteRecordConflict(id);
             const msg = 'Another user just edited this record. Reload to see their changes before re-saving.';
-            reportSupabaseError('records', 'upsert', msg);
+            if (tripped) {
+              // Repeated conflicts in a short window = a stuck client (stale
+              // local version), not a one-off race. Fire ONE strong toast and
+              // let the breaker short-circuit future saves above so we stop
+              // hammering the DB. (CLAUDE.md: fail loudly, never spin silently.)
+              try {
+                const ar = useAppStore.getState().language === 'ar';
+                useAppStore.getState().addToast(
+                  ar
+                    ? 'تعذّر حفظ هذا السجل بسبب تعارض النسخة المتكرر. أعد تحميل الصفحة للمتابعة.'
+                    : 'Saving was paused after repeated version conflicts on this record. Reload the page to continue.',
+                  'error',
+                );
+              } catch { /* store not ready — the per-conflict reports below still log */ }
+            } else {
+              reportSupabaseError('records', 'upsert', msg);
+            }
             outcome = { status: 'conflict', message: msg };
           } else {
             const msg = error.message ?? String(error);
@@ -895,6 +980,7 @@ async function supabaseRecordUpsert(
           // RPC signature to RETURN TABLE(updated_at) so we can do strict
           // compare here too — tracked in the audit follow-up migration.
           markRecentlyWritten('records', record.id, null);
+          clearRecordConflict(id);
           outcome = { status: 'saved' };
         }
       }
@@ -2592,6 +2678,35 @@ export const useAppStore = create<AppState>((set, get) => ({
     //    'conflict' } and can react (e.g. abort a fan-out, summarize
     //    bulk-edit conflicts).
     const result = await supabaseRecordUpsert(finalRecord, { expectedVersion });
+
+    // Incident 2026-06-02 fix: `record_save` bumps the row's `version` by +1 on
+    // a successful UPDATE (records_bump_version trigger) but the RPC returns
+    // only the id — so the local copy used to stay pinned at the pre-save
+    // version. The SECOND save of the same record in one session then sent a
+    // stale `expected_version` and was rejected (version_mismatch), and
+    // Realtime echo-suppression kept the client blind to its own bump. A flow
+    // that saves the same record repeatedly (the Data Migration wizard) thus
+    // entered a permanent-conflict loop that pinned Postgres CPU. Advance the
+    // local version ourselves on success so subsequent saves match the server.
+    // Guard: only when we sent a concrete numeric version AND the store row is
+    // still at exactly that version (a concurrent realtime merge may have
+    // already advanced it — don't fight that).
+    if (
+      result.status === 'saved' &&
+      typeof expectedVersion === 'number' &&
+      !isModelHardcoded(record.model_id)
+    ) {
+      set((s) => {
+        const list = s.records[record.model_id] ?? [];
+        const idx = list.findIndex((r) => r.id === record.id);
+        if (idx < 0 || (list[idx]!.version ?? null) !== expectedVersion) return {};
+        const bumped = list.slice();
+        bumped[idx] = { ...bumped[idx]!, version: expectedVersion + 1 };
+        saveLocalRecordsForModel(record.model_id, bumped);
+        return { records: { ...s.records, [record.model_id]: bumped } };
+      });
+    }
+
     // Execute workflows after state is settled
     queueMicrotask(() => {
       const s = get();
