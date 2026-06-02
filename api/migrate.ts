@@ -57,6 +57,8 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
 
 interface MigrateRequestBody {
   action?: 'extract' | 'suggest_mappings' | 'standardize';
+  // UI language for the model's human-readable text (notes / reasons).
+  language?: 'ar' | 'en';
   // extract
   files?: ExtractFileInput[];
   // suggest_mappings
@@ -94,7 +96,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           }
         }
         try {
-          const result = await runExtract(apiKey, files);
+          const result = await runExtract(apiKey, files, body.language ?? 'ar');
           return jsonOk({ ok: true, ...result });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -112,6 +114,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             headers,
             sampleRows: Array.isArray(body.sampleRows) ? body.sampleRows : [],
             fields,
+            language: body.language ?? 'ar',
           });
           return jsonOk({ ok: true, mappings });
         } catch (err) {
@@ -130,6 +133,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             fieldLabel: body.fieldLabel ?? '',
             candidates: Array.isArray(body.candidates) ? body.candidates : [],
             rawValues,
+            language: body.language ?? 'ar',
           });
           return jsonOk({ ok: true, decisions });
         } catch (err) {

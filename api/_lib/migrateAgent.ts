@@ -16,6 +16,15 @@ import Anthropic from '@anthropic-ai/sdk';
 
 export const EXTRACT_MODEL = 'claude-opus-4-7';
 export const EXTRACT_FALLBACK_MODEL = 'claude-sonnet-4-6';
+
+export type AgentLanguage = 'ar' | 'en';
+
+/** Force the model's human-readable text (notes / reasons) into the UI
+ * language. Cell DATA is always preserved verbatim regardless. */
+function langLine(language: AgentLanguage, field: string): string {
+  const lang = language === 'ar' ? 'Arabic (العربية)' : 'English';
+  return `\n\nIMPORTANT: Write every "${field}" value you return in ${lang}. (This applies only to your explanatory text — never translate or alter the extracted cell DATA itself.)`;
+}
 // Mapping + standardization are bounded text tasks (headers/sample rows, and
 // distinct values per column) — Sonnet is plenty and keeps cost down.
 export const MAP_MODEL = 'claude-sonnet-4-6';
@@ -112,6 +121,7 @@ function fileExtensionMime(name: string): string | null {
 export async function runExtract(
   apiKey: string,
   files: ExtractFileInput[],
+  language: AgentLanguage = 'ar',
 ): Promise<RawTableResult> {
   const skipped: { name: string; reason: string }[] = [];
   const blocks: Anthropic.ContentBlockParam[] = [
@@ -196,7 +206,7 @@ export async function runExtract(
     client.messages.create({
       model,
       max_tokens: 16000,
-      system: EXTRACT_SYSTEM,
+      system: EXTRACT_SYSTEM + langLine(language, 'notes'),
       tools: [EXTRACT_TOOL],
       tool_choice: { type: 'tool', name: 'emit_raw_table' },
       messages: [{ role: 'user', content: blocks }],
@@ -294,7 +304,7 @@ Rules:
 
 export async function runSuggestMappings(
   apiKey: string,
-  input: { headers: string[]; sampleRows: string[][]; fields: TargetFieldLite[] },
+  input: { headers: string[]; sampleRows: string[][]; fields: TargetFieldLite[]; language?: AgentLanguage },
 ): Promise<MappingSuggestion[]> {
   const fieldList = input.fields
     .map((f) => `- ${f.name} | ${f.label_en} / ${f.label_ar} | type=${f.type}${f.required ? ' | required' : ''}`)
@@ -315,7 +325,7 @@ export async function runSuggestMappings(
   const response = await client.messages.create({
     model: MAP_MODEL,
     max_tokens: 2000,
-    system: SUGGEST_SYSTEM,
+    system: SUGGEST_SYSTEM + langLine(input.language ?? 'ar', 'reason'),
     tools: [SUGGEST_TOOL],
     tool_choice: { type: 'tool', name: 'emit_column_mappings' },
     messages: [{ role: 'user', content: userMsg }],
@@ -417,6 +427,7 @@ export async function runStandardize(
     fieldLabel: string;
     candidates: StandardizeCandidate[];
     rawValues: string[];
+    language?: AgentLanguage;
   },
 ): Promise<ValueDecisionOut[]> {
   const isLookup = input.fieldType === 'lookup';
@@ -433,7 +444,7 @@ export async function runStandardize(
   const response = await client.messages.create({
     model: STANDARDIZE_MODEL,
     max_tokens: 4000,
-    system: STANDARDIZE_SYSTEM,
+    system: STANDARDIZE_SYSTEM + langLine(input.language ?? 'ar', 'reason'),
     tools: [STANDARDIZE_TOOL],
     tool_choice: { type: 'tool', name: 'emit_value_standardization' },
     messages: [{ role: 'user', content: userMsg }],

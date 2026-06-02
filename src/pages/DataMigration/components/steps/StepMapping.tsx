@@ -52,7 +52,7 @@ export default function StepMapping({
     setLoading(true);
     void (async () => {
       try {
-        const sug = await suggestMappings(table.headers, table.rows.slice(0, 6), targetFieldLites(model));
+        const sug = await suggestMappings(table.headers, table.rows.slice(0, 6), targetFieldLites(model), isAr ? 'ar' : 'en');
         const next: Record<number, string | null> = {};
         table.headers.forEach((_, i) => {
           const s = sug.find((x) => x.columnIndex === i);

@@ -62,6 +62,7 @@ export default function StepStandardize({
             fieldLabel: isAr ? c.field.label_ar : c.field.label_en,
             candidates,
             rawValues: distinct.map((d) => d.raw),
+            language: isAr ? 'ar' : 'en',
           });
           onChangeColumn(c.colIndex, buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, decisions, isAr));
         } catch (err) {

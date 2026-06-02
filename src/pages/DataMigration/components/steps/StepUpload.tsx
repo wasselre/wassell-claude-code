@@ -103,7 +103,7 @@ export default function StepUpload({ isAr, recordId, onTable }: StepUploadProps)
     if (uploads.length === 0) return;
     setBusy('extracting');
     try {
-      const result = await extractRawTable(uploads);
+      const result = await extractRawTable(uploads, isAr ? 'ar' : 'en');
       if (result.files_skipped.length > 0) {
         addToast(
           (isAr ? 'تم تخطي: ' : 'Skipped: ') +

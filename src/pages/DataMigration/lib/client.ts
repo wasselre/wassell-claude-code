@@ -98,7 +98,10 @@ export interface ExtractResult extends RawTable {
  * per file, then POSTs to /api/migrate (action=extract). Returns the unified
  * raw table. Throws on failure.
  */
-export async function extractRawTable(uploads: MigrationUpload[]): Promise<ExtractResult> {
+export async function extractRawTable(
+  uploads: MigrationUpload[],
+  language: 'ar' | 'en' = 'ar',
+): Promise<ExtractResult> {
   if (!supabase) throw new Error('Supabase is not configured.');
   if (uploads.length === 0) throw new Error('No files to extract.');
 
@@ -116,7 +119,7 @@ export async function extractRawTable(uploads: MigrationUpload[]): Promise<Extra
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'extract', files }),
+    body: JSON.stringify({ action: 'extract', files, language }),
   }, 300_000);
   const body = (await res.json().catch(() => ({}))) as Partial<ExtractResult> & {
     ok?: boolean;
@@ -141,11 +144,12 @@ export async function suggestMappings(
   headers: string[],
   sampleRows: string[][],
   fields: TargetFieldLite[],
+  language: 'ar' | 'en' = 'ar',
 ): Promise<ColumnMappingSuggestion[]> {
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'suggest_mappings', headers, sampleRows, fields }),
+    body: JSON.stringify({ action: 'suggest_mappings', headers, sampleRows, fields, language }),
   }, 90_000);
   const body = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
@@ -183,6 +187,7 @@ export async function standardizeColumn(input: {
   fieldLabel: string;
   candidates: StandardizeCandidate[];
   rawValues: string[];
+  language?: 'ar' | 'en';
 }): Promise<StandardizeDecision[]> {
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
