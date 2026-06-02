@@ -11,50 +11,28 @@
  * structured response. Haiku is fast (~300-500ms) and cheap — important
  * because this fires on every debounced input change in the Builder.
  *
+ * Runtime: `edge`. This endpoint is bursty — a user opens the options editor,
+ * translates a handful of labels, then closes it — so a `nodejs` function
+ * would go cold between sessions and the first translation each session paid a
+ * full Node cold-start (bundling the Anthropic SDK), which is what made the
+ * live auto-fill feel "very very slow". Edge cold-starts are near-zero and this
+ * matches the other Anthropic endpoints (/api/agent, /api/builder-agent,
+ * /api/workflow-agent). Migrated off `nodejs` 2026-06-02.
+ *
  * Failure posture: returns 502 with the underlying error message. The
  * client surfaces this as a red toast and blocks the save until the user
  * retries or types a different value — never falls back to gibberish slugs.
  */
 
-import type { IncomingMessage, ServerResponse } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 
-export const config = {
-  runtime: 'nodejs',
-  maxDuration: 30,
-};
+export const config = { runtime: 'edge' };
 
 interface RequestBody {
   input?: string;
   source_lang?: 'ar' | 'en' | 'auto';
   kind?: 'model' | 'section' | 'field' | 'option' | 'group' | 'workflow' | 'dashboard' | 'role' | 'profile' | 'generic';
-}
-
-async function readNodeBody(req: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks);
-}
-
-async function nodeToWebRequest(nodeReq: IncomingMessage): Promise<Request> {
-  const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
-  const url = new URL(nodeReq.url ?? '/', `https://${host}`);
-  const headers = new Headers();
-  for (const [k, v] of Object.entries(nodeReq.headers)) {
-    if (typeof v === 'string') headers.set(k, v);
-    else if (Array.isArray(v)) headers.set(k, v.join(', '));
-  }
-  const method = nodeReq.method ?? 'GET';
-  const body = method === 'GET' || method === 'HEAD' ? undefined : await readNodeBody(nodeReq);
-  return new Request(url.toString(), { method, headers, body });
-}
-
-async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse): Promise<void> {
-  nodeRes.statusCode = webResp.status;
-  for (const [k, v] of webResp.headers) nodeRes.setHeader(k, v);
-  const buf = Buffer.from(await webResp.arrayBuffer());
-  nodeRes.end(buf);
 }
 
 const KIND_GUIDANCE: Record<NonNullable<RequestBody['kind']>, string> = {
@@ -138,10 +116,10 @@ function sanitizeSlug(raw: string): string {
   return slug;
 }
 
-export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
-  const req = await nodeToWebRequest(nodeReq);
-  const resp = await withAuth(req, async (_user) => {
-    if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
+export default async function handler(req: Request): Promise<Response> {
+  if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
+
+  return withAuth(req, async (_user) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
 
@@ -207,5 +185,4 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       name: slug,
     });
   });
-  await writeWebResponseToNode(resp, nodeRes);
 }

@@ -4,7 +4,7 @@ import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { v4 as uuid } from 'uuid';
-import { GripVertical, Trash2, Plus, ChevronDown, ChevronRight, FolderPlus, Folder, Pencil, Lock, Check, List, Loader2 } from 'lucide-react';
+import { GripVertical, Trash2, Plus, ChevronDown, ChevronRight, FolderPlus, Folder, Pencil, Lock, Check, List, Loader2, Languages } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { slugify } from '@/lib/autoTranslate';
 import { translateLabel, type TranslatedLabel } from '@/lib/translateLabel';
@@ -16,6 +16,17 @@ const OPTION_COLORS = [
   '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899',
   '#14B8A6', '#F97316', '#6366F1', '#6B7280', '#B8734F', '#C09B5F',
 ];
+
+// A bare UUID (or empty) is machine-junk, never a deliberate api_name — e.g.
+// an orphaned section_selector option still carrying its old section id.
+// Those are eligible for auto-derivation; a real slug (snake_case, or even an
+// Arabic inline slug a user/record already relies on) is left alone. Shared by
+// the per-row live translation and the bulk "Translate all" action.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isAutoFillableValue = (v?: string) => {
+  const trimmed = (v ?? '').trim();
+  return !trimmed || UUID_RE.test(trimmed);
+};
 
 interface OptionsEditorProps {
   options: FieldOption[];
@@ -156,16 +167,6 @@ function OptionRow({
   // null until the user touches a label, so simply opening the editor on an
   // existing option never kicks off a translation (and never rewrites a slug).
   const [editingLang, setEditingLang] = useState<'ar' | 'en' | null>(null);
-
-  // A bare UUID (or empty) is machine-junk, never a deliberate api_name — e.g.
-  // an orphaned section_selector option still carrying its old section id.
-  // Those are eligible for auto-derivation; a real slug (snake_case, or even an
-  // Arabic inline slug a user/record already relies on) is left alone.
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  const isAutoFillableValue = (v?: string) => {
-    const trimmed = (v ?? '').trim();
-    return !trimmed || UUID_RE.test(trimmed);
-  };
 
   // "Touched" = a deliberate value we must not auto-overwrite. Seeded from the
   // option's state at mount so opening an existing option never clobbers its
@@ -499,8 +500,71 @@ export default function OptionsEditor({
   const isAr = language === 'ar';
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [modalOpen, setModalOpen] = useState(false);
+  const [bulkTranslating, setBulkTranslating] = useState(false);
 
   const isLocked = (o: FieldOption) => lockSectionOptions && !!o.is_section_option;
+
+  // An option is "fillable" by the bulk translator when it has at least one
+  // label typed but is still missing the opposite-language label or a real
+  // slug. Locked (section-linked) options and fully-filled ones are skipped.
+  const needsBulkTranslate = (o: FieldOption): boolean => {
+    if (isLocked(o)) return false;
+    const ar = (o.label_ar ?? '').trim();
+    const en = (o.label_en ?? '').trim();
+    if (!ar && !en) return false; // nothing to translate from
+    const oppositeMissing = (!!ar && !en) || (!!en && !ar);
+    return oppositeMissing || isAutoFillableValue(o.value);
+  };
+
+  const pendingTranslateCount = options.filter(needsBulkTranslate).length;
+
+  // Translate every blank option at once, in parallel — one round-trip's worth
+  // of latency instead of N staggered debounced calls. Only ever FILLS blanks
+  // (missing opposite label, missing/uuid slug); never overwrites a label or
+  // slug the user actually typed. Reuses translateLabel's module cache, so an
+  // option already filled live this session resolves instantly.
+  const translateAll = async () => {
+    const targets = options.filter(needsBulkTranslate);
+    if (targets.length === 0) return;
+    setBulkTranslating(true);
+    try {
+      const results = await Promise.allSettled(
+        targets.map(async (o) => {
+          // Prefer the English side as the source (the slug derives from it);
+          // fall back to Arabic when only Arabic is present.
+          const source = ((o.label_en ?? '').trim() || (o.label_ar ?? '').trim());
+          const out = await translateLabel(source, 'option');
+          return { id: o.id, out };
+        }),
+      );
+
+      const patchById = new Map<string, Partial<FieldOption>>();
+      let failures = 0;
+      for (const r of results) {
+        if (r.status !== 'fulfilled') { failures++; continue; }
+        const { id, out } = r.value;
+        const o = options.find((x) => x.id === id);
+        if (!o) continue;
+        const patch: Partial<FieldOption> = {};
+        if (!(o.label_ar ?? '').trim() && out.label_ar) patch.label_ar = out.label_ar;
+        if (!(o.label_en ?? '').trim() && out.label_en) patch.label_en = out.label_en;
+        if (isAutoFillableValue(o.value) && out.name) patch.value = out.name;
+        if (Object.keys(patch).length > 0) patchById.set(id, patch);
+      }
+
+      if (patchById.size > 0) {
+        onChange(options.map((o) => (patchById.has(o.id) ? { ...o, ...patchById.get(o.id)! } : o)));
+      }
+      if (failures > 0) {
+        addToast(
+          isAr ? `تعذّرت ترجمة ${failures} خيار` : `${failures} option(s) failed to translate`,
+          'error',
+        );
+      }
+    } finally {
+      setBulkTranslating(false);
+    }
+  };
 
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
@@ -750,6 +814,19 @@ export default function OptionsEditor({
             <FolderPlus size={14} />
             {t('fields.add_group')}
           </button>
+          {pendingTranslateCount > 0 && (
+            <button
+              onClick={translateAll}
+              disabled={bulkTranslating}
+              className="pill text-copper border-copper/30 hover:bg-copper/5 disabled:opacity-60 disabled:cursor-wait"
+              title={isAr
+                ? 'ترجمة كل الخيارات التي ما زالت تنقصها اللغة الأخرى أو api_name دفعة واحدة'
+                : 'Auto-translate every option still missing its other language or api_name, all at once'}
+            >
+              {bulkTranslating ? <Loader2 size={14} className="animate-spin" /> : <Languages size={14} />}
+              {isAr ? `ترجمة الكل (${pendingTranslateCount})` : `Translate all (${pendingTranslateCount})`}
+            </button>
+          )}
           <div className="flex-1" />
           <button
             onClick={() => setModalOpen(false)}

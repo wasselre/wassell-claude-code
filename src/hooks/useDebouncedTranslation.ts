@@ -59,7 +59,12 @@ interface UseDebouncedTranslationResult {
   translateNow: () => Promise<TranslatedLabel>;
 }
 
-const DEFAULT_DELAY_MS = 700;
+// 450ms: long enough to detect a real typing pause, short enough that the
+// auto-fill no longer feels laggy. Was 700ms — lowered 2026-06-02 after the
+// live option translation was reported as "very very slow". The blur handler
+// still force-resolves immediately, so this only governs the pause-and-watch
+// case, not tab/click-away.
+const DEFAULT_DELAY_MS = 450;
 
 export function useDebouncedTranslation(
   input: string,

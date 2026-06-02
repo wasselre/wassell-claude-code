@@ -1,7 +1,7 @@
 # PRD: Internationalization (Arabic / English, RTL/LTR)
 
 **Status:** Live
-**Last updated:** 2026-05-10
+**Last updated:** 2026-06-02
 **Related PRDs:** navigation-layout.md, model-builder.md
 
 ## What it is (in plain English)
@@ -23,13 +23,15 @@ Wassell is a Saudi Arabian real-estate company. Arabic is the primary language, 
 - **Layout inversion:** Tailwind's `rtl:` prefix and CSS logical properties (margin-inline-start etc.) are used so the sidebar, icons, and forms flip correctly.
 - **Currency:** SAR (Saudi Riyal, ر.س) — currency inputs/display use this unit and an Arabic-friendly format.
 - **PDF generation** supports Arabic RTL text via jsPDF with a custom font setup (see import-export.md).
-- **Live auto-translate**: as the user types in the Builder, a debounced (~700ms) call to `/api/translate` fills the opposite-language label AND derives a snake_case Latin slug from the English version. No more `item_<timestamp>` slugs for Arabic input. Wired into model/section/field/option/group creation, plus workflow/dashboard/widget rename. Failures surface as a red toast and block save — never silently fall back to gibberish.
+- **Live auto-translate**: as the user types in the Builder, a debounced (~450ms) call to `/api/translate` fills the opposite-language label AND derives a snake_case Latin slug from the English version. No more `item_<timestamp>` slugs for Arabic input. Wired into model/section/field/option/group creation, plus workflow/dashboard/widget rename. Failures surface as a red toast and block save — never silently fall back to gibberish. `/api/translate` runs on the Vercel **edge** runtime (like the other Anthropic endpoints) so the bursty, open-modal-translate-a-few-close usage pattern doesn't pay a Node cold-start on the first call each session.
+- **Bulk "Translate all" (dropdown options editor)**: the options modal shows a `Translate all (N)` button whenever N options still lack their other-language label or a real `api_name`. It translates every blank option **in parallel** (one round-trip's latency, not N staggered debounced calls), only ever filling blanks — never overwriting a label or slug the user typed. Reuses the same in-memory cache as the live translator, so options already filled live this session resolve instantly. Per-option failures are tallied into a single red toast.
 - **Translation Settings page** (`/settings/translations`) lets an admin edit any key in the i18n dictionary without redeploy.
 
 ## User flows
 1. **Switch language:** Click language toggle in Header → whole UI flips AR/EN and LTR/RTL instantly.
 2. **Edit a static string:** `/settings/translations` → find the key → edit the AR or EN value → save → change reflects in the UI.
-3. **Live auto-translate (Builder):** type a label in your current language → after ~700ms of quiet, the opposite-language label and a clean Latin slug appear as a small helper line under the input. Save is blocked while a translation is in flight or after a translation error — the user retries until it succeeds. The translation can still be manually overridden by typing into the opposite-language input or the API-name input.
+3. **Live auto-translate (Builder):** type a label in your current language → after ~450ms of quiet, the opposite-language label and a clean Latin slug appear as a small helper line under the input. Save is blocked while a translation is in flight or after a translation error — the user retries until it succeeds. The translation can still be manually overridden by typing into the opposite-language input or the API-name input.
+4. **Translate a whole dropdown at once:** in the options editor modal, type just the Arabic (or just the English) for several options → click `Translate all (N)` → all blank options fill their other language + `api_name` together in one parallel batch. Faster than waiting for each row's debounced live translation to fire one at a time.
 
 ## Data touched
 - Reads/writes: `localStorage` (language preference).
@@ -42,8 +44,9 @@ Wassell is a Saudi Arabian real-estate company. Arabic is the primary language, 
 | `src/lib/i18n.ts` | i18n setup, translation dictionary, `t()` helper |
 | `src/lib/autoTranslate.ts` | `slugify` (Latin-only sync) and `needsTranslation` predicate |
 | `src/lib/translateLabel.ts` | Client wrapper around `/api/translate` with in-memory cache |
-| `src/hooks/useDebouncedTranslation.ts` | React hook — debounced live translation for input fields |
-| `api/translate.ts` | Server endpoint (Claude Haiku 4.5 + force tool-use) — returns label_ar + label_en + snake_case slug |
+| `src/hooks/useDebouncedTranslation.ts` | React hook — debounced (~450ms) live translation for input fields |
+| `src/pages/Builder/components/OptionsEditor.tsx` | Dropdown options editor modal — per-row live translation + the bulk `Translate all` parallel-batch button |
+| `api/translate.ts` | Server endpoint (Claude Haiku 4.5 + force tool-use, **edge** runtime) — returns label_ar + label_en + snake_case slug |
 | `src/components/layout/Header.tsx` | Language toggle control |
 | `src/pages/Settings/TranslationSettingsPage.tsx` | Admin UI for editing translations |
 | `src/App.tsx` | Applies `dir` and `lang` on language change |
