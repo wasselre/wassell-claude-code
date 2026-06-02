@@ -35,10 +35,15 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
   const data: MigrationData = useMemo(() => (record ? readMigrationData(record) : {}), [record]);
 
   const patch = (partial: Partial<MigrationData>) => {
-    if (!record) return;
+    // Read the FRESHEST record from the store (not this render's closure) so
+    // rapid successive patches build on each other instead of clobbering one
+    // another or fighting the optimistic-version check.
+    const fresh = (useAppStore.getState().records[modelId] ?? []).find((r) => r.id === recordId);
+    const base = fresh ?? record;
+    if (!base) return;
     const next: AppRecord = {
-      ...record,
-      data: { ...record.data, ...partial },
+      ...base,
+      data: { ...base.data, ...partial },
       updated_at: new Date().toISOString(),
     };
     void saveRecord(next);
@@ -153,6 +158,12 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               }
               onCountResults={(field, results) =>
                 patch({ count_results: { ...(data.count_results ?? {}), [field]: results } })
+              }
+              onComputed={(std, counts) =>
+                patch({
+                  standardization: { ...(data.standardization ?? {}), ...std },
+                  count_results: { ...(data.count_results ?? {}), ...counts },
+                })
               }
               onProceed={() => patch({ step: 'preview' })}
               onBack={() => patch({ step: 'mapping' })}

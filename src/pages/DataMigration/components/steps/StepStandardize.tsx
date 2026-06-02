@@ -25,6 +25,12 @@ interface StepStandardizeProps {
   countResults: Record<string, CountRowResult[]> | undefined;
   onChangeColumn: (colIndex: number, plan: ColumnStandardization) => void;
   onCountResults: (fieldName: string, results: CountRowResult[]) => void;
+  /** Persist the whole initial computation (all columns + counts) in ONE save —
+   * avoids a burst of racing patches that the optimistic-version check rejects. */
+  onComputed: (
+    std: Record<number, ColumnStandardization>,
+    counts: Record<string, CountRowResult[]>,
+  ) => void;
   onProceed: () => void;
   onBack: () => void;
 }
@@ -39,6 +45,7 @@ export default function StepStandardize({
   countResults,
   onChangeColumn,
   onCountResults,
+  onComputed,
   onProceed,
   onBack,
 }: StepStandardizeProps) {
@@ -60,7 +67,11 @@ export default function StepStandardize({
     if (missingCols.length === 0 && missingCounts.length === 0) return;
     setLoading(true);
     void (async () => {
-      for (const c of missingCols) {
+      // Run every column-standardization + count call in PARALLEL, then persist
+      // them all in ONE save (onComputed). Doing one save per call previously
+      // fired ~8 rapid patches that raced the optimistic-version check, so most
+      // were rejected and the step looped forever on its spinner.
+      const stdTasks = missingCols.map(async (c) => {
         const multi = isMultiValueColumn(c.field);
         const distinct = distinctColumnValues(table.rows, c.colIndex, multi);
         try {
@@ -75,7 +86,7 @@ export default function StepStandardize({
             rawValues: distinct.map((d) => d.raw),
             language: isAr ? 'ar' : 'en',
           });
-          onChangeColumn(c.colIndex, buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, decisions, isAr));
+          return { colIndex: c.colIndex, plan: buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, decisions, isAr) };
         } catch (err) {
           addToast(
             (isAr ? 'تعذّر توحيد القيم: ' : 'Standardization failed: ') +
@@ -83,40 +94,50 @@ export default function StepStandardize({
             'error',
           );
           // empty-decisions plan → everything 'unmatched', user resolves manually
-          onChangeColumn(c.colIndex, buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, [], isAr));
+          return { colIndex: c.colIndex, plan: buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, [], isAr) };
         }
-      }
+      });
 
-      // AI-counted fields: read each unit's full-row description → total count.
-      if (missingCounts.length > 0) {
-        const countRows = table.rows
-          .map((row, idx) => ({ rowIndex: idx, text: rowDescription(table.headers, row) }))
-          .filter((r) => r.text);
-        for (const slug of missingCounts) {
-          const field = allFields.find((f) => f.name === slug);
-          if (!field) continue;
-          try {
-            const counts = await countField({
-              fieldLabel: isAr ? field.label_ar : field.label_en,
-              rows: countRows,
-              language: isAr ? 'ar' : 'en',
-            });
-            const byIdx = new Map(counts.map((c) => [c.rowIndex, c]));
-            onCountResults(
-              slug,
-              countRows.map((r) => byIdx.get(r.rowIndex) ?? { rowIndex: r.rowIndex, count: 0, reason: '' }),
-            );
-          } catch (err) {
-            addToast(
-              (isAr ? 'تعذّر حساب العدّ: ' : 'Counting failed: ') +
-                (err instanceof Error ? err.message : String(err)),
-              'error',
-            );
-            onCountResults(slug, countRows.map((r) => ({ rowIndex: r.rowIndex, count: 0, reason: '' })));
-          }
+      const countRows = table.rows
+        .map((row, idx) => ({ rowIndex: idx, text: rowDescription(table.headers, row) }))
+        .filter((r) => r.text);
+      const countTasks = missingCounts.map(async (slug) => {
+        const field = allFields.find((f) => f.name === slug);
+        if (!field) return null;
+        try {
+          const counts = await countField({
+            fieldLabel: isAr ? field.label_ar : field.label_en,
+            rows: countRows,
+            language: isAr ? 'ar' : 'en',
+          });
+          const byIdx = new Map(counts.map((c) => [c.rowIndex, c]));
+          return {
+            slug,
+            results: countRows.map((r) => byIdx.get(r.rowIndex) ?? { rowIndex: r.rowIndex, count: 0, reason: '' }),
+          };
+        } catch (err) {
+          addToast(
+            (isAr ? 'تعذّر حساب العدّ: ' : 'Counting failed: ') +
+              (err instanceof Error ? err.message : String(err)),
+            'error',
+          );
+          return { slug, results: countRows.map((r) => ({ rowIndex: r.rowIndex, count: 0, reason: '' })) };
         }
-      }
+      });
 
+      const [stdDone, countDone] = await Promise.all([Promise.all(stdTasks), Promise.all(countTasks)]);
+
+      const stdAcc: Record<number, ColumnStandardization> = {};
+      stdDone.forEach((r) => {
+        stdAcc[r.colIndex] = r.plan;
+      });
+      const countAcc: Record<string, CountRowResult[]> = {};
+      countDone.forEach((r) => {
+        if (r) countAcc[r.slug] = r.results;
+      });
+      if (Object.keys(stdAcc).length > 0 || Object.keys(countAcc).length > 0) {
+        onComputed(stdAcc, countAcc);
+      }
       setLoading(false);
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
