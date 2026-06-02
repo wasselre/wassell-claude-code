@@ -1,7 +1,7 @@
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { mapImportedRows } from '@/lib/excelUtils';
 import { applyStandardization, modelWithNewOptions } from './applyStandardization';
-import type { ColumnStandardization, MigrationResult, RawTable } from './types';
+import type { ColumnStandardization, CountRowResult, MigrationResult, RawTable } from './types';
 
 interface SaveResultLike {
   status?: string;
@@ -12,6 +12,8 @@ export interface RunMigrationArgs {
   table: RawTable;
   mappings: Record<number, string | null>;
   standardization: Record<number, ColumnStandardization>;
+  countFields?: string[];
+  countResults?: Record<string, CountRowResult[]>;
   allModels: AppModel[];
   allRecords: Record<string, AppRecord[]>;
   createdBy: string | null;
@@ -49,6 +51,36 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
     .flatMap((s) => s.fields)
     .filter((f) => f.type !== 'mirror');
   const allModels2 = args.allModels.map((m) => (m.id === model.id ? model2 : m));
+
+  // 2.5 — AI-counted fields. Drop any column mapping to a counted field, then
+  // append one column carrying each unit's computed count, mapped to the field
+  // (mapImportedRows then parses it as the number value). Same "extra column"
+  // trick routed values use, so counts survive the empty-row filter.
+  const countFields = args.countFields ?? [];
+  const countResults = args.countResults ?? {};
+  if (countFields.length > 0) {
+    for (const [k, v] of Object.entries(applied.mappings)) {
+      if (v && countFields.includes(v)) applied.mappings[Number(k)] = null;
+    }
+    let nextCol = Math.max(
+      table.headers.length,
+      ...applied.rows.map((r) => r.length),
+      ...Object.keys(applied.mappings).map((k) => Number(k) + 1),
+      0,
+    );
+    for (const slug of countFields) {
+      const results = countResults[slug];
+      if (!results || results.length === 0) continue;
+      const idx = nextCol++;
+      const byIdx = new Map(results.map((r) => [r.rowIndex, r.count]));
+      applied.rows.forEach((row, r) => {
+        while (row.length <= idx) row.push('');
+        const c = byIdx.get(r);
+        row[idx] = c !== undefined && c !== null ? String(c) : '';
+      });
+      applied.mappings[idx] = slug;
+    }
+  }
 
   // 3 — map rows to record data (+ auto-created lookup target records).
   const { data: mappedData, newLookupRecords } = mapImportedRows(

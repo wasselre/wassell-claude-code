@@ -4,7 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { Loader2, AlertCircle, ArrowRight, ArrowLeft } from 'lucide-react';
 import { runMigration } from '../../lib/runMigration';
 import type { AppModel } from '@/types';
-import type { RawTable, ColumnStandardization, MigrationResult } from '../../lib/types';
+import type { RawTable, ColumnStandardization, CountRowResult, MigrationResult } from '../../lib/types';
 
 interface StepMigratingProps {
   isAr: boolean;
@@ -12,6 +12,8 @@ interface StepMigratingProps {
   table: RawTable;
   mappings: Record<number, string | null>;
   standardization: Record<number, ColumnStandardization> | undefined;
+  countFields: string[] | undefined;
+  countResults: Record<string, CountRowResult[]> | undefined;
   onDone: (result: MigrationResult) => void;
   onBack: () => void;
 }
@@ -22,6 +24,8 @@ export default function StepMigrating({
   table,
   mappings,
   standardization,
+  countFields,
+  countResults,
   onDone,
   onBack,
 }: StepMigratingProps) {
@@ -46,6 +50,8 @@ export default function StepMigrating({
           table,
           mappings,
           standardization: standardization ?? {},
+          countFields,
+          countResults,
           allModels,
           allRecords,
           createdBy: currentUserId,

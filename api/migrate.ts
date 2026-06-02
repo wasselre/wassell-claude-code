@@ -19,9 +19,11 @@ import {
   runExtract,
   runSuggestMappings,
   runStandardize,
+  runCountField,
   type ExtractFileInput,
   type TargetFieldLite,
   type StandardizeCandidate,
+  type CountInputRow,
 } from './_lib/migrateAgent.js';
 
 export const config = {
@@ -56,7 +58,7 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
 }
 
 interface MigrateRequestBody {
-  action?: 'extract' | 'suggest_mappings' | 'standardize';
+  action?: 'extract' | 'suggest_mappings' | 'standardize' | 'count_field';
   // UI language for the model's human-readable text (notes / reasons).
   language?: 'ar' | 'en';
   // extract
@@ -70,6 +72,8 @@ interface MigrateRequestBody {
   fieldLabel?: string;
   candidates?: StandardizeCandidate[];
   rawValues?: string[];
+  // count_field
+  countRows?: CountInputRow[];
 }
 
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
@@ -138,6 +142,22 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           return jsonOk({ ok: true, decisions });
         } catch (err) {
           return jsonError(502, `Standardization failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      case 'count_field': {
+        const countRows = Array.isArray(body.countRows) ? body.countRows : [];
+        if (!body.fieldLabel || countRows.length === 0) {
+          return jsonError(400, 'count_field: fieldLabel and countRows[] are required');
+        }
+        try {
+          const counts = await runCountField(apiKey, {
+            fieldLabel: body.fieldLabel,
+            rows: countRows,
+            language: body.language ?? 'ar',
+          });
+          return jsonOk({ ok: true, counts });
+        } catch (err) {
+          return jsonError(502, `Counting failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       default:

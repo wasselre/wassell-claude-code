@@ -86,8 +86,20 @@ export interface MigrationData {
   mapping_suggestions?: ColumnMappingSuggestion[];
   /** Per dropdown/multiselect/lookup column: the value-standardization plan + decisions. */
   standardization?: Record<number, ColumnStandardization>;
+  /** Number fields the AI computes by counting from each unit's description
+   * (e.g. bathrooms / bedrooms total) — field slugs. */
+  count_fields?: string[];
+  /** AI-computed per-row counts, keyed by field slug. Reviewed/edited before migrate. */
+  count_results?: Record<string, CountRowResult[]>;
   /** Final import summary, set when status='done'. */
   result?: MigrationResult;
+}
+
+/** One unit's AI-computed count for a counted field (e.g. total bathrooms). */
+export interface CountRowResult {
+  rowIndex: number;
+  count: number;
+  reason: string;
 }
 
 export interface ColumnMappingSuggestion {

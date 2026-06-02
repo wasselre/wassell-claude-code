@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { ArrowRight, ArrowLeft, Loader2, Sparkles } from 'lucide-react';
-import { mappingTargets, targetFieldLites } from '../../lib/targetFields';
+import { ArrowRight, ArrowLeft, Loader2, Sparkles, CheckSquare, Square, Calculator } from 'lucide-react';
+import { mappingTargets, targetFieldLites, countableFields } from '../../lib/targetFields';
 import { suggestMappings } from '../../lib/client';
 import type { AppModel } from '@/types';
 import type { RawTable, ColumnMappingSuggestion } from '../../lib/types';
@@ -12,7 +12,9 @@ interface StepMappingProps {
   table: RawTable;
   mappings: Record<number, string | null> | undefined;
   suggestions: ColumnMappingSuggestion[] | undefined;
+  countFields: string[] | undefined;
   onMappings: (mappings: Record<number, string | null>, suggestions?: ColumnMappingSuggestion[]) => void;
+  onCountFields: (next: string[]) => void;
   onContinue: () => void;
   onBack: () => void;
 }
@@ -35,7 +37,9 @@ export default function StepMapping({
   table,
   mappings,
   suggestions,
+  countFields,
   onMappings,
+  onCountFields,
   onContinue,
   onBack,
 }: StepMappingProps) {
@@ -44,7 +48,11 @@ export default function StepMapping({
   const fetched = useRef(false);
   const Next = isAr ? ArrowLeft : ArrowRight;
   const Back = isAr ? ArrowRight : ArrowLeft;
-  const targets = mappingTargets(model, isAr);
+  const counted = new Set(countFields ?? []);
+  // Counted fields are computed by the AI, not mapped from a column — exclude
+  // them as column targets.
+  const targets = mappingTargets(model, isAr).filter((t) => !counted.has(t.value));
+  const countables = countableFields(model);
 
   useEffect(() => {
     if (mappings !== undefined || fetched.current) return;
@@ -77,6 +85,27 @@ export default function StepMapping({
   const sampleFor = (i: number) =>
     table.rows.slice(0, 4).map((r) => r[i] ?? '').filter(Boolean).slice(0, 2).join(' · ');
 
+  const toggleCount = (slug: string) => {
+    const set = new Set(counted);
+    if (set.has(slug)) {
+      set.delete(slug);
+    } else {
+      set.add(slug);
+      // A counted field is AI-computed, not column-mapped — clear any column
+      // currently pointed at it.
+      const cleared: Record<number, string | null> = { ...current };
+      let changed = false;
+      for (const [k, v] of Object.entries(cleared)) {
+        if (v === slug) {
+          cleared[Number(k)] = null;
+          changed = true;
+        }
+      }
+      if (changed) onMappings(cleared, suggestions);
+    }
+    onCountFields([...set]);
+  };
+
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center text-center p-12 gap-3 h-full">
@@ -99,7 +128,8 @@ export default function StepMapping({
         </p>
       </div>
 
-      <div className="flex-1 min-h-0 overflow-y-auto grid grid-cols-1 sm:grid-cols-2 gap-2.5 pe-1">
+      <div className="flex-1 min-h-0 overflow-y-auto pe-1">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
         {table.headers.map((header, idx) => {
           const mapped = current[idx] ?? '';
           const sug = suggestions?.find((s) => s.columnIndex === idx);
@@ -138,6 +168,40 @@ export default function StepMapping({
             </div>
           );
         })}
+        </div>
+
+        {countables.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-sand/20">
+            <div className="flex items-center gap-1.5 mb-1">
+              <Calculator size={14} className="text-copper" />
+              <span className="text-sm font-bold text-charcoal">
+                {isAr ? 'حقول تُحسب تلقائيًا' : 'AI-counted fields'}
+              </span>
+            </div>
+            <p className="text-xs text-charcoal/50 mb-2">
+              {isAr
+                ? 'لهذه الحقول الرقمية، يقرأ الذكاء وصف كل وحدة ويحسب الإجمالي (مثل إجمالي الحمامات أو الغرف) بدلاً من ربطها بعمود.'
+                : "For these number fields the AI reads each unit's full description and computes the total (e.g. total bathrooms / bedrooms) instead of mapping a single column."}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {countables.map((f) => {
+                const on = counted.has(f.name);
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => toggleCount(f.name)}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-sm transition-colors ${
+                      on ? 'border-copper bg-copper/10 text-copper' : 'border-sand/40 text-charcoal/70 hover:bg-cream'
+                    }`}
+                  >
+                    {on ? <CheckSquare size={14} /> : <Square size={14} />}
+                    {isAr ? f.label_ar : f.label_en}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-sand/20">

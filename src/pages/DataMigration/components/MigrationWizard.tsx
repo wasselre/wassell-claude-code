@@ -105,7 +105,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 isAr={isAr}
                 table={data.raw_table}
                 onChange={(t) => patch({ raw_table: t })}
-                onReplace={(t) => patch({ raw_table: t, mappings: undefined })}
+                onReplace={(t) => patch({ raw_table: t, mappings: undefined, count_results: undefined })}
                 onContinue={() => patch({ step: 'mapping' })}
                 onBack={() => patch({ step: 'upload' })}
               />
@@ -128,7 +128,9 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               table={data.raw_table}
               mappings={data.mappings}
               suggestions={data.mapping_suggestions}
+              countFields={data.count_fields}
               onMappings={(m, s) => patch(s ? { mappings: m, mapping_suggestions: s } : { mappings: m })}
+              onCountFields={(next) => patch({ count_fields: next })}
               onContinue={() => patch({ step: 'standardize' })}
               onBack={() => patch({ step: 'review_raw' })}
             />
@@ -143,8 +145,13 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               table={data.raw_table}
               mappings={data.mappings}
               standardization={data.standardization}
+              countFields={data.count_fields}
+              countResults={data.count_results}
               onChangeColumn={(ci, plan) =>
                 patch({ standardization: { ...(data.standardization ?? {}), [ci]: plan } })
+              }
+              onCountResults={(field, results) =>
+                patch({ count_results: { ...(data.count_results ?? {}), [field]: results } })
               }
               onMigrate={() => patch({ step: 'migrating', status: 'migrating' })}
               onBack={() => patch({ step: 'mapping' })}
@@ -160,6 +167,8 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               table={data.raw_table}
               mappings={data.mappings}
               standardization={data.standardization}
+              countFields={data.count_fields}
+              countResults={data.count_results}
               onDone={(result) => patch({ result, step: 'done', status: 'done' })}
               onBack={() => patch({ step: 'standardize', status: 'draft' })}
             />

@@ -19,6 +19,24 @@ export function importableFields(model: AppModel): ModelField[] {
   return model.schema.sections.flatMap((s) => s.fields).filter((f) => IMPORTABLE_TYPES.has(f.type));
 }
 
+/** Number fields that can be set to "AI count total" mode (e.g. bathrooms,
+ * bedrooms) — the AI reads each unit's description and returns the total. */
+export function countableFields(model: AppModel): ModelField[] {
+  return importableFields(model).filter((f) => f.type === 'number');
+}
+
+/** Build a one-line "header: value" description of a row for the count AI,
+ * skipping empty cells. */
+export function rowDescription(headers: string[], row: string[]): string {
+  return headers
+    .map((h, i) => {
+      const v = (row[i] ?? '').trim();
+      return v ? `${h}: ${v}` : '';
+    })
+    .filter(Boolean)
+    .join(' | ');
+}
+
 /** Mapping-target options for the column→field selects. Range fields expose two
  * entries (`slug.min` / `slug.max`) so each half maps to its own column —
  * mirrors ImportModal's mappingOptions. */

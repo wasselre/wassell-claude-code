@@ -204,3 +204,37 @@ export async function standardizeColumn(input: {
   }
   return body.decisions;
 }
+
+export interface CountResultRow {
+  rowIndex: number;
+  count: number;
+  reason: string;
+}
+
+/** Ask the AI to count a per-unit total (e.g. total bathrooms) from each row's
+ * description. Throws on failure. */
+export async function countField(input: {
+  fieldLabel: string;
+  rows: { rowIndex: number; text: string }[];
+  language?: 'ar' | 'en';
+}): Promise<CountResultRow[]> {
+  const res = await fetchWithTimeout('/api/migrate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({
+      action: 'count_field',
+      fieldLabel: input.fieldLabel,
+      countRows: input.rows,
+      language: input.language ?? 'ar',
+    }),
+  }, 120_000);
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    counts?: CountResultRow[];
+    error?: string;
+  };
+  if (!res.ok || !body.ok || !Array.isArray(body.counts)) {
+    throw new Error(body.error ?? `Counting failed (${res.status})`);
+  }
+  return body.counts;
+}

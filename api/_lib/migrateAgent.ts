@@ -467,3 +467,88 @@ export async function runStandardize(
     };
   });
 }
+
+// ============================================================================
+// count_field — AI counts a per-unit total (e.g. bathrooms / bedrooms) by
+// reading each unit's full description. One row = one unit.
+// ============================================================================
+
+export interface CountInputRow {
+  rowIndex: number;
+  text: string;
+}
+
+export interface CountOut {
+  rowIndex: number;
+  count: number;
+  reason: string;
+}
+
+const COUNT_TOOL: Anthropic.Tool = {
+  name: 'emit_counts',
+  description: 'For each unit row, return the total count of the requested thing.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      counts: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            rowIndex: { type: 'integer', description: 'The row index given in the input.' },
+            count: { type: 'integer', description: 'Total count for this unit (0 if none / unknown).' },
+            reason: { type: 'string', description: 'Brief justification — which mentions you counted.' },
+          },
+          required: ['rowIndex', 'count', 'reason'],
+        },
+      },
+    },
+    required: ['counts'],
+  },
+};
+
+const COUNT_SYSTEM = `You count how many of a specific thing a Saudi real-estate UNIT has (e.g. bathrooms / دورات المياه, or bedrooms / غرف النوم) by reading that unit's full description. Always call the emit_counts tool.
+
+For each unit row you get its index and a description (header: value pairs). Return the TOTAL integer count of the requested thing for that unit:
+- Sum explicit numbers ("2 دورة مياة" = 2; "3 bedrooms" = 3).
+- ADD implied ones: an en-suite / attached bathroom mentioned inside a bedroom or master-suite description counts as +1 bathroom; a "master bedroom" / "جناح نوم" counts as a bedroom.
+- Count each distinct room / fixture once — don't double-count the same one if it's described twice.
+- If the description says nothing about the requested thing, return 0.
+Return exactly one entry per input rowIndex.`;
+
+const COUNT_BATCH = 100;
+
+export async function runCountField(
+  apiKey: string,
+  input: { fieldLabel: string; rows: CountInputRow[]; language?: AgentLanguage },
+): Promise<CountOut[]> {
+  const client = new Anthropic({ apiKey });
+  const out: CountOut[] = [];
+  for (let i = 0; i < input.rows.length; i += COUNT_BATCH) {
+    const batch = input.rows.slice(i, i + COUNT_BATCH);
+    const userMsg =
+      `Count the total "${input.fieldLabel}" for each unit below.\n\nUNITS:\n` +
+      batch.map((r) => `[${r.rowIndex}] ${r.text || '(no description)'}`).join('\n');
+    const response = await client.messages.create({
+      model: STANDARDIZE_MODEL,
+      max_tokens: 4000,
+      system: COUNT_SYSTEM + langLine(input.language ?? 'ar', 'reason'),
+      tools: [COUNT_TOOL],
+      tool_choice: { type: 'tool', name: 'emit_counts' },
+      messages: [{ role: 'user', content: userMsg }],
+    });
+    const tb = response.content.find((b) => b.type === 'tool_use');
+    if (!tb || tb.type !== 'tool_use') throw new Error('Count model did not respond');
+    const parsed = tb.input as { counts?: unknown };
+    const arr = Array.isArray(parsed.counts) ? parsed.counts : [];
+    for (const c of arr) {
+      const o = c as Record<string, unknown>;
+      out.push({
+        rowIndex: Number(o.rowIndex),
+        count: Math.max(0, Math.round(Number(o.count) || 0)),
+        reason: typeof o.reason === 'string' ? o.reason : '',
+      });
+    }
+  }
+  return out;
+}
