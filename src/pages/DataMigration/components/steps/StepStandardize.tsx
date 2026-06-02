@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { Loader2, ArrowRight, ArrowLeft, PlayCircle, CheckCircle2 } from 'lucide-react';
+import { Loader2, ArrowRight, ArrowLeft, Eye, CheckCircle2 } from 'lucide-react';
 import {
   standardizableColumns,
   distinctColumnValues,
@@ -25,7 +25,7 @@ interface StepStandardizeProps {
   countResults: Record<string, CountRowResult[]> | undefined;
   onChangeColumn: (colIndex: number, plan: ColumnStandardization) => void;
   onCountResults: (fieldName: string, results: CountRowResult[]) => void;
-  onMigrate: () => void;
+  onProceed: () => void;
   onBack: () => void;
 }
 
@@ -39,7 +39,7 @@ export default function StepStandardize({
   countResults,
   onChangeColumn,
   onCountResults,
-  onMigrate,
+  onProceed,
   onBack,
 }: StepStandardizeProps) {
   const addToast = useAppStore((s) => s.addToast);
@@ -205,11 +205,11 @@ export default function StepStandardize({
           {isAr ? 'رجوع' : 'Back'}
         </button>
         <button
-          onClick={onMigrate}
+          onClick={onProceed}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors font-medium"
         >
-          <PlayCircle size={16} />
-          {isAr ? 'ترحيل البيانات' : 'Migrate data'}
+          <Eye size={16} />
+          {isAr ? 'معاينة السجلات' : 'Preview records'}
         </button>
       </div>
     </div>

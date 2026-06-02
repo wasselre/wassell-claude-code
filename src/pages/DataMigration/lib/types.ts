@@ -32,6 +32,7 @@ export type MigrationStep =
   | 'review_raw'
   | 'mapping'
   | 'standardize'
+  | 'preview'
   | 'migrating'
   | 'done';
 
@@ -41,6 +42,7 @@ export const MIGRATION_STEP_ORDER: MigrationStep[] = [
   'review_raw',
   'mapping',
   'standardize',
+  'preview',
   'done',
 ];
 
@@ -91,6 +93,8 @@ export interface MigrationData {
   count_fields?: string[];
   /** AI-computed per-row counts, keyed by field slug. Reviewed/edited before migrate. */
   count_results?: Record<string, CountRowResult[]>;
+  /** Source row indices the user un-approved in the preview step (not migrated). */
+  excluded_rows?: number[];
   /** Final import summary, set when status='done'. */
   result?: MigrationResult;
 }

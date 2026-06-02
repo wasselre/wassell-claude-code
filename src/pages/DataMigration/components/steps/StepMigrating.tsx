@@ -14,6 +14,7 @@ interface StepMigratingProps {
   standardization: Record<number, ColumnStandardization> | undefined;
   countFields: string[] | undefined;
   countResults: Record<string, CountRowResult[]> | undefined;
+  excludedRows: number[] | undefined;
   onDone: (result: MigrationResult) => void;
   onBack: () => void;
 }
@@ -26,6 +27,7 @@ export default function StepMigrating({
   standardization,
   countFields,
   countResults,
+  excludedRows,
   onDone,
   onBack,
 }: StepMigratingProps) {
@@ -52,6 +54,7 @@ export default function StepMigrating({
           standardization: standardization ?? {},
           countFields,
           countResults,
+          excludedRows,
           allModels,
           allRecords,
           createdBy: currentUserId,

@@ -24,12 +24,13 @@ Onboarding a developer's project + units used to be a manual, hours-long job: ey
 - **Multi-select stays multi-value end-to-end** — values are kept comma/`،`-separated and standardized per token, never collapsed to one (a deliberate departure from the Excel template export, whose single-select in-cell dropdown can't represent multiple values).
 - **AI-counted number fields** — flag a number field (e.g. bathrooms / bedrooms) as "AI-counted" in the mapping step. For each unit the AI reads that row's full description and returns the **total** (summing explicit numbers AND implied ones — an en-suite mentioned in a bedroom = +1 bathroom — without double-counting; 0 when unknown), shown per-unit and **editable before migrate**. A counted field is computed, not mapped from a column (it's removed from the column targets). One row = one unit. The AI's text (notes / mapping & standardization reasons / count reasons) follows the UI language — Arabic in the Arabic app.
 - **Lookups avoid duplicates:** "link existing" rewrites the value to the matched record's display so the importer resolves to that record; only an explicit "create new" mints a new developer/project.
+- **Final preview + per-record approval:** before anything is written, a preview step shows every record that *will* be created — in a table with resolved display values (option labels, linked-record names, not slugs/UUIDs). Each record has a checkbox (all approved by default); deselect any you don't want. Only approved records migrate (exact duplicates are auto-skipped and counted; new linked-record count is shown). Built on a shared, pure `buildMigrationPlan`, so what you approve is byte-for-byte what gets saved.
 - **Migrate reuses the proven import core** (`mapImportedRows`) and the standard `saveRecord` path, so auto-IDs, formulas, frozen-model dispatch, duplicate-skip, and the offline retry queue all work exactly as they do elsewhere. Per-row failures are reported, never silently dropped.
 - **`data_migration` is never freezable and never a migration target** (it's excluded from the target picker and the Freeze modal).
 
 ## User flows
 
-1. **Main happy path (messy files):** New migration → pick model → drop PDF/images → *Extract data* → review/fix the raw table → *Suggest column mapping* → adjust → *Review values* → approve/override each value → *Migrate* → "Imported N records into <model>".
+1. **Main happy path (messy files):** New migration → pick model → drop PDF/images → *Extract data* → review/fix the raw table → *Suggest column mapping* → adjust → *Review values* → approve/override each value → *Preview records* → approve/deselect each record → *Migrate* → "Imported N records into <model>".
 2. **Fast path (clean data — "start at step 5"):** New migration → pick model → upload a clean Excel/CSV (or start blank + paste) → review → mapping → standardize → migrate.
 3. **Edit-and-re-upload:** at the review step, Download Excel → fix in Excel → Re-upload corrected (mappings reset) → continue.
 4. **Error/empty states:** an AI step that fails or times out shows a loud toast + the wizard stays put so you can retry or fall back to manual mapping; a model with no dropdown/lookup columns skips straight to a "ready to migrate" state; very large tables (>500 rows) render the first 500 for in-app editing with a note that all rows still migrate (edit the rest via download).
@@ -53,7 +54,9 @@ Onboarding a developer's project + units used to be a manual, hours-long job: ey
 | `src/pages/DataMigration/components/CountFieldReview.tsx` | Per-unit review of AI-counted number fields (editable) |
 | `src/pages/DataMigration/lib/client.ts` | Upload + signed-URL + `/api/migrate` callers (with timeouts) |
 | `src/pages/DataMigration/lib/applyStandardization.ts` | Rewrites raw cells to canonical values + routes values to other fields |
-| `src/pages/DataMigration/lib/runMigration.ts` | Orchestrates apply → `mapImportedRows` → dup-skip → `saveRecord` |
+| `src/pages/DataMigration/lib/runMigration.ts` | `buildMigrationPlan` (pure: apply → `mapImportedRows` → dup-skip, records tagged with source row) + `runMigration` (saves approved records) |
+| `src/pages/DataMigration/components/steps/StepPreview.tsx` | Final per-record approval table (built from `buildMigrationPlan`) |
+| `src/pages/DataMigration/lib/previewRecords.ts` | Resolve stored values → display labels for the preview table |
 | `src/pages/DataMigration/lib/{types,targetFields,buildStandardization}.ts` | Shared types + field/option helpers + AI→decision bridge |
 | `api/migrate.ts` + `api/_lib/migrateAgent.ts` | The AI endpoint + Anthropic tool-use logic |
 | `src/lib/excelUtils.ts` | `readExcelFile`, `exportRawTable`, `mapImportedRows` (reused) |
@@ -66,4 +69,5 @@ Onboarding a developer's project + units used to be a manual, hours-long job: ey
 - **Extraction size:** bounded by Anthropic per-request limits (images ≤5MB, capped file count) and the model's output budget (≈a few hundred rows). For very large datasets use the clean-Excel path; oversized inputs surface a `truncated` notice rather than failing silently.
 - **Bulk insert path:** the live migrate uses `saveRecord` per row (correct + proven, slower at scale). `records_bulk_save` is built and DB-verified but not yet wired in — a clean follow-up to speed up multi-thousand-row imports.
 - **Routed values aren't re-standardized:** a value moved to another field is stored as-is; if that target field is itself a dropdown, the value may need manual fixing afterward.
+- **Auto-created lookup records aren't pruned for excluded rows:** if you deselect a record in the preview, any *new* linked record (developer/project) its row would have created is still created. The preview surfaces the new-linked-record count so it's visible.
 - **One target model per migration:** units link to projects via the normal lookup auto-match (a "project name" column resolves/creates the project) — there is no combined parent+child wizard.

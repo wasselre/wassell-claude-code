@@ -8,6 +8,7 @@ import StepUpload from './steps/StepUpload';
 import StepReviewRaw from './steps/StepReviewRaw';
 import StepMapping from './steps/StepMapping';
 import StepStandardize from './steps/StepStandardize';
+import StepPreview from './steps/StepPreview';
 import StepMigrating from './steps/StepMigrating';
 import StepDone from './steps/StepDone';
 
@@ -153,8 +154,26 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               onCountResults={(field, results) =>
                 patch({ count_results: { ...(data.count_results ?? {}), [field]: results } })
               }
-              onMigrate={() => patch({ step: 'migrating', status: 'migrating' })}
+              onProceed={() => patch({ step: 'preview' })}
               onBack={() => patch({ step: 'mapping' })}
+            />
+          </div>
+        )}
+
+        {step === 'preview' && targetModel && data.raw_table && data.mappings && (
+          <div className="flex-1 min-h-0">
+            <StepPreview
+              isAr={isAr}
+              model={targetModel}
+              table={data.raw_table}
+              mappings={data.mappings}
+              standardization={data.standardization}
+              countFields={data.count_fields}
+              countResults={data.count_results}
+              excludedRows={data.excluded_rows}
+              onChangeExcluded={(next) => patch({ excluded_rows: next })}
+              onConfirm={() => patch({ step: 'migrating', status: 'migrating' })}
+              onBack={() => patch({ step: 'standardize' })}
             />
           </div>
         )}
@@ -169,8 +188,9 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               standardization={data.standardization}
               countFields={data.count_fields}
               countResults={data.count_results}
+              excludedRows={data.excluded_rows}
               onDone={(result) => patch({ result, step: 'done', status: 'done' })}
-              onBack={() => patch({ step: 'standardize', status: 'draft' })}
+              onBack={() => patch({ step: 'preview', status: 'draft' })}
             />
           </div>
         )}
