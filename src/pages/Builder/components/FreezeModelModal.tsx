@@ -28,7 +28,7 @@ export default function FreezeModelModal({ open, onClose, model }: FreezeModelMo
   const [confirmTyped, setConfirmTyped] = useState('');
 
   const recordCount = getRecords(model.id).length;
-  const NON_FREEZABLE = new Set(['chats', 'ai_chats']);
+  const NON_FREEZABLE = new Set(['chats', 'ai_chats', 'data_migration']);
   const isFreezable = !NON_FREEZABLE.has(model.name) && !model.is_hardcoded;
 
   // Re-run the coercion check every time the modal opens.

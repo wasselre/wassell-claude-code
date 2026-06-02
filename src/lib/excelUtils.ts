@@ -394,6 +394,32 @@ export async function exportTemplate(
 }
 
 /**
+ * Write an arbitrary { headers, rows } table to an .xlsx and trigger a browser
+ * download. Generic counterpart to `exportToExcel` (which is model-bound) —
+ * used by the Data Migration wizard so the user can pull the AI-extracted raw
+ * table out, fix it in Excel, and re-upload.
+ *
+ * Plain text cells, NO data validation — deliberate. The template export
+ * (`exportTemplate`) gives multiselect columns a single-select in-cell
+ * dropdown, which silently collapses a multi-value cell to one value. Here
+ * every cell is free text, so comma / `،`-separated multi-values survive the
+ * download → edit → re-upload round-trip intact.
+ */
+export function exportRawTable(
+  table: { headers: string[]; rows: (string | number)[][] },
+  filename: string,
+  isAr: boolean,
+): void {
+  const wsData = [table.headers, ...table.rows];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = table.headers.map(() => ({ wch: 22 }));
+  if (isAr) ws['!dir'] = 'rtl';
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, isAr ? 'البيانات' : 'Data');
+  XLSX.writeFile(wb, filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`);
+}
+
+/**
  * Read an uploaded Excel/CSV file and return header row + data rows
  */
 export async function readExcelFile(

@@ -36,6 +36,7 @@ import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import DecksPage from '@/pages/Decks/DecksPage';
+import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import ImageChatsPage from '@/pages/ImageChats/ImageChatsPage';
 import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import FilesPage from '@/pages/Files/FilesPage';
@@ -100,6 +101,11 @@ function RecordDetailDispatcher() {
     // handles brief form / progress / ready / failed states internally.
     return <DecksPage />;
   }
+  if (modelName === 'data_migration') {
+    // DataMigrationPage is a split-pane import wizard — reads :recordId
+    // itself and drives its own multi-step state machine off record.data.
+    return <DataMigrationPage />;
+  }
   if (modelName === 'image_chats') {
     // ImageChatsPage is a split-pane "mini Higgsfield" chat UI — reads
     // :recordId itself, handles its own message-thread mount keying.
@@ -140,6 +146,9 @@ function RecordListDispatcher() {
   }
   if (modelName === 'decks') {
     return <DecksPage />;
+  }
+  if (modelName === 'data_migration') {
+    return <DataMigrationPage />;
   }
   if (modelName === 'image_chats') {
     return <ImageChatsPage />;

@@ -94,6 +94,13 @@ Real-estate offices in Saudi Arabia sometimes have spotty connectivity. We don't
 - **Builder UI for frozen models is read-only.** The "Freeze" button is replaced with a "Frozen · `<name>`" pill plus a banner explaining schema edits go through Claude. The Fields/Card/Maps/Buttons tabs all accept a `readOnly` prop that blocks pointer events. The Builder Agent's schema-mutating tools refuse on frozen models with a message pointing the user at a regular Claude Code chat for migrations.
 - **Future schema edits** (adding/dropping a column, adding a new junction) happen via a migration written by Claude that does the DDL AND updates the model's JSONB schema in `models.schema`, then calls `regenerate_frozen_model_artifacts(model_id)` + `rebuild_unified_records()` to refresh the view + UNION.
 
+### Data Migration support (added 2026-06-01)
+
+Backing the [data-migration.md](data-migration.md) wizard:
+- **`wassel-migrations` Storage bucket** — private, 32 MB/file, owner-scoped RLS (`<auth.uid()>/...` path prefix). Holds developer files uploaded for AI extraction. The extract endpoint reads them via short-lived signed URLs the client mints (no service-role).
+- **`records_bulk_save(model_id, rows jsonb, created_by)` RPC** — inserts many records in one round-trip by looping `record_save` per row in its own subtransaction (frozen/unfrozen dispatch for free), returning `{inserted, errors[]}`. Workflows are intentionally NOT fired for bulk import. Built + DB-verified; reserved as a future fast-path (the live wizard currently imports via `saveRecord` per row).
+- **`record_reserve_auto_ids(model_id, field_id, scope_key, count, start)` RPC** — atomically reserves a contiguous block of auto-IDs (reuses `auto_id_counters`), for batch import without the per-row race.
+
 ## User flows
 1. **First-run offline:** User opens app with no Supabase env → app seeds from `seedModels.ts` → all data lives in localStorage → fully functional.
 2. **First-run online:** User opens app with Supabase configured → parallel kickoff fires every read concurrently → chrome-critical tier renders the sidebar / Builder / Settings as soon as it lands → records / workflow_runs / activity_log / whiteboards finish in the background. The realtime orchestrator + SWR listeners start once chrome is ready.

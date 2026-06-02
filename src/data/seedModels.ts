@@ -4051,6 +4051,126 @@ const imageChatsModel: AppModel = {
 };
 
 // ============================================================
+// DATA MIGRATION (2026-06-01) — AI-assisted import wizard.
+// Custom-UI system model (like decks / ai_chats): each record is one
+// migration session. The wizard reads/writes freeform JSON off
+// `record.data` (raw_table, mappings, standardization, result, phase) —
+// only title/status/step need to be real schema fields. The generic
+// record form never renders for this model (App.tsx dispatches to
+// DataMigrationPage). Never frozen, never a migration target itself.
+// ============================================================
+export const dataMigrationId = uuid();
+const dmBaseSectionId = uuid();
+const dmTitleFieldId = uuid();
+const dmStatusFieldId = uuid();
+const dmTargetModelFieldId = uuid();
+const dmStepFieldId = uuid();
+const dmErrorFieldId = uuid();
+
+const dataMigrationModel: AppModel = {
+  id: dataMigrationId,
+  name: 'data_migration',
+  label_ar: 'ترحيل البيانات',
+  label_en: 'Data Migration',
+  icon: 'import',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: dmTitleFieldId,
+    badge_field_id: dmStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: dmBaseSectionId,
+        label_ar: 'الترحيل',
+        label_en: 'Migration',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          {
+            id: dmTitleFieldId,
+            name: 'title',
+            label_ar: 'العنوان',
+            label_en: 'Title',
+            type: 'text',
+            required: false,
+            order: 0,
+            section_id: dmBaseSectionId,
+            width: 'full',
+            show_in_table: true,
+          },
+          {
+            // Coarse list-pill state. The fine-grained wizard position lives
+            // in the separate `step` field — see DataMigration/lib/types.ts.
+            id: dmStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: false,
+            order: 1,
+            section_id: dmBaseSectionId,
+            width: 'third',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'مسودة', label_en: 'Draft', value: 'draft', color: '#9ca3af' },
+              { id: uuid(), label_ar: 'جارٍ الاستخراج', label_en: 'Extracting', value: 'extracting', color: '#3b82f6' },
+              { id: uuid(), label_ar: 'جارٍ الترحيل', label_en: 'Migrating', value: 'migrating', color: '#3b82f6' },
+              { id: uuid(), label_ar: 'تم', label_en: 'Done', value: 'done', color: '#22c55e' },
+              { id: uuid(), label_ar: 'فشل', label_en: 'Failed', value: 'failed', color: '#ef4444' },
+            ],
+          },
+          {
+            id: dmTargetModelFieldId,
+            name: 'target_model_id',
+            label_ar: 'النموذج الهدف',
+            label_en: 'Target model',
+            type: 'text',
+            required: false,
+            order: 2,
+            section_id: dmBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: dmStepFieldId,
+            name: 'step',
+            label_ar: 'الخطوة',
+            label_en: 'Step',
+            type: 'text',
+            required: false,
+            order: 3,
+            section_id: dmBaseSectionId,
+            width: 'third',
+            show_in_table: false,
+          },
+          {
+            id: dmErrorFieldId,
+            name: 'error_message',
+            label_ar: 'رسالة الخطأ',
+            label_en: 'Error message',
+            type: 'textarea',
+            required: false,
+            order: 4,
+            section_id: dmBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 export const SEED_MODELS: AppModel[] = [
@@ -4067,6 +4187,7 @@ export const SEED_MODELS: AppModel[] = [
   chatTemplatesModel,
   aiChatsModel,
   decksModel,
+  dataMigrationModel,
   phoneCallsModel,
   // Designs group: Templates Library + Marketing Operations + Competitors
   // reference (template-driven design generator, 2026-05-09 rebuild).
