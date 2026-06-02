@@ -426,7 +426,10 @@ export async function readExcelFile(
   file: File,
 ): Promise<{ headers: string[]; rows: string[][] }> {
   const buffer = await file.arrayBuffer();
-  const wb = XLSX.read(buffer, { type: 'array' });
+  // codepage 65001 = UTF-8. Forces SheetJS to decode CSV/TXT bytes as UTF-8 so
+  // Arabic in a BOM-less UTF-8 CSV doesn't mojibake (e.g. "شقة" → "Ø´ÙØ©").
+  // Ignored for .xlsx (already UTF-8 internally). UTF-8 is the right modern default.
+  const wb = XLSX.read(buffer, { type: 'array', codepage: 65001 });
 
   const firstSheet = wb.Sheets[wb.SheetNames[0]!];
   if (!firstSheet) throw new Error('Empty file');

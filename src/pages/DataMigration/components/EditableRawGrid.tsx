@@ -1,4 +1,4 @@
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ArrowDownToLine } from 'lucide-react';
 import type { RawTable } from '../lib/types';
 
 interface EditableRawGridProps {
@@ -56,6 +56,21 @@ export default function EditableRawGrid({ table, onChange, isAr }: EditableRawGr
       rows: rows.map((row) => row.filter((_, ci) => ci !== c)),
     });
 
+  // Fill every row in column `c` with the value currently in the FIRST row —
+  // type a value in the top cell, click fill-down to apply it to all rows.
+  const fillColumn = (c: number) => {
+    const val = rows[0]?.[c] ?? '';
+    onChange({
+      ...table,
+      rows: rows.map((row) => {
+        const next = [...row];
+        while (next.length <= c) next.push('');
+        next[c] = val;
+        return next;
+      }),
+    });
+  };
+
   return (
     <div>
       <div className="overflow-auto max-h-[55vh] border border-sand/30 rounded-xl">
@@ -71,6 +86,13 @@ export default function EditableRawGrid({ table, onChange, isAr }: EditableRawGr
                       onChange={(e) => setHeader(c, e.target.value)}
                       className="w-full bg-transparent font-bold text-charcoal px-1.5 py-1 rounded focus:bg-white focus:outline-none focus:ring-1 focus:ring-copper/40"
                     />
+                    <button
+                      onClick={() => fillColumn(c)}
+                      title={isAr ? 'تعبئة كل الصفوف بقيمة الصف الأول' : 'Fill all rows with the first row’s value'}
+                      className="shrink-0 text-charcoal/30 hover:text-copper transition-colors"
+                    >
+                      <ArrowDownToLine size={13} />
+                    </button>
                     <button
                       onClick={() => removeColumn(c)}
                       title={isAr ? 'حذف العمود' : 'Delete column'}

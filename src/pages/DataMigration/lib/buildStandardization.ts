@@ -2,6 +2,72 @@ import type { AppRecord, ModelField } from '@/types';
 import type { ColumnStandardization, StandardizableType, ValueDecision } from './types';
 import type { StandardizeCandidate, StandardizeDecision } from './client';
 
+// Arabic diacritics + tatweel — stripped for matching so "ريا" matches "ريّا",
+// "شقه" matches "شقة", etc. Matching only; canonical keeps the real label.
+const AR_DIACRITICS = /[ً-ْٰـ]/g;
+export function normalizeMatch(s: string): string {
+  return (s ?? '')
+    .normalize('NFKC')
+    .replace(AR_DIACRITICS, '')
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ى/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Deterministically match each distinct value to an existing option (dropdown/
+ * multiselect) or lookup record by normalized display — BEFORE asking the AI.
+ * This is what makes large lookups link: the lookup target can have thousands
+ * of records (all_projects = 1,371), far more than the AI can be handed, so an
+ * exact/normalized match must happen client-side. Returns synthesized
+ * "match" decisions for the hits + the values still needing the AI.
+ */
+export function preResolveColumn(
+  field: ModelField,
+  fieldType: StandardizableType,
+  distinct: { raw: string; count: number }[],
+  allRecords: Record<string, AppRecord[]>,
+): { decisions: StandardizeDecision[]; unmatched: { raw: string; count: number }[] } {
+  const decisions: StandardizeDecision[] = [];
+  const unmatched: { raw: string; count: number }[] = [];
+
+  if (fieldType === 'lookup') {
+    const modelId = field.lookup_model_id;
+    const disp = field.lookup_display_field;
+    const idx = new Map<string, { id: string; display: string }>();
+    if (modelId && disp) {
+      for (const r of allRecords[modelId] ?? []) {
+        const d = String(r.data[disp] ?? '').trim();
+        if (!d) continue;
+        const k = normalizeMatch(d);
+        if (k && !idx.has(k)) idx.set(k, { id: r.id, display: d });
+      }
+    }
+    for (const dv of distinct) {
+      const m = idx.get(normalizeMatch(dv.raw));
+      if (m) decisions.push({ rawValue: dv.raw, kind: 'match', candidateId: m.id, canonical: m.display, confidence: 1, reason: 'مطابقة مباشرة / direct match' });
+      else unmatched.push(dv);
+    }
+  } else {
+    const idx = new Map<string, { label_ar: string; label_en: string; value: string }>();
+    for (const o of field.options ?? []) {
+      [o.label_ar, o.label_en, o.value].forEach((t) => {
+        const k = normalizeMatch(String(t ?? ''));
+        if (k && !idx.has(k)) idx.set(k, o);
+      });
+    }
+    for (const dv of distinct) {
+      const o = idx.get(normalizeMatch(dv.raw));
+      if (o) decisions.push({ rawValue: dv.raw, kind: 'match', candidateId: null, canonical: o.label_en || o.label_ar || o.value, confidence: 1, reason: 'مطابقة مباشرة / direct match' });
+      else unmatched.push(dv);
+    }
+  }
+  return { decisions, unmatched };
+}
+
 /** dropdown/multiselect candidates = the field's options. */
 export function optionCandidates(field: ModelField): StandardizeCandidate[] {
   return (field.options ?? []).map((o) => ({ value: o.value, label_ar: o.label_ar, label_en: o.label_en }));

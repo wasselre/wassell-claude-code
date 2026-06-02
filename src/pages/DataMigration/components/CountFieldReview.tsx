@@ -6,8 +6,8 @@ interface Props {
   isAr: boolean;
   fieldLabel: string;
   results: CountRowResult[];
-  /** row index → a short unit label for display. */
-  rowLabel: (rowIndex: number) => string;
+  /** row index → the unit's FULL description (so the user can verify the count). */
+  rowText: (rowIndex: number) => string;
   onChange: (next: CountRowResult[]) => void;
 }
 
@@ -16,7 +16,7 @@ interface Props {
  * computed count per unit with the AI's reasoning; the user can adjust any
  * number before migrating. Same approve-before-apply gate as standardization.
  */
-export default function CountFieldReview({ isAr, fieldLabel, results, rowLabel, onChange }: Props) {
+export default function CountFieldReview({ isAr, fieldLabel, results, rowText, onChange }: Props) {
   const [open, setOpen] = useState(true);
   const setCount = (i: number, count: number) =>
     onChange(results.map((r, ri) => (ri === i ? { ...r, count } : r)));
@@ -42,13 +42,17 @@ export default function CountFieldReview({ isAr, fieldLabel, results, rowLabel, 
       {open && (
         <div className="px-3 pb-3 space-y-1.5 max-h-[40vh] overflow-y-auto">
           {results.map((r, i) => (
-            <div key={r.rowIndex} className="flex items-center gap-2 p-2 rounded-lg border border-sand/20">
+            <div key={r.rowIndex} className="flex items-start gap-2 p-2 rounded-lg border border-sand/20">
               <div className="flex-1 min-w-0">
-                <div className="text-sm text-charcoal truncate">
-                  {rowLabel(r.rowIndex) || (isAr ? `صف ${r.rowIndex + 1}` : `Row ${r.rowIndex + 1}`)}
+                <div className="text-[10px] text-charcoal/40 mb-0.5">
+                  {isAr ? `الوحدة ${r.rowIndex + 1}` : `Unit ${r.rowIndex + 1}`}
+                </div>
+                {/* Full unit row so the user can verify the count is right. */}
+                <div className="text-xs text-charcoal/80 leading-relaxed">
+                  {rowText(r.rowIndex) || (isAr ? '(لا يوجد وصف)' : '(no description)')}
                 </div>
                 {r.reason && (
-                  <div className="text-[10px] text-charcoal/40 truncate" title={r.reason}>
+                  <div className="text-[10px] text-copper/70 mt-0.5" title={r.reason}>
                     {r.reason}
                   </div>
                 )}

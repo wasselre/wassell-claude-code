@@ -8,8 +8,8 @@ import {
   importableFields,
   rowDescription,
 } from '../../lib/targetFields';
-import { optionCandidates, lookupCandidates, buildColumnStandardization } from '../../lib/buildStandardization';
-import { standardizeColumn, countField } from '../../lib/client';
+import { optionCandidates, lookupCandidates, buildColumnStandardization, preResolveColumn } from '../../lib/buildStandardization';
+import { standardizeColumn, countField, type StandardizeDecision } from '../../lib/client';
 import ValueStandardizationColumn from '../ValueStandardizationColumn';
 import CountFieldReview from '../CountFieldReview';
 import type { AppModel } from '@/types';
@@ -74,28 +74,36 @@ export default function StepStandardize({
       const stdTasks = missingCols.map(async (c) => {
         const multi = isMultiValueColumn(c.field);
         const distinct = distinctColumnValues(table.rows, c.colIndex, multi);
-        try {
-          const candidates =
-            c.fieldType === 'lookup'
-              ? lookupCandidates(c.field, allRecords).slice(0, 300)
-              : optionCandidates(c.field);
-          const decisions = await standardizeColumn({
-            fieldType: c.fieldType,
-            fieldLabel: isAr ? c.field.label_ar : c.field.label_en,
-            candidates,
-            rawValues: distinct.map((d) => d.raw),
-            language: isAr ? 'ar' : 'en',
-          });
-          return { colIndex: c.colIndex, plan: buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, decisions, isAr) };
-        } catch (err) {
-          addToast(
-            (isAr ? 'تعذّر توحيد القيم: ' : 'Standardization failed: ') +
-              (err instanceof Error ? err.message : String(err)),
-            'error',
-          );
-          // empty-decisions plan → everything 'unmatched', user resolves manually
-          return { colIndex: c.colIndex, plan: buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, [], isAr) };
+        // Deterministic normalized match first (links existing options/records
+        // regardless of how large the lookup target is); AI only for the rest.
+        const { decisions: preDecisions, unmatched } = preResolveColumn(c.field, c.fieldType, distinct, allRecords);
+        let aiDecisions: StandardizeDecision[] = [];
+        if (unmatched.length > 0) {
+          try {
+            const candidates =
+              c.fieldType === 'lookup'
+                ? lookupCandidates(c.field, allRecords).slice(0, 300)
+                : optionCandidates(c.field);
+            aiDecisions = await standardizeColumn({
+              fieldType: c.fieldType,
+              fieldLabel: isAr ? c.field.label_ar : c.field.label_en,
+              candidates,
+              rawValues: unmatched.map((d) => d.raw),
+              language: isAr ? 'ar' : 'en',
+            });
+          } catch (err) {
+            addToast(
+              (isAr ? 'تعذّر توحيد القيم: ' : 'Standardization failed: ') +
+                (err instanceof Error ? err.message : String(err)),
+              'error',
+            );
+            // leave AI-less; unmatched stay 'unmatched' for manual resolution
+          }
         }
+        return {
+          colIndex: c.colIndex,
+          plan: buildColumnStandardization(c.colIndex, c.field, c.fieldType, distinct, [...preDecisions, ...aiDecisions], isAr),
+        };
       });
 
       const countRows = table.rows
@@ -181,8 +189,9 @@ export default function StepStandardize({
             {cols.map((c) => {
               const plan = standardization?.[c.colIndex];
               if (!plan) return null;
-              const candidates =
-                c.fieldType === 'lookup' ? lookupCandidates(c.field, allRecords) : optionCandidates(c.field);
+              // Lookups use the searchable LookupCombobox (reads the store directly),
+              // so no need to build a big candidate array; dropdowns pass options.
+              const candidates = c.fieldType === 'lookup' ? [] : optionCandidates(c.field);
               return (
                 <ValueStandardizationColumn
                   key={c.colIndex}
@@ -191,6 +200,8 @@ export default function StepStandardize({
                   fieldLabel={isAr ? c.field.label_ar : c.field.label_en}
                   plan={plan}
                   candidates={candidates}
+                  lookupModelId={c.field.lookup_model_id ?? undefined}
+                  lookupDisplayField={c.field.lookup_display_field ?? undefined}
                   otherFields={otherScalarFields
                     .filter((f) => f.name !== c.field.name)
                     .map((f) => ({ name: f.name, label: isAr ? f.label_ar : f.label_en }))}
@@ -208,7 +219,7 @@ export default function StepStandardize({
                   isAr={isAr}
                   fieldLabel={isAr ? field.label_ar : field.label_en}
                   results={results}
-                  rowLabel={(idx) => table.rows[idx]?.find((cell) => cell && cell.trim()) ?? ''}
+                  rowText={(idx) => rowDescription(table.headers, table.rows[idx] ?? [])}
                   onChange={(next) => onCountResults(slug, next)}
                 />
               );

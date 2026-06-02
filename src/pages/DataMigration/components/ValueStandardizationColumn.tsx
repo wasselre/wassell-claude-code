@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Check, Plus, ArrowLeftRight, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronRight, Check, Plus, ArrowLeftRight, Sparkles, X } from 'lucide-react';
+import LookupCombobox from '@/pages/Records/components/LookupCombobox';
 import { proposalToDecision } from '../lib/buildStandardization';
 import type { StandardizeCandidate } from '../lib/client';
 import type { ColumnStandardization, ValueDecision } from '../lib/types';
@@ -13,6 +14,9 @@ interface Props {
   candidates: StandardizeCandidate[];
   /** other importable fields a value can be routed to (slug → label). */
   otherFields: { name: string; label: string }[];
+  /** for lookup columns — powers the searchable record picker. */
+  lookupModelId?: string;
+  lookupDisplayField?: string;
   onChange: (next: ColumnStandardization) => void;
 }
 
@@ -35,6 +39,8 @@ export default function ValueStandardizationColumn({
   plan,
   candidates,
   otherFields,
+  lookupModelId,
+  lookupDisplayField,
   onChange,
 }: Props) {
   const [open, setOpen] = useState(true);
@@ -124,32 +130,62 @@ export default function ValueStandardizationColumn({
                 </div>
                 <ArrowLeftRight size={13} className="text-charcoal/30 shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <select
-                    value={selVal}
-                    onChange={(e) => onSelect(i, v.raw, e.target.value)}
-                    className={`form-input text-sm py-1 w-full ${isUnmatched ? 'text-charcoal/40' : ''}`}
-                  >
-                    <optgroup label={isAr ? 'القيم المسموحة' : 'Allowed values'}>
-                      {candOptions.map((c) => (
-                        <option key={c.key} value={c.key}>{c.label}</option>
-                      ))}
-                    </optgroup>
-                    <optgroup label={isAr ? 'إجراءات' : 'Actions'}>
-                      <option value="new">
-                        {isLookup
-                          ? (isAr ? `➕ إنشاء سجل جديد "${v.raw}"` : `➕ Create new "${v.raw}"`)
-                          : (isAr ? `➕ إنشاء خيار جديد "${v.raw}"` : `➕ Create new option "${v.raw}"`)}
-                      </option>
-                      <option value="unmatched">{isAr ? '— اتركه فارغًا —' : '— Leave blank —'}</option>
-                    </optgroup>
-                    {otherFields.length > 0 && (
-                      <optgroup label={isAr ? '↪ نقل إلى حقل آخر' : '↪ Move to another field'}>
-                        {otherFields.map((f) => (
-                          <option key={f.name} value={`route:${f.name}`}>{f.label}</option>
+                  {isLookup && lookupModelId && lookupDisplayField ? (
+                    <div className="flex items-center gap-1.5">
+                      <div className="flex-1 min-w-0">
+                        <LookupCombobox
+                          lookupModelId={lookupModelId}
+                          lookupDisplayField={lookupDisplayField}
+                          value={d.kind === 'lookup_record' ? d.recordId : undefined}
+                          onChange={(val) => {
+                            const id = Array.isArray(val) ? val[0] : val;
+                            setDecision(i, id ? { kind: 'lookup_record', recordId: id } : { kind: 'unmatched' });
+                          }}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setDecision(i, { kind: 'create_record', newLabel: v.raw })}
+                        title={isAr ? `إنشاء سجل جديد "${v.raw}"` : `Create new "${v.raw}"`}
+                        className={`shrink-0 p-1.5 rounded-lg border ${isNew ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-sand/40 text-charcoal/50 hover:bg-cream'}`}
+                      >
+                        <Plus size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDecision(i, { kind: 'unmatched' })}
+                        title={isAr ? 'اتركه فارغًا' : 'Leave blank'}
+                        className={`shrink-0 p-1.5 rounded-lg border ${isUnmatched ? 'border-charcoal/30 bg-charcoal/5 text-charcoal/60' : 'border-sand/40 text-charcoal/50 hover:bg-cream'}`}
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={selVal}
+                      onChange={(e) => onSelect(i, v.raw, e.target.value)}
+                      className={`form-input text-sm py-1 w-full ${isUnmatched ? 'text-charcoal/40' : ''}`}
+                    >
+                      <optgroup label={isAr ? 'القيم المسموحة' : 'Allowed values'}>
+                        {candOptions.map((c) => (
+                          <option key={c.key} value={c.key}>{c.label}</option>
                         ))}
                       </optgroup>
-                    )}
-                  </select>
+                      <optgroup label={isAr ? 'إجراءات' : 'Actions'}>
+                        <option value="new">
+                          {isAr ? `➕ إنشاء خيار جديد "${v.raw}"` : `➕ Create new option "${v.raw}"`}
+                        </option>
+                        <option value="unmatched">{isAr ? '— اتركه فارغًا —' : '— Leave blank —'}</option>
+                      </optgroup>
+                      {otherFields.length > 0 && (
+                        <optgroup label={isAr ? '↪ نقل إلى حقل آخر' : '↪ Move to another field'}>
+                          {otherFields.map((f) => (
+                            <option key={f.name} value={`route:${f.name}`}>{f.label}</option>
+                          ))}
+                        </optgroup>
+                      )}
+                    </select>
+                  )}
                   <div className="flex items-center gap-2 mt-0.5">
                     {v.proposal.confidence > 0 && selVal === decisionToValue(proposalToDecision(v.proposal)) && (
                       <span className="inline-flex items-center gap-0.5 text-[10px] text-copper/80">
