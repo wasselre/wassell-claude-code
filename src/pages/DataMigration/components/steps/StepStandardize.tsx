@@ -6,14 +6,12 @@ import {
   distinctColumnValues,
   isMultiValueColumn,
   importableFields,
-  rowDescription,
 } from '../../lib/targetFields';
 import { optionCandidates, lookupCandidates, buildColumnStandardization, preResolveColumn } from '../../lib/buildStandardization';
-import { standardizeColumn, countField, type StandardizeDecision } from '../../lib/client';
+import { standardizeColumn, type StandardizeDecision } from '../../lib/client';
 import ValueStandardizationColumn from '../ValueStandardizationColumn';
-import CountFieldReview from '../CountFieldReview';
 import type { AppModel } from '@/types';
-import type { RawTable, ColumnStandardization, CountRowResult } from '../../lib/types';
+import type { RawTable, ColumnStandardization } from '../../lib/types';
 
 interface StepStandardizeProps {
   isAr: boolean;
@@ -21,16 +19,10 @@ interface StepStandardizeProps {
   table: RawTable;
   mappings: Record<number, string | null>;
   standardization: Record<number, ColumnStandardization> | undefined;
-  countFields: string[] | undefined;
-  countResults: Record<string, CountRowResult[]> | undefined;
   onChangeColumn: (colIndex: number, plan: ColumnStandardization) => void;
-  onCountResults: (fieldName: string, results: CountRowResult[]) => void;
-  /** Persist the whole initial computation (all columns + counts) in ONE save —
-   * avoids a burst of racing patches that the optimistic-version check rejects. */
-  onComputed: (
-    std: Record<number, ColumnStandardization>,
-    counts: Record<string, CountRowResult[]>,
-  ) => void;
+  /** Persist the whole initial computation (all columns) in ONE save — avoids a
+   * burst of racing patches that the optimistic-version check would reject. */
+  onComputed: (std: Record<number, ColumnStandardization>) => void;
   onProceed: () => void;
   onBack: () => void;
 }
@@ -41,10 +33,7 @@ export default function StepStandardize({
   table,
   mappings,
   standardization,
-  countFields,
-  countResults,
   onChangeColumn,
-  onCountResults,
   onComputed,
   onProceed,
   onBack,
@@ -56,21 +45,17 @@ export default function StepStandardize({
   const Back = isAr ? ArrowRight : ArrowLeft;
 
   const cols = standardizableColumns(model, mappings);
-  const countSlugs = countFields ?? [];
-  const allFields = model.schema.sections.flatMap((s) => s.fields);
 
   useEffect(() => {
     if (fetched.current) return;
     fetched.current = true;
     const missingCols = cols.filter((c) => !standardization?.[c.colIndex]);
-    const missingCounts = countSlugs.filter((slug) => !countResults?.[slug]);
-    if (missingCols.length === 0 && missingCounts.length === 0) return;
+    if (missingCols.length === 0) return;
     setLoading(true);
     void (async () => {
-      // Run every column-standardization + count call in PARALLEL, then persist
-      // them all in ONE save (onComputed). Doing one save per call previously
-      // fired ~8 rapid patches that raced the optimistic-version check, so most
-      // were rejected and the step looped forever on its spinner.
+      // Run every column-standardization in PARALLEL, then persist them all in
+      // ONE save (onComputed). One save per call previously raced the
+      // optimistic-version check and looped the spinner forever.
       const stdTasks = missingCols.map(async (c) => {
         const multi = isMultiValueColumn(c.field);
         const distinct = distinctColumnValues(table.rows, c.colIndex, multi);
@@ -106,45 +91,13 @@ export default function StepStandardize({
         };
       });
 
-      const countRows = table.rows
-        .map((row, idx) => ({ rowIndex: idx, text: rowDescription(table.headers, row) }))
-        .filter((r) => r.text);
-      const countTasks = missingCounts.map(async (slug) => {
-        const field = allFields.find((f) => f.name === slug);
-        if (!field) return null;
-        try {
-          const counts = await countField({
-            fieldLabel: isAr ? field.label_ar : field.label_en,
-            rows: countRows,
-            language: isAr ? 'ar' : 'en',
-          });
-          const byIdx = new Map(counts.map((c) => [c.rowIndex, c]));
-          return {
-            slug,
-            results: countRows.map((r) => byIdx.get(r.rowIndex) ?? { rowIndex: r.rowIndex, count: 0, reason: '' }),
-          };
-        } catch (err) {
-          addToast(
-            (isAr ? 'تعذّر حساب العدّ: ' : 'Counting failed: ') +
-              (err instanceof Error ? err.message : String(err)),
-            'error',
-          );
-          return { slug, results: countRows.map((r) => ({ rowIndex: r.rowIndex, count: 0, reason: '' })) };
-        }
-      });
-
-      const [stdDone, countDone] = await Promise.all([Promise.all(stdTasks), Promise.all(countTasks)]);
-
+      const stdDone = await Promise.all(stdTasks);
       const stdAcc: Record<number, ColumnStandardization> = {};
       stdDone.forEach((r) => {
         stdAcc[r.colIndex] = r.plan;
       });
-      const countAcc: Record<string, CountRowResult[]> = {};
-      countDone.forEach((r) => {
-        if (r) countAcc[r.slug] = r.results;
-      });
-      if (Object.keys(stdAcc).length > 0 || Object.keys(countAcc).length > 0) {
-        onComputed(stdAcc, countAcc);
+      if (Object.keys(stdAcc).length > 0) {
+        onComputed(stdAcc);
       }
       setLoading(false);
     })();
@@ -175,7 +128,7 @@ export default function StepStandardize({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto space-y-2.5 pe-1">
-        {cols.length === 0 && countSlugs.length === 0 ? (
+        {cols.length === 0 ? (
           <div className="flex flex-col items-center justify-center text-center py-10 gap-2 text-charcoal/60">
             <CheckCircle2 size={28} className="text-green-500" />
             <p className="text-sm">
@@ -185,46 +138,29 @@ export default function StepStandardize({
             </p>
           </div>
         ) : (
-          <>
-            {cols.map((c) => {
-              const plan = standardization?.[c.colIndex];
-              if (!plan) return null;
-              // Lookups use the searchable LookupCombobox (reads the store directly),
-              // so no need to build a big candidate array; dropdowns pass options.
-              const candidates = c.fieldType === 'lookup' ? [] : optionCandidates(c.field);
-              return (
-                <ValueStandardizationColumn
-                  key={c.colIndex}
-                  isAr={isAr}
-                  header={table.headers[c.colIndex] ?? ''}
-                  fieldLabel={isAr ? c.field.label_ar : c.field.label_en}
-                  plan={plan}
-                  candidates={candidates}
-                  lookupModelId={c.field.lookup_model_id ?? undefined}
-                  lookupDisplayField={c.field.lookup_display_field ?? undefined}
-                  otherFields={otherScalarFields
-                    .filter((f) => f.name !== c.field.name)
-                    .map((f) => ({ name: f.name, label: isAr ? f.label_ar : f.label_en }))}
-                  onChange={(next) => onChangeColumn(c.colIndex, next)}
-                />
-              );
-            })}
-            {countSlugs.map((slug) => {
-              const results = countResults?.[slug];
-              const field = allFields.find((f) => f.name === slug);
-              if (!results || !field) return null;
-              return (
-                <CountFieldReview
-                  key={slug}
-                  isAr={isAr}
-                  fieldLabel={isAr ? field.label_ar : field.label_en}
-                  results={results}
-                  rowText={(idx) => rowDescription(table.headers, table.rows[idx] ?? [])}
-                  onChange={(next) => onCountResults(slug, next)}
-                />
-              );
-            })}
-          </>
+          cols.map((c) => {
+            const plan = standardization?.[c.colIndex];
+            if (!plan) return null;
+            // Lookups use the searchable LookupCombobox (reads the store directly),
+            // so no need to build a big candidate array; dropdowns pass options.
+            const candidates = c.fieldType === 'lookup' ? [] : optionCandidates(c.field);
+            return (
+              <ValueStandardizationColumn
+                key={c.colIndex}
+                isAr={isAr}
+                header={table.headers[c.colIndex] ?? ''}
+                fieldLabel={isAr ? c.field.label_ar : c.field.label_en}
+                plan={plan}
+                candidates={candidates}
+                lookupModelId={c.field.lookup_model_id ?? undefined}
+                lookupDisplayField={c.field.lookup_display_field ?? undefined}
+                otherFields={otherScalarFields
+                  .filter((f) => f.name !== c.field.name)
+                  .map((f) => ({ name: f.name, label: isAr ? f.label_ar : f.label_en }))}
+                onChange={(next) => onChangeColumn(c.colIndex, next)}
+              />
+            );
+          })
         )}
       </div>
 

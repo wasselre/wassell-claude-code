@@ -101,6 +101,7 @@ export interface ExtractResult extends RawTable {
 export async function extractRawTable(
   uploads: MigrationUpload[],
   language: 'ar' | 'en' = 'ar',
+  fields: TargetFieldLite[] = [],
 ): Promise<ExtractResult> {
   if (!supabase) throw new Error('Supabase is not configured.');
   if (uploads.length === 0) throw new Error('No files to extract.');
@@ -119,7 +120,7 @@ export async function extractRawTable(
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'extract', files, language }),
+    body: JSON.stringify({ action: 'extract', files, language, fields }),
   }, 300_000);
   const body = (await res.json().catch(() => ({}))) as Partial<ExtractResult> & {
     ok?: boolean;
@@ -132,6 +133,7 @@ export async function extractRawTable(
     headers: body.headers,
     rows: Array.isArray(body.rows) ? body.rows : [],
     notes: body.notes,
+    summary: body.summary,
     truncated: Boolean(body.truncated),
     source: 'ai_extract',
     files_processed: body.files_processed ?? uploads.length,
@@ -205,59 +207,29 @@ export async function standardizeColumn(input: {
   return body.decisions;
 }
 
-export interface CountResultRow {
-  rowIndex: number;
-  count: number;
-  reason: string;
-}
-
-/** Ask the AI to count a per-unit total (e.g. total bathrooms) from each row's
- * description. Throws on failure. */
-export async function countField(input: {
-  fieldLabel: string;
-  rows: { rowIndex: number; text: string }[];
-  language?: 'ar' | 'en';
-}): Promise<CountResultRow[]> {
-  const res = await fetchWithTimeout('/api/migrate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({
-      action: 'count_field',
-      fieldLabel: input.fieldLabel,
-      countRows: input.rows,
-      language: input.language ?? 'ar',
-    }),
-  }, 120_000);
-  const body = (await res.json().catch(() => ({}))) as {
-    ok?: boolean;
-    counts?: CountResultRow[];
-    error?: string;
-  };
-  if (!res.ok || !body.ok || !Array.isArray(body.counts)) {
-    throw new Error(body.error ?? `Counting failed (${res.status})`);
-  }
-  return body.counts;
-}
-
 export interface EnrichColumnResult {
   header: string;
   values: string[];
 }
 
 /**
- * "Ask the AI to get more information" — fill blank cells from other columns,
- * pull a column out of the uploaded files, or add a column from the model's
- * knowledge. Returns columns to add/fill (the caller merges). Throws on failure.
+ * Post-extraction discussion — a multi-turn chat about the extracted table.
+ * The AI explains its work (especially how it derived numbers from the floor
+ * plans + text) and can revise the table (add / fill / recount a column, by
+ * re-reading the brochure). Returns its `reply` plus any column edits the
+ * caller merges into the table. Throws on failure.
  */
-export async function enrichTable(input: {
-  instruction: string;
+export async function discussExtraction(input: {
+  messages: { role: 'user' | 'assistant'; content: string }[];
   headers: string[];
   rows: string[][];
   /** the migration's uploaded source files — minted into signed URLs so the AI
-   * can read them (for "extract a column from the brochure"). */
+   * can re-read the brochure + floor plans. */
   uploads?: MigrationUpload[];
+  /** the target model's fields (context only — never used to coerce values). */
+  fields?: TargetFieldLite[];
   language?: 'ar' | 'en';
-}): Promise<{ columns: EnrichColumnResult[]; notes?: string; truncated: boolean }> {
+}): Promise<{ reply: string; columns: EnrichColumnResult[]; truncated: boolean }> {
   const files: { name: string; mimeType: string; url: string }[] = [];
   if (input.uploads && input.uploads.length > 0 && supabase) {
     for (const u of input.uploads) {
@@ -269,23 +241,28 @@ export async function enrichTable(input: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
     body: JSON.stringify({
-      action: 'enrich',
-      instruction: input.instruction,
+      action: 'discuss',
+      messages: input.messages,
       headers: input.headers,
       rows: input.rows,
       files,
+      fields: input.fields,
       language: input.language ?? 'ar',
     }),
   }, 300_000);
   const body = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
+    reply?: string;
     columns?: EnrichColumnResult[];
-    notes?: string;
     truncated?: boolean;
     error?: string;
   };
-  if (!res.ok || !body.ok || !Array.isArray(body.columns)) {
-    throw new Error(body.error ?? `Enrichment failed (${res.status})`);
+  if (!res.ok || !body.ok || typeof body.reply !== 'string') {
+    throw new Error(body.error ?? `Discuss failed (${res.status})`);
   }
-  return { columns: body.columns, notes: body.notes, truncated: Boolean(body.truncated) };
+  return {
+    reply: body.reply,
+    columns: Array.isArray(body.columns) ? body.columns : [],
+    truncated: Boolean(body.truncated),
+  };
 }

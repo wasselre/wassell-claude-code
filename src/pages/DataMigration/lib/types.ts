@@ -62,6 +62,10 @@ export interface RawTable {
   source?: 'ai_extract' | 'excel_upload' | 'manual';
   /** AI-extraction notes / ambiguities, surfaced to the user. */
   notes?: string;
+  /** AI's plain-English report of what it extracted — esp. how each number was
+   * derived (text mentions / floor-plan features) and its source. Seeds the
+   * first message of the post-extraction discussion. */
+  summary?: string;
   /** True if extraction could not include every page/row of the input. */
   truncated?: boolean;
   pages_processed?: number;
@@ -82,8 +86,8 @@ export interface MigrationData {
   /** Realtime progress sub-phase for the async (worker) steps. */
   phase?: string;
   raw_table?: RawTable;
-  /** Uploaded source files (storage paths) — kept so the "Ask AI" enrich step
-   * can re-read the brochure to extract a missed column. */
+  /** Uploaded source files (storage paths) — kept so the post-extraction
+   * discussion can re-read the brochure (incl. floor plans). */
   source_files?: { path: string; name: string; mimeType: string; size: number }[];
   /** Column index → target field slug (`slug` or range `slug.min`/`slug.max`), or null to skip. */
   mappings?: Record<number, string | null>;
@@ -91,22 +95,20 @@ export interface MigrationData {
   mapping_suggestions?: ColumnMappingSuggestion[];
   /** Per dropdown/multiselect/lookup column: the value-standardization plan + decisions. */
   standardization?: Record<number, ColumnStandardization>;
-  /** Number fields the AI computes by counting from each unit's description
-   * (e.g. bathrooms / bedrooms total) — field slugs. */
-  count_fields?: string[];
-  /** AI-computed per-row counts, keyed by field slug. Reviewed/edited before migrate. */
-  count_results?: Record<string, CountRowResult[]>;
+  /** The post-extraction discussion: the AI's extraction summary is seeded as
+   * the first assistant turn, then the operator and AI chat about the data. */
+  chat?: ChatMessage[];
   /** Source row indices the user un-approved in the preview step (not migrated). */
   excluded_rows?: number[];
   /** Final import summary, set when status='done'. */
   result?: MigrationResult;
 }
 
-/** One unit's AI-computed count for a counted field (e.g. total bathrooms). */
-export interface CountRowResult {
-  rowIndex: number;
-  count: number;
-  reason: string;
+/** One turn in the post-extraction discussion (summary + operator chat). */
+export interface ChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  ts?: string;
 }
 
 export interface ColumnMappingSuggestion {

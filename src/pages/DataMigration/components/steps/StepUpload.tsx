@@ -17,11 +17,16 @@ import {
   extractRawTable,
   type MigrationUpload,
 } from '../../lib/client';
+import { targetFieldLites } from '../../lib/targetFields';
 import type { RawTable } from '../../lib/types';
+import type { AppModel } from '@/types';
 
 interface StepUploadProps {
   isAr: boolean;
   recordId: string;
+  /** The chosen target model — its fields are sent to extraction as a
+   * "what to look for" hunt-list (extraction is model-aware). */
+  model: AppModel;
   onTable: (table: RawTable, sourceFiles?: MigrationUpload[]) => void;
 }
 
@@ -35,7 +40,7 @@ const isExcel = (f: File) => EXCEL_EXT.test(f.name) || f.type.includes('sheet') 
  *  (b) PDF / screenshots / images → uploaded to storage, then AI-extracted.
  * Also "start with a blank table" for fully manual entry.
  */
-export default function StepUpload({ isAr, recordId, onTable }: StepUploadProps) {
+export default function StepUpload({ isAr, recordId, model, onTable }: StepUploadProps) {
   const addToast = useAppStore((s) => s.addToast);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploads, setUploads] = useState<MigrationUpload[]>([]);
@@ -103,7 +108,7 @@ export default function StepUpload({ isAr, recordId, onTable }: StepUploadProps)
     if (uploads.length === 0) return;
     setBusy('extracting');
     try {
-      const result = await extractRawTable(uploads, isAr ? 'ar' : 'en');
+      const result = await extractRawTable(uploads, isAr ? 'ar' : 'en', targetFieldLites(model));
       if (result.files_skipped.length > 0) {
         addToast(
           (isAr ? 'تم تخطي: ' : 'Skipped: ') +

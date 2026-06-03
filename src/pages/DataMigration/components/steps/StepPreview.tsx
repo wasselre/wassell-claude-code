@@ -5,7 +5,7 @@ import { ArrowRight, ArrowLeft, PlayCircle, AlertTriangle } from 'lucide-react';
 import { buildMigrationPlan } from '../../lib/runMigration';
 import { resolveDisplay } from '../../lib/previewRecords';
 import type { AppModel, ModelField } from '@/types';
-import type { RawTable, ColumnStandardization, CountRowResult } from '../../lib/types';
+import type { RawTable, ColumnStandardization } from '../../lib/types';
 
 interface StepPreviewProps {
   isAr: boolean;
@@ -13,8 +13,6 @@ interface StepPreviewProps {
   table: RawTable;
   mappings: Record<number, string | null>;
   standardization: Record<number, ColumnStandardization> | undefined;
-  countFields: string[] | undefined;
-  countResults: Record<string, CountRowResult[]> | undefined;
   excludedRows: number[] | undefined;
   onChangeExcluded: (next: number[]) => void;
   onConfirm: () => void;
@@ -35,8 +33,6 @@ export default function StepPreview({
   table,
   mappings,
   standardization,
-  countFields,
-  countResults,
   excludedRows,
   onChangeExcluded,
   onConfirm,
@@ -54,13 +50,11 @@ export default function StepPreview({
         table,
         mappings,
         standardization: standardization ?? {},
-        countFields,
-        countResults,
         allModels,
         allRecords,
         makeId: uuid,
       }),
-    [model, table, mappings, standardization, countFields, countResults, allModels, allRecords],
+    [model, table, mappings, standardization, allModels, allRecords],
   );
 
   // Columns = the importable fields actually populated by any record, in schema order.

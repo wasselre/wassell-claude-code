@@ -1,107 +1,142 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { readExcelFile, exportRawTable } from '@/lib/excelUtils';
-import { Download, Upload, ArrowRight, ArrowLeft, Info, Sparkles, Loader2 } from 'lucide-react';
+import {
+  Download,
+  Upload,
+  ArrowRight,
+  ArrowLeft,
+  Info,
+  Sparkles,
+  Loader2,
+  MessageSquareText,
+  ChevronDown,
+  ChevronRight,
+} from 'lucide-react';
 import EditableRawGrid from '../EditableRawGrid';
-import { enrichTable, type MigrationUpload } from '../../lib/client';
-import type { RawTable } from '../../lib/types';
+import { discussExtraction, type MigrationUpload } from '../../lib/client';
+import { targetFieldLites } from '../../lib/targetFields';
+import type { RawTable, ChatMessage } from '../../lib/types';
+import type { AppModel } from '@/types';
 
 interface StepReviewRawProps {
   isAr: boolean;
+  /** Target model — fed to the discussion as context (never to coerce values). */
+  model: AppModel;
   table: RawTable;
-  /** uploaded source files — let "Ask AI" re-read the brochure for a missed column. */
+  /** Uploaded source files — let the discussion re-read the brochure + plans. */
   sourceFiles?: MigrationUpload[];
+  /** The post-extraction discussion thread (persisted on the record). */
+  chat?: ChatMessage[];
   /** Persist edits (debounced by this component). */
   onChange: (t: RawTable) => void;
   /** Re-upload replaces the table AND resets downstream mappings/standardization. */
   onReplace: (t: RawTable) => void;
+  /** Persist the discussion thread. */
+  onChat: (next: ChatMessage[]) => void;
   onContinue: () => void;
   onBack: () => void;
 }
 
-/** Merge AI-returned columns into the table: existing header → fill blanks only
- * (never overwrite); unknown header → append a new column. */
-function mergeEnrichment(table: RawTable, columns: { header: string; values: string[] }[]): RawTable {
+/** Apply the AI's discussion column edits to the table: an existing header is
+ * filled/overwritten with the AI's non-empty values (a recount or fix); an
+ * unknown header is appended as a new column. */
+function applyDiscussColumns(table: RawTable, columns: { header: string; values: string[] }[]): RawTable {
   const headers = [...table.headers];
   const rows = table.rows.map((r) => [...r]);
   for (const col of columns) {
     let idx = headers.findIndex((h) => h.trim() === col.header.trim());
-    const isNew = idx === -1;
-    if (isNew) {
+    if (idx === -1) {
       headers.push(col.header);
       idx = headers.length - 1;
     }
     rows.forEach((r, i) => {
       while (r.length <= idx) r.push('');
       const val = (col.values[i] ?? '').trim();
-      if (!val) return;
-      if (isNew || (r[idx] ?? '') === '') r[idx] = val; // fill blanks / new column
+      if (val) r[idx] = val; // overwrite/fill with the AI's non-empty value
     });
   }
   return { ...table, headers, rows };
 }
 
 /**
- * Step "review_raw" — show the raw table (extracted or uploaded), edit it
- * in-app, download as Excel, or re-upload a corrected sheet. The convergence
- * point for both entry modes.
+ * Step "review_raw" — show the extracted table, edit it in-app, download/
+ * re-upload, AND discuss it with the AI. Extraction now does the heavy lifting
+ * (model-aware, numeric, deep floor-plan analysis), so this step is review +
+ * conversation: the AI's summary explains how it derived every number, and the
+ * operator can chat back to question or revise the data (recount a column,
+ * pull a missed field, re-read the brochure).
  *
- * Edits are held in a local `draft` (responsive typing) and persisted to the
- * record on a 700ms debounce — never per keystroke (that would spam Supabase).
- * The draft re-seeds from `table` on every mount, which is correct because the
- * wizard only mounts this step for `review_raw`; we flush the pending save on
- * navigate and on unmount so nothing is lost.
+ * Edits are held in a local `draft` and persisted on a 700ms debounce; the
+ * pending save is flushed on navigate / unmount.
  */
 export default function StepReviewRaw({
   isAr,
+  model,
   table,
   sourceFiles,
+  chat,
   onChange,
   onReplace,
+  onChat,
   onContinue,
   onBack,
 }: StepReviewRawProps) {
   const addToast = useAppStore((s) => s.addToast);
   const fileRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<RawTable>(table);
-  const [aiInstruction, setAiInstruction] = useState('');
+  const [aiInput, setAiInput] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  const [discussOpen, setDiscussOpen] = useState(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<RawTable>(table);
   const Next = isAr ? ArrowLeft : ArrowRight;
   const Back = isAr ? ArrowRight : ArrowLeft;
 
+  const thread: ChatMessage[] = chat ?? [];
+
   const runAsk = async () => {
-    const instruction = aiInstruction.trim();
-    if (!instruction) return;
+    const text = aiInput.trim();
+    if (!text || aiBusy) return;
     setAiBusy(true);
     try {
-      const { columns, notes, truncated } = await enrichTable({
-        instruction,
+      // Seed the model with its own extraction summary (the conversation's
+      // opening), then the persisted thread, then the new question.
+      const apiMessages = [
+        ...(draft.summary ? [{ role: 'assistant' as const, content: draft.summary }] : []),
+        ...thread.map((m) => ({ role: m.role, content: m.content })),
+        { role: 'user' as const, content: text },
+      ];
+      const { reply, columns, truncated } = await discussExtraction({
+        messages: apiMessages,
         headers: draft.headers,
         rows: draft.rows,
         uploads: sourceFiles,
+        fields: targetFieldLites(model),
         language: isAr ? 'ar' : 'en',
       });
-      if (columns.length === 0) {
-        addToast(isAr ? 'لم يُضِف الذكاء أي بيانات' : 'AI returned nothing to add', 'info');
-        return;
+      const now = new Date().toISOString();
+      onChat([
+        ...thread,
+        { role: 'user', content: text, ts: now },
+        { role: 'assistant', content: reply || (isAr ? 'تم.' : 'Done.'), ts: now },
+      ]);
+      if (columns.length > 0) {
+        const next = applyDiscussColumns(draft, columns);
+        if (timer.current) {
+          clearTimeout(timer.current);
+          timer.current = null;
+        }
+        setDraft(next);
+        latest.current = next;
+        onChange(next); // persist the revised table immediately
+        addToast(
+          (isAr ? `حدّث الذكاء ${columns.length} عمود` : `AI updated ${columns.length} column(s)`) +
+            (truncated ? (isAr ? ' (أول 250 صف)' : ' (first 250 rows)') : ''),
+          'success',
+        );
       }
-      const next = mergeEnrichment(draft, columns);
-      if (timer.current) {
-        clearTimeout(timer.current);
-        timer.current = null;
-      }
-      setDraft(next);
-      latest.current = next;
-      onChange(next); // persist immediately
-      setAiInstruction('');
-      addToast(
-        (isAr ? `أضاف/عبّأ الذكاء ${columns.length} عمود` : `AI added/filled ${columns.length} column(s)`) +
-          (notes ? ` — ${notes}` : '') +
-          (truncated ? (isAr ? ' (أول 250 صف)' : ' (first 250 rows)') : ''),
-        'success',
-      );
+      setAiInput('');
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     } finally {
@@ -159,6 +194,7 @@ export default function StepReviewRaw({
   const rowCount = draft.rows.length;
   const colCount = draft.headers.length;
   const canContinue = colCount > 0 && rowCount > 0;
+  const msgPairs = (thread.length / 2) | 0;
 
   return (
     <div className="p-5 flex flex-col h-full">
@@ -169,8 +205,8 @@ export default function StepReviewRaw({
           </h3>
           <p className="text-xs text-charcoal/50">
             {isAr
-              ? `${rowCount} صف · ${colCount} عمود — عدّل هنا، أو نزّل وصحّح في Excel ثم أعد الرفع.`
-              : `${rowCount} rows · ${colCount} columns — edit here, or download, fix in Excel and re-upload.`}
+              ? `${rowCount} صف · ${colCount} عمود — عدّل هنا، أو ناقش الذكاء، أو نزّل وصحّح في Excel ثم أعد الرفع.`
+              : `${rowCount} rows · ${colCount} columns — edit here, discuss with the AI, or download/fix in Excel and re-upload.`}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -205,32 +241,91 @@ export default function StepReviewRaw({
         </div>
       )}
 
-      {/* Ask AI — fill blanks from other columns, pull a column from the
-          uploaded files, or add a column from the AI's knowledge. */}
-      <div className="mb-3 flex items-center gap-2">
-        <input
-          value={aiInstruction}
-          onChange={(e) => setAiInstruction(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !aiBusy && aiInstruction.trim()) void runAsk();
-          }}
-          placeholder={
-            isAr
-              ? 'اطلب من الذكاء: عبّئ المدينة من الحي، أو أضف تاريخ التسليم من الكتيّب…'
-              : 'Ask AI: fill city from district, add delivery date from the brochure…'
-          }
-          disabled={aiBusy}
-          className="form-input flex-1 text-sm py-1.5"
-        />
-        <button
-          onClick={() => void runAsk()}
-          disabled={aiBusy || !aiInstruction.trim()}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-copper/10 text-copper font-medium text-sm hover:bg-copper/20 disabled:opacity-50 transition-colors shrink-0"
-        >
-          {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-          {isAr ? 'اسأل الذكاء' : 'Ask AI'}
-        </button>
-      </div>
+      {/* AI discussion: the extraction summary + a back-and-forth chat where the
+          operator can question how a value (esp. a number) was derived, or ask
+          the AI to recount / pull a missed column by re-reading the brochure. */}
+      {(draft.summary || draft.source === 'ai_extract') && (
+        <div className="mb-3 rounded-xl border border-copper/20 bg-copper/[0.03] overflow-hidden shrink-0">
+          <button
+            onClick={() => setDiscussOpen((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-charcoal hover:bg-copper/[0.06] transition-colors"
+          >
+            {discussOpen ? (
+              <ChevronDown size={15} />
+            ) : (
+              <ChevronRight size={15} className={isAr ? 'rotate-180' : ''} />
+            )}
+            <MessageSquareText size={15} className="text-copper" />
+            <span className="flex-1 text-start">
+              {isAr ? 'ملخص ونقاش الاستخراج' : 'Extraction summary & chat'}
+            </span>
+            {msgPairs > 0 && (
+              <span className="text-[11px] text-charcoal/40 font-normal">
+                {isAr ? `${msgPairs} رسالة` : `${msgPairs} msg`}
+              </span>
+            )}
+          </button>
+
+          {discussOpen && (
+            <div className="px-3 pb-3">
+              {/* Summary + thread, bounded + scrollable so the grid stays visible. */}
+              <div className="max-h-52 overflow-y-auto space-y-2 pe-1">
+                {draft.summary && (
+                  <div className="text-xs text-charcoal/80 whitespace-pre-wrap leading-relaxed bg-white/60 rounded-lg p-2.5 border border-sand/30">
+                    {draft.summary}
+                  </div>
+                )}
+                {thread.map((m, i) => (
+                  <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div
+                      className={`max-w-[85%] text-xs whitespace-pre-wrap leading-relaxed rounded-lg px-2.5 py-1.5 ${
+                        m.role === 'user'
+                          ? 'bg-copper text-white'
+                          : 'bg-white text-charcoal border border-sand/30'
+                      }`}
+                    >
+                      {m.content}
+                    </div>
+                  </div>
+                ))}
+                {aiBusy && (
+                  <div className="flex justify-start">
+                    <div className="inline-flex items-center gap-1.5 text-xs text-charcoal/50 bg-white border border-sand/30 rounded-lg px-2.5 py-1.5">
+                      <Loader2 size={13} className="animate-spin" />
+                      {isAr ? 'يفكّر الذكاء…' : 'Thinking…'}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2 mt-2">
+                <input
+                  value={aiInput}
+                  onChange={(e) => setAiInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !aiBusy && aiInput.trim()) void runAsk();
+                  }}
+                  placeholder={
+                    isAr
+                      ? 'اسأل: كيف حسبت عدد الحمامات؟ أو: أعد عدّ الغرف من المخطط…'
+                      : 'Ask: how did you count the bathrooms? or: recount bedrooms from the plan…'
+                  }
+                  disabled={aiBusy}
+                  className="form-input flex-1 text-sm py-1.5"
+                />
+                <button
+                  onClick={() => void runAsk()}
+                  disabled={aiBusy || !aiInput.trim()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-copper/10 text-copper font-medium text-sm hover:bg-copper/20 disabled:opacity-50 transition-colors shrink-0"
+                >
+                  {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                  {isAr ? 'اسأل' : 'Ask'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex-1 min-h-0">
         <EditableRawGrid table={draft} onChange={handleGridChange} isAr={isAr} />

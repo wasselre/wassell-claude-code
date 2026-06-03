@@ -1,11 +1,18 @@
 /**
  * Anthropic helpers for the Data Migration wizard (POST /api/migrate).
  *
- * Three actions, each forced-tool so the model always returns structured JSON:
- *   - extract            : files (PDF/image) → one unified raw { headers, rows } table
- *   - suggest_mappings   : raw headers + sample rows + target fields → column→field map  (Phase 4)
- *   - standardize        : a dropdown/multiselect/lookup column's distinct values →
- *                          canonical option / lookup matches                            (Phase 4)
+ * Four actions, each forced-tool so the model always returns structured JSON:
+ *   - extract          : files (PDF/image) → ONE unified raw table. Model-aware
+ *                        (given the target model's fields as a hunt-list),
+ *                        numeric (bare numbers for counts/quantities), and
+ *                        plan-deep (counts a unit's components from its floor
+ *                        plan, combined with the text). Returns a `summary`.
+ *   - suggest_mappings : raw headers + sample rows + target fields → column→field map
+ *   - standardize      : a dropdown/multiselect/lookup column's distinct values →
+ *                        canonical option / lookup matches
+ *   - discuss          : multi-turn chat about the extracted table — explain how
+ *                        a value was derived, or revise the table (recount / add
+ *                        / fill a column by re-reading the brochure)
  *
  * Models are pinned to IDs proven available in this project (the decks
  * pipeline + aiAgent use opus-4-7 / sonnet-4-6). Bump in one place when the
@@ -42,6 +49,9 @@ export interface RawTableResult {
   headers: string[];
   rows: string[][];
   notes?: string;
+  /** Human-readable report of what was extracted — esp. how each numeric column
+   * was derived (which text mentions / plan features) and its source. */
+  summary?: string;
   truncated: boolean;
   files_processed: number;
   files_skipped: { name: string; reason: string }[];
@@ -78,6 +88,11 @@ const EXTRACT_TOOL: Anthropic.Tool = {
         type: 'string',
         description: 'Optional: ambiguities (merged cells, unreadable regions, inferred units). One short paragraph.',
       },
+      summary: {
+        type: 'string',
+        description:
+          'A short report of what you extracted, for the operator to verify. For EVERY numeric column (counts, prices, areas) state how you derived the values — which text mentions and/or which floor-plan features you counted — and the source of each (text / plan / both). Mention any unit where the plan and text disagreed and which you trusted.',
+      },
       truncated: {
         type: 'boolean',
         description: 'True if you could not include every row/page because the input was larger than what fits in one response.',
@@ -87,18 +102,30 @@ const EXTRACT_TOOL: Anthropic.Tool = {
   },
 };
 
-const EXTRACT_SYSTEM = `You extract structured tabular data from messy real-estate documents for a Saudi Arabian CRM (Wassel / وصل العقارية). The files are developer hand-offs: unit lists, price tables, project specs — as PDFs, screenshots, or photos, often in Arabic.
+const EXTRACT_SYSTEM = `You extract structured data from messy real-estate documents for a Saudi Arabian CRM (Wassel / وصل العقارية). Files are developer hand-offs — unit lists, price tables, project specs, brochures with floor plans — as PDFs, screenshots, or photos, usually in Arabic.
 
 Always call the \`emit_raw_table\` tool — never reply in prose.
 
-Rules:
-1. Find every table / list of records across ALL the provided files and merge them into ONE table. If two files describe the same kind of record (e.g. units), union their columns: same concept → same column. A row missing a column gets an empty string for it.
-2. One logical record per row (e.g. one unit per row).
-3. Preserve cell values EXACTLY as written — do NOT translate, do NOT reformat numbers or dates, do NOT standardize spelling, do NOT strip units (keep "120 م²", "450,000 ر.س" verbatim). Cleaning and standardization happen later with human approval; your job is faithful capture.
-4. Keep Arabic text in Arabic. Keep mixed Arabic/Latin as-is.
-5. If a cell holds multiple values (e.g. several amenities), keep them all in that one cell separated by a comma — never drop any.
-6. Use clear, human-readable column headers taken from the source (Arabic or English as the source uses).
-7. If the input has more rows/pages than you can faithfully fit in one response, extract as many complete rows as you can and set "truncated": true. Never invent or pad data.`;
+WHAT TO LOOK FOR — the destination model's fields:
+You are given the list of fields the destination cares about. Use it ONLY to know what information to hunt for: find a value for each field wherever the source has one, and make it a column. This is GUIDANCE, not a constraint:
+- Do NOT normalize, translate, reformat, standardize spelling, or coerce values to match those fields or the system. Capture values RAW and verbatim ("120 م²", "450,000 ر.س", "شقه"). Cleaning + matching happen LATER with human approval — your only job here is faithful, COMPLETE capture of the right information.
+- If the source has other useful data beyond those fields, ADD extra columns for it. More signal is good.
+
+NUMBERS — output bare numbers:
+For any data that is a count or quantity (bathrooms, bedrooms, kitchens, floors, parking, price, area…), put a PLAIN NUMBER in the cell — \`3\`, never "3 دورات مياه" / "ثلاث حمامات" / "3 bathrooms". (A measurement column may keep its unit only if the column is inherently a measurement; pure counts are bare integers.)
+
+FLOOR PLANS — analyze them deeply (critical):
+Brochures include architectural floor plans. For every plan:
+- Work out which unit it belongs to — match by the unit/type label that appears BOTH on the plan and in the text (a plan titled "نموذج A1" is the A1 unit). Units of the same type share one plan.
+- COUNT the unit's components from the DRAWING: bathrooms = distinct WC / toilet fixtures, bedrooms = bedroom rooms, plus kitchens, living rooms (صالة), maid's rooms, etc.
+- COMBINE the plan with the text for the same unit — they are two views of one unit. When the plan and the text DISAGREE, TRUST THE PLAN (it is ground truth). Resolve ambiguities like "2 دورة مياة" + "الجناح الرئيسي يحتوي على دورة مياة" by counting the fixtures actually drawn (here: 3, not 2).
+
+ONE TABLE:
+1. Merge every table / list across all files into ONE table; union columns (same concept → same column); a row missing a column gets "".
+2. One logical record per row (one unit per row).
+3. Keep Arabic in Arabic; keep a multi-value cell (e.g. amenities) comma-separated — never drop any value.
+4. Use clear, human-readable headers (from the source, or your own where you derived a column like a plan-based count).
+5. If the input is larger than you can faithfully fit, extract as many COMPLETE rows as possible and set "truncated": true. Never invent or pad.`;
 
 function fileExtensionMime(name: string): string | null {
   const ext = name.toLowerCase().split('.').pop() ?? '';
@@ -116,7 +143,7 @@ function fileExtensionMime(name: string): string | null {
 /**
  * Fetch each signed-URL file (image/PDF) and build Claude content blocks.
  * Skips unsupported/oversized files (reported, never silently dropped).
- * Shared by extract + enrich.
+ * Shared by extract + discuss.
  */
 async function buildFileBlocks(
   files: ExtractFileInput[],
@@ -186,6 +213,7 @@ export async function runExtract(
   apiKey: string,
   files: ExtractFileInput[],
   language: AgentLanguage = 'ar',
+  targetFields: TargetFieldLite[] = [],
 ): Promise<RawTableResult> {
   const { blocks: fileBlocks, skipped, truncated: truncatedInput, used } = await buildFileBlocks(files);
   if (used === 0) {
@@ -193,22 +221,34 @@ export async function runExtract(
       `No extractable files. ${skipped.map((s) => `${s.name}: ${s.reason}`).join('; ') || 'No files provided.'}`,
     );
   }
+  const fieldList = targetFields.length
+    ? targetFields.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`).join('\n')
+    : '';
   const blocks: Anthropic.ContentBlockParam[] = [
     {
       type: 'text',
       text:
-        'Extract every record from the following file(s) into one unified table. ' +
-        'Preserve all values verbatim.',
+        'Extract every record from the file(s) below into one unified table, following the rules.\n\n' +
+        (fieldList
+          ? 'The destination model cares about these fields — use them as your hunt-list (find a value for each where the source has one; add extra columns for any other useful data; do NOT clean or coerce):\n' +
+            fieldList +
+            '\n\n'
+          : '') +
+        "Preserve non-numeric values verbatim; output bare numbers for counts/quantities; deeply analyze the floor plans and combine them with the text to count each unit's components.",
     },
     ...fileBlocks,
   ];
 
   const client = new Anthropic({ apiKey });
+  const langNote =
+    language === 'ar'
+      ? '\n\nIMPORTANT: Write your "notes" and "summary" in Arabic (العربية). Never translate or alter the extracted cell DATA itself.'
+      : '\n\nIMPORTANT: Write your "notes" and "summary" in English. Never translate or alter the extracted cell DATA itself.';
   const call = (model: string) =>
     client.messages.create({
       model,
       max_tokens: 16000,
-      system: EXTRACT_SYSTEM + langLine(language, 'notes'),
+      system: EXTRACT_SYSTEM + langNote,
       tools: [EXTRACT_TOOL],
       tool_choice: { type: 'tool', name: 'emit_raw_table' },
       messages: [{ role: 'user', content: blocks }],
@@ -229,6 +269,7 @@ export async function runExtract(
     headers?: unknown;
     rows?: unknown;
     notes?: unknown;
+    summary?: unknown;
     truncated?: unknown;
   };
 
@@ -242,6 +283,7 @@ export async function runExtract(
     headers,
     rows,
     notes: typeof out.notes === 'string' ? out.notes : undefined,
+    summary: typeof out.summary === 'string' ? out.summary : undefined,
     truncated: Boolean(out.truncated) || truncatedInput,
     files_processed: used,
     files_skipped: skipped,
@@ -471,94 +513,12 @@ export async function runStandardize(
 }
 
 // ============================================================================
-// count_field — AI counts a per-unit total (e.g. bathrooms / bedrooms) by
-// reading each unit's full description. One row = one unit.
-// ============================================================================
-
-export interface CountInputRow {
-  rowIndex: number;
-  text: string;
-}
-
-export interface CountOut {
-  rowIndex: number;
-  count: number;
-  reason: string;
-}
-
-const COUNT_TOOL: Anthropic.Tool = {
-  name: 'emit_counts',
-  description: 'For each unit row, return the total count of the requested thing.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      counts: {
-        type: 'array',
-        items: {
-          type: 'object',
-          properties: {
-            rowIndex: { type: 'integer', description: 'The row index given in the input.' },
-            count: { type: 'integer', description: 'Total count for this unit (0 if none / unknown).' },
-            reason: { type: 'string', description: 'Brief justification — which mentions you counted.' },
-          },
-          required: ['rowIndex', 'count', 'reason'],
-        },
-      },
-    },
-    required: ['counts'],
-  },
-};
-
-const COUNT_SYSTEM = `You count how many of a specific thing a Saudi real-estate UNIT has (e.g. bathrooms / دورات المياه, or bedrooms / غرف النوم) by reading that unit's full description. Always call the emit_counts tool.
-
-For each unit row you get its index and a description (header: value pairs). Return the TOTAL integer count of the requested thing for that unit:
-- Sum explicit numbers ("2 دورة مياة" = 2; "3 bedrooms" = 3).
-- ADD implied ones: an en-suite / attached bathroom mentioned inside a bedroom or master-suite description counts as +1 bathroom; a "master bedroom" / "جناح نوم" counts as a bedroom.
-- Count each distinct room / fixture once — don't double-count the same one if it's described twice.
-- If the description says nothing about the requested thing, return 0.
-Return exactly one entry per input rowIndex.`;
-
-const COUNT_BATCH = 100;
-
-export async function runCountField(
-  apiKey: string,
-  input: { fieldLabel: string; rows: CountInputRow[]; language?: AgentLanguage },
-): Promise<CountOut[]> {
-  const client = new Anthropic({ apiKey });
-  const out: CountOut[] = [];
-  for (let i = 0; i < input.rows.length; i += COUNT_BATCH) {
-    const batch = input.rows.slice(i, i + COUNT_BATCH);
-    const userMsg =
-      `Count the total "${input.fieldLabel}" for each unit below.\n\nUNITS:\n` +
-      batch.map((r) => `[${r.rowIndex}] ${r.text || '(no description)'}`).join('\n');
-    const response = await client.messages.create({
-      model: STANDARDIZE_MODEL,
-      max_tokens: 4000,
-      system: COUNT_SYSTEM + langLine(input.language ?? 'ar', 'reason'),
-      tools: [COUNT_TOOL],
-      tool_choice: { type: 'tool', name: 'emit_counts' },
-      messages: [{ role: 'user', content: userMsg }],
-    });
-    const tb = response.content.find((b) => b.type === 'tool_use');
-    if (!tb || tb.type !== 'tool_use') throw new Error('Count model did not respond');
-    const parsed = tb.input as { counts?: unknown };
-    const arr = Array.isArray(parsed.counts) ? parsed.counts : [];
-    for (const c of arr) {
-      const o = c as Record<string, unknown>;
-      out.push({
-        rowIndex: Number(o.rowIndex),
-        count: Math.max(0, Math.round(Number(o.count) || 0)),
-        reason: typeof o.reason === 'string' ? o.reason : '',
-      });
-    }
-  }
-  return out;
-}
-
-// ============================================================================
-// enrich — "ask the AI to get more information": fill blank cells from other
-// columns, add a column pulled from the uploaded files, or add a column from
-// the model's own knowledge. Returns columns to add/fill (the client merges).
+// discuss — a multi-turn chat about the extracted table. The operator asks the
+// AI to explain its work (especially how it derived each number from the floor
+// plans + text) and/or to revise the table (add / fill / recount a column,
+// re-read the brochure). The model replies conversationally and may return
+// column edits the client merges. Supersedes the old one-shot "enrich"; step-2
+// counting was removed — counting now happens during extraction.
 // ============================================================================
 
 export interface EnrichColumn {
@@ -566,20 +526,33 @@ export interface EnrichColumn {
   values: string[]; // one per table row, in row order; '' = unknown
 }
 
-const ENRICH_ROW_CAP = 250;
+export interface DiscussTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
-const ENRICH_TOOL: Anthropic.Tool = {
-  name: 'emit_table_enrichment',
-  description: 'Return the column(s) to add or fill, per the user instruction.',
+const DISCUSS_ROW_CAP = 250;
+
+const DISCUSS_TOOL: Anthropic.Tool = {
+  name: 'emit_discussion',
+  description:
+    'Reply to the operator about the extracted table. ALWAYS include "reply". ' +
+    'Only include "columns" when the operator asked you to add / fill / recount / fix data.',
   input_schema: {
     type: 'object',
     properties: {
+      reply: {
+        type: 'string',
+        description:
+          "Your conversational answer — explain your reasoning, cite the source (text / floor plan / both), or describe the change you made.",
+      },
       columns: {
         type: 'array',
+        description: 'OMIT unless the operator asked to change the table. Each entry adds (new header) or fills/replaces (existing header) one column.',
         items: {
           type: 'object',
           properties: {
-            header: { type: 'string', description: 'Existing header (to fill that column) or a new header (to add a column).' },
+            header: { type: 'string', description: 'EXACT existing header (to fill/replace that column) or a new header (to add one).' },
             values: {
               type: 'array',
               items: { type: 'string' },
@@ -589,31 +562,36 @@ const ENRICH_TOOL: Anthropic.Tool = {
           required: ['header', 'values'],
         },
       },
-      notes: { type: 'string', description: 'Optional one-line note about what you did / assumptions.' },
     },
-    required: ['columns'],
+    required: ['reply'],
   },
 };
 
-const ENRICH_SYSTEM = `You extend a raw data table for a Saudi Arabian real-estate CRM (Wassel / وصل العقارية) per the user's instruction. Always call the emit_table_enrichment tool. You can:
-(a) FILL BLANK cells of an EXISTING column by reasoning from the other columns in each row;
-(b) ADD a NEW column whose values you extract from the attached source file(s);
-(c) ADD a NEW column from your general knowledge.
+const DISCUSS_SYSTEM = `You are discussing an EXTRACTED data table with the operator of a Saudi Arabian real-estate CRM (Wassel / وصل العقارية). The table was just extracted from developer files — brochures with floor plans, price lists, specs. Always call the emit_discussion tool.
 
-Return the column(s) to add or fill. For each: "header" = the EXACT existing header to fill that column, or a new header to add one; "values" = one string per table row, in the SAME ORDER as the rows given (row 0 first).
+In this chat you:
+- ANSWER the operator's question conversationally in "reply". When they ask how you got a value — especially a NUMBER — explain which text mentions and/or which floor-plan features you counted, and the source (text / plan / both).
+- When they ask you to add, fill, recount, or fix data, ALSO return the affected column(s) in "columns" (one value per table row, in row order). For counts, re-read the attached floor plans and combine them with the text — the plan is ground truth on disagreement. Otherwise OMIT "columns" entirely.
 
 Rules:
-- Use "" for any row you cannot determine — NEVER fabricate or guess.
-- Keep values concise and consistent across rows (same unit/format).
-- Preserve the data: do not return columns the instruction doesn't ask about.
-- Answer in the language of the data (Arabic data → Arabic values).`;
+- Output bare numbers for counts/quantities (3, not "3 دورات مياه").
+- Do NOT clean / normalize / coerce values to the system — keep them raw (cleaning happens later with approval). You may add a column, fill blanks, or correct a value the operator flags as wrong.
+- Use "" for any row you genuinely cannot determine — NEVER fabricate.
+- Answer in the language of the data (Arabic data → Arabic).`;
 
-export async function runEnrich(
+export async function runDiscuss(
   apiKey: string,
-  input: { instruction: string; headers: string[]; rows: string[][]; files?: ExtractFileInput[]; language?: AgentLanguage },
-): Promise<{ columns: EnrichColumn[]; notes?: string; truncated: boolean }> {
-  const rowsForAi = input.rows.slice(0, ENRICH_ROW_CAP);
-  const truncated = input.rows.length > ENRICH_ROW_CAP;
+  input: {
+    messages: DiscussTurn[];
+    headers: string[];
+    rows: string[][];
+    fields?: TargetFieldLite[];
+    files?: ExtractFileInput[];
+    language?: AgentLanguage;
+  },
+): Promise<{ reply: string; columns: EnrichColumn[]; truncated: boolean }> {
+  const rowsForAi = input.rows.slice(0, DISCUSS_ROW_CAP);
+  const truncated = input.rows.length > DISCUSS_ROW_CAP;
 
   const tableText =
     `| # | ${input.headers.join(' | ')} |\n` +
@@ -621,19 +599,35 @@ export async function runEnrich(
       .map((r, i) => `| ${i} | ${input.headers.map((_, c) => (r[c] ?? '').replace(/\|/g, '/')).join(' | ')} |`)
       .join('\n');
 
+  const fieldList = input.fields?.length
+    ? '\n\nDESTINATION FIELDS (context only — do NOT coerce values to them):\n' +
+      input.fields.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`).join('\n')
+    : '';
+
   const fileResult = input.files && input.files.length > 0 ? await buildFileBlocks(input.files) : null;
   const fileBlocks = fileResult?.blocks ?? [];
 
-  const blocks: Anthropic.ContentBlockParam[] = [
-    {
-      type: 'text',
-      text:
-        `INSTRUCTION: ${input.instruction}\n\n` +
-        `TABLE (${rowsForAi.length} rows; values must align to these row numbers):\n${tableText}` +
-        (fileBlocks.length > 0 ? '\n\nSource file(s) are attached below — use them for any "extract from the file" request.' : ''),
-    },
-    ...fileBlocks,
-  ];
+  const history = input.messages.length ? input.messages : [{ role: 'user' as const, content: '(no message)' }];
+  const lastIdx = history.length - 1;
+  const convo: Anthropic.MessageParam[] = history.map((m, i): Anthropic.MessageParam => {
+    // Attach the table + fields + source files to the LATEST user turn only
+    // (re-sending the brochure on every turn would balloon cost).
+    if (i === lastIdx && m.role === 'user') {
+      return {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              `${m.content}\n\nCURRENT TABLE (${rowsForAi.length} rows; any "columns" you return must align to these row numbers):\n${tableText}${fieldList}` +
+              (fileBlocks.length > 0 ? '\n\nThe source file(s) are attached below — re-read them (including floor plans) as needed.' : ''),
+          },
+          ...fileBlocks,
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
 
   const client = new Anthropic({ apiKey });
   // Vision model when files are attached (reading the brochure); else Sonnet.
@@ -642,10 +636,10 @@ export async function runEnrich(
     client.messages.create({
       model: m,
       max_tokens: 8000,
-      system: ENRICH_SYSTEM + langLine(input.language ?? 'ar', 'notes'),
-      tools: [ENRICH_TOOL],
-      tool_choice: { type: 'tool', name: 'emit_table_enrichment' },
-      messages: [{ role: 'user', content: blocks }],
+      system: DISCUSS_SYSTEM + langLine(input.language ?? 'ar', 'reply'),
+      tools: [DISCUSS_TOOL],
+      tool_choice: { type: 'tool', name: 'emit_discussion' },
+      messages: convo,
     });
 
   let response;
@@ -656,8 +650,8 @@ export async function runEnrich(
   }
 
   const tb = response.content.find((b) => b.type === 'tool_use');
-  if (!tb || tb.type !== 'tool_use') throw new Error('Enrichment model did not respond');
-  const out = tb.input as { columns?: unknown; notes?: unknown };
+  if (!tb || tb.type !== 'tool_use') throw new Error('Discussion model did not respond');
+  const out = tb.input as { reply?: unknown; columns?: unknown };
   const rawCols = Array.isArray(out.columns) ? out.columns : [];
   const columns: EnrichColumn[] = rawCols
     .map((c) => {
@@ -669,5 +663,9 @@ export async function runEnrich(
     })
     .filter((c) => c.header);
 
-  return { columns, notes: typeof out.notes === 'string' ? out.notes : undefined, truncated };
+  return {
+    reply: typeof out.reply === 'string' ? out.reply : '',
+    columns,
+    truncated,
+  };
 }

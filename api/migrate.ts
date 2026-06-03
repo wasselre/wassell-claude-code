@@ -19,12 +19,11 @@ import {
   runExtract,
   runSuggestMappings,
   runStandardize,
-  runCountField,
-  runEnrich,
+  runDiscuss,
   type ExtractFileInput,
   type TargetFieldLite,
   type StandardizeCandidate,
-  type CountInputRow,
+  type DiscussTurn,
 } from './_lib/migrateAgent.js';
 
 export const config = {
@@ -59,24 +58,22 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
 }
 
 interface MigrateRequestBody {
-  action?: 'extract' | 'suggest_mappings' | 'standardize' | 'count_field' | 'enrich';
-  // UI language for the model's human-readable text (notes / reasons).
+  action?: 'extract' | 'suggest_mappings' | 'standardize' | 'discuss';
+  // UI language for the model's human-readable text (notes / reasons / reply).
   language?: 'ar' | 'en';
-  // extract
+  // extract — `fields` is the destination model's field list (a hunt-list).
   files?: ExtractFileInput[];
+  fields?: TargetFieldLite[];
   // suggest_mappings
   headers?: string[];
   sampleRows?: string[][];
-  fields?: TargetFieldLite[];
   // standardize
   fieldType?: 'dropdown' | 'multiselect' | 'lookup';
   fieldLabel?: string;
   candidates?: StandardizeCandidate[];
   rawValues?: string[];
-  // count_field
-  countRows?: CountInputRow[];
-  // enrich
-  instruction?: string;
+  // discuss — multi-turn chat about the extracted table
+  messages?: DiscussTurn[];
   rows?: string[][];
 }
 
@@ -104,7 +101,12 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           }
         }
         try {
-          const result = await runExtract(apiKey, files, body.language ?? 'ar');
+          const result = await runExtract(
+            apiKey,
+            files,
+            body.language ?? 'ar',
+            Array.isArray(body.fields) ? body.fields : [],
+          );
           return jsonOk({ ok: true, ...result });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -148,39 +150,24 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           return jsonError(502, `Standardization failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      case 'count_field': {
-        const countRows = Array.isArray(body.countRows) ? body.countRows : [];
-        if (!body.fieldLabel || countRows.length === 0) {
-          return jsonError(400, 'count_field: fieldLabel and countRows[] are required');
-        }
-        try {
-          const counts = await runCountField(apiKey, {
-            fieldLabel: body.fieldLabel,
-            rows: countRows,
-            language: body.language ?? 'ar',
-          });
-          return jsonOk({ ok: true, counts });
-        } catch (err) {
-          return jsonError(502, `Counting failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-      case 'enrich': {
-        const instruction = (body.instruction ?? '').trim();
+      case 'discuss': {
+        const messages = Array.isArray(body.messages) ? body.messages : [];
         const headers = Array.isArray(body.headers) ? body.headers : [];
-        if (!instruction || headers.length === 0) {
-          return jsonError(400, 'enrich: instruction and headers[] are required');
+        if (messages.length === 0 || headers.length === 0) {
+          return jsonError(400, 'discuss: messages[] and headers[] are required');
         }
         try {
-          const result = await runEnrich(apiKey, {
-            instruction,
+          const result = await runDiscuss(apiKey, {
+            messages,
             headers,
             rows: Array.isArray(body.rows) ? body.rows : [],
+            fields: Array.isArray(body.fields) ? body.fields : undefined,
             files: Array.isArray(body.files) ? body.files : undefined,
             language: body.language ?? 'ar',
           });
           return jsonOk({ ok: true, ...result });
         } catch (err) {
-          return jsonError(502, `Enrichment failed: ${err instanceof Error ? err.message : String(err)}`);
+          return jsonError(502, `Discuss failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       default:
