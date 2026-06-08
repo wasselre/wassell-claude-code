@@ -1,7 +1,7 @@
 # PRD: Access Control (Users, Roles, Profiles)
 
 **Status:** Live (user-management feature complete; locked for ~6 months)
-**Last updated:** 2026-05-31 (role-field display values (`RolesPage`) and scope-rule record pickers (`ScopeConditionEditor`) now resolve a lookup's `mirror` display field via the shared `resolveLookupDisplayValue` helper — purely a label-rendering consistency change following the model-builder feature; no access-control behavior changed. See model-builder.md. Prior: 2026-05-24)
+**Last updated:** 2026-06-08 (deleting a user now also removes the Supabase Auth identity (`auth.users`) via the new `delete-user` Edge Function — previously "Delete user" only cleared the app-level `public.users` row and left the Auth identity orphaned, so re-inviting that same email failed with `email_exists`. Also: the invite/delete error toasts now surface the real GoTrue reason instead of the opaque "Edge Function returned a non-2xx status code". Prior: 2026-05-31)
 **Related PRDs:** model-builder.md, record-management.md, workflow-automation.md, data-storage.md, logs.md
 
 > **2026-05-24 — `auth_uid` binding deadlock fixed.**
@@ -209,6 +209,7 @@ Every destructive mutation returns `{ ok: true } | { ok: false, reason }`. UI gu
 - **Role delete cascades:** the role is removed AND all `role_assignments` pointing at it are pruned from every user. No dangling references on users. Referring workflows keep their dangling `role_id` so the Workflow editor can warn (no auto-fix).
 - **Self-delete is blocked** (`reason: 'self_delete'`).
 - **Last active admin cannot be deleted or deactivated** (`reason: 'last_admin'`). Applies to `deleteUser` and to `saveUser` when deactivating the last admin or flipping them to a non-admin profile.
+- **Deleting a user also removes their Supabase Auth identity.** After the store removes the app-level `public.users` row, `UsersPage.confirmDelete` calls `deleteAuthUser` → the `delete-user` Edge Function (service-role, admin-gated) deletes the `auth.users` row, freeing the email for a future invite. Before this, "Delete user" left the Auth identity orphaned, so re-inviting that email failed with `email_exists` (the opaque "non-2xx" toast). The `self_delete` / `last_admin` guards run first (so they also protect the Auth deletion), and the Edge Function itself refuses to delete the caller's own identity. Idempotent — a no-op if the Auth identity is already gone. (Users who own RESTRICT-referenced resources — folders/files/shared links — still can't have their `public.users` row removed client-side; that pre-existing FK guard is unchanged.)
 - **User save requires a valid profile** (`reason: 'missing_profile'`). The Save button is disabled in the UI; the store validates regardless.
 - **Destructive actions always confirm** — user/profile/role delete, user deactivate all use the standard `Modal` confirmation pattern.
 
@@ -239,8 +240,8 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 ## Key files
 | File | What it does |
 |---|---|
-| `src/pages/Settings/UsersPage.tsx` | User list, create/edit modal with inline role-field editor, delete + deactivate confirmations, Send-invite checkbox on create, Resend-invite button per row |
-| `src/lib/auth.ts` | Supabase Auth wrapper — `signIn`, `signOut`, `getSession`, `getSessionUid`, `onAuthChange`, `sendPasswordResetEmail`, `updatePassword`, `inviteUser` (calls the `invite-user` Edge Function), TOTP MFA helpers |
+| `src/pages/Settings/UsersPage.tsx` | User list, create/edit modal with inline role-field editor, delete + deactivate confirmations (delete also removes the Supabase Auth identity via `deleteAuthUser`), Send-invite checkbox on create, Resend-invite button per row |
+| `src/lib/auth.ts` | Supabase Auth wrapper — `signIn`, `signOut`, `getSession`, `getSessionUid`, `onAuthChange`, `sendPasswordResetEmail`, `updatePassword`, `inviteUser` (calls `invite-user`), `deleteAuthUser` (calls `delete-user`), TOTP MFA helpers. `inviteUser`/`deleteAuthUser` read the Edge Function's real error body (via `FunctionsHttpError.context`) so toasts show the actual reason (e.g. `email_exists`, email rate limit) instead of "Edge Function returned a non-2xx status code" |
 | `src/pages/Login.tsx`, `src/pages/auth/ResetPassword.tsx` | Sign-in page and password-recovery landing page |
 | `src/pages/Settings/ProfilesPage.tsx` | Profile list and editor; system badge; delete guard UI |
 | `src/pages/Settings/components/PermissionMatrix.tsx` | Per-model expandable card: 6 action toggles + view/edit scope editors + per-field hidden/readonly/editable rules |
@@ -250,6 +251,7 @@ Non-admin-accessible routes: `/`, `/model/:modelName`, `/model/:modelName/new`, 
 | `src/pages/ProfilePage.tsx` | Self-service /profile page: change name, change password, manage MFA factor |
 | `src/pages/auth/MfaSetup.tsx` | TOTP enrollment + challenge page; gated by RequireAdmin via `getCurrentAal()` |
 | `supabase/functions/invite-user/index.ts` | Edge Function that uses the service-role key to verify the caller is an admin (`wassell_is_admin(auth.uid())`), then issues `auth.admin.inviteUserByEmail` AND atomically writes `public.users.auth_uid` for the matching email (skips if `auth_uid` is already set — never clobbers). |
+| `supabase/functions/delete-user/index.ts` | Edge Function (service-role, admin-gated via `wassell_is_admin`) that deletes a user's `auth.users` identity — by `auth_uid` when the frontend supplies it (from `users.auth_uid`), else resolved from the email via the admin user list. Idempotent (no-op if already gone); refuses to delete the caller's own identity. Mirror of `invite-user`; closes the orphan-re-invite gap. |
 | `supabase/migrations/2026-05-24_bind_my_auth_uid.sql` | SECURITY DEFINER RPC `bind_my_auth_uid()` — closes the 2026-05-06 chicken-and-egg in `users_write` for users invited before the Edge-Function fix. Called from `initialize()` on every sign-in; idempotent. |
 | `src/pages/Settings/RolesPage.tsx` | Role list + editor. Wraps each role as an `AppModel`-shaped object and delegates to `SectionManager` with `ownerKind='role'` for the full builder UX. Read-only Members table supports all field-type displays. |
 | `src/pages/Builder/components/SectionManager.tsx` | Shared builder (used by both models and roles). `ownerKind` prop gates rename propagation. |

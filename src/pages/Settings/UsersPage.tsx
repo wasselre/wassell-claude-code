@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
-import { inviteUser, isAuthAvailable } from '@/lib/auth';
+import { inviteUser, deleteAuthUser, isAuthAvailable } from '@/lib/auth';
 import { Users as UsersIcon, Plus, Pencil, Trash2, Shield, Mail, Loader2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -159,15 +159,35 @@ export default function UsersPage() {
     setDeactivatingUser(null);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!deletingUser) return;
-    const result = deleteUser(deletingUser.id);
+    const target = deletingUser;
+    setDeletingUser(null);
+    const result = deleteUser(target.id);
     if (!result.ok) {
       addToast(t(reasonToKey(result.reason)), 'error');
+      return;
+    }
+    // The store removed the app-level row. Now remove the Supabase Auth
+    // identity so the email is freed for a future invite — the browser can't
+    // do this directly (needs service-role), so the delete-user Edge Function
+    // does it. Skipping this is what used to leave a deleted user's email
+    // permanently un-re-invitable (email_exists → opaque "non-2xx" toast).
+    if (!isAuthAvailable()) {
+      addToast(t('toast.deleted'), 'success');
+      return;
+    }
+    const { error } = await deleteAuthUser(target.email, target.auth_uid ?? null);
+    if (error) {
+      addToast(
+        isAr
+          ? `تم حذف المستخدم، لكن تعذّر حذف هوية الدخول (قد يمنع إعادة الدعوة بنفس البريد): ${error}`
+          : `User removed, but the login identity wasn't deleted (may block re-inviting this email): ${error}`,
+        'error',
+      );
     } else {
       addToast(t('toast.deleted'), 'success');
     }
-    setDeletingUser(null);
   };
 
   const canCreate = profiles.length > 0;

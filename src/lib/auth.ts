@@ -12,6 +12,7 @@
  * errors inline without wrapping everything in try/catch.
  */
 import type { AuthError, Session } from '@supabase/supabase-js';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 
 export interface AuthResult {
@@ -95,10 +96,93 @@ export async function inviteUser(
     const { data, error } = await supabase.functions.invoke('invite-user', {
       body: { email, redirect_to: target },
     });
-    if (error) return { error: error.message ?? 'Failed to send invite.' };
+    // When the function returns a non-2xx status, supabase-js puts a
+    // FunctionsHttpError in `error` whose `.message` is the useless
+    // "Edge Function returned a non-2xx status code" and leaves `data` null —
+    // the real reason ({ ok:false, error }) is in the response body. Read it
+    // out so the caller sees "...already been registered" / "rate limit"
+    // instead of the generic string. (Same pattern as readFunctionError in
+    // projectDetailsAi.ts.)
+    if (error) return { error: await readEdgeFunctionError(error) };
     if (data && (data as { ok?: boolean }).ok === false) {
-      const errorMessage = (data as { error?: string }).error ?? 'Invite failed.';
-      return { error: errorMessage };
+      return { error: mapEdgeFunctionError((data as { error?: string }).error ?? 'Invite failed.') };
+    }
+    return { error: null };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { error: msg };
+  }
+}
+
+/**
+ * Pull the real error out of a failed `invite-user` / `delete-user`
+ * invocation. supabase-js surfaces a non-2xx response as a FunctionsHttpError
+ * whose `.message` is the generic "Edge Function returned a non-2xx status
+ * code"; the actionable reason lives in the JSON body ({ ok:false, error }).
+ */
+async function readEdgeFunctionError(error: unknown): Promise<string> {
+  if (error instanceof FunctionsHttpError) {
+    try {
+      const body = await error.context.json();
+      const real = (body as { error?: string } | null)?.error;
+      if (real) return mapEdgeFunctionError(real);
+    } catch {
+      // Body wasn't JSON (e.g. a gateway 5xx). Fall through to the message below.
+    }
+  }
+  if (error && typeof error === 'object' && 'message' in error) {
+    return String((error as { message: unknown }).message);
+  }
+  return String(error);
+}
+
+/**
+ * Turn raw GoTrue errors into clear, action-oriented messages. The ones we
+ * actually hit: re-inviting an account that already exists (email_exists) and
+ * Supabase's per-hour email cap. Shared by inviteUser + deleteAuthUser.
+ */
+function mapEdgeFunctionError(raw: string): string {
+  const m = raw.toLowerCase();
+  if (m.includes('already been registered') || m.includes('email_exists')) {
+    return 'This email already has an account — no invite needed. If they are locked out, use "Send password reset" instead.';
+  }
+  if (m.includes('rate limit') || m.includes('for security purposes')) {
+    return 'Too many emails were sent in a short window. Wait a minute and try again, or raise the cap in Supabase Auth → Rate Limits.';
+  }
+  return raw;
+}
+
+/**
+ * Delete a user's Supabase Auth identity (the `auth.users` row) via the
+ * `delete-user` Edge Function.
+ *
+ * The app's "Delete user" only removes the app-level `public.users` row; the
+ * browser can't delete the Auth identity (that needs the service-role key).
+ * Without this, the email stays registered in Supabase Auth and re-inviting it
+ * later fails with `email_exists`. Call this right after removing the app row
+ * so the email is freed for a future invite.
+ *
+ * Pass `authUid` (from `users.auth_uid`) when known — the function deletes it
+ * directly. When it's null/unknown (e.g. an unbound row) the function resolves
+ * the identity by email. Idempotent: deleting an already-gone identity returns
+ * success.
+ */
+export async function deleteAuthUser(
+  email: string,
+  authUid?: string | null,
+): Promise<AuthVoidResult> {
+  if (!supabase) return { error: NOT_CONFIGURED_ERR };
+  const session = await getSession();
+  if (!session?.access_token) {
+    return { error: 'You must be signed in to delete users.' };
+  }
+  try {
+    const { data, error } = await supabase.functions.invoke('delete-user', {
+      body: { email, auth_uid: authUid ?? null },
+    });
+    if (error) return { error: await readEdgeFunctionError(error) };
+    if (data && (data as { ok?: boolean }).ok === false) {
+      return { error: mapEdgeFunctionError((data as { error?: string }).error ?? 'Delete failed.') };
     }
     return { error: null };
   } catch (err) {
