@@ -154,6 +154,15 @@ export default function RecordFormPage() {
     recordId: string | null;
     prefill?: Record<string, unknown>;
   } | null>(null);
+  // When a `find_or_create_record` button finds an existing match we no longer
+  // force-open it for edit — we ask whether to open the existing record or
+  // create a NEW one (e.g. "Register a visit" when the client already has a
+  // prior visit but the rep wants to log another). Null when no prompt is open.
+  const [findCreatePrompt, setFindCreatePrompt] = useState<{
+    modelId: string;
+    foundId: string;
+    prefill: Record<string, unknown>;
+  } | null>(null);
 
   // Smart auto-link + auto-fill primitives. The hooks no-op when no field
   // on this model declares the relevant config, so they're cheap to mount
@@ -614,9 +623,13 @@ export default function RecordFormPage() {
         );
         if (searchFailed) return;
         if (found) {
-          setRecordModal({
+          // Don't force-edit the match — let the user choose "open existing" or
+          // "create new". The new record stays prefilled from the trigger record,
+          // exactly like the not-found path below.
+          setFindCreatePrompt({
             modelId: button.action.target_model_id,
-            recordId: found.id,
+            foundId: found.id,
+            prefill: buildPrefill(button.action.prefill, formData),
           });
         } else {
           setRecordModal({
@@ -1175,6 +1188,54 @@ export default function RecordFormPage() {
           onClose={() => setRecordModal(null)}
         />
       )}
+
+      {/* find_or_create match → choose: open the existing record, or create a new
+        * one (still prefilled from this record). Lets "Register a visit" log a
+        * fresh visit even when the client already has a prior one. */}
+      <Modal
+        open={findCreatePrompt !== null}
+        onClose={() => setFindCreatePrompt(null)}
+        title={t('records.find_or_create_title')}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setFindCreatePrompt(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (!findCreatePrompt) return;
+                setRecordModal({ modelId: findCreatePrompt.modelId, recordId: findCreatePrompt.foundId });
+                setFindCreatePrompt(null);
+              }}
+            >
+              {t('records.find_or_create_open_existing')}
+            </Button>
+            <Button
+              onClick={() => {
+                if (!findCreatePrompt) return;
+                setRecordModal({
+                  modelId: findCreatePrompt.modelId,
+                  recordId: null,
+                  prefill: findCreatePrompt.prefill,
+                });
+                setFindCreatePrompt(null);
+              }}
+            >
+              {t('records.find_or_create_make_new')}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-charcoal">
+          {t('records.find_or_create_body', {
+            model: (() => {
+              const tm = models.find((m) => m.id === findCreatePrompt?.modelId);
+              return tm ? (isAr ? tm.label_ar : tm.label_en) : '';
+            })(),
+          })}
+        </p>
+      </Modal>
 
       {/* Delete modal */}
       <Modal
