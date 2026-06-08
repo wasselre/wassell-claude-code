@@ -154,12 +154,14 @@ function saveLocal<T>(key: string, data: T): void {
 }
 
 // ─── Per-model records cache ──────────────────────────────────────────
-// Records used to live under a single `wassell_records` key — a flat array
-// re-stringified on every save. With ~1000 records of ~5KB each this hit the
-// browser's 5–10 MB localStorage cap, plus blocked the main thread for
-// 100–500 ms per save. Now each model's records live under
-// `wassell_records:<modelId>`, so a saveRecord rewrites only that bucket.
-// On first load we migrate from the legacy single key.
+// Records are NO LONGER cached in localStorage (retired 2026-06-08). They once
+// lived under `wassell_records:<modelId>` as an offline fallback, but on real
+// datasets that mirror grew past 8 MB and blew the browser's 5-10 MB quota:
+// every page load re-wrote it and threw QuotaExceededError (the user-facing
+// "تجاوز الذاكرة المؤقتة" toast). This cloud, auth-gated CRM can't run offline
+// anyway, and we don't need offline record viewing — so records load only from
+// Supabase. The persist helpers below are kept (callers unchanged) but now only
+// SWEEP any pre-existing buckets so returning users' bloat gets cleaned up.
 const RECORDS_KEY_PREFIX = 'wassell_records:';
 const RECORDS_LEGACY_KEY = 'wassell_records';
 
@@ -167,52 +169,26 @@ function recordsKeyFor(modelId: string): string {
   return `${RECORDS_KEY_PREFIX}${modelId}`;
 }
 
-/** Load every per-model bucket; on first run, migrates from the legacy single
- *  key and deletes it. Returns a `model_id → records` map ready for the store. */
+/** Offline fallback reader for records. Records are no longer cached in
+ *  localStorage (retired 2026-06-08 — see the section note above), so this
+ *  always returns an empty map now: an offline / Supabase-unreachable load
+ *  shows no records rather than a stale cache. Kept because the fallback
+ *  branch in initialize() still calls it. */
 function loadLocalRecordsMap(): Record<string, AppRecord[]> {
-  const out: Record<string, AppRecord[]> = {};
-  let foundPerModel = false;
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (!key || !key.startsWith(RECORDS_KEY_PREFIX)) continue;
-    foundPerModel = true;
-    const modelId = key.slice(RECORDS_KEY_PREFIX.length);
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) out[modelId] = JSON.parse(raw) as AppRecord[];
-    } catch {
-      // Skip a bucket that's gone bad — the next save will repopulate it.
-    }
-  }
-  if (foundPerModel) return out;
-
-  // First run with the new layout: pull from the legacy key, split by model_id,
-  // re-write per-model, and remove the legacy key.
-  const legacy = loadLocal<AppRecord[]>(RECORDS_LEGACY_KEY) ?? [];
-  for (const rec of legacy) {
-    if (!rec.model_id) continue;
-    if (!out[rec.model_id]) out[rec.model_id] = [];
-    out[rec.model_id]!.push(rec);
-  }
-  if (Object.keys(out).length > 0) saveLocalRecordsMap(out);
-  try {
-    localStorage.removeItem(RECORDS_LEGACY_KEY);
-  } catch {
-    // ignore
-  }
-  return out;
+  return {};
 }
 
-/** Persist the full records map, one bucket per model. Sweeps stale buckets
- *  for models that no longer have any records (e.g. a model that was just
- *  deleted, or whose records were all removed). */
+/** Was: persist the full records map. Now: SWEEP every record bucket.
+ *  Records are no longer mirrored to localStorage (retired 2026-06-08) — the
+ *  mirror grew past 8 MB and blew the browser's 5-10 MB quota, throwing
+ *  QuotaExceededError on every load. This cloud, auth-gated CRM can't run
+ *  offline anyway (decks/AI/WhatsApp/maps need the network) and we don't need
+ *  offline record viewing, so records load only from Supabase now. Callers are
+ *  unchanged; leaving liveModelIds empty makes the loop below delete every
+ *  `wassell_records:*` key, cleaning up returning users' bloated cache. */
 function saveLocalRecordsMap(records: Record<string, AppRecord[]>): void {
+  void records;
   const liveModelIds = new Set<string>();
-  for (const [modelId, rows] of Object.entries(records)) {
-    if (!rows || rows.length === 0) continue;
-    saveLocal(recordsKeyFor(modelId), rows);
-    liveModelIds.add(modelId);
-  }
   // Sweep stale buckets so deleted models / emptied models don't pile up.
   for (let i = localStorage.length - 1; i >= 0; i--) {
     const key = localStorage.key(i);
@@ -237,18 +213,19 @@ function saveLocalRecordsMap(records: Record<string, AppRecord[]>): void {
   }
 }
 
-/** Persist a single model's records bucket. Used by saveRecord — the hot path
- *  now writes O(records-in-this-model) bytes instead of O(all-records). */
+/** Was: persist a single model's records bucket from the saveRecord hot path.
+ *  Now: ensure no stale bucket lingers for the model. Records aren't cached in
+ *  localStorage anymore — see saveLocalRecordsMap. */
 function saveLocalRecordsForModel(modelId: string, rows: AppRecord[]): void {
-  if (!rows || rows.length === 0) {
-    try {
-      localStorage.removeItem(recordsKeyFor(modelId));
-    } catch {
-      // ignore
-    }
-    return;
+  void rows;
+  try {
+    localStorage.removeItem(recordsKeyFor(modelId));
+  } catch (err) {
+    // Cleanup-only: removeItem throws only if storage is blocked. No data is
+    // lost (the real write path is Supabase); log so it isn't a silent swallow.
+    // eslint-disable-next-line no-console
+    console.warn('[localStorage] record-bucket cleanup failed:', err);
   }
-  saveLocal(recordsKeyFor(modelId), rows);
 }
 
 // ────────────────────────────────────────────────────────────────────
