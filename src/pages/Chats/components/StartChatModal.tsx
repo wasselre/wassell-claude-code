@@ -1,10 +1,12 @@
 import { useState, useMemo, useRef, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Send, Loader2, User, Phone as PhoneIcon, MessageSquare, Pencil, AlertCircle } from 'lucide-react';
+import { X, Send, Loader2, User, UserCheck, Phone as PhoneIcon, MessageSquare, Pencil, AlertCircle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizePhone } from '@/lib/phone';
+import { resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import PhoneInput from '@/pages/Records/components/PhoneInput';
-import ClientPicker, { type PickedClient } from './ClientPicker';
+import ClientPicker, { type PickedClient, resolveClientSlugs, recordToPickedClient } from './ClientPicker';
 import TemplatePickerModal from './TemplatePickerModal';
 
 type Mode = 'client' | 'manual';
@@ -28,9 +30,20 @@ export default function StartChatModal({ onClose }: { onClose: () => void }) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const waDevices = useAppStore((s) => s.waDevices);
   const startNewChat = useAppStore((s) => s.startNewChat);
+  const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
 
   const activeDevices = useMemo(() => waDevices.filter((d) => d.is_active), [waDevices]);
   const defaultDevice = activeDevices.find((d) => d.is_default) ?? activeDevices[0] ?? null;
+
+  // Clients data for the manual-entry "matches a client" hint. Scoped to what
+  // the user may see (same as the picker), and the slug resolution + matcher
+  // are shared with the picker / startNewChat so the hint can never disagree
+  // with the link that actually gets written.
+  const clientsModel = useMemo(() => models.find((m) => m.name === 'clients'), [models]);
+  const scopedClients = useApplyViewScope(clientsModel, clientsModel ? (records[clientsModel.id] ?? []) : []);
+  const clientSlugs = useMemo(() => resolveClientSlugs(clientsModel), [clientsModel]);
+  const phoneSlugs = useMemo(() => phoneFieldSlugs(clientsModel), [clientsModel]);
 
   const [mode, setMode] = useState<Mode>('client');
   const [manualPhone, setManualPhone] = useState<string | undefined>(undefined); // E.164 from PhoneInput
@@ -48,6 +61,18 @@ export default function StartChatModal({ onClose }: { onClose: () => void }) {
   // what actually gets sent.
   const recipientRaw = mode === 'client' ? (client?.phone ?? null) : (manualPhone ?? null);
   const normalizedRecipient = normalizePhone(recipientRaw ?? '');
+
+  // If the manually-typed number matches an existing client, surface a chip so
+  // the user can switch to that client (locked card) instead of messaging a
+  // bare number. Uses the same digits-only matcher startNewChat uses to
+  // auto-link, so the suggestion and the eventual link always agree.
+  const manualMatch = useMemo<PickedClient | null>(() => {
+    if (mode !== 'manual' || !normalizedRecipient) return null;
+    const id = resolveClientLink(normalizedRecipient, scopedClients, phoneSlugs);
+    if (!id) return null;
+    const rec = scopedClients.find((c) => c.id === id);
+    return rec ? recordToPickedClient(rec, clientSlugs, isAr) : null;
+  }, [mode, normalizedRecipient, scopedClients, phoneSlugs, clientSlugs, isAr]);
 
   // A client was picked but has no usable phone on its record — block + explain
   // rather than letting Send look enabled and then fail.
@@ -207,6 +232,31 @@ export default function StartChatModal({ onClose }: { onClose: () => void }) {
                     ? 'اختر رمز الدولة وأدخل الرقم — يُدمجان قبل الإرسال.'
                     : 'Pick the country code and enter the number — they are combined before sending.'}
                 </p>
+                {manualMatch && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError(null);
+                      setMode('client');
+                      setManualPhone(undefined);
+                      setClient(manualMatch);
+                    }}
+                    className="mt-2 w-full flex items-center gap-2 text-xs text-copper bg-copper/5 hover:bg-copper/10 border border-copper/30 rounded-lg px-3 py-2 transition-colors text-start"
+                  >
+                    <UserCheck size={14} className="shrink-0" />
+                    <span className="flex-1 min-w-0">
+                      {isAr ? 'يطابق عميلًا مسجلًا: ' : 'Matches a saved client: '}
+                      {manualMatch.code && (
+                        <span className="font-mono font-bold" dir="ltr">
+                          {manualMatch.code}{' '}
+                        </span>
+                      )}
+                      <span className="font-semibold">{manualMatch.name}</span>
+                      {' — '}
+                      {isAr ? 'استخدام هذا العميل؟' : 'use this client?'}
+                    </span>
+                  </button>
+                )}
               </div>
             )}
 

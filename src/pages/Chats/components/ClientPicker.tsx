@@ -25,6 +25,12 @@ export interface PickedClient {
   phone: string | null;
 }
 
+export interface ClientSlugs {
+  codeSlug: string | null;
+  nameSlug: string | null;
+  phoneSlug: string | null;
+}
+
 /**
  * Resolve which field slugs hold the business code / name / phone on the
  * clients model. Resolved from the schema (not hardcoded) so an admin
@@ -32,12 +38,11 @@ export interface PickedClient {
  *   - business id = first `auto_id` field (seeded: `client_code`)
  *   - name        = the card-title field, else the first `text` field
  *   - phone       = the first `phone` field (reuses `phoneFieldSlugs`)
+ *
+ * Exported so the manual-entry match hint in StartChatModal resolves the
+ * same slugs as the picker.
  */
-function resolveClientSlugs(model: AppModel | undefined): {
-  codeSlug: string | null;
-  nameSlug: string | null;
-  phoneSlug: string | null;
-} {
+export function resolveClientSlugs(model: AppModel | undefined): ClientSlugs {
   const fields = model ? model.schema.sections.flatMap((s) => s.fields) : [];
   const codeSlug = fields.find((f) => f.type === 'auto_id')?.name ?? null;
   const titleId = model?.card_config?.title_field_id ?? null;
@@ -47,6 +52,24 @@ function resolveClientSlugs(model: AppModel | undefined): {
     null;
   const phoneSlug = phoneFieldSlugs(model)[0] ?? null;
   return { codeSlug, nameSlug, phoneSlug };
+}
+
+/**
+ * Build a `PickedClient` from a client record + resolved slugs. Shared by the
+ * picker result rows AND the StartChatModal manual-entry match hint, so both
+ * surfaces render code / name / phone identically.
+ */
+export function recordToPickedClient(rec: AppRecord, slugs: ClientSlugs, isAr: boolean): PickedClient {
+  const d = rec.data as Record<string, unknown>;
+  const code = slugs.codeSlug && typeof d[slugs.codeSlug] === 'string' ? (d[slugs.codeSlug] as string) : null;
+  const name =
+    slugs.nameSlug && typeof d[slugs.nameSlug] === 'string' && (d[slugs.nameSlug] as string).trim()
+      ? (d[slugs.nameSlug] as string)
+      : isAr
+        ? '(بدون اسم)'
+        : '(no name)';
+  const phone = slugs.phoneSlug && typeof d[slugs.phoneSlug] === 'string' ? (d[slugs.phoneSlug] as string) : null;
+  return { recordId: rec.id, code, name, phone };
 }
 
 /**
@@ -71,10 +94,7 @@ export default function ClientPicker({ onPick }: { onPick: (client: PickedClient
   // only searches their own clients, same as the records table + lookup picker.
   const clients = useApplyViewScope(clientsModel, allClients);
 
-  const { codeSlug, nameSlug, phoneSlug } = useMemo(
-    () => resolveClientSlugs(clientsModel),
-    [clientsModel],
-  );
+  const slugs = useMemo(() => resolveClientSlugs(clientsModel), [clientsModel]);
 
   // Same expanded-field set the table view offers as search scopes (local
   // fields + mirrored children), so "Search a specific field" lists exactly
@@ -112,18 +132,7 @@ export default function ClientPicker({ onPick }: { onPick: (client: PickedClient
     return { results: matched.slice(0, LIMIT), total: matched.length };
   }, [query, clients, searchIndex]);
 
-  const toPicked = (rec: AppRecord): PickedClient => {
-    const d = rec.data as Record<string, unknown>;
-    const code = codeSlug && typeof d[codeSlug] === 'string' ? (d[codeSlug] as string) : null;
-    const name =
-      nameSlug && typeof d[nameSlug] === 'string' && (d[nameSlug] as string).trim()
-        ? (d[nameSlug] as string)
-        : isAr
-          ? '(بدون اسم)'
-          : '(no name)';
-    const phone = phoneSlug && typeof d[phoneSlug] === 'string' ? (d[phoneSlug] as string) : null;
-    return { recordId: rec.id, code, name, phone };
-  };
+  const toPicked = (rec: AppRecord): PickedClient => recordToPickedClient(rec, slugs, isAr);
 
   if (!clientsModel) {
     return (
