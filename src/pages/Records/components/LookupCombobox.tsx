@@ -38,11 +38,12 @@ export default function LookupCombobox({
   const allLinkedRecords = records[lookupModelId] ?? [];
   const linkedRecords = useApplyViewScope(linkedModel, allLinkedRecords);
 
-  // The display field may be a `mirror` on the target model (value computed at
-  // render time, never stored). Inline-create writes the typed value to the
-  // display field, which is impossible for a computed mirror — so creation is
-  // disabled below when the display field is a mirror.
-  const displayIsMirror =
+  // The display field may be COMPUTED, not stored: either a `mirror` field on the
+  // target model, or a `section_mirror` child stored as a compound `${containerId}::
+  // ${childSlug}` id. Inline-create writes the typed value to the display field, which
+  // is impossible for a computed field — so creation is disabled below in that case.
+  const displayIsComputed =
+    lookupDisplayField.includes('::') ||
     linkedModel?.schema.sections
       .flatMap((s) => s.fields)
       .find((f) => f.name === lookupDisplayField)?.type === 'mirror';
@@ -135,7 +136,7 @@ export default function LookupCombobox({
   const canCreate =
     trimmedQuery.length > 0 &&
     !!lookupDisplayField &&
-    !displayIsMirror &&
+    !displayIsComputed &&
     !filteredRecords.some((r) => labelFor(r).toLowerCase() === trimmedQuery.toLowerCase());
 
   const createAndPick = () => {

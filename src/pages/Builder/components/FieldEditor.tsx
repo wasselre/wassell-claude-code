@@ -10,6 +10,7 @@ import FieldPicker from '@/components/ui/FieldPicker';
 import OptionsEditor from './OptionsEditor';
 import SaveAsTemplateModal from './SaveAsTemplateModal';
 import { formatNumberWithCommas, parseFormattedNumber } from '@/pages/Records/components/RangeField';
+import { collectViewFields } from '@/lib/sectionMirrorExpand';
 import { Info, Layers, Bookmark, RotateCcw, AlertTriangle, Loader2 } from 'lucide-react';
 import { COUNTRY_CODES, DEFAULT_COUNTRY_CODE } from '@/lib/phone';
 import { formatAutoId, resetAutoIdCounters, renumberAutoIdField } from '@/lib/autoIdAssigner';
@@ -578,10 +579,20 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   };
 
   const lookupModel = lookupModelId ? models.find((m) => m.id === lookupModelId) : null;
-  const lookupFields = lookupModel
-    ? lookupModel.schema.sections.flatMap((s) => s.fields).filter((f) =>
-        LOOKUP_DISPLAY_TYPES.includes(f.type),
-      )
+  // Display-field options = the target model's local fields PLUS the child fields
+  // surfaced through each `section_mirror` container (via collectViewFields, the same
+  // expansion the Card/Maps builders use). A local field is stored by its slug; a
+  // mirrored child is stored by its compound `${containerId}::${childSlug}` id, which
+  // resolveLookupDisplayValue resolves through readExpandedValue at render time.
+  const lookupDisplayOptions = lookupModel
+    ? collectViewFields(lookupModel, models)
+        .filter((ef) => LOOKUP_DISPLAY_TYPES.includes(ef.field.type))
+        .map((ef) => ({
+          key: ef.id,
+          value: ef.kind === 'mirrored' ? ef.id : ef.field.name,
+          label: isAr ? ef.field.label_ar : ef.field.label_en,
+          mirrored: ef.kind === 'mirrored',
+        }))
     : [];
   const otherModels = models.filter((m) => m.id !== model.id);
 
@@ -1025,9 +1036,9 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                     className="form-input text-sm"
                   >
                     <option value="">—</option>
-                    {lookupFields.map((f) => (
-                      <option key={f.id} value={f.name}>
-                        {isAr ? f.label_ar : f.label_en}
+                    {lookupDisplayOptions.map((opt) => (
+                      <option key={opt.key} value={opt.value}>
+                        {opt.label}{opt.mirrored ? (isAr ? ' (مرآة)' : ' (mirrored)') : ''}
                       </option>
                     ))}
                   </select>

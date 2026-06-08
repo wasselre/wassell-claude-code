@@ -172,4 +172,69 @@ describe('resolveLookupDisplayValue', () => {
     });
     expect(value).toBeUndefined();
   });
+
+  // section_mirror CHILD field as the display field — the real-world Our Projects case:
+  //   our_projects.unit_details (section_mirror, via the `project` lookup → all_projects)
+  //   surfaces all_projects.unit_count. A lookup → our_projects can display that child,
+  //   stored as the compound id `${containerId}::unit_count`.
+  function buildSectionMirror() {
+    const allProjects = model({
+      id: 'm_all',
+      name: 'all_projects',
+      sections: [section({ id: 'ap_details', fields: [field({ name: 'unit_count', type: 'number' })] })],
+    });
+    const ourProjects = model({
+      id: 'm_our',
+      name: 'our_projects',
+      sections: [
+        section({
+          id: 'op_s0',
+          fields: [
+            field({ id: 'op_project', name: 'project', type: 'lookup', lookup_model_id: 'm_all', lookup_display_field: 'unit_count' }),
+            field({
+              id: 'op_unit_details',
+              name: 'unit_details',
+              type: 'section_mirror',
+              section_mirror_via_lookup_field_id: 'op_project',
+              section_mirror_source_section_id: 'ap_details',
+            }),
+          ],
+        }),
+      ],
+    });
+    return { allProjects, ourProjects };
+  }
+
+  it('resolves a section_mirror CHILD field selected as the display field (compound id)', () => {
+    const { allProjects, ourProjects } = buildSectionMirror();
+    const allModels = [allProjects, ourProjects];
+    const allRecords: Record<string, AppRecord[]> = {
+      m_all: [rec('ap1', 'm_all', { unit_count: 42 })],
+      m_our: [rec('op1', 'm_our', { project: 'ap1' })],
+    };
+    const compoundId = 'op_unit_details::unit_count';
+    const value = resolveLookupDisplayValue(allRecords.m_our[0]!, compoundId, {
+      targetModel: ourProjects,
+      allModels,
+      allRecords,
+    });
+    expect(value).toBe(42);
+  });
+
+  it('returns undefined for a section_mirror child when the container’s lookup is unselected', () => {
+    const { allProjects, ourProjects } = buildSectionMirror();
+    const allModels = [allProjects, ourProjects];
+    const allRecords: Record<string, AppRecord[]> = { m_all: [], m_our: [rec('op1', 'm_our', {})] };
+    const value = resolveLookupDisplayValue(allRecords.m_our[0]!, 'op_unit_details::unit_count', {
+      targetModel: ourProjects,
+      allModels,
+      allRecords,
+    });
+    expect(value).toBeUndefined();
+  });
+
+  it('degrades a compound id to the raw read (undefined) without full context', () => {
+    const op = rec('op1', 'm_our', { project: 'ap1' });
+    expect(resolveLookupDisplayValue(op, 'op_unit_details::unit_count', {})).toBeUndefined();
+  });
 });

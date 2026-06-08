@@ -1,5 +1,6 @@
 import { rollupRecordForMirror } from './ourProjectsRollup';
 import type { AppModel, AppRecord, ModelField } from '@/types';
+import { collectViewFields, readExpandedValue, VIRTUAL_FIELD_SEPARATOR } from './sectionMirrorExpand';
 
 export type MirrorStatus =
   | 'ok'
@@ -233,17 +234,24 @@ export interface LookupDisplayContext {
  * For an ordinary (stored) display field this returns `targetRecord.data[displaySlug]`
  * — byte-for-byte the same as the old direct read every call site used to do.
  *
- * A `mirror` display field stores NO data (it's computed at render time), so when
- * the chosen display field is a mirror we resolve it through {@link resolveMirror},
- * hopping the mirror's sibling lookup on the *target* model. A multi-valued mirror
- * is collapsed to a ", "-joined string so it renders as a single label (display
- * surfaces expect a scalar). A misconfigured / empty / chained mirror yields
- * `undefined`, letting each caller apply its own empty handling.
+ * Two kinds of display field are computed, not stored, and are resolved here:
  *
- * Degrades gracefully: resolving a mirror needs `targetModel` + `allModels` +
- * `allRecords` in `ctx`. When any is absent — or the display field isn't a mirror —
- * we fall back to the raw stored read, so callers that lack full scope keep working
- * exactly as before (they just can't surface a mirror's live value).
+ * 1. A `mirror` field (single-hop): resolved through {@link resolveMirror}, hopping
+ *    the mirror's sibling lookup on the *target* model.
+ * 2. A `section_mirror` CHILD field: selected in the Builder as the compound id
+ *    `${containerId}::${childSlug}` (see {@link VIRTUAL_FIELD_SEPARATOR}). Resolved
+ *    by expanding the target model's view fields and reading through the container's
+ *    sibling lookup with {@link readExpandedValue} — e.g. a lookup → Our Projects can
+ *    display `unit_count`, which Our Projects itself mirrors from All Projects.
+ *
+ * A multi-valued result is collapsed to a ", "-joined string so it renders as a single
+ * label (display surfaces expect a scalar). A misconfigured / empty / chained source
+ * yields `undefined`, letting each caller apply its own empty handling.
+ *
+ * Degrades gracefully: resolving either computed kind needs `targetModel` + `allModels`
+ * + `allRecords` in `ctx`. When any is absent — or the display field is an ordinary
+ * stored field — we fall back to the raw stored read, so callers that lack full scope
+ * keep working exactly as before.
  */
 export function resolveLookupDisplayValue(
   targetRecord: { data: Record<string, unknown> },
@@ -252,6 +260,21 @@ export function resolveLookupDisplayValue(
 ): unknown {
   const { targetModel, allModels, allRecords } = ctx;
   if (targetModel && allModels && allRecords) {
+    // (2) section_mirror child — compound `${containerId}::${childSlug}` id.
+    if (displaySlug.includes(VIRTUAL_FIELD_SEPARATOR)) {
+      const expanded = collectViewFields(targetModel, allModels).find((ef) => ef.id === displaySlug);
+      if (!expanded) return undefined;
+      // readExpandedValue only reads `.data`, so the minimal targetRecord shape suffices.
+      const v = readExpandedValue(expanded, targetRecord as unknown as AppRecord, allRecords, targetModel);
+      if (Array.isArray(v)) {
+        return v
+          .filter((x) => x !== null && x !== undefined && typeof x !== 'object')
+          .map((x) => String(x))
+          .join(', ');
+      }
+      return v;
+    }
+    // (1) mirror field — single-hop via the sibling lookup.
     const displayField = targetModel.schema.sections
       .flatMap((s) => s.fields)
       .find((f) => f.name === displaySlug);
