@@ -1,4 +1,16 @@
 /**
+ * ⚠️  COPY of api/_lib/imageGen.ts — keep in sync.
+ *
+ * The Fly.io worker is a standalone npm package (worker/tsconfig.json has
+ * rootDir:"src"; the Dockerfile copies only worker/src/), so it cannot import
+ * from api/_lib/. This is a verbatim copy — the decks pipeline does the same
+ * (worker/src/runDeckJob.ts is "ported from api/generate-deck.ts"). When you
+ * change the chat functions (resolveChatModelSlug / imageGenChat /
+ * startChatGeneration / pollImageGen / stub mode) in api/_lib/imageGen.ts,
+ * change them here too. imageGen.ts has zero imports, so this copies clean.
+ */
+
+/**
  * Image generation adapter — fal.ai's `nano-banana-pro/edit`
  * (Google's Gemini 3 Pro Image, aka "Nano Banana 2").
  *

@@ -300,6 +300,38 @@ Fly.io worker (always-on Node, polls every 3s) ──claim via FOR UPDATE SKIP L
 3. If status='running' but minutes > 20, the watchdog should sweep it on the next 5-min tick. If it doesn't, `SELECT public.deck_jobs_watchdog();` manually.
 4. To force-fail a stuck job and unblock the UI: `UPDATE records SET data = data || jsonb_build_object('status','failed','error_message','manual unstick') WHERE id = '<uuid>';` (Realtime pushes it to the browser instantly.)
 
+## Generation jobs pipeline (image chats) (added 2026-06-08)
+
+Image Chats v2 generation runs on the SAME Fly.io worker as decks, draining a SECOND queue (`generation_jobs`, `kind='image'`) on an INDEPENDENT poll loop. `POST /api/image-chat/send` only enqueues; the worker calls fal.ai and fills the assistant message in place. This is the per-message twin of the decks pipeline — read "Decks generation pipeline" above for the shared rationale.
+
+**Architecture:**
+- One job per assistant message. The slim endpoint appends a user message + an assistant PLACEHOLDER (`status='queued'`) to `records.data.messages` AND inserts a `generation_jobs` row, then returns 202. The worker claims via `generation_job_claim_next(worker, 'image')`, calls fal.ai, re-hosts outputs to `marketing-assets`, and patches THAT message to `status='completed'` + images. Realtime fans the record update to the SPA — placeholders fill in independently, so generation is concurrent and the composer never blocks.
+- Per-message status (`queued|generating|completed|failed|cancelled`) lives on the message; the legacy conversation-level `record.data.status` is now a lossy rollup (kept for back-compat, NOT driven off for UI).
+
+**Where everything lives:**
+- Migration: `supabase/migrations/2026-06-08_generation_jobs_queue.sql` — table, RLS, claim/complete/fail/cancel RPCs, watchdog
+- Endpoints: `api/image-chat/send.ts` (slim enqueue), `api/image-chat/promote-asset.ts` (asset promote + file_id cache)
+- Worker: `worker/src/runImageJob.ts` (pipeline), `worker/src/index.ts` (`imagePollLoop`), `worker/src/imageGen.ts` (COPY of `api/_lib/imageGen.ts`)
+- Client: `src/lib/imageChat/client.ts` (`enqueueImageChatTurn` / `cancelImageJob`), `src/lib/assets/promote.ts`, `src/lib/assets/recordTargets.ts`
+- UI: `src/pages/ImageChats/components/{ChatThread,MessageBubble,Composer,AssetActionsMenu,AddImageToFilesModal,AddImageToRecordModal}.tsx`
+- PRD: `docs/prd/image-chats.md`
+
+**Hard rules — never violate:**
+
+1. **Never hold an HTTP request open for the fal.ai call.** Same rule as decks. `/api/image-chat/send` enqueues and returns fast; the worker does the long poll. If you find yourself awaiting `pollImageGen` in the endpoint, you're recreating the bug we just removed.
+
+2. **`worker/src/imageGen.ts` is a COPY of `api/_lib/imageGen.ts`.** The worker is a standalone npm package (`rootDir:src`; the Dockerfile copies only `src/`) and CANNOT import from `api/_lib`. When you change the chat functions (`resolveChatModelSlug` / `imageGenChat` / `startChatGeneration` / `pollImageGen` / stub mode), change BOTH files. (Decks does the same — `runDeckJob.ts` is "ported from api/generate-deck.ts".)
+
+3. **Concurrent workers are safe via OPTIMISTIC CONCURRENCY — do not force `fly scale count 1`.** `record_save` overwrites the full `data`, so concurrent writers to the same conversation's `messages` array would clobber each other *without protection*. The protection: EVERY write to an `image_chats` record (endpoint append, worker fill, promote cache) uses `record_save` `p_expected_version` + retry on the 40001 version-mismatch (the `records_bump_version` BEFORE-UPDATE trigger increments `version` on each write, so a stale writer is bounced and re-applies onto the latest array). With that in place, ANY number of workers + concurrent endpoint appends are safe — the loser just retries (bounded ~6 attempts; the client's 3-in-flight-per-conversation cap keeps contention well under that). The deck worker app actually runs **5 machines** (throughput/HA) and image jobs ride on them safely. Do NOT pass `p_expected_version: null` for `image_chats` writes (that's the decks posture, safe only because each deck is its own record). *Verified live 2026-06-08: version bumps on UPDATE, record_save raises 40001 on stale version, and the worker pipeline completed a real generation end-to-end across the 5-machine app.*
+
+4. **Server-side writes only for the `image_chats` record — never via the browser store.** The placeholder append (endpoint), the message fill (worker), and the `file_id` dedup cache (promote endpoint) all write via `record_save` directly. Writing the chat record through the SPA store (`saveRecord`) registers a null-`updated_at` entry in the realtime echo-dedup (`src/lib/realtime/dedup.ts`) that would SUPPRESS the next worker fill-in for that conversation. (The Add-to-Record TARGET record write DOES go through the store — safe, because the worker never touches target records.)
+
+5. **complete/fail RPCs only touch `status='running'` jobs; the watchdog/cancel only patch the affected MESSAGE (not the conversation).** Same race-protection posture as decks. A late completion after cancel/watchdog is a no-op; a stuck job fails only its own placeholder, leaving siblings + the composer live.
+
+6. **`FAL_KEY` is now required on the Fly worker** (the deck worker never needed it). Set it via `fly secrets set`. `FAL_KEY='stub'` returns canned picsum URLs for offline/CI.
+
+7. **Asset promote-on-add.** Generated images stay public `marketing-assets` URLs (free chat render). The FIRST Add-to-Files/Record promotes ONE `files` row (server-side copy → `wassel-files`) and caches `files.id` on the message; later Add-to-Record reuses it (dedup). Don't promote at generation time (that would force signed-URL chat rendering + a `files` row per discarded variation).
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline

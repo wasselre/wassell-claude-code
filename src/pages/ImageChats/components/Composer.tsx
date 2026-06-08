@@ -62,10 +62,25 @@ async function resolveImageFieldValue(
   return { url: raw, value: raw, name: basename(raw), source };
 }
 
+/** A one-shot instruction to pin an image (and optionally seed a prompt) into
+ *  the composer — fired by the message actions menu's "Create Variation" /
+ *  "Use as Next Reference". Consumed (and cleared) on receipt. */
+export interface ComposerSeed {
+  attachmentUrl: string;
+  attachmentName?: string;
+  prompt?: string;
+}
+
 interface Props {
-  disabled: boolean;
+  /** True when the conversation is at its in-flight generation cap. Gates only
+   *  the Send action (+ shows a hint); the textarea and attach controls stay
+   *  live so the user can compose the next turn while others generate. */
+  atCapacity: boolean;
   initialAspectRatio: ChatAspectRatio;
   initialPresetId: string | null;
+  /** One-shot reference/variation seed from the actions menu. */
+  seed?: ComposerSeed | null;
+  onSeedConsumed?: () => void;
   onSend: (params: {
     prompt: string;
     attachmentUrls: string[];
@@ -105,9 +120,11 @@ const ASPECTS: ReadonlyArray<{ key: ChatAspectRatio; iconBox: string }> = [
  * still in effect for prompt-text purposes.
  */
 export default function Composer({
-  disabled,
+  atCapacity,
   initialAspectRatio,
   initialPresetId,
+  seed,
+  onSeedConsumed,
   onSend,
 }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -182,6 +199,26 @@ export default function Composer({
     // re-merging on every keystroke elsewhere in the app.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [presetId]);
+
+  // Consume a one-shot reference/variation seed from the actions menu: pin the
+  // image as the PRIMARY (first) attachment and, if the prompt is empty, seed
+  // it. onSeedConsumed clears the seed so this fires once per request.
+  useEffect(() => {
+    if (!seed) return;
+    const url = seed.attachmentUrl;
+    setAttachments((prev) =>
+      prev.some((a) => a.value === url)
+        ? prev
+        : [
+            { url, value: url, name: seed.attachmentName ?? basename(url), source: 'user' as const },
+            ...prev,
+          ],
+    );
+    if (seed.prompt) setPrompt((cur) => (cur.trim() ? cur : seed.prompt!));
+    requestAnimationFrame(() => textareaRef.current?.focus());
+    onSeedConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seed]);
 
   // Auto-grow the textarea up to 6 lines.
   useEffect(() => {
@@ -273,7 +310,7 @@ export default function Composer({
   }
 
   function handleSend() {
-    if (disabled || uploading) return;
+    if (uploading || atCapacity) return;
     const trimmed = prompt.trim();
     if (!trimmed && attachments.length === 0) return;
     onSend({
@@ -301,10 +338,17 @@ export default function Composer({
     }
   }
 
-  const canSend = !disabled && !uploading && (prompt.trim().length > 0 || attachments.length > 0);
+  const canSend = !uploading && !atCapacity && (prompt.trim().length > 0 || attachments.length > 0);
 
   return (
     <div className="border-t border-sand/20 bg-cream/30 p-3 space-y-2">
+      {atCapacity && (
+        <div className="text-[11px] text-charcoal/60 bg-cream rounded-lg px-3 py-1.5 border border-sand/30">
+          {isAr
+            ? 'يتم إنشاء عدة صور الآن — انتظر حتى تنتهي إحداها قبل الإرسال مرة أخرى.'
+            : 'A few images are generating — wait for one to finish before sending again.'}
+        </div>
+      )}
       {/* Attachment row */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2">
@@ -339,7 +383,6 @@ export default function Composer({
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={disabled}
           rows={2}
           placeholder={
             isAr
@@ -416,9 +459,9 @@ export default function Composer({
         <button
           type="button"
           onClick={() => setDrivePickerOpen(true)}
-          disabled={disabled || uploading}
+          disabled={uploading}
           className={`inline-flex items-center justify-center w-9 h-9 rounded-lg border border-sand/40 bg-white hover:bg-cream transition-colors ${
-            disabled || uploading ? 'opacity-50 cursor-not-allowed' : ''
+            uploading ? 'opacity-50 cursor-not-allowed' : ''
           }`}
           title={isAr ? 'اختيار من الملفات' : 'Pick from Files'}
           aria-label={isAr ? 'اختيار من الملفات' : 'Pick from Files'}
@@ -429,7 +472,7 @@ export default function Composer({
         {/* Paperclip — file upload */}
         <label
           className={`inline-flex items-center justify-center w-9 h-9 rounded-lg border border-sand/40 bg-white hover:bg-cream cursor-pointer transition-colors ${
-            disabled || uploading ? 'opacity-50 cursor-not-allowed' : ''
+            uploading ? 'opacity-50 cursor-not-allowed' : ''
           }`}
           title={isAr ? 'إرفاق صورة' : 'Attach image'}
         >
@@ -442,7 +485,7 @@ export default function Composer({
             type="file"
             multiple
             accept="image/png,image/jpeg,image/webp"
-            disabled={disabled || uploading}
+            disabled={uploading}
             onChange={(e) => {
               void handleFileSelect(e.target.files);
               e.target.value = '';
@@ -459,7 +502,7 @@ export default function Composer({
           className="inline-flex items-center justify-center gap-2 px-4 h-9 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
           aria-label={isAr ? 'إرسال' : 'Send'}
         >
-          {disabled ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+          <Send size={16} />
           <span>{isAr ? 'إرسال' : 'Send'}</span>
         </button>
       </div>

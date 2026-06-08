@@ -5,6 +5,19 @@ and runs Anthropic Skills + code_execution to build Wassel-branded
 `.pptx` files. Replaces the Vercel Edge function whose 300s hard cap
 was killing real generations.
 
+**Also drains the image-generation queue (Image Chats v2, 2026-06-08).** The
+same process runs a SECOND independent poll loop over `generation_jobs`
+(`kind='image'`): claim → fal.ai (Nano Banana 2 / GPT Image 2) → re-host to
+`marketing-assets` → fill the assistant message in `records.data.messages`. It's
+the per-message twin of the deck pipeline (one job per chat message, concurrent,
+non-blocking). Separate loop so 30s–5min image turns don't head-of-line-block
+3–12min deck jobs. See `src/runImageJob.ts` and `src/index.ts` (`imagePollLoop`),
+and CLAUDE.md → "Generation jobs pipeline (image chats)". **This adds one new
+required secret: `FAL_KEY`** (see step 4). Image writes to the shared `messages`
+array are safe at ANY machine count via optimistic concurrency (per-write version
+check + retry — see the CLAUDE.md hard rules), so the app's existing multi-machine
+setup (5 machines in `bom`) hosts image jobs without clobbering.
+
 ## What this fixes
 
 The old flow: browser POSTs to `/api/generate-deck` (Vercel Edge),
@@ -41,9 +54,11 @@ gets stuck on a spinner even if the worker crashes.
 
 | File | Purpose |
 |---|---|
-| `src/index.ts` | Main entry. Poll loop + `/healthz` + `/wake` HTTP server + watchdog ticker + graceful shutdown. |
-| `src/runDeckJob.ts` | The actual generation pipeline (ported from the old `api/generate-deck.ts` body). Anthropic call, base64 extraction, Supabase Storage upload, signed URL, record update. |
-| `src/env.ts` | Strict env loader. Fails fast at startup if anything required is missing. |
+| `src/index.ts` | Main entry. TWO concurrent poll loops (decks + images) + `/healthz` + `/wake` HTTP server + watchdog tickers + graceful shutdown. |
+| `src/runDeckJob.ts` | The deck generation pipeline (ported from the old `api/generate-deck.ts` body). Anthropic call, base64 extraction, Supabase Storage upload, signed URL, record update. |
+| `src/runImageJob.ts` | The per-message image pipeline (Image Chats v2). fal.ai call, output re-host to `marketing-assets`, per-message fill with optimistic concurrency. |
+| `src/imageGen.ts` | **COPY of `api/_lib/imageGen.ts`** (the worker can't import from `api/`). fal.ai adapter — keep the chat functions in sync with the original. |
+| `src/env.ts` | Strict env loader. Fails fast at startup if anything required is missing (now incl. `FAL_KEY`). |
 | `Dockerfile` | Multi-stage Node 22 alpine. Builds TS in stage 1, ships JS-only image in stage 2. |
 | `fly.toml` | Fly.io app config — Mumbai region (matches Supabase ap-south-1), always-on, single 512 MB VM. |
 
@@ -95,7 +110,16 @@ fly secrets set `
   ANTHROPIC_API_KEY=sk-ant-... `
   ANTHROPIC_WASSEL_SKILL_ID=sk_... `
   ANTHROPIC_WASSEL_REVIEW_SKILL_ID=sk_...   # optional but recommended
+  FAL_KEY=...                               # NEW (Image Chats v2) — REQUIRED; use 'stub' for offline
+  # Optional fal model overrides (defaults are fine):
+  # FAL_CHAT_MODEL_ID=fal-ai/nano-banana-pro/edit `
+  # FAL_CHAT_GPT_IMAGE_2_MODEL_ID=openai/gpt-image-2/edit
 ```
+
+`FAL_KEY` is the **one new secret since the image queue was added** — the worker
+now boots-fail if it's missing (the same fal key already lives in the Vercel
+project). Use `FAL_KEY=stub` on a throwaway/CI worker to return canned picsum
+URLs without calling fal.
 
 **`SUPABASE_SERVICE_ROLE_KEY` is the one secret that DOESN'T already
 exist in the Vercel project** (the existing API uses the anon key

@@ -11,6 +11,13 @@ const REQUIRED = [
   'SUPABASE_SERVICE_ROLE_KEY',
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_WASSEL_SKILL_ID',
+  // Image Chats v2 — the worker now also drains the generation_jobs (image)
+  // queue and calls fal.ai. imageGen.ts reads FAL_KEY (+ optional FAL_BASE_URL
+  // / FAL_CHAT_MODEL_ID / FAL_CHAT_GPT_IMAGE_2_MODEL_ID) straight from
+  // process.env; we require FAL_KEY here so the worker fails fast at boot
+  // instead of dying on the first image job. Set FAL_KEY='stub' for offline/CI
+  // (imageGen returns canned picsum URLs). NEW secret on the Fly app.
+  'FAL_KEY',
 ] as const;
 
 export interface WorkerEnv {

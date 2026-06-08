@@ -3,13 +3,15 @@ import { useAppStore } from '@/stores/appStore';
 import { Plus, Sparkles, ImageIcon } from 'lucide-react';
 import type { AppRecord } from '@/types';
 import {
-  sendImageChatTurn,
+  enqueueImageChatTurn,
+  cancelImageJob,
   type ChatAspectRatio,
   type ChatModelId,
+  type MessageImage,
   type StoredMessage,
 } from '@/lib/imageChat/client';
 import MessageBubble from './MessageBubble';
-import Composer from './Composer';
+import Composer, { type ComposerSeed } from './Composer';
 import { chatModelDisplayName } from './ModelDropdown';
 
 interface Props {
@@ -18,16 +20,23 @@ interface Props {
   onNewChat: () => void;
 }
 
+/** Max generations a single conversation can have in flight at once. Beyond
+ *  this the Send button is gated (with a hint) — bounds fal.ai spend and the
+ *  worker's per-record write serialization while still feeling concurrent. */
+const MAX_INFLIGHT = 3;
+
 /**
  * Active Image Chats thread. Shows the message transcript above and a
- * sticky Higgsfield-style composer below. The composer is the source
- * of truth for the per-turn controls (aspect ratio, variations, brand
- * preset, attachments); on send it calls the API and re-reads the
- * persisted record state via the store.
+ * sticky Higgsfield-style composer below. Image Chats v2: generation is
+ * fully concurrent and non-blocking — each send enqueues a per-message job
+ * (which renders its own placeholder/spinner via MessageBubble) and the
+ * composer stays live so the user can keep sending. Results stream back in
+ * place via Supabase Realtime on the record.
  */
 export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const recordsByModel = useAppStore((s) => s.records);
+  const addToast = useAppStore((s) => s.addToast);
 
   const record = useMemo<AppRecord | undefined>(() => {
     return (recordsByModel[modelId] ?? []).find((r) => r.id === recordId);
@@ -40,35 +49,62 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
 
   const lastAspect: ChatAspectRatio =
     (record?.data.last_aspect_ratio as ChatAspectRatio | undefined) ?? '1:1';
-  const lastPresetId =
-    (record?.data.last_preset_id as string | undefined | null) ?? null;
+  const lastPresetId = (record?.data.last_preset_id as string | undefined | null) ?? null;
   const lastModelId = record?.data.last_model as string | undefined | null;
-  const recordStatus = (record?.data.status as string | undefined) ?? 'idle';
-  const recordError = (record?.data.error_message as string | undefined) ?? null;
   const headerModelName = chatModelDisplayName(lastModelId, isAr);
 
-  const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  // Auto-chain target: the last assistant message's primary image. Null
-  // when the conversation is empty or the previous turn failed.
+  // Auto-chain target: the most recent COMPLETED assistant image. A queued /
+  // generating / failed placeholder is never used as the reference.
   const prevImageUrl = useMemo<string | null>(() => {
     for (let i = storedMessages.length - 1; i >= 0; i--) {
       const m = storedMessages[i]!;
-      if (m.role === 'assistant' && m.images.length > 0 && m.images[0]) {
+      if (
+        m.role === 'assistant' &&
+        (m.status === undefined || m.status === 'completed') &&
+        m.images.length > 0 &&
+        m.images[0]
+      ) {
         return m.images[0].url;
       }
     }
     return null;
   }, [storedMessages]);
 
+  // How many generations are currently in flight for this conversation.
+  const inFlightCount = useMemo(
+    () =>
+      storedMessages.filter(
+        (m) => m.role === 'assistant' && (m.status === 'queued' || m.status === 'generating'),
+      ).length,
+    [storedMessages],
+  );
+  const atCapacity = inFlightCount >= MAX_INFLIGHT;
+
+  // One-shot composer seed for "Create Variation" / "Use as Next Reference".
+  const [seed, setSeed] = useState<ComposerSeed | null>(null);
+
+  function handleRequestVariation(image: MessageImage) {
+    setSeed({
+      attachmentUrl: image.url,
+      attachmentName: image.name,
+      prompt: isAr
+        ? 'أنشئ نسخة مختلفة من هذه الصورة مع الحفاظ على نفس التكوين والأسلوب.'
+        : 'Create a variation of this image, keeping the same composition and style.',
+    });
+  }
+
+  function handleUseAsReference(image: MessageImage) {
+    setSeed({ attachmentUrl: image.url, attachmentName: image.name });
+  }
+
   useEffect(() => {
     scrollRef.current?.scrollTo({
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth',
     });
-  }, [storedMessages.length, sending]);
+  }, [storedMessages.length]);
 
   async function handleSend(params: {
     prompt: string;
@@ -79,11 +115,11 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
     presetId: string | null;
     modelId: ChatModelId;
   }) {
-    if (sending) return;
-    setSending(true);
-    setError(null);
     try {
-      await sendImageChatTurn({
+      // Fire-and-forget: returns as soon as the job is queued. The placeholder
+      // + final image arrive via Realtime — we never await generation, so the
+      // composer is free immediately for the next turn.
+      await enqueueImageChatTurn({
         recordId,
         prompt: params.prompt,
         attachmentUrls: params.attachmentUrls,
@@ -94,15 +130,41 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
         modelId: params.modelId,
         prevImageUrl,
       });
-      // Realtime fan-out (records publication, see schema.sql) pushes
-      // the appended messages + status updates from the server back
-      // into the store automatically — no explicit refresh needed.
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
-    } finally {
-      setSending(false);
+      addToast(err instanceof Error ? err.message : String(err), 'error');
     }
+  }
+
+  function handleRetry(failed: StoredMessage) {
+    const idx = storedMessages.findIndex((m) => m.id === failed.id);
+    let userMsg: StoredMessage | undefined;
+    for (let i = idx - 1; i >= 0; i--) {
+      if (storedMessages[i]?.role === 'user') {
+        userMsg = storedMessages[i];
+        break;
+      }
+    }
+    if (!userMsg) {
+      addToast(isAr ? 'تعذر إعادة المحاولة' : 'Cannot retry — original prompt not found', 'error');
+      return;
+    }
+    void handleSend({
+      prompt: userMsg.text ?? '',
+      attachmentUrls: userMsg.images.map((im) => im.url),
+      attachmentSources: userMsg.images.map((im) =>
+        im.source === 'preset' || im.source === 'snippet' ? im.source : 'user',
+      ),
+      aspectRatio: userMsg.aspect_ratio ?? '1:1',
+      numVariations: userMsg.num_variations ?? 1,
+      presetId: userMsg.preset_id ?? null,
+      modelId: lastModelId === 'gpt-image-2' ? 'gpt-image-2' : 'nano-banana',
+    });
+  }
+
+  function handleCancel(jobId: string) {
+    void cancelImageJob(jobId).catch((err) => {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    });
   }
 
   if (!record) {
@@ -113,9 +175,6 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
     );
   }
 
-  const isGenerating = sending || recordStatus === 'generating';
-  const surfaceError = error ?? (recordStatus === 'failed' ? recordError : null);
-
   return (
     <div className="flex-1 flex flex-col min-h-0">
       {/* Header */}
@@ -125,8 +184,7 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
         </div>
         <div className="min-w-0 flex-1">
           <div className="font-medium text-sm truncate">
-            {(record.data.title as string | undefined) ??
-              (isAr ? 'محادثة' : 'Conversation')}
+            {(record.data.title as string | undefined) ?? (isAr ? 'محادثة' : 'Conversation')}
           </div>
           <div className="text-xs text-charcoal/60">
             {isAr ? `${headerModelName} • وصل العقارية` : `${headerModelName} • Wassel`}
@@ -144,38 +202,28 @@ export default function ChatThread({ recordId, modelId, onNewChat }: Props) {
 
       {/* Transcript */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-4">
-        {storedMessages.length === 0 && !isGenerating && (
-          <WelcomeHint isAr={isAr} />
-        )}
+        {storedMessages.length === 0 && <WelcomeHint isAr={isAr} />}
         {storedMessages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
+          <MessageBubble
+            key={m.id}
+            message={m}
+            chatRecordId={recordId}
+            onRetry={handleRetry}
+            onCancel={handleCancel}
+            onRequestVariation={handleRequestVariation}
+            onUseAsReference={handleUseAsReference}
+          />
         ))}
-        {isGenerating && (
-          <div className="flex items-center gap-2 text-sm text-charcoal/60 italic ps-2">
-            <Sparkles size={14} className="text-copper animate-pulse" />
-            <span>
-              {isAr
-                ? lastModelId === 'gpt-image-2'
-                  ? `${headerModelName} يفكر... قد تستغرق العملية حتى خمس دقائق.`
-                  : `${headerModelName} يفكر... قد تستغرق العملية حتى دقيقتين.`
-                : lastModelId === 'gpt-image-2'
-                  ? `${headerModelName} is thinking… this can take up to five minutes.`
-                  : `${headerModelName} is thinking… this can take up to two minutes.`}
-            </span>
-          </div>
-        )}
-        {surfaceError && (
-          <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm p-3 whitespace-pre-wrap">
-            {surfaceError}
-          </div>
-        )}
       </div>
 
-      {/* Composer */}
+      {/* Composer — never blocked by generation; only the Send action is gated
+          when the conversation is at its in-flight cap. */}
       <Composer
-        disabled={isGenerating}
+        atCapacity={atCapacity}
         initialAspectRatio={lastAspect}
         initialPresetId={lastPresetId}
+        seed={seed}
+        onSeedConsumed={() => setSeed(null)}
         onSend={handleSend}
       />
     </div>

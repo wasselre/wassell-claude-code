@@ -1,11 +1,14 @@
 /**
- * Browser-side helper for `POST /api/image-chat/send`.
+ * Browser-side helper for `POST /api/image-chat/send` (Image Chats v2).
  *
- * Image-chat turns aren't streamed — fal.ai is a fire-and-poll queue
- * and the worst case is ~3 minutes, well inside `maxDuration: 240`.
- * The composer just awaits the response. The deck record's `status`
- * field flips to 'generating' immediately (server-side) so any other
- * tab watching via Realtime sees the spinner.
+ * Image-chat turns are no longer awaited end-to-end. The endpoint ENQUEUES a
+ * per-message generation job and returns fast ({ job_id, message_id }); the
+ * Fly.io worker fills the assistant placeholder in place and the SPA picks up
+ * the result via Supabase Realtime on the record. So the composer never
+ * blocks — the user can fire several turns at once and keep chatting.
+ *
+ * Each assistant message carries its OWN `status` (queued/generating/
+ * completed/failed/cancelled); the old conversation-level blocking is gone.
  */
 
 import { supabase } from '@/lib/supabase';
@@ -19,10 +22,19 @@ export type ChatModelId = 'nano-banana' | 'gpt-image-2';
 
 export type AttachmentSource = 'user' | 'preset' | 'snippet';
 
+/** Per-message generation lifecycle. Lives on the assistant message, not the
+ *  conversation. Absent on legacy messages ⇒ treat as 'completed'. */
+export type MessageStatus = 'queued' | 'generating' | 'completed' | 'failed' | 'cancelled';
+
 export interface MessageImage {
   url: string;
   name?: string;
   source?: AttachmentSource | 'assistant';
+  /** Promote-on-add cache (Image Chats v2 Part 5): the canonical Files-System
+   *  `files.id` created the first time this image was added to Files or a
+   *  record. Reused by every later add so the asset is deduped instead of
+   *  re-copied. Absent until the first promote. */
+  file_id?: string;
 }
 
 export interface StoredMessage {
@@ -35,6 +47,12 @@ export interface StoredMessage {
   preset_id?: string | null;
   preset_name?: string | null;
   created_at: string;
+  /** Assistant-only. Drives the per-message spinner / result / error UI. */
+  status?: MessageStatus;
+  /** The generation_jobs row filling this message (used for cancel/retry). */
+  job_id?: string;
+  /** Failure reason, shown when status === 'failed'. */
+  error?: string;
 }
 
 export interface SendTurnInput {
@@ -53,9 +71,11 @@ export interface SendTurnInput {
   prevImageUrl: string | null;
 }
 
-export interface SendTurnResponse {
-  messages: StoredMessage[];
-  assistant: StoredMessage;
+export interface EnqueueResponse {
+  /** generation_jobs.id — used to cancel the job. */
+  jobId: string;
+  /** The assistant placeholder message id this job fills. */
+  messageId: string;
 }
 
 async function authHeader(): Promise<Record<string, string>> {
@@ -65,10 +85,14 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function sendImageChatTurn(
-  input: SendTurnInput,
-  signal?: AbortSignal,
-): Promise<SendTurnResponse> {
+/**
+ * Enqueue one image-chat turn. Returns as soon as the server has written the
+ * user message + assistant placeholder and queued the job — NOT when the image
+ * is ready. The finished image arrives via Realtime. Throws only on an
+ * enqueue-time failure (bad input, auth, server error); generation failures
+ * surface per-message on the placeholder.
+ */
+export async function enqueueImageChatTurn(input: SendTurnInput): Promise<EnqueueResponse> {
   const res = await fetch('/api/image-chat/send', {
     method: 'POST',
     headers: {
@@ -86,12 +110,26 @@ export async function sendImageChatTurn(
       model_id: input.modelId,
       prev_image_url: input.prevImageUrl,
     }),
-    signal,
   });
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(body?.error ?? `POST /api/image-chat/send failed (${res.status})`);
   }
-  return (await res.json()) as SendTurnResponse;
+  const json = (await res.json()) as { job_id?: string; message_id?: string };
+  if (!json.job_id || !json.message_id) {
+    throw new Error('enqueue succeeded but job_id/message_id missing from response');
+  }
+  return { jobId: json.job_id, messageId: json.message_id };
+}
+
+/**
+ * Cancel a queued or running generation job. The cancel RPC is owner-gated and
+ * patches the assistant message to status='cancelled' itself, so the UI
+ * updates purely via Realtime. No-op offline (nothing was enqueued).
+ */
+export async function cancelImageJob(jobId: string): Promise<void> {
+  if (!supabase) return;
+  const { error } = await supabase.rpc('generation_job_cancel', { p_job_id: jobId });
+  if (error) throw new Error(error.message);
 }

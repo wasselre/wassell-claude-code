@@ -131,7 +131,15 @@ export default function ImageChatsPage() {
                 (chat.data.title as string | undefined) ??
                 (isAr ? 'محادثة' : 'Conversation');
               const messageCount = Number(chat.data.message_count ?? 0);
-              const status = chat.data.status as string | undefined;
+              // "generating" is per-message now (the legacy conversation-level
+              // status is a lossy rollup) — light up the dot if any message in
+              // this chat is still queued or generating.
+              const msgs = Array.isArray(chat.data.messages)
+                ? (chat.data.messages as Array<{ status?: string }>)
+                : [];
+              const anyGenerating = msgs.some(
+                (m) => m.status === 'queued' || m.status === 'generating',
+              );
               const active = chat.id === recordId;
               return (
                 <button
@@ -144,9 +152,9 @@ export default function ImageChatsPage() {
                   <div className="flex items-center gap-2">
                     <ImageIcon size={14} className="text-copper shrink-0" />
                     <div className="font-medium text-sm truncate flex-1">{title}</div>
-                    {status === 'generating' && (
-                      <span className="text-[10px] text-blue-600 font-medium animate-pulse">
-                        {isAr ? '...' : '...'}
+                    {anyGenerating && (
+                      <span className="text-[10px] text-copper font-medium animate-pulse">
+                        ●
                       </span>
                     )}
                   </div>

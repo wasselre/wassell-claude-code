@@ -1,54 +1,46 @@
 /**
- * POST /api/image-chat/send
+ * POST /api/image-chat/send  (Image Chats v2 — slim enqueue)
  *
- * One turn of the "mini Higgsfield" Image Chats UI. Mirrors the
- * shape of api/icons/generate.ts (auth → fal.ai → re-host to
- * marketing-assets → return) but writes message history back to the
- * caller's `image_chats` record between steps so the SPA's Realtime
- * subscription drives the spinner / completion state.
+ * One turn of the "mini Higgsfield" Image Chats UI. This used to run the whole
+ * fal.ai generation synchronously (awaiting up to 300s and blocking the entire
+ * conversation). It now ENQUEUES a per-message job and returns fast; the
+ * always-on Fly.io worker drains the `generation_jobs` queue and fills the
+ * assistant placeholder in place. Status flows to the SPA via Supabase
+ * Realtime on the record — no held HTTP, no SSE. This mirrors the decks
+ * pipeline (api/generate-deck.ts + worker/src/runImageJob.ts).
  *
- * Body: `{ record_id, prompt, attachment_urls, aspect_ratio,
- *          num_variations, preset_id, prev_image_url }`.
- *
- *   - `attachment_urls`: ordered list of marketing-assets public URLs
- *     the user uploaded this turn (via the client `uploadImage`
- *     helper, folder `image-chats/uploads`).
- *   - `preset_id` (optional): id of an `image_presets` record. The
- *     server looks it up, prepends `prompt_text` to the user prompt,
- *     and merges the preset's `images` into the input image list.
- *     Clients can't smuggle arbitrary images through this path —
- *     image URLs are read FROM the preset record, never from the
- *     request body.
- *   - `prev_image_url` (optional): the previous assistant message's
- *     primary image, passed in by the SPA so the model can auto-chain
- *     (iterate on the last result without the user re-uploading it).
- *     If present, gets appended to the input image list after the
- *     user attachments + preset images.
+ * Body: `{ record_id, prompt, attachment_urls, attachment_sources,
+ *          aspect_ratio, num_variations, preset_id, model_id, prev_image_url }`.
  *
  * Flow per turn:
  *   1. Auth + validate inputs.
- *   2. Read the image_chats record (verify caller owns it).
- *   3. If preset_id is set, read the image_presets record to pull
- *      its prompt_text + images.
- *   4. Build the merged prompt and merged input-URL list.
- *   5. Write `status='generating'` + append the user message.
- *      Realtime fans out to the browser → composer spinner.
- *   6. Call fal.ai imageGenChat → pollImageGen.
- *   7. Re-host each result URL in marketing-assets at
- *      image-chats/outputs/<user_id>/<record_id>/<uuid>.png.
- *   8. Append the assistant message, write `status='idle'`,
- *      increment message_count + last_message_at.
- *   9. Return the updated message list.
+ *   2. Resolve each attachment to a stable marketing-assets public URL UNDER
+ *      THE CALLER'S JWT (bare files.id UUIDs from preset/snippet image fields
+ *      are permission-checked + copied out of the private wassel-files bucket).
+ *      This stays in the endpoint because it needs the JWT for the RLS gate;
+ *      the worker only has service-role.
+ *   3. Resolve brand-preset prompt_text + name (the client owns the image
+ *      list; we never re-read preset images here).
+ *   4. Append the user message AND an assistant PLACEHOLDER (status='queued')
+ *      to records.data.messages via record_save — SERVER-SIDE, so the realtime
+ *      echo-dedup never suppresses it. Uses optimistic concurrency
+ *      (p_expected_version + retry on the 40001 version-mismatch) because rapid
+ *      successive sends + the worker's fill-in all write the shared messages
+ *      array.
+ *   5. Insert ONE generation_jobs row (service-role; RLS blocks user inserts)
+ *      with the frozen request params.
+ *   6. Best-effort POST /wake to the worker (skip its ~3s poll latency).
+ *   7. Return 202 { job_id, message_id }.
  *
- * On any error after step 5, the record is updated with
- * `status='failed'` + `error_message` so the UI exits the spinner via
- * Realtime instead of hanging.
+ * If the job insert fails after the placeholder is written, we flip that
+ * placeholder to status='failed' so the bubble doesn't hang on "queued"
+ * forever (the watchdog only sweeps 'running' jobs, not 'queued' messages).
  *
  * Loud failures only — per CLAUDE.md "Silent Failures":
- *   - fal.ai non-2xx → 502 with upstream body.
- *   - storage upload error → 500.
  *   - missing JWT → 401 (via withAuth).
  *   - input validation error → 400.
+ *   - attachment resolution failure → 400.
+ *   - enqueue/storage error → 500.
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
@@ -59,53 +51,41 @@ import {
   getServiceClient,
   loadFileBypassRls,
 } from '../_lib/files.js';
-import {
-  imageGenChat,
-  pollImageGen,
-  type ChatAspectRatio,
-  type ChatModelId,
-} from '../_lib/imageGen.js';
+import type { ChatAspectRatio, ChatModelId } from '../_lib/imageGen.js';
 
-// maxDuration bumped from 240→300 (2026-05-23) when GPT Image 2 was added
-// to the model picker. OpenAI's quality-first model regularly takes 3-5
-// minutes per turn vs Nano Banana's 30-90s, and the prior 240s ceiling +
-// 230s poll budget were triggering "Image-gen poll timed out" on the
-// first real GPT Image 2 send. 300s is the documented safe Vercel ceiling
-// per CLAUDE.md "Decks generation pipeline" — anything longer needs to
-// move to the Fly.io worker pattern.
+// Slim enqueue — one attachment-resolution pass + a couple of DB writes + a
+// fire-and-forget /wake. 60s is plenty (down from 300s; the long fal.ai poll
+// moved to the Fly.io worker). Keeping nodejs runtime: the JWT-scoped
+// attachment permission check uses the Node↔Web adapter below.
 export const config = {
   runtime: 'nodejs',
-  maxDuration: 300,
+  maxDuration: 60,
 };
+
+/** Bounded retry budget for optimistic-concurrency version conflicts. */
+const MAX_SAVE_ATTEMPTS = 6;
 
 interface RequestBody {
   record_id?: string;
   prompt?: string;
   attachment_urls?: string[];
-  /** Parallel array to attachment_urls — labels each thumbnail's
-   * origin so the message bubble can render a ✦ badge for preset /
-   * snippet auto-attaches. Optional; defaults to ['user', ...]. */
   attachment_sources?: Array<'user' | 'preset' | 'snippet'>;
   aspect_ratio?: string;
   num_variations?: number;
   preset_id?: string | null;
-  /** Which image model to run this turn on. Validated against the
-   *  allow-list below; unknown / missing values fall back to
-   *  'nano-banana'. */
   model_id?: string;
   prev_image_url?: string | null;
 }
 
 interface MessageImage {
   url: string;
-  /** Display label for the message bubble. Falls back to the URL basename. */
   name?: string;
-  /** 'user' (uploaded by the user this turn), 'preset' (auto-attached from
-   * the chosen brand preset), 'snippet' (auto-attached from a prompt
-   * snippet), 'assistant' (fal.ai output, persisted to marketing-assets). */
   source?: 'user' | 'preset' | 'snippet' | 'assistant';
+  /** Promote-on-add cache (Part 5) — set by the SPA, carried through here. */
+  file_id?: string;
 }
 
+/** Keep in sync with StoredMessage in src/lib/imageChat/client.ts. */
 interface StoredMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -116,6 +96,10 @@ interface StoredMessage {
   preset_id?: string | null;
   preset_name?: string | null;
   created_at: string;
+  /** Assistant-only generation lifecycle. Absent ⇒ legacy completed. */
+  status?: 'queued' | 'generating' | 'completed' | 'failed' | 'cancelled';
+  job_id?: string;
+  error?: string;
 }
 
 const ASPECTS: readonly ChatAspectRatio[] = ['1:1', '9:16', '16:9', '4:3', '3:4'];
@@ -163,7 +147,6 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
 const BUCKET = 'marketing-assets';
 
 function isMarketingAssetsUrl(s: string, supabaseUrl: string): boolean {
-  // Acceptable shape: `<supabaseUrl>/storage/v1/object/public/marketing-assets/<path>`.
   const marker = `/storage/v1/object/public/${BUCKET}/`;
   return s.startsWith(supabaseUrl) && s.includes(marker);
 }
@@ -194,18 +177,11 @@ function extFromContentType(ct: string): string {
 
 /**
  * Normalize one attachment-list item into a marketing-assets public URL.
- *
- * Accepts either:
- *   - An already-valid marketing-assets URL (legacy paperclip uploads via
- *     uploadImage land here) → returned unchanged.
- *   - A bare `files.id` UUID (new image/multi_image fields on presets and
- *     snippets store this) → the file is copied from the private
- *     `wassel-files` bucket into `marketing-assets/image-chats/preset-copies/...`
- *     so (a) fal.ai can fetch it with a stable public URL and (b) it can be
- *     persisted into the message history without an expiring signed URL.
- *
- * Permission is gated under the caller's JWT via `wassell_can_access_file`
- * before any service-role read happens.
+ * Accepts an already-valid marketing-assets URL (returned unchanged) or a bare
+ * `files.id` UUID (preset/snippet image fields), which is permission-checked
+ * under the caller's JWT then service-role copied out of the private
+ * `wassel-files` bucket into marketing-assets so fal.ai can fetch a stable
+ * public URL. Unchanged from the synchronous version.
  */
 async function resolveAttachmentToMarketingUrl(
   raw: string,
@@ -249,7 +225,7 @@ async function resolveAttachmentToMarketingUrl(
   return publicUrl;
 }
 
-/* ─── Record-update helpers ───────────────────────────────────────── */
+/* ─── Record helpers ──────────────────────────────────────────────── */
 
 async function readImageChatsModelId(supabase: SupabaseClient): Promise<string> {
   const { data, error } = await supabase
@@ -263,35 +239,50 @@ async function readImageChatsModelId(supabase: SupabaseClient): Promise<string> 
   return data.id as string;
 }
 
-interface PatchInput {
-  supabase: SupabaseClient;
-  modelId: string;
-  recordId: string;
-  patch: Record<string, unknown>;
+function isVersionConflict(err: { code?: string; message?: string } | null): boolean {
+  if (!err) return false;
+  return err.code === '40001' || /version_mismatch/i.test(err.message ?? '');
 }
 
-/** Read-merge-save the record via the `record_save` RPC. */
-async function patchRecord({ supabase, modelId, recordId, patch }: PatchInput): Promise<void> {
-  const { data: current, error: readErr } = await supabase
-    .from('records')
-    .select('data, created_by_user_id')
-    .eq('id', recordId)
-    .single();
-  if (readErr || !current) {
-    throw new Error(`failed to read image_chats record: ${readErr?.message ?? 'not found'}`);
-  }
-  const newData = { ...(current.data as Record<string, unknown>), ...patch };
-  const { error: saveErr } = await supabase.rpc('record_save', {
-    p_model_id: modelId,
-    p_id: recordId,
-    p_data: newData,
-    p_created_by:
-      (current as { created_by_user_id: string | null }).created_by_user_id ?? null,
-    p_expected_version: null,
-  });
-  if (saveErr) {
+/**
+ * Read-transform-save the record via record_save with optimistic concurrency.
+ * The `build` callback receives the CURRENT data and returns the new data. On
+ * a version-mismatch (40001) — meaning another rapid send or the worker's
+ * fill-in bumped the row — we re-read and re-apply onto the latest state, so
+ * no concurrent turn is clobbered. Runs under the caller's JWT (RLS-correct).
+ */
+async function mutateRecordWithRetry(
+  jwtClient: SupabaseClient,
+  modelId: string,
+  recordId: string,
+  build: (current: Record<string, unknown>) => Record<string, unknown>,
+): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
+    const { data: current, error: readErr } = await jwtClient
+      .from('records')
+      .select('data, version, created_by_user_id')
+      .eq('id', recordId)
+      .single();
+    if (readErr || !current) {
+      throw new Error(`failed to read image_chats record: ${readErr?.message ?? 'not found'}`);
+    }
+    const data = ((current.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+    const newData = build(data);
+    const { error: saveErr } = await jwtClient.rpc('record_save', {
+      p_model_id: modelId,
+      p_id: recordId,
+      p_data: newData,
+      p_created_by:
+        (current as { created_by_user_id: string | null }).created_by_user_id ?? null,
+      p_expected_version: (current as { version: number | null }).version ?? null,
+    });
+    if (!saveErr) return;
+    if (isVersionConflict(saveErr as { code?: string; message?: string })) continue;
     throw new Error(`record_save failed: ${saveErr.message}`);
   }
+  throw new Error(
+    `record_save failed after ${MAX_SAVE_ATTEMPTS} version-conflict retries`,
+  );
 }
 
 /* ─── Main handler ─────────────────────────────────────────────────── */
@@ -318,9 +309,8 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const numVariations = Math.max(1, Math.min(4, Number(body.num_variations) || 1));
     const presetId = body.preset_id && typeof body.preset_id === 'string' ? body.preset_id : null;
     const modelId: ChatModelId = isChatModelId(body.model_id) ? body.model_id : 'nano-banana';
-    const prevImageUrl = body.prev_image_url && typeof body.prev_image_url === 'string'
-      ? body.prev_image_url
-      : null;
+    const prevImageUrl =
+      body.prev_image_url && typeof body.prev_image_url === 'string' ? body.prev_image_url : null;
 
     if (userPrompt.trim().length === 0 && attachmentUrls.length === 0 && !prevImageUrl) {
       return jsonError(400, 'prompt, attachment_urls, or prev_image_url is required');
@@ -341,16 +331,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       global: { headers: { Authorization: `Bearer ${jwt}` } },
     });
 
-    // Normalize each attachment to a marketing-assets public URL. Items may
-    // arrive as either legacy marketing-assets URLs (paperclip uploads) or
-    // as bare `files.id` UUIDs (preset/snippet image fields, which now live
-    // in the Files System on the private `wassel-files` bucket). For file
-    // IDs we permission-check under the caller's JWT, then service-role
-    // copy the bytes into marketing-assets so fal.ai has a stable public
-    // URL and the message history stays valid forever (no signed-URL
-    // expiry). `prev_image_url` only ever comes from prior assistant
-    // outputs, which are already marketing-assets URLs — but we run it
-    // through the same resolver for symmetry.
+    // ── Resolve attachments → stable marketing-assets URLs (JWT-scoped) ──
     let resolvedAttachmentUrls: string[];
     let resolvedPrevImageUrl: string | null;
     try {
@@ -360,55 +341,30 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         ),
       );
       resolvedPrevImageUrl = prevImageUrl
-        ? await resolveAttachmentToMarketingUrl(
-            prevImageUrl,
-            supabase,
-            supabaseUrl,
-            user.userId,
-            recordId,
-          )
+        ? await resolveAttachmentToMarketingUrl(prevImageUrl, supabase, supabaseUrl, user.userId, recordId)
         : null;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return jsonError(400, `attachment resolution failed: ${msg}`);
     }
 
-    // ── Look up models + records ─────────────────────────────────────
-    const imageChatsModelId = await readImageChatsModelId(supabase).catch(
-      (err: Error) => err,
-    );
+    // ── Resolve model + verify the record exists & is readable ───────────
+    const imageChatsModelId = await readImageChatsModelId(supabase).catch((err: Error) => err);
     if (imageChatsModelId instanceof Error) {
       return jsonError(500, imageChatsModelId.message);
     }
 
     const { data: chatRecord, error: chatErr } = await supabase
       .from('records')
-      .select('id, data, created_by_user_id')
+      .select('id')
       .eq('id', recordId)
       .eq('model_id', imageChatsModelId)
       .single();
     if (chatErr || !chatRecord) {
       return jsonError(404, `image_chats record not found: ${chatErr?.message ?? recordId}`);
     }
-    // No explicit ownership check here — RLS on `records` already enforces
-    // it: this SELECT runs with the caller's JWT, and the record_save RPC
-    // below also runs under the same JWT. If we successfully read the row,
-    // the user can write to it. (A previous version compared
-    // `chatRecord.created_by_user_id` to `user.userId`, but the former is a
-    // public.users.id stamped client-side via `state.currentUserId` and the
-    // latter is an auth.users.id from Supabase auth — different identifier
-    // namespaces. The comparison fired a false 403 every single time.)
 
-    // ── Resolve brand preset (if any) ────────────────────────────────
-    // The CLIENT owns the image list for this turn — preset auto-
-    // attachments are pre-populated into `attachment_urls` by the
-    // composer at pick time, and the user can remove any of them
-    // before sending. The server only reads `prompt_text` + `name`
-    // from the preset record here; it deliberately does NOT re-read
-    // the preset's `images` field. That way removing an auto-attached
-    // preset image really removes it from the fal.ai call. Sources are
-    // labeled by `source` on each MessageImage so the bubble can still
-    // render the ✦ badge in history.
+    // ── Resolve brand preset (prompt_text + name only) ───────────────────
     let presetPromptText = '';
     let presetName: string | null = null;
     if (presetId) {
@@ -434,37 +390,21 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       presetName = (pd.name as string | undefined) ?? null;
     }
 
-    // ── Build merged prompt + image list ─────────────────────────────
+    // ── Build merged prompt + image source labels ────────────────────────
     const finalPrompt = presetPromptText
       ? `${presetPromptText}\n\n${userPrompt}`.trim()
       : userPrompt.trim();
-    // Image order matters — nano-banana-pro/edit treats the first
-    // image as the primary subject and the rest as supporting
-    // references. Order: user-curated attachments first (in the order
-    // the composer kept them) → previous assistant image (the
-    // auto-chain target). The composer is responsible for placing
-    // preset/snippet assets in the right slot of attachment_urls
-    // when those were added.
-    const mergedImageUrls: string[] = [
-      ...resolvedAttachmentUrls,
-      ...(resolvedPrevImageUrl ? [resolvedPrevImageUrl] : []),
-    ];
 
-    const nowIso = new Date().toISOString();
-    const existingMessages = Array.isArray((chatRecord as { data: { messages?: unknown } }).data.messages)
-      ? ((chatRecord as { data: { messages: StoredMessage[] } }).data.messages)
-      : [];
-
-    // Image source labels for history rendering. The composer sends
-    // a parallel `attachment_sources` array (same length & order as
-    // `attachment_urls`) so each thumbnail can show the right badge
-    // ('user' / 'preset' / 'snippet'). If the array is missing or the
-    // wrong length we fall back to 'user' for everything.
     const rawSources = body.attachment_sources;
     const attachmentSources: Array<'user' | 'preset' | 'snippet'> =
       Array.isArray(rawSources) && rawSources.length === resolvedAttachmentUrls.length
         ? rawSources.map((s) => (s === 'preset' || s === 'snippet' ? s : 'user'))
         : resolvedAttachmentUrls.map(() => 'user' as const);
+
+    // ── Build the user message + assistant placeholder ───────────────────
+    const jobId = crypto.randomUUID();
+    const assistantId = crypto.randomUUID();
+    const nowIso = new Date().toISOString();
 
     const userMessage: StoredMessage = {
       id: crypto.randomUUID(),
@@ -482,139 +422,110 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       created_at: nowIso,
     };
 
-    const isFirstUserMessage = existingMessages.length === 0;
-    const titleFromFirst = isFirstUserMessage
-      ? (userPrompt.trim().slice(0, 60) || 'New design')
-      : undefined;
-
-    // ── Stamp "generating" + append user message ─────────────────────
-    await patchRecord({
-      supabase,
-      modelId: imageChatsModelId,
-      recordId,
-      patch: {
-        messages: [...existingMessages, userMessage],
-        message_count: existingMessages.length + 1,
-        last_message_at: nowIso,
-        last_aspect_ratio: aspectRatio,
-        last_preset_id: presetId,
-        last_model: modelId,
-        status: 'generating',
-        error_message: null,
-        ...(titleFromFirst ? { title: titleFromFirst } : {}),
-      },
-    });
-
-    // ── Run fal.ai turn ──────────────────────────────────────────────
-    let outputUrls: string[];
-    try {
-      const start = await imageGenChat({
-        prompt: finalPrompt || 'Edit the attached image.',
-        imageUrls: mergedImageUrls,
-        aspectRatio,
-        numVariations,
-        modelId,
-      });
-      // Poll budget = function maxDuration (300s) minus a 10s tail for
-      // the post-poll work (output re-host loop + final record_save).
-      // GPT Image 2 routinely takes 3-5 min; Nano Banana 2 finishes in
-      // 30-90s, so the longer budget only matters for the slow path.
-      const result = await pollImageGen(start, { intervalMs: 2500, timeoutMs: 290_000 });
-      if (result.status !== 'completed' || !result.imageUrls || result.imageUrls.length === 0) {
-        const detail = result.rawError ? `: ${result.rawError}` : '';
-        throw new Error(`image generation ${result.status}${detail}`);
-      }
-      outputUrls = result.imageUrls;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      await patchRecord({
-        supabase,
-        modelId: imageChatsModelId,
-        recordId,
-        patch: { status: 'failed', error_message: msg },
-      }).catch(() => undefined);
-      return jsonError(502, msg);
-    }
-
-    // ── Re-host each output URL in marketing-assets ──────────────────
-    const persisted: MessageImage[] = [];
-    for (let i = 0; i < outputUrls.length; i++) {
-      const sourceUrl = outputUrls[i]!;
-      let bytes: Uint8Array;
-      let contentType: string;
-      try {
-        const srcRes = await fetch(sourceUrl);
-        if (!srcRes.ok) throw new Error(`fetch ${srcRes.status}`);
-        bytes = new Uint8Array(await srcRes.arrayBuffer());
-        contentType = srcRes.headers.get('content-type') ?? 'image/png';
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await patchRecord({
-          supabase,
-          modelId: imageChatsModelId,
-          recordId,
-          patch: { status: 'failed', error_message: `output fetch failed: ${msg}` },
-        }).catch(() => undefined);
-        return jsonError(502, `output fetch failed: ${msg}`);
-      }
-      const ext = contentType.includes('jpeg') ? 'jpg' : contentType.includes('webp') ? 'webp' : 'png';
-      const path = `image-chats/outputs/${user.userId}/${recordId}/${crypto.randomUUID()}.${ext}`;
-      const { error: upErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, bytes, { contentType, upsert: false });
-      if (upErr) {
-        await patchRecord({
-          supabase,
-          modelId: imageChatsModelId,
-          recordId,
-          patch: { status: 'failed', error_message: `output upload failed: ${upErr.message}` },
-        }).catch(() => undefined);
-        return jsonError(500, `output upload failed: ${upErr.message}`);
-      }
-      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      const publicUrl = pub?.publicUrl;
-      if (!publicUrl) {
-        await patchRecord({
-          supabase,
-          modelId: imageChatsModelId,
-          recordId,
-          patch: { status: 'failed', error_message: 'output uploaded but URL not resolved' },
-        }).catch(() => undefined);
-        return jsonError(500, 'output uploaded but public URL not resolved');
-      }
-      persisted.push({
-        url: publicUrl,
-        name: `variation-${i + 1}.${ext}`,
-        source: 'assistant',
-      });
-    }
-
-    const assistantMessage: StoredMessage = {
-      id: crypto.randomUUID(),
+    const placeholder: StoredMessage = {
+      id: assistantId,
       role: 'assistant',
-      images: persisted,
+      images: [],
       aspect_ratio: aspectRatio,
       num_variations: numVariations,
       preset_id: presetId,
       preset_name: presetName,
-      created_at: new Date().toISOString(),
+      created_at: nowIso,
+      status: 'queued',
+      job_id: jobId,
     };
 
-    const finalMessages = [...existingMessages, userMessage, assistantMessage];
-    await patchRecord({
-      supabase,
-      modelId: imageChatsModelId,
-      recordId,
-      patch: {
-        messages: finalMessages,
-        message_count: finalMessages.length,
-        last_message_at: assistantMessage.created_at,
-        status: 'idle',
-        error_message: null,
+    // ── Append both messages (server-side, optimistic concurrency) ───────
+    try {
+      await mutateRecordWithRetry(supabase, imageChatsModelId, recordId, (data) => {
+        const existing: StoredMessage[] = Array.isArray(data.messages)
+          ? (data.messages as StoredMessage[])
+          : [];
+        const isFirst = existing.length === 0;
+        const messages = [...existing, userMessage, placeholder];
+        return {
+          ...data,
+          messages,
+          message_count: messages.length,
+          last_message_at: nowIso,
+          last_aspect_ratio: aspectRatio,
+          last_preset_id: presetId,
+          last_model: modelId,
+          // Legacy conversation-level rollup — kept for back-compat; the UI now
+          // derives "generating" from per-message status.
+          status: 'generating',
+          error_message: null,
+          ...(isFirst ? { title: userPrompt.trim().slice(0, 60) || 'New design' } : {}),
+        };
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return jsonError(500, `failed to append message: ${msg}`);
+    }
+
+    // ── Enqueue the generation job (service-role; RLS blocks user inserts) ─
+    const svc = getServiceClient();
+    const { error: insErr } = await svc.from('generation_jobs').insert({
+      id: jobId,
+      record_id: recordId,
+      message_id: assistantId,
+      user_id: user.userId,
+      kind: 'image',
+      status: 'queued',
+      prompt: finalPrompt,
+      params: {
+        aspect_ratio: aspectRatio,
+        num_variations: numVariations,
+        model_id: modelId,
+        attachments: resolvedAttachmentUrls.map((url, i) => ({
+          url,
+          source: attachmentSources[i] ?? 'user',
+        })),
+        prev_image_url: resolvedPrevImageUrl,
+        preset_id: presetId,
+        preset_name: presetName,
       },
     });
+    if (insErr) {
+      // The placeholder is already in the record showing "queued" but no job
+      // will ever run it — flip it to failed so the bubble doesn't hang
+      // (the watchdog only sweeps 'running' jobs). Best-effort.
+      await mutateRecordWithRetry(supabase, imageChatsModelId, recordId, (data) => {
+        const msgs: StoredMessage[] = Array.isArray(data.messages)
+          ? (data.messages as StoredMessage[])
+          : [];
+        return {
+          ...data,
+          messages: msgs.map((m) =>
+            m.id === assistantId
+              ? { ...m, status: 'failed', error: `could not enqueue generation: ${insErr.message}` }
+              : m,
+          ),
+        };
+      }).catch(() => undefined);
+      return jsonError(500, `failed to enqueue image job: ${insErr.message}`);
+    }
+    console.log(`[image-chat/send] queued job=${jobId} record=${recordId} msg=${assistantId}`);
 
-    return jsonOk({ messages: finalMessages, assistant: assistantMessage });
+    // ── Best-effort wake ping (worker polls every ~3s regardless) ────────
+    const workerUrl = process.env.WASSEL_DECK_WORKER_URL;
+    if (workerUrl) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 1500);
+        await fetch(`${workerUrl.replace(/\/$/, '')}/wake`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ job_id: jobId, kind: 'image' }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(t);
+      } catch (err) {
+        console.warn(`[image-chat/send] wake ping failed (non-fatal): ${(err as Error).message}`);
+      }
+    }
+
+    return jsonOk({ job_id: jobId, message_id: assistantId, status: 'queued' }, 202);
   });
   await writeWebResponseToNode(resp, nodeRes);
 }
