@@ -39,6 +39,8 @@ import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { useFieldDefaults } from './hooks/useFieldDefaults';
 import { createMissingLinkedRecords } from './utils/createMissingLinkedRecords';
+import { findDuplicateRecord, type DuplicateMatch } from './utils/findDuplicateRecord';
+import DuplicateWarningModal from './components/DuplicateWarningModal';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
 import { applyFollowupAutoStamp } from './utils/followupAutoStamp';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
@@ -163,6 +165,10 @@ export default function RecordFormPage() {
     foundId: string;
     prefill: Record<string, unknown>;
   } | null>(null);
+  // Set when a NEW record's duplicate-check value collides with an existing
+  // record (model.schema.duplicate_check_field_id). handleSave opens this
+  // warn-and-choose modal instead of writing the duplicate. Null when closed.
+  const [duplicateMatch, setDuplicateMatch] = useState<DuplicateMatch | null>(null);
 
   // Smart auto-link + auto-fill primitives. The hooks no-op when no field
   // on this model declares the relevant config, so they're cheap to mount
@@ -820,6 +826,23 @@ export default function RecordFormPage() {
       }
     }
 
+    // 2c. Duplicate-check (create only). If this model declares a
+    //     duplicate_check_field_id and we're creating a NEW record whose value
+    //     for that field already matches an existing record, stop and let the
+    //     user decide — fix the value, or open the existing record. Runs BEFORE
+    //     any side-effecting save (mirror fan-out / linked-record creation) so
+    //     an aborted save leaves nothing half-written. This enforces on the
+    //     form what the Import wizard already enforces on import; the other
+    //     create paths (createMissingLinkedRecords, useAutoLink) already link
+    //     to an existing match instead of duplicating.
+    if (isNew) {
+      const dup = findDuplicateRecord(model, formData, records[model.id] ?? []);
+      if (dup) {
+        setDuplicateMatch(dup);
+        return false;
+      }
+    }
+
     // 3. Fan-out: save each edited target record first.
     //
     // Audit fix C1 — atomicity & concurrency:
@@ -1186,6 +1209,24 @@ export default function RecordFormPage() {
           recordId={recordModal.recordId}
           prefill={recordModal.prefill}
           onClose={() => setRecordModal(null)}
+        />
+      )}
+
+      {/* Duplicate-check warning — a NEW record's duplicate_check_field value
+        * (e.g. phone) already exists. Two ways out, never a silent dup. */}
+      {duplicateMatch && (
+        <DuplicateWarningModal
+          model={model}
+          match={duplicateMatch}
+          onEdit={() => setDuplicateMatch(null)}
+          onOpenExisting={() => {
+            const target = duplicateMatch.record.id;
+            setDuplicateMatch(null);
+            // The new draft is intentionally abandoned for the existing record,
+            // so clear the dirty flag to skip the unsaved-changes guard.
+            setIsDirty(false);
+            navigate(`/model/${model.name}/${target}`);
+          }}
         />
       )}
 

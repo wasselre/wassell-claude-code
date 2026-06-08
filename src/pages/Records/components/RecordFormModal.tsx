@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { Save, Loader2 } from 'lucide-react';
@@ -6,9 +7,11 @@ import { useAppStore } from '@/stores/appStore';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import SectionBlock from './SectionBlock';
+import DuplicateWarningModal from './DuplicateWarningModal';
 import { useAutoLink } from '../hooks/useAutoLink';
 import { useAutoFill } from '../hooks/useAutoFill';
 import { applyFollowupAutoStamp } from '../utils/followupAutoStamp';
+import { findDuplicateRecord, type DuplicateMatch } from '../utils/findDuplicateRecord';
 import type { AppRecord } from '@/types';
 
 interface RecordFormModalProps {
@@ -42,8 +45,12 @@ export default function RecordFormModal({
   onSaved,
 }: RecordFormModalProps) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { models, records, language, saveRecord, addToast } = useAppStore();
   const isAr = language === 'ar';
+  // Set when a NEW record's duplicate-check value collides with an existing
+  // one — opens the warn-and-choose modal instead of saving the duplicate.
+  const [duplicateMatch, setDuplicateMatch] = useState<DuplicateMatch | null>(null);
 
   const model = models.find((m) => m.id === modelId);
   const isNew = !recordId;
@@ -115,6 +122,17 @@ export default function RecordFormModal({
       const label = isAr ? missing[0]!.label_ar : missing[0]!.label_en;
       addToast(`${isAr ? 'الحقل مطلوب: ' : 'Required field: '}${label}`, 'error');
       return;
+    }
+
+    // Duplicate-check (create only) — same guard as RecordFormPage.handleSave.
+    // If this model's duplicate_check_field_id value already exists, open the
+    // warn-and-choose modal instead of writing the duplicate.
+    if (isNew) {
+      const dup = findDuplicateRecord(model, formData, records[model.id] ?? []);
+      if (dup) {
+        setDuplicateMatch(dup);
+        return;
+      }
     }
 
     setSaving(true);
@@ -190,6 +208,21 @@ export default function RecordFormModal({
           />
         ))}
       </div>
+
+      {/* Duplicate-check warning — stacks above this modal (z-[60] > Modal's z-50). */}
+      {duplicateMatch && (
+        <DuplicateWarningModal
+          model={model}
+          match={duplicateMatch}
+          onEdit={() => setDuplicateMatch(null)}
+          onOpenExisting={() => {
+            const target = duplicateMatch.record.id;
+            setDuplicateMatch(null);
+            onClose();
+            navigate(`/model/${model.name}/${target}`);
+          }}
+        />
+      )}
     </Modal>
   );
 }
