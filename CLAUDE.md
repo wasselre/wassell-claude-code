@@ -424,6 +424,18 @@ git push origin HEAD:main   # pre-push hook double-checks; Vercel deploys main
 
 **No PR. No branch-push-and-wait. No clicking "Merge pull request" on GitHub.** The user has explicitly rejected those flows for routine deploys.
 
+### After the push — verify it deployed AND works live (added 2026-06-08)
+
+Pushing to `main` is **not** "done." Vercel auto-deploys `main`; confirm the deploy succeeded and smoke-test the actual change on the live app before reporting back. Claude can do this directly via the Supabase + Claude-in-Chrome MCPs — full recipes in `docs/claude-live-ops.md`. This is the deploy-side of the "test everything before done" rule.
+
+1. **Capture the pushed SHA:** `git rev-parse HEAD`.
+2. **Docs-only-to-PRD skip:** if the push touched ONLY `docs/prd/models/**` + `docs/prd/workflows/**`, `vercel.json`'s `ignoreCommand` skips the build — no deploy, nothing to verify. Any other path (code, `CLAUDE.md`, other docs) DOES deploy.
+3. **Confirm the deploy** with the Vercel MCP `list_deployments` (project `prj_4ObF1mUW9KmmhFJDkoHCD0MZzJEh`, team `team_3UCVfsGz7gmIizM7AsVfczzW`): find the `target:"production"` / `meta.githubCommitRef:"main"` entry whose `meta.githubCommitSha` == your SHA, and poll (~30–60 s; builds take ~1–2 min) until `state:"READY"`. On `state:"ERROR"`, pull `get_deployment_build_logs`, fix, re-push.
+4. **Smoke-test the live app** with the Claude-in-Chrome MCP on `https://app.wassel.re` (hard-reload to bust the hashed SPA bundle): exercise the exact behavior you changed and confirm it works; check `read_console_messages` (onlyErrors) for new errors; verify data via the Supabase MCP where the change touches data.
+5. **Report with proof:** the deployed SHA + deployment id + what you tested. If it failed, say so — a bad prod deploy can be rolled back (deployments are `isRollbackCandidate`).
+
+Skip the live smoke-test only when the change isn't observable in the running app (pure CI/tooling/test-only, or the docs-only skip above) — but still confirm the deploy reached `READY` (step 3).
+
 ### The safety net — pre-push hook
 
 `scripts/safe-push-main.sh`, installed via `scripts/install-git-hooks.sh`, refuses any push to `main` whose local tip is not on top of `origin/main`. Lives in the *shared* `.git/hooks/` directory, so a single install protects every worktree of the repo (existing and future). To install or re-install: `bash scripts/install-git-hooks.sh` from any worktree. Bypass with `--no-verify` is **not allowed** without explicit user OK.
