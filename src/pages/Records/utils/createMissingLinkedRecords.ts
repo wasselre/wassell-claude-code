@@ -40,6 +40,47 @@ function normalizeFor(value: unknown, normalize: 'phone' | undefined): string | 
 }
 
 /**
+ * Slugs of the lookup fields that {@link createMissingLinkedRecords} WILL fill
+ * at save time for the current form — i.e. `on_save` create-if-missing fields
+ * that have a usable (long-enough) source value and a still-empty lookup.
+ *
+ * The record form's required-field validation treats these as already
+ * satisfied, so a (required) `client_id` that's about to be created+linked from
+ * a typed phone doesn't block the Save. When there's no usable source value the
+ * lookup is NOT returned, so the normal required check still applies (you can't
+ * save an appointment with neither a client nor a phone).
+ *
+ * Keep the gating in sync with the loop in createMissingLinkedRecords below.
+ */
+export function pendingOnSaveLookupNames(
+  model: AppModel,
+  formData: Record<string, unknown>,
+): Set<string> {
+  const out = new Set<string>();
+  const allFields = model.schema.sections
+    .filter((s) => !s.is_mirrored)
+    .flatMap((s) => s.fields);
+  const fieldsById = new Map(allFields.map((f) => [f.id, f]));
+
+  for (const f of allFields) {
+    if (!f.auto_link_create_if_missing || f.auto_link_create_timing !== 'on_save') continue;
+    if (!f.auto_link_lookup_field_id || !f.auto_link_target_field_name) continue;
+    const lookupField = fieldsById.get(f.auto_link_lookup_field_id);
+    if (!lookupField || lookupField.type !== 'lookup' || !lookupField.lookup_model_id) continue;
+    if (lookupField.is_multi) continue;
+    // Already linked (user pick / while-typing match) → not pending; the normal
+    // required check passes on its own.
+    const currentLookup = formData[lookupField.name];
+    if (typeof currentLookup === 'string' && currentLookup) continue;
+    const needle = normalizeFor(formData[f.name], f.auto_link_normalize);
+    if (!needle) continue;
+    if (needle.length < (f.auto_link_create_min_length ?? 0)) continue;
+    out.add(lookupField.name);
+  }
+  return out;
+}
+
+/**
  * Save-time companion to the `useAutoLink` hook. For every field on `model`
  * configured with `auto_link_create_if_missing` + `auto_link_create_timing:'on_save'`,
  * this resolves the sibling lookup at COMMIT time rather than while typing:

@@ -38,7 +38,7 @@ import { Users, Home } from 'lucide-react';
 import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { useFieldDefaults } from './hooks/useFieldDefaults';
-import { createMissingLinkedRecords } from './utils/createMissingLinkedRecords';
+import { createMissingLinkedRecords, pendingOnSaveLookupNames, type CreatedLinkedRecord } from './utils/createMissingLinkedRecords';
 import { findDuplicateRecord, type DuplicateMatch } from './utils/findDuplicateRecord';
 import DuplicateWarningModal from './components/DuplicateWarningModal';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
@@ -46,6 +46,17 @@ import { applyFollowupAutoStamp } from './utils/followupAutoStamp';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
 import { useRolledUpRecord } from '@/hooks/useRolledUpRecords';
 import { isButtonVisible } from '@/lib/permissions';
+
+/**
+ * Drives the "new client created" popup shown after a save that auto-created a
+ * linked record (e.g. a client made from a phone-first appointment with no
+ * matching client). `onContinue` runs the navigation the save would otherwise
+ * have done — deferred so the popup shows before we leave the page.
+ */
+interface NewLinkedNotice {
+  records: CreatedLinkedRecord[];
+  onContinue: () => void;
+}
 
 export default function RecordFormPage() {
   const { modelName, recordId } = useParams();
@@ -135,6 +146,13 @@ export default function RecordFormPage() {
     model?.updated_at ?? null,
   );
   const [showDelete, setShowDelete] = useState(false);
+  // Open "new client created" popup, set by a caller after a save that
+  // auto-created a linked record. Null when no popup is showing.
+  const [newLinkedNotice, setNewLinkedNotice] = useState<NewLinkedNotice | null>(null);
+  // handleSave stashes the records it just created here (it keeps its boolean
+  // contract); the Save callers read it synchronously after the await to decide
+  // whether to show the popup or navigate straight away. Reset at each save.
+  const justCreatedLinkedRef = useRef<CreatedLinkedRecord[]>([]);
   // Tracks whether the form has unsaved user edits. Used to guard prev/next
   // navigation and the back button with a Save / Discard / Cancel prompt.
   const [isDirty, setIsDirty] = useState(false);
@@ -726,6 +744,9 @@ export default function RecordFormPage() {
   // Returns false on any validation or conflict failure — handleSave has
   // already toasted the user in that case.
   const handleSave = async (): Promise<boolean> => {
+    // Reset the per-save "records I just created" stash (read by the Save
+    // callers after the await to drive the new-client popup).
+    justCreatedLinkedRef.current = [];
     // Audit fix M2: refuse to save if the schema changed under us.
     // The form's slugs / required-field map / lookup config are bound
     // to the model state at mount. If an admin edited the model mid-form
@@ -744,9 +765,16 @@ export default function RecordFormPage() {
     const allFields = model.schema.sections
       .filter((s) => !s.is_mirrored)
       .flatMap((s) => s.fields);
+    // A required lookup that a save-time deferred create will fill (phone →
+    // client_id) counts as satisfied — otherwise a phone-first appointment for
+    // a brand-new client would be blocked by the required client_id before
+    // createMissingLinkedRecords ever runs. When there's no creatable source
+    // value the lookup is NOT in this set, so the required check still applies.
+    const deferredLookupNames = pendingOnSaveLookupNames(model, formData);
     const missing = allFields.filter((f) => {
       if (!f.required) return false;
       if (f.type === 'mirror') return false;
+      if (deferredLookupNames.has(f.name)) return false;
       // A field hidden by its `visible_when` rule can't be filled, so it must
       // not block the save (mirrors the form, which doesn't render it).
       if (!isFieldVisible(f, formData, model)) return false;
@@ -933,13 +961,11 @@ export default function RecordFormPage() {
       return false;
     }
     setIsDirty(false);
-    // Announce any linked records created during this save (e.g. a new client
-    // auto-created from a typed phone+name). One popup per created record.
-    for (const c of createdLinked) {
-      const tm = models.find((m) => m.id === c.modelId);
-      const tmLabel = tm ? (isAr ? tm.label_ar : tm.label_en) : '';
-      addToast(t('toast.linked_record_created', { model: tmLabel, name: c.label }), 'success');
-    }
+    // Hand any linked records created during this save (e.g. a new client
+    // auto-created from a typed phone+name) to the Save callers via a ref, so
+    // they can show the "new client created" popup and defer the post-save
+    // navigation until the user dismisses it.
+    justCreatedLinkedRef.current = createdLinked;
     if (result.status === 'queued') {
       addToast(
         isAr
@@ -960,13 +986,14 @@ export default function RecordFormPage() {
   const handleSaveAndExit = async () => {
     const exit = pendingExit;
     const ok = await handleSave();
-    if (ok) {
-      setPendingExit(null);
-      if (exit) {
-        exit.run();
-      } else {
-        navigate(exitTarget);
-      }
+    if (!ok) return;
+    setPendingExit(null);
+    const runExit = () => (exit ? exit.run() : navigate(exitTarget));
+    const created = justCreatedLinkedRef.current;
+    if (created.length > 0) {
+      setNewLinkedNotice({ records: created, onContinue: runExit });
+    } else {
+      runExit();
     }
   };
 
@@ -975,6 +1002,25 @@ export default function RecordFormPage() {
     setIsDirty(false);
     setPendingExit(null);
     exit?.run();
+  };
+
+  // "New client created" popup — Continue runs the deferred post-save
+  // navigation; View Client opens the freshly-created client instead.
+  const dismissNewLinkedNotice = () => {
+    const cont = newLinkedNotice?.onContinue;
+    setNewLinkedNotice(null);
+    cont?.();
+  };
+  const viewNewLinked = () => {
+    const notice = newLinkedNotice;
+    setNewLinkedNotice(null);
+    const rec = notice?.records[0];
+    const tm = rec ? models.find((m) => m.id === rec.modelId) : null;
+    if (rec && tm) {
+      navigate(`/model/${tm.name}/${rec.id}`);
+    } else {
+      notice?.onContinue?.();
+    }
   };
 
   const handleDelete = () => {
@@ -1093,7 +1139,14 @@ export default function RecordFormPage() {
           {!readOnly && (
           <Button onClick={async () => {
             const ok = await handleSave();
-            if (ok) navigate(exitTarget);
+            if (!ok) return;
+            const created = justCreatedLinkedRef.current;
+            if (created.length > 0) {
+              // Auto-created a client — show the popup, then navigate on dismiss.
+              setNewLinkedNotice({ records: created, onContinue: () => navigate(exitTarget) });
+            } else {
+              navigate(exitTarget);
+            }
           }}>
             <Save size={16} />
             {t('common.save')}
@@ -1321,6 +1374,47 @@ export default function RecordFormPage() {
         }
       >
         <p className="text-charcoal">{t('records.unsaved_changes_message')}</p>
+      </Modal>
+
+      {/* New-client notice — shown after a save that auto-created a client from
+        * a phone-first appointment (no existing client matched the typed phone).
+        * Continue runs the deferred navigation; View Client opens the client.
+        * The same mechanism backs the visits model, so the copy is client-
+        * oriented (both current consumers create a client). */}
+      <Modal
+        open={newLinkedNotice !== null}
+        onClose={dismissNewLinkedNotice}
+        title={isAr ? 'تم إنشاء عميل جديد' : 'New client created'}
+        footer={
+          <>
+            {newLinkedNotice?.records.length === 1 && (
+              <Button variant="secondary" onClick={viewNewLinked}>
+                <Users size={16} />
+                {isAr ? 'عرض العميل' : 'View Client'}
+              </Button>
+            )}
+            <Button onClick={dismissNewLinkedNotice}>
+              {isAr ? 'متابعة' : 'Continue'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-charcoal">
+          {isAr
+            ? 'لم يكن هناك عميل بهذا الرقم، فتم إنشاء عميل جديد تلقائيًا وربطه بهذا السجل.'
+            : 'No client matched this number, so a new client was created automatically and linked to this record.'}
+        </p>
+        <div className="mt-3 space-y-1">
+          {newLinkedNotice?.records.map((c) => (
+            <div
+              key={c.id}
+              dir="auto"
+              className="rounded-xl bg-sand/20 px-4 py-2 text-sm font-bold text-charcoal"
+            >
+              {c.label}
+            </div>
+          ))}
+        </div>
       </Modal>
     </div>
   );

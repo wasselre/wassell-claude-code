@@ -1356,10 +1356,12 @@ const appointmentsModel: AppModel = {
         fields: [
           {
             // Phone-first entry. Typing a phone debounce-searches clients;
-            // exact match → links via client_id; zero matches → creates a
-            // new minimal client (just the phone) and links to it. Same
-            // bidirectional auto-fill as the visits model. Order 0 so the
-            // form opens with the phone as the first focus.
+            // an exact match links via client_id LIVE while typing. A zero
+            // match creates a new client — but only at SAVE (see
+            // auto_link_create_timing below), never mid-typing, so a
+            // half-typed phone can't spawn a stray client. Same bidirectional
+            // auto-fill as the visits model. Order 0 so the form opens with
+            // the phone as the first focus.
             id: uuid(),
             name: 'phone_number',
             label_ar: 'رقم جوال العميل',
@@ -1374,10 +1376,17 @@ const appointmentsModel: AppModel = {
             auto_link_lookup_field_id: apptClientFieldId,
             auto_link_target_field_name: 'phone_number',
             auto_link_normalize: 'phone',
-            // Create new client if no match: minimum 12 chars in the
+            // Create a new client if no match: minimum 12 chars in the
             // normalized phone (E.164 SA mobile = +9665xxxxxxxx = 13).
             auto_link_create_if_missing: true,
             auto_link_create_min_length: 12,
+            // Defer creation to the Save commit (createMissingLinkedRecords),
+            // not the typing debounce — so a partial phone never creates a
+            // client. The form shows a "new client created" popup afterwards.
+            auto_link_create_timing: 'on_save',
+            // Seed the new client's name from the appointment's typed
+            // client_name (beyond the phone, which is always copied).
+            auto_link_create_copy_fields: [{ from: 'client_name', to: 'client_name' }],
             auto_fill_from_lookup_field_id: apptClientFieldId,
             auto_fill_source_field_name: 'phone_number',
           },
