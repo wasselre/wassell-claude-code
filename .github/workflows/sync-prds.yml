@@ -40,7 +40,10 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Node 22+ has a native WebSocket, which newer @supabase/supabase-js
+          # requires when createClient initializes its Realtime client. On Node 20
+          # createClient throws "Node.js 20 detected without native WebSocket support".
+          node-version: '22'
 
       - name: Install @supabase/supabase-js
         run: npm install @supabase/supabase-js@^2.49.1 --no-save --no-package-lock --no-audit --no-fund
