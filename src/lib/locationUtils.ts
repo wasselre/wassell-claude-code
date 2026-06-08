@@ -1,5 +1,6 @@
 import type { AppModel, AppRecord, MapsConfig, ModelField } from '@/types';
 import { resolveMirror } from './mirrorResolver';
+import { collectViewFields, readExpandedValue, VIRTUAL_FIELD_SEPARATOR } from './sectionMirrorExpand';
 
 export const DEFAULT_MAP_CENTER = { lat: 24.7136, lng: 46.6753 } as const;
 export const DEFAULT_MAP_ZOOM = 11;
@@ -120,52 +121,103 @@ function toLatLng(latStr: string | undefined, lngStr: string | undefined): LatLn
 }
 
 /**
- * Cross-model context needed to resolve a `mirror` location field — the live
- * value lives on a record in another model, reached via the sibling lookup.
- * Optional everywhere: when the configured location field is a plain url/text
- * field, no context is required (resolution stays local to `record`).
+ * Cross-model context needed to resolve a `mirror` OR a `section_mirror` child
+ * location field — the live value lives on a record in another model, reached
+ * via the container's sibling lookup. Optional everywhere: when the configured
+ * location field is a plain url/text field, no context is required (resolution
+ * stays local to `record`).
  */
 export interface LocationResolveCtx {
   allRecords: Record<string, AppRecord[]>;
   allModels: AppModel[];
 }
 
+/** First non-empty trimmed string from a scalar or (possibly nested) array, else null. */
+function firstLocationString(v: unknown): string | null {
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      const s = firstLocationString(item);
+      if (s) return s;
+    }
+    return null;
+  }
+  return typeof v === 'string' && v.trim() ? v.trim() : null;
+}
+
 /**
- * Read the configured location field's raw string for a record. For a plain
+ * Read the raw location string for a record from a RESOLVED field. For a plain
  * url/text field that's just `record.data[field.name]`. For a `mirror` field
  * (e.g. a project's location mirrored from the master All Projects record) we
  * hop through the sibling lookup via `resolveMirror` — which is why mirror
  * resolution needs `ctx`. A multi-value mirror yields the first non-empty link.
+ *
+ * Note: this takes an already-resolved local `ModelField`. Section-mirror CHILD
+ * fields aren't real fields on the model — they're handled in
+ * `readConfiguredLocationString` below.
  */
 function readLocationString(
   record: AppRecord,
   field: ModelField,
   ctx?: LocationResolveCtx,
 ): string | null {
-  const pickString = (v: unknown): string | null =>
-    typeof v === 'string' && v.trim() ? v.trim() : null;
-
   if (field.type === 'mirror') {
     if (!ctx) return null; // mirror needs cross-model context — caller didn't supply it
     const res = resolveMirror(field, record.data, ctx.allRecords, ctx.allModels);
     if (res.status !== 'ok') return null;
-    if (Array.isArray(res.value)) {
-      for (const v of res.value) {
-        const s = pickString(v);
-        if (s) return s;
-      }
-      return null;
-    }
-    return pickString(res.value);
+    return firstLocationString(res.value);
   }
 
-  return pickString(record.data[field.name]);
+  return firstLocationString(record.data[field.name]);
+}
+
+/**
+ * Read the location string for `cfg.location_url_field_id`, resolving all three
+ * field kinds the Map Builder offers:
+ *   1. a plain url/text field on this model,
+ *   2. a `mirror` field whose target is a url/text field on a linked model,
+ *   3. a `section_mirror` CHILD field — a url/text field surfaced from another
+ *      model through a section-mirror container. Its id is the compound
+ *      `${containerId}::${childSlug}`, so it isn't a real field on the model;
+ *      we expand the model's view fields and read through the container's
+ *      sibling lookup via `readExpandedValue` (e.g. Our Projects pinning from
+ *      All Projects' "موقع المشروع" url, surfaced via its بيانات المشروع mirror).
+ *
+ * Kinds 2 and 3 read a value off another model's record, so both require `ctx`
+ * (the hook supplies it whenever the configured field is a mirror or a
+ * section-mirror child). Returns null when the value is empty/unresolvable.
+ */
+function readConfiguredLocationString(
+  record: AppRecord,
+  cfg: MapsConfig,
+  fields: ModelField[],
+  ctx?: LocationResolveCtx,
+): string | null {
+  const fieldId = cfg.location_url_field_id;
+  if (!fieldId) return null;
+
+  // (3) Section-mirror child — compound `container::child` id.
+  if (fieldId.includes(VIRTUAL_FIELD_SEPARATOR)) {
+    if (!ctx) return null; // section-mirror child needs cross-model context
+    const currentModel = ctx.allModels.find((m) => m.id === record.model_id);
+    if (!currentModel) return null;
+    const ef = collectViewFields(currentModel, ctx.allModels).find((e) => e.id === fieldId);
+    if (!ef) return null;
+    return firstLocationString(
+      readExpandedValue(ef, record, ctx.allRecords, currentModel, ctx.allModels),
+    );
+  }
+
+  // (1)/(2) Local url/text field, or a `mirror` whose target is url/text.
+  const field = fields.find((f) => f.id === fieldId);
+  if (!field) return null;
+  return readLocationString(record, field, ctx);
 }
 
 /**
  * Resolve a record to lat/lng using the MapsConfig's configured sources.
- * URL-parse first (following a `mirror` field through to its source when the
- * location field is mirrored), then manual lat/lng number fields, else null.
+ * URL-parse first (following a `mirror` field or a `section_mirror` child
+ * through to its source when the location field is mirrored), then manual
+ * lat/lng number fields, else null.
  */
 export function resolveLocation(
   record: AppRecord,
@@ -176,13 +228,10 @@ export function resolveLocation(
   const byId = new Map(fields.map((f) => [f.id, f]));
 
   if (cfg.location_url_field_id) {
-    const field = byId.get(cfg.location_url_field_id);
-    if (field) {
-      const raw = readLocationString(record, field, ctx);
-      if (raw) {
-        const parsed = parseGoogleMapsUrl(raw);
-        if (parsed) return parsed;
-      }
+    const raw = readConfiguredLocationString(record, cfg, fields, ctx);
+    if (raw) {
+      const parsed = parseGoogleMapsUrl(raw);
+      if (parsed) return parsed;
     }
   }
 
@@ -442,10 +491,7 @@ export function resolveLocationWithCache(
   const direct = resolveLocation(record, cfg, fields, ctx);
   if (direct) return direct;
 
-  if (!cfg.location_url_field_id) return null;
-  const field = fields.find((f) => f.id === cfg.location_url_field_id);
-  if (!field) return null;
-  const raw = readLocationString(record, field, ctx);
+  const raw = readConfiguredLocationString(record, cfg, fields, ctx);
   if (!raw) return null;
 
   const cached = getCachedResolution(raw);
@@ -466,14 +512,13 @@ export function collectUrlsNeedingResolution(
   ctx?: LocationResolveCtx,
 ): string[] {
   if (!cfg.location_url_field_id) return [];
-  const urlField = fields.find((f) => f.id === cfg.location_url_field_id);
-  if (!urlField) return [];
 
   const cache = loadUrlCache();
   const out = new Set<string>();
   for (const rec of records) {
     if (resolveLocation(rec, cfg, fields, ctx)) continue; // sync path worked
-    const trimmed = readLocationString(rec, urlField, ctx); // follows mirror fields
+    // Follows mirror fields AND section-mirror children to the source link.
+    const trimmed = readConfiguredLocationString(rec, cfg, fields, ctx);
     if (!trimmed) continue;
     if (parseGoogleMapsUrl(trimmed)) continue; // sync parse works
     if (cache[trimmed]) continue; // successfully cached — skip; null/missing retries

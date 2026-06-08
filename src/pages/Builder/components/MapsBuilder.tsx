@@ -46,14 +46,18 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
   // by the location/color pipelines, which don't follow section-mirror children.
   const localFields = useMemo(() => viewFields.filter((ef) => ef.kind === 'local'), [viewFields]);
 
-  // Location source = a url/text field directly, OR a `mirror` field that
-  // surfaces a url/text field on another model (so a project can pin from its
-  // master All Projects location without storing the link locally). Local only —
-  // the resolver reads the value off this record, not through a section mirror.
+  // Location source, any of:
+  //  - a local url/text field directly,
+  //  - a local `mirror` field that surfaces a url/text field on another model
+  //    (so a model can pin from a linked record without storing the link), or
+  //  - a `section_mirror` CHILD field that is itself a url/text field (e.g. Our
+  //    Projects surfaces All Projects' "موقع المشروع" url via a section mirror).
+  // The resolver (readConfiguredLocationString) follows both mirror kinds.
   const urlFields = useMemo(
     () =>
-      localFields.filter((ef) => {
+      viewFields.filter((ef) => {
         const f = ef.field;
+        if (ef.kind === 'mirrored') return f.type === 'url' || f.type === 'text';
         if (f.type === 'url' || f.type === 'text') return true;
         if (f.type === 'mirror') {
           const target = resolveMirrorTargetField(f, model, models);
@@ -61,7 +65,7 @@ export default function MapsBuilder({ model, onChange, readOnly = false }: MapsB
         }
         return false;
       }),
-    [localFields, model, models],
+    [viewFields, model, models],
   );
   const numberFields = useMemo(() => localFields.filter((ef) => ef.field.type === 'number'), [localFields]);
   // Pin color is resolved by the location pipeline (resolvePinColor), which

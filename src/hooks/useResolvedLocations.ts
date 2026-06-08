@@ -8,6 +8,7 @@ import {
   type LocationResolveCtx,
 } from '@/lib/locationUtils';
 import { useAppStore } from '@/stores/appStore';
+import { VIRTUAL_FIELD_SEPARATOR } from '@/lib/sectionMirrorExpand';
 import type { AppModel, AppRecord } from '@/types';
 
 export interface ResolvedPin {
@@ -38,21 +39,24 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
   const cfg = model.maps_config;
   const allFields = useMemo(() => model.schema.sections.flatMap((s) => s.fields), [model]);
 
-  // Cross-model context is only needed when the location field is a `mirror`
-  // (its live value lives on another model's record, reached via the sibling
-  // lookup — e.g. a project's location mirrored from the master All Projects
-  // record). For plain url/text location fields we keep `ctx` undefined so
-  // resolution stays local and pins don't recompute when unrelated records
-  // elsewhere change.
+  // Cross-model context is only needed when the location field reaches into
+  // another model — a `mirror` field OR a `section_mirror` child (compound
+  // `container::child` id). Both resolve their live value off another model's
+  // record via the sibling lookup (e.g. a project's location mirrored/surfaced
+  // from the master All Projects record). For plain url/text location fields we
+  // keep `ctx` undefined so resolution stays local and pins don't recompute
+  // when unrelated records elsewhere change.
   const allRecords = useAppStore((s) => s.records);
   const allModels = useAppStore((s) => s.models);
-  const locationIsMirror = useMemo(() => {
-    if (!cfg.location_url_field_id) return false;
-    return allFields.find((f) => f.id === cfg.location_url_field_id)?.type === 'mirror';
+  const locationNeedsCtx = useMemo(() => {
+    const id = cfg.location_url_field_id;
+    if (!id) return false;
+    if (id.includes(VIRTUAL_FIELD_SEPARATOR)) return true; // section-mirror child
+    return allFields.find((f) => f.id === id)?.type === 'mirror';
   }, [cfg.location_url_field_id, allFields]);
   const ctx = useMemo<LocationResolveCtx | undefined>(
-    () => (locationIsMirror ? { allRecords, allModels } : undefined),
-    [locationIsMirror, allRecords, allModels],
+    () => (locationNeedsCtx ? { allRecords, allModels } : undefined),
+    [locationNeedsCtx, allRecords, allModels],
   );
 
   // Bumps when a batch of async resolutions finishes — forces recompute.
