@@ -265,7 +265,9 @@ export function resolveLookupDisplayValue(
       const expanded = collectViewFields(targetModel, allModels).find((ef) => ef.id === displaySlug);
       if (!expanded) return undefined;
       // readExpandedValue only reads `.data`, so the minimal targetRecord shape suffices.
-      const v = readExpandedValue(expanded, targetRecord as unknown as AppRecord, allRecords, targetModel);
+      // Pass allModels (5th arg) so a child pointing at a COMPUTED rollup field (e.g.
+      // all_projects.unit_count, never stored) is rolled up before it's read.
+      const v = readExpandedValue(expanded, targetRecord as unknown as AppRecord, allRecords, targetModel, allModels);
       if (Array.isArray(v)) {
         return v
           .filter((x) => x !== null && x !== undefined && typeof x !== 'object')
