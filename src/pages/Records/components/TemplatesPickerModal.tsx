@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, X, Search, ImageOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
+import Button from '@/components/ui/Button';
 
 interface TemplatesPickerModalProps {
   /** Currently selected template IDs (controlled). */
@@ -193,19 +194,18 @@ export default function TemplatesPickerModal({
                 : `${working.size} selected`}
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onClose} className="btn-secondary">
+            <Button variant="secondary" type="button" onClick={onClose}>
               {isAr ? 'إلغاء' : 'Cancel'}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => {
                 onSave(Array.from(working));
                 onClose();
               }}
-              className="btn-primary"
             >
               {isAr ? 'حفظ' : 'Save'}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

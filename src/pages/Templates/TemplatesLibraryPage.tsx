@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Plus, Search, ImageOff, Pencil, Trash2, MoreVertical, Layers, Sparkles } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import Button from '@/components/ui/Button';
 import TemplatesAiAgentModal from './TemplatesAiAgentModal';
 
 /**
@@ -103,23 +104,22 @@ export default function TemplatesLibraryPage() {
               className="form-input ps-9 w-64"
             />
           </div>
-          <button
+          <Button
+            variant="secondary"
             type="button"
             onClick={() => setAiOpen(true)}
-            className="btn-secondary flex items-center gap-2"
             title={isAr ? 'الصق وصف القالب وسيقوم الذكاء الاصطناعي بإنشائه' : 'Paste a template description and the AI will build it'}
           >
             <Sparkles size={16} className="text-copper" />
             {isAr ? 'إنشاء بالذكاء الاصطناعي' : 'AI Agent'}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={() => navigate(`/model/${designTemplatesModel.name}/new`)}
-            className="btn-primary flex items-center gap-2"
           >
             <Plus size={16} />
             {isAr ? 'قالب جديد' : 'New Template'}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -149,14 +149,13 @@ export default function TemplatesLibraryPage() {
                 : 'Create your first template — reference image + 3 prompts (cleanup, editing, design) + variables list.')}
           </p>
           {!query && (
-            <button
+            <Button
               type="button"
               onClick={() => navigate(`/model/${designTemplatesModel.name}/new`)}
-              className="btn-primary inline-flex items-center gap-2"
             >
               <Plus size={16} />
               {isAr ? 'قالب جديد' : 'New Template'}
-            </button>
+            </Button>
           )}
         </div>
       ) : (

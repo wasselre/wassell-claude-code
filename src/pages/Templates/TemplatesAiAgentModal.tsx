@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { Sparkles, X, Loader2, AlertCircle } from 'lucide-react';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
+import Button from '@/components/ui/Button';
 import { supabase } from '@/lib/supabase';
 import type { AppRecord } from '@/types';
 
@@ -232,19 +233,18 @@ export default function TemplatesAiAgentModal({ modelId, onClose }: TemplatesAiA
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 p-5 border-t border-sand/40 bg-cream/40">
-          <button
+          <Button
+            variant="secondary"
             type="button"
             onClick={() => { if (!submitting) onClose(); }}
             disabled={submitting}
-            className="btn-secondary disabled:opacity-50"
           >
             {isAr ? 'إلغاء' : 'Cancel'}
-          </button>
-          <button
+          </Button>
+          <Button
             type="button"
             onClick={() => void handleGenerate()}
             disabled={submitting || description.trim().length < 50}
-            className="btn-primary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {submitting ? (
               <>
@@ -257,7 +257,7 @@ export default function TemplatesAiAgentModal({ modelId, onClose }: TemplatesAiA
                 {isAr ? 'إنشاء القالب' : 'Generate Template'}
               </>
             )}
-          </button>
+          </Button>
         </div>
       </div>
     </div>,

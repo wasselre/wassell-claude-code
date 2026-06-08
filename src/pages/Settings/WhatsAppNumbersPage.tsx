@@ -243,22 +243,24 @@ function NumberRow({
                 className="input flex-1 text-sm"
                 disabled={saving}
               />
-              <button
+              <Button
+                variant="secondary"
                 onClick={saveNames}
                 disabled={saving}
-                className="btn-secondary !px-3"
+                className="!px-3"
                 title={isAr ? 'حفظ' : 'Save'}
               >
                 <Check size={16} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
                 onClick={cancelNames}
                 disabled={saving}
-                className="btn-secondary !px-3"
+                className="!px-3"
                 title={isAr ? 'إلغاء' : 'Cancel'}
               >
                 <X size={16} />
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -272,34 +274,37 @@ function NumberRow({
       {/* Right: action buttons — only shown when not editing names */}
       {!editing && (
         <div className="flex flex-wrap gap-2 shrink-0">
-          <button
+          <Button
+            variant="secondary"
             onClick={() => setEditing(true)}
-            className="btn-secondary !px-3 !text-xs"
+            className="!px-3 !text-xs"
             disabled={saving}
           >
             {isAr ? 'تعديل الاسم' : 'Rename'}
-          </button>
+          </Button>
           {!row.is_default && (
-            <button
+            <Button
+              variant="secondary"
               onClick={() => persist({ is_default: true })}
-              className="btn-secondary !px-3 !text-xs"
+              className="!px-3 !text-xs"
               disabled={saving || !row.is_active}
               title={!row.is_active ? (isAr ? 'يجب التفعيل أولاً' : 'Activate first') : undefined}
             >
               <Star size={12} />
               {isAr ? 'اجعله افتراضي' : 'Set default'}
-            </button>
+            </Button>
           )}
-          <button
+          <Button
+            variant="secondary"
             onClick={() => persist({ is_active: !row.is_active, is_default: row.is_active ? false : row.is_default })}
-            className="btn-secondary !px-3 !text-xs"
+            className="!px-3 !text-xs"
             disabled={saving}
           >
             {row.is_active ? <EyeOff size={12} /> : <Eye size={12} />}
             {row.is_active
               ? (isAr ? 'إخفاء' : 'Hide')
               : (isAr ? 'تفعيل' : 'Activate')}
-          </button>
+          </Button>
         </div>
       )}
     </div>
