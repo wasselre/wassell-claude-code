@@ -6,6 +6,7 @@ import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizePhone } from '@/lib/phone';
 import { resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import PhoneInput from '@/pages/Records/components/PhoneInput';
+import Button from '@/components/ui/Button';
 import ClientPicker, { type PickedClient, resolveClientSlugs, recordToPickedClient } from './ClientPicker';
 import TemplatePickerModal from './TemplatePickerModal';
 
@@ -332,13 +333,13 @@ export default function StartChatModal({ onClose }: { onClose: () => void }) {
 
             {/* Footer */}
             <div className="flex gap-2 justify-end pt-1">
-              <button type="button" onClick={onClose} disabled={sending} className="btn-secondary">
+              <Button type="button" variant="secondary" onClick={onClose} disabled={sending}>
                 {isAr ? 'إلغاء' : 'Cancel'}
-              </button>
-              <button type="submit" disabled={!canSend} className="btn-primary inline-flex items-center gap-1.5">
+              </Button>
+              <Button type="submit" variant="primary" disabled={!canSend}>
                 {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 {isAr ? 'إرسال' : 'Send'}
-              </button>
+              </Button>
             </div>
           </form>
         </div>

@@ -9,6 +9,7 @@ import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizeForSearch } from '@/lib/recordSearch';
 import { resolveProjectFacts, type ProjectMessageFacts } from '@/lib/projectMessageFacts';
 import { supabase } from '@/lib/supabase';
+import Button from '@/components/ui/Button';
 import type { AppRecord } from '@/types';
 
 /**
@@ -357,17 +358,13 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
                 {isAr ? `${selectedIds.length} محدد` : `${selectedIds.length} selected`}
               </span>
               <div className="flex gap-2">
-                <button onClick={onClose} className="btn-secondary">
+                <Button variant="secondary" onClick={onClose}>
                   {isAr ? 'إلغاء' : 'Cancel'}
-                </button>
-                <button
-                  onClick={startReview}
-                  disabled={selectedIds.length === 0}
-                  className="btn-primary inline-flex items-center gap-1.5"
-                >
+                </Button>
+                <Button variant="primary" onClick={startReview} disabled={selectedIds.length === 0}>
                   <Sparkles size={14} />
                   {isAr ? `توليد (${selectedIds.length})` : `Generate (${selectedIds.length})`}
-                </button>
+                </Button>
               </div>
             </div>
           </>
@@ -401,13 +398,13 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
                     {isAr ? `${savedCount} محفوظ` : `${savedCount} saved`}
                   </span>
                 )}
-                <button onClick={saveAll} disabled={pendingSavable === 0} className="btn-secondary inline-flex items-center gap-1.5">
+                <Button variant="secondary" onClick={saveAll} disabled={pendingSavable === 0}>
                   <Save size={14} />
                   {isAr ? `حفظ الكل (${pendingSavable})` : `Save all (${pendingSavable})`}
-                </button>
-                <button onClick={onClose} className="btn-primary">
+                </Button>
+                <Button variant="primary" onClick={onClose}>
                   {isAr ? 'تم' : 'Done'}
-                </button>
+                </Button>
               </div>
             </div>
           </>
@@ -517,14 +514,15 @@ function ReviewCard({
             <SkipForward size={13} />
             {isAr ? 'تخطٍ' : 'Skip'}
           </button>
-          <button
+          <Button
+            variant="primary"
             onClick={onSave}
             disabled={generating || item.status === 'error' || (!item.bodyAr.trim() && !item.bodyEn.trim())}
-            className="btn-primary !py-1 !px-3 !text-xs inline-flex items-center gap-1"
+            className="!py-1 !px-3 !text-xs"
           >
             <Save size={13} />
             {isAr ? 'حفظ' : 'Save'}
-          </button>
+          </Button>
         </div>
       )}
     </div>
