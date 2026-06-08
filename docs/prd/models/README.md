@@ -10,10 +10,10 @@
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-06-08 |
 | [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 5 | 30 | no | 2026-06-01 |
-| [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 9 | no | 2026-05-31 |
-| [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 10 | yes | 2026-06-08 |
+| [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 9 | no | 2026-06-08 |
+| [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 11 | yes | 2026-06-08 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 12 | yes | 2026-06-08 |
-| [Clients](clients.md) | `clients` | JSONB | New Group | 2 | 18 | no | 2026-05-18 |
+| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 20 | no | 2026-06-08 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
 | [Contacts](contacts.md) | `contacts` | JSONB | New Group | 1 | 3 | no | 2026-06-08 |
 | [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-06-08 |
@@ -32,4 +32,4 @@
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 2 | 5 | no | 2026-06-08 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Units](units.md) | `units` | JSONB | Projects | 1 | 31 | no | 2026-06-08 |
-| [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 7 | no | 2026-06-08 |
+| [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 8 | no | 2026-06-08 |

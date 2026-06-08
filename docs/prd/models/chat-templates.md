@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **10**
+- Fields: **11**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -39,6 +39,7 @@
 | `media_file_id` | Haberchat file id / معرّف الملف | Text | no | half | no |  |
 | `media_mime` | MIME type / نوع MIME | Text | no | half | no |  |
 | `media_size` | File size (bytes) / حجم الملف | Number | no | half | no |  |
+| `project_id` | Project / المشروع | Lookup | no | half | yes | → All Projects |
 
 **Field details:**
 
@@ -51,3 +52,7 @@
   - API value `video` → "Video" / "فيديو"
   - API value `audio` → "Audio" / "صوت"
   - API value `document` → "Document" / "مستند"
+- **Project / المشروع** (`project_id`, type `lookup`):
+  - target model: All Projects
+  - shows field: `project_name`
+  - multiple: no

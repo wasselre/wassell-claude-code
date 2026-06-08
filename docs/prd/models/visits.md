@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **7**
+- Fields: **8**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -29,11 +29,12 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `client_id` | Client / العميل | Lookup | yes | half | yes | → Clients |
+| `client_id` | Client / العميل | Lookup | no | half | yes | → Clients |
 | `phone` | Phone / رقم الجوال | Phone | no | half | yes |  |
 | `name` | Name / الاسم | Text | no | half | yes |  |
 | `scheduled_datetime` | Scheduled Date & Time / موعد الزيارة | Date & time | no | half | yes |  |
 | `project_id` | Project / المشروع | Lookup | no | half | yes | → Our Projects |
+| `units` | Units / الوحدات | unit_picker | no | half | yes |  |
 | `sales_representative` | Sales Representative / ممثل المبيعات | Assignee | no | half | yes | any user |
 | `visit_notes` | Visit Notes / ملاحظات الزيارة | Notes | no | half | yes |  |
 
@@ -41,10 +42,10 @@
 
 - **Client / العميل** (`client_id`, type `lookup`):
   - target model: Clients
-  - shows field: `client_code`
-  - multiple: no
+  - shows field: `client_id`
+  - multiple: no · max in dropdown: 20
 - **Phone / رقم الجوال** (`phone`, type `phone`):
-  - auto-links Client (`client_id`) by matching `phone_number`
+  - auto-links Client (`client_id`) by matching `phone_number` (creates if missing)
   - auto-fills from Client (`client_id`) → `phone_number`
   - default country code `+966`
 - **Name / الاسم** (`name`, type `text`):

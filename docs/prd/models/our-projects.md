@@ -24,7 +24,7 @@
 - Badge: `22f55ec2-dba8-4d28-b97d-e2be4df2b60f` (unknown field)
 
 ## Maps view
-- Location URL field: `be1d58a4-a33e-4509-9b08-96aa6769b2f8` (unknown field)
+- Location URL field: `0cf73ff9-fb05-452f-9d5b-30d2d9c3c4b2::project_location` (unknown field)
 - Pin label field: Project (`project`)
 - Click action: popup
 

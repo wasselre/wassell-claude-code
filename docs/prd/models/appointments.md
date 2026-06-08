@@ -5,7 +5,7 @@
 # Model: Appointments / المواعيد  `appointments`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-05-31
+**Last updated (from DB):** 2026-06-08
 **Model id:** `b032a675-6237-4436-9783-a1a253855f74`
 **Storage:** unified records (JSONB)
 **Group:** New Group

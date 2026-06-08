@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-05-18
+**Last updated (from DB):** 2026-06-08
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -13,10 +13,10 @@
 **Icon:** `users`   ·   **Color:** `#B8734F`
 
 ## Overview
-- Sections: **2** (2 base, 0 non-base)
-- Fields: **18**
+- Sections: **4** (2 base, 2 non-base)
+- Fields: **20**
 - Section-selector field: none
-- Duplicate-check field: none
+- Duplicate-check field: Mobile Number (`phone_number`)
 - Custom buttons: 0
 
 ## Card view
@@ -592,3 +592,15 @@
   - API value `مصعد` → "Elevator" / "مصعد"
 - **Budget / الميزانية** (`budget`, type `range`):
   - 50000 to 5000000 step 50000 SAR
+
+### 3. WhatsApp History / سجل واتساب  _(color #25D366)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `whatsapp_history` | WhatsApp History / سجل واتساب | WhatsApp history | no | full | no |  |
+
+### 4. Calls / سجل المكالمات  _(color #3B82F6)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `call_history` | Call History / سجل المكالمات | Call history | no | full | no |  |
