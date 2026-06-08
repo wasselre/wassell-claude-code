@@ -1,6 +1,7 @@
 import { createPortal } from 'react-dom';
 import { Copy, Pencil, ArrowUpRight } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import Button from '@/components/ui/Button';
 import type { AppModel, ModelField } from '@/types';
 import type { DuplicateMatch } from '../utils/findDuplicateRecord';
 
@@ -58,7 +59,7 @@ export default function DuplicateWarningModal({ model, match, onEdit, onOpenExis
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-sand/20">
-          <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+          <div className="w-9 h-9 rounded-lg bg-copper/10 text-copper flex items-center justify-center shrink-0">
             <Copy size={16} />
           </div>
           <div className="min-w-0">
@@ -103,16 +104,18 @@ export default function DuplicateWarningModal({ model, match, onEdit, onOpenExis
           </p>
         </div>
 
-        {/* Footer — two ways out, never a silent "create anyway" */}
+        {/* Footer — two ways out, never a silent "create anyway".
+            Uses the shared brand Button (copper primary) — NOT the undefined
+            `btn-primary`/`btn-secondary` classes, which render unstyled. */}
         <div className="flex gap-2 justify-end px-5 py-4 border-t border-sand/20">
-          <button type="button" onClick={onEdit} className="btn-secondary inline-flex items-center gap-1.5">
+          <Button variant="secondary" onClick={onEdit}>
             <Pencil size={14} />
             {isAr ? 'تعديل القيمة' : 'Edit value'}
-          </button>
-          <button type="button" onClick={onOpenExisting} className="btn-primary inline-flex items-center gap-1.5">
+          </Button>
+          <Button variant="primary" onClick={onOpenExisting}>
             <ArrowUpRight size={14} />
             {isAr ? 'فتح السجل الموجود' : 'Open existing record'}
-          </button>
+          </Button>
         </div>
       </div>
     </div>,
