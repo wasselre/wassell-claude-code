@@ -26,6 +26,22 @@ Agent(subagent_type="prd-updater", prompt="Refresh PRDs after <describe the chan
 
 **PRD index:** `docs/prd/README.md`. **PRD template:** `docs/prd/_TEMPLATE.md`.
 
+## Generated model & workflow PRDs (added 2026-06-08)
+
+Unfrozen models and workflows live **only as JSONB rows in Supabase** — created at runtime via the in-app Model Builder + Workflow editor — so they never appear in code and Claude is otherwise blind to them in a fresh session. To close that gap, `scripts/sync-model-workflow-prds.mjs` reads the live DB and writes one deterministic markdown PRD per model and per workflow:
+
+- `docs/prd/models/<model-name-slug>.md` — every section + field (slug/API name, type, required, width, dropdown options with their API `value` + colors, lookups → target model + display field, formulas, ranges, auto-IDs, mirrors, computed rollups, `visible_when`, custom buttons).
+- `docs/prd/workflows/<label-slug>-<id8>.md` — trigger (plain English), branches (IF / ELSE IF / OTHERWISE, AND/OR), conditions, and every action with fully resolved field mappings. Handles both the branched and the legacy flat shape.
+- A generated `README.md` index in each dir.
+
+**Rules — never violate:**
+1. **These two dirs are AUTO-GENERATED — never hand-edit.** Every file carries a banner saying so; the next `npm run sync:prds` overwrites them and prunes files for deleted models/workflows. (The hand-written numbered PRDs in `docs/prd/` root are a separate, human-owned surface — the `prd-reminder` hook and `prd-updater` subagent do NOT touch the generated dirs.)
+2. **Run `npm run sync:prds` at the start of any model/workflow task** to refresh from the live DB. A `SessionStart` hook in `.claude/settings.json` runs it (`--hook`) automatically each session — best-effort: it quietly skips (exit 0) if Supabase env is absent and never blocks the session.
+3. **The git diff of these dirs is the record of what the user changed in-app** — that is the "what edit happened" trail.
+4. Pure templating, no LLM. Reads `models`, `workflows`, `model_groups`, `workflow_groups`, `webhook_slugs`, `roles`, `profiles`. Prefers `SUPABASE_SERVICE_ROLE_KEY` (bypasses RLS so no row is hidden); falls back to anon. Auto-loads `.env.local`/`.env` (no `dotenv` dependency).
+5. Unresolved references render VISIBLE — `(unknown field)`, `(unknown model)`, `(role)`. These flag **real stale references in the data** (e.g. a deleted role, an orphaned card-title field, the follow-up-type UUID drift), not script bugs.
+6. **Don't put secrets in workflow static values** — they'd be rendered into the committed PRD. (Secrets live in server-side env; workflow actions reference `{field_slug}` tokens, not literal keys.)
+
 ## Tech Stack
 - **Frontend:** React 18 + TypeScript + Vite
 - **Styling:** Tailwind CSS v3 (RTL support via `dir` attribute)

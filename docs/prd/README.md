@@ -35,6 +35,15 @@ This folder contains the **living source of truth** for what every section of th
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 
+## Auto-generated PRDs (models & workflows)
+
+Two subfolders are **machine-generated from the live Supabase DB**, not hand-written:
+
+- **[models/](models/)** — one PRD per model: every section, field, field type, dropdown option (with its API `value`), lookup, formula, range, and computed rollup. Includes unfrozen models that exist only as JSONB rows and never appear in code.
+- **[workflows/](workflows/)** — one PRD per workflow: trigger, branches, conditions, and every action with its resolved field mappings.
+
+Regenerate with `npm run sync:prds` (reads the live DB; a `SessionStart` hook also runs it each session). **Never hand-edit these** — they're overwritten on the next run and files for deleted models/workflows are pruned. The git diff of these folders is the record of what changed in the app. See `CLAUDE.md` → "Generated model & workflow PRDs" for the full contract.
+
 ## Decision rule: when to add a new PRD vs. extend an existing one
 
 When you add a new feature:
