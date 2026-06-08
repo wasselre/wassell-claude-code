@@ -3,11 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import {
   ArrowLeft, ArrowRight, Save, Trash2, Paperclip, X, Loader2,
-  Image as ImageIcon, Video, Mic, FileText, MessageSquare,
+  Image as ImageIcon, Video, Mic, FileText, MessageSquare, Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile } from '@/lib/haberchat/client';
 import Button from '@/components/ui/Button';
+import ProjectMessageGeneratorModal from './components/ProjectMessageGeneratorModal';
 import type { AppRecord } from '@/types';
 
 /**
@@ -51,6 +52,7 @@ export default function ChatTemplateFormPage() {
 
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showGenerator, setShowGenerator] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
@@ -177,6 +179,7 @@ export default function ChatTemplateFormPage() {
 
   return (
     <div className="p-6 md:p-8 max-w-3xl mx-auto">
+      {showGenerator && <ProjectMessageGeneratorModal onClose={() => setShowGenerator(false)} />}
       {/* Back */}
       <button
         onClick={() => navigate('/model/chat_templates')}
@@ -190,7 +193,7 @@ export default function ChatTemplateFormPage() {
         <div className="w-12 h-12 rounded-2xl bg-green-500/10 text-green-700 flex items-center justify-center">
           <MessageSquare size={22} />
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold text-chocolate">
             {isNew ? (isAr ? 'قالب جديد' : 'New template') : name || (isAr ? 'تعديل قالب' : 'Edit template')}
           </h1>
@@ -198,6 +201,13 @@ export default function ChatTemplateFormPage() {
             {isAr ? 'يُستخدم من داخل المحادثات لإرسال رسائل جاهزة مع أو بدون مرفق.' : 'Used inside conversations to send prewritten messages with or without an attachment.'}
           </p>
         </div>
+        <Button
+          onClick={() => setShowGenerator(true)}
+          className="!bg-copper/10 !text-copper hover:!bg-copper/20 !border-copper/20 shrink-0"
+        >
+          <Sparkles size={15} />
+          {isAr ? 'توليد بالذكاء الاصطناعي' : 'Generate with AI'}
+        </Button>
       </div>
 
       <div className="card p-5 space-y-4">

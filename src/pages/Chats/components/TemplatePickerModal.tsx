@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { X, Search, MessageSquare, Image as ImageIcon, Video, Mic, FileText, Paperclip } from 'lucide-react';
+import { X, Search, MessageSquare, Image as ImageIcon, Video, Mic, FileText, Paperclip, Globe } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 
@@ -39,6 +39,9 @@ export default function TemplatePickerModal({
   const [search, setSearch] = useState('');
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [langFilter, setLangFilter] = useState<'all' | 'ar' | 'en' | 'both'>('all');
+  // When a template has BOTH ar + en bodies, picking it first asks which
+  // language to insert (this row id expands to a language chooser).
+  const [langChoiceId, setLangChoiceId] = useState<string | null>(null);
 
   // Derive the tag universe so we can render a filter row.
   const allTags = useMemo(() => {
@@ -72,21 +75,30 @@ export default function TemplatePickerModal({
     });
   }, [templates, search, tagFilter, langFilter]);
 
-  const handlePick = (t: AppRecord) => {
+  // Emit the pick with a specific body (media carried along).
+  const pickWithBody = (t: AppRecord, body: string) => {
     const d = t.data as Record<string, unknown>;
-    // Pick whichever body best matches the current UI language. Fall
-    // back to the other one if the preferred body is empty.
-    const preferredBody = isAr
-      ? (d.body_ar as string | null) || (d.body_en as string | null) || ''
-      : (d.body_en as string | null) || (d.body_ar as string | null) || '';
     onPick({
-      body: preferredBody,
+      body,
       mediaFileId: (d.media_file_id as string | null) || null,
       mediaMime: (d.media_mime as string | null) || null,
       mediaSize: typeof d.media_size === 'number' ? (d.media_size as number) : null,
       mediaFilename: (d.media_filename as string | null) || null,
       mediaKind: (d.media_kind as string | null) || null,
     });
+  };
+
+  const handlePick = (t: AppRecord) => {
+    const d = t.data as Record<string, unknown>;
+    const ar = ((d.body_ar as string | null) ?? '').trim();
+    const en = ((d.body_en as string | null) ?? '').trim();
+    // Both languages present → ask which one to insert (the row expands to a
+    // language chooser). Single-language templates insert directly.
+    if (ar && en) {
+      setLangChoiceId(t.id);
+      return;
+    }
+    pickWithBody(t, ar || en);
   };
 
   return (
@@ -193,8 +205,8 @@ export default function TemplatePickerModal({
             {visible.map((t) => {
               const d = t.data as Record<string, unknown>;
               const name = (d.name as string | null) ?? '';
-              const bodyAr = (d.body_ar as string | null) ?? '';
-              const bodyEn = (d.body_en as string | null) ?? '';
+              const bodyAr = ((d.body_ar as string | null) ?? '').trim();
+              const bodyEn = ((d.body_en as string | null) ?? '').trim();
               const preview = isAr
                 ? (bodyAr || bodyEn)
                 : (bodyEn || bodyAr);
@@ -206,6 +218,47 @@ export default function TemplatePickerModal({
                 : mediaKind === 'video' ? Video
                 : mediaKind === 'audio' ? Mic
                 : FileText;
+
+              // Both bodies present + this row chosen → show the language picker
+              // instead of the normal row (the user selects ar/en to insert).
+              if (langChoiceId === t.id && bodyAr && bodyEn) {
+                return (
+                  <div key={t.id} className="rounded-lg border border-copper/40 bg-copper/5 p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Globe size={14} className="text-copper shrink-0" />
+                      <span className="font-bold text-sm text-charcoal flex-1 truncate">{name || (isAr ? '(بدون اسم)' : '(unnamed)')}</span>
+                      <button
+                        type="button"
+                        onClick={() => setLangChoiceId(null)}
+                        className="text-charcoal/40 hover:text-charcoal"
+                        aria-label={isAr ? 'رجوع' : 'Back'}
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                    <p className="text-xs text-charcoal/60 mb-2">
+                      {isAr ? 'اختر اللغة المراد إدراجها:' : 'Choose the language to insert:'}
+                    </p>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => pickWithBody(t, bodyAr)}
+                        className="flex-1 rounded-lg border border-sand/40 hover:border-copper/50 hover:bg-white px-3 py-2 text-sm font-medium text-charcoal transition-colors"
+                      >
+                        {isAr ? 'العربية' : 'Arabic'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => pickWithBody(t, bodyEn)}
+                        className="flex-1 rounded-lg border border-sand/40 hover:border-copper/50 hover:bg-white px-3 py-2 text-sm font-medium text-charcoal transition-colors"
+                      >
+                        {isAr ? 'الإنجليزية' : 'English'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+
               return (
                 <button
                   key={t.id}
@@ -220,6 +273,12 @@ export default function TemplatePickerModal({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-bold text-sm text-charcoal">{name || (isAr ? '(بدون اسم)' : '(unnamed)')}</span>
+                      {bodyAr && bodyEn && (
+                        <span className="inline-flex items-center gap-1 text-[10px] text-copper bg-copper/10 rounded-full px-1.5 py-0.5">
+                          <Globe size={9} />
+                          {isAr ? 'لغتان' : 'AR · EN'}
+                        </span>
+                      )}
                       {hasMedia && (
                         <span className="inline-flex items-center gap-1 text-[10px] text-copper bg-copper/10 rounded-full px-1.5 py-0.5">
                           <Paperclip size={9} />

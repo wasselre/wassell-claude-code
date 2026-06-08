@@ -3568,6 +3568,22 @@ const chatTemplatesModel: AppModel = {
             width: 'half',
             show_in_table: false,
           },
+          // Set by the AI Project Message generator — links a generated
+          // template back to the master all_projects record it was built from.
+          {
+            id: uuid(),
+            name: 'project_id',
+            label_ar: 'المشروع',
+            label_en: 'Project',
+            type: 'lookup',
+            required: false,
+            order: 10,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            lookup_model_id: allProjectsId,
+            lookup_display_field: 'project_name',
+          },
         ],
       },
     ],
