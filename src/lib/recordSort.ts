@@ -110,6 +110,22 @@ export function buildSortKey(field: ModelField, value: unknown, ctx: SortCtx): n
       // Sort by entry count.
       return Array.isArray(value) ? value.length : 0;
 
+    case 'unit_picker': {
+      // Sort by the linked units' codes (same text the cell shows), not UUIDs.
+      const unitModelId = field.unit_picker_unit_model_id ?? models.find((m) => m.name === 'units')?.id ?? null;
+      if (!unitModelId) return null;
+      const units = allRecords[unitModelId] ?? [];
+      const ids = Array.isArray(value) ? (value as unknown[]) : [value];
+      const labels = ids
+        .map((id) => {
+          const rec = units.find((r) => r.id === id);
+          const dv = rec?.data['unit_code'] ?? rec?.data['unit_number'];
+          return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : '';
+        })
+        .filter(Boolean);
+      return labels.length ? labels.join(', ') : null;
+    }
+
     default:
       // text, textarea, email, phone, url, auto_id, multi_link, etc. — natural
       // string compare (numeric:true on the comparator gives "PRJ-2" < "PRJ-10").

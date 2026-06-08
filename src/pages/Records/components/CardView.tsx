@@ -41,6 +41,24 @@ function resolveFieldDisplay(
     }
     return resolveOne(raw) ?? '—';
   }
+  if (field.type === 'unit_picker') {
+    const unitModelId = field.unit_picker_unit_model_id ?? allModels.find((m) => m.name === 'units')?.id ?? null;
+    const unitRecords = unitModelId ? allRecords[unitModelId] ?? [] : [];
+    const raw = record.data[field.name];
+    const ids = Array.isArray(raw)
+      ? (raw as unknown[]).filter((v): v is string => typeof v === 'string')
+      : typeof raw === 'string' && raw
+        ? [raw]
+        : [];
+    const labels = ids
+      .map((id) => {
+        const r = unitRecords.find((x) => x.id === id);
+        const v = r?.data['unit_code'] ?? r?.data['unit_number'];
+        return v !== undefined && v !== null && v !== '' ? String(v) : null;
+      })
+      .filter((x): x is string => !!x);
+    return labels.length > 0 ? labels.join(isAr ? '، ' : ', ') : '—';
+  }
   return formatScalar(field, record.data[field.name], isAr);
 }
 

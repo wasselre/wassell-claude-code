@@ -37,6 +37,8 @@ import UnitsTabPane from './components/UnitsTabPane';
 import { Users, Home } from 'lucide-react';
 import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
+import { useFieldDefaults } from './hooks/useFieldDefaults';
+import { createMissingLinkedRecords } from './utils/createMissingLinkedRecords';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
 import { applyFollowupAutoStamp } from './utils/followupAutoStamp';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
@@ -158,6 +160,8 @@ export default function RecordFormPage() {
   // unconditionally for every record form.
   useAutoLink({ model, formData, setFormData });
   useAutoFill({ model, formData, setFormData });
+  // Seed dynamic defaults (current user / now) into NEW records on mount.
+  useFieldDefaults({ model, isNew, formData, setFormData });
 
   // Prev/next navigation uses the filtered+sorted list published by
   // RecordListPage. If no nav context is available (e.g. deep-linked into a
@@ -854,11 +858,30 @@ export default function RecordFormPage() {
       // intent and the retry queue will replay on the next reload.
     }
 
+    // 3b. Save-time linked-record creation. For visits this turns a typed
+    //     phone + name with no matching client into a brand-new client, linked
+    //     via client_id — but only now, at commit, so a half-typed phone never
+    //     spawns a stray client (createMissingLinkedRecords + the phone field's
+    //     auto_link_create_timing:'on_save'). Runs after validation so we never
+    //     create for an invalid form, and before the parent save so the link is
+    //     attached in a single write.
+    const dataToSave: Record<string, unknown> = { ...formData };
+    const { patch: linkedPatch, created: createdLinked } = await createMissingLinkedRecords({
+      model,
+      formData: dataToSave,
+      records,
+      saveRecord,
+    });
+    if (Object.keys(linkedPatch).length > 0) {
+      Object.assign(dataToSave, linkedPatch);
+      setFormData((prev) => ({ ...prev, ...linkedPatch }));
+    }
+
     // 4. Save this record with the form-mount version snapshot (audit H5).
     const record = {
       id: existingRecord?.id ?? uuid(),
       model_id: model.id,
-      data: formData,
+      data: dataToSave,
       created_at: existingRecord?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -874,6 +897,13 @@ export default function RecordFormPage() {
       return false;
     }
     setIsDirty(false);
+    // Announce any linked records created during this save (e.g. a new client
+    // auto-created from a typed phone+name). One popup per created record.
+    for (const c of createdLinked) {
+      const tm = models.find((m) => m.id === c.modelId);
+      const tmLabel = tm ? (isAr ? tm.label_ar : tm.label_en) : '';
+      addToast(t('toast.linked_record_created', { model: tmLabel, name: c.label }), 'success');
+    }
     if (result.status === 'queued') {
       addToast(
         isAr

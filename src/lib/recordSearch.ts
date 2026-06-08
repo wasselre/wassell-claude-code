@@ -176,6 +176,22 @@ function collectFieldSearchParts(
       for (const u of arr) if (typeof u !== 'object') out.push(String(u));
       return;
     }
+    case 'unit_picker': {
+      // Stored as unit id(s); index each unit's code/number so a search for a
+      // unit code matches the parent record.
+      const unitModelId = field.unit_picker_unit_model_id ?? ctx.models.find((m) => m.name === 'units')?.id ?? null;
+      if (!unitModelId) return;
+      const targets = ctx.records[unitModelId] ?? [];
+      const ids = Array.isArray(v) ? v : [v];
+      for (const id of ids) {
+        if (typeof id !== 'string') continue;
+        const target = targets.find((r) => r.id === id);
+        if (!target) continue;
+        const dv = target.data['unit_code'] ?? target.data['unit_number'];
+        if (dv !== null && dv !== undefined && dv !== '') out.push(String(dv));
+      }
+      return;
+    }
     default: {
       // text / email / phone / url / textarea / number / currency / formula /
       // auto_id / date / datetime / assignee / etc. — stringify scalars; skip

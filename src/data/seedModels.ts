@@ -192,6 +192,9 @@ const visitsPhoneFieldId = uuid();
 const visitsNameFieldId = uuid();
 const visitsScheduledFieldId = uuid();
 const visitsProjectFieldId = uuid();
+const visitsUnitsFieldId = uuid();
+const visitsSalesRepFieldId = uuid();
+const visitsNotesFieldId = uuid();
 
 // ============================================================
 // DEVELOPERS MODEL (new 2026-04-18)
@@ -2384,8 +2387,11 @@ const visitsModel: AppModel = {
             width: 'half',
             show_in_table: true,
             lookup_model_id: clientsId,
-            // Show the client's auto-id (CLT-0001 …) in the picker, not the name.
-            lookup_display_field: 'client_code',
+            // Show the client's auto-id (CLT-0001 …) in the picker + table, not
+            // the record UUID. The clients auto-id field's slug is `client_id`
+            // (an earlier value of 'client_code' did not exist on the clients
+            // model, so the lookup fell back to a truncated UUID).
+            lookup_display_field: 'client_id',
           },
           {
             id: visitsPhoneFieldId,
@@ -2404,6 +2410,14 @@ const visitsModel: AppModel = {
             auto_link_lookup_field_id: visitsClientFieldId,
             auto_link_target_field_name: 'phone_number',
             auto_link_normalize: 'phone',
+            // Create-if-missing, deferred to Save: a typed phone that matches no
+            // client spawns a NEW client (with phone + the typed name) only when
+            // the visit is committed — never mid-typing. See
+            // createMissingLinkedRecords + RecordFormPage.handleSave.
+            auto_link_create_if_missing: true,
+            auto_link_create_timing: 'on_save',
+            auto_link_create_min_length: 9,
+            auto_link_create_copy_fields: [{ from: 'name', to: 'client_name' }],
             // Forward auto-fill: when the user picks a client_id directly,
             // pull the client's phone_number into this editable field.
             auto_fill_from_lookup_field_id: visitsClientFieldId,
@@ -2434,6 +2448,8 @@ const visitsModel: AppModel = {
             section_id: visitsBasicSectionId,
             width: 'half',
             show_in_table: true,
+            // Default a new visit's date/time to now (seeded by useFieldDefaults).
+            default_dynamic: 'now',
           },
           {
             id: visitsProjectFieldId,
@@ -2448,6 +2464,50 @@ const visitsModel: AppModel = {
             show_in_table: true,
             lookup_model_id: ourProjectsId,
             lookup_display_field: 'project_name',
+          },
+          {
+            id: visitsUnitsFieldId,
+            name: 'units',
+            label_ar: 'الوحدات',
+            label_en: 'Units',
+            type: 'unit_picker',
+            required: false,
+            order: 5,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            is_multi: true,
+            // Cascading project → unit picker. The project step is a FILTER only
+            // (sourced from All Projects, which own the units); the stored value
+            // is the selected unit id(s). Units render as cards (units card_config).
+            unit_picker_unit_model_id: unitsId,
+            unit_picker_project_link_field: 'project_id',
+          },
+          {
+            id: visitsSalesRepFieldId,
+            name: 'sales_representative',
+            label_ar: 'ممثل المبيعات',
+            label_en: 'Sales Representative',
+            type: 'assignee',
+            required: false,
+            order: 6,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            show_in_table: true,
+            // Default a new visit's rep to the signed-in user (useFieldDefaults).
+            default_dynamic: 'current_user',
+          },
+          {
+            id: visitsNotesFieldId,
+            name: 'visit_notes',
+            label_ar: 'ملاحظات الزيارة',
+            label_en: 'Visit Notes',
+            type: 'notes',
+            required: false,
+            order: 7,
+            section_id: visitsBasicSectionId,
+            width: 'full',
+            show_in_table: true,
           },
         ],
       },

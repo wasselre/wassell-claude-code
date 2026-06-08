@@ -26,7 +26,7 @@ import type {
 
 const FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'notes', 'number', 'range', 'email', 'phone', 'date', 'datetime',
-  'currency', 'url', 'multi_link', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'mirror', 'section_mirror', 'section_selector', 'assignee',
+  'currency', 'url', 'multi_link', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'unit_picker', 'mirror', 'section_mirror', 'section_selector', 'assignee',
   'auto_id', 'formula', 'table',
   'image', 'multi_image', 'file', 'multi_file', 'attachment',
   'whatsapp_history', 'call_history',
@@ -422,8 +422,26 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       option_groups: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector') && optionGroups.length > 0 ? optionGroups : undefined,
       lookup_model_id: type === 'lookup' ? lookupModelId : null,
       lookup_display_field: type === 'lookup' ? lookupDisplayField : null,
-      is_multi: type === 'lookup' ? isMulti : undefined,
+      is_multi: type === 'lookup' || type === 'unit_picker' ? isMulti : undefined,
       lookup_max_records: type === 'lookup' ? lookupMaxRecords : undefined,
+      // Carry-through for advanced props that have no dedicated Builder UI yet
+      // (they're configured via the seed/migrations). Sourcing them from the
+      // original `field` means editing a field in the Builder never silently
+      // drops them — e.g. the visits phone/name auto-link + auto-fill wiring,
+      // the unit-picker config, or a field's dynamic default. New fields (no
+      // `field`) leave these undefined, which serializes away cleanly.
+      auto_link_lookup_field_id: field?.auto_link_lookup_field_id,
+      auto_link_target_field_name: field?.auto_link_target_field_name,
+      auto_link_normalize: field?.auto_link_normalize,
+      auto_link_create_if_missing: field?.auto_link_create_if_missing,
+      auto_link_create_min_length: field?.auto_link_create_min_length,
+      auto_link_create_timing: field?.auto_link_create_timing,
+      auto_link_create_copy_fields: field?.auto_link_create_copy_fields,
+      auto_fill_from_lookup_field_id: field?.auto_fill_from_lookup_field_id,
+      auto_fill_source_field_name: field?.auto_fill_source_field_name,
+      default_dynamic: field?.default_dynamic,
+      unit_picker_unit_model_id: field?.unit_picker_unit_model_id,
+      unit_picker_project_link_field: field?.unit_picker_project_link_field,
       assignee_role_ids: type === 'assignee' ? (assigneeFilterMode === 'restricted' ? assigneeRoleIds : []) : undefined,
       assignee_profile_ids: type === 'assignee' ? (assigneeFilterMode === 'restricted' ? assigneeProfileIds : []) : undefined,
       assignee_user_filter_mode: type === 'assignee' ? assigneeFilterMode : undefined,

@@ -1,7 +1,7 @@
 # PRD: Clients (Client 360 view)
 
 **Status:** Live
-**Last updated:** 2026-05-31
+**Last updated:** 2026-06-08 (**Clients auto-created from the Visits form (new):** logging a visit for a phone number that matches no existing client now creates a new client at **Save** (carrying the phone + the typed name → `phone_number` / `client_name`), links it to the visit, and shows a confirmation popup. Driven by `createMissingLinkedRecords` from the visits model's phone-field config — see record-management.md "Visits model".) | 2026-05-31
 **Related PRDs:** [record-management.md](record-management.md), [chats.md](chats.md), [calling.md](calling.md), [model-builder.md](model-builder.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)

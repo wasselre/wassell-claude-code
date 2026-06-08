@@ -169,7 +169,14 @@ export function useAutoLink({ model, formData, setFormData }: UseAutoLinkArgs): 
             // already typed something that exactly matches the last
             // value we auto-created for — that's the debounce re-firing
             // on an unrelated formData change, not a new search.
-            if (!f.auto_link_create_if_missing) return;
+            //
+            // `auto_link_create_timing:'on_save'` defers creation to the
+            // form Save commit (createMissingLinkedRecords) instead of
+            // creating while typing — the FIND path above still runs, so
+            // an existing record is still linked live; only the CREATE is
+            // held back. Used by visits so a half-typed phone never spawns
+            // a stray client.
+            if (!f.auto_link_create_if_missing || f.auto_link_create_timing === 'on_save') return;
             const minLen = f.auto_link_create_min_length ?? 0;
             if (needle.length < minLen) return;
             if (lastCreatedFor.current.get(f.id) === needle) return;

@@ -79,6 +79,7 @@ const resources = {
 
       // Toasts
       'toast.saved': 'تم الحفظ بنجاح',
+      'toast.linked_record_created': 'تم إنشاء سجل جديد في {{model}}: {{name}}',
       'toast.deleted': 'تم الحذف',
       'toast.link_copied': 'تم نسخ الرابط',
       'toast.error': 'حدث خطأ',
@@ -171,6 +172,7 @@ const resources = {
       'fields.type.dropdown': 'قائمة منسدلة',
       'fields.type.multiselect': 'اختيار متعدد',
       'fields.type.lookup': 'ربط',
+      'fields.type.unit_picker': 'الوحدات (مشروع ← وحدة)',
       'fields.type.mirror': 'مرآة',
       'fields.type.section_mirror': 'مرآة قسم',
       'fields.type.section_selector': 'محدد الأقسام',
@@ -776,6 +778,7 @@ const resources = {
 
       // Toasts
       'toast.saved': 'Saved successfully',
+      'toast.linked_record_created': 'New entry created in {{model}}: {{name}}',
       'toast.deleted': 'Deleted',
       'toast.link_copied': 'Link copied',
       'toast.error': 'An error occurred',
@@ -868,6 +871,7 @@ const resources = {
       'fields.type.dropdown': 'Dropdown',
       'fields.type.multiselect': 'Multi-Select',
       'fields.type.lookup': 'Lookup',
+      'fields.type.unit_picker': 'Units (project → unit)',
       'fields.type.mirror': 'Mirror',
       'fields.type.section_mirror': 'Section Mirror',
       'fields.type.section_selector': 'Section Selector',

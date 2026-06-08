@@ -13,6 +13,7 @@ export type FieldType =
   | 'dropdown'
   | 'multiselect'
   | 'lookup'
+  | 'unit_picker'
   | 'mirror'
   | 'section_mirror'
   | 'section_selector'
@@ -144,6 +145,14 @@ export interface ModelField {
   lookup_display_field?: string | null;
   is_multi?: boolean; // When type: 'lookup', allows picking multiple records (value becomes string[]).
   lookup_max_records?: number; // When type: 'lookup', caps how many records show in the combobox dropdown (default 20).
+  // Unit picker (type: 'unit_picker'). A cascading project→unit selector: the
+  // user first picks a project (filter only, NOT stored) from the project model
+  // that owns units, then picks one or more units rendered as cards (the unit
+  // model's card_config). Stored value is the unit id(s) — a string when single,
+  // string[] when is_multi. The project model is derived from the link field's
+  // lookup_model_id, so only these two need configuring:
+  unit_picker_unit_model_id?: string | null; // model holding the units (default: the `units` model)
+  unit_picker_project_link_field?: string; // slug on the unit model whose lookup points at the project (default 'project_id')
   assignee_role_ids?: string[];
   assignee_profile_ids?: string[];
   // 'all'        — any active user is eligible (role/profile lists ignored)
@@ -281,6 +290,20 @@ export interface ModelField {
   // Absent / 0 = no guard (any non-empty value triggers create — risky).
   auto_link_create_if_missing?: boolean;
   auto_link_create_min_length?: number;
+  // Controls WHEN the auto-create fires. 'while_typing' (default, the
+  // appointments behavior) creates the missing record during the debounced
+  // search in useAutoLink. 'on_save' defers creation to the form Save commit
+  // (see createMissingLinkedRecords) so a record is only created when the user
+  // actually commits — used by the visits model so a half-typed phone never
+  // spawns a stray client.
+  auto_link_create_timing?: 'while_typing' | 'on_save';
+  // Extra fields to copy from the CURRENT record into the newly-created target
+  // record (beyond auto_link_target_field_name, which always receives the
+  // matched value). Each entry maps a source field slug on THIS model → a
+  // target field slug on the lookup model. Visits uses
+  // [{ from: 'name', to: 'client_name' }] so an auto-created client captures
+  // the typed visitor name, not just the phone number.
+  auto_link_create_copy_fields?: { from: string; to: string }[];
   // Forward auto-fill primitive. When the referenced lookup field's value
   // changes, the form copies the linked record's `auto_fill_source_field_name`
   // value into THIS field. Editable afterwards — user overrides survive
@@ -290,6 +313,14 @@ export interface ModelField {
   // at render time; auto-fill writes once on change and the user can edit.
   auto_fill_from_lookup_field_id?: string | null;
   auto_fill_source_field_name?: string | null;
+  // Dynamic default for NEW records, applied by useFieldDefaults on the create
+  // form when this field is still empty. 'current_user' stamps the signed-in
+  // user's id (assignee fields); 'now' stamps the current ISO datetime
+  // (datetime); 'today' stamps the current ISO date (date). The user can edit
+  // the value afterwards — this only seeds the initial blank, it does not lock
+  // the field. Visits uses 'current_user' on sales_representative and 'now' on
+  // scheduled_datetime.
+  default_dynamic?: 'current_user' | 'now' | 'today';
   // Cross-record rollup. When `is_computed` is true the field's value is
   // never user-edited; it's computed live at read time from related records
   // (the units → project rollups on both our_projects and all_projects —

@@ -6,6 +6,7 @@ import { ExternalLink, Fingerprint, Calculator, X, Plus } from 'lucide-react';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
+import UnitPickerField from './UnitPickerField';
 import PhoneInput from './PhoneInput';
 import DynamicCell from './DynamicCell';
 import AutoGrowTextarea from './AutoGrowTextarea';
@@ -367,6 +368,9 @@ export default function DynamicField({
             onChange={onChange}
           />
         );
+
+      case 'unit_picker':
+        return <UnitPickerField field={field} value={value} onChange={onChange} />;
 
       case 'mirror': {
         const res = resolveMirror(field, recordData ?? null, records, models);

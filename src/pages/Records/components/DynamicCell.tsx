@@ -407,6 +407,33 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
       return renderOne(value);
     }
 
+    case 'unit_picker': {
+      // Stored value is unit id(s); display each as its unit_code chip,
+      // resolved against the units model (configurable, defaults to `units`).
+      const unitModelId = field.unit_picker_unit_model_id ?? models.find((m) => m.name === 'units')?.id ?? null;
+      if (!unitModelId) return <span className="text-charcoal/20">—</span>;
+      const unitRecords = allRecords[unitModelId] ?? [];
+      const ids = Array.isArray(value)
+        ? (value as unknown[]).filter((v): v is string => typeof v === 'string')
+        : typeof value === 'string' && value
+          ? [value]
+          : [];
+      if (ids.length === 0) return <span className="text-charcoal/20">—</span>;
+      const labelFor = (id: string): string => {
+        const r = unitRecords.find((x) => x.id === id);
+        if (!r) return isAr ? 'محذوف' : 'Deleted';
+        const v = r.data['unit_code'] ?? r.data['unit_number'];
+        return v !== undefined && v !== null && v !== '' ? String(v) : id.slice(0, 8);
+      };
+      return (
+        <div className="flex flex-wrap gap-1">
+          {ids.map((id) => (
+            <Badge key={id} label={labelFor(id)} />
+          ))}
+        </div>
+      );
+    }
+
     case 'assignee': {
       const { users } = useAppStore.getState();
       const assignedUser = users.find((u) => u.id === value);
