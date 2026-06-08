@@ -2183,6 +2183,12 @@ export interface AppState {
     phone: string;
     body: string;
     deviceId?: string;
+    /**
+     * Explicitly-chosen client (from the Start New Chat picker). When set and
+     * still a live client, the new conversation's `client_link` is set to this
+     * id directly — explicit selection wins over the phone-match heuristic.
+     */
+    clientRecordId?: string;
   }) => Promise<{ recordId: string; chatWid: string }>;
   /**
    * Subscribe to Supabase Realtime INSERT/UPDATE events on `chat_messages`

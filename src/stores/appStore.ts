@@ -3953,7 +3953,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  startNewChat: async (input: { phone: string; body: string; deviceId?: string }) => {
+  startNewChat: async (input: { phone: string; body: string; deviceId?: string; clientRecordId?: string }) => {
     const state = get();
     const chatsModel = state.models.find((m) => m.name === 'chats');
     if (!chatsModel) throw new Error('chats model not found');
@@ -4005,11 +4005,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       meta: {},
     };
     let record = mergeChatIntoRecord(existing ?? null, synth, deviceId, chatsModel.id);
-    // Opportunistic client link — for brand-new chats AND for revived
-    // chats whose previous `client_link` points to a since-deleted client.
+    // Client link resolution. An explicit selection from the Start New Chat
+    // picker wins — it links the conversation directly to the chosen client
+    // (still verified live, so a since-deleted id falls through). Otherwise
+    // fall back to the opportunistic phone-match heuristic, used for the
+    // manual-entry path AND for revived chats whose previous `client_link`
+    // points to a since-deleted client.
     const clientsModel = state.models.find((m) => m.name === 'clients');
     const clients = clientsModel ? (state.records[clientsModel.id] ?? []) : [];
-    if (!isLiveClient((record.data as Record<string, unknown>).client_link, clients)) {
+    if (input.clientRecordId && isLiveClient(input.clientRecordId, clients)) {
+      record = { ...record, data: { ...record.data, client_link: input.clientRecordId } };
+    } else if (!isLiveClient((record.data as Record<string, unknown>).client_link, clients)) {
       const slugs = phoneFieldSlugs(clientsModel);
       const link = resolveClientLink(e164, clients, slugs);
       if (link) record = { ...record, data: { ...record.data, client_link: link } };
