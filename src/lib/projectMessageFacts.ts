@@ -81,6 +81,34 @@ function fieldBySlug(model: AppModel | undefined, slug: string): ModelField | un
   return model?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === slug);
 }
 
+/**
+ * Resolve a field slug from a list of candidates (first one present on the
+ * model wins). The LIVE all_projects model was rebuilt in the Builder with
+ * different slugs than the seed (e.g. `preferred_city` not `city`), so we
+ * try the live slug first and fall back to the seed slug — works for both.
+ */
+function slugByCandidates(model: AppModel | undefined, candidates: string[]): string | null {
+  if (!model) return null;
+  const fields = model.schema.sections.flatMap((s) => s.fields);
+  for (const c of candidates) if (fields.some((f) => f.name === c)) return c;
+  return null;
+}
+
+/**
+ * Find a computed field's slug by its `computed_kind` (stable across renames
+ * and independent of which model it lives on). Used to read the auto-calculated
+ * unit rollups — price/bedroom/bathroom ranges, unit counts — which on the
+ * live model live on all_projects, and on the seed live on our_projects.
+ */
+function slugByComputedKind(model: AppModel | undefined, kind: string): string | null {
+  if (!model) return null;
+  return (
+    model.schema.sections
+      .flatMap((s) => s.fields)
+      .find((f) => f.is_computed && f.computed_kind === kind)?.name ?? null
+  );
+}
+
 /** Format a number with thousands separators + currency, per language. */
 function formatPrice(n: number): Bilingual {
   const grouped = Math.round(n).toLocaleString('en-US');
@@ -124,50 +152,80 @@ export function resolveProjectFacts(
   // Name — prefer the master's name, fall back to the our_projects name.
   const name = asString(ap.project_name) ?? asString(ourProject.data?.project_name);
 
+  // Resolve scalar field slugs from the LIVE model (live slug first, seed
+  // fallback). The live all_projects was rebuilt in the Builder, so the seed
+  // slugs (city/district/brochure_link/location) don't exist there.
+  const citySlug = slugByCandidates(allProjectsModel, ['preferred_city', 'city']);
+  const districtSlug = slugByCandidates(allProjectsModel, ['preferred_neighborhoods', 'district', 'neighborhood']);
+  const unitTypesSlug = slugByCandidates(allProjectsModel, ['unit_types', 'unit_type']);
+  const brochureSlug = slugByCandidates(allProjectsModel, ['brochure_url', 'brochure_link', 'brochure']);
+  const locationSlug = slugByCandidates(allProjectsModel, ['project_location', 'location', 'location_url']);
+
   // City / district — dropdowns on all_projects, resolved to bilingual labels.
-  const city = resolveOptionLabels(fieldBySlug(allProjectsModel, 'city'), ap.city);
-  const district = resolveOptionLabels(fieldBySlug(allProjectsModel, 'district'), ap.district);
+  const city = resolveOptionLabels(citySlug ? fieldBySlug(allProjectsModel, citySlug) : undefined, citySlug ? ap[citySlug] : null);
+  const district = resolveOptionLabels(districtSlug ? fieldBySlug(allProjectsModel, districtSlug) : undefined, districtSlug ? ap[districtSlug] : null);
 
   // Units linked to this project (project_id → all_projects.id).
   const units = unitsModel ? (records[unitsModel.id] ?? []) : [];
-  const projectUnits = allProjectId
-    ? units.filter((u) => {
-        const pid = u.data?.project_id;
-        if (typeof pid === 'string') return pid === allProjectId;
-        if (Array.isArray(pid)) return pid.includes(allProjectId);
-        return false;
-      })
-    : [];
 
-  // Unit types available — distinct unit_type values across the project's units,
-  // resolved to bilingual labels (preserve first-seen order).
-  const unitTypeField = fieldBySlug(unitsModel, 'unit_type');
-  const seenTypes = new Set<string>();
+  // Unit types available — prefer the curated all_projects `unit_types`
+  // multiselect; fall back to the distinct unit_type across the project's units.
   const unitTypes: Bilingual[] = [];
-  for (const u of projectUnits) {
-    const v = asString(u.data?.unit_type);
-    if (!v || seenTypes.has(v)) continue;
-    seenTypes.add(v);
-    const label = resolveOptionLabels(unitTypeField, v);
+  const seenTypes = new Set<string>();
+  const utField = unitTypesSlug ? fieldBySlug(allProjectsModel, unitTypesSlug) : undefined;
+  const utRaw = unitTypesSlug ? ap[unitTypesSlug] : null;
+  const utValues = Array.isArray(utRaw) ? utRaw : utRaw != null && utRaw !== '' ? [utRaw] : [];
+  for (const v of utValues) {
+    const key = asString(v);
+    if (!key || seenTypes.has(key)) continue;
+    seenTypes.add(key);
+    const label = resolveOptionLabels(utField, v);
     if (label) unitTypes.push(label);
   }
+  if (unitTypes.length === 0 && allProjectId) {
+    const unitTypeField = fieldBySlug(unitsModel, 'unit_type');
+    for (const u of units) {
+      const pid = u.data?.project_id;
+      const matches = typeof pid === 'string' ? pid === allProjectId : Array.isArray(pid) && pid.includes(allProjectId);
+      if (!matches) continue;
+      const v = asString(u.data?.unit_type);
+      if (!v || seenTypes.has(v)) continue;
+      seenTypes.add(v);
+      const label = resolveOptionLabels(unitTypeField, v);
+      if (label) unitTypes.push(label);
+    }
+  }
 
-  // Bedroom / bathroom ranges — the auto-calculated rollups. They're stripped
-  // from stored data, so recompute them from the units via the shared engine.
-  const rolled =
-    ourProjectsModel != null ? applyProjectRollups(ourProject, ourProjectsModel, units) : ourProject;
-  const bedrooms = rolled.data?.bedroom_range as NumericRange | null | undefined;
-  const bathrooms = rolled.data?.bathroom_range as NumericRange | null | undefined;
-  const priceRange = rolled.data?.price_range as NumericRange | null | undefined;
+  // Auto-calculated unit rollups (bedroom/bathroom/price ranges). They're
+  // `is_computed` and never stored, so recompute via the shared engine. On the
+  // LIVE model they live on all_projects; on the seed on our_projects. Compute
+  // both, then read each rollup BY its computed_kind from whichever model
+  // defines it — robust to slug renames and to the field moving between models.
+  const apRolled = allProject && allProjectsModel ? applyProjectRollups(allProject, allProjectsModel, units) : null;
+  const opRolled = ourProjectsModel ? applyProjectRollups(ourProject, ourProjectsModel, units) : null;
+  const readRollup = (kind: string): unknown => {
+    const apSlug = slugByComputedKind(allProjectsModel, kind);
+    if (apSlug && apRolled?.data?.[apSlug] != null) return apRolled.data[apSlug];
+    const opSlug = slugByComputedKind(ourProjectsModel, kind);
+    if (opSlug && opRolled?.data?.[opSlug] != null) return opRolled.data[opSlug];
+    return null;
+  };
 
-  // Minimum price — the calculated floor from real units wins; fall back to the
-  // master's manually-entered min_price when the project has no priced units.
+  const bedrooms = (readRollup('bedroom_range') as NumericRange | null) ?? null;
+  const bathrooms = (readRollup('bathroom_range') as NumericRange | null) ?? null;
+  const priceRange = readRollup('price_range') as NumericRange | null;
+
+  // Minimum price — the calculated floor from real units. Fall back to a plain
+  // min_price field only if the model still has one (the seed did; the live
+  // model derives price entirely from the computed price_range).
+  const minPriceSlug = slugByCandidates(allProjectsModel, ['min_price', 'starting_price']);
   const minPriceNum =
-    (priceRange && Number.isFinite(priceRange.min) ? priceRange.min : null) ?? asFiniteNumber(ap.min_price);
+    (priceRange && Number.isFinite(priceRange.min) ? priceRange.min : null) ??
+    (minPriceSlug ? asFiniteNumber(ap[minPriceSlug]) : null);
   const minPrice = minPriceNum != null ? formatPrice(minPriceNum) : null;
 
-  const brochureLink = asString(ap.brochure_link);
-  const locationLink = resolveLocationLink(asString(ap.location));
+  const brochureLink = brochureSlug ? asString(ap[brochureSlug]) : null;
+  const locationLink = resolveLocationLink(locationSlug ? asString(ap[locationSlug]) : null);
 
   // Which required fields are genuinely empty → drives the preview warnings +
   // the "not available" placeholder in the message.

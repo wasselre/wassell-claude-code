@@ -141,4 +141,61 @@ describe('resolveProjectFacts', () => {
     expect(f.missing).not.toContain('location');
     expect(f.missing).not.toContain('min_price');
   });
+
+  // Regression for the prod bug: the LIVE all_projects model was rebuilt in the
+  // Builder with different slugs than the seed (preferred_city, brochure_url,
+  // project_location, unit_types multiselect) and the rollups are computed on
+  // all_projects, not our_projects. The old resolver hardcoded seed slugs +
+  // our_projects rollups, so everything but unit types came back "Not available".
+  it('resolves the LIVE topology — Builder-renamed slugs + rollups on all_projects', () => {
+    const AP = 'm_all2', OP = 'm_our2', UN = 'm_units2';
+    const allLive = model('all_projects', AP, [
+      field({ name: 'project_name', type: 'text' }),
+      field({ name: 'preferred_city', type: 'dropdown', options: [opt('riyadh', 'الرياض', 'Riyadh')] }),
+      field({ name: 'preferred_neighborhoods', type: 'dropdown', options: [opt('narjis', 'النرجس', 'Al Narjis')] }),
+      field({ name: 'unit_types', type: 'multiselect', options: [opt('apartment', 'شقة', 'Apartment'), opt('villa', 'فيلا', 'Villa')] }),
+      field({ name: 'brochure_url', type: 'url' }),
+      field({ name: 'project_location', type: 'url' }),
+      field({ name: 'price_range', type: 'range', is_computed: true, computed_kind: 'price_range' }),
+      field({ name: 'bedroom_range', type: 'range', is_computed: true, computed_kind: 'bedroom_range' }),
+      field({ name: 'bathroom_range', type: 'range', is_computed: true, computed_kind: 'bathroom_range' }),
+    ]);
+    // Live our_projects is a thin sidecar: just the lookup, no rollup fields.
+    const ourLive = model('our_projects', OP, [
+      field({ name: 'project', type: 'lookup', lookup_model_id: AP, lookup_display_field: 'project_name' }),
+    ]);
+    const unitsLive = model('units', UN, [
+      field({ name: 'project_id', type: 'lookup', lookup_model_id: AP }),
+      field({ name: 'bedrooms', type: 'number' }),
+      field({ name: 'bathrooms', type: 'number' }),
+      field({ name: 'total_price', type: 'number' }),
+    ]);
+    const ms = [allLive, ourLive, unitsLive];
+    const recs: Record<string, AppRecord[]> = {
+      [AP]: [rec('ap', AP, {
+        project_name: 'مينا 52',
+        preferred_city: 'riyadh',
+        preferred_neighborhoods: 'narjis',
+        unit_types: ['apartment'],
+        brochure_url: 'https://wassel.re/m52.pdf',
+        project_location: 'https://maps.app.goo.gl/KvrmddYBhAjiQfcNA',
+      })],
+      [OP]: [rec('op', OP, { project: 'ap' })],
+      [UN]: [
+        rec('u1', UN, { project_id: 'ap', bedrooms: 2, bathrooms: 2, total_price: 1200000 }),
+        rec('u2', UN, { project_id: 'ap', bedrooms: 3, bathrooms: 3, total_price: 1700000 }),
+      ],
+    };
+    const f = resolveProjectFacts(recs[OP][0]!, ms, recs);
+    expect(f.name).toBe('مينا 52');
+    expect(f.city).toEqual({ ar: 'الرياض', en: 'Riyadh' });               // preferred_city
+    expect(f.district).toEqual({ ar: 'النرجس', en: 'Al Narjis' });        // preferred_neighborhoods
+    expect(f.unitTypes).toEqual([{ ar: 'شقة', en: 'Apartment' }]);        // all_projects unit_types
+    expect(f.bedrooms).toEqual({ min: 2, max: 3 });                       // rollup on all_projects
+    expect(f.bathrooms).toEqual({ min: 2, max: 3 });
+    expect(f.minPrice).toEqual({ ar: '1,200,000 ر.س', en: 'SAR 1,200,000' }); // price_range.min
+    expect(f.brochureLink).toBe('https://wassel.re/m52.pdf');             // brochure_url
+    expect(f.locationLink).toBe('https://maps.app.goo.gl/KvrmddYBhAjiQfcNA'); // project_location (http verbatim)
+    expect(f.missing).toEqual([]);                                        // nothing missing now
+  });
 });
