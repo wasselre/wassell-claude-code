@@ -7,8 +7,7 @@ import {
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizeForSearch } from '@/lib/recordSearch';
-import { resolveProjectFacts, type ProjectMessageFacts } from '@/lib/projectMessageFacts';
-import { supabase } from '@/lib/supabase';
+import { resolveProjectFacts, composeProjectMessage, type ProjectMessageFacts } from '@/lib/projectMessageFacts';
 import Button from '@/components/ui/Button';
 import type { AppRecord } from '@/types';
 
@@ -36,41 +35,6 @@ interface GenItem {
   bodyAr: string;
   bodyEn: string;
   error?: string;
-}
-
-async function authHeader(): Promise<Record<string, string>> {
-  if (!supabase) return {};
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-async function generateProjectMessage(
-  facts: ProjectMessageFacts,
-): Promise<{ body_ar: string; body_en: string }> {
-  const res = await fetch('/api/templates/generate-project-message', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({
-      project: {
-        name: facts.name,
-        city: facts.city,
-        district: facts.district,
-        unitTypes: facts.unitTypes,
-        bedrooms: facts.bedrooms,
-        bathrooms: facts.bathrooms,
-        minPrice: facts.minPrice,
-        brochureLink: facts.brochureLink,
-        locationLink: facts.locationLink,
-      },
-    }),
-  });
-  if (!res.ok) {
-    const e = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(e?.error ?? `Generation failed (${res.status})`);
-  }
-  const body = (await res.json()) as { body_ar: string; body_en: string };
-  return { body_ar: body.body_ar, body_en: body.body_en };
 }
 
 const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
@@ -146,46 +110,34 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
     return f?.name || (typeof r.data?.project_name === 'string' ? r.data.project_name : null) || (isAr ? '(بدون اسم)' : '(no name)');
   };
 
-  // ── Generation ──────────────────────────────────────────────────────
-  const runGeneration = async (its: GenItem[]) => {
-    await Promise.allSettled(its.map((it) => generateOne(it.ourProjectId)));
-  };
-
-  const generateOne = async (ourProjectId: string) => {
-    const target = (curr: GenItem[]) => curr.find((i) => i.ourProjectId === ourProjectId);
-    setItems((prev) => prev.map((i) => (i.ourProjectId === ourProjectId ? { ...i, status: 'generating', error: undefined } : i)));
-    const it = target(items) ?? items.find((i) => i.ourProjectId === ourProjectId);
-    const facts = it?.facts ?? factsByRecord.get(ourProjectId);
-    if (!facts) return;
-    try {
-      const { body_ar, body_en } = await generateProjectMessage(facts);
-      setItems((prev) =>
-        prev.map((i) =>
-          i.ourProjectId === ourProjectId ? { ...i, status: 'done', bodyAr: body_ar, bodyEn: body_en } : i,
-        ),
-      );
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setItems((prev) => prev.map((i) => (i.ourProjectId === ourProjectId ? { ...i, status: 'error', error: msg } : i)));
-    }
+  // ── Composition (deterministic — no AI, exact format, missing fields omitted) ──
+  // Regenerate re-composes from facts, discarding any manual edits.
+  const generateOne = (ourProjectId: string) => {
+    setItems((prev) =>
+      prev.map((i) => {
+        if (i.ourProjectId !== ourProjectId) return i;
+        const { body_ar, body_en } = composeProjectMessage(i.facts);
+        return { ...i, status: 'done', bodyAr: body_ar, bodyEn: body_en, error: undefined };
+      }),
+    );
   };
 
   const startReview = () => {
     const its: GenItem[] = selectedIds.map((id) => {
       const facts = factsByRecord.get(id)!;
+      const { body_ar, body_en } = composeProjectMessage(facts);
       return {
         ourProjectId: id,
         allProjectId: facts.allProjectId,
         name: facts.name || (isAr ? '(بدون اسم)' : '(no name)'),
         facts,
-        status: 'generating' as const,
-        bodyAr: '',
-        bodyEn: '',
+        status: 'done' as const,
+        bodyAr: body_ar,
+        bodyEn: body_en,
       };
     });
     setItems(its);
     setStep('review');
-    void runGeneration(its);
   };
 
   const saveItem = async (ourProjectId: string) => {
@@ -268,7 +220,7 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
           </div>
           <div className="flex-1 min-w-0">
             <h2 className="text-base font-bold text-chocolate">
-              {isAr ? 'توليد رسائل المشاريع بالذكاء الاصطناعي' : 'Generate project messages with AI'}
+              {isAr ? 'توليد رسائل المشاريع' : 'Generate project messages'}
             </h2>
             <p className="text-xs text-charcoal/50">
               {step === 'select'

@@ -206,7 +206,7 @@ export default function ChatTemplateFormPage() {
           className="!bg-copper/10 !text-copper hover:!bg-copper/20 !border-copper/20 shrink-0"
         >
           <Sparkles size={15} />
-          {isAr ? 'توليد بالذكاء الاصطناعي' : 'Generate with AI'}
+          {isAr ? 'توليد رسائل المشاريع' : 'Generate project messages'}
         </Button>
       </div>
 

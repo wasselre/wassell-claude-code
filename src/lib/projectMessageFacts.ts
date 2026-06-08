@@ -255,3 +255,38 @@ export function resolveProjectFacts(
     missing,
   };
 }
+
+function rangeText(r: NumericRange): string {
+  return r.min === r.max ? String(r.min) : `${r.min} - ${r.max}`;
+}
+
+/**
+ * Compose the WhatsApp message DETERMINISTICALLY from resolved facts — no AI,
+ * no greeting line, no closing line, exact labels. A field that's missing is
+ * OMITTED entirely (never written as "not available"; the preview surfaces
+ * what's missing separately, via `facts.missing`). Structure: the project name
+ * on its own line, a blank line, then one labeled line per PRESENT field.
+ *
+ * Per the user's exact spec (2026-06-08): price label is "الأسعار تبدأ من" /
+ * "Prices start from"; nothing extra is ever added to the body.
+ */
+export function composeProjectMessage(facts: ProjectMessageFacts): { body_ar: string; body_en: string } {
+  const ar: string[] = [];
+  const en: string[] = [];
+  if (facts.city) { ar.push(`المدينة: ${facts.city.ar}`); en.push(`City: ${facts.city.en}`); }
+  if (facts.district) { ar.push(`الحي: ${facts.district.ar}`); en.push(`District: ${facts.district.en}`); }
+  if (facts.unitTypes.length > 0) {
+    ar.push(`أنواع الوحدات: ${facts.unitTypes.map((u) => u.ar).join('، ')}`);
+    en.push(`Unit Types: ${facts.unitTypes.map((u) => u.en).join(', ')}`);
+  }
+  if (facts.bedrooms) { ar.push(`غرف النوم: ${rangeText(facts.bedrooms)}`); en.push(`Bedrooms: ${rangeText(facts.bedrooms)}`); }
+  if (facts.bathrooms) { ar.push(`دورات المياه: ${rangeText(facts.bathrooms)}`); en.push(`Bathrooms: ${rangeText(facts.bathrooms)}`); }
+  if (facts.minPrice) { ar.push(`الأسعار تبدأ من: ${facts.minPrice.ar}`); en.push(`Prices start from: ${facts.minPrice.en}`); }
+  if (facts.brochureLink) { ar.push(`البروشور: ${facts.brochureLink}`); en.push(`Brochure: ${facts.brochureLink}`); }
+  if (facts.locationLink) { ar.push(`الموقع: ${facts.locationLink}`); en.push(`Location: ${facts.locationLink}`); }
+  const title = facts.name ?? '';
+  return {
+    body_ar: [title, '', ...ar].join('\n').trim(),
+    body_en: [title, '', ...en].join('\n').trim(),
+  };
+}

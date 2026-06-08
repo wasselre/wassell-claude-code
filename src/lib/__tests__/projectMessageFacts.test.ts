@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveProjectFacts } from '../projectMessageFacts';
+import { resolveProjectFacts, composeProjectMessage, type ProjectMessageFacts } from '../projectMessageFacts';
 import type { AppModel, AppRecord, ModelField, ModelSection, ModelOption } from '@/types';
 
 function field(partial: Partial<ModelField> & { name: string }): ModelField {
@@ -197,5 +197,47 @@ describe('resolveProjectFacts', () => {
     expect(f.brochureLink).toBe('https://wassel.re/m52.pdf');             // brochure_url
     expect(f.locationLink).toBe('https://maps.app.goo.gl/KvrmddYBhAjiQfcNA'); // project_location (http verbatim)
     expect(f.missing).toEqual([]);                                        // nothing missing now
+  });
+});
+
+describe('composeProjectMessage', () => {
+  const base: ProjectMessageFacts = {
+    ourProjectId: 'o', allProjectId: 'a', name: 'مينا 52',
+    city: { ar: 'الرياض', en: 'Riyadh' },
+    district: { ar: 'النرجس', en: 'An-Narjis' },
+    unitTypes: [{ ar: 'شقة', en: 'Apartment' }],
+    bedrooms: { min: 2, max: 3 }, bathrooms: { min: 2, max: 3 },
+    minPrice: { ar: '1,200,000 ر.س', en: 'SAR 1,200,000' },
+    brochureLink: null,                                   // genuinely missing
+    locationLink: 'https://maps.app.goo.gl/x',
+    missing: ['brochure'],
+  };
+
+  it('no greeting/closing, omits missing fields, exact price label', () => {
+    const { body_ar, body_en } = composeProjectMessage(base);
+    // no greeting or closing fluff in either language
+    expect(body_ar).not.toMatch(/مرحب|تتردد|تواصل معنا/);
+    expect(body_en).not.toMatch(/welcome|feel free|reach out/i);
+    // missing brochure is OMITTED entirely — no label, no "not available"
+    expect(body_ar).not.toContain('البروشور');
+    expect(body_ar).not.toContain('غير متوفر');
+    expect(body_en).not.toContain('Brochure');
+    expect(body_en).not.toContain('Not available');
+    // exact price label (الأسعار تبدأ من / Prices start from)
+    expect(body_ar).toContain('الأسعار تبدأ من: 1,200,000 ر.س');
+    expect(body_en).toContain('Prices start from: SAR 1,200,000');
+    // structure: name on the first line, then the present fields
+    expect(body_ar.split('\n')[0]).toBe('مينا 52');
+    expect(body_ar).toContain('المدينة: الرياض');
+    expect(body_ar).toContain('غرف النوم: 2 - 3');
+    expect(body_ar).toContain('الموقع: https://maps.app.goo.gl/x');
+    expect(body_en).toContain('City: Riyadh');
+  });
+
+  it('renders an equal-min/max range as a single number', () => {
+    const f: ProjectMessageFacts = { ...base, bedrooms: { min: 3, max: 3 } };
+    const { body_ar } = composeProjectMessage(f);
+    expect(body_ar).toContain('غرف النوم: 3');
+    expect(body_ar).not.toContain('غرف النوم: 3 - 3');
   });
 });
