@@ -1,10 +1,33 @@
-# PRD: Image Chats
+# PRD: Image Chats → Creative Studio
 
 **Status:** Live
-**Last updated:** 2026-06-08 (v2 — concurrent per-message generation jobs + generated images become reusable platform assets)
+**Last updated:** 2026-06-09 (v3 — rebuilt as a Creative **Workspace** (Higgsfield-style), not a chat: Generations + a first-class media-asset library)
 **Related PRDs:** [files.md](files.md), [record-management.md](record-management.md), [marketing-operations.md](marketing-operations.md), [templates-library.md](templates-library.md), [navigation-layout.md](navigation-layout.md)
 
-## What it is (in plain English)
+## What it is (in plain English) — v3 (Creative Workspace)
+
+Image Chats is now a **Creative Studio workspace**, not a chat. The primary object is a **Creative Session → Generations → Assets**, shown as a Higgsfield-style workspace, NOT a conversation thread:
+
+- **Left** — Creative Sessions (thumbnail, title, generation count; New / Rename / Duplicate / Delete).
+- **Center (dominant)** — the **canvas**: the selected generation's outputs (large single image or grid; queued/generating placeholder; failed → Retry). Click an output to select it.
+- **Bottom** — the **Composer** (prompt • reference images • brand preset • prompt snippet • model • aspect • variations • **Send/Generate**); stays live while generations run (3-in-flight soft cap).
+- **Timeline** — a secondary strip of generation thumbnails; click to load one into the canvas.
+- **Right** — the **Selected Asset panel**: full preview + provenance (prompt/model/settings/time) + actions (Download, Copy URL, Add to Files, Add to Record, Create Variation, Use as Reference, Regenerate).
+
+**Generations, not messages.** Each `Generation` (`record.data.generations[]`) captures `{ prompt, reference images, model, aspect, variations, based_on (lineage), status, output_asset_ids }`. Generations run concurrently in the background (the `generation_jobs` queue + Fly worker, unchanged) and fill in via Realtime.
+
+**Every output is a first-class asset.** Each generated image is a row in the new **`media_assets`** table (kind=image now; video/audio/document reserved) with provenance + stable identity — reusable across sessions, Files, records, and brand presets. "The image doesn't belong to the chat; the session references assets." Bytes stay in the public marketing-assets bucket (cheap canvas render); **Add to Files** copies into `wassel-files` once.
+
+**Migration.** Existing sessions were reshaped `messages → generations` (old outputs kept as inline `output_urls`; originals stashed under `_legacy_messages`). The brand-preset + prompt-snippet libraries, Files/record integrations, and the fal.ai models are all unchanged from v2.
+
+Key v3 files: `StudioWorkspace.tsx`, `SelectedAssetPanel.tsx`, `lib/generations.ts`, `api/image-chat/generate.ts`, `worker/src/runImageJob.ts` (dual-path), `supabase/migrations/2026-06-09_media_assets.sql` + `2026-06-09_sessions_to_generations.sql`. See CLAUDE.md → "Image Chats v3 — Creative Workspace".
+
+---
+
+## (v2 reference — the chat era, superseded by v3 above)
+
+A "mini Higgsfield" chat interface inside Wassell. The user picks a Wassel-branded conversation, types or attaches images, picks an aspect ratio + brand preset + image model, and hits Send — fal.ai generates the image and posts it back into the conversation. Two models are exposed in the composer: **Nano Banana 2** (Google's Gemini 3 Pro Image, default — fast, multi-image, strong with Arabic) and **GPT Image 2** (OpenAI — best in-image text rendering, photorealism-first). Each new turn can iterate on the previous result, so the workflow feels like ChatGPT / Gemini's image-editing chat, but routed through our fal.ai integration and styled with our brand presets.
+
 
 A "mini Higgsfield" chat interface inside Wassell. The user picks a Wassel-branded conversation, types or attaches images, picks an aspect ratio + brand preset + image model, and hits Send — fal.ai generates the image and posts it back into the conversation. Two models are exposed in the composer: **Nano Banana 2** (Google's Gemini 3 Pro Image, default — fast, multi-image, strong with Arabic) and **GPT Image 2** (OpenAI — best in-image text rendering, photorealism-first). Each new turn can iterate on the previous result, so the workflow feels like ChatGPT / Gemini's image-editing chat, but routed through our fal.ai integration and styled with our brand presets.
 

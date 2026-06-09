@@ -2,25 +2,22 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Sparkles, Plus, ImageIcon } from 'lucide-react';
+import { Sparkles, Plus, ImageIcon, Pencil, Copy, Trash2 } from 'lucide-react';
 import type { AppRecord } from '@/types';
-import ChatThread from './components/ChatThread';
+import StudioWorkspace from './components/StudioWorkspace';
 import { seedDefaultLibrariesIfEmpty } from './lib/seedDefaults';
 
 /**
- * Image Chats — "mini Higgsfield" inside Wassell. Two-pane layout
- * mirrors the AiAgentPage:
- *   - Left: list of past conversations (records in `image_chats`).
- *   - Right: active thread (ChatThread) or an empty-state welcome.
+ * Image Chats v3 — Creative Studio. Two-pane layout:
+ *   - Left: list of Creative Sessions (records in `image_chats`) with thumbnail,
+ *     generation count, and rename / duplicate / delete actions.
+ *   - Right: the workspace (StudioWorkspace) — canvas + timeline + composer +
+ *     selected-asset panel — or an empty-state welcome.
  *
- * Routes `/model/image_chats` and `/model/image_chats/:recordId`
- * both land here via the dispatcher in App.tsx.
- *
- * Messages for each conversation live inline in `record.data.messages`.
- * The bottom-pinned composer in ChatThread fires
- * `POST /api/image-chat/send` per turn; the backend appends the
- * user + assistant messages to the record and we re-read from the
- * store on completion.
+ * Each session's generations live in `record.data.generations[]`; the Composer
+ * fires `POST /api/image-chat/generate` which appends a queued Generation and a
+ * background job. Results stream in via Supabase Realtime; every output becomes
+ * a first-class `media_assets` row.
  */
 export default function ImageChatsPage() {
   const { recordId } = useParams();
@@ -29,21 +26,12 @@ export default function ImageChatsPage() {
   const models = useAppStore((s) => s.models);
   const recordsByModel = useAppStore((s) => s.records);
   const saveRecord = useAppStore((s) => s.saveRecord);
+  const deleteRecord = useAppStore((s) => s.deleteRecord);
   const currentUserId = useAppStore((s) => s.currentUserId);
 
-  const imageChatsModel = useMemo(
-    () => models.find((m) => m.name === 'image_chats'),
-    [models],
-  );
+  const imageChatsModel = useMemo(() => models.find((m) => m.name === 'image_chats'), [models]);
 
   // One-shot seed of "Wassel default" preset + starter prompt snippets.
-  // Authoritatively gated by `seedDefaultLibrariesIfEmpty` itself:
-  // it (a) short-circuits on a per-user localStorage flag, (b) queries
-  // Supabase directly (not the in-memory cache, which is empty before
-  // records finish loading), and (c) sets the flag whether or not it
-  // actually inserted. The ref here just prevents this effect from
-  // firing twice in the same mount (Strict Mode + transient store
-  // updates) before the flag has been written.
   const seedAttemptedRef = useRef(false);
   useEffect(() => {
     if (seedAttemptedRef.current) return;
@@ -60,17 +48,23 @@ export default function ImageChatsPage() {
     });
   }, [models, saveRecord, isAr, currentUserId]);
 
-  const chats = useMemo<AppRecord[]>(() => {
+  const sessions = useMemo<AppRecord[]>(() => {
     if (!imageChatsModel) return [];
     const all = recordsByModel[imageChatsModel.id] ?? [];
     return [...all].sort((a, b) => {
-      const aT = (a.data.last_message_at as string | undefined) ?? a.updated_at;
-      const bT = (b.data.last_message_at as string | undefined) ?? b.updated_at;
+      const aT =
+        (a.data.last_generation_at as string | undefined) ??
+        (a.data.last_message_at as string | undefined) ??
+        a.updated_at;
+      const bT =
+        (b.data.last_generation_at as string | undefined) ??
+        (b.data.last_message_at as string | undefined) ??
+        b.updated_at;
       return (bT ?? '').localeCompare(aT ?? '');
     });
   }, [imageChatsModel, recordsByModel]);
 
-  function startNewChat() {
+  function startNewSession() {
     if (!imageChatsModel) return;
     const now = new Date().toISOString();
     const newId = uuid();
@@ -78,10 +72,9 @@ export default function ImageChatsPage() {
       id: newId,
       model_id: imageChatsModel.id,
       data: {
-        title: isAr ? 'محادثة جديدة' : 'New design',
-        status: 'idle',
-        message_count: 0,
-        messages: [],
+        title: isAr ? 'جلسة جديدة' : 'New session',
+        generations: [],
+        generation_count: 0,
         last_aspect_ratio: '1:1',
         last_preset_id: null,
         created_by: currentUserId,
@@ -89,105 +82,182 @@ export default function ImageChatsPage() {
       created_at: now,
       updated_at: now,
     };
-    saveRecord(record);
+    void saveRecord(record);
     navigate(`/model/image_chats/${newId}`);
+  }
+
+  function duplicateSession(session: AppRecord, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!imageChatsModel) return;
+    const now = new Date().toISOString();
+    const newId = uuid();
+    const record: AppRecord = {
+      id: newId,
+      model_id: imageChatsModel.id,
+      data: {
+        ...session.data,
+        title: `${(session.data.title as string | undefined) ?? 'Session'} ${isAr ? '(نسخة)' : '(copy)'}`,
+        created_by: currentUserId,
+      },
+      created_at: now,
+      updated_at: now,
+    };
+    void saveRecord(record);
+    navigate(`/model/image_chats/${newId}`);
+  }
+
+  function renameSession(session: AppRecord, e: React.MouseEvent) {
+    e.stopPropagation();
+    const next = window.prompt(
+      isAr ? 'اسم الجلسة' : 'Session name',
+      String((session.data.title as string | undefined) ?? ''),
+    );
+    if (next === null) return;
+    void saveRecord({
+      ...session,
+      data: { ...session.data, title: next.trim() || (isAr ? 'جلسة' : 'Session') },
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  function deleteSession(session: AppRecord, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!window.confirm(isAr ? 'حذف هذه الجلسة؟' : 'Delete this session?')) return;
+    if (imageChatsModel) deleteRecord(imageChatsModel.id, session.id);
+    if (recordId === session.id) navigate('/model/image_chats');
   }
 
   if (!imageChatsModel) {
     return (
       <div className="p-8 text-center text-charcoal/70">
-        {isAr
-          ? 'نموذج محادثات التصميم غير مهيأ بعد. أعد تحميل الصفحة.'
-          : 'Image Chats model not initialized. Please reload.'}
+        {isAr ? 'مساحة العمل غير مهيأة بعد. أعد تحميل الصفحة.' : 'Studio not initialized. Please reload.'}
       </div>
     );
   }
 
   return (
     <div className="h-[calc(100vh-8rem)] flex overflow-hidden rounded-2xl border border-sand/20 bg-white">
-      {/* Left pane — conversation list */}
+      {/* Left pane — sessions */}
       <div
-        className={`w-full md:w-[320px] shrink-0 border-e border-sand/20 flex-col ${
+        className={`w-full md:w-[300px] shrink-0 border-e border-sand/20 flex-col ${
           recordId ? 'hidden md:flex' : 'flex'
         }`}
       >
-        <div className="p-3 border-b border-sand/20 flex items-center gap-2">
+        <div className="p-3 border-b border-sand/20">
           <button
-            onClick={startNewChat}
-            className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-sm font-medium"
+            onClick={startNewSession}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-sm font-medium"
           >
             <Plus size={16} />
-            {isAr ? 'محادثة جديدة' : 'New chat'}
+            {isAr ? 'جلسة جديدة' : 'New session'}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          {chats.length === 0 ? (
+          {sessions.length === 0 ? (
             <div className="p-6 text-center text-sm text-charcoal/60">
-              {isAr ? 'لا توجد محادثات بعد.' : 'No conversations yet.'}
+              {isAr ? 'لا توجد جلسات بعد.' : 'No sessions yet.'}
             </div>
           ) : (
-            chats.map((chat) => {
-              const title =
-                (chat.data.title as string | undefined) ??
-                (isAr ? 'محادثة' : 'Conversation');
-              const messageCount = Number(chat.data.message_count ?? 0);
-              // "generating" is per-message now (the legacy conversation-level
-              // status is a lossy rollup) — light up the dot if any message in
-              // this chat is still queued or generating.
-              const msgs = Array.isArray(chat.data.messages)
-                ? (chat.data.messages as Array<{ status?: string }>)
+            sessions.map((session) => {
+              const title = (session.data.title as string | undefined) ?? (isAr ? 'جلسة' : 'Session');
+              const gens = Array.isArray(session.data.generations)
+                ? (session.data.generations as Array<{ status?: string }>)
                 : [];
-              const anyGenerating = msgs.some(
-                (m) => m.status === 'queued' || m.status === 'generating',
-              );
-              const active = chat.id === recordId;
+              const genCount = Number(session.data.generation_count ?? gens.length);
+              const anyGenerating = gens.some((g) => g.status === 'queued' || g.status === 'generating');
+              const thumbUrl = session.data.thumbnail_url as string | undefined;
+              const active = session.id === recordId;
               return (
-                <button
-                  key={chat.id}
-                  onClick={() => navigate(`/model/image_chats/${chat.id}`)}
-                  className={`w-full text-start p-3 border-b border-sand/10 hover:bg-cream transition-colors ${
+                <div
+                  key={session.id}
+                  onClick={() => navigate(`/model/image_chats/${session.id}`)}
+                  className={`group w-full text-start p-2.5 border-b border-sand/10 hover:bg-cream transition-colors cursor-pointer flex items-center gap-2.5 ${
                     active ? 'bg-cream' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <ImageIcon size={14} className="text-copper shrink-0" />
-                    <div className="font-medium text-sm truncate flex-1">{title}</div>
-                    {anyGenerating && (
-                      <span className="text-[10px] text-copper font-medium animate-pulse">
-                        ●
-                      </span>
+                  {/* Thumbnail */}
+                  <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden border border-sand/30 bg-cream/50 flex items-center justify-center">
+                    {thumbUrl ? (
+                      <img src={thumbUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    ) : (
+                      <ImageIcon size={16} className="text-charcoal/30" />
                     )}
                   </div>
-                  <div className="text-xs text-charcoal/60 truncate mt-1 ps-6">
-                    {messageCount > 0
-                      ? isAr
-                        ? `${messageCount} رسالة`
-                        : `${messageCount} message${messageCount === 1 ? '' : 's'}`
-                      : isAr
-                        ? 'جديدة'
-                        : 'New'}
+                  {/* Title + count */}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <div className="font-medium text-sm truncate flex-1">{title}</div>
+                      {anyGenerating && <span className="text-[10px] text-copper animate-pulse">●</span>}
+                    </div>
+                    <div className="text-xs text-charcoal/60 truncate mt-0.5">
+                      {genCount > 0
+                        ? isAr
+                          ? `${genCount} إنشاء`
+                          : `${genCount} generation${genCount === 1 ? '' : 's'}`
+                        : isAr
+                          ? 'جديدة'
+                          : 'New'}
+                    </div>
                   </div>
-                </button>
+                  {/* Hover actions */}
+                  <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                    <IconBtn label={isAr ? 'إعادة تسمية' : 'Rename'} onClick={(e) => renameSession(session, e)}>
+                      <Pencil size={13} />
+                    </IconBtn>
+                    <IconBtn label={isAr ? 'تكرار' : 'Duplicate'} onClick={(e) => duplicateSession(session, e)}>
+                      <Copy size={13} />
+                    </IconBtn>
+                    <IconBtn label={isAr ? 'حذف' : 'Delete'} onClick={(e) => deleteSession(session, e)} danger>
+                      <Trash2 size={13} />
+                    </IconBtn>
+                  </div>
+                </div>
               );
             })
           )}
         </div>
       </div>
 
-      {/* Right pane — active chat or welcome */}
+      {/* Right pane — workspace or welcome */}
       <div className={`flex-1 min-w-0 flex-col ${!recordId ? 'hidden md:flex' : 'flex'}`}>
         {recordId ? (
-          <ChatThread
+          <StudioWorkspace
             key={recordId}
             recordId={recordId}
             modelId={imageChatsModel.id}
-            onNewChat={startNewChat}
+            onNewChat={startNewSession}
           />
         ) : (
-          <EmptyPane isAr={isAr} onStart={startNewChat} />
+          <EmptyPane isAr={isAr} onStart={startNewSession} />
         )}
       </div>
     </div>
+  );
+}
+
+function IconBtn({
+  children,
+  label,
+  onClick,
+  danger,
+}: {
+  children: React.ReactNode;
+  label: string;
+  onClick: (e: React.MouseEvent) => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      className={`p-1.5 rounded-md hover:bg-white transition-colors ${
+        danger ? 'text-red-500 hover:text-red-600' : 'text-charcoal/50 hover:text-charcoal/80'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -198,19 +268,19 @@ function EmptyPane({ isAr, onStart }: { isAr: boolean; onStart: () => void }) {
         <Sparkles size={32} className="text-copper" />
       </div>
       <h2 className="text-xl font-semibold text-charcoal mb-2">
-        {isAr ? 'محادثات التصميم' : 'Image Chats'}
+        {isAr ? 'الاستوديو الإبداعي' : 'Creative Studio'}
       </h2>
       <p className="text-sm text-charcoal/70 max-w-md mb-6">
         {isAr
-          ? 'صمم منشورات ولافتات وصور ترويجية عبر محادثة مع نموذج صور (Nano Banana 2 أو GPT Image 2). اختر النموذج والإعداد التجاري والمقاس، أرفق صورة، ثم اكتب ما تريد.'
-          : 'Design posts, banners, and promo images through a chat with an image model (Nano Banana 2 or GPT Image 2). Pick a model, brand preset, and aspect ratio, attach an image, then describe what you want.'}
+          ? 'صمم منشورات ولافتات وصور ترويجية على لوحة عمل واحدة. كل صورة تنشئها تصبح أصلاً قابلاً لإعادة الاستخدام في الملفات والسجلات والإعدادات التجارية.'
+          : 'Design posts, banners, and promo imagery on one canvas. Every image you create becomes a reusable asset you can drop into Files, records, and brand presets.'}
       </p>
       <button
         onClick={onStart}
         className="flex items-center gap-2 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors"
       >
         <Plus size={16} />
-        {isAr ? 'محادثة جديدة' : 'New chat'}
+        {isAr ? 'جلسة جديدة' : 'New session'}
       </button>
     </div>
   );

@@ -1,42 +1,42 @@
 /**
- * runImageJob — the per-message half of Image Chats v2 generation.
+ * runImageJob — fills one Generation (Image Chats v3) or, for legacy jobs, one
+ * chat message (v2). Ported from the synchronous api/image-chat/send.ts (the
+ * fal.ai call + the output re-host loop).
  *
- * Ported from the synchronous api/image-chat/send.ts (the fal.ai call + the
- * output re-host loop), restructured to fill ONE assistant placeholder message
- * inside an `image_chats` conversation rather than block a whole HTTP request.
+ * DUAL PATH (cutover safety):
+ *   - v3 job (job.generationId set): create a `media_assets` row per output
+ *     (first-class library asset) and fill the Generation in
+ *     records.data.generations[*] (status + output_asset_ids).
+ *   - v2 job (job.messageId set, no generationId): fill the assistant message
+ *     in records.data.messages[*] (status + images) — unchanged behavior.
+ * The shared middle (resolve model, params, cancel checks, fal call, re-host)
+ * is identical; only the terminal write differs. This lets the worker deploy
+ * before the endpoint/UI cut over to generations.
  *
- *   1. Resolve the image_chats model id (one round-trip).
- *   2. Stamp the placeholder message status='generating' (SPA shows a
- *      per-message spinner via Realtime).
- *   3. Cancel pre-check — if the user already cancelled, bail before spending
- *      a fal.ai call.
- *   4. Submit to fal.ai (imageGenChat) and poll until terminal (pollImageGen).
- *      No per-request timeout cap — the 15-min generation_jobs_watchdog is the
- *      backstop. (This is the whole reason we moved off Vercel's 300s ceiling.)
- *   5. Cancel post-check — skip the re-host if the user cancelled mid-run.
- *   6. Re-host each fal output to marketing-assets/image-chats/outputs/... so
- *      the URLs are stable + public forever (fal URLs expire).
- *   7. Fill the placeholder: status='completed' + images. The SPA reconciles
- *      the whole record via Realtime and the bubble swaps spinner → grid.
+ *   1. Resolve image_chats model id.
+ *   2. Stamp the target (message|generation) status='generating' (Realtime →
+ *      per-item spinner).
+ *   3. Cancel pre-check.
+ *   4. fal.ai (imageGenChat → pollImageGen). No per-request cap; the 15-min
+ *      generation_jobs_watchdog is the backstop.
+ *   5. Cancel post-check.
+ *   6. Re-host each fal output to marketing-assets/image-chats/outputs/... .
+ *   7. v3: insert media_assets + fill the Generation. v2: fill the message.
  *
- * Errors bubble to index.ts which marks the generation_jobs row failed; we
- * write status='failed' + a humanized error onto the MESSAGE first so the
- * bubble exits its spinner (NOT the conversation — siblings + composer stay
- * live). Per CLAUDE.md "Silent Failures": never swallow; the message `error`
- * field IS the surfaced failure.
+ * Errors bubble to index.ts (marks the job failed); we write status='failed' +
+ * a humanized error onto the target FIRST so its spinner exits (NOT the whole
+ * session/conversation — siblings + composer stay live).
  *
- * Concurrency (CRITICAL): unlike decks (one record per job), image turns append
- * to a SHARED records.data.messages array, and the user can fire a new turn (a
- * new endpoint append) while this worker is filling an earlier message. So
- * every write here uses OPTIMISTIC CONCURRENCY through record_save's
- * p_expected_version + retry on the version-mismatch (SQLSTATE 40001). The
- * records_bump_version trigger increments `version` on each UPDATE, so a
- * stale-read writer is reliably bounced and re-applies onto the latest array
- * instead of clobbering a concurrently-appended turn.
+ * Concurrency (CRITICAL): sessions/conversations have a SHARED data array
+ * (generations|messages) and the user can fire a new turn while this fills an
+ * earlier one. Every write uses OPTIMISTIC CONCURRENCY via record_save's
+ * p_expected_version + retry on the version-mismatch (40001); the
+ * records_bump_version trigger increments `version` per UPDATE, so a stale
+ * writer is bounced and re-applies onto the latest array. Safe at any worker
+ * count.
  *
- * Auth model: service-role Supabase client (bypasses RLS). Ownership was
- * validated by api/image-chat/send.ts (under the caller's JWT) before the job
- * was enqueued; the job's user_id scopes the storage path.
+ * Auth: service-role client (bypasses RLS). Ownership was validated by
+ * api/image-chat/send.ts before enqueue; job.userId scopes storage + assets.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -52,11 +52,13 @@ import {
 export interface ImageJob {
   /** generation_jobs.id */
   id: string;
-  /** records.id — the image_chats conversation. */
+  /** records.id — the session / conversation. */
   recordId: string;
-  /** records.data.messages[*].id — the assistant placeholder this job fills. */
-  messageId: string;
-  /** auth.users.id of the submitter (scopes the output storage path). */
+  /** v2: records.data.messages[*].id this job fills (null for v3 jobs). */
+  messageId: string | null;
+  /** v3: records.data.generations[*].id this job fills (null for v2 jobs). */
+  generationId: string | null;
+  /** auth.users.id of the submitter (scopes the output storage path + assets). */
   userId: string;
   kind: string;
   /** Final merged prompt (brand-preset text + user prompt). */
@@ -76,37 +78,16 @@ interface JobParams {
   preset_name?: string | null;
 }
 
-/** Keep in sync with MessageImage in src/lib/imageChat/client.ts. */
-interface MessageImage {
-  url: string;
-  name?: string;
-  source?: string;
-  /** Promote-on-add cache (Image Chats v2 Part 5). Set by the SPA, not here;
-   *  carried through so worker writes never drop it. */
-  file_id?: string;
-}
-
-/** Keep in sync with StoredMessage in src/lib/imageChat/client.ts. */
-interface StoredMessage {
+/** A record array item we patch (message or generation) — only `id` + `status`
+ *  + the per-path fields matter to the patch helper. */
+interface RecordArrayItem {
   id: string;
-  role: 'user' | 'assistant';
-  text?: string;
-  images: MessageImage[];
-  aspect_ratio?: ChatAspectRatio;
-  num_variations?: number;
-  preset_id?: string | null;
-  preset_name?: string | null;
-  created_at: string;
-  status?: 'queued' | 'generating' | 'completed' | 'failed' | 'cancelled';
-  job_id?: string;
-  error?: string;
+  [k: string]: unknown;
 }
 
 const BUCKET = 'marketing-assets';
-/** No fal per-request cap — sit just under the 15-min watchdog. */
 const POLL_TIMEOUT_MS = 13 * 60_000;
 const POLL_INTERVAL_MS = 2500;
-/** Bounded retry budget for optimistic-concurrency version conflicts. */
 const MAX_SAVE_ATTEMPTS = 6;
 
 const ASPECTS: readonly ChatAspectRatio[] = ['1:1', '9:16', '16:9', '4:3', '3:4'];
@@ -123,7 +104,21 @@ interface RunArgs {
   job: ImageJob;
 }
 
+interface RehostedOutput {
+  publicUrl: string;
+  storagePath: string;
+  contentType: string;
+  ext: string;
+}
+
 export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<string, unknown>> {
+  const isV3 = !!job.generationId;
+  const targetKey: 'generations' | 'messages' = isV3 ? 'generations' : 'messages';
+  const targetId = isV3 ? job.generationId! : job.messageId;
+  if (!targetId) {
+    throw new Error(`job ${job.id} has neither generationId nor messageId — cannot run`);
+  }
+
   // ── Resolve image_chats model id ────────────────────────────────────
   const { data: modelRow, error: modelErr } = await supabase
     .from('models')
@@ -135,13 +130,12 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
   }
   const modelId = modelRow.id as string;
 
-  // ── Per-message update helper (optimistic concurrency + retry) ───────
-  // Read (data, version, created_by) → patch ONLY the target message in
-  // data.messages → record_save with p_expected_version=version. On a
-  // version conflict (a concurrent turn appended meanwhile) re-read and
-  // re-apply onto the latest array. Preserves created_by_user_id.
-  const updateMessage = async (
-    patch: Partial<StoredMessage>,
+  // ── Patch ONE item in records.data[targetKey] (optimistic concurrency) ─
+  // Reads (data, version, created_by) → merges `patch` into the item with the
+  // matching id → record_save with p_expected_version. Retries on 40001 by
+  // re-reading the latest array. Preserves created_by_user_id.
+  const patchTarget = async (
+    patch: Record<string, unknown>,
     extraRecordFields: Record<string, unknown> = {},
   ): Promise<void> => {
     for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
@@ -152,29 +146,29 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
         .single();
       if (readErr || !current) {
         throw new Error(
-          `failed to read image_chats record ${job.recordId}: ${readErr?.message ?? 'not found'}`,
+          `failed to read session record ${job.recordId}: ${readErr?.message ?? 'not found'}`,
         );
       }
       const data = ((current.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-      const messages: StoredMessage[] = Array.isArray(data.messages)
-        ? (data.messages as StoredMessage[])
+      const arr: RecordArrayItem[] = Array.isArray(data[targetKey])
+        ? (data[targetKey] as RecordArrayItem[])
         : [];
       let found = false;
-      const newMessages = messages.map((m) => {
-        if (m.id === job.messageId) {
+      const newArr = arr.map((it) => {
+        if (it.id === targetId) {
           found = true;
-          return { ...m, ...patch };
+          return { ...it, ...patch };
         }
-        return m;
+        return it;
       });
       if (!found) {
-        // The conversation (or this message) is gone — e.g. user deleted the
-        // chat mid-run. Abort loudly; never silently no-op (CLAUDE.md).
+        // The session (or this item) is gone — e.g. deleted mid-run. Abort
+        // loudly; never silently no-op (CLAUDE.md).
         throw new Error(
-          `message ${job.messageId} not present in record ${job.recordId} — aborting`,
+          `${targetKey} item ${targetId} not present in record ${job.recordId} — aborting`,
         );
       }
-      const newData = { ...data, messages: newMessages, ...extraRecordFields };
+      const newData = { ...data, [targetKey]: newArr, ...extraRecordFields };
       const { error: saveErr } = await supabase.rpc('record_save', {
         p_model_id: modelId,
         p_id: job.recordId,
@@ -184,10 +178,7 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
         p_expected_version: (current as { version: number | null }).version ?? null,
       });
       if (!saveErr) return;
-      if (isVersionConflict(saveErr as { code?: string; message?: string })) {
-        // A concurrent turn bumped the version — re-read and retry.
-        continue;
-      }
+      if (isVersionConflict(saveErr as { code?: string; message?: string })) continue;
       throw new Error(`record_save failed: ${saveErr.message}`);
     }
     throw new Error(
@@ -195,7 +186,7 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
     );
   };
 
-  // ── Parse frozen params ──────────────────────────────────────────────
+  // ── Parse frozen params (shared) ─────────────────────────────────────
   const params = (job.params ?? {}) as JobParams;
   const aspectRatio: ChatAspectRatio = ASPECTS.includes(params.aspect_ratio as ChatAspectRatio)
     ? (params.aspect_ratio as ChatAspectRatio)
@@ -213,8 +204,6 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
     typeof params.prev_image_url === 'string' && params.prev_image_url.length > 0
       ? params.prev_image_url
       : null;
-  // Order matters: nano-banana-pro/edit treats the first image as the primary
-  // subject. User-curated attachments first, then the auto-chain reference.
   const mergedImageUrls = [...attachmentUrls, ...(prevImageUrl ? [prevImageUrl] : [])];
 
   const isCancelled = async (): Promise<boolean> => {
@@ -227,12 +216,14 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
   };
 
   // ── Stamp generating ─────────────────────────────────────────────────
-  await updateMessage({ status: 'generating' });
-  console.log(`[run-image] generating job=${job.id} record=${job.recordId} msg=${job.messageId}`);
+  await patchTarget({ status: 'generating' });
+  console.log(
+    `[run-image] generating job=${job.id} record=${job.recordId} ${targetKey.slice(0, -1)}=${targetId}`,
+  );
 
   // ── Cancel pre-check ─────────────────────────────────────────────────
   if (await isCancelled()) {
-    await updateMessage({ status: 'cancelled' });
+    await patchTarget({ status: 'cancelled' });
     console.log(`[run-image] cancelled-before-start job=${job.id}`);
     return { cancelled: true };
   }
@@ -258,22 +249,21 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
     outputUrls = result.imageUrls;
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
-    const friendly = humanizeImageError(raw);
-    await updateMessage({ status: 'failed', error: friendly }).catch((e) =>
-      console.error(`[run-image] could not mark message failed: ${(e as Error).message}`),
+    await patchTarget({ status: 'failed', error: humanizeImageError(raw) }).catch((e) =>
+      console.error(`[run-image] could not mark target failed: ${(e as Error).message}`),
     );
-    throw err; // index.ts marks the job failed with the raw message
+    throw err;
   }
 
-  // ── Cancel post-check (skip re-host if cancelled mid-generation) ──────
+  // ── Cancel post-check ────────────────────────────────────────────────
   if (await isCancelled()) {
-    await updateMessage({ status: 'cancelled' });
+    await patchTarget({ status: 'cancelled' });
     console.log(`[run-image] cancelled-after-generate job=${job.id}`);
     return { cancelled: true };
   }
 
   // ── Re-host outputs to marketing-assets (service-role, public bucket) ─
-  const persisted: MessageImage[] = [];
+  const outputs: RehostedOutput[] = [];
   for (let i = 0; i < outputUrls.length; i++) {
     const sourceUrl = outputUrls[i]!;
     let bytes: Uint8Array;
@@ -285,7 +275,7 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
       contentType = srcRes.headers.get('content-type') ?? 'image/png';
     } catch (err) {
       const msg = `output fetch failed: ${err instanceof Error ? err.message : String(err)}`;
-      await updateMessage({ status: 'failed', error: msg }).catch(() => undefined);
+      await patchTarget({ status: 'failed', error: msg }).catch(() => undefined);
       throw new Error(msg);
     }
     const ext = contentType.includes('jpeg')
@@ -293,44 +283,87 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
       : contentType.includes('webp')
         ? 'webp'
         : 'png';
-    const path = `image-chats/outputs/${job.userId}/${job.recordId}/${crypto.randomUUID()}.${ext}`;
+    const storagePath = `image-chats/outputs/${job.userId}/${job.recordId}/${crypto.randomUUID()}.${ext}`;
     const { error: upErr } = await supabase.storage
       .from(BUCKET)
-      .upload(path, bytes, { contentType, upsert: false });
+      .upload(storagePath, bytes, { contentType, upsert: false });
     if (upErr) {
       const msg = `output upload failed: ${upErr.message}`;
-      await updateMessage({ status: 'failed', error: msg }).catch(() => undefined);
+      await patchTarget({ status: 'failed', error: msg }).catch(() => undefined);
       throw new Error(msg);
     }
-    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(storagePath);
     const publicUrl = pub?.publicUrl;
     if (!publicUrl) {
       const msg = 'output uploaded but public URL not resolved';
-      await updateMessage({ status: 'failed', error: msg }).catch(() => undefined);
+      await patchTarget({ status: 'failed', error: msg }).catch(() => undefined);
       throw new Error(msg);
     }
-    persisted.push({ url: publicUrl, name: `variation-${i + 1}.${ext}`, source: 'assistant' });
+    outputs.push({ publicUrl, storagePath, contentType, ext });
   }
 
-  // ── Fill the placeholder + bump conversation rollups ─────────────────
-  // status:'idle' / last_message_at are the legacy conversation-level fields
-  // kept for back-compat (the UI now derives "generating" from per-message
-  // status). `error` is omitted from the patch (undefined would be dropped by
-  // JSONB anyway) so a fresh placeholder stays clean.
-  await updateMessage(
+  // ── Terminal write — v3 (media_assets + generation) or v2 (message) ──
+  if (isV3) {
+    // Insert one first-class media_assets row per output.
+    const assetRows = outputs.map((o) => ({
+      kind: 'image',
+      storage_bucket: BUCKET,
+      storage_path: o.storagePath,
+      public_url: o.publicUrl,
+      mime_type: o.contentType,
+      prompt: job.prompt,
+      model_id: modelIdChat,
+      settings: { aspect_ratio: aspectRatio, num_variations: numVariations },
+      source_session_id: job.recordId,
+      source_generation_id: job.generationId,
+      created_by_user_id: job.userId,
+    }));
+    const { data: insertedAssets, error: assetErr } = await supabase
+      .from('media_assets')
+      .insert(assetRows)
+      .select('id');
+    if (assetErr || !insertedAssets) {
+      const msg = `media_assets insert failed: ${assetErr?.message ?? 'unknown'}`;
+      await patchTarget({ status: 'failed', error: msg }).catch(() => undefined);
+      throw new Error(msg);
+    }
+    const assetIds = insertedAssets.map((r) => r.id as string);
+    await patchTarget(
+      { status: 'completed', output_asset_ids: assetIds, error: null },
+      {
+        last_generation_at: new Date().toISOString(),
+        // Session thumbnail = the latest generation's first output. We stamp
+        // both the asset id (for linking) and the public_url (so the session
+        // list renders a thumbnail without fetching media_assets).
+        thumbnail_asset_id: assetIds[0] ?? null,
+        thumbnail_url: outputs[0]?.publicUrl ?? null,
+      },
+    );
+    console.log(
+      `[run-image] completed v3 job=${job.id} assets=${assetIds.length} record=${job.recordId}`,
+    );
+    return { asset_ids: assetIds };
+  }
+
+  // v2 legacy: fill the assistant message with images.
+  const persisted = outputs.map((o, i) => ({
+    url: o.publicUrl,
+    name: `variation-${i + 1}.${o.ext}`,
+    source: 'assistant',
+  }));
+  await patchTarget(
     { status: 'completed', images: persisted },
     { last_message_at: new Date().toISOString(), status: 'idle', error_message: null },
   );
   console.log(
-    `[run-image] completed job=${job.id} variations=${persisted.length} record=${job.recordId}`,
+    `[run-image] completed v2 job=${job.id} variations=${persisted.length} record=${job.recordId}`,
   );
   return { images: persisted };
 }
 
 /**
- * Translate raw fal.ai / network errors into plain text for the per-message
- * red error box. Always preserves the original wording so a screenshot is
- * still debuggable. Mirrors the posture of runDeckJob.humanizeErrorMessage.
+ * Translate raw fal.ai / network errors into plain text for the per-item error
+ * box. Preserves the original wording for debugging.
  */
 function humanizeImageError(raw: string): string {
   const lower = raw.toLowerCase();

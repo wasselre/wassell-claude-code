@@ -149,7 +149,8 @@ async function claimAndRunOneImage(): Promise<boolean> {
   const rows = (data ?? []) as Array<{
     job_id: string;
     record_id: string;
-    message_id: string;
+    message_id: string | null;
+    generation_id: string | null;
     user_id: string;
     kind: string;
     prompt: string | null;
@@ -161,7 +162,8 @@ async function claimAndRunOneImage(): Promise<boolean> {
   const job: ImageJob = {
     id: row.job_id,
     recordId: row.record_id,
-    messageId: row.message_id,
+    messageId: row.message_id ?? null,
+    generationId: row.generation_id ?? null,
     userId: row.user_id,
     kind: row.kind,
     prompt: row.prompt,
@@ -169,7 +171,7 @@ async function claimAndRunOneImage(): Promise<boolean> {
     attempts: row.attempts,
   };
   console.log(
-    `[worker] claimed image job=${job.id} record=${job.recordId} msg=${job.messageId} attempts=${job.attempts}`,
+    `[worker] claimed image job=${job.id} record=${job.recordId} gen=${job.generationId ?? '-'} msg=${job.messageId ?? '-'} attempts=${job.attempts}`,
   );
 
   try {

@@ -78,6 +78,74 @@ export interface EnqueueResponse {
   messageId: string;
 }
 
+/* ─── Image Chats v3 — Creative Workspace ─────────────────────────────────
+ * The session's primary objects are Generations (not chat messages), and each
+ * output is a first-class MediaAsset row (the `media_assets` table). */
+
+export type GenerationStatus = MessageStatus;
+
+/** A first-class media-library asset (one row in `media_assets`). */
+export interface MediaAsset {
+  id: string;
+  kind: 'image' | 'video' | 'audio' | 'document';
+  public_url: string;
+  storage_path?: string | null;
+  mime_type?: string | null;
+  width?: number | null;
+  height?: number | null;
+  prompt?: string | null;
+  model_id?: string | null;
+  settings?: Record<string, unknown> | null;
+  source_session_id?: string | null;
+  source_generation_id?: string | null;
+  promoted_file_id?: string | null;
+  created_at: string;
+}
+
+/** One generation in a Creative Session (lives in `record.data.generations`). */
+export interface Generation {
+  id: string;
+  prompt: string;
+  /** media_assets used as references ("Use as Reference"). */
+  reference_asset_ids: string[];
+  /** ad-hoc uploaded references (marketing-assets URLs / files.id). */
+  reference_urls: string[];
+  preset_id?: string | null;
+  preset_name?: string | null;
+  model_id: ChatModelId;
+  aspect_ratio: ChatAspectRatio;
+  num_variations: number;
+  /** parent generation id (iteration lineage). */
+  based_on?: string | null;
+  status?: GenerationStatus;
+  job_id?: string;
+  error?: string;
+  /** the media_assets this generation produced (v3 generations). */
+  output_asset_ids: string[];
+  /** Inline output URLs — set ONLY for generations migrated from v2 chat
+   *  messages (whose outputs predate the media_assets library). The canvas
+   *  prefers output_asset_ids and falls back to these. */
+  output_urls?: string[];
+  created_at: string;
+}
+
+export interface GenerationInput {
+  sessionId: string;
+  prompt: string;
+  referenceUrls: string[];
+  referenceAssetIds: string[];
+  presetId: string | null;
+  modelId: ChatModelId;
+  aspectRatio: ChatAspectRatio;
+  numVariations: number;
+  basedOn: string | null;
+}
+
+export interface GenerationEnqueueResponse {
+  jobId: string;
+  generationId: string;
+}
+
 async function authHeader(): Promise<Record<string, string>> {
   if (!supabase) return {};
   const { data } = await supabase.auth.getSession();
@@ -124,9 +192,44 @@ export async function enqueueImageChatTurn(input: SendTurnInput): Promise<Enqueu
 }
 
 /**
+ * Enqueue one Generation in a Creative Session (Image Chats v3). Returns as
+ * soon as the server appends the queued Generation + the job — NOT when the
+ * image is ready (it streams in via Realtime, and each output becomes a
+ * first-class `media_assets` row). Throws only on enqueue-time failure.
+ */
+export async function enqueueGeneration(
+  input: GenerationInput,
+): Promise<GenerationEnqueueResponse> {
+  const res = await fetch('/api/image-chat/generate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({
+      session_id: input.sessionId,
+      prompt: input.prompt,
+      reference_urls: input.referenceUrls,
+      reference_asset_ids: input.referenceAssetIds,
+      preset_id: input.presetId,
+      model_id: input.modelId,
+      aspect_ratio: input.aspectRatio,
+      num_variations: input.numVariations,
+      based_on: input.basedOn,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(body?.error ?? `POST /api/image-chat/generate failed (${res.status})`);
+  }
+  const json = (await res.json()) as { job_id?: string; generation_id?: string };
+  if (!json.job_id || !json.generation_id) {
+    throw new Error('enqueue succeeded but job_id/generation_id missing from response');
+  }
+  return { jobId: json.job_id, generationId: json.generation_id };
+}
+
+/**
  * Cancel a queued or running generation job. The cancel RPC is owner-gated and
- * patches the assistant message to status='cancelled' itself, so the UI
- * updates purely via Realtime. No-op offline (nothing was enqueued).
+ * patches the target (message or generation) to status='cancelled' itself, so
+ * the UI updates purely via Realtime. No-op offline (nothing was enqueued).
  */
 export async function cancelImageJob(jobId: string): Promise<void> {
   if (!supabase) return;

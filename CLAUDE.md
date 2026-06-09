@@ -332,6 +332,18 @@ Image Chats v2 generation runs on the SAME Fly.io worker as decks, draining a SE
 
 7. **Asset promote-on-add.** Generated images stay public `marketing-assets` URLs (free chat render). The FIRST Add-to-Files/Record promotes ONE `files` row (server-side copy → `wassel-files`) and caches `files.id` on the message; later Add-to-Record reuses it (dedup). Don't promote at generation time (that would force signed-URL chat rendering + a `files` row per discarded variation).
 
+### Image Chats v3 — Creative Workspace (added 2026-06-09)
+
+v3 replaced the chat framing with a **Creative Workspace**: the session's primary objects are **Generations** (not chat messages), and every output is a first-class **`media_assets`** row (a central media library). Same `generation_jobs` queue + Fly worker + fal.ai underneath.
+
+- **Data shape:** `record.data.generations[]` (was `messages[]`). Each Generation = `{ id, prompt, reference_urls, reference_asset_ids, model_id, aspect_ratio, num_variations, based_on, status, job_id, output_asset_ids, output_urls?, created_at }`. The session also carries `generation_count`, `thumbnail_url`, `thumbnail_asset_id`, `last_generation_at`.
+- **`media_assets` table** (`supabase/migrations/2026-06-09_media_assets.sql`): one row per generated output — `kind` (image/video/audio/document), `public_url` (bytes stay in public marketing-assets for cheap canvas render), provenance (`prompt`/`model_id`/`settings`), `source_session_id`/`source_generation_id`, `promoted_file_id`, `created_by_user_id` (= auth.uid(); RLS owner-select). Future-proof for video/audio/docs.
+- **Dual-path worker:** `worker/src/runImageJob.ts` branches on `generation_jobs.generation_id` — v3 (create `media_assets` + fill the Generation) vs legacy v2 (fill a message). `message_id` is now nullable.
+- **Endpoint:** `api/image-chat/generate.ts` (v3) appends a Generation + inserts a job with `generation_id`. The v2 `api/image-chat/send.ts` stays for back-compat (unused post-cutover).
+- **Migration:** `2026-06-09_sessions_to_generations.sql` reshapes existing sessions (`messages` → `generations`, outputs as inline `output_urls`; originals stashed under `_legacy_messages`). Idempotent.
+- **UI:** `src/pages/ImageChats/components/StudioWorkspace.tsx` (canvas + timeline + composer + `SelectedAssetPanel`) replaced `ChatThread`/`MessageBubble`/`AssetActionsMenu` (deleted). Outputs resolve via `src/pages/ImageChats/lib/generations.ts` (`media_assets` for v3, inline `output_urls` for migrated). PRD: `docs/prd/image-chats.md`.
+- The same hard rules above apply (no held HTTP for fal; optimistic concurrency on every session write; complete/fail/watchdog guards; `worker/src/imageGen.ts` is a copy).
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline
