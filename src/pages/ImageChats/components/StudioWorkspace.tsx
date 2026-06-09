@@ -11,6 +11,7 @@ import {
 } from '@/lib/imageChat/client';
 import Composer, { type ComposerSeed } from './Composer';
 import SelectedAssetPanel from './SelectedAssetPanel';
+import AssetLightbox from './AssetLightbox';
 import { chatModelDisplayName } from './ModelDropdown';
 import { useSessionAssets, generationOutputs, generationThumbUrl, type OutputItem } from '../lib/generations';
 
@@ -60,6 +61,7 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
   // selectedGenerationId === null ⇒ follow the latest generation.
   const [selectedGenerationId, setSelectedGenerationId] = useState<string | null>(null);
   const [selectedOutputIdx, setSelectedOutputIdx] = useState<number | null>(null);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const [seed, setSeed] = useState<ComposerSeed | null>(null);
   const [basedOn, setBasedOn] = useState<string | null>(null);
 
@@ -206,7 +208,10 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
                 outputs={selectedOutputs}
                 isAr={isAr}
                 selectedOutputIdx={selectedOutputIdx}
-                onSelectOutput={(i) => setSelectedOutputIdx(i)}
+                onSelectOutput={(i) => {
+                  setSelectedOutputIdx(i);
+                  setLightboxOpen(true);
+                }}
                 onCancel={handleCancel}
                 onRetry={() => regenerate(selectedGen)}
               />
@@ -233,6 +238,7 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
             output={selectedOutput}
             generation={selectedGen}
             onClose={() => setSelectedOutputIdx(null)}
+            onExpand={() => setLightboxOpen(true)}
             onCreateVariation={() => createVariation(selectedOutput, selectedGen)}
             onUseAsReference={() => useAsReference(selectedOutput)}
             onRegenerate={() => regenerate(selectedGen)}
@@ -252,6 +258,31 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
       {/* prevImageUrl is computed for parity with v2 auto-chain; references are
           explicit in v3 (Use as Reference), so it isn't auto-attached. */}
       <span className="hidden">{prevImageUrl ?? ''}</span>
+
+      {/* Full-screen viewer — opened by clicking a canvas image or the panel
+          preview. Variation / Reference / Regenerate close it so the seeded
+          composer is back in view. */}
+      {lightboxOpen && selectedGen && selectedOutput && selectedOutputIdx !== null && (
+        <AssetLightbox
+          outputs={selectedOutputs}
+          index={selectedOutputIdx}
+          generation={selectedGen}
+          onIndexChange={(i) => setSelectedOutputIdx(i)}
+          onClose={() => setLightboxOpen(false)}
+          onCreateVariation={() => {
+            createVariation(selectedOutput, selectedGen);
+            setLightboxOpen(false);
+          }}
+          onUseAsReference={() => {
+            useAsReference(selectedOutput);
+            setLightboxOpen(false);
+          }}
+          onRegenerate={() => {
+            regenerate(selectedGen);
+            setLightboxOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
