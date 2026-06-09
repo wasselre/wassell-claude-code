@@ -3,6 +3,7 @@ import { Plus, Trash2, ImagePlus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { ModelField, TableColumn } from '@/types';
 import { evaluateFormula, isFormulaErrorValue } from '@/lib/formulaEngine';
+import { shortenGoogleMapsUrl } from '@/lib/urlUtils';
 import { formatNumberWithCommas, parseFormattedNumber } from './RangeField';
 import IconPickerModal from './IconPickerModal';
 import AutoGrowTextarea from './AutoGrowTextarea';
@@ -167,6 +168,10 @@ function CellInput({
           type="url"
           value={(value as string) ?? ''}
           onChange={(e) => onChange(e.target.value)}
+          onBlur={(e) => {
+            const shortened = shortenGoogleMapsUrl(e.target.value);
+            if (shortened !== e.target.value) onChange(shortened);
+          }}
           className={commonClass}
           dir="ltr"
         />

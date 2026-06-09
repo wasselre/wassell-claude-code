@@ -14,6 +14,7 @@ import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/
 import { canEditRecord, getFieldPermission } from '@/lib/permissions';
 import type { AppModel, AppRecord, ModelField, ModelView } from '@/types';
 import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
+import { shortenGoogleMapsUrl } from '@/lib/urlUtils';
 
 interface TableViewProps {
   model: AppModel;
@@ -679,7 +680,9 @@ function UrlInlineEditor({
   }, [open]);
 
   const commit = () => {
-    onChange(draft.trim() === '' ? undefined : draft);
+    // Shorten a pasted Google Maps link to its compact ?q=lat,lng form on save
+    // (no-op for any other URL); empty input clears the value.
+    onChange(draft.trim() === '' ? undefined : shortenGoogleMapsUrl(draft));
     setOpen(false);
   };
 

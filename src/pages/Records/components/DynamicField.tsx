@@ -19,6 +19,7 @@ import TemplatesPickerModal from './TemplatesPickerModal';
 import GenerationsGallery, { GENERATION_STATUS_LABELS, GenerationStatusBadge } from './GenerationsGallery';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 import { resolveMirror } from '@/lib/mirrorResolver';
+import { shortenGoogleMapsUrl } from '@/lib/urlUtils';
 import { evaluateFormulaInModel, formatFormulaValue, isFormulaErrorValue } from '@/lib/formulaEngine';
 import {
   ImageFieldInput,
@@ -282,6 +283,28 @@ export default function DynamicField({
               type="url"
               value={(value as string) ?? ''}
               onChange={(e) => onChange(e.target.value)}
+              onBlur={(e) => {
+                // Collapse a long Google Maps link into its short ?q=lat,lng
+                // form once the user leaves the field. No-op for any other URL.
+                const shortened = shortenGoogleMapsUrl(e.target.value);
+                if (shortened !== e.target.value) onChange(shortened);
+              }}
+              onPaste={(e) => {
+                // When the paste replaces the whole value (empty field or full
+                // selection), shorten a pasted Maps link immediately — the most
+                // common flow. Partial pastes fall through to onBlur.
+                const el = e.currentTarget;
+                const replacesAll =
+                  el.value === '' ||
+                  (el.selectionStart === 0 && el.selectionEnd === el.value.length);
+                if (!replacesAll) return;
+                const pasted = e.clipboardData.getData('text');
+                const shortened = shortenGoogleMapsUrl(pasted);
+                if (shortened !== pasted) {
+                  e.preventDefault();
+                  onChange(shortened);
+                }
+              }}
               className="form-input pe-10"
               placeholder="https://..."
               dir="ltr"
@@ -723,6 +746,10 @@ function MultiLinkFieldInput({ value, onChange, isAr }: MultiLinkFieldInputProps
             type="url"
             value={link}
             onChange={(e) => updateAt(i, e.target.value)}
+            onBlur={(e) => {
+              const shortened = shortenGoogleMapsUrl(e.target.value);
+              if (shortened !== e.target.value) updateAt(i, shortened);
+            }}
             className="form-input flex-1"
             placeholder="https://..."
             dir="ltr"
