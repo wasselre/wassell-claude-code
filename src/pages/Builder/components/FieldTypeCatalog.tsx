@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import {
   Type, AlignLeft, Hash, AtSign, Phone, CalendarDays, Clock, DollarSign,
-  Link2, Link, ToggleLeft, ChevronDown, List, Search, Layers, UserCheck, Copy,
+  Link2, Link, ToggleLeft, ChevronDown, List, Search, Home, Layers, UserCheck, Copy,
   StickyNote, SlidersHorizontal, Plus, Rows3, Fingerprint, Calculator, Table2,
   Image as ImageIcon, Images as MultiImagesIcon, File as FileFieldIcon,
   Files as MultiFilesIcon, Paperclip as PaperclipIcon, MessageSquare, PhoneCall,
@@ -36,6 +36,7 @@ const TYPE_CARDS: TypeCard[] = [
   { type: 'dropdown',         icon: ChevronDown,       color: '#EF4444', bg: '#EF444415' },
   { type: 'multiselect',      icon: List,              color: '#F97316', bg: '#F9731615' },
   { type: 'lookup',           icon: Search,            color: '#B8734F', bg: '#B8734F15' },
+  { type: 'unit_picker',      icon: Home,              color: '#8E4E3A', bg: '#8E4E3A15' },
   { type: 'mirror',           icon: Copy,              color: '#8E4E3A', bg: '#8E4E3A15' },
   { type: 'section_mirror',   icon: Rows3,             color: '#6B4226', bg: '#6B422615' },
   { type: 'section_selector', icon: Layers,            color: '#4A4E54', bg: '#4A4E5415' },

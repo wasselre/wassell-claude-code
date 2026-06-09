@@ -114,6 +114,11 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [lookupDisplayField, setLookupDisplayField] = useState<string | null>(null);
   const [isMulti, setIsMulti] = useState<boolean>(false);
   const [lookupMaxRecords, setLookupMaxRecords] = useState<number>(20);
+  // Unit picker (type: 'unit_picker') — which model holds the units, and which
+  // lookup field on it points at the project. Both fall back to the live
+  // defaults (`units` model / `project_id` slug) when left unset.
+  const [unitPickerUnitModelId, setUnitPickerUnitModelId] = useState<string | null>(null);
+  const [unitPickerProjectLinkField, setUnitPickerProjectLinkField] = useState<string>('');
   const [assigneeRoleIds, setAssigneeRoleIds] = useState<string[]>([]);
   const [assigneeProfileIds, setAssigneeProfileIds] = useState<string[]>([]);
   const [assigneeFilterMode, setAssigneeFilterMode] = useState<'all' | 'restricted'>('all');
@@ -221,6 +226,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setLookupDisplayField(field.lookup_display_field ?? null);
       setIsMulti(field.is_multi ?? false);
       setLookupMaxRecords(field.lookup_max_records ?? 20);
+      setUnitPickerUnitModelId(field.unit_picker_unit_model_id ?? null);
+      setUnitPickerProjectLinkField(field.unit_picker_project_link_field ?? '');
       setAssigneeRoleIds(field.assignee_role_ids ?? []);
       setAssigneeProfileIds(field.assignee_profile_ids ?? []);
       {
@@ -278,6 +285,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setLookupDisplayField(null);
       setIsMulti(false);
       setLookupMaxRecords(20);
+      setUnitPickerUnitModelId(null);
+      setUnitPickerProjectLinkField('');
       setAssigneeRoleIds([]);
       setDefaultCountryCode(DEFAULT_COUNTRY_CODE);
       setMirrorViaLookupFieldId(null);
@@ -375,6 +384,26 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const formulaHasError =
     type === 'formula' && (!!formulaParseError || formulaUnknownRefs.length > 0 || !!formulaCyclePath);
 
+  // ── Unit-picker derivations (type: 'unit_picker') ──
+  // Effective unit model = explicit choice, else the live `units` model. The
+  // project-link options are that model's lookup fields; the effective link
+  // defaults to `project_id` when present. These resolve the display values for
+  // the config selects AND the values persisted by buildSavedField, so an
+  // untouched picker saves a fully-specified (self-describing) config.
+  const unitPickerUnitModelIdEffective =
+    unitPickerUnitModelId ?? models.find((m) => m.name === 'units')?.id ?? null;
+  const unitPickerUnitModel = unitPickerUnitModelIdEffective
+    ? models.find((m) => m.id === unitPickerUnitModelIdEffective) ?? null
+    : null;
+  const unitPickerLinkFieldOptions = unitPickerUnitModel
+    ? unitPickerUnitModel.schema.sections
+        .flatMap((s) => s.fields)
+        .filter((f) => f.type === 'lookup' && !!f.lookup_model_id)
+    : [];
+  const unitPickerLinkFieldEffective =
+    unitPickerProjectLinkField ||
+    (unitPickerLinkFieldOptions.some((f) => f.name === 'project_id') ? 'project_id' : '');
+
   const buildSavedField = (
     resolvedLabels?: { label_ar: string; label_en: string },
     resolvedSlug?: string,
@@ -440,8 +469,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       auto_fill_from_lookup_field_id: field?.auto_fill_from_lookup_field_id,
       auto_fill_source_field_name: field?.auto_fill_source_field_name,
       default_dynamic: field?.default_dynamic,
-      unit_picker_unit_model_id: field?.unit_picker_unit_model_id,
-      unit_picker_project_link_field: field?.unit_picker_project_link_field,
+      unit_picker_unit_model_id: type === 'unit_picker' ? unitPickerUnitModelIdEffective : field?.unit_picker_unit_model_id,
+      unit_picker_project_link_field: type === 'unit_picker' ? (unitPickerLinkFieldEffective || undefined) : field?.unit_picker_project_link_field,
       assignee_role_ids: type === 'assignee' ? (assigneeFilterMode === 'restricted' ? assigneeRoleIds : []) : undefined,
       assignee_profile_ids: type === 'assignee' ? (assigneeFilterMode === 'restricted' ? assigneeProfileIds : []) : undefined,
       assignee_user_filter_mode: type === 'assignee' ? assigneeFilterMode : undefined,
@@ -1094,6 +1123,82 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                   </p>
                 </div>
               )}
+            </div>
+          </>
+        )}
+
+        {/* Unit picker config — cascading project → unit selector */}
+        {type === 'unit_picker' && (
+          <>
+            <div className="border-t border-sand/10" />
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
+                  {isAr ? 'نموذج الوحدات' : 'Units model'}
+                </label>
+                <select
+                  value={unitPickerUnitModelIdEffective ?? ''}
+                  onChange={(e) => {
+                    setUnitPickerUnitModelId(e.target.value || null);
+                    // Switching models invalidates the chosen link field.
+                    setUnitPickerProjectLinkField('');
+                  }}
+                  className="form-input text-sm"
+                >
+                  <option value="">—</option>
+                  {otherModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {isAr ? m.label_ar : m.label_en}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-charcoal/30 mt-1.5">
+                  {isAr
+                    ? 'النموذج الذي يحتوي على الوحدات المراد اختيارها.'
+                    : 'The model that holds the units to pick from.'}
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
+                  {isAr ? 'حقل ربط المشروع' : 'Project link field'}
+                </label>
+                <select
+                  value={unitPickerLinkFieldEffective}
+                  onChange={(e) => setUnitPickerProjectLinkField(e.target.value)}
+                  disabled={!unitPickerUnitModel}
+                  className="form-input text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <option value="">—</option>
+                  {unitPickerLinkFieldOptions.map((f) => (
+                    <option key={f.id} value={f.name}>
+                      {isAr ? f.label_ar : f.label_en}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-charcoal/30 mt-1.5">
+                  {isAr
+                    ? 'حقل الربط في نموذج الوحدات الذي يشير إلى المشروع. تُشتق قائمة المشاريع منه.'
+                    : 'The lookup field on the units model that points to the project. The project list is derived from it.'}
+                </p>
+                {unitPickerUnitModel && unitPickerLinkFieldOptions.length === 0 && (
+                  <p className="text-[11px] text-amber-500 mt-1.5">
+                    {isAr
+                      ? 'لا يحتوي هذا النموذج على حقل ربط. أضف حقل ربط للمشروع أولاً.'
+                      : 'This model has no lookup field. Add a project lookup field on it first.'}
+                  </p>
+                )}
+              </div>
+              <label className="flex items-center gap-2.5 cursor-pointer group py-0.5">
+                <input
+                  type="checkbox"
+                  checked={isMulti}
+                  onChange={(e) => setIsMulti(e.target.checked)}
+                  className="w-4 h-4 rounded border-sand/50 text-copper focus:ring-copper/20 transition-colors"
+                />
+                <span className="text-[13px] font-semibold text-charcoal/70 group-hover:text-charcoal transition-colors">
+                  {isAr ? 'السماح باختيار عدة وحدات' : 'Allow selecting multiple units'}
+                </span>
+              </label>
             </div>
           </>
         )}
