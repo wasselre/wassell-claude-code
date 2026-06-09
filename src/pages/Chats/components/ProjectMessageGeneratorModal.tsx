@@ -8,6 +8,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizeForSearch } from '@/lib/recordSearch';
 import { resolveProjectFacts, composeProjectMessage, type ProjectMessageFacts } from '@/lib/projectMessageFacts';
+import { translateLabel, detectInputLanguage } from '@/lib/translateLabel';
 import Button from '@/components/ui/Button';
 import type { AppRecord } from '@/types';
 
@@ -110,34 +111,47 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
     return f?.name || (typeof r.data?.project_name === 'string' ? r.data.project_name : null) || (isAr ? '(بدون اسم)' : '(no name)');
   };
 
-  // ── Composition (deterministic — no AI, exact format, missing fields omitted) ──
-  // Regenerate re-composes from facts, discarding any manual edits.
-  const generateOne = (ourProjectId: string) => {
-    setItems((prev) =>
-      prev.map((i) => {
-        if (i.ourProjectId !== ourProjectId) return i;
-        const { body_ar, body_en } = composeProjectMessage(i.facts);
-        return { ...i, status: 'done', bodyAr: body_ar, bodyEn: body_en, error: undefined };
-      }),
-    );
+  // ── Composition ──────────────────────────────────────────────────────
+  // The message body is deterministic (no AI prose). The ONE async step is
+  // translating the Arabic project name to English for the English body
+  // (cached + dedup'd by translateLabel; non-Arabic names like "178" pass
+  // through; falls back to the Arabic name if the translate API is down).
+  const resolveNameEn = async (name: string | null): Promise<string | null> => {
+    if (!name || detectInputLanguage(name) !== 'ar') return name;
+    try {
+      const { label_en } = await translateLabel(name, 'generic');
+      return label_en || name;
+    } catch {
+      return name; // graceful — keep the Arabic name in the EN body
+    }
+  };
+
+  // Re-compose one project (also used by Regenerate); discards manual edits.
+  const generateOne = async (ourProjectId: string) => {
+    const facts = factsByRecord.get(ourProjectId);
+    if (!facts) return;
+    setItems((prev) => prev.map((i) => (i.ourProjectId === ourProjectId ? { ...i, status: 'generating', error: undefined } : i)));
+    const nameEn = await resolveNameEn(facts.name);
+    const { body_ar, body_en } = composeProjectMessage(facts, { nameEn });
+    setItems((prev) => prev.map((i) => (i.ourProjectId === ourProjectId ? { ...i, status: 'done', bodyAr: body_ar, bodyEn: body_en } : i)));
   };
 
   const startReview = () => {
     const its: GenItem[] = selectedIds.map((id) => {
       const facts = factsByRecord.get(id)!;
-      const { body_ar, body_en } = composeProjectMessage(facts);
       return {
         ourProjectId: id,
         allProjectId: facts.allProjectId,
         name: facts.name || (isAr ? '(بدون اسم)' : '(no name)'),
         facts,
-        status: 'done' as const,
-        bodyAr: body_ar,
-        bodyEn: body_en,
+        status: 'generating' as const,
+        bodyAr: '',
+        bodyEn: '',
       };
     });
     setItems(its);
     setStep('review');
+    void Promise.allSettled(its.map((it) => generateOne(it.ourProjectId)));
   };
 
   const saveItem = async (ourProjectId: string) => {

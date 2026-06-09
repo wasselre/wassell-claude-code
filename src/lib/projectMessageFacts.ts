@@ -270,7 +270,10 @@ function rangeText(r: NumericRange): string {
  * Per the user's exact spec (2026-06-08): price label is "الأسعار تبدأ من" /
  * "Prices start from"; nothing extra is ever added to the body.
  */
-export function composeProjectMessage(facts: ProjectMessageFacts): { body_ar: string; body_en: string } {
+export function composeProjectMessage(
+  facts: ProjectMessageFacts,
+  opts?: { nameEn?: string | null },
+): { body_ar: string; body_en: string } {
   const ar: string[] = [];
   const en: string[] = [];
   if (facts.city) { ar.push(`المدينة: ${facts.city.ar}`); en.push(`City: ${facts.city.en}`); }
@@ -284,9 +287,13 @@ export function composeProjectMessage(facts: ProjectMessageFacts): { body_ar: st
   if (facts.minPrice) { ar.push(`الأسعار تبدأ من: ${facts.minPrice.ar}`); en.push(`Prices start from: ${facts.minPrice.en}`); }
   if (facts.brochureLink) { ar.push(`البروشور: ${facts.brochureLink}`); en.push(`Brochure: ${facts.brochureLink}`); }
   if (facts.locationLink) { ar.push(`الموقع: ${facts.locationLink}`); en.push(`Location: ${facts.locationLink}`); }
-  const title = facts.name ?? '';
+  // The project name is a single (Arabic) text field with no stored English
+  // form, so the English body uses a translated/transliterated name when one
+  // is supplied (e.g. "مينا 52" → "Mena 52"); falls back to the Arabic name.
+  const titleAr = facts.name ?? '';
+  const titleEn = (opts?.nameEn || facts.name) ?? '';
   return {
-    body_ar: [title, '', ...ar].join('\n').trim(),
-    body_en: [title, '', ...en].join('\n').trim(),
+    body_ar: [titleAr, '', ...ar].join('\n').trim(),
+    body_en: [titleEn, '', ...en].join('\n').trim(),
   };
 }

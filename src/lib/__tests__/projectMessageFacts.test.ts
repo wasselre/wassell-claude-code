@@ -240,4 +240,12 @@ describe('composeProjectMessage', () => {
     expect(body_ar).toContain('غرف النوم: 3');
     expect(body_ar).not.toContain('غرف النوم: 3 - 3');
   });
+
+  it('uses the translated English name for the English body title (Arabic body keeps the Arabic name)', () => {
+    const { body_ar, body_en } = composeProjectMessage(base, { nameEn: 'Mena 52' });
+    expect(body_ar.split('\n')[0]).toBe('مينا 52'); // Arabic title unchanged
+    expect(body_en.split('\n')[0]).toBe('Mena 52'); // English title = translated name
+    // no override → English body falls back to the Arabic name
+    expect(composeProjectMessage(base).body_en.split('\n')[0]).toBe('مينا 52');
+  });
 });
