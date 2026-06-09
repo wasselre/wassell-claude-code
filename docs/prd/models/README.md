@@ -13,8 +13,8 @@
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 9 | no | 2026-06-08 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 11 | yes | 2026-06-08 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 12 | yes | 2026-06-08 |
-| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 20 | no | 2026-06-08 |
-| [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
+| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 20 | no | 2026-06-09 |
+| [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-06-09 |
 | [Contacts](contacts.md) | `contacts` | JSONB | New Group | 1 | 3 | no | 2026-06-08 |
 | [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-06-08 |
 | [Decks](decks.md) | `decks` | JSONB | — | 1 | 11 | yes | 2026-06-08 |

@@ -562,6 +562,8 @@ export default function RecordFormPage() {
    *   - `trigger_workflow` → POST /api/run-button-workflow (Paseet flow).
    *   - `generate_design`  → POST /api/marketing/generate (two-phase
    *     Higgsfield orchestration on marketing_operations records).
+   *   - `analyze_reel`      → POST /api/analyze-reel (clean + analyze one
+   *     competitor reel transcript on the Competitor Library).
    *
    * After either succeeds we re-read the record via `unified_records` so
    * the form reflects whatever the server wrote without a full reload.
@@ -704,6 +706,42 @@ export default function RecordFormPage() {
           isAr
             ? 'بدأ توليد التصميم — ستظهر النتائج تلقائياً'
             : 'Design generation started — results will appear automatically',
+          'success',
+        );
+      } else if (button.action.type === 'analyze_reel') {
+        // Clean + analyze one competitor reel. Pre-flight: needs a raw
+        // transcript in `content`. The endpoint runs synchronously (one
+        // ~10–30s Anthropic call) and writes the cleaned transcript +
+        // analysis fields before responding, so the shared re-read below
+        // picks them up.
+        const contentVal = formData.content;
+        if (typeof contentVal !== 'string' || contentVal.trim().length < 20) {
+          addToast(
+            isAr ? 'لا يوجد نص لتحليله في هذا السجل' : 'This record has no transcript to analyze',
+            'error',
+          );
+          return;
+        }
+        const res = await fetch('/api/analyze-reel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({
+            record_id: existingRecord.id,
+            model_id: model.id,
+          }),
+        });
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({ error: res.statusText }));
+          addToast(
+            isAr
+              ? `فشل التنظيف والتحليل: ${errBody?.error ?? `(${res.status})`}`
+              : `Clean & analyze failed: ${errBody?.error ?? `(${res.status})`}`,
+            'error',
+          );
+          return;
+        }
+        addToast(
+          isAr ? 'تم تنظيف النص وتحليله' : 'Transcript cleaned and analyzed',
           'success',
         );
       } else {

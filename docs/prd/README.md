@@ -32,6 +32,7 @@ This folder contains the **living source of truth** for what every section of th
 | 22 | [files.md](files.md) | Drive-style file library — uploads to private `wassel-files` bucket, nested folders, file + folder permissions (viewer/editor/owner) with folder cascade, brand-heavy public `/share/:token` external links with password + expiry + view counter |
 | 23 | [image-chats.md](image-chats.md) | "Mini Higgsfield" image-design chat — fal.ai Nano Banana 2, per-turn aspect ratio / variations / brand preset, image + prompt libraries with auto-attach |
 | 24 | [data-migration.md](data-migration.md) | AI-assisted import wizard — any-format files → raw table → AI column mapping → approval-gated value standardization (match / create / route-to-field) → import into any model |
+| 25 | [copywriter-intelligence.md](copywriter-intelligence.md) | Competitor reel knowledge base — AI "Clean & Analyze" turns noisy Arabic auto-transcripts into clean text + structured marketing analysis (hook, angle, trigger, structure, tone, CTA); feeds a planned copywriter agent |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 

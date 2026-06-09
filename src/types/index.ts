@@ -482,6 +482,7 @@ export type CustomButtonLocation = 'record_form' | 'record_list';
 export type CustomButtonActionType =
   | 'trigger_workflow'
   | 'generate_design'
+  | 'analyze_reel'
   | 'create_record'
   | 'find_or_create_record';
 
@@ -498,6 +499,17 @@ export interface CustomButtonActionTriggerWorkflow {
  */
 export interface CustomButtonActionGenerateDesign {
   type: 'generate_design';
+}
+
+/**
+ * Fires `/api/analyze-reel` for the current record: cleans the raw `content`
+ * transcript (transcription correction) and extracts the marketing-analysis
+ * fields (hook, angle, psychological trigger, structure, tone, CTA) back onto
+ * the record. Used by the Competitor Library's "Clean & Analyze" button.
+ * No payload — the action discriminator is enough.
+ */
+export interface CustomButtonActionAnalyzeReel {
+  type: 'analyze_reel';
 }
 
 /**
@@ -546,6 +558,7 @@ export interface CustomButtonActionFindOrCreateRecord {
 export type CustomButtonAction =
   | CustomButtonActionTriggerWorkflow
   | CustomButtonActionGenerateDesign
+  | CustomButtonActionAnalyzeReel
   | CustomButtonActionCreateRecord
   | CustomButtonActionFindOrCreateRecord;
 

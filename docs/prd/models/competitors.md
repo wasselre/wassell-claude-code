@@ -5,7 +5,7 @@
 # Model: Competitors / مكتبة المنافسين  `competitors`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-06-09
 **Model id:** `484b5157-ed8c-4013-9dd7-442476a7f9ff`
 **Storage:** unified records (JSONB)
 **Group:** Designs
@@ -14,10 +14,10 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **4**
+- Fields: **15**
 - Section-selector field: none
 - Duplicate-check field: none
-- Custom buttons: 0
+- Custom buttons: 1
 
 ## Sections & fields
 
@@ -29,9 +29,80 @@
 | `type` | Type / النوع | Dropdown | yes | half | yes | 2 options |
 | `content` | Content / المحتوى | Text area | yes | full | no |  |
 | `notes` | Notes / ملاحظات | Text area | no | full | no |  |
+| `clean_content` | Clean Transcript / النص المنقّح | Text area | no | full | no |  |
+| `hook` | Hook / الخطّاف (الجملة الافتتاحية) | Text area | no | full | no |  |
+| `hook_type` | Hook Type / نوع الخطّاف | Dropdown | no | half | yes | 7 options |
+| `angle` | Main Angle / الزاوية الرئيسية | Multi-select | no | full | no | 10 options · multi |
+| `psych_trigger` | Psychological Trigger / المحفّز النفسي | Multi-select | no | full | no | 10 options · multi |
+| `structure` | Script Structure / بنية النص | Text area | no | full | no |  |
+| `tone` | Tone / النبرة | Multi-select | no | half | no | 8 options · multi |
+| `cta` | CTA / الدعوة لاتخاذ إجراء | Text | no | half | no |  |
+| `cta_type` | CTA Type / نوع الدعوة | Dropdown | no | half | no | 8 options |
+| `analysis_notes` | Analysis Notes / ملاحظات التحليل | Text area | no | full | no |  |
+| `processing_status` | Processing Status / حالة المعالجة | Dropdown | no | half | yes | 6 options |
 
 **Field details:**
 
 - **Type / النوع** (`type`, type `dropdown`) — options:
   - API value `reel_script` → "Reel Script" / "نص الريل"
   - API value `post_example` → "Post Example" / "مثال منشور"
+- **Hook Type / نوع الخطّاف** (`hook_type`, type `dropdown`) — options:
+  - API value `question` → "Question" / "سؤال"
+  - API value `curiosity` → "Curiosity" / "فضول"
+  - API value `shock` → "Shock" / "صدمة"
+  - API value `lifestyle` → "Lifestyle" / "نمط حياة"
+  - API value `investment` → "Investment" / "فرصة استثمارية"
+  - API value `problem` → "Problem" / "طرح مشكلة"
+  - API value `statement` → "Statement" / "تصريح جريء"
+- **Main Angle / الزاوية الرئيسية** (`angle`, type `multiselect`) — multi-value. Options:
+  - API value `location` → "Location" / "الموقع"
+  - API value `luxury` → "Luxury" / "الفخامة"
+  - API value `privacy` → "Privacy" / "الخصوصية"
+  - API value `family` → "Family living" / "الحياة العائلية"
+  - API value `investment_return` → "Investment return" / "العائد الاستثماري"
+  - API value `exclusivity` → "Exclusivity" / "الحصرية"
+  - API value `space` → "Space" / "المساحة والرحابة"
+  - API value `design` → "Design" / "التصميم"
+  - API value `value` → "Value" / "القيمة مقابل السعر"
+  - API value `amenities` → "Amenities" / "الخدمات والمرافق"
+- **Psychological Trigger / المحفّز النفسي** (`psych_trigger`, type `multiselect`) — multi-value. Options:
+  - API value `status` → "Status" / "المكانة الاجتماعية"
+  - API value `fomo` → "Fear of missing out" / "الخوف من فوات الفرصة"
+  - API value `security` → "Security" / "الأمان"
+  - API value `comfort` → "Comfort" / "الراحة"
+  - API value `achievement` → "Achievement" / "الإنجاز"
+  - API value `pride` → "Pride" / "الفخر"
+  - API value `convenience` → "Convenience" / "السهولة والتيسير"
+  - API value `wealth` → "Wealth" / "الثراء"
+  - API value `belonging` → "Belonging" / "الانتماء"
+  - API value `aspiration` → "Aspiration" / "الطموح"
+- **Tone / النبرة** (`tone`, type `multiselect`) — multi-value. Options:
+  - API value `luxury` → "Luxury" / "فاخرة"
+  - API value `premium` → "Premium" / "راقية"
+  - API value `urgent` → "Urgent" / "عاجلة"
+  - API value `friendly` → "Friendly" / "ودّية"
+  - API value `expert` → "Expert" / "احترافية"
+  - API value `educational` → "Educational" / "تثقيفية"
+  - API value `aspirational` → "Aspirational" / "ملهمة"
+  - API value `warm` → "Warm" / "دافئة"
+- **CTA Type / نوع الدعوة** (`cta_type`, type `dropdown`) — options:
+  - API value `book_visit` → "Book a visit" / "احجز زيارة"
+  - API value `contact` → "Contact us" / "تواصل معنا"
+  - API value `reserve` → "Reserve now" / "احجز الآن"
+  - API value `message` → "Send a message" / "أرسل رسالة"
+  - API value `whatsapp` → "WhatsApp" / "واتساب"
+  - API value `visit_location` → "Visit location" / "زورونا بالموقع"
+  - API value `learn_more` → "Learn more" / "اعرف المزيد"
+  - API value `none` → "None" / "بدون دعوة"
+- **Processing Status / حالة المعالجة** (`processing_status`, type `dropdown`) — options:
+  - API value `raw` → "Raw" / "خام" · color `#9CA3AF`
+  - API value `cleaned` → "Cleaned" / "منقّح" · color `#60A5FA`
+  - API value `analyzed` → "Analyzed" / "محلَّل" · color `#34D399`
+  - API value `reviewed` → "Reviewed" / "مُراجَع" · color `#B8734F`
+  - API value `skipped` → "Skipped" / "متجاوَز" · color `#D1D5DB`
+  - API value `error` → "Error" / "خطأ" · color `#EF4444`
+
+## Custom buttons
+
+- **Clean & Analyze / تنظيف وتحليل** — icon `sparkles`, shows in: record_form
+  - action: `analyze_reel`

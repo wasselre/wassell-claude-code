@@ -141,9 +141,11 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
         const wf = triggerWorkflowId ? workflows.find((w) => w.id === triggerWorkflowId) : null;
         const wfLabel = btn.action.type === 'generate_design'
           ? (isAr ? '(توليد تصميم)' : '(generate design)')
-          : wf
-            ? (isAr ? wf.label_ar : wf.label_en) || wf.id
-            : isAr ? '(بدون سير عمل)' : '(no workflow)';
+          : btn.action.type === 'analyze_reel'
+            ? (isAr ? '(تنظيف وتحليل)' : '(clean & analyze)')
+            : wf
+              ? (isAr ? wf.label_ar : wf.label_en) || wf.id
+              : isAr ? '(بدون سير عمل)' : '(no workflow)';
         return (
           <div
             key={btn.id}
@@ -305,6 +307,12 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
                       {isAr
                         ? 'هذا الزر مرتبط بمولّد التصميم النظامي ولا يستخدم سير عمل.'
                         : 'This button is wired to the built-in design generator and does not use a workflow.'}
+                    </div>
+                  ) : btn.action.type === 'analyze_reel' ? (
+                    <div className="form-input bg-sand/5 text-charcoal/60 italic cursor-not-allowed">
+                      {isAr
+                        ? 'هذا الزر مرتبط بأداة تنظيف وتحليل الريلز النظامية ولا يستخدم سير عمل.'
+                        : 'This button is wired to the built-in reel clean & analyze tool and does not use a workflow.'}
                     </div>
                   ) : (
                     // create_record / find_or_create_record — Builder UI for these
