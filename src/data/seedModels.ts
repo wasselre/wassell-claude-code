@@ -2860,6 +2860,71 @@ const aiChatsModel: AppModel = {
 };
 
 // ============================================================
+// COPYWRITER MODEL — real-estate copywriter agent conversations
+// ============================================================
+// Each record is one copywriter conversation; messages live inline in
+// record.data.messages (same shape as ai_chats). Renders a custom split-pane
+// UI (src/pages/Copywriter), backed by api/copywriter.ts. The agent retrieves
+// over the enriched `competitors` reel library (proven patterns) + our
+// projects, and writes/improves/analyzes reel scripts + hooks. Phase 3 of the
+// copywriter intelligence system — see docs/prd/copywriter-intelligence.md.
+export const copywriterChatsId = uuid();
+const copywriterChatsBaseSectionId = uuid();
+const copywriterChatsTitleFieldId = uuid();
+const copywriterChatsStatusFieldId = uuid();
+const copywriterChatsLastMessageFieldId = uuid();
+
+const copywriterChatsModel: AppModel = {
+  id: copywriterChatsId,
+  name: 'copywriter_chats',
+  label_ar: 'كاتب المحتوى',
+  label_en: 'Copywriter',
+  icon: 'pen-line',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: copywriterChatsTitleFieldId,
+    subtitle_field_id: copywriterChatsLastMessageFieldId,
+    badge_field_id: copywriterChatsStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: copywriterChatsBaseSectionId,
+        label_ar: 'معلومات المحادثة',
+        label_en: 'Conversation',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          { id: copywriterChatsTitleFieldId, name: 'title', label_ar: 'العنوان', label_en: 'Title', type: 'text', required: false, order: 0, section_id: copywriterChatsBaseSectionId, width: 'full', show_in_table: true },
+          { id: copywriterChatsStatusFieldId, name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: false, order: 1, section_id: copywriterChatsBaseSectionId, width: 'third', show_in_table: true, options: [
+            { id: uuid(), label_ar: 'نشط', label_en: 'Active', value: 'active', color: '#22c55e' },
+            { id: uuid(), label_ar: 'مؤرشف', label_en: 'Archived', value: 'archived', color: '#9ca3af' },
+          ] },
+          { id: uuid(), name: 'message_count', label_ar: 'عدد الرسائل', label_en: 'Messages', type: 'number', required: false, order: 2, section_id: copywriterChatsBaseSectionId, width: 'third', show_in_table: true },
+          { id: copywriterChatsLastMessageFieldId, name: 'last_message_at', label_ar: 'آخر رسالة', label_en: 'Last Message', type: 'datetime', required: false, order: 3, section_id: copywriterChatsBaseSectionId, width: 'third', show_in_table: true },
+          { id: uuid(), name: 'feedback_score', label_ar: 'تقييم الجودة', label_en: 'Feedback Score', type: 'dropdown', required: false, order: 4, section_id: copywriterChatsBaseSectionId, width: 'third', show_in_table: false, options: [
+            { id: uuid(), label_ar: '⭐ ضعيف', label_en: '1 - Poor', value: '1', color: '#ef4444' },
+            { id: uuid(), label_ar: '⭐⭐ مقبول', label_en: '2 - Fair', value: '2', color: '#f59e0b' },
+            { id: uuid(), label_ar: '⭐⭐⭐ جيد', label_en: '3 - Good', value: '3', color: '#eab308' },
+            { id: uuid(), label_ar: '⭐⭐⭐⭐ ممتاز', label_en: '4 - Great', value: '4', color: '#84cc16' },
+            { id: uuid(), label_ar: '⭐⭐⭐⭐⭐ مذهل', label_en: '5 - Excellent', value: '5', color: '#22c55e' },
+          ] },
+          { id: uuid(), name: 'linked_project_id', label_ar: 'المشروع المرتبط', label_en: 'Linked Project', type: 'lookup', required: false, order: 5, section_id: copywriterChatsBaseSectionId, width: 'full', show_in_table: false, lookup_model_id: allProjectsId, lookup_display_field: 'project_name' },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // PHONE CALLS MODEL (Hatif call events as user-facing records)
 // ============================================================
 // Every inbound, outbound-IVR, and agent-placed call Hatif logs gets a
@@ -3194,7 +3259,7 @@ const competitorsModel: AppModel = {
         color: '#B8734F',
         fields: [
           { id: uuid(), name: 'name', label_ar: 'الاسم', label_en: 'Name', type: 'text', required: true, order: 0, section_id: competitorsBaseId, width: 'half', show_in_table: true },
-          { id: uuid(), name: 'type', label_ar: 'النوع', label_en: 'Type', type: 'dropdown', required: true, order: 1, section_id: competitorsBaseId, width: 'half', show_in_table: true, options: [opt('reel_script', 'Reel Script'), opt('post_example', 'Post Example')] },
+          { id: uuid(), name: 'type', label_ar: 'النوع', label_en: 'Type', type: 'dropdown', required: true, order: 1, section_id: competitorsBaseId, width: 'half', show_in_table: true, options: [opt('reel_script', 'Reel Script'), opt('post_example', 'Post Example'), { id: uuid(), value: 'our_script', label_ar: 'نصّنا', label_en: 'Our Script' }] },
           { id: uuid(), name: 'content', label_ar: 'المحتوى', label_en: 'Content', type: 'textarea', required: true, order: 2, section_id: competitorsBaseId, width: 'full', show_in_table: false },
           { id: uuid(), name: 'notes', label_ar: 'ملاحظات', label_en: 'Notes', type: 'textarea', required: false, order: 3, section_id: competitorsBaseId, width: 'full', show_in_table: false },
           // --- Reel marketing-analysis fields (added 2026-06-09, mirrors
@@ -4356,6 +4421,7 @@ export const SEED_MODELS: AppModel[] = [
   chatsModel,
   chatTemplatesModel,
   aiChatsModel,
+  copywriterChatsModel,
   decksModel,
   dataMigrationModel,
   phoneCallsModel,

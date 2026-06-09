@@ -35,6 +35,7 @@ import ProjectDetailsBridgePage from '@/pages/Settings/ProjectDetailsBridgePage'
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
+import CopywriterPage from '@/pages/Copywriter/CopywriterPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import ImageChatsPage from '@/pages/ImageChats/ImageChatsPage';
@@ -96,6 +97,11 @@ function RecordDetailDispatcher() {
     // mount keying.
     return <AiAgentPage />;
   }
+  if (modelName === 'copywriter_chats') {
+    // CopywriterPage is the same split-pane chat UI as AiAgentPage — the
+    // real-estate copywriter agent (api/copywriter). Reads :recordId itself.
+    return <CopywriterPage />;
+  }
   if (modelName === 'decks') {
     // DecksPage is a split-pane deck-builder UI — reads :recordId itself,
     // handles brief form / progress / ready / failed states internally.
@@ -143,6 +149,9 @@ function RecordListDispatcher() {
   }
   if (modelName === 'ai_chats') {
     return <AiAgentPage />;
+  }
+  if (modelName === 'copywriter_chats') {
+    return <CopywriterPage />;
   }
   if (modelName === 'decks') {
     return <DecksPage />;
