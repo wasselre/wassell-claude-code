@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-06-09
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -96,7 +96,7 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `preferred_projects` | Preferred Projects / المشاريع المفضلة | Lookup | no | half | no | → All Projects · multi |
-| `preferred_units` | Preferred Units / الوحدات المفضلة | Lookup | no | half | no | → Units · multi |
+| `client_favorite_units` | Client Favorite Units / الوحدات المفضلة للعميل | unit_picker | no | half | yes |  |
 | `preferred_direction` | Preferred Direction / الإتجاه المفضل | Multi-select | no | half | no | 8 options · multi |
 | `preferred_neighborhoods` | Preferred Neighborhoods / الأحياء المفضلة | Multi-select | no | half | no | 151 options · multi |
 | `preferred_area` | Preferred Area / المساحة المفضلة للعميل | Range | no | half | no | 100–2000 |
@@ -112,10 +112,6 @@
 - **Preferred Projects / المشاريع المفضلة** (`preferred_projects`, type `lookup`):
   - target model: All Projects
   - shows field: `project_name`
-  - multiple: yes · max in dropdown: 1000
-- **Preferred Units / الوحدات المفضلة** (`preferred_units`, type `lookup`):
-  - target model: Units
-  - shows field: `unit_code`
   - multiple: yes · max in dropdown: 1000
 - **Preferred Direction / الإتجاه المفضل** (`preferred_direction`, type `multiselect`) — multi-value. Options:
   - API value `شمال` → "North" / "شمال"
