@@ -4,7 +4,7 @@
 
 # Models — auto-generated index
 
-**25 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**26 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -16,6 +16,7 @@
 | [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 20 | no | 2026-06-09 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-06-09 |
 | [Contacts](contacts.md) | `contacts` | JSONB | New Group | 1 | 3 | no | 2026-06-08 |
+| [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | — | 1 | 6 | no | 2026-06-09 |
 | [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-06-08 |
 | [Decks](decks.md) | `decks` | JSONB | — | 1 | 11 | yes | 2026-06-08 |
 | [Templates Library](design-templates.md) | `design_templates` | JSONB | Designs | 1 | 7 | yes | 2026-05-09 |

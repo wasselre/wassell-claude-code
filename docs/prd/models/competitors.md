@@ -26,7 +26,7 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `name` | Name / الاسم | Text | yes | half | yes |  |
-| `type` | Type / النوع | Dropdown | yes | half | yes | 2 options |
+| `type` | Type / النوع | Dropdown | yes | half | yes | 3 options |
 | `content` | Content / المحتوى | Text area | yes | full | no |  |
 | `notes` | Notes / ملاحظات | Text area | no | full | no |  |
 | `clean_content` | Clean Transcript / النص المنقّح | Text area | no | full | no |  |
@@ -46,6 +46,7 @@
 - **Type / النوع** (`type`, type `dropdown`) — options:
   - API value `reel_script` → "Reel Script" / "نص الريل"
   - API value `post_example` → "Post Example" / "مثال منشور"
+  - API value `our_script` → "Our Script" / "نصّنا"
 - **Hook Type / نوع الخطّاف** (`hook_type`, type `dropdown`) — options:
   - API value `question` → "Question" / "سؤال"
   - API value `curiosity` → "Curiosity" / "فضول"
