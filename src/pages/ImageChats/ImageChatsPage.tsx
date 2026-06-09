@@ -6,6 +6,9 @@ import { Sparkles, Plus, ImageIcon, Pencil, Copy, Trash2, Images } from 'lucide-
 import type { AppRecord } from '@/types';
 import StudioWorkspace from './components/StudioWorkspace';
 import MediaLibraryModal from './components/MediaLibraryModal';
+import Modal from '@/components/ui/Modal';
+import Input from '@/components/ui/Input';
+import Button from '@/components/ui/Button';
 import { seedDefaultLibrariesIfEmpty } from './lib/seedDefaults';
 
 /**
@@ -32,6 +35,9 @@ export default function ImageChatsPage() {
 
   const imageChatsModel = useMemo(() => models.find((m) => m.name === 'image_chats'), [models]);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<AppRecord | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<AppRecord | null>(null);
 
   // One-shot seed of "Wassel default" preset + starter prompt snippets.
   const seedAttemptedRef = useRef(false);
@@ -110,23 +116,30 @@ export default function ImageChatsPage() {
 
   function renameSession(session: AppRecord, e: React.MouseEvent) {
     e.stopPropagation();
-    const next = window.prompt(
-      isAr ? 'اسم الجلسة' : 'Session name',
-      String((session.data.title as string | undefined) ?? ''),
-    );
-    if (next === null) return;
+    setRenameValue(String((session.data.title as string | undefined) ?? ''));
+    setRenameTarget(session);
+  }
+
+  function commitRename() {
+    if (!renameTarget) return;
     void saveRecord({
-      ...session,
-      data: { ...session.data, title: next.trim() || (isAr ? 'جلسة' : 'Session') },
+      ...renameTarget,
+      data: { ...renameTarget.data, title: renameValue.trim() || (isAr ? 'جلسة' : 'Session') },
       updated_at: new Date().toISOString(),
     });
+    setRenameTarget(null);
   }
 
   function deleteSession(session: AppRecord, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!window.confirm(isAr ? 'حذف هذه الجلسة؟' : 'Delete this session?')) return;
-    if (imageChatsModel) deleteRecord(imageChatsModel.id, session.id);
-    if (recordId === session.id) navigate('/model/image_chats');
+    setDeleteTarget(session);
+  }
+
+  function commitDelete() {
+    if (!deleteTarget) return;
+    if (imageChatsModel) deleteRecord(imageChatsModel.id, deleteTarget.id);
+    if (recordId === deleteTarget.id) navigate('/model/image_chats');
+    setDeleteTarget(null);
   }
 
   if (!imageChatsModel) {
@@ -242,6 +255,63 @@ export default function ImageChatsPage() {
       </div>
 
       {libraryOpen && <MediaLibraryModal onClose={() => setLibraryOpen(false)} />}
+
+      {/* Rename session — in-app modal (replaces the native window.prompt). */}
+      <Modal
+        open={renameTarget !== null}
+        onClose={() => setRenameTarget(null)}
+        title={isAr ? 'إعادة تسمية الجلسة' : 'Rename session'}
+        maxWidth="max-w-sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setRenameTarget(null)}>
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </Button>
+            <Button variant="primary" onClick={commitRename}>
+              {isAr ? 'حفظ' : 'Save'}
+            </Button>
+          </>
+        }
+      >
+        <Input
+          label={isAr ? 'اسم الجلسة' : 'Session name'}
+          value={renameValue}
+          autoFocus
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => setRenameValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              commitRename();
+            }
+          }}
+          placeholder={isAr ? 'اسم الجلسة' : 'Session name'}
+        />
+      </Modal>
+
+      {/* Delete session — in-app confirm (replaces the native window.confirm). */}
+      <Modal
+        open={deleteTarget !== null}
+        onClose={() => setDeleteTarget(null)}
+        title={isAr ? 'حذف الجلسة' : 'Delete session'}
+        maxWidth="max-w-sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+              {isAr ? 'إلغاء' : 'Cancel'}
+            </Button>
+            <Button variant="danger" onClick={commitDelete}>
+              {isAr ? 'حذف' : 'Delete'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-charcoal/80 leading-relaxed">
+          {isAr
+            ? `هل تريد حذف الجلسة «${(deleteTarget?.data.title as string | undefined) ?? 'جلسة'}»؟ لا يمكن التراجع عن هذا الإجراء.`
+            : `Delete the session “${(deleteTarget?.data.title as string | undefined) ?? 'Session'}”? This can't be undone.`}
+        </p>
+      </Modal>
     </div>
   );
 }
