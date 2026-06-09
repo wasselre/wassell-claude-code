@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Sparkles, Plus, ImageIcon, Pencil, Copy, Trash2 } from 'lucide-react';
+import { Sparkles, Plus, ImageIcon, Pencil, Copy, Trash2, Images } from 'lucide-react';
 import type { AppRecord } from '@/types';
 import StudioWorkspace from './components/StudioWorkspace';
+import MediaLibraryModal from './components/MediaLibraryModal';
 import { seedDefaultLibrariesIfEmpty } from './lib/seedDefaults';
 
 /**
@@ -30,6 +31,7 @@ export default function ImageChatsPage() {
   const currentUserId = useAppStore((s) => s.currentUserId);
 
   const imageChatsModel = useMemo(() => models.find((m) => m.name === 'image_chats'), [models]);
+  const [libraryOpen, setLibraryOpen] = useState(false);
 
   // One-shot seed of "Wassel default" preset + starter prompt snippets.
   const seedAttemptedRef = useRef(false);
@@ -143,13 +145,20 @@ export default function ImageChatsPage() {
           recordId ? 'hidden md:flex' : 'flex'
         }`}
       >
-        <div className="p-3 border-b border-sand/20">
+        <div className="p-3 border-b border-sand/20 space-y-2">
           <button
             onClick={startNewSession}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-sm font-medium"
           >
             <Plus size={16} />
             {isAr ? 'جلسة جديدة' : 'New session'}
+          </button>
+          <button
+            onClick={() => setLibraryOpen(true)}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-sand/40 bg-white hover:bg-cream text-charcoal/80 transition-colors text-sm font-medium"
+          >
+            <Images size={16} className="text-copper" />
+            {isAr ? 'مكتبة الوسائط' : 'Media library'}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -231,6 +240,8 @@ export default function ImageChatsPage() {
           <EmptyPane isAr={isAr} onStart={startNewSession} />
         )}
       </div>
+
+      {libraryOpen && <MediaLibraryModal onClose={() => setLibraryOpen(false)} />}
     </div>
   );
 }
