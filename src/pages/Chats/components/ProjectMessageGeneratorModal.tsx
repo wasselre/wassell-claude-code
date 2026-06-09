@@ -8,7 +8,8 @@ import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizeForSearch } from '@/lib/recordSearch';
 import { resolveProjectFacts, composeProjectMessage, type ProjectMessageFacts } from '@/lib/projectMessageFacts';
-import { translateLabel, detectInputLanguage } from '@/lib/translateLabel';
+import { detectInputLanguage } from '@/lib/translateLabel';
+import { transliterateName } from '@/lib/transliterateName';
 import Button from '@/components/ui/Button';
 import type { AppRecord } from '@/types';
 
@@ -119,8 +120,7 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
   const resolveNameEn = async (name: string | null): Promise<string | null> => {
     if (!name || detectInputLanguage(name) !== 'ar') return name;
     try {
-      const { label_en } = await translateLabel(name, 'generic');
-      return label_en || name;
+      return await transliterateName(name); // phonetic, not a meaning translation
     } catch {
       return name; // graceful — keep the Arabic name in the EN body
     }
