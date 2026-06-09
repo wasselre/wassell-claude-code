@@ -72,8 +72,11 @@ export default function EditableRawGrid({ table, onChange, isAr }: EditableRawGr
   };
 
   return (
-    <div>
-      <div className="overflow-auto max-h-[55vh] border border-sand/30 rounded-xl">
+    // Fill the height-bounded slot the parent gives us and scroll the table
+    // INTERNALLY, so the step's footer stays pinned. (A fixed max-h here let the
+    // grid spill past its flex slot and overlap the footer on short viewports.)
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex-1 min-h-0 overflow-auto border border-sand/30 rounded-xl">
         <table className="text-sm border-collapse min-w-full">
           <thead className="sticky top-0 z-10 bg-cream-light">
             <tr>
@@ -145,13 +148,13 @@ export default function EditableRawGrid({ table, onChange, isAr }: EditableRawGr
         </table>
       </div>
       {rows.length > RENDER_CAP && (
-        <div className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+        <div className="mt-2 shrink-0 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           {isAr
             ? `يتم عرض أول ${RENDER_CAP} من ${rows.length} صف للتعديل. سيتم ترحيل كل الصفوف. للتعديل على البقية، نزّل الملف وصحّحه ثم أعد الرفع.`
             : `Showing the first ${RENDER_CAP} of ${rows.length} rows for editing. All rows will migrate. To edit the rest, download, fix, and re-upload.`}
         </div>
       )}
-      <div className="mt-2">
+      <div className="mt-2 shrink-0">
         <button
           onClick={addRow}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-copper hover:text-terracotta"

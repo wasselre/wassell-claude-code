@@ -198,7 +198,7 @@ export default function StepReviewRaw({
 
   return (
     <div className="p-5 flex flex-col h-full">
-      <div className="flex flex-wrap items-center gap-2 mb-3">
+      <div className="flex flex-wrap items-center gap-2 mb-3 shrink-0">
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-charcoal">
             {isAr ? 'راجع البيانات المستخرجة' : 'Review the extracted data'}
@@ -235,7 +235,7 @@ export default function StepReviewRaw({
       </div>
 
       {draft.notes && (
-        <div className="mb-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-copper/[0.06] border border-copper/20 text-xs text-charcoal/70">
+        <div className="mb-3 shrink-0 max-h-40 overflow-y-auto flex items-start gap-2 px-3 py-2 rounded-lg bg-copper/[0.06] border border-copper/20 text-xs text-charcoal/70">
           <Info size={14} className="text-copper shrink-0 mt-0.5" />
           <span>{draft.notes}</span>
         </div>
@@ -331,7 +331,7 @@ export default function StepReviewRaw({
         <EditableRawGrid table={draft} onChange={handleGridChange} isAr={isAr} />
       </div>
 
-      <div className="flex items-center justify-between mt-4 pt-3 border-t border-sand/20">
+      <div className="flex items-center justify-between mt-4 pt-3 border-t border-sand/20 shrink-0">
         <button
           onClick={goBack}
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-charcoal/60 hover:bg-cream transition-colors"
