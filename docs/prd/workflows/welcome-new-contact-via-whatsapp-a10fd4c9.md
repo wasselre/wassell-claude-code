@@ -5,8 +5,8 @@
 # Workflow: Welcome new contact via WhatsApp / ترحيب جهة اتصال جديدة عبر واتساب
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-05-11
-**Workflow id:** `a10fd4c9-a360-4caa-9421-c9501409bd68`   ·   **Active:** yes
+**Last updated (from DB):** 2026-06-09
+**Workflow id:** `a10fd4c9-a360-4caa-9421-c9501409bd68`   ·   **Active:** no
 **Group:** Sales
 **Trigger:** When a record is created
 **Trigger model:** Contacts / جهات الإتصال `contacts`

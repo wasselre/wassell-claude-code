@@ -5,7 +5,7 @@
 # Workflow: First Follow-up (Clients - Follow-ups) / اول متابعة (العملاء - المتابعة )
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-01
+**Last updated (from DB):** 2026-06-09
 **Workflow id:** `a336e134-2d79-44f3-8219-a4bd8e2f76f8`   ·   **Active:** yes
 **Group:** Sales
 **Trigger:** When a record is created
@@ -26,7 +26,7 @@ _Match: ALL must pass (AND)_
 **Action 1 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
 - Client ID (`client_id`) ← the trigger record's id
-- Sales Rep (`sales_rep`) ← static value a3374d65-9cee-4daa-8880-5e8ff23e7db0
+- Sales Rep (`sales_rep`) ← static value 50526b19-e686-4220-ae95-10dd76f7c482
 - Follow-up Type (`followup_type`) ← static value appointment_booking_call
-- Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d`
+- Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by ``
 - Follow-up Number (`followup_number`) ← static value 1

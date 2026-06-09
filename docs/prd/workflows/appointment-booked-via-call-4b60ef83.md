@@ -5,7 +5,7 @@
 # Workflow: Appointment booked via call / حجز موعد عبر مكالمة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-05-11
+**Last updated (from DB):** 2026-06-09
 **Workflow id:** `4b60ef83-5e16-4ff1-b522-b88e7ae2ab35`   ·   **Active:** yes
 **Group:** مجلد جديد
 **Trigger:** When a record is created
@@ -40,7 +40,7 @@ Send a WhatsApp message:
 **Action 3 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
 - Client ID (`client_id`) ← the trigger record's Client (`client_id`)
-- Follow-up Type (`followup_type`) ← static value 24de0d57-57ac-4188-ad7d-94680527ad4f
+- Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
 - Appointment (`appointment_id`) ← the trigger record's id
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Appointment Date (`appointment_date`) offset by `-1d @10:00`
 - Sales Rep (`sales_rep`) ← the current user
@@ -48,6 +48,6 @@ Create a **Follow-ups / المتابعات** record with:
 **Action 4 — Create Record**
 Create a **Follow-ups / المتابعات** record with:
 - Client ID (`client_id`) ← the trigger record's Client (`client_id`)
-- Follow-up Type (`followup_type`) ← static value 9471874b-c0fd-49ca-9a59-a5e7c13a274d
+- Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Appointment Date (`appointment_date`) offset by `+0d @10:00`
 - Sales Rep (`sales_rep`) ← the current user

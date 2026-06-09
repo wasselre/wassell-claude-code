@@ -10,8 +10,8 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | [1](1-34af4560.md) | update | Clients | no | flat | 2 | 2026-04-26 |
 | [Apology WhatsApp on missed call](apology-whatsapp-on-missed-call-58392e9e.md) | create | Phone Calls | yes | 1 | 1 | 2026-04-27 |
-| [Appointment booked via call](appointment-booked-via-call-4b60ef83.md) | create | Appointments | yes | 1 | 4 | 2026-05-11 |
-| [First Follow-up (Clients - Follow-ups)](first-follow-up-clients-follow-ups-a336e134.md) | create | Clients | yes | 1 | 1 | 2026-06-01 |
-| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 4 | 7 | 2026-05-11 |
+| [Appointment booked via call](appointment-booked-via-call-4b60ef83.md) | create | Appointments | yes | 1 | 4 | 2026-06-09 |
+| [First Follow-up (Clients - Follow-ups)](first-follow-up-clients-follow-ups-a336e134.md) | create | Clients | yes | 1 | 1 | 2026-06-09 |
+| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 4 | 7 | 2026-06-09 |
 | [Targeted Projects](targeted-projects-f9a636dd.md) | update | All Projects | yes | 1 | 2 | 2026-05-11 |
-| [Welcome new contact via WhatsApp](welcome-new-contact-via-whatsapp-a10fd4c9.md) | create | Contacts | yes | 1 | 1 | 2026-05-11 |
+| [Welcome new contact via WhatsApp](welcome-new-contact-via-whatsapp-a10fd4c9.md) | create | Contacts | no | 1 | 1 | 2026-06-09 |

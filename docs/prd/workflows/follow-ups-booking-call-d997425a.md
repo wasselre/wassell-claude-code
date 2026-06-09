@@ -5,7 +5,7 @@
 # Workflow: Follow-ups - Booking Call / المتابعات - إتصال حجز موعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-05-11
+**Last updated (from DB):** 2026-06-09
 **Workflow id:** `d997425a-0c8d-48c4-afef-b5792792cfae`   ·   **Active:** yes
 **Group:** Sales
 **Trigger:** When a record is updated
@@ -20,7 +20,7 @@ _Match: ALL must pass (AND)_
 - Call Result (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
 - Follow-up Number (`followup_number`) less than 10
-- Follow-up Type (`followup_type`) equals 5a6ec52f-efe6-4595-85f6-ae3857f4d0af
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
 
 **Actions (run in order):**
 
@@ -28,7 +28,7 @@ _Match: ALL must pass (AND)_
 Create a **Follow-ups / المتابعات** record with:
 - Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Sales Rep (`sales_rep`) ← a user chosen by role `0a64a077-98ab-422e-98df-26e23567e1ac` (role)
-- Follow-up Type (`followup_type`) ← static value 5a6ec52f-efe6-4595-85f6-ae3857f4d0af
+- Follow-up Type (`followup_type`) ← static value appointment_booking_call
 - Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Actual Follow-up (`actual_datetime`) offset by `+1d`
 
@@ -43,7 +43,7 @@ Update **Clients / العملاء** records where Client ID (`client_id`) = the 
 _Match: ALL must pass (AND)_
 - Call Result (`call_result`) equals "Interested" (`interested`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
-- Follow-up Type (`followup_type`) equals 5a6ec52f-efe6-4595-85f6-ae3857f4d0af
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
 
 **Actions (run in order):**
 
@@ -51,7 +51,7 @@ _Match: ALL must pass (AND)_
 Create a **Follow-ups / المتابعات** record with:
 - Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Sales Rep (`sales_rep`) ← a user chosen by role `0a64a077-98ab-422e-98df-26e23567e1ac` (role)
-- Follow-up Type (`followup_type`) ← static value 9471874b-c0fd-49ca-9a59-a5e7c13a274d
+- Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
 - Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Actual Follow-up (`actual_datetime`) offset by `+1d`
 
@@ -66,7 +66,7 @@ Update **Clients / العملاء** records where Client ID (`client_id`) = the 
 _Match: ALL must pass (AND)_
 - Call Result (`call_result`) equals "Wrong Time" (`wrong_time`) · _only when it newly becomes true_
 - Actual Follow-up (`actual_datetime`) is not empty
-- Follow-up Type (`followup_type`) equals 5a6ec52f-efe6-4595-85f6-ae3857f4d0af
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
 
 **Actions (run in order):**
 
@@ -74,7 +74,7 @@ _Match: ALL must pass (AND)_
 Create a **Follow-ups / المتابعات** record with:
 - Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
 - Sales Rep (`sales_rep`) ← a user chosen by role `0a64a077-98ab-422e-98df-26e23567e1ac` (role)
-- Follow-up Type (`followup_type`) ← static value 5a6ec52f-efe6-4595-85f6-ae3857f4d0af
+- Follow-up Type (`followup_type`) ← static value appointment_booking_call
 - Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by ``
 
