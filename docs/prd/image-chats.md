@@ -1,7 +1,7 @@
 # PRD: Image Chats → Creative Studio
 
 **Status:** Live
-**Last updated:** 2026-06-09 (v3 — rebuilt as a Creative **Workspace** (Higgsfield-style), not a chat: Generations + a first-class media-asset library; v3.1 — clicking an image opens a full-screen viewer carrying the asset actions)
+**Last updated:** 2026-06-09 (v3 — rebuilt as a Creative **Workspace** (Higgsfield-style), not a chat: Generations + a first-class media-asset library; v3.2 — full-screen viewer redesigned: covers the app sidebar, LEFT = collapsible Branding/Design prompt sections, RIGHT = actions; the Media Library opens the same viewer)
 **Related PRDs:** [files.md](files.md), [record-management.md](record-management.md), [marketing-operations.md](marketing-operations.md), [templates-library.md](templates-library.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English) — v3 (Creative Workspace)
@@ -9,10 +9,11 @@
 Image Chats is now a **Creative Studio workspace**, not a chat. The primary object is a **Creative Session → Generations → Assets**, shown as a Higgsfield-style workspace, NOT a conversation thread:
 
 - **Left** — Creative Sessions (thumbnail, title, generation count; New / Rename / Duplicate / Delete).
-- **Center (dominant)** — the **canvas**: the selected generation's outputs (large single image or grid; queued/generating placeholder; failed → Retry). Click an output to open a **full-screen viewer** — the image at full size, prev/next navigation + a thumbnail filmstrip across the generation's outputs (← → / Esc), and a docked panel with the same provenance + asset actions. Closing the viewer leaves that output selected in the right panel.
+- **Center (dominant)** — the **canvas**: the selected generation's outputs (large single image or grid; queued/generating placeholder; failed → Retry). Click an output to open a **full-screen viewer** that covers the app sidebar, laid out in three physical columns: **LEFT** = two collapsible prompt sections — **Branding prompt** (the brand-preset's text, resolved from the generation's `preset_id`) and **Design prompt** (your composer instruction); **CENTER** = the image at full size with prev/next + a thumbnail filmstrip across the generation's outputs (← → / Esc / backdrop close); **RIGHT** = the asset actions. Closing leaves that output selected in the right rail.
 - **Bottom** — the **Composer** (prompt • reference images • brand preset • prompt snippet • model • aspect • variations • **Send/Generate**); stays live while generations run (3-in-flight soft cap).
 - **Timeline** — a secondary strip of generation thumbnails; click to load one into the canvas.
-- **Right** — the **Selected Asset panel**: preview (click → the same full-screen viewer) + provenance (prompt/model/settings/time) + actions (Download, Copy URL, Add to Files, Add to Record, Create Variation, Use as Reference, Regenerate). The action list is shared with the viewer (one `AssetActions` component, so the two surfaces never drift).
+- **Right** — the **Selected Asset panel**: preview (click → the same full-screen viewer) + provenance (prompt/model/settings/time) + actions (Download, Copy URL, Add to Files, Add to Record, Create Variation, Use as Reference, Regenerate). The action list is one shared `AssetActions` component (panel + viewer + Media Library never drift); the viewer's creative actions are hidden where there's no active session (the Media Library shows Download / Copy URL / Add to Files / Add to Record / **Open source session** instead).
+- **Media Library** — the "Media library" button opens a cross-session gallery over all of the user's `media_assets`; clicking an asset opens the **same full-screen viewer** (Branding/Design prompts resolved from the asset's source generation — falling back to the asset's stored prompt as Design when unresolvable).
 
 **Generations, not messages.** Each `Generation` (`record.data.generations[]`) captures `{ prompt, reference images, model, aspect, variations, based_on (lineage), status, output_asset_ids }`. Generations run concurrently in the background (the `generation_jobs` queue + Fly worker, unchanged) and fill in via Realtime.
 
@@ -20,7 +21,7 @@ Image Chats is now a **Creative Studio workspace**, not a chat. The primary obje
 
 **Migration.** Existing sessions were reshaped `messages → generations` (old outputs kept as inline `output_urls`; originals stashed under `_legacy_messages`). The brand-preset + prompt-snippet libraries, Files/record integrations, and the fal.ai models are all unchanged from v2.
 
-Key v3 files: `StudioWorkspace.tsx`, `SelectedAssetPanel.tsx`, `AssetLightbox.tsx` (full-screen viewer), `AssetActions.tsx` (shared action list), `lib/generations.ts`, `api/image-chat/generate.ts`, `worker/src/runImageJob.ts` (dual-path), `supabase/migrations/2026-06-09_media_assets.sql` + `2026-06-09_sessions_to_generations.sql`. See CLAUDE.md → "Image Chats v3 — Creative Workspace".
+Key v3 files: `StudioWorkspace.tsx`, `SelectedAssetPanel.tsx`, `AssetLightbox.tsx` (full-screen viewer — left prompts / center image / right actions), `AssetActions.tsx` (shared action list), `MediaLibraryModal.tsx` (cross-session gallery → same viewer), `lib/generations.ts`, `api/image-chat/generate.ts`, `worker/src/runImageJob.ts` (dual-path), `supabase/migrations/2026-06-09_media_assets.sql` + `2026-06-09_sessions_to_generations.sql`. See CLAUDE.md → "Image Chats v3 — Creative Workspace".
 
 ---
 

@@ -3,10 +3,11 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { supabase } from '@/lib/supabase';
-import { X, Search, Download, Link2, FolderPlus, Database, ExternalLink, Loader2, Images } from 'lucide-react';
-import type { MediaAsset } from '@/lib/imageChat/client';
-import AddImageToFilesModal from './AddImageToFilesModal';
-import AddImageToRecordModal from './AddImageToRecordModal';
+import { X, Search, Loader2, Images, ExternalLink } from 'lucide-react';
+import type { AppRecord } from '@/types';
+import type { MediaAsset, Generation } from '@/lib/imageChat/client';
+import AssetLightbox from './AssetLightbox';
+import AssetActions from './AssetActions';
 
 interface Props {
   onClose: () => void;
@@ -15,24 +16,27 @@ interface Props {
 const PAGE_SIZE = 200;
 
 /**
- * Cross-session Media Library (Image Chats v3, Part 6 foundation). A gallery
- * over ALL of the user's `media_assets` (RLS owner-scoped, newest first), with
- * prompt search + a kind filter. Selecting an asset shows its preview +
- * provenance + reuse actions (Download, Copy URL, Add to Files, Add to Record)
- * and a jump to the source session. The "shared media library" surface — the
- * generic asset browser the workspace was built toward.
+ * Cross-session Media Library (Image Chats v3). A gallery over ALL of the user's
+ * `media_assets` (RLS owner-scoped, newest first) with prompt search. Clicking
+ * an asset opens the SAME full-screen viewer as the workspace (AssetLightbox):
+ * left = Branding/Design prompt sections (resolved from the asset's source
+ * generation), center = the image, right = the asset actions (Download, Copy
+ * URL, Add to Files, Add to Record, + Open source session). The branding/design
+ * split is resolved by finding the source generation in the store; if it can't
+ * be resolved (e.g. migrated outputs), the asset's stored prompt is shown as the
+ * Design prompt.
  */
 export default function MediaLibraryModal({ onClose }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
+  const models = useAppStore((s) => s.models);
+  const recordsByModel = useAppStore((s) => s.records);
   const navigate = useNavigate();
 
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<MediaAsset | null>(null);
-  const [filesOpen, setFilesOpen] = useState(false);
-  const [recordOpen, setRecordOpen] = useState(false);
 
   useEffect(() => {
     if (!supabase) {
@@ -66,166 +70,153 @@ export default function MediaLibraryModal({ onClose }: Props) {
     );
   }, [assets, query]);
 
-  async function copyUrl(url: string) {
-    try {
-      await navigator.clipboard.writeText(url);
-      addToast(isAr ? 'تم نسخ الرابط' : 'URL copied', 'success');
-    } catch {
-      addToast(isAr ? 'تعذّر النسخ' : 'Copy failed', 'error');
+  // image_presets → prompt_text, for the Branding section.
+  const presetById = useMemo(() => {
+    const pModel = models.find((m) => m.name === 'image_presets');
+    const recs = pModel ? (recordsByModel[pModel.id] ?? []) : [];
+    const map = new Map<string, { promptText: string; name: string }>();
+    for (const r of recs) {
+      map.set(r.id, {
+        promptText: String((r.data.prompt_text as string | undefined) ?? ''),
+        name: String((r.data.name as string | undefined) ?? ''),
+      });
     }
+    return map;
+  }, [models, recordsByModel]);
+
+  // image_chats sessions → resolve an asset's source generation (preset + design prompt).
+  const sessionsById = useMemo(() => {
+    const icModel = models.find((m) => m.name === 'image_chats');
+    const recs = icModel ? (recordsByModel[icModel.id] ?? []) : [];
+    const map = new Map<string, AppRecord>();
+    for (const r of recs) map.set(r.id, r);
+    return map;
+  }, [models, recordsByModel]);
+
+  function partsFor(asset: MediaAsset): { brandingPrompt: string | null; brandingName: string | null; designPrompt: string } {
+    const session = asset.source_session_id ? sessionsById.get(asset.source_session_id) : undefined;
+    const gens = session && Array.isArray(session.data.generations) ? (session.data.generations as Generation[]) : [];
+    const gen = asset.source_generation_id ? gens.find((g) => g.id === asset.source_generation_id) : undefined;
+    const preset = gen?.preset_id ? presetById.get(gen.preset_id) : undefined;
+    return {
+      brandingPrompt: preset?.promptText ?? null,
+      brandingName: gen?.preset_name ?? preset?.name ?? null,
+      // Fallback: the asset's stored (merged) prompt as Design when the source
+      // generation can't be resolved (e.g. migrated outputs).
+      designPrompt: gen?.prompt ?? asset.prompt ?? '',
+    };
   }
 
-  const pseudoImage = selected ? { url: selected.public_url, name: 'wassel-image.png' } : null;
+  const parts = selected ? partsFor(selected) : null;
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/50 p-4"
-      dir={isAr ? 'rtl' : 'ltr'}
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-5xl h-[85vh] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center gap-3 p-3 border-b border-sand/20">
-          <Images size={18} className="text-copper shrink-0" />
-          <div className="text-sm font-semibold text-charcoal">{isAr ? 'مكتبة الوسائط' : 'Media Library'}</div>
-          <div className="relative flex-1 max-w-sm">
-            <Search size={14} className="absolute top-1/2 -translate-y-1/2 start-2.5 text-charcoal/40" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={isAr ? 'ابحث بالوصف…' : 'Search by prompt…'}
-              className="w-full ps-8 pe-3 py-1.5 rounded-lg border border-sand/40 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none text-sm bg-white"
-            />
-          </div>
-          <div className="text-xs text-charcoal/50">
-            {filtered.length} {isAr ? 'أصل' : filtered.length === 1 ? 'asset' : 'assets'}
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-cream text-charcoal/70" aria-label={isAr ? 'إغلاق' : 'Close'}>
-            <X size={18} />
-          </button>
-        </div>
+  return (
+    <>
+      {createPortal(
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/50 p-4"
+          dir={isAr ? 'rtl' : 'ltr'}
+          onClick={onClose}
+        >
+          <div
+            className="w-full max-w-5xl h-[85vh] flex flex-col rounded-2xl bg-white shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center gap-3 p-3 border-b border-sand/20">
+              <Images size={18} className="text-copper shrink-0" />
+              <div className="text-sm font-semibold text-charcoal">{isAr ? 'مكتبة الوسائط' : 'Media Library'}</div>
+              <div className="relative flex-1 max-w-sm">
+                <Search size={14} className="absolute top-1/2 -translate-y-1/2 start-2.5 text-charcoal/40" />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={isAr ? 'ابحث بالوصف…' : 'Search by prompt…'}
+                  className="w-full ps-8 pe-3 py-1.5 rounded-lg border border-sand/40 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none text-sm bg-white"
+                />
+              </div>
+              <div className="text-xs text-charcoal/50">
+                {filtered.length} {isAr ? 'أصل' : filtered.length === 1 ? 'asset' : 'assets'}
+              </div>
+              <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-cream text-charcoal/70" aria-label={isAr ? 'إغلاق' : 'Close'}>
+                <X size={18} />
+              </button>
+            </div>
 
-        {/* Body: grid + detail */}
-        <div className="flex-1 flex min-h-0">
-          <div className="flex-1 overflow-y-auto p-3">
-            {loading ? (
-              <div className="h-full flex items-center justify-center text-charcoal/50">
-                <Loader2 size={24} className="animate-spin text-copper" />
-              </div>
-            ) : filtered.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-sm text-charcoal/50">
-                {assets.length === 0
-                  ? isAr
-                    ? 'لا توجد وسائط بعد. أنشئ صورًا في الاستوديو.'
-                    : 'No media yet. Generate images in the studio.'
-                  : isAr
-                    ? 'لا توجد نتائج مطابقة.'
-                    : 'No matching assets.'}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                {filtered.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    onClick={() => setSelected(a)}
-                    className={`relative aspect-square rounded-lg overflow-hidden border bg-cream/40 transition-all ${
-                      selected?.id === a.id ? 'border-copper ring-2 ring-copper/30' : 'border-sand/30 hover:border-copper/50'
-                    }`}
-                    title={a.prompt ?? ''}
-                  >
-                    <img src={a.public_url} alt="" className="w-full h-full object-cover" loading="lazy" />
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Detail */}
-          {selected && pseudoImage && (
-            <div className="w-[300px] shrink-0 border-s border-sand/20 flex flex-col overflow-y-auto p-3 space-y-3">
-              <div className="rounded-xl overflow-hidden border border-sand/30 bg-cream/40">
-                <img src={selected.public_url} alt="" className="w-full h-auto object-contain" />
-              </div>
-              <div className="space-y-2 text-xs">
-                <Meta label={isAr ? 'الوصف' : 'Prompt'} value={selected.prompt || '—'} />
-                <div className="flex gap-3">
-                  <Meta label={isAr ? 'النموذج' : 'Model'} value={selected.model_id ?? '—'} />
-                  <Meta label={isAr ? 'النوع' : 'Kind'} value={selected.kind} ltr />
+            {/* Grid */}
+            <div className="flex-1 overflow-y-auto p-3">
+              {loading ? (
+                <div className="h-full flex items-center justify-center text-charcoal/50">
+                  <Loader2 size={24} className="animate-spin text-copper" />
                 </div>
-                <Meta label={isAr ? 'وقت الإنشاء' : 'Created'} value={formatTime(selected.created_at, isAr)} />
-              </div>
-              <div className="space-y-1.5 pt-1">
-                <a
-                  href={selected.public_url}
-                  download="wassel-image.png"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm border border-sand/40 bg-white text-charcoal/80 hover:bg-cream transition-colors"
-                >
-                  <Download size={15} className="text-charcoal/60" /> {isAr ? 'تنزيل' : 'Download'}
-                </a>
-                <Btn icon={<Link2 size={15} className="text-charcoal/60" />} label={isAr ? 'نسخ الرابط' : 'Copy URL'} onClick={() => void copyUrl(selected.public_url)} />
-                <Btn icon={<FolderPlus size={15} className="text-copper" />} label={isAr ? 'إضافة إلى الملفات' : 'Add to Files'} onClick={() => setFilesOpen(true)} />
-                <Btn icon={<Database size={15} className="text-copper" />} label={isAr ? 'إضافة إلى سجل' : 'Add to Record'} onClick={() => setRecordOpen(true)} />
-                {selected.source_session_id && (
-                  <Btn
-                    icon={<ExternalLink size={15} className="text-charcoal/60" />}
-                    label={isAr ? 'فتح الجلسة' : 'Open session'}
+              ) : filtered.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-sm text-charcoal/50">
+                  {assets.length === 0
+                    ? isAr
+                      ? 'لا توجد وسائط بعد. أنشئ صورًا في الاستوديو.'
+                      : 'No media yet. Generate images in the studio.'
+                    : isAr
+                      ? 'لا توجد نتائج مطابقة.'
+                      : 'No matching assets.'}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                  {filtered.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      onClick={() => setSelected(a)}
+                      className="relative aspect-square rounded-lg overflow-hidden border border-sand/30 hover:border-copper/60 bg-cream/40 transition-all"
+                      title={a.prompt ?? ''}
+                    >
+                      <img src={a.public_url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+
+      {/* Full-screen viewer — same layout as the workspace (left prompts /
+          center image / right actions). Renders on top of the gallery. */}
+      {selected && parts && (
+        <AssetLightbox
+          images={[{ url: selected.public_url }]}
+          index={0}
+          onIndexChange={() => undefined}
+          onClose={() => setSelected(null)}
+          brandingPrompt={parts.brandingPrompt}
+          brandingName={parts.brandingName}
+          designPrompt={parts.designPrompt}
+          meta={{
+            model: selected.model_id,
+            aspect: (selected.settings?.aspect_ratio as string | undefined) ?? null,
+            created: selected.created_at,
+          }}
+          actions={
+            <AssetActions
+              output={{ url: selected.public_url }}
+              extra={
+                selected.source_session_id ? (
+                  <button
+                    type="button"
                     onClick={() => {
                       navigate(`/model/image_chats/${selected.source_session_id}`);
                       onClose();
                     }}
-                  />
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {filesOpen && pseudoImage && (
-        <AddImageToFilesModal image={pseudoImage} imageIndex={0} messageId="" chatRecordId="" onClose={() => setFilesOpen(false)} />
+                    className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm border border-sand/40 bg-white text-charcoal/80 hover:bg-cream transition-colors"
+                  >
+                    <ExternalLink size={15} className="text-charcoal/60" />
+                    <span>{isAr ? 'فتح الجلسة' : 'Open session'}</span>
+                  </button>
+                ) : undefined
+              }
+            />
+          }
+        />
       )}
-      {recordOpen && pseudoImage && (
-        <AddImageToRecordModal image={pseudoImage} imageIndex={0} messageId="" chatRecordId="" onClose={() => setRecordOpen(false)} />
-      )}
-    </div>,
-    document.body,
+    </>
   );
-}
-
-function Btn({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm border border-sand/40 bg-white text-charcoal/80 hover:bg-cream transition-colors"
-    >
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function Meta({ label, value, ltr }: { label: string; value: string; ltr?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-charcoal/50">{label}</div>
-      <div className="text-charcoal/90 break-words whitespace-pre-wrap" dir={ltr ? 'ltr' : undefined}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function formatTime(iso: string, isAr: boolean): string {
-  try {
-    return new Date(iso).toLocaleString(isAr ? 'ar' : 'en', { dateStyle: 'medium', timeStyle: 'short' });
-  } catch {
-    return iso;
-  }
 }

@@ -12,6 +12,7 @@ import {
 import Composer, { type ComposerSeed } from './Composer';
 import SelectedAssetPanel from './SelectedAssetPanel';
 import AssetLightbox from './AssetLightbox';
+import AssetActions from './AssetActions';
 import { chatModelDisplayName } from './ModelDropdown';
 import { useSessionAssets, generationOutputs, generationThumbUrl, type OutputItem } from '../lib/generations';
 
@@ -40,6 +41,7 @@ const ASPECT_CSS: Record<ChatAspectRatio, string> = {
 export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const recordsByModel = useAppStore((s) => s.records);
+  const models = useAppStore((s) => s.models);
   const addToast = useAppStore((s) => s.addToast);
 
   const record = useMemo<AppRecord | undefined>(
@@ -53,6 +55,21 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
   }, [record]);
 
   const assetsById = useSessionAssets(recordId, generations);
+
+  // Brand presets (image_presets) → resolve a generation's preset_id to its
+  // prompt_text for the "Branding prompt" section in the full-screen viewer.
+  const presetById = useMemo(() => {
+    const pModel = models.find((m) => m.name === 'image_presets');
+    const recs = pModel ? (recordsByModel[pModel.id] ?? []) : [];
+    const map = new Map<string, { promptText: string; name: string }>();
+    for (const r of recs) {
+      map.set(r.id, {
+        promptText: String((r.data.prompt_text as string | undefined) ?? ''),
+        name: String((r.data.name as string | undefined) ?? ''),
+      });
+    }
+    return map;
+  }, [models, recordsByModel]);
 
   const lastAspect = (record?.data.last_aspect_ratio as ChatAspectRatio | undefined) ?? '1:1';
   const lastPresetId = (record?.data.last_preset_id as string | undefined | null) ?? null;
@@ -169,6 +186,7 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
   }
 
   const selectedOutput = selectedOutputIdx !== null ? selectedOutputs[selectedOutputIdx] : null;
+  const selPreset = selectedGen?.preset_id ? presetById.get(selectedGen.preset_id) : undefined;
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -264,23 +282,35 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
           composer is back in view. */}
       {lightboxOpen && selectedGen && selectedOutput && selectedOutputIdx !== null && (
         <AssetLightbox
-          outputs={selectedOutputs}
+          images={selectedOutputs.map((o) => ({ url: o.url }))}
           index={selectedOutputIdx}
-          generation={selectedGen}
           onIndexChange={(i) => setSelectedOutputIdx(i)}
           onClose={() => setLightboxOpen(false)}
-          onCreateVariation={() => {
-            createVariation(selectedOutput, selectedGen);
-            setLightboxOpen(false);
+          brandingPrompt={selPreset?.promptText ?? null}
+          brandingName={selectedGen.preset_name ?? selPreset?.name ?? null}
+          designPrompt={selectedGen.prompt}
+          meta={{
+            model: chatModelDisplayName(selectedGen.model_id, isAr),
+            aspect: selectedGen.aspect_ratio,
+            created: selectedGen.created_at,
           }}
-          onUseAsReference={() => {
-            useAsReference(selectedOutput);
-            setLightboxOpen(false);
-          }}
-          onRegenerate={() => {
-            regenerate(selectedGen);
-            setLightboxOpen(false);
-          }}
+          actions={
+            <AssetActions
+              output={selectedOutput}
+              onCreateVariation={() => {
+                createVariation(selectedOutput, selectedGen);
+                setLightboxOpen(false);
+              }}
+              onUseAsReference={() => {
+                useAsReference(selectedOutput);
+                setLightboxOpen(false);
+              }}
+              onRegenerate={() => {
+                regenerate(selectedGen);
+                setLightboxOpen(false);
+              }}
+            />
+          }
         />
       )}
     </div>

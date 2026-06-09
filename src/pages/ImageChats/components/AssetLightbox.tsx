@@ -1,46 +1,53 @@
-import { useEffect } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '@/stores/appStore';
-import { X, ChevronLeft, ChevronRight } from 'lucide-react';
-import type { Generation } from '@/lib/imageChat/client';
-import type { OutputItem } from '../lib/generations';
-import AssetActions from './AssetActions';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Palette, PencilRuler } from 'lucide-react';
 
 interface Props {
-  /** All outputs of the generation (for prev/next + filmstrip navigation). */
-  outputs: OutputItem[];
-  /** Index of the output currently shown. */
+  /** Outputs to navigate (a generation's grid; a single asset in the library). */
+  images: { url: string }[];
   index: number;
-  generation: Generation;
   onIndexChange: (i: number) => void;
   onClose: () => void;
-  onCreateVariation: () => void;
-  onUseAsReference: () => void;
-  onRegenerate: () => void;
+  /** Brand-preset text (the "branding prompt"). Null/empty → muted placeholder. */
+  brandingPrompt?: string | null;
+  /** Preset name shown as the branding section subtitle. */
+  brandingName?: string | null;
+  /** The user's design instruction (the "design prompt"). */
+  designPrompt?: string | null;
+  /** Compact provenance shown above the actions. */
+  meta?: { model?: string | null; aspect?: string | null; created?: string | null };
+  /** Right-column action buttons (composed per surface, via AssetActions). */
+  actions: ReactNode;
 }
 
 /**
- * Full-screen viewer for a single output asset (Image Chats v3). Opened by
- * clicking an image in the canvas (or the right panel preview). Shows the image
- * at full size with prev/next navigation across the generation's outputs, a
- * thumbnail filmstrip, and a docked panel carrying the same provenance + actions
- * as SelectedAssetPanel (via the shared AssetActions). Esc / backdrop / × close;
- * ← → navigate. Sits at z-40 so the action modals (z-50/z-[60]) and toasts
- * (z-50) layer above it.
+ * Full-screen asset viewer (Image Chats v3). Three physical columns regardless
+ * of language: LEFT = collapsible Branding-prompt + Design-prompt sections,
+ * CENTER = the image at full size (prev/next + filmstrip across a generation's
+ * outputs; ← → / Esc / backdrop close), RIGHT = the action menu. Sits at z-50 so
+ * it covers the app sidebar (`.sidebar` is position:fixed z-50 — this portal is
+ * later in the DOM, so equal z-index paints on top, exactly like every app
+ * modal-overlay). The action modals it opens (Add-to-Files z-50 portal,
+ * Add-to-Record z-[60]) are mounted later still, so they layer above it.
+ *
+ * Used by BOTH the workspace canvas and the cross-session Media Library — the
+ * caller supplies the resolved branding/design prompts + the actions node.
  */
 export default function AssetLightbox({
-  outputs,
+  images,
   index,
-  generation,
   onIndexChange,
   onClose,
-  onCreateVariation,
-  onUseAsReference,
-  onRegenerate,
+  brandingPrompt,
+  brandingName,
+  designPrompt,
+  meta,
+  actions,
 }: Props) {
   const isAr = useAppStore((s) => s.language === 'ar');
-  const count = outputs.length;
-  const output = outputs[index];
+  const count = images.length;
+  const current = images[index];
   const hasPrev = index > 0;
   const hasNext = index < count - 1;
 
@@ -55,29 +62,45 @@ export default function AssetLightbox({
     return () => window.removeEventListener('keydown', onKey);
   }, [index, count, onClose, onIndexChange]);
 
-  if (!output) return null;
+  if (!current) return null;
 
-  const asset = output.asset;
-  const prompt = asset?.prompt ?? generation.prompt;
-  const model = asset?.model_id ?? generation.model_id;
-  const aspect = generation.aspect_ratio;
-  const created = asset?.created_at ?? generation.created_at;
-
+  // dir="ltr" on the shell locks the three columns physically (left=prompts,
+  // right=actions) per the user's spec; each panel re-applies the page dir for
+  // correct label/icon flow, and prompt bodies use dir="auto" (content-driven).
   return createPortal(
-    <div className="fixed inset-0 z-40 flex bg-charcoal/90 backdrop-blur-sm" dir={isAr ? 'rtl' : 'ltr'}>
-      {/* Image stage — click the empty area to close. */}
-      <div
-        className="relative flex-1 min-w-0 flex items-center justify-center p-4 md:p-10"
-        onClick={onClose}
+    <div className="fixed inset-0 z-50 flex bg-charcoal/95 backdrop-blur-sm" dir="ltr">
+      {/* LEFT — prompts */}
+      <aside
+        className="hidden md:flex w-[300px] shrink-0 bg-white border-r border-sand/20 flex-col overflow-y-auto"
+        dir={isAr ? 'rtl' : 'ltr'}
       >
-        {/* Counter (top-left, physical) */}
+        <div className="p-3 border-b border-sand/20 text-sm font-semibold text-charcoal shrink-0">
+          {isAr ? 'الأوصاف' : 'Prompts'}
+        </div>
+        <Section
+          icon={<Palette size={14} className="text-copper" />}
+          title={isAr ? 'وصف الهوية' : 'Branding prompt'}
+          subtitle={brandingName ?? undefined}
+          defaultOpen
+          empty={isAr ? 'لا يوجد قالب هوية' : 'No brand preset'}
+          body={brandingPrompt ?? ''}
+        />
+        <Section
+          icon={<PencilRuler size={14} className="text-copper" />}
+          title={isAr ? 'وصف التصميم' : 'Design prompt'}
+          defaultOpen
+          empty="—"
+          body={designPrompt ?? ''}
+        />
+      </aside>
+
+      {/* CENTER — image stage (click empty area to close) */}
+      <div className="relative flex-1 min-w-0 flex items-center justify-center p-4 md:p-8" onClick={onClose}>
         {count > 1 && (
           <div className="absolute top-4 left-4 z-10 px-2.5 py-1 rounded-full bg-white/10 text-white text-xs font-medium" dir="ltr">
             {index + 1} / {count}
           </div>
         )}
-
-        {/* Close (top-right, physical) */}
         <button
           type="button"
           onClick={onClose}
@@ -87,15 +110,13 @@ export default function AssetLightbox({
           <X size={20} />
         </button>
 
-        {/* The image — stop propagation so clicking it doesn't close. */}
         <img
-          src={output.url}
+          src={current.url}
           alt=""
           className="max-h-[84vh] max-w-full object-contain rounded-lg shadow-2xl select-none"
           onClick={(e) => e.stopPropagation()}
         />
 
-        {/* Prev / next (physical left/right edges) */}
         {count > 1 && (
           <>
             <NavBtn
@@ -116,60 +137,92 @@ export default function AssetLightbox({
                 if (hasNext) onIndexChange(index + 1);
               }}
             />
+            <div
+              className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-2 py-2 rounded-xl bg-charcoal/50 max-w-[90%] overflow-x-auto"
+              dir="ltr"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {images.map((o, i) => (
+                <button
+                  key={o.url + i}
+                  type="button"
+                  onClick={() => onIndexChange(i)}
+                  className={`w-12 h-12 shrink-0 rounded-md overflow-hidden border-2 transition-all ${
+                    i === index ? 'border-copper' : 'border-white/20 hover:border-white/60'
+                  }`}
+                  aria-label={`#${i + 1}`}
+                >
+                  <img src={o.url} alt="" className="w-full h-full object-cover" loading="lazy" />
+                </button>
+              ))}
+            </div>
           </>
         )}
+      </div>
 
-        {/* Thumbnail filmstrip (forced LTR so #1…#N read in chevron order) */}
-        {count > 1 && (
-          <div
-            className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 px-2 py-2 rounded-xl bg-charcoal/50 max-w-[90%] overflow-x-auto"
-            dir="ltr"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {outputs.map((o, i) => (
-              <button
-                key={o.url + i}
-                type="button"
-                onClick={() => onIndexChange(i)}
-                className={`w-12 h-12 shrink-0 rounded-md overflow-hidden border-2 transition-all ${
-                  i === index ? 'border-copper' : 'border-white/20 hover:border-white/60'
-                }`}
-                aria-label={`#${i + 1}`}
-              >
-                <img src={o.url} alt="" className="w-full h-full object-cover" loading="lazy" />
-              </button>
-            ))}
+      {/* RIGHT — actions */}
+      <aside
+        className="w-[260px] sm:w-[300px] shrink-0 bg-white border-l border-sand/20 flex flex-col overflow-y-auto"
+        dir={isAr ? 'rtl' : 'ltr'}
+      >
+        <div className="p-3 border-b border-sand/20 flex items-center gap-2 shrink-0">
+          <div className="flex-1 text-sm font-semibold text-charcoal">{isAr ? 'الإجراءات' : 'Actions'}</div>
+          <button onClick={onClose} className="md:hidden p-1.5 rounded-lg hover:bg-cream text-charcoal/70" aria-label={isAr ? 'إغلاق' : 'Close'}>
+            <X size={16} />
+          </button>
+        </div>
+        {meta && (meta.model || meta.aspect || meta.created) && (
+          <div className="px-3 pt-3 text-[11px] text-charcoal/50 flex flex-wrap gap-x-2 gap-y-0.5" dir="ltr">
+            {meta.model && <span>{meta.model}</span>}
+            {meta.aspect && <span>· {meta.aspect}</span>}
+            {meta.created && <span>· {formatTime(meta.created, isAr)}</span>}
           </div>
         )}
-      </div>
-
-      {/* Docked details + actions (shared with the right rail). */}
-      <div className="w-[300px] shrink-0 bg-white flex flex-col overflow-y-auto border-s border-sand/20">
-        <div className="p-3 border-b border-sand/20 text-sm font-semibold text-charcoal">
-          {isAr ? 'تفاصيل الأصل' : 'Asset details'}
-        </div>
-        <div className="p-3 space-y-4">
-          {/* Provenance */}
-          <div className="space-y-2 text-xs">
-            <Meta label={isAr ? 'الوصف' : 'Prompt'} value={prompt || '—'} />
-            <div className="flex gap-3">
-              <Meta label={isAr ? 'النموذج' : 'Model'} value={model} />
-              <Meta label={isAr ? 'المقاس' : 'Aspect'} value={aspect} ltr />
-            </div>
-            <Meta label={isAr ? 'وقت الإنشاء' : 'Created'} value={formatTime(created, isAr)} />
-          </div>
-
-          {/* Actions */}
-          <AssetActions
-            output={output}
-            onCreateVariation={onCreateVariation}
-            onUseAsReference={onUseAsReference}
-            onRegenerate={onRegenerate}
-          />
-        </div>
-      </div>
+        <div className="p-3">{actions}</div>
+      </aside>
     </div>,
     document.body,
+  );
+}
+
+function Section({
+  icon,
+  title,
+  subtitle,
+  body,
+  empty,
+  defaultOpen,
+}: {
+  icon: ReactNode;
+  title: string;
+  subtitle?: string;
+  body: string;
+  empty: string;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  const hasBody = body.trim().length > 0;
+  return (
+    <div className="border-b border-sand/20">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-cream/60 transition-colors text-start"
+      >
+        <ChevronDown size={14} className={`text-charcoal/40 transition-transform shrink-0 ${open ? '' : '-rotate-90'}`} />
+        {icon}
+        <span className="font-semibold text-xs text-charcoal flex-1 truncate">{title}</span>
+        {subtitle && <span className="text-[11px] text-charcoal/50 truncate max-w-[90px]">{subtitle}</span>}
+      </button>
+      {open && (
+        <div
+          className={`px-3 pb-3 text-xs whitespace-pre-wrap break-words leading-relaxed ${hasBody ? 'text-charcoal/80' : 'text-charcoal/40 italic'}`}
+          dir="auto"
+        >
+          {hasBody ? body : empty}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -198,17 +251,6 @@ function NavBtn({
     >
       {side === 'left' ? <ChevronLeft size={22} /> : <ChevronRight size={22} />}
     </button>
-  );
-}
-
-function Meta({ label, value, ltr }: { label: string; value: string; ltr?: boolean }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-charcoal/50">{label}</div>
-      <div className="text-charcoal/90 break-words whitespace-pre-wrap" dir={ltr ? 'ltr' : undefined}>
-        {value}
-      </div>
-    </div>
   );
 }
 
