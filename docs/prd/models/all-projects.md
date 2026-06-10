@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-01
+**Last updated (from DB):** 2026-06-10
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -37,7 +37,7 @@
 | `developer` | Developer / المطور | Lookup | no | half | yes | → Developers |
 | `project_name` | Project Name / اسم المشروع | Text | yes | half | yes |  |
 | `project_id` | Project ID / معرف المشروع | Auto ID | no | half | yes | م ش### |
-| `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 11 options · multi |
+| `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 12 options · multi |
 | `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 7 options · multi |
 | `project_stage` | Project Stage / مرحلة المشروع | Dropdown | no | half | yes | 7 options |
 | `project_status` | Project Status / حالة المشروع | Dropdown | no | half | yes | 6 options |
@@ -68,6 +68,7 @@
   - API value `townhouses` → "Townhouses" / "تاون هاوس" · color `#6366F1`
   - API value `villas` → "Villas" / "فلل" · color `#6B7280`
   - API value `اختبار-سلج` → "Test" / "اختبار-سلج" · color `#3B82F6`
+  - API value `برج` → "برج" / "برج" · color `#10B981`
 - **Preferred Amenities / المرافق** (`preferred_amenities`, type `multiselect`) — multi-value. Options:
   - API value `مجلس` → "Majlis" / "مجلس"
   - API value `غرفة خادمة` → "Maid Room" / "غرفة خادمة"

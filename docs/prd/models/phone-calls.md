@@ -5,7 +5,7 @@
 # Model: Phone Calls / المكالمات  `phone_calls`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-06-10
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -13,8 +13,8 @@
 **Icon:** `phone-call`   ·   **Color:** `#B8734F`
 
 ## Overview
-- Sections: **1** (1 base, 0 non-base)
-- Fields: **15**
+- Sections: **2** (2 base, 0 non-base)
+- Fields: **14**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -34,11 +34,9 @@
 | `direction` | Direction / الاتجاه | Dropdown | no | third | yes | 2 options |
 | `status` | Status / الحالة | Dropdown | no | third | yes | 9 options |
 | `customer_phone` | Customer Phone / رقم العميل | Phone | no | third | yes |  |
-| `caller_number` | Caller Number / رقم المتصل | Phone | no | half | no |  |
-| `callee_number` | Callee Number / رقم المتلقي | Phone | no | half | no |  |
 | `duration_seconds` | Duration (seconds) / مدة المكالمة (ثوانٍ) | Number | no | third | yes |  |
 | `call_time` | Call Time / وقت المكالمة | Date & time | no | third | yes |  |
-| `agent_name` | Agent / الوكيل | Text | no | third | yes |  |
+| `agent_name` | Agent / الوكيل | Assignee | no | third | yes | any user |
 | `dtmf_digit` | DTMF Digit / الرقم المضغوط | Text | no | third | yes |  |
 | `dtmf_label` | DTMF Label / تسمية الخيار | Text | no | third | no |  |
 | `sentiment` | Sentiment / الانطباع | Dropdown | no | third | yes | 5 options |
@@ -63,10 +61,8 @@
   - API value `active` → "Active" / "نشطة" · color `#eab308`
 - **Customer Phone / رقم العميل** (`customer_phone`, type `phone`):
   - default country code `+966`
-- **Caller Number / رقم المتصل** (`caller_number`, type `phone`):
-  - default country code `+966`
-- **Callee Number / رقم المتلقي** (`callee_number`, type `phone`):
-  - default country code `+966`
+- **Agent / الوكيل** (`agent_name`, type `assignee`):
+  - eligible users: any active user
 - **Sentiment / الانطباع** (`sentiment`, type `dropdown`) — options:
   - API value `positive` → "Positive" / "إيجابي" · color `#22c55e`
   - API value `neutral` → "Neutral" / "محايد" · color `#6b7280`
@@ -77,3 +73,9 @@
   - target model: Clients
   - shows field: `client_id`
   - multiple: no · max in dropdown: 2000
+
+### 2. Call Transcript / نص المكالمة  _(base, color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `transcription_text` | Full Transcript / النص الكامل للمكالمة | Text area | no | full | no |  |
