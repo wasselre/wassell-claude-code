@@ -8,11 +8,18 @@ import RangeField from './RangeField';
 import LookupCombobox from './LookupCombobox';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
+import {
+  ImageFieldInput,
+  MultiImageFieldInput,
+  FileFieldInput,
+  MultiFileFieldInput,
+} from './DriveFieldInputs';
+import AttachmentFieldInput from './AttachmentFieldInput';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
 import { canEditRecord, getFieldPermission } from '@/lib/permissions';
-import type { AppModel, AppRecord, ModelField, ModelView } from '@/types';
+import type { AppModel, AppRecord, AttachmentRef, ModelField, ModelView } from '@/types';
 import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
 import { shortenGoogleMapsUrl } from '@/lib/urlUtils';
 
@@ -345,6 +352,8 @@ export default function TableView({ model, records, onRowClick, onDelete, view, 
                           field={field}
                           value={editData[field.name]}
                           onChange={(val) => updateField(field.name, val)}
+                          modelId={model.id}
+                          recordId={record.id}
                         />
                       ) : (
                         <DynamicCell
@@ -414,10 +423,16 @@ function InlineInput({
   field,
   value,
   onChange,
+  modelId,
+  recordId,
 }: {
   field: ModelField;
   value: unknown;
   onChange: (value: unknown) => void;
+  /** Owning model + record id — passed through to the Drive-backed inputs so
+   *  files uploaded while inline-editing get tagged to this record. */
+  modelId: string;
+  recordId: string;
 }) {
   const { language, records, users, models } = useAppStore();
   const isAr = language === 'ar';
@@ -622,6 +637,114 @@ function InlineInput({
             </option>
           ))}
         </select>
+      );
+    }
+
+    // Drive-backed file fields (image / multi_image / file / multi_file /
+    // attachment). Reuse the EXACT same Files-system inputs the record form
+    // uses, wired with the field's accept/size/folder/cap config. Without
+    // these cases they'd fall through to the `default` text input below, which
+    // stringifies and clobbers the structured value (a `files.id` string,
+    // string[], or AttachmentRef[]) — destroying the file links on save.
+    // Wrapped in a stopPropagation div like the other rich inputs; the pickers
+    // themselves portal out (fixed inset-0), so they escape the table scroll box.
+    case 'image':
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <ImageFieldInput
+            value={typeof value === 'string' ? value : ''}
+            acceptMime={field.image_accept ?? 'image/*'}
+            maxSizeMb={field.image_max_size_mb ?? 25}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId}
+            recordId={recordId}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        </div>
+      );
+
+    case 'multi_image': {
+      const list = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string')
+        : [];
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <MultiImageFieldInput
+            value={list}
+            acceptMime={field.image_accept ?? 'image/*'}
+            maxSizeMb={field.image_max_size_mb ?? 25}
+            maxItems={field.attachment_max_items}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId}
+            recordId={recordId}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        </div>
+      );
+    }
+
+    case 'file':
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <FileFieldInput
+            value={typeof value === 'string' ? value : ''}
+            acceptMime={field.image_accept}
+            maxSizeMb={field.image_max_size_mb ?? 500}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId}
+            recordId={recordId}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        </div>
+      );
+
+    case 'multi_file': {
+      const list = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string')
+        : [];
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <MultiFileFieldInput
+            value={list}
+            acceptMime={field.image_accept}
+            maxSizeMb={field.image_max_size_mb ?? 500}
+            maxItems={field.attachment_max_items}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId}
+            recordId={recordId}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        </div>
+      );
+    }
+
+    case 'attachment': {
+      // Tolerant parse — legacy/empty/malformed values become an empty list,
+      // matching DynamicField's attachment case.
+      const refs: AttachmentRef[] = Array.isArray(value)
+        ? value.filter(
+            (r): r is AttachmentRef =>
+              !!r && typeof r === 'object' && 'type' in r && 'id' in r &&
+              ((r as AttachmentRef).type === 'file' || (r as AttachmentRef).type === 'folder') &&
+              typeof (r as AttachmentRef).id === 'string',
+          )
+        : [];
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <AttachmentFieldInput
+            value={refs}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            maxItems={field.attachment_max_items}
+            modelId={modelId}
+            recordId={recordId}
+          />
+        </div>
       );
     }
 
