@@ -243,68 +243,28 @@ async function findPhoneCallsModelId(): Promise<string | null> {
   return phoneCallsModelIdCache;
 }
 
-let clientsModelIdCache: string | null = null;
-async function findClientsModelId(): Promise<string | null> {
-  if (clientsModelIdCache) return clientsModelIdCache;
-  const supa = getServiceSupabase();
-  const { data } = await supa
-    .from('models')
-    .select('id')
-    .eq('name', 'clients')
-    .maybeSingle();
-  clientsModelIdCache = (data?.id as string | undefined) ?? null;
-  return clientsModelIdCache;
-}
-
 /**
- * Candidate string forms of a canonical E.164 number, so a client whose phone
- * was stored in a non-normalized shape (bare digits, KSA local "05…", or
- * without the leading "+") still matches. `contactPhone` itself is already
- * normalized to E.164 (normalizePhoneE164) — this is the "normalize before
- * matching" requirement applied to the *stored* side too.
- */
-function phoneMatchCandidates(e164: string): string[] {
-  const out = new Set<string>();
-  out.add(e164);                                  // "+966550294024"
-  const digits = e164.replace(/\D/g, '');         // "966550294024"
-  out.add(digits);
-  out.add(`+${digits}`);
-  if (digits.startsWith('966')) {
-    const local = digits.slice(3);                // "550294024"
-    out.add(`0${local}`);                         // "0550294024"
-    out.add(local);                               // "550294024"
-  }
-  return [...out].filter(Boolean);
-}
-
-/**
- * Best-effort lookup of a client record whose phone matches `contactPhone`.
- * The seed Clients model stores phone in `phone_number`; tenants who renamed
- * that slug will fall through and the call_logs row is still written.
- * Returns null when no match is found.
+ * Look up the client record whose phone matches `contactPhone`, via the
+ * `find_client_id_by_phone` SQL RPC. The RPC canonicalizes BOTH sides to KSA
+ * E.164 (`ksa_phone_canon`: strips separators / "00" prefix; reconciles a
+ * leading 966 / leading 0 / bare 9-digit subscriber), so the match is
+ * FORMAT-AGNOSTIC — a client phone stored as "+966…", "05…", bare "5XXXXXXXX",
+ * or with spaces/dashes all match the same call. This is the single source of
+ * truth for phone→client matching, shared with the migration backfill, so the
+ * webhook and any backfill can never drift. The RPC resolves the clients model
+ * id itself and goes through `unified_records` (frozen-safe). Returns null on
+ * no match; errors are surfaced to the function log rather than swallowed.
  *
- * We try each candidate form in turn (most data matches the first, canonical
- * E.164 form). unified_records — works whether the clients model is frozen or
- * not. A query error is surfaced to the function log rather than swallowed.
+ * See supabase/migrations/2026-06-10_phone_canon_rpc.sql.
  */
 async function findClientRecordIdByPhone(contactPhone: string): Promise<string | null> {
-  const clientsModelId = await findClientsModelId();
-  if (!clientsModelId) return null;
   const supa = getServiceSupabase();
-  for (const candidate of phoneMatchCandidates(contactPhone)) {
-    const { data, error } = await supa
-      .from('unified_records')
-      .select('id')
-      .eq('model_id', clientsModelId)
-      .eq('data->>phone_number', candidate)
-      .limit(1);
-    if (error) {
-      console.error('[hatif-webhook] client phone lookup failed:', error.message);
-      return null;
-    }
-    if (data && data.length > 0) return data[0].id as string;
+  const { data, error } = await supa.rpc('find_client_id_by_phone', { p_phone: contactPhone });
+  if (error) {
+    console.error('[hatif-webhook] client phone lookup failed:', error.message);
+    return null;
   }
-  return null;
+  return (data as string | null) ?? null;
 }
 
 // ─── Agent → app-user matching ─────────────────────────────────────
