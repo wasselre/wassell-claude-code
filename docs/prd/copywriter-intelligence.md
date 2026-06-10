@@ -45,7 +45,7 @@ Auto-generated transcripts are too noisy to learn from (wrong/misheard words, br
 | `src/data/seedModels.ts` | Canonical `competitors` model definition (fields + button), kept in sync with the migration. |
 | `src/types/index.ts` · `src/pages/Records/RecordFormPage.tsx` · `src/pages/Builder/components/CustomButtonsTab.tsx` | The `analyze_reel` custom-button action type + its dispatch + Builder display. |
 | **Phase 3 — Copywriter agent** | |
-| `api/_lib/copywriterAgent.ts` | The agent brain: system prompt (methodology), `search_reels`/`get_reel` tools + executors; reuses `search_projects`/`get_project` from `aiAgent.ts`. |
+| `api/_lib/copywriterAgent.ts` | The agent brain: system prompt (methodology) + all four tool executors. `search_reels`/`get_reel` over the reel library; `search_projects`/`get_project` scoped to **`all_projects`** — `get_project` reads the live schema and returns a fact sheet splitting `details` (team-entered) from `calculated` (the auto-computed rollups: price/area/bedroom/bathroom ranges, unit counts, price per m², keyed by `computed_kind`). |
 | `api/copywriter.ts` | `POST /api/copywriter` — SSE tool-use loop (edge), clone of `api/agent.ts`. |
 | `src/lib/copywriter/client.ts` | Browser SSE client (`streamCopywriterTurn`). |
 | `src/pages/Copywriter/CopywriterPage.tsx` · `components/CopywriterThread.tsx` | Split-pane chat UI (list + thread), clone of the AI sales agent's. |
