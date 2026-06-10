@@ -2942,6 +2942,7 @@ const copywriterChatsModel: AppModel = {
 
 export const phoneCallsId = uuid();
 const phoneCallsBaseSectionId = uuid();
+const phoneCallsTranscriptSectionId = uuid();
 const phoneCallsDirectionFieldId = uuid();
 const phoneCallsStatusFieldId = uuid();
 const phoneCallsCustomerPhoneFieldId = uuid();
@@ -3136,18 +3137,6 @@ const phoneCallsModel: AppModel = {
           },
           {
             id: uuid(),
-            name: 'transcription_text',
-            label_ar: 'نص التفريغ الكامل',
-            label_en: 'Full Transcript',
-            type: 'textarea',
-            required: false,
-            order: 13,
-            section_id: phoneCallsBaseSectionId,
-            width: 'full',
-            show_in_table: false,
-          },
-          {
-            id: uuid(),
             name: 'pickup_time',
             label_ar: 'وقت الرد',
             label_en: 'Picked Up At',
@@ -3195,6 +3184,31 @@ const phoneCallsModel: AppModel = {
             show_in_table: true,
             lookup_model_id: clientsId,
             lookup_display_field: 'name',
+          },
+        ],
+      },
+      {
+        // Dedicated section so staff can read the full call transcript. The
+        // webhook mirrors call_logs.transcription.text into the record's
+        // `transcription_text` slug, which this textarea renders.
+        id: phoneCallsTranscriptSectionId,
+        label_ar: 'نص المكالمة',
+        label_en: 'Call Transcript',
+        order: 1,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          {
+            id: uuid(),
+            name: 'transcription_text',
+            label_ar: 'النص الكامل للمكالمة',
+            label_en: 'Full Transcript',
+            type: 'textarea',
+            required: false,
+            order: 0,
+            section_id: phoneCallsTranscriptSectionId,
+            width: 'full',
+            show_in_table: false,
           },
         ],
       },
