@@ -5,7 +5,7 @@
 # Model: Copywriter / كاتب المحتوى  `copywriter_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-09
+**Last updated (from DB):** 2026-06-10
 **Model id:** `09ba91d8-692f-4aed-a557-4af5888c81be`
 **Storage:** unified records (JSONB)
 **Group:** (ungrouped)
@@ -35,7 +35,7 @@
 | `message_count` | Messages / عدد الرسائل | Number | no | third | yes |  |
 | `last_message_at` | Last Message / آخر رسالة | Date & time | no | third | yes |  |
 | `feedback_score` | Feedback Score / تقييم الجودة | Dropdown | no | third | no | 5 options |
-| `linked_project_id` | Linked Project / المشروع المرتبط | Lookup | no | full | no | → `5229e15f-afd9-49a1-aa4f-7f2a43525025` (unknown model) |
+| `linked_project_id` | Linked Project / المشروع المرتبط | Lookup | no | full | no | → All Projects |
 
 **Field details:**
 
@@ -49,6 +49,6 @@
   - API value `4` → "4 - Great" / "⭐⭐⭐⭐ ممتاز" · color `#84cc16`
   - API value `5` → "5 - Excellent" / "⭐⭐⭐⭐⭐ مذهل" · color `#22c55e`
 - **Linked Project / المشروع المرتبط** (`linked_project_id`, type `lookup`):
-  - target model: `5229e15f-afd9-49a1-aa4f-7f2a43525025` (unknown model)
+  - target model: All Projects
   - shows field: `project_name`
   - multiple: no

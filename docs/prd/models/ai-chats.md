@@ -5,7 +5,7 @@
 # Model: AI Agent / المساعد الذكي  `ai_chats`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-06-10
 **Model id:** `ca95e4eb-da23-47fa-9f77-3149ba5fa37c`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -34,7 +34,7 @@
 | `status` | Status / الحالة | Dropdown | no | third | yes | 2 options |
 | `message_count` | Messages / عدد الرسائل | Number | no | third | yes |  |
 | `last_message_at` | Last Message / آخر رسالة | Date & time | no | third | yes |  |
-| `linked_client_id` | Linked Client / العميل المرتبط | Lookup | no | full | no | → `7762d8db-4e9d-4a61-8f8c-40bbd9b3ef33` (unknown model) |
+| `linked_client_id` | Linked Client / العميل المرتبط | Lookup | no | full | no | → Clients |
 
 **Field details:**
 
@@ -42,6 +42,6 @@
   - API value `active` → "Active" / "نشط" · color `#22c55e`
   - API value `archived` → "Archived" / "مؤرشف" · color `#9ca3af`
 - **Linked Client / العميل المرتبط** (`linked_client_id`, type `lookup`):
-  - target model: `7762d8db-4e9d-4a61-8f8c-40bbd9b3ef33` (unknown model)
+  - target model: Clients
   - shows field: `name`
   - multiple: no
