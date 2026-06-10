@@ -2925,6 +2925,127 @@ const copywriterChatsModel: AppModel = {
 };
 
 // ============================================================
+// REELS MODEL (reel_scripts) — production records for marketing reels
+// ============================================================
+// Manages reel production + content. The copywriter agent (above) emits a
+// structured reel script via its emit_reel_script tool; the chat renders it as
+// a table with a "Create Reel" button that opens a PREFILLED record of this
+// model (project + script table auto-filled) for the user to review and Save.
+//
+// Slug is `reel_scripts`, NOT `reels` — `reels` is in RETIRED_SYSTEM_MODEL_NAMES
+// (the retired 2026-05-09 marketing pipeline) and would be hard-deleted on load.
+// The user-facing label is "Reels".
+//
+// Stable id so the prod migration (supabase/migrations/2026-06-10_reel_scripts_model.sql)
+// and this seed share one model id. The seed's `project` lookup targets the seed
+// allProjectsId (fresh installs); the prod row targets the LIVE all_projects id.
+export const REEL_SCRIPTS_MODEL_ID = '7c0ffee1-5cab-4b0a-9d3e-12ab34cd56ef';
+const reelScriptsBasicSectionId = uuid();
+const reelScriptsBriefSectionId = uuid();
+const reelScriptsScriptSectionId = uuid();
+const reelScriptsProductionSectionId = uuid();
+const reelScriptsTitleFieldId = uuid();
+const reelScriptsStatusFieldId = uuid();
+
+const reelScriptsModel: AppModel = {
+  id: REEL_SCRIPTS_MODEL_ID,
+  name: 'reel_scripts',
+  label_ar: 'الريلز',
+  label_en: 'Reels',
+  icon: 'clapperboard',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: reelScriptsTitleFieldId,
+    subtitle_field_id: null,
+    badge_field_id: reelScriptsStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: reelScriptsBasicSectionId,
+        label_ar: 'معلومات أساسية',
+        label_en: 'Basic Information',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          { id: reelScriptsTitleFieldId, name: 'title', label_ar: 'العنوان', label_en: 'Title', type: 'text', required: true, order: 0, section_id: reelScriptsBasicSectionId, width: 'half', show_in_table: true },
+          { id: uuid(), name: 'project', label_ar: 'المشروع', label_en: 'Project', type: 'lookup', required: false, order: 1, section_id: reelScriptsBasicSectionId, width: 'half', show_in_table: true, lookup_model_id: allProjectsId, lookup_display_field: 'project_name', is_multi: false },
+          { id: reelScriptsStatusFieldId, name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: false, order: 2, section_id: reelScriptsBasicSectionId, width: 'half', show_in_table: true, options: [
+            { id: uuid(), label_ar: 'مسودة', label_en: 'Draft', value: 'draft', color: '#9ca3af' },
+            { id: uuid(), label_ar: 'كتابة السيناريو', label_en: 'Scripting', value: 'scripting', color: '#3b82f6' },
+            { id: uuid(), label_ar: 'قيد الإنتاج', label_en: 'In Production', value: 'in_production', color: '#f59e0b' },
+            { id: uuid(), label_ar: 'قيد المراجعة', label_en: 'In Review', value: 'in_review', color: '#eab308' },
+            { id: uuid(), label_ar: 'معتمد', label_en: 'Approved', value: 'approved', color: '#22c55e' },
+            { id: uuid(), label_ar: 'منشور', label_en: 'Published', value: 'published', color: '#8b5cf6' },
+          ] },
+        ],
+      },
+      {
+        id: reelScriptsBriefSectionId,
+        label_ar: 'الفكرة',
+        label_en: 'Brief',
+        order: 1,
+        is_base: true,
+        color: '#C09B5F',
+        fields: [
+          { id: uuid(), name: 'reel_idea', label_ar: 'فكرة الريل', label_en: 'Reel Idea', type: 'textarea', required: false, order: 0, section_id: reelScriptsBriefSectionId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'objective', label_ar: 'الهدف', label_en: 'Objective', type: 'text', required: false, order: 1, section_id: reelScriptsBriefSectionId, width: 'half', show_in_table: false },
+          { id: uuid(), name: 'target_audience', label_ar: 'الجمهور المستهدف', label_en: 'Target Audience', type: 'text', required: false, order: 2, section_id: reelScriptsBriefSectionId, width: 'half', show_in_table: false },
+          { id: uuid(), name: 'key_message', label_ar: 'الرسالة الأساسية', label_en: 'Key Message', type: 'textarea', required: false, order: 3, section_id: reelScriptsBriefSectionId, width: 'full', show_in_table: false },
+        ],
+      },
+      {
+        id: reelScriptsScriptSectionId,
+        label_ar: 'السيناريو',
+        label_en: 'Script',
+        order: 2,
+        is_base: true,
+        color: '#8E4E3A',
+        fields: [
+          { id: uuid(), name: 'hook', label_ar: 'الخطّاف', label_en: 'Hook', type: 'textarea', required: false, order: 0, section_id: reelScriptsScriptSectionId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'angle', label_ar: 'الزاوية / المحفّز', label_en: 'Angle / Trigger', type: 'text', required: false, order: 1, section_id: reelScriptsScriptSectionId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'script_table', label_ar: 'جدول السيناريو', label_en: 'Script Table', type: 'table', required: false, order: 2, section_id: reelScriptsScriptSectionId, width: 'full', show_in_table: false,
+            table_columns: [
+              { id: uuid(), name: 'scene', label_ar: 'المشهد', label_en: 'Scene', type: 'text', required: false },
+              { id: uuid(), name: 'voiceover', label_ar: 'التعليق الصوتي', label_en: 'Voiceover', type: 'textarea', required: false },
+              { id: uuid(), name: 'visual', label_ar: 'التوجيه البصري', label_en: 'Visual Direction', type: 'textarea', required: false },
+              { id: uuid(), name: 'on_screen_text', label_ar: 'نص على الشاشة', label_en: 'On-Screen Text', type: 'textarea', required: false },
+              { id: uuid(), name: 'notes', label_ar: 'ملاحظات', label_en: 'Notes', type: 'text', required: false },
+            ] },
+          { id: uuid(), name: 'cta', label_ar: 'الدعوة', label_en: 'CTA', type: 'textarea', required: false, order: 3, section_id: reelScriptsScriptSectionId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'alt_hooks', label_ar: 'خطّافات بديلة', label_en: 'Alternative Hooks', type: 'textarea', required: false, order: 4, section_id: reelScriptsScriptSectionId, width: 'full', show_in_table: false },
+        ],
+      },
+      {
+        id: reelScriptsProductionSectionId,
+        label_ar: 'الإنتاج',
+        label_en: 'Production',
+        order: 3,
+        is_base: true,
+        color: '#4A2C2A',
+        fields: [
+          { id: uuid(), name: 'approval_status', label_ar: 'حالة الاعتماد', label_en: 'Approval Status', type: 'dropdown', required: false, order: 0, section_id: reelScriptsProductionSectionId, width: 'half', show_in_table: true, options: [
+            { id: uuid(), label_ar: 'معلّق', label_en: 'Pending', value: 'pending', color: '#9ca3af' },
+            { id: uuid(), label_ar: 'معتمد', label_en: 'Approved', value: 'approved', color: '#22c55e' },
+            { id: uuid(), label_ar: 'تعديلات مطلوبة', label_en: 'Changes Requested', value: 'changes_requested', color: '#ef4444' },
+          ] },
+          { id: uuid(), name: 'review_comments', label_ar: 'ملاحظات المراجعة', label_en: 'Review Comments', type: 'notes', required: false, order: 1, section_id: reelScriptsProductionSectionId, width: 'full', show_in_table: false },
+          { id: uuid(), name: 'production_notes', label_ar: 'ملاحظات الإنتاج', label_en: 'Production Notes', type: 'notes', required: false, order: 2, section_id: reelScriptsProductionSectionId, width: 'full', show_in_table: false },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // PHONE CALLS MODEL (Hatif call events as user-facing records)
 // ============================================================
 // Every inbound, outbound-IVR, and agent-placed call Hatif logs gets a
@@ -4415,6 +4536,7 @@ export const SEED_MODELS: AppModel[] = [
   chatTemplatesModel,
   aiChatsModel,
   copywriterChatsModel,
+  reelScriptsModel,
   decksModel,
   dataMigrationModel,
   phoneCallsModel,

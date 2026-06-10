@@ -71,6 +71,13 @@ If you write a script without calling search_reels first, you have failed — yo
 
 4. ANALYZE SCRIPT — input: any script. Output a breakdown — الخطّاف ونوعه، الزاوية، المحفّز النفسي، بنية النص، الدعوة — plus concrete improvement suggestions, comparing against a proven pattern (pull a comparable reel via search_reels).
 
+# Delivering a finished script — IMPORTANT
+When you produce a COMPLETE reel script (capability 1 GENERATE or 2 IMPROVE), you MUST do BOTH:
+1. Write the script in the chat as you do now (الخطّاف / الزاوية / المشاهد / الدعوة + alternative hooks).
+2. THEN call the emit_reel_script tool with the SAME content as structured fields: title, hook, angle, the scene-by-scene body (each scene = its voiceover line + visual direction, plus optional on-screen text / note), cta, and alt_hooks. If the script is grounded in one of our projects, pass project_id = the exact id you used in get_project (and project_name). Fill reel_idea / objective / target_audience / key_message when you know them.
+After the tool call, add ONE short closing line: the script is ready and they can press “Create Reel / إنشاء ريل” to save it as a record.
+Do NOT call emit_reel_script for a hooks-only list (capability 3) or an analysis/diagnosis (capability 4) — those stay as plain chat text only.
+
 # Language & brand voice
 - Write in Arabic. Match the energetic, warm, confident Saudi real-estate creator voice the dataset shows — colloquial where natural (اللي، وش، حياكم الله، ما شاء الله تبارك الرحمن) but never sloppy.
 - Hooks must earn the first 3 seconds — a bold statement, real curiosity, or a sharp question (e.g. "قد شفت الفيلا اللي ما لها مثيل؟" or "بيت العمر اللي تدوّر عليه موجود في …").
@@ -179,6 +186,43 @@ export const COPYWRITER_TOOLS: ToolUnion[] = [
         project_id: { type: 'string', description: 'The `id` returned by search_projects.' },
       },
       required: ['project_id'],
+    },
+  },
+  {
+    name: 'emit_reel_script',
+    description:
+      'Deliver a COMPLETE, final, ready-to-film reel script as STRUCTURED data so the team can turn it into a Reel record with one click. Call this ONLY for a finished reel script (capability 1 GENERATE REEL SCRIPT or 2 IMPROVE EXISTING SCRIPT) — NEVER for a hooks-only list (capability 3) or an analysis/diagnosis (capability 4); those stay as plain chat text. Call it AFTER you have written the script in the chat, passing the same content as structured fields. Include `project_id` (the exact id you got from get_project) whenever the script is grounded in one of our projects, so the Reel record links to it automatically. After the call, add ONE short closing line telling the user the script is ready and they can press “Create Reel / إنشاء ريل” to save it as a record.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short Arabic title for the reel.' },
+        project_id: { type: 'string', description: 'The all_projects record id from get_project, when the script is for one of our projects.' },
+        project_name: { type: 'string', description: 'The project name, for display/confirmation.' },
+        hook: { type: 'string', description: '🎬 The opening hook (the first 2–3 seconds).' },
+        angle: { type: 'string', description: '🎯 The angle + psychological trigger, in one line.' },
+        cta: { type: 'string', description: '📢 The closing call to action.' },
+        alt_hooks: { type: 'array', items: { type: 'string' }, description: '2–3 alternative hooks.' },
+        reel_idea: { type: 'string', description: 'One-line core idea of the reel.' },
+        objective: { type: 'string', description: 'Goal of the reel (e.g. awareness, leads, launch).' },
+        target_audience: { type: 'string', description: 'Who the reel targets.' },
+        key_message: { type: 'string', description: 'The single key message.' },
+        scenes: {
+          type: 'array',
+          description: 'The scene-by-scene body — one entry per scene/beat, in order.',
+          items: {
+            type: 'object',
+            properties: {
+              scene: { type: 'string', description: 'Scene label, e.g. "مشهد ١".' },
+              voiceover: { type: 'string', description: 'The spoken voiceover line for this scene.' },
+              visual: { type: 'string', description: 'Visual direction — what is on screen / how it is shot.' },
+              on_screen_text: { type: 'string', description: 'On-screen text overlay (optional).' },
+              notes: { type: 'string', description: 'Production note for this scene (optional).' },
+            },
+            required: ['voiceover', 'visual'],
+          },
+        },
+      },
+      required: ['title', 'hook', 'scenes'],
     },
   },
 ];
@@ -609,6 +653,15 @@ export async function executeCopywriterTool(
         return await searchProjects(supabase, (input ?? {}) as ProjectSearchInput);
       case 'get_project':
         return await getProject(supabase, input as { project_id: string });
+      case 'emit_reel_script':
+        // Pure delivery channel: the structured payload is surfaced to the
+        // browser by api/copywriter.ts as a `reel_script` SSE event (it owns
+        // the `send`). Nothing is persisted server-side and no record is
+        // auto-created — the user reviews + saves the Reel record themselves.
+        return JSON.stringify({
+          ok: true,
+          note: 'Reel script delivered to the user as a structured table with a “Create Reel” button. Add one short closing line; do not repeat the full script as text.',
+        });
       default:
         return JSON.stringify({ error: `unknown tool: ${name}` });
     }

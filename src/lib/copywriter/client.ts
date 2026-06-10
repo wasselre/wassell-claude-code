@@ -11,6 +11,9 @@ export type CopywriterEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_use'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; result: string }
+  // Structured final reel script emitted via the emit_reel_script tool. `data`
+  // is the raw tool input (untrusted) — normalize with normalizeReelScript.
+  | { type: 'reel_script'; data: unknown }
   | { type: 'done'; stop_reason: string }
   | { type: 'error'; message: string };
 

@@ -127,6 +127,13 @@ export default async function handler(req: Request): Promise<Response> {
               }> = [];
               for (const toolUse of toolUses) {
                 send({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
+                if (toolUse.name === 'emit_reel_script') {
+                  // Surface the structured reel script to the browser as a
+                  // dedicated event the thread renders as a table card with a
+                  // "Create Reel" button. Still runs through the normal tool
+                  // loop below so the model gets an ack and writes a closing line.
+                  send({ type: 'reel_script', data: toolUse.input });
+                }
                 const toolStartedAt = Date.now();
                 let toolResult = '';
                 let toolError: string | undefined;

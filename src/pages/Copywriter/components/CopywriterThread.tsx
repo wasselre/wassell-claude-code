@@ -1,13 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { Send, Loader2, PenLine, Search, FileSearch, Building2, Plus } from 'lucide-react';
 import type { AppRecord } from '@/types';
 import { streamCopywriterTurn, type CopywriterApiMessage } from '@/lib/copywriter/client';
+import {
+  normalizeReelScript,
+  reelScriptToPrefill,
+  serializeReelScriptForModel,
+  type ReelScript,
+} from '@/lib/copywriter/reelScript';
+import ReelScriptCard from './ReelScriptCard';
+import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 
 interface StoredMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: string;
+  /** Present on an assistant message that delivered a final, structured reel script. */
+  reel_script?: ReelScript;
 }
 
 interface Props {
@@ -26,6 +37,12 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
   const isAr = useAppStore((s) => s.language === 'ar');
   const recordsByModel = useAppStore((s) => s.records);
   const saveRecord = useAppStore((s) => s.saveRecord);
+  const models = useAppStore((s) => s.models);
+  const addToast = useAppStore((s) => s.addToast);
+  const navigate = useNavigate();
+
+  // The "Reels" model (slug reel_scripts) — target of the Create Reel action.
+  const reelScriptsModel = useMemo(() => models.find((m) => m.name === 'reel_scripts'), [models]);
 
   const record = useMemo<AppRecord | undefined>(() => {
     return (recordsByModel[modelId] ?? []).find((r) => r.id === recordId);
@@ -41,6 +58,11 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Structured reel script streamed in this turn (rendered live under the
+  // typing bubble; persisted onto the assistant message when the stream ends).
+  const [pendingReelScript, setPendingReelScript] = useState<ReelScript | null>(null);
+  // When set, the prefilled "Create Reel" record-form modal is open.
+  const [reelPrefill, setReelPrefill] = useState<Record<string, unknown> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -49,7 +71,7 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
       top: scrollRef.current.scrollHeight,
       behavior: 'smooth',
     });
-  }, [storedMessages, streamingText, activeTool]);
+  }, [storedMessages, streamingText, activeTool, pendingReelScript]);
 
   useEffect(() => {
     return () => abortRef.current?.abort();
@@ -62,6 +84,7 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
     setInput('');
     setError(null);
     setStreamingText('');
+    setPendingReelScript(null);
     setActiveTool(null);
     setSending(true);
 
@@ -86,15 +109,23 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
       updated_at: now,
     });
 
-    const apiMessages: CopywriterApiMessage[] = withUser.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    // Re-attach any structured reel script the model produced earlier so it
+    // stays grounded when the user asks for a revision. The UI still shows the
+    // clean table — this serialized text is for the model only.
+    const apiMessages: CopywriterApiMessage[] = withUser.map((m) => {
+      let content = m.content;
+      if (m.role === 'assistant' && m.reel_script) {
+        const serialized = serializeReelScriptForModel(m.reel_script);
+        content = content.trim() ? `${content}\n\n${serialized}` : serialized;
+      }
+      return { role: m.role, content };
+    });
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     let assistantText = '';
+    let capturedReelScript: ReelScript | null = null;
 
     try {
       await streamCopywriterTurn(
@@ -107,6 +138,12 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
             setActiveTool(event.name);
           } else if (event.type === 'tool_result') {
             setActiveTool(null);
+          } else if (event.type === 'reel_script') {
+            const rs = normalizeReelScript(event.data);
+            if (rs) {
+              capturedReelScript = rs;
+              setPendingReelScript(rs);
+            }
           } else if (event.type === 'error') {
             setError(event.message);
           }
@@ -114,12 +151,13 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
         controller.signal,
       );
 
-      if (assistantText.trim()) {
+      if (assistantText.trim() || capturedReelScript) {
         const done = new Date().toISOString();
         const assistantMessage: StoredMessage = {
           role: 'assistant',
           content: assistantText,
           timestamp: done,
+          ...(capturedReelScript ? { reel_script: capturedReelScript } : {}),
         };
         const finalMessages = [...withUser, assistantMessage];
         saveRecord({
@@ -139,10 +177,20 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
       if (msg !== 'The user aborted a request.') setError(msg);
     } finally {
       setStreamingText('');
+      setPendingReelScript(null);
       setActiveTool(null);
       setSending(false);
       abortRef.current = null;
     }
+  }
+
+  /** Open the prefilled "Create Reel" record form for a structured script. */
+  function openReelModal(rs: ReelScript) {
+    if (!reelScriptsModel) {
+      addToast(isAr ? 'نموذج الريلز غير متوفر' : 'Reels model is not available', 'error');
+      return;
+    }
+    setReelPrefill(reelScriptToPrefill(rs));
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -192,10 +240,28 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
           <WelcomeHint isAr={isAr} />
         )}
         {storedMessages.map((m, i) => (
-          <Bubble key={i} role={m.role} content={m.content} />
+          <div key={i} className="flex flex-col w-full gap-0">
+            {(m.content.trim() || !m.reel_script) && <Bubble role={m.role} content={m.content} />}
+            {m.reel_script && (
+              <ReelScriptCard
+                rs={m.reel_script}
+                isAr={isAr}
+                onAccept={openReelModal}
+                disabled={!reelScriptsModel}
+              />
+            )}
+          </div>
         ))}
         {activeTool && <ToolBadge name={activeTool} isAr={isAr} />}
         {streamingText && <Bubble role="assistant" content={streamingText} typing />}
+        {pendingReelScript && (
+          <ReelScriptCard
+            rs={pendingReelScript}
+            isAr={isAr}
+            onAccept={openReelModal}
+            disabled={!reelScriptsModel}
+          />
+        )}
         {error && (
           <div className="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm p-3">
             {error}
@@ -225,6 +291,21 @@ export default function CopywriterThread({ recordId, modelId, onNewChat }: Props
           </button>
         </div>
       </div>
+
+      {/* Create Reel — prefilled record form. Reuses RecordFormModal as-is:
+          full Reels form, explicit Save, no silent auto-save. */}
+      {reelScriptsModel && reelPrefill && (
+        <RecordFormModal
+          modelId={reelScriptsModel.id}
+          recordId={null}
+          prefill={reelPrefill}
+          onClose={() => setReelPrefill(null)}
+          onSaved={(id) => {
+            setReelPrefill(null);
+            navigate(`/model/${reelScriptsModel.name}/${id}`);
+          }}
+        />
+      )}
     </div>
   );
 }

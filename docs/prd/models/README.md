@@ -4,12 +4,12 @@
 
 # Models — auto-generated index
 
-**26 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**27 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-06-08 |
-| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 5 | 30 | no | 2026-06-01 |
+| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 5 | 30 | no | 2026-06-10 |
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 9 | no | 2026-06-08 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 11 | yes | 2026-06-08 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 12 | yes | 2026-06-08 |
@@ -26,9 +26,10 @@
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-06-08 |
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 4 | 4 | no | 2026-06-08 |
-| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | New Group | 1 | 15 | no | 2026-06-08 |
+| [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | New Group | 2 | 14 | no | 2026-06-10 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
+| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-06-10 |
 | [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 14 | 214 | yes | 2026-05-17 |
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 2 | 5 | no | 2026-06-08 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
