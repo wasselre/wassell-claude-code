@@ -50,6 +50,14 @@ interface HatifCallEvent {
   callLength?: string | null;
   userId?: string | null;
   userName?: string | null;
+  // Agent email is NOT part of Hatif's current post-call payload, but we accept
+  // several plausible field names so the agent→app-user match (findAgentUserId)
+  // lights up automatically the day Hatif starts sending one — no code change
+  // needed. Until then we fall back to a name match on `userName`.
+  userEmail?: string | null;
+  agentEmail?: string | null;
+  userPrincipalName?: string | null;
+  user?: { email?: string | null; userName?: string | null } | null;
   contactId?: string | null;
   contactNumber?: string | null;
   aiAgentId?: string | null;
@@ -249,27 +257,127 @@ async function findClientsModelId(): Promise<string | null> {
 }
 
 /**
+ * Candidate string forms of a canonical E.164 number, so a client whose phone
+ * was stored in a non-normalized shape (bare digits, KSA local "05…", or
+ * without the leading "+") still matches. `contactPhone` itself is already
+ * normalized to E.164 (normalizePhoneE164) — this is the "normalize before
+ * matching" requirement applied to the *stored* side too.
+ */
+function phoneMatchCandidates(e164: string): string[] {
+  const out = new Set<string>();
+  out.add(e164);                                  // "+966550294024"
+  const digits = e164.replace(/\D/g, '');         // "966550294024"
+  out.add(digits);
+  out.add(`+${digits}`);
+  if (digits.startsWith('966')) {
+    const local = digits.slice(3);                // "550294024"
+    out.add(`0${local}`);                         // "0550294024"
+    out.add(local);                               // "550294024"
+  }
+  return [...out].filter(Boolean);
+}
+
+/**
  * Best-effort lookup of a client record whose phone matches `contactPhone`.
  * The seed Clients model stores phone in `phone_number`; tenants who renamed
  * that slug will fall through and the call_logs row is still written.
  * Returns null when no match is found.
+ *
+ * We try each candidate form in turn (most data matches the first, canonical
+ * E.164 form). unified_records — works whether the clients model is frozen or
+ * not. A query error is surfaced to the function log rather than swallowed.
  */
 async function findClientRecordIdByPhone(contactPhone: string): Promise<string | null> {
   const clientsModelId = await findClientsModelId();
   if (!clientsModelId) return null;
   const supa = getServiceSupabase();
-  // JSONB text-extract filter: `data->>phone_number` = contactPhone.
-  // Supabase-js uses `.eq('column', value)` — for JSONB paths it's the
-  // identical string form, column-name side.
-  // unified_records — works whether the clients model is frozen or not.
-  const { data } = await supa
-    .from('unified_records')
-    .select('id')
-    .eq('model_id', clientsModelId)
-    .eq('data->>phone_number', contactPhone)
-    .limit(1)
-    .maybeSingle();
-  return (data?.id as string | undefined) ?? null;
+  for (const candidate of phoneMatchCandidates(contactPhone)) {
+    const { data, error } = await supa
+      .from('unified_records')
+      .select('id')
+      .eq('model_id', clientsModelId)
+      .eq('data->>phone_number', candidate)
+      .limit(1);
+    if (error) {
+      console.error('[hatif-webhook] client phone lookup failed:', error.message);
+      return null;
+    }
+    if (data && data.length > 0) return data[0].id as string;
+  }
+  return null;
+}
+
+// ─── Agent → app-user matching ─────────────────────────────────────
+// The phone_calls `agent_name` field is an `assignee` field: it stores an app
+// user's id (public.users.id), not a name string. We resolve the Hatif agent
+// to an app user by email first (when Hatif sends one), then by a normalized
+// full-name match against the active roster. No match → null (the call is
+// still logged, the agent is just left unassigned). The raw Hatif name is
+// still kept verbatim in call_logs.agent_name for the Call History panel.
+
+interface AppUserLite {
+  id: string;
+  email: string | null;
+  name_en: string | null;
+  name_ar: string | null;
+}
+
+async function loadActiveUsers(): Promise<AppUserLite[]> {
+  // Deliberately NOT cached across events: the roster changes rarely but we
+  // want a newly-added agent to link without waiting for the Edge isolate to
+  // recycle. The table is a single-company roster (tiny), so a read per
+  // webhook is negligible.
+  const supa = getServiceSupabase();
+  const { data, error } = await supa
+    .from('users')
+    .select('id,email,name_en,name_ar')
+    .eq('is_active', true);
+  if (error) {
+    console.error('[hatif-webhook] active-users load for agent match failed:', error.message);
+    return [];
+  }
+  return (data as AppUserLite[] | null) ?? [];
+}
+
+function normalizeName(s: string | null | undefined): string {
+  return (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function firstNonEmpty(...vals: (string | null | undefined)[]): string | null {
+  for (const v of vals) {
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/**
+ * Resolve the Hatif call's human agent to an app user id (the value an
+ * `assignee` field stores). Email match first, normalized-name fallback
+ * second. Returns null when nothing matches — caller stores an empty agent.
+ */
+async function findAgentUserId(event: HatifCallEvent): Promise<string | null> {
+  const email = firstNonEmpty(
+    event.userEmail, event.agentEmail, event.userPrincipalName, event.user?.email,
+  );
+  const name = firstNonEmpty(event.userName, event.user?.userName);
+  if (!email && !name) return null;
+
+  const users = await loadActiveUsers();
+  if (users.length === 0) return null;
+
+  if (email) {
+    const e = email.toLowerCase();
+    const byEmail = users.find((u) => (u.email ?? '').trim().toLowerCase() === e);
+    if (byEmail) return byEmail.id;
+  }
+  if (name) {
+    const n = normalizeName(name);
+    const byName = users.find(
+      (u) => normalizeName(u.name_en) === n || normalizeName(u.name_ar) === n,
+    );
+    if (byName) return byName.id;
+  }
+  return null;
 }
 
 /**
@@ -307,6 +415,7 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
     null;
 
   const clientRecordId = contactPhone ? await findClientRecordIdByPhone(contactPhone) : null;
+  const agentUserId = await findAgentUserId(event);
 
   // Full transcription text (plain string, no word-level timings) — the
   // rich JSONB `words` array stays in call_logs.transcription. This text
@@ -322,14 +431,18 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
     call_id: event.callId,
     direction,
     status,
+    // `customer_phone` is the single, normalized customer-side number used for
+    // matching, display, workflows, and client lookup. The raw caller/callee
+    // legs are intentionally NOT mirrored onto the record — they duplicated
+    // this value and live on in call_logs for forensics.
     customer_phone: contactPhone,
-    caller_number: event.callerNumber ?? null,
-    callee_number: event.calleeNumber ?? null,
     duration_seconds: parseCallLengthSeconds(event.callLength),
     call_time: event.creationTime,
     pickup_time: event.pickupTime ?? null,
     hangup_time: event.hangupTime ?? null,
-    agent_name: event.userName ?? null,
+    // `agent_name` is an `assignee` field — stores the matched app-user id (or
+    // null). The raw Hatif agent name stays in call_logs.agent_name.
+    agent_name: agentUserId,
     dtmf_digit: dtmfDigit,
     dtmf_label: dtmfLabel,
     sentiment,

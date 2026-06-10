@@ -3040,32 +3040,6 @@ const phoneCallsModel: AppModel = {
           },
           {
             id: uuid(),
-            name: 'caller_number',
-            label_ar: 'رقم المتصل',
-            label_en: 'Caller Number',
-            type: 'phone',
-            required: false,
-            order: 4,
-            section_id: phoneCallsBaseSectionId,
-            width: 'half',
-            show_in_table: false,
-            default_country_code: '+966',
-          },
-          {
-            id: uuid(),
-            name: 'callee_number',
-            label_ar: 'رقم المتلقي',
-            label_en: 'Callee Number',
-            type: 'phone',
-            required: false,
-            order: 5,
-            section_id: phoneCallsBaseSectionId,
-            width: 'half',
-            show_in_table: false,
-            default_country_code: '+966',
-          },
-          {
-            id: uuid(),
             name: 'duration_seconds',
             label_ar: 'مدة المكالمة (ثوانٍ)',
             label_en: 'Duration (seconds)',
@@ -3089,11 +3063,16 @@ const phoneCallsModel: AppModel = {
             show_in_table: true,
           },
           {
+            // Linked app user who handled the call. Populated by the webhook
+            // matching Hatif's agent (by email, then name) to a CRM user; left
+            // empty when no app user matches. The raw Hatif name lives on in
+            // call_logs.agent_name for the Call History panel.
             id: uuid(),
             name: 'agent_name',
-            label_ar: 'الوكيل',
+            label_ar: 'الموظف',
             label_en: 'Agent',
-            type: 'text',
+            type: 'assignee',
+            assignee_user_filter_mode: 'all',
             required: false,
             order: 8,
             section_id: phoneCallsBaseSectionId,

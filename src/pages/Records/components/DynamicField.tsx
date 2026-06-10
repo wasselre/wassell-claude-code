@@ -106,6 +106,16 @@ interface DynamicFieldProps {
   recordId?: string;
 }
 
+/** True when a URL points at a playable audio file (used to render a player). */
+function isAudioUrl(url: string): boolean {
+  const audioExt = /\.(wav|mp3|m4a|aac|ogg|oga|opus|webm|flac)(\?|#|$)/i;
+  try {
+    return audioExt.test(new URL(url, 'https://_').pathname);
+  } catch {
+    return audioExt.test(url);
+  }
+}
+
 export default function DynamicField({
   field, value, onChange, recordData, compact, modelId, recordId,
 }: DynamicFieldProps) {
@@ -276,51 +286,64 @@ export default function DynamicField({
           </div>
         );
 
-      case 'url':
+      case 'url': {
+        const urlVal = typeof value === 'string' ? value : '';
+        // Render an inline audio player when the URL points at an audio file
+        // (e.g. a Hatif call recording `.wav`) or the field is clearly a
+        // recording/voice field. The URL itself stays stored + editable above
+        // the player — we only ADD the player, never replace the link.
+        const showAudio =
+          !!urlVal && (isAudioUrl(urlVal) || /record|recording|audio|voice/i.test(field.name));
         return (
-          <div className="relative">
-            <input
-              type="url"
-              value={(value as string) ?? ''}
-              onChange={(e) => onChange(e.target.value)}
-              onBlur={(e) => {
-                // Collapse a long Google Maps link into its short ?q=lat,lng
-                // form once the user leaves the field. No-op for any other URL.
-                const shortened = shortenGoogleMapsUrl(e.target.value);
-                if (shortened !== e.target.value) onChange(shortened);
-              }}
-              onPaste={(e) => {
-                // When the paste replaces the whole value (empty field or full
-                // selection), shorten a pasted Maps link immediately — the most
-                // common flow. Partial pastes fall through to onBlur.
-                const el = e.currentTarget;
-                const replacesAll =
-                  el.value === '' ||
-                  (el.selectionStart === 0 && el.selectionEnd === el.value.length);
-                if (!replacesAll) return;
-                const pasted = e.clipboardData.getData('text');
-                const shortened = shortenGoogleMapsUrl(pasted);
-                if (shortened !== pasted) {
-                  e.preventDefault();
-                  onChange(shortened);
-                }
-              }}
-              className="form-input pe-10"
-              placeholder="https://..."
-              dir="ltr"
-            />
-            {typeof value === 'string' && value && (
-              <a
-                href={value as string}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="absolute end-3 top-1/2 -translate-y-1/2 text-copper hover:text-terracotta"
-              >
-                <ExternalLink size={14} />
-              </a>
+          <div>
+            <div className="relative">
+              <input
+                type="url"
+                value={urlVal}
+                onChange={(e) => onChange(e.target.value)}
+                onBlur={(e) => {
+                  // Collapse a long Google Maps link into its short ?q=lat,lng
+                  // form once the user leaves the field. No-op for any other URL.
+                  const shortened = shortenGoogleMapsUrl(e.target.value);
+                  if (shortened !== e.target.value) onChange(shortened);
+                }}
+                onPaste={(e) => {
+                  // When the paste replaces the whole value (empty field or full
+                  // selection), shorten a pasted Maps link immediately — the most
+                  // common flow. Partial pastes fall through to onBlur.
+                  const el = e.currentTarget;
+                  const replacesAll =
+                    el.value === '' ||
+                    (el.selectionStart === 0 && el.selectionEnd === el.value.length);
+                  if (!replacesAll) return;
+                  const pasted = e.clipboardData.getData('text');
+                  const shortened = shortenGoogleMapsUrl(pasted);
+                  if (shortened !== pasted) {
+                    e.preventDefault();
+                    onChange(shortened);
+                  }
+                }}
+                className="form-input pe-10"
+                placeholder="https://..."
+                dir="ltr"
+              />
+              {urlVal && (
+                <a
+                  href={urlVal}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="absolute end-3 top-1/2 -translate-y-1/2 text-copper hover:text-terracotta"
+                >
+                  <ExternalLink size={14} />
+                </a>
+              )}
+            </div>
+            {showAudio && (
+              <audio controls preload="none" src={urlVal} className="w-full mt-2" dir="ltr" />
             )}
           </div>
         );
+      }
 
       case 'multi_link': {
         const links = Array.isArray(value)
