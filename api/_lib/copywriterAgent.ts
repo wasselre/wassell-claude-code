@@ -237,6 +237,20 @@ interface RecordRow {
 const asStr = (v: unknown): string => (typeof v === 'string' ? v : '');
 const asArr = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []);
 
+/** Normalize for project-name search: Arabic-Indic / Eastern-Arabic digits →
+ *  Western, lowercase, collapse whitespace, trim — so "مينا ٥٢", "مينا 52" and
+ *  the stored "مينا 52 " (trailing space) all reduce to the same "مينا 52". */
+function normalizeForSearch(s: string): string {
+  let out = '';
+  for (const ch of s) {
+    const c = ch.codePointAt(0) ?? 0;
+    if (c >= 0x0660 && c <= 0x0669) out += String(c - 0x0660); // ٠-٩
+    else if (c >= 0x06f0 && c <= 0x06f9) out += String(c - 0x06f0); // ۰-۹
+    else out += ch;
+  }
+  return out.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 async function getModelByName(
   supabase: SupabaseClient,
   name: string,
@@ -547,24 +561,40 @@ async function searchProjects(supabase: SupabaseClient, input: ProjectSearchInpu
     return JSON.stringify({ error: err instanceof Error ? err.message : String(err), projects: [] });
   }
 
-  const city = (input.city ?? '').toLowerCase().trim();
-  const district = (input.district ?? '').toLowerCase().trim();
-  const terms = (input.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
-  const hasFilters = !!(city || district || terms.length);
+  const queryNorm = normalizeForSearch(input.query ?? '');
+  const queryTerms = queryNorm.split(' ').filter(Boolean);
+  const cityNorm = normalizeForSearch(input.city ?? '');
+  const districtNorm = normalizeForSearch(input.district ?? '');
+  const hasFilters = !!(queryNorm || cityNorm || districtNorm);
 
   const scored = rows
     .map((r) => {
       const d = r.data;
       const name = asStr(d.project_name);
       if (!name) return null;
-      let score = 1;
-      if (city && asStr(d.preferred_city).toLowerCase().includes(city)) score += 3;
-      if (district && asStr(d.preferred_neighborhoods).toLowerCase().includes(district)) score += 4;
-      if (terms.length) {
-        const hay = JSON.stringify(d).toLowerCase();
-        for (const t of terms) if (hay.includes(t)) score += 1;
+      const nameNorm = normalizeForSearch(name);
+
+      let score = 0;
+      // The project NAME is by far the strongest signal. An exact / phrase
+      // match on the name MUST dominate incidental matches elsewhere in the
+      // record (a price or area that happens to contain the query digits) —
+      // otherwise the real "مينا 52" ties with 28 other مينا projects that
+      // merely have "52" somewhere in their data, and the result cap buries it.
+      if (queryNorm) {
+        if (nameNorm === queryNorm) score += 2000;
+        else if (nameNorm.includes(queryNorm)) score += 1000; // name contains the whole query
+        else if (nameNorm.length >= 3 && queryNorm.includes(nameNorm)) score += 500;
+        const bodyNorm = normalizeForSearch(JSON.stringify(d));
+        for (const t of queryTerms) {
+          if (nameNorm.includes(t)) score += 20; // term in the name
+          else if (bodyNorm.includes(t)) score += 1; // term elsewhere (weak tiebreak)
+        }
       }
-      if (hasFilters && score === 1) return null; // filters given but none matched
+      if (cityNorm && normalizeForSearch(asStr(d.preferred_city)).includes(cityNorm)) score += 6;
+      if (districtNorm && normalizeForSearch(asStr(d.preferred_neighborhoods)).includes(districtNorm)) score += 8;
+
+      if (hasFilters && score === 0) return null; // filters given but nothing matched
+      if (!hasFilters) score = 1; // no filters → list everything
       return {
         score,
         summary: {
@@ -582,7 +612,7 @@ async function searchProjects(supabase: SupabaseClient, input: ProjectSearchInpu
     .filter((x): x is NonNullable<typeof x> => x !== null)
     .sort((a, b) => b.score - a.score);
 
-  const limit = Math.max(1, Math.min(25, input.limit ?? 12));
+  const limit = Math.max(1, Math.min(30, input.limit ?? 15));
   return JSON.stringify({ total: scored.length, projects: scored.slice(0, limit).map((x) => x.summary) });
 }
 
