@@ -67,13 +67,27 @@ export async function assertCanAccessFile(
   jwtClient: SupabaseClient,
   fileId: string,
   kind: 'view' | 'edit' | 'delete',
+  actor?: { email?: string | null },
 ): Promise<void> {
   const { data, error } = await jwtClient.rpc('wassell_can_access_file', {
     p_file_id: fileId,
     p_kind: kind,
   });
   if (error) throw new AuthError(500, `permission check failed: ${error.message}`);
-  if (!data) throw new AuthError(403, 'not allowed');
+  if (!data) {
+    // Record the denial in the audit trail. Previously a 403 left NO server-side
+    // trace, so "why can't user X open this file?" reports were un-investigable.
+    // (logFileActivityServer is a function declaration below — hoisted, safe to call here.)
+    void logFileActivityServer({
+      event_type: 'access_denied',
+      summary_ar: `رُفض الوصول إلى ملف (${kind})`,
+      summary_en: `File access denied (${kind})`,
+      details: { file_id: fileId, kind },
+      actor_email: actor?.email ?? null,
+      status: 'warning',
+    });
+    throw new AuthError(403, 'not allowed');
+  }
 }
 
 export interface FileMetadata {
@@ -96,6 +110,30 @@ export async function loadFileBypassRls(fileId: string): Promise<FileMetadata | 
     .maybeSingle();
   if (error) throw new AuthError(500, `file lookup failed: ${error.message}`);
   return (data as FileMetadata) ?? null;
+}
+
+/**
+ * Build the user-facing download filename for a file.
+ *
+ * Rules (PRD "Download Filename Issues"):
+ *   - Use the display name (original_name / renamed name), never the storage
+ *     UUID. The storage_path's `<uid>/<id>.<ext>` form must never reach the user.
+ *   - Guarantee the correct extension is present. The authoritative extension
+ *     is the one on the storage_path (set at upload from the MIME→ext map), so
+ *     a renamed-without-extension file ("Contract" ← "Contract.pdf") still
+ *     downloads as "Contract.pdf" and opens in the right app.
+ *   - Non-ASCII (Arabic) names pass through untouched — Supabase Storage's
+ *     `download` option RFC-5987-encodes the Content-Disposition filename, so
+ *     we hand it the raw UTF-8 string and let the storage server encode it.
+ */
+export function downloadFilenameFor(meta: { original_name: string; storage_path: string }): string {
+  const name = (meta.original_name || '').trim() || 'file';
+  const dot = meta.storage_path.lastIndexOf('.');
+  const pathExt = dot >= 0 ? meta.storage_path.slice(dot + 1).toLowerCase() : '';
+  if (!pathExt) return name;
+  // Already carries the right extension (case-insensitive)? leave it alone.
+  if (name.toLowerCase().endsWith(`.${pathExt}`)) return name;
+  return `${name}.${pathExt}`;
 }
 
 /**

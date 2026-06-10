@@ -10,6 +10,7 @@
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import {
   assertCanAccessFile,
+  downloadFilenameFor,
   getJwtClient,
   loadFileBypassRls,
   logFileActivityServer,
@@ -31,7 +32,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (!body.fileId) return jsonError(400, 'fileId is required');
 
     const jwtClient = getJwtClient(req);
-    await assertCanAccessFile(jwtClient, body.fileId, 'view');
+    await assertCanAccessFile(jwtClient, body.fileId, 'view', { email: user.email });
 
     const file = await loadFileBypassRls(body.fileId);
     if (!file) return jsonError(404, 'file not found');
@@ -40,7 +41,7 @@ export default async function handler(req: Request): Promise<Response> {
       file.storage_bucket,
       file.storage_path,
       VIEW_URL_TTL_SECONDS,
-      file.original_name,
+      downloadFilenameFor(file),
     );
 
     void logFileActivityServer({

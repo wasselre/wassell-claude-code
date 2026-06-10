@@ -35,7 +35,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (!body.fileId) return jsonError(400, 'fileId is required');
 
     const jwtClient = getJwtClient(req);
-    await assertCanAccessFile(jwtClient, body.fileId, 'view');
+    await assertCanAccessFile(jwtClient, body.fileId, 'view', { email: user.email });
 
     const file = await loadFileBypassRls(body.fileId);
     if (!file) return jsonError(404, 'file not found');

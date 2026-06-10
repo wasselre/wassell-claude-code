@@ -1,19 +1,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { FilePlus, FolderPlus, FolderUp, Loader2, Upload } from 'lucide-react';
+import { FilePlus, FolderPlus, FolderUp, Loader2, Search, Upload, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { FileRow, FolderRow } from '@/types';
+import type { FileRow, FilePermissionRole, FolderRow } from '@/types';
 import {
   deleteFile,
   deleteFolder,
+  effectiveFileRoles,
+  effectiveFolderRoles,
   getFolder,
   listFiles,
   listFolders,
   listSharedWithMe,
   renameFile,
   renameFolder,
+  roleSatisfies,
+  searchDrive,
   signDownloadUrl,
+  signViewUrls,
+  type DriveSearchResult,
 } from '@/lib/files/client';
 import { createDocument } from '@/lib/documents/client';
 import FilesTabs from './components/FilesTabs';
@@ -53,6 +59,24 @@ export default function FilesPage({ forceShared = false }: Props) {
   /** Cache of all folders we've ever seen — used by breadcrumb to walk parents. */
   const [folderCache, setFolderCache] = useState<FolderRow[]>([]);
   const [loading, setLoading] = useState(false);
+  /** fileId → signed thumbnail URL, batch-signed for all image files in one
+   *  request whenever the file list changes (replaces per-tile signing). */
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
+  /** id → caller's effective role, batch-resolved per view so the UI shows the
+   *  right edit/delete/share affordances for cascade/direct grantees (not just
+   *  uploaders). RLS remains the authoritative gate. */
+  const [fileRoles, setFileRoles] = useState<Record<string, FilePermissionRole>>({});
+  const [folderRoles, setFolderRoles] = useState<Record<string, FilePermissionRole>>({});
+
+  // ─── Search state ─────────────────────────────────────────────────────
+  const [searchInput, setSearchInput] = useState('');
+  const [searchQuery, setSearchQuery] = useState(''); // debounced
+  const [searchResult, setSearchResult] = useState<DriveSearchResult>({
+    folders: [],
+    files: [],
+    contentMatchIds: new Set(),
+  });
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // Modal state
   const [previewFile, setPreviewFile] = useState<FileRow | null>(null);
@@ -71,13 +95,24 @@ export default function FilesPage({ forceShared = false }: Props) {
 
   const currentFolderId = view === 'folder' ? folderIdParam ?? null : null;
 
-  // ─── Selection state ─────────────────────────────────────────────────
-  const selection = useFilesSelection({ folders, files });
+  // When a search is active, the grids render the (global) search results
+  // instead of the current folder's contents. All the per-view machinery
+  // (selection, thumbnails, roles) keys off these displayed lists so search
+  // reuses the exact same tiles + affordances.
+  const searchActive = searchQuery.trim().length >= 2;
+  const displayFolders = searchActive ? searchResult.folders : folders;
+  const displayFiles = searchActive ? searchResult.files : files;
 
-  // Clear selection whenever the view or folder changes — selected ids from a
-  // previous folder are meaningless here.
+  // ─── Selection state ─────────────────────────────────────────────────
+  const selection = useFilesSelection({ folders: displayFolders, files: displayFiles });
+
+  // Clear selection AND any active search whenever the view or folder changes —
+  // navigating away from a search (e.g. clicking a folder result) should land
+  // in that folder normally, not keep showing global results.
   useEffect(() => {
     selection.clear();
+    setSearchInput('');
+    setSearchQuery('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view, currentFolderId]);
 
@@ -402,22 +437,137 @@ export default function FilesPage({ forceShared = false }: Props) {
     void reload();
   }, [reload]);
 
+  // Batch-sign thumbnails for every image file in the displayed list in ONE
+  // request whenever it changes (was one /sign-view-url per tile). `displayFiles`
+  // is the search results when a search is active, else the current view.
+  useEffect(() => {
+    const imageIds = displayFiles.filter((f) => f.kind === 'image').map((f) => f.id);
+    if (imageIds.length === 0) {
+      setThumbUrls({});
+      return;
+    }
+    let cancelled = false;
+    void signViewUrls(imageIds)
+      .then((map) => {
+        if (!cancelled) setThumbUrls(map);
+      })
+      .catch(() => {
+        // surfaceError already toasted; cards fall back to the icon tile.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayFiles]);
+
+  // Batch-resolve effective roles for the displayed files + folders so the
+  // kebab/preview affordances match real grants (cascade + direct), not just
+  // ownership. One RPC per kind per list change.
+  useEffect(() => {
+    const ids = displayFiles.map((f) => f.id);
+    if (ids.length === 0) {
+      setFileRoles({});
+      return;
+    }
+    let cancelled = false;
+    void effectiveFileRoles(ids)
+      .then((map) => {
+        if (!cancelled) setFileRoles(map);
+      })
+      .catch(() => {
+        // surfaced; falls back to the uploader heuristic below.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayFiles]);
+
+  useEffect(() => {
+    const ids = displayFolders.map((f) => f.id);
+    if (ids.length === 0) {
+      setFolderRoles({});
+      return;
+    }
+    let cancelled = false;
+    void effectiveFolderRoles(ids)
+      .then((map) => {
+        if (!cancelled) setFolderRoles(map);
+      })
+      .catch(() => {
+        // surfaced; falls back to the creator heuristic below.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [displayFolders]);
+
+  // Debounce the raw search box into the active (committed) query.
+  useEffect(() => {
+    const id = window.setTimeout(() => setSearchQuery(searchInput), 300);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
+
+  // Run the global Drive search whenever the debounced query changes.
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (q.length < 2) {
+      setSearchResult({ folders: [], files: [], contentMatchIds: new Set() });
+      setSearchLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setSearchLoading(true);
+    void searchDrive(q)
+      .then((res) => {
+        if (!cancelled) setSearchResult(res);
+      })
+      .catch(() => {
+        /* surfaceError already toasted */
+      })
+      .finally(() => {
+        if (!cancelled) setSearchLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [searchQuery]);
+
   // ─── Permission helpers ───────────────────────────────────────────────
 
+  // Effective-role-aware affordances. The batch RPC (above) resolves the
+  // caller's real role per item including folder cascade + direct grants; while
+  // that's loading (or if it failed) we fall back to uploader/creator ownership
+  // so owners never lose their own buttons. RLS is the authoritative write gate.
   const canEditFile = useCallback(
     (f: FileRow) => {
-      // Direct ownership wins. Folder cascade is enforced by RLS so any file
-      // we can see at all is at least viewer-level; we approximate "editor+"
-      // here using uploader-ownership. A future round-trip could surface the
-      // exact role, but it's a UX cleanup, not a security issue (RLS gates writes).
+      const role = fileRoles[f.id];
+      if (role) return roleSatisfies(role, 'edit');
       return f.uploaded_by_user_id === currentUserId;
     },
-    [currentUserId],
+    [fileRoles, currentUserId],
   );
-  const canDeleteFile = canEditFile;
+  const canDeleteFile = useCallback(
+    (f: FileRow) => {
+      const role = fileRoles[f.id];
+      if (role) return roleSatisfies(role, 'delete');
+      return f.uploaded_by_user_id === currentUserId;
+    },
+    [fileRoles, currentUserId],
+  );
   const canManageFolder = useCallback(
-    (f: FolderRow) => f.created_by_user_id === currentUserId,
-    [currentUserId],
+    (f: FolderRow) => {
+      const role = folderRoles[f.id];
+      if (role) return roleSatisfies(role, 'edit');
+      return f.created_by_user_id === currentUserId;
+    },
+    [folderRoles, currentUserId],
+  );
+  const canDeleteFolder = useCallback(
+    (f: FolderRow) => {
+      const role = folderRoles[f.id];
+      if (role) return roleSatisfies(role, 'delete');
+      return f.created_by_user_id === currentUserId;
+    },
+    [folderRoles, currentUserId],
   );
 
   // ─── Handlers ────────────────────────────────────────────────────────
@@ -519,18 +669,18 @@ export default function FilesPage({ forceShared = false }: Props) {
 
   // ─── Bulk action handlers ───────────────────────────────────────────
   const selectedFiles = useMemo(
-    () => files.filter((f) => selection.selectedFileIds.has(f.id)),
-    [files, selection.selectedFileIds],
+    () => displayFiles.filter((f) => selection.selectedFileIds.has(f.id)),
+    [displayFiles, selection.selectedFileIds],
   );
   const selectedFolders = useMemo(
-    () => folders.filter((f) => selection.selectedFolderIds.has(f.id)),
-    [folders, selection.selectedFolderIds],
+    () => displayFolders.filter((f) => selection.selectedFolderIds.has(f.id)),
+    [displayFolders, selection.selectedFolderIds],
   );
   const deletableSelected = useMemo(() => {
     const f = selectedFiles.filter((x) => canDeleteFile(x));
-    const fo = selectedFolders.filter((x) => canManageFolder(x));
+    const fo = selectedFolders.filter((x) => canDeleteFolder(x));
     return { files: f, folders: fo, total: f.length + fo.length };
-  }, [selectedFiles, selectedFolders, canDeleteFile, canManageFolder]);
+  }, [selectedFiles, selectedFolders, canDeleteFile, canDeleteFolder]);
   const movableFiles = useMemo(
     () => selectedFiles.filter((x) => canEditFile(x)),
     [selectedFiles, canEditFile],
@@ -672,8 +822,34 @@ export default function FilesPage({ forceShared = false }: Props) {
         </div>
       </div>
 
-      {/* Breadcrumb (folder view only) */}
-      {view === 'folder' && (
+      {/* Global search */}
+      <div className="mb-4">
+        <div className="relative max-w-lg">
+          <Search
+            size={16}
+            className="absolute top-1/2 -translate-y-1/2 start-3 text-charcoal/40 pointer-events-none"
+          />
+          <input
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder={t('files.search.placeholder')}
+            dir="auto"
+            className="w-full ps-9 pe-9 py-2.5 rounded-xl bg-white border border-sand/40 text-sm text-charcoal placeholder-charcoal/40 focus:outline-none focus:ring-2 focus:ring-copper/30"
+          />
+          {searchInput && (
+            <button
+              onClick={() => setSearchInput('')}
+              aria-label={t('files.search.clear_aria')}
+              className="absolute top-1/2 -translate-y-1/2 end-2 p-1 rounded-md text-charcoal/40 hover:text-charcoal hover:bg-cream"
+            >
+              <X size={15} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Breadcrumb (folder view only, hidden while searching) */}
+      {view === 'folder' && !searchActive && (
         <div className="mb-4">
           <FilesBreadcrumb folders={folderCache} currentFolderId={currentFolderId} />
         </div>
@@ -692,12 +868,16 @@ export default function FilesPage({ forceShared = false }: Props) {
       />
 
       {/* Content */}
-      {loading ? (
+      {(searchActive ? searchLoading : loading) ? (
         <div className="py-20 flex justify-center">
           <Loader2 size={28} className="animate-spin text-copper" />
         </div>
-      ) : folders.length === 0 && files.length === 0 ? (
-        <EmptyState view={view} onUpload={() => window.dispatchEvent(new Event('files:open-picker'))} uploadEnabled={uploadEnabled} />
+      ) : displayFolders.length === 0 && displayFiles.length === 0 ? (
+        searchActive ? (
+          <SearchEmpty query={searchQuery} />
+        ) : (
+          <EmptyState view={view} onUpload={() => window.dispatchEvent(new Event('files:open-picker'))} uploadEnabled={uploadEnabled} />
+        )
       ) : (
         <div
           ref={gridRef}
@@ -709,18 +889,24 @@ export default function FilesPage({ forceShared = false }: Props) {
           className={`space-y-6 relative select-none ${selection.totalSelected > 0 ? 'pb-24' : ''}`}
           style={bulkBusy ? { pointerEvents: 'none', opacity: 0.7 } : undefined}
         >
-          {folders.length > 0 && (
+          {searchActive && (
+            <p className="text-sm text-charcoal/50 -mb-2">
+              {t('files.search.results', { count: displayFolders.length + displayFiles.length })}
+            </p>
+          )}
+          {displayFolders.length > 0 && (
             <section>
               <h2 className="text-xs font-bold text-charcoal/40 uppercase tracking-widest mb-3">
                 {isAr ? 'المجلدات' : 'Folders'}
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-                {folders.map((f) => (
+                {displayFolders.map((f) => (
                   <FolderTile
                     key={f.id}
                     folder={f}
                     shared={view === 'shared' || f.created_by_user_id !== currentUserId}
                     canManage={canManageFolder(f)}
+                    canDelete={canDeleteFolder(f)}
                     selected={selection.isSelected('folder', f.id)}
                     selectionActive={selection.totalSelected > 0}
                     onSelectClick={(e) => onCardClick({ kind: 'folder', id: f.id }, e)}
@@ -737,19 +923,20 @@ export default function FilesPage({ forceShared = false }: Props) {
             </section>
           )}
 
-          {files.length > 0 && (
+          {displayFiles.length > 0 && (
             <section>
               <h2 className="text-xs font-bold text-charcoal/40 uppercase tracking-widest mb-3">
                 {isAr ? 'الملفات' : 'Files'}
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                {files.map((f) => (
+                {displayFiles.map((f) => (
                   <FileCard
                     key={f.id}
                     file={f}
                     shared={view === 'shared' || f.uploaded_by_user_id !== currentUserId}
                     canEdit={canEditFile(f)}
                     canDelete={canDeleteFile(f)}
+                    thumbUrl={f.kind === 'image' ? thumbUrls[f.id] ?? null : undefined}
                     selected={selection.isSelected('file', f.id)}
                     selectionActive={selection.totalSelected > 0}
                     onSelectClick={(e) => onCardClick({ kind: 'file', id: f.id }, e)}
@@ -947,6 +1134,19 @@ function EmptyState({ view, uploadEnabled, onUpload }: EmptyProps) {
           {t('files.upload.button')}
         </button>
       )}
+    </div>
+  );
+}
+
+/** Shown when a search returns nothing. */
+function SearchEmpty({ query }: { query: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className="py-20 flex flex-col items-center justify-center text-center">
+      <div className="w-20 h-20 rounded-3xl bg-cream flex items-center justify-center mb-4">
+        <Search size={32} className="text-copper" />
+      </div>
+      <p className="text-charcoal/60 max-w-md">{t('files.search.empty', { query })}</p>
     </div>
   );
 }

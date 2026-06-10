@@ -11,6 +11,7 @@
 
 import { jsonError, jsonOk } from '../_lib/auth.js';
 import {
+  downloadFilenameFor,
   getAnonClient,
   getServiceClient,
   signFileUrl,
@@ -62,7 +63,10 @@ export default async function handler(req: Request): Promise<Response> {
     fileRow.storage_bucket,
     fileRow.storage_path,
     SHARE_URL_TTL_SECONDS,
-    row.original_name ?? fileRow.original_name ?? 'file',
+    downloadFilenameFor({
+      original_name: row.original_name ?? fileRow.original_name ?? 'file',
+      storage_path: fileRow.storage_path,
+    }),
   );
 
   void anon.rpc('record_shared_link_view', { p_token: body.token });

@@ -495,6 +495,65 @@ export async function getFile(fileId: string): Promise<FileRow | null> {
   return (data as FileRow) ?? null;
 }
 
+// ─── Search ──────────────────────────────────────────────────────────────
+
+export interface DriveSearchResult {
+  folders: FolderRow[];
+  files: FileRow[];
+  /** Ids of files whose match came from Wassel-document BODY content (not the
+   *  name) — so the UI can badge "matched in content". */
+  contentMatchIds: Set<string>;
+}
+
+/**
+ * Global Drive search across folder names, file names, and Wassel-document
+ * body content. Every query runs under the caller's JWT so RLS filters the
+ * results to what they may see. Uploaded-file *content* (PDF/Office text) is
+ * not indexed yet — that's the future-ready piece. `content_html` ILIKE is a
+ * crude v1 (matches tag names too); a tsvector/FTS index is the upgrade path.
+ */
+export async function searchDrive(query: string): Promise<DriveSearchResult> {
+  const empty: DriveSearchResult = { folders: [], files: [], contentMatchIds: new Set() };
+  if (!supabase) return empty;
+  const q = query.trim();
+  if (q.length < 2) return empty;
+  // Escape LIKE wildcards in the user's text so "50%" searches literally.
+  const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+
+  const [foldersRes, filesRes, docsRes] = await Promise.all([
+    supabase.from('folders').select('*').ilike('name', like).order('name').limit(50),
+    supabase
+      .from('files')
+      .select('*')
+      .ilike('original_name', like)
+      .order('created_at', { ascending: false })
+      .limit(50),
+    supabase.from('wassel_documents').select('file_id').ilike('content_html', like).limit(50),
+  ]);
+  if (foldersRes.error) throw surfaceError('search folders', foldersRes.error);
+  if (filesRes.error) throw surfaceError('search files', filesRes.error);
+  // Content search is best-effort — a failure there shouldn't sink name results.
+  const docFileIds = docsRes.error
+    ? []
+    : ((docsRes.data ?? []) as Array<{ file_id: string }>).map((r) => r.file_id);
+
+  const nameFiles = (filesRes.data ?? []) as FileRow[];
+  const haveIds = new Set(nameFiles.map((f) => f.id));
+  const missingDocIds = docFileIds.filter((id) => !haveIds.has(id));
+
+  let extraDocFiles: FileRow[] = [];
+  if (missingDocIds.length > 0) {
+    const { data } = await supabase.from('files').select('*').in('id', missingDocIds);
+    extraDocFiles = (data ?? []) as FileRow[];
+  }
+
+  return {
+    folders: (foldersRes.data ?? []) as FolderRow[],
+    files: [...nameFiles, ...extraDocFiles],
+    contentMatchIds: new Set(docFileIds),
+  };
+}
+
 // ─── Folder CRUD (direct via RLS) ───────────────────────────────────────
 
 export async function createFolder(name: string, parentFolderId: string | null): Promise<FolderRow> {
@@ -623,6 +682,26 @@ export async function signViewUrl(
     original_name: body.original_name ?? '',
     mime_type: body.mime_type ?? '',
   };
+}
+
+/**
+ * Batch-sign view URLs for many files in ONE request. Returns a map of
+ * fileId → signed URL; ids the caller can't view (or that fail to sign) are
+ * simply absent from the map. Used by the Files grid to load every image
+ * thumbnail without firing one request per tile. See api/files/sign-view-urls.
+ */
+export async function signViewUrls(fileIds: string[]): Promise<Record<string, string>> {
+  if (fileIds.length === 0) return {};
+  const res = await fetch('/api/files/sign-view-urls', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ fileIds }),
+  });
+  const body = (await res.json().catch(() => ({}))) as { urls?: Record<string, string>; error?: string };
+  if (!res.ok) {
+    throw surfaceError('sign view urls', new Error(body.error ?? `HTTP ${res.status}`));
+  }
+  return body.urls ?? {};
 }
 
 export async function signDownloadUrl(fileId: string): Promise<{ url: string }> {
@@ -836,6 +915,38 @@ export async function fetchSharedFileDownload(token: string, password?: string):
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return { url: body.url };
+}
+
+// ─── Effective role (server batch lookup) ───────────────────────────────
+
+/**
+ * Batch-resolve the caller's STRONGEST effective role per file via the
+ * `wassell_effective_file_roles` RPC (admin/uploader → owner, else max of
+ * direct grant + folder cascade). Ids the caller can't access are absent from
+ * the map. Drives correct edit/delete/share affordances for grantees — RLS is
+ * still the authoritative gate. See migration 2026-06-10_files_effective_roles.
+ */
+export async function effectiveFileRoles(fileIds: string[]): Promise<Record<string, FilePermissionRole>> {
+  if (!supabase || fileIds.length === 0) return {};
+  const { data, error } = await supabase.rpc('wassell_effective_file_roles', { p_file_ids: fileIds });
+  if (error) throw surfaceError('effective file roles', error);
+  const out: Record<string, FilePermissionRole> = {};
+  for (const row of (data ?? []) as Array<{ file_id: string; role: FilePermissionRole }>) {
+    out[row.file_id] = row.role;
+  }
+  return out;
+}
+
+/** Folder twin of effectiveFileRoles (admin/creator → owner, else cascade). */
+export async function effectiveFolderRoles(folderIds: string[]): Promise<Record<string, FilePermissionRole>> {
+  if (!supabase || folderIds.length === 0) return {};
+  const { data, error } = await supabase.rpc('wassell_effective_folder_roles', { p_folder_ids: folderIds });
+  if (error) throw surfaceError('effective folder roles', error);
+  const out: Record<string, FilePermissionRole> = {};
+  for (const row of (data ?? []) as Array<{ folder_id: string; role: FilePermissionRole }>) {
+    out[row.folder_id] = row.role;
+  }
+  return out;
 }
 
 // ─── Effective role (client-side cascade lookup) ────────────────────────

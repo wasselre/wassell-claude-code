@@ -12,8 +12,12 @@ interface Props {
   onRename: (folder: FolderRow) => void;
   onPermissions: (folder: FolderRow) => void;
   onDelete: (folder: FolderRow) => void;
-  /** True when the current user is the folder's owner (can manage). */
+  /** True when the caller is editor+ on the folder — shows the kebab and
+   *  rename/share/permissions actions. */
   canManage: boolean;
+  /** True when the caller is owner on the folder — gates the Delete action.
+   *  Defaults to canManage when omitted (back-compat). */
+  canDelete?: boolean;
   /** Selection-related props — same contract as FileCard. */
   selected: boolean;
   selectionActive: boolean;
@@ -28,11 +32,13 @@ export default function FolderTile({
   onPermissions,
   onDelete,
   canManage,
+  canDelete,
   selected,
   selectionActive,
   onSelectClick,
   onToggleCheckbox,
 }: Props) {
+  const showDelete = canDelete ?? canManage;
   const { t } = useTranslation();
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -104,8 +110,12 @@ export default function FolderTile({
               <MenuItem icon={Pencil} label={t('files.actions.rename')} onClick={() => { setMenuOpen(false); onRename(folder); }} />
               <MenuItem icon={Share2} label={t('files.actions.share')} onClick={() => { setMenuOpen(false); onPermissions(folder); }} />
               <MenuItem icon={Shield} label={t('files.actions.permissions')} onClick={() => { setMenuOpen(false); onPermissions(folder); }} />
-              <div className="my-1 border-t border-sand/30" />
-              <MenuItem icon={Trash2} label={t('files.actions.delete')} danger onClick={() => { setMenuOpen(false); onDelete(folder); }} />
+              {showDelete && (
+                <>
+                  <div className="my-1 border-t border-sand/30" />
+                  <MenuItem icon={Trash2} label={t('files.actions.delete')} danger onClick={() => { setMenuOpen(false); onDelete(folder); }} />
+                </>
+              )}
             </TileMenu>
           </div>
         )}

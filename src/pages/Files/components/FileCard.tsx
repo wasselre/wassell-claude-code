@@ -12,6 +12,12 @@ interface Props {
   shared?: boolean;
   canEdit: boolean;
   canDelete: boolean;
+  /** Parent-managed thumbnail URL for image kinds. When the parent batch-signs
+   *  thumbnails (FilesPage), it passes the URL (or null while loading / on
+   *  failure) so the card does NOT fire its own per-tile sign request. Leave
+   *  undefined to make the card self-fetch lazily (back-compat for any caller
+   *  that doesn't batch). */
+  thumbUrl?: string | null;
   /** Currently selected in the bulk-select UI. */
   selected: boolean;
   /** True if anything is selected — switches plain click from "preview" to
@@ -47,20 +53,28 @@ export default function FileCard({
   onPermissions,
   onDelete,
   onRename,
+  thumbUrl,
 }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
-  const [thumbUrl, setThumbUrl] = useState<string | null>(null);
+  const [selfThumbUrl, setSelfThumbUrl] = useState<string | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const kebabRef = useRef<HTMLButtonElement>(null);
 
-  // Lazy-load a thumbnail for image kinds.
+  // The parent (FilesPage) batch-signs thumbnails and passes `thumbUrl`. Only
+  // self-fetch when the parent ISN'T managing it (thumbUrl === undefined) —
+  // that's the back-compat path for callers that don't batch.
+  const parentManaged = thumbUrl !== undefined;
+  const shownThumb = parentManaged ? thumbUrl : selfThumbUrl;
+
+  // Lazy-load a thumbnail for image kinds — only in the self-managed case.
   useEffect(() => {
+    if (parentManaged) return;
     if (file.kind !== 'image') return;
     let cancelled = false;
     void signViewUrl(file.id)
       .then((res) => {
-        if (!cancelled) setThumbUrl(res.url);
+        if (!cancelled) setSelfThumbUrl(res.url);
       })
       .catch(() => {
         // Failure is fine — falls back to the icon tile.
@@ -68,7 +82,7 @@ export default function FileCard({
     return () => {
       cancelled = true;
     };
-  }, [file.id, file.kind]);
+  }, [file.id, file.kind, parentManaged]);
 
   const accent = kindAccent[file.kind];
   const Icon = kindIcon[file.kind];
@@ -108,9 +122,9 @@ export default function FileCard({
 
       {/* Thumb area */}
       <div className={`aspect-[4/3] flex items-center justify-center relative ${accent.bg}`}>
-        {file.kind === 'image' && thumbUrl ? (
+        {file.kind === 'image' && shownThumb ? (
           <img
-            src={thumbUrl}
+            src={shownThumb}
             alt={file.original_name}
             className="absolute inset-0 w-full h-full object-cover"
             loading="lazy"
