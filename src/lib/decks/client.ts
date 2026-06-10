@@ -57,6 +57,28 @@ const DECKS_BUCKET = 'wassel-decks';
  * by Supabase via the bucket's file_size_limit (100 MB). */
 export const MAX_ATTACHMENT_BYTES = 32 * 1024 * 1024;
 
+/** File extensions Claude can read inside the deck sandbox (the set we
+ * forward to the Anthropic Files API). SINGLE SOURCE OF TRUTH — consumed by
+ * both the upload dropzone's `accept` attribute AND the "choose from Files"
+ * picker's filter, so the two can never drift. If you add a type here, also
+ * confirm the worker knows how to read it (see runDeckJob's attachmentsBlock). */
+export const DECK_ATTACHABLE_EXTS = [
+  'xlsx', 'xls', 'csv',
+  'pdf',
+  'pptx', 'docx', 'doc',
+  'png', 'jpg', 'jpeg', 'webp', 'gif', 'heic', 'heif',
+  'txt',
+] as const;
+
+/** True when a filename's extension is one the deck sandbox can read. Used to
+ * grey-out unsupported files in the Files picker. */
+export function isDeckAttachableName(name: string): boolean {
+  const ix = name.lastIndexOf('.');
+  if (ix < 0 || ix === name.length - 1) return false;
+  const ext = name.slice(ix + 1).toLowerCase();
+  return (DECK_ATTACHABLE_EXTS as readonly string[]).includes(ext);
+}
+
 /** Upload one attachment to the `wassel-decks` bucket under
  * `<userId>/<deckId>/uploads/<timestamp>_<safe-name>`. Returns the metadata
  * needed by the API + the UI's local list. Throws on any storage error
@@ -89,6 +111,55 @@ export async function uploadDeckAttachment(
     mimeType: file.type || '',
     size: file.size,
   };
+}
+
+/** Attach a file that already lives in the Files library (the `wassel-files`
+ * bucket) to a deck, by copying its bytes into the deck's uploads area in
+ * `wassel-decks`. This deliberately funnels through `uploadDeckAttachment`
+ * so the result is INDISTINGUISHABLE from a local upload — same path shape
+ * (`<userId>/<deckId>/uploads/...`), same scope check, same worker download
+ * path. No worker change needed.
+ *
+ * Byte integrity: we fetch the original via a permission-checked signed URL
+ * (`/api/files/sign-download-url`, which works for both files you own and
+ * files shared with you) and re-upload the raw bytes. Storage never
+ * transcodes, so a `.pptx` / `.xlsx` stays byte-for-byte identical — exactly
+ * like downloading it and re-picking it by hand.
+ *
+ * Throws (no silent failure — see CLAUDE.md "Silent Failures") on an
+ * oversize file, a permission/sign error, or a download/upload failure; the
+ * caller surfaces it inline on the attachment row. */
+export async function attachDeckAttachmentFromLibrary(
+  userId: string,
+  deckId: string,
+  file: { id: string; original_name: string; mime_type: string; size_bytes: number },
+): Promise<DeckAttachment> {
+  if (file.size_bytes > MAX_ATTACHMENT_BYTES) {
+    throw new Error(
+      `File too large (${(file.size_bytes / 1024 / 1024).toFixed(1)} MB). Max is ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  // Permission-checked signed URL — the endpoint asserts the caller can view
+  // the file before signing, so this can't be used to exfiltrate a file the
+  // user has no access to.
+  const signRes = await fetch('/api/files/sign-download-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ fileId: file.id }),
+  });
+  const signBody = (await signRes.json().catch(() => ({}))) as { url?: string; error?: string };
+  if (!signRes.ok || !signBody.url) {
+    throw new Error(signBody.error ?? `Could not access the file in your library (${signRes.status}).`);
+  }
+  const dl = await fetch(signBody.url);
+  if (!dl.ok) {
+    throw new Error(`Could not download the file from your library (${dl.status}).`);
+  }
+  const blob = await dl.blob();
+  const fileObj = new File([blob], file.original_name, {
+    type: file.mime_type || blob.type || 'application/octet-stream',
+  });
+  return uploadDeckAttachment(userId, deckId, fileObj);
 }
 
 /** Best-effort cleanup when the user removes an attachment from the form

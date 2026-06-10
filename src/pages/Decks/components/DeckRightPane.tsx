@@ -11,21 +11,25 @@ import {
   Check,
   Paperclip,
   X,
+  FolderOpen,
   FileSpreadsheet,
   FileText as FileTextIcon,
   FileImage,
   File as FileIcon,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { AppRecord } from '@/types';
+import type { AppRecord, FileRow } from '@/types';
 import {
   signDeckUrl,
   enqueueGenerateDeck,
   uploadDeckAttachment,
+  attachDeckAttachmentFromLibrary,
   deleteDeckAttachment,
+  DECK_ATTACHABLE_EXTS,
   type DeckAttachment,
   type DeckSize,
 } from '@/lib/decks/client';
+import PickFromFilesModal from './PickFromFilesModal';
 
 type Phase = 'calling-claude' | 'downloading' | 'uploading' | 'finalizing';
 type ModelChoice = 'claude-opus-4-7' | 'claude-sonnet-4-6';
@@ -57,15 +61,11 @@ interface UiAttachment extends DeckAttachment {
   error?: string;
 }
 
-/** Mime types accepted by the brief form. Aligned with the bucket's
+/** File-input `accept` string. Derived from the single source of truth in
+ * decks/client so the local-upload picker and the "choose from Files" picker
+ * can never accept different sets. Aligned with the bucket's
  * `allowed_mime_types` (see migration 2026-05-10). */
-const ACCEPT_ATTRIBUTE = [
-  '.xlsx', '.xls', '.csv',
-  '.pdf',
-  '.pptx', '.docx', '.doc',
-  '.png', '.jpg', '.jpeg', '.webp', '.gif', '.heic', '.heif',
-  '.txt',
-].join(',');
+const ACCEPT_ATTRIBUTE = DECK_ATTACHABLE_EXTS.map((e) => `.${e}`).join(',');
 
 interface Props {
   recordId: string;
@@ -307,6 +307,7 @@ function BriefForm({
   const [attachments, setAttachments] = useState<UiAttachment[]>(initialAttachments);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   const uploadingCount = attachments.filter((a) => a.status === 'uploading').length;
   const canSubmit =
@@ -350,6 +351,43 @@ function BriefForm({
         );
       }
     });
+  }
+
+  /** Attach a file picked from the Files library. Mirrors `addFiles`'s
+   * optimistic placeholder → copy → ready/failed flow, but the bytes come
+   * from `wassel-files` (copied into the deck's uploads area) instead of the
+   * local disk. */
+  function addFromLibrary(file: FileRow) {
+    if (!userId) {
+      alert(isAr ? 'يجب تسجيل الدخول لإرفاق الملفات.' : 'Sign in to attach files.');
+      return;
+    }
+    const placeholder: UiAttachment = {
+      uiId: crypto.randomUUID(),
+      name: file.original_name,
+      path: '',
+      mimeType: file.mime_type || '',
+      size: file.size_bytes,
+      status: 'uploading',
+    };
+    setAttachments((prev) => [...prev, placeholder]);
+    void (async () => {
+      try {
+        const result = await attachDeckAttachmentFromLibrary(userId, record.id, file);
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.uiId === placeholder.uiId ? { ...a, ...result, status: 'ready' as const } : a,
+          ),
+        );
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setAttachments((prev) =>
+          prev.map((a) =>
+            a.uiId === placeholder.uiId ? { ...a, status: 'failed' as const, error: msg } : a,
+          ),
+        );
+      }
+    })();
   }
 
   async function removeAttachment(uiId: string) {
@@ -595,6 +633,18 @@ function BriefForm({
           />
         </div>
 
+        {/* Pick an existing file from the in-app Files library — e.g. a saved
+            deck (.pptx) you want to reuse as a template, or a project sheet
+            already uploaded. Its bytes are copied into this deck's uploads. */}
+        <button
+          type="button"
+          onClick={() => setPickerOpen(true)}
+          className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-sand/40 text-sm text-charcoal/80 hover:border-copper/50 hover:bg-cream/50 transition-colors"
+        >
+          <FolderOpen size={15} className="text-copper" />
+          {isAr ? 'اختر من الملفات' : 'Choose from Files'}
+        </button>
+
         {attachments.length > 0 && (
           <ul className="mt-3 space-y-1.5">
             {attachments.map((att) => (
@@ -607,6 +657,16 @@ function BriefForm({
             ))}
           </ul>
         )}
+
+        <PickFromFilesModal
+          open={pickerOpen}
+          isAr={isAr}
+          onClose={() => setPickerOpen(false)}
+          onPick={(file) => {
+            addFromLibrary(file);
+            setPickerOpen(false);
+          }}
+        />
       </fieldset>
 
       <button
