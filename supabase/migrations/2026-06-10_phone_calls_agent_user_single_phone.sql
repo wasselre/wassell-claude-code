@@ -91,15 +91,37 @@ WHERE r.id = resolved.id
   -- only write when the stored value isn't already the resolved user id
   AND r.data->>'agent_name' IS DISTINCT FROM resolved.user_id;
 
--- ── 4. Records: backfill client_link from customer_phone (digits-equal) ─────
-WITH matched AS (
+-- ── 4. Records: backfill client_link from customer_phone ───────────────────
+-- Canonicalize BOTH sides to KSA E.164 digits ("966XXXXXXXXX") before
+-- comparing. ~45% of clients store the phone as a BARE 9-digit subscriber
+-- number (no country code, e.g. "532577669"), so a raw digit-equality match
+-- ("966532577669" = "532577669" -> false) misses every one of them. The canon
+-- (reconcile leading 966 / leading 0 / bare) mirrors the webhook's
+-- phoneMatchCandidates intent and links them correctly.
+WITH norm_clients AS (
+  SELECT cl.id::text AS cid, cl.created_at,
+         CASE
+           WHEN regexp_replace(cl.data->>'phone_number', '\D', '', 'g') ~ '^966'
+             THEN regexp_replace(cl.data->>'phone_number', '\D', '', 'g')
+           WHEN regexp_replace(cl.data->>'phone_number', '\D', '', 'g') ~ '^0'
+             THEN '966' || substring(regexp_replace(cl.data->>'phone_number', '\D', '', 'g') from 2)
+           ELSE '966' || regexp_replace(cl.data->>'phone_number', '\D', '', 'g')
+         END AS canon
+    FROM public.records cl
+   WHERE cl.model_id = (SELECT id FROM public.models WHERE name = 'clients')
+     AND COALESCE(cl.data->>'phone_number', '') <> ''
+),
+matched AS (
   SELECT r.id AS call_id,
-         (SELECT cl.id::text
-            FROM public.records cl
-           WHERE cl.model_id = (SELECT id FROM public.models WHERE name = 'clients')
-             AND regexp_replace(cl.data->>'phone_number', '\D', '', 'g')
-                 = regexp_replace(r.data->>'customer_phone', '\D', '', 'g')
-           ORDER BY cl.created_at
+         (SELECT nc.cid FROM norm_clients nc
+           WHERE nc.canon = CASE
+             WHEN regexp_replace(r.data->>'customer_phone', '\D', '', 'g') ~ '^966'
+               THEN regexp_replace(r.data->>'customer_phone', '\D', '', 'g')
+             WHEN regexp_replace(r.data->>'customer_phone', '\D', '', 'g') ~ '^0'
+               THEN '966' || substring(regexp_replace(r.data->>'customer_phone', '\D', '', 'g') from 2)
+             ELSE '966' || regexp_replace(r.data->>'customer_phone', '\D', '', 'g')
+           END
+           ORDER BY nc.created_at
            LIMIT 1) AS client_id
     FROM public.records r
    WHERE r.model_id = (SELECT id FROM public.models WHERE name = 'phone_calls')
