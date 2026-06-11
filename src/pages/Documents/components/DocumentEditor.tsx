@@ -181,18 +181,6 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
         spellcheck: 'true',
       },
       transformPastedHTML: (html) => stripFontFamily(html),
-      // Record-mention chips navigate to their record on click. User
-      // mentions are inert (no user-profile page exists).
-      handleClickOn: (_view, _pos, node) => {
-        if (node.type.name === 'mention') {
-          const attrs = node.attrs as unknown as MentionAttrs;
-          if (attrs.kind === 'record') {
-            onMentionClickRef.current?.(attrs);
-            return true;
-          }
-        }
-        return false;
-      },
     },
     onUpdate: () => {
       onChangeRef.current();
@@ -214,6 +202,30 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
     if (!editor) return;
     editor.view.dom.setAttribute('dir', baseDir);
   }, [editor, baseDir]);
+
+  // Record-mention chips navigate on click. Delegated DOM listener on the
+  // editor surface (NOT ProseMirror's handleClickOn — that callback doesn't
+  // reliably fire for inline leaf atoms; verified live 2026-06-11). The chip
+  // span carries data-mention/data-kind/data-id/data-model-id from renderHTML.
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const onClick = (e: MouseEvent) => {
+      const el = (e.target as HTMLElement | null)?.closest?.('[data-mention]');
+      if (!el) return;
+      if (el.getAttribute('data-kind') !== 'record') return;
+      e.preventDefault();
+      const attrs: MentionAttrs = {
+        kind: 'record',
+        id: el.getAttribute('data-id') ?? '',
+        modelId: el.getAttribute('data-model-id'),
+        label: el.getAttribute('data-label') ?? '',
+      };
+      onMentionClickRef.current?.(attrs);
+    };
+    dom.addEventListener('click', onClick);
+    return () => dom.removeEventListener('click', onClick);
+  }, [editor]);
 
   // Push fresh CRM variable values into the decoration extension whenever
   // the linked records (or their data) change — the token text in the doc
