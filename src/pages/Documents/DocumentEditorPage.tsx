@@ -16,6 +16,7 @@ import {
   Minimize2,
   PanelTopClose,
   PanelTopOpen,
+  Settings2,
   Share2,
   Sparkles,
   Users,
@@ -23,7 +24,14 @@ import {
 import type { Editor, JSONContent } from '@tiptap/react';
 import { useAppStore } from '@/stores/appStore';
 import type { FileRow, WasselDocumentRow } from '@/types';
-import { loadDocument, renameDocument, saveDocument } from '@/lib/documents/client';
+import { loadDocument, renameDocument, saveDocument, saveDocumentSettings } from '@/lib/documents/client';
+import {
+  DEFAULT_PAGE_SETTINGS,
+  normalizePageSettings,
+  pageCanvasStyle,
+  type PageSettings,
+} from '@/lib/documents/pageSettings';
+import PageSettingsModal from './components/PageSettingsModal';
 import ShareLinkModal from '@/pages/Files/components/ShareLinkModal';
 import PermissionsPanel from '@/pages/Files/components/PermissionsPanel';
 import MoveToFolderModal from '@/pages/Files/components/MoveToFolderModal';
@@ -76,6 +84,8 @@ export default function DocumentEditorPage() {
   const [linksOpen, setLinksOpen] = useState(false);
   const [varsOpen, setVarsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [pageSetupOpen, setPageSetupOpen] = useState(false);
+  const [pageSettings, setPageSettings] = useState<PageSettings>(DEFAULT_PAGE_SETTINGS);
   /** Outline panel visibility — persisted so the preference sticks. Only
    *  rendered on lg+ screens (the canvas margin hosts it). */
   const [outlineOpen, setOutlineOpen] = useState<boolean>(
@@ -145,6 +155,7 @@ export default function DocumentEditorPage() {
         setFile(res.file);
         setDoc(res.doc);
         setTitleDraft(res.file.original_name);
+        setPageSettings(normalizePageSettings(res.doc.settings));
         setLoading(false);
       })
       .catch((err) => {
@@ -397,6 +408,7 @@ export default function DocumentEditorPage() {
                 <HeaderIconBtn icon={FolderInput} label={t('files.actions.move')} onClick={() => setMoveOpen(true)} />
                 <HeaderIconBtn icon={Link2} label={t('doc.links.title')} onClick={() => setLinksOpen(true)} />
                 <HeaderIconBtn icon={Braces} label={t('doc.vars.title')} onClick={() => setVarsOpen(true)} />
+                <HeaderIconBtn icon={Settings2} label={t('doc.page.title')} onClick={() => setPageSetupOpen(true)} />
                 <HeaderIconBtn
                   icon={Sparkles}
                   label={t('doc.assist.title')}
@@ -466,7 +478,7 @@ export default function DocumentEditorPage() {
           </div>
         )}
         <div className="flex-1 min-w-0">
-        <div className="wassel-doc-page">
+        <div className="wassel-doc-page" style={{ ...pageCanvasStyle(pageSettings), maxWidth: '100%' }}>
           <DocumentEditor
             ref={editorRef}
             initialContent={(doc.content_json as JSONContent) ?? { type: 'doc', content: [{ type: 'paragraph' }] }}
@@ -568,9 +580,19 @@ export default function DocumentEditorPage() {
       <ExportModal
         open={exportOpen}
         title={file.original_name}
+        settings={pageSettings}
         getJson={() => editorRef.current?.getJSON() ?? { type: 'doc', content: [] }}
         getHtml={() => editorRef.current?.getHTML() ?? ''}
         onClose={() => setExportOpen(false)}
+      />
+      <PageSettingsModal
+        open={pageSetupOpen}
+        value={pageSettings}
+        onClose={() => setPageSetupOpen(false)}
+        onSave={async (next) => {
+          await saveDocumentSettings(file.id, next as unknown as Record<string, unknown>);
+          setPageSettings(next);
+        }}
       />
       <CrmVariablesPopover
         open={varsOpen}

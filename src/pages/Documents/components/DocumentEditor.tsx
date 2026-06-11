@@ -4,6 +4,7 @@ import { Extension } from '@tiptap/core';
 import { CrmVariables } from './CrmVariablesExtension';
 import { MentionNode, mentionSuggestion, type MentionAttrs } from './MentionExtension';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
+import { PageBreak } from './PageBreakExtension';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -177,6 +178,7 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
       TableRow,
       TableHeader,
       TableCell,
+      PageBreak,
     ],
     editorProps: {
       attributes: {

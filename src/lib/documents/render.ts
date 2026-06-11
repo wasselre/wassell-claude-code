@@ -19,6 +19,7 @@ import Image from '@tiptap/extension-image';
 import TextAlign from '@tiptap/extension-text-align';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { MentionNode } from '@/pages/Documents/components/MentionExtension';
+import { PageBreak } from '@/pages/Documents/components/PageBreakExtension';
 
 const SCHEMA_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -33,6 +34,7 @@ const SCHEMA_EXTENSIONS = [
   TableRow,
   TableHeader,
   TableCell,
+  PageBreak,
 ];
 
 export function renderDocumentHtml(json: JSONContent): string {

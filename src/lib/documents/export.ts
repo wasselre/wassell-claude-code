@@ -24,9 +24,14 @@ import {
   BorderStyle,
   Document,
   ExternalHyperlink,
+  Footer,
+  Header,
   HeadingLevel,
   LevelFormat,
   Packer,
+  PageBreak,
+  PageNumber,
+  PageOrientation,
   Paragraph,
   Table,
   TableCell,
@@ -34,6 +39,13 @@ import {
   TextRun,
   WidthType,
 } from 'docx';
+import {
+  DEFAULT_PAGE_SETTINGS,
+  docxPageGeometry,
+  pageCssSize,
+  MARGIN_MM,
+  type PageSettings,
+} from './pageSettings';
 
 // ─── Shared helpers ───────────────────────────────────────────────────────
 
@@ -66,7 +78,15 @@ export function downloadText(filename: string, text: string, mime: string): void
 
 // ─── HTML shell ───────────────────────────────────────────────────────────
 
-export function buildHtmlShell(title: string, bodyHtml: string, dir: 'rtl' | 'ltr'): string {
+export function buildHtmlShell(
+  title: string,
+  bodyHtml: string,
+  dir: 'rtl' | 'ltr',
+  settings: PageSettings = DEFAULT_PAGE_SETTINGS,
+): string {
+  const marginMm = MARGIN_MM[settings.margin];
+  const hasHeader = settings.header_text.trim().length > 0;
+  const hasFooter = settings.footer_text.trim().length > 0;
   return `<!DOCTYPE html>
 <html lang="${dir === 'rtl' ? 'ar' : 'en'}" dir="${dir}">
 <head>
@@ -90,13 +110,26 @@ export function buildHtmlShell(title: string, bodyHtml: string, dir: 'rtl' | 'lt
   hr { border: none; border-top: 1px solid #D4B896; margin: 1.4em 0; }
   a { color: #8E4E3A; }
   [data-mention] { background: rgba(184,115,79,.12); border-radius: 6px; padding: 0 4px; color: #8E4E3A; font-weight: 700; }
+  .doc-page-break { border-top: 1px dashed #C09B5F; margin: 1.4em 0; }
+  .page-running { display: none; }
   @media print {
-    main { padding: 0; max-width: none; }
-    @page { margin: 20mm; }
+    main { padding: ${hasHeader ? '10mm' : '0'} 0 ${hasFooter ? '10mm' : '0'}; max-width: none; }
+    @page { size: ${pageCssSize(settings)}; margin: ${marginMm}mm; }
+    .doc-page-break { border: none; margin: 0; break-after: page; }
+    /* position:fixed repeats on every printed page — the classic running
+       header/footer trick (per-page numbering needs @page margin boxes,
+       which Chromium doesn't support; DOCX export carries real numbers). */
+    .page-running { display: block; position: fixed; inset-inline: 0; font-size: 11px; color: #8a8f96; }
+    .page-running.head { top: -${Math.max(marginMm - 12, 2)}mm; }
+    .page-running.foot { bottom: -${Math.max(marginMm - 12, 2)}mm; }
   }
 </style>
 </head>
-<body><main>${bodyHtml}</main></body>
+<body>
+${hasHeader ? `<div class="page-running head">${escapeHtml(settings.header_text)}</div>` : ''}
+${hasFooter ? `<div class="page-running foot">${escapeHtml(settings.footer_text)}</div>` : ''}
+<main>${bodyHtml}</main>
+</body>
 </html>`;
 }
 
@@ -106,10 +139,15 @@ function escapeHtml(s: string): string {
 
 /** PDF via the browser print engine — the only client-side path with correct
  *  Arabic shaping. Opens a window, waits for Amiri to load, then prints. */
-export function openPrintPdf(title: string, bodyHtml: string, dir: 'rtl' | 'ltr'): boolean {
+export function openPrintPdf(
+  title: string,
+  bodyHtml: string,
+  dir: 'rtl' | 'ltr',
+  settings: PageSettings = DEFAULT_PAGE_SETTINGS,
+): boolean {
   const w = window.open('', '_blank');
   if (!w) return false; // popup blocked — caller toasts
-  const shell = buildHtmlShell(title, bodyHtml, dir).replace(
+  const shell = buildHtmlShell(title, bodyHtml, dir, settings).replace(
     '</body>',
     `<script>document.fonts.ready.then(function(){setTimeout(function(){window.print();},150);});</script></body>`,
   );
@@ -155,6 +193,8 @@ function blockToMd(node: JSONContent, depth: number): string | null {
     case 'codeBlock':
       return '```\n' + nodeText(node) + '\n```';
     case 'horizontalRule':
+      return '---';
+    case 'pageBreak':
       return '---';
     case 'image': {
       const src = String(node.attrs?.src ?? '');
@@ -227,11 +267,33 @@ function inlineToMd(nodes: JSONContent[]): string {
 
 // ─── DOCX ─────────────────────────────────────────────────────────────────
 
-export async function buildDocxBlob(doc: JSONContent, isAr: boolean): Promise<Blob> {
+export async function buildDocxBlob(
+  doc: JSONContent,
+  isAr: boolean,
+  settings: PageSettings = DEFAULT_PAGE_SETTINGS,
+): Promise<Blob> {
   const children: Array<Paragraph | Table> = [];
   for (const node of doc.content ?? []) {
     children.push(...blockToDocx(node, isAr));
   }
+
+  // Headers / footers — real Word running parts. Page numbers render via
+  // PageNumber.CURRENT; different-first-page maps to titlePage + empty
+  // `first` header/footer parts.
+  const geo = docxPageGeometry(settings);
+  const headerRuns: TextRun[] = settings.header_text.trim()
+    ? [new TextRun({ text: settings.header_text, rightToLeft: isAr })]
+    : [];
+  const footerRuns: TextRun[] = [];
+  if (settings.footer_text.trim()) {
+    footerRuns.push(new TextRun({ text: settings.footer_text, rightToLeft: isAr }));
+  }
+  if (settings.show_page_numbers) {
+    if (footerRuns.length > 0) footerRuns.push(new TextRun({ text: '  —  ' }));
+    footerRuns.push(new TextRun({ children: [PageNumber.CURRENT] }));
+  }
+  const hasHeader = headerRuns.length > 0;
+  const hasFooter = footerRuns.length > 0;
 
   const document = new Document({
     styles: {
@@ -252,7 +314,42 @@ export async function buildDocxBlob(doc: JSONContent, isAr: boolean): Promise<Bl
         },
       ],
     },
-    sections: [{ children }],
+    sections: [
+      {
+        properties: {
+          page: {
+            size: {
+              width: geo.landscape ? geo.height : geo.width,
+              height: geo.landscape ? geo.width : geo.height,
+              orientation: geo.landscape ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT,
+            },
+            margin: { top: geo.margin, bottom: geo.margin, left: geo.margin, right: geo.margin },
+          },
+          titlePage: settings.different_first_page,
+        },
+        headers: hasHeader
+          ? {
+              default: new Header({
+                children: [new Paragraph({ children: headerRuns, alignment: AlignmentType.CENTER, bidirectional: isAr })],
+              }),
+              ...(settings.different_first_page ? { first: new Header({ children: [] }) } : {}),
+            }
+          : settings.different_first_page
+          ? { first: new Header({ children: [] }) }
+          : undefined,
+        footers: hasFooter
+          ? {
+              default: new Footer({
+                children: [new Paragraph({ children: footerRuns, alignment: AlignmentType.CENTER, bidirectional: isAr })],
+              }),
+              ...(settings.different_first_page ? { first: new Footer({ children: [] }) } : {}),
+            }
+          : settings.different_first_page
+          ? { first: new Footer({ children: [] }) }
+          : undefined,
+        children,
+      },
+    ],
   });
   return Packer.toBlob(document);
 }
@@ -319,6 +416,8 @@ function blockToDocx(node: JSONContent, isAr: boolean, listCtx?: { kind: 'bullet
           border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: 'D4B896' } },
         }),
       ];
+    case 'pageBreak':
+      return [new Paragraph({ children: [new PageBreak()] })];
     case 'table':
       return [tableToDocx(node, isAr)];
     case 'image':

@@ -22,6 +22,7 @@ import {
   Redo,
   Minus,
   Table as TableIcon,
+  SeparatorHorizontal,
   Rows3,
   Columns3,
   TableRowsSplit,
@@ -210,6 +211,11 @@ export default function DocumentToolbar({ editor, onInsertImage }: Props) {
             icon={Minus}
             label={t('doc.editor.divider')}
             onClick={() => editor.chain().focus().setHorizontalRule().run()}
+          />
+          <Btn
+            icon={SeparatorHorizontal}
+            label={t('doc.editor.page_break')}
+            onClick={() => editor.chain().focus().setPageBreak().run()}
           />
         </Group>
 

@@ -179,6 +179,18 @@ export async function saveDocument(input: SaveDocumentInput): Promise<{ version:
   };
 }
 
+/** Persist the document's page settings (size/orientation/margins/header/
+ *  footer). Separate from saveDocument — settings changes shouldn't bump the
+ *  content version or race the autosave. */
+export async function saveDocumentSettings(
+  fileId: string,
+  settings: Record<string, unknown>,
+): Promise<void> {
+  if (!supabase) throw surfaceError('save settings', new Error('Supabase not configured'));
+  const { error } = await supabase.from('wassel_documents').update({ settings }).eq('file_id', fileId);
+  if (error) throw surfaceError('save settings', error);
+}
+
 /** Rename a document. Reuses the existing files.renameFile semantics — kept
  *  here so callers in the editor don't have to import from two places. */
 export async function renameDocument(fileId: string, newTitle: string): Promise<FileRow> {

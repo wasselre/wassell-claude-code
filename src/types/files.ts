@@ -103,6 +103,8 @@ export interface WasselDocumentRow {
   content_html: string;
   version: number;
   last_edited_by_user_id: string | null;
+  /** Page settings JSONB ({} = defaults) — see lib/documents/pageSettings. */
+  settings: Record<string, unknown> | null;
   updated_at: string;
 }
 

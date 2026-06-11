@@ -391,3 +391,26 @@ html.doc-fullscreen .wassel-toasts {
   background: rgba(255, 255, 255, 0.6);
   border: 1px solid rgba(212, 184, 150, 0.35);
 }
+
+/* ── Page break (editor visual) ───────────────────────────────────────────
+ * Prints as break-after:page (export shell); in the editor it reads as a
+ * labeled dashed divider. */
+.wassel-doc-surface .doc-page-break {
+  position: relative;
+  border-top: 2px dashed rgba(192, 155, 95, 0.6);   /* gold */
+  margin: 1.6em 0;
+}
+.wassel-doc-surface .doc-page-break::after {
+  content: '⤓';
+  position: absolute;
+  top: -0.75em;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  background: #fff;
+  color: #C09B5F;
+  padding: 0 8px;
+  font-size: 12px;
+}
+.wassel-doc-surface .doc-page-break.ProseMirror-selectednode {
+  border-top-color: #B8734F;
+}

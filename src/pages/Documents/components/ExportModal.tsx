@@ -14,10 +14,13 @@ import {
   safeFilename,
   tiptapToMarkdown,
 } from '@/lib/documents/export';
+import type { PageSettings } from '@/lib/documents/pageSettings';
 
 interface Props {
   open: boolean;
   title: string;
+  /** Page geometry + header/footer — flows into PDF/HTML shells and DOCX. */
+  settings: PageSettings;
   /** Live editor content getters — fresh even before the next autosave. */
   getJson: () => JSONContent;
   getHtml: () => string;
@@ -34,7 +37,7 @@ const FORMATS: Array<{ id: Format; icon: LucideIcon }> = [
 ];
 
 /** Export menu — PDF (print engine), DOCX, HTML, Markdown. */
-export default function ExportModal({ open, title, getJson, getHtml, onClose }: Props) {
+export default function ExportModal({ open, title, settings, getJson, getHtml, onClose }: Props) {
   const { t } = useTranslation();
   const isAr = useAppStore((s) => s.language === 'ar');
   const addToast = useAppStore((s) => s.addToast);
@@ -48,17 +51,17 @@ export default function ExportModal({ open, title, getJson, getHtml, onClose }: 
       const dir: 'rtl' | 'ltr' = isAr ? 'rtl' : 'ltr';
       const base = safeFilename(title);
       if (format === 'pdf') {
-        const ok = openPrintPdf(title, getHtml(), dir);
+        const ok = openPrintPdf(title, getHtml(), dir, settings);
         if (!ok) {
           addToast(t('doc.export.popup_blocked'), 'error');
           return;
         }
       } else if (format === 'html') {
-        downloadText(`${base}.html`, buildHtmlShell(title, getHtml(), dir), 'text/html');
+        downloadText(`${base}.html`, buildHtmlShell(title, getHtml(), dir, settings), 'text/html');
       } else if (format === 'md') {
         downloadText(`${base}.md`, tiptapToMarkdown(getJson()), 'text/markdown');
       } else {
-        const blob = await buildDocxBlob(getJson(), isAr);
+        const blob = await buildDocxBlob(getJson(), isAr, settings);
         downloadBlob(`${base}.docx`, blob);
       }
       addToast(t('doc.export.done'), 'success');
