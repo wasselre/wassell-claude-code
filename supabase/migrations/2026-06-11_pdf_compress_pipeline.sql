@@ -198,6 +198,29 @@ END $$;
 REVOKE ALL ON FUNCTION public.pdf_compress_fail(uuid, text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.pdf_compress_fail(uuid, text) TO service_role;
 
+-- ─── 5b. RPC: pdf_compress_requeue ──────────────────────────────────────────
+-- Timeout self-heal. Fly shared-cpu machines throttle to 1/16 vCPU once their
+-- burst credits drain (live 2026-06-11: a 19 MB brochure needs ~95 s of CPU —
+-- 2m50s on a credit-fresh machine, >9 min on a drained one). When a gs run
+-- times out, the worker requeues the job (attempts < 3) instead of failing it,
+-- so a different — likely fresh — machine claims it. Running-only guard, same
+-- as complete/fail. attempts is NOT reset; claim_next increments it.
+CREATE OR REPLACE FUNCTION public.pdf_compress_requeue(p_job_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  v_file uuid;
+BEGIN
+  UPDATE public.pdf_compress_jobs
+     SET status = 'queued', worker_id = NULL, started_at = NULL
+   WHERE id = p_job_id AND status = 'running'
+  RETURNING file_id INTO v_file;
+  RETURN v_file IS NOT NULL;
+END $$;
+
+REVOKE ALL ON FUNCTION public.pdf_compress_requeue(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pdf_compress_requeue(uuid) TO service_role;
+
 -- ─── 6. Watchdog ────────────────────────────────────────────────────────────
 -- A gs run is bounded at 540s in the worker (raised from 240s after a live
 -- 19 MB brochure — the primary use case — hit the shared-cpu ceiling on

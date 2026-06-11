@@ -367,9 +367,10 @@ FOURTH queue on the same Fly worker: `pdf_compress_jobs` compresses PDFs with Gh
 
 **Hard rules — never violate:**
 1. **Never hold an HTTP request open for the compression** (same rule as the other three queues).
-2. **Kill gs as a process GROUP** (`spawn detached:true` + `kill(-pid)`) — same posture as soffice (rule 3 above); 540 s timeout (240 s proved too low live — a 19 MB brochure, the primary use case, is CPU-bound JPEG re-encoding on shared-cpu), 150 MB input cap.
+2. **Kill gs as a process GROUP** (`spawn detached:true` + `kill(-pid)`) — same posture as soffice (rule 3 above); 540 s timeout, 150 MB input cap.
 3. **complete/fail RPCs only touch `status='running'` jobs**; `pdf_compress_watchdog()` sweeps running >15 min (must stay above the 540 s job ceiling).
 4. **Never compress in place.** The result is always a NEW files row + NEW storage object (file bytes are immutable — the office-preview cache depends on it, and a bad compression must never destroy a source document). A failed `files` INSERT must remove the just-uploaded object.
+5. **Timeouts requeue, they don't fail (attempts < 3).** Fly shared-cpu machines throttle to 1/16 vCPU once burst credits drain — measured live 2026-06-11: the SAME 19 MB brochure took 2m50s on a credit-fresh machine and >9 min (timeout) on a drained one. On a gs timeout the worker calls `pdf_compress_requeue` so a different machine claims the job, and sits out 2 poll intervals so the throttled machine doesn't re-claim its own requeue. Don't "fix" a timeout by only raising the ceiling — check which MACHINE ran it first.
 
 ## Offline / Local Fallback
 - All data is mirrored to localStorage

@@ -397,6 +397,33 @@ async function claimAndRunOneCompress(): Promise<boolean> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    // Timeout self-heal: Fly shared-cpu machines throttle to 1/16 vCPU once
+    // their burst credits drain (live 2026-06-11: this exact job took 2m50s
+    // on a fresh machine, >9 min on a drained one). Requeue so a different —
+    // likely credit-fresh — machine claims it; cap at 3 attempts total.
+    if (msg.includes('timed out') && job.attempts < 3) {
+      console.warn(
+        `[worker] compress job=${job.id} timed out (attempt ${job.attempts}) — requeueing for another machine`,
+      );
+      try {
+        const { error: requeueErr } = await supabase.rpc('pdf_compress_requeue', {
+          p_job_id: job.id,
+        });
+        if (!requeueErr) {
+          // Sit out two poll intervals so THIS (likely throttled) machine
+          // doesn't win the race to re-claim its own requeued job — the four
+          // siblings poll every POLL_INTERVAL_MS and will grab it first.
+          await sleep(env.POLL_INTERVAL_MS * 2);
+          return true;
+        }
+        console.error(`[worker] pdf_compress_requeue RPC failed: ${requeueErr.message}`);
+      } catch (requeueInnerErr) {
+        console.error(
+          `[worker] could not requeue compress job: ${(requeueInnerErr as Error).message}`,
+        );
+      }
+      // Requeue path failed — fall through to the normal fail flow.
+    }
     console.error(`[worker] compress job=${job.id} FAILED:`, msg);
     if (err instanceof Error && err.stack) console.error(err.stack);
     try {
