@@ -7,6 +7,7 @@ import {
   Check,
   Cloud,
   CloudOff,
+  FileDown,
   FolderInput,
   Link2,
   ListTree,
@@ -30,6 +31,7 @@ import LinkedRecordsModal from './components/LinkedRecordsModal';
 import CrmVariablesPopover from './components/CrmVariablesPopover';
 import DocAssistModal from './components/DocAssistModal';
 import DocumentOutline from './components/DocumentOutline';
+import ExportModal from './components/ExportModal';
 import { listLinksForFile, type DocumentLink } from '@/lib/documents/links';
 import { resolveDocVariables } from '@/lib/documents/variables';
 import { buildAssistContext } from '@/lib/documents/assist';
@@ -73,6 +75,7 @@ export default function DocumentEditorPage() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
   const [varsOpen, setVarsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
   /** Outline panel visibility — persisted so the preference sticks. Only
    *  rendered on lg+ screens (the canvas margin hosts it). */
   const [outlineOpen, setOutlineOpen] = useState<boolean>(
@@ -427,6 +430,9 @@ export default function DocumentEditorPage() {
               onClick={toggleOutline}
             />
 
+            {/* Export — also for read-only viewers. */}
+            <HeaderIconBtn icon={FileDown} label={t('doc.export.title')} onClick={() => setExportOpen(true)} />
+
             {/* Fullscreen enter / exit — available to everyone (viewers can
                 focus-read too). Exit lives HERE in the header, not floating. */}
             <HeaderIconBtn
@@ -558,6 +564,13 @@ export default function DocumentEditorPage() {
           if (!editor || !assist) return;
           editor.chain().focus().insertContentAt(assist.to, assistResultContent(result, true)).run();
         }}
+      />
+      <ExportModal
+        open={exportOpen}
+        title={file.original_name}
+        getJson={() => editorRef.current?.getJSON() ?? { type: 'doc', content: [] }}
+        getHtml={() => editorRef.current?.getHTML() ?? ''}
+        onClose={() => setExportOpen(false)}
       />
       <CrmVariablesPopover
         open={varsOpen}
