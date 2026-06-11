@@ -13,7 +13,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
-import type { RawTable, ColumnMappingSuggestion } from './types';
+import type { RawTable, ColumnMappingSuggestion, ProjectIntelligenceSection } from './types';
 import type { TargetFieldLite } from './targetFields';
 
 const MIGRATIONS_BUCKET = 'wassel-migrations';
@@ -89,7 +89,9 @@ export async function deleteMigrationFile(path: string): Promise<void> {
 }
 
 export interface ExtractResult extends RawTable {
-  /** mode='project' only: the Arabic marketing document about the project. */
+  /** mode='project' only: the project-level intelligence sections. */
+  intelligence?: ProjectIntelligenceSection[];
+  /** mode='project' only: the Arabic Project Knowledge Document. */
   document?: string;
   files_processed: number;
   files_skipped: { name: string; reason: string }[];
@@ -139,6 +141,10 @@ export async function extractRawTable(
     rows: Array.isArray(body.rows) ? body.rows : [],
     notes: body.notes,
     summary: body.summary,
+    intelligence:
+      Array.isArray(body.intelligence) && body.intelligence.length > 0
+        ? body.intelligence
+        : undefined,
     document: typeof body.document === 'string' && body.document.trim() ? body.document : undefined,
     truncated: Boolean(body.truncated),
     source: 'ai_extract',

@@ -13,11 +13,12 @@ import {
   ChevronDown,
   ChevronRight,
   FileText,
+  Lightbulb,
 } from 'lucide-react';
 import EditableRawGrid from '../EditableRawGrid';
 import { discussExtraction, type MigrationUpload } from '../../lib/client';
 import { targetFieldLites } from '../../lib/targetFields';
-import type { RawTable, ChatMessage } from '../../lib/types';
+import type { RawTable, ChatMessage, ProjectIntelligenceSection } from '../../lib/types';
 import type { AppModel } from '@/types';
 
 interface StepReviewRawProps {
@@ -29,9 +30,11 @@ interface StepReviewRawProps {
   sourceFiles?: MigrationUpload[];
   /** The post-extraction discussion thread (persisted on the record). */
   chat?: ChatMessage[];
-  /** PROJECT-PROFILE mode: the Arabic marketing document — shown in its own
+  /** PROJECT-PROFILE mode: the Arabic knowledge document — shown in its own
    * editable panel and saved onto the project record at import. */
   projectDocument?: string;
+  /** PROJECT-PROFILE mode: the project-level intelligence sections (read-only). */
+  projectIntelligence?: ProjectIntelligenceSection[];
   /** Persist document edits (debounced by this component). */
   onProjectDocument?: (doc: string) => void;
   /** Persist edits (debounced by this component). */
@@ -83,6 +86,7 @@ export default function StepReviewRaw({
   sourceFiles,
   chat,
   projectDocument,
+  projectIntelligence,
   onProjectDocument,
   onChange,
   onReplace,
@@ -96,6 +100,7 @@ export default function StepReviewRaw({
   const [aiInput, setAiInput] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [discussOpen, setDiscussOpen] = useState(true);
+  const [intelOpen, setIntelOpen] = useState(false);
   const [docOpen, setDocOpen] = useState(false);
   const [docDraft, setDocDraft] = useState(projectDocument ?? '');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -268,8 +273,46 @@ export default function StepReviewRaw({
         </div>
       )}
 
-      {/* PROJECT-PROFILE mode: the Arabic marketing document — the content
-          writers' source of truth. Editable; saved onto the project record's
+      {/* PROJECT-PROFILE mode: the project-level intelligence — the AI's
+          understanding of the project as a whole (positioning, audience,
+          design, pricing/area insights…). Read-only; persisted on the
+          migration record. */}
+      {projectIntelligence && projectIntelligence.length > 0 && (
+        <div className="mb-3 rounded-xl border border-copper/30 bg-copper/[0.04] overflow-hidden shrink-0">
+          <button
+            onClick={() => setIntelOpen((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-charcoal hover:bg-copper/[0.08] transition-colors"
+          >
+            {intelOpen ? (
+              <ChevronDown size={15} />
+            ) : (
+              <ChevronRight size={15} className={isAr ? 'rotate-180' : ''} />
+            )}
+            <Lightbulb size={15} className="text-copper" />
+            <span className="flex-1 text-start">
+              {isAr ? 'تحليل المشروع' : 'Project intelligence'}
+            </span>
+            <span className="text-[11px] text-charcoal/40 font-normal">
+              {isAr ? `${projectIntelligence.length} قسم` : `${projectIntelligence.length} sections`}
+            </span>
+          </button>
+          {intelOpen && (
+            <div className="px-3 pb-3 max-h-80 overflow-y-auto space-y-2">
+              {projectIntelligence.map((sec, i) => (
+                <div key={i} className="bg-white/70 rounded-lg p-2.5 border border-sand/30">
+                  <div className="text-xs font-bold text-copper mb-1">{sec.title}</div>
+                  <div className="text-xs text-charcoal/80 whitespace-pre-wrap leading-relaxed">
+                    {sec.content}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* PROJECT-PROFILE mode: the Arabic project knowledge document — the
+          teams' source of truth. Editable; saved onto the project record's
           marketing_document field at import. (Gated on the prop, not the
           draft, so clearing the textarea doesn't unmount the editor.) */}
       {projectDocument !== undefined && onProjectDocument && (
@@ -295,8 +338,8 @@ export default function StepReviewRaw({
             <div className="px-3 pb-3">
               <p className="text-[11px] text-charcoal/50 mb-2">
                 {isAr
-                  ? 'مرجع كتّاب المحتوى — تُحفظ في حقل «الوثيقة التسويقية» بسجل المشروع عند الترحيل. حرّرها بحرّية قبل المتابعة.'
-                  : 'The content writers’ source of truth — saved into the project record’s "Marketing Document" field on import. Edit it freely before continuing.'}
+                  ? 'المرجع الدائم لفرق المبيعات والمحتوى والتسويق — تُحفظ في حقل «الوثيقة التسويقية» بسجل المشروع عند الترحيل. حرّرها بحرّية قبل المتابعة.'
+                  : 'The permanent source of truth for the sales, content, and marketing teams — saved into the project record’s "Marketing Document" field on import. Edit it freely before continuing.'}
               </p>
               <textarea
                 dir="auto"

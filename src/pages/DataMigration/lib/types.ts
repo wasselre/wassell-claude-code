@@ -41,6 +41,14 @@ export function isProjectProfileTarget(model: AppModel): boolean {
 /** Target-model field slug that receives the generated marketing document. */
 export const MARKETING_DOC_FIELD = 'marketing_document';
 
+/** One titled section of the project-level intelligence layer (PROJECT-PROFILE
+ * mode): overview, concept & positioning, target audience, design philosophy,
+ * pricing/area insights… Wizard-facing understanding of the whole project. */
+export interface ProjectIntelligenceSection {
+  title: string;
+  content: string;
+}
+
 /** Fine-grained wizard position, persisted on `record.data.step`. */
 export type MigrationStep =
   | 'pick_model'
@@ -103,10 +111,15 @@ export interface MigrationData {
   /** Realtime progress sub-phase for the async (worker) steps. */
   phase?: string;
   raw_table?: RawTable;
-  /** PROJECT-PROFILE mode only: the Arabic marketing document the extraction
-   * wrote about the project. Editable in the review step; injected into the
-   * target record's `marketing_document` field by buildMigrationPlan. */
+  /** PROJECT-PROFILE mode only: the Arabic Project Knowledge Document the
+   * extraction wrote about the project. Editable in the review step; injected
+   * into the target record's `marketing_document` field by buildMigrationPlan. */
   project_document?: string;
+  /** PROJECT-PROFILE mode only: the project-level intelligence sections —
+   * shown read-only in the review step; persisted here for later reference,
+   * never written into the imported record (the document is the permanent
+   * artifact). */
+  project_intelligence?: ProjectIntelligenceSection[];
   /** Uploaded source files (storage paths) — kept so the post-extraction
    * discussion can re-read the brochure (incl. floor plans). */
   source_files?: { path: string; name: string; mimeType: string; size: number }[];

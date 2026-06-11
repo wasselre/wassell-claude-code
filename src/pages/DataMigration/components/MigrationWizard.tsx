@@ -100,12 +100,13 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               isAr={isAr}
               recordId={recordId}
               model={targetModel}
-              onTable={(table, sourceFiles, projectDocument) =>
+              onTable={(table, sourceFiles, extras) =>
                 patch({
                   raw_table: table,
                   step: 'review_raw',
                   source_files: sourceFiles,
-                  project_document: projectDocument,
+                  project_document: extras?.projectDocument,
+                  project_intelligence: extras?.projectIntelligence,
                 })
               }
             />
@@ -122,6 +123,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 sourceFiles={data.source_files}
                 chat={data.chat}
                 projectDocument={data.project_document}
+                projectIntelligence={data.project_intelligence}
                 onProjectDocument={(d) => patch({ project_document: d })}
                 onChange={(t) => patch({ raw_table: t })}
                 onReplace={(t) =>
@@ -144,12 +146,13 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 isAr={isAr}
                 recordId={recordId}
                 model={targetModel}
-                onTable={(table, sourceFiles, projectDocument) =>
+                onTable={(table, sourceFiles, extras) =>
                   patch({
                     raw_table: table,
                     step: 'review_raw',
                     source_files: sourceFiles,
-                    project_document: projectDocument,
+                    project_document: extras?.projectDocument,
+                    project_intelligence: extras?.projectIntelligence,
                   })
                 }
               />

@@ -20,8 +20,14 @@ import {
 } from '../../lib/client';
 import { targetFieldLites } from '../../lib/targetFields';
 import { isProjectProfileTarget } from '../../lib/types';
-import type { RawTable } from '../../lib/types';
+import type { RawTable, ProjectIntelligenceSection } from '../../lib/types';
 import type { AppModel } from '@/types';
+
+/** PROJECT-PROFILE mode extras returned alongside the table. */
+export interface ProjectExtras {
+  projectDocument?: string;
+  projectIntelligence?: ProjectIntelligenceSection[];
+}
 
 interface StepUploadProps {
   isAr: boolean;
@@ -29,8 +35,8 @@ interface StepUploadProps {
   /** The chosen target model — its fields are sent to extraction as a
    * "what to look for" hunt-list (extraction is model-aware). */
   model: AppModel;
-  /** projectDocument is set only in PROJECT-PROFILE mode (projects target). */
-  onTable: (table: RawTable, sourceFiles?: MigrationUpload[], projectDocument?: string) => void;
+  /** extras are set only in PROJECT-PROFILE mode (projects target). */
+  onTable: (table: RawTable, sourceFiles?: MigrationUpload[], extras?: ProjectExtras) => void;
 }
 
 const EXCEL_EXT = /\.(xlsx|xls|csv)$/i;
@@ -145,7 +151,7 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
           source: 'ai_extract',
         },
         uploads,
-        result.document,
+        { projectDocument: result.document, projectIntelligence: result.intelligence },
       );
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -192,8 +198,8 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
               {isAr ? 'وضع ملف المشروع: ' : 'Project profile mode: '}
             </span>
             {isAr
-              ? 'سيستخرج Claude المعلومات العامة للمشروع بالتفصيل (صفًا واحدًا — بدون جدول وحدات)، ويكتب وثيقة تسويقية شاملة بالعربية تُحفظ في سجل المشروع لتكون مرجع كتّاب المحتوى.'
-              : "Claude will extract the project's general information in detail (one row — no units table) and write a comprehensive Arabic marketing document, saved on the project record as the content writers' source of truth."}
+              ? 'سيستخرج Claude معلومات المشروع العامة بالتفصيل (صفًا واحدًا — بدون جدول وحدات)، ويبني تحليلًا شاملًا للمشروع (التموضع، الجمهور، التصميم، الأسعار…)، ويكتب وثيقة معرفية تسويقية بالعربية تُحفظ في سجل المشروع لتكون المرجع الدائم لفرق المبيعات والمحتوى والتسويق.'
+              : "Claude will extract the project's general information in detail (one row — no units table), build a project intelligence briefing (positioning, audience, design, pricing…), and write an Arabic project knowledge document saved on the record as the permanent source of truth for sales, content, and marketing."}
           </div>
         </div>
       )}

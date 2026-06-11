@@ -57,6 +57,12 @@ export interface ExtractFileInput {
   url: string;
 }
 
+/** One titled section of the project-level intelligence layer (mode='project'). */
+export interface ProjectIntelligenceSection {
+  title: string;
+  content: string;
+}
+
 export interface RawTableResult {
   headers: string[];
   rows: string[][];
@@ -64,8 +70,14 @@ export interface RawTableResult {
   /** Human-readable report of what was extracted — esp. how each numeric column
    * was derived (which text mentions / plan features) and its source. */
   summary?: string;
-  /** mode='project' only: the Arabic marketing / reference document describing
-   * the whole project — saved onto the project record at import time. */
+  /** mode='project' only: the project-level intelligence layer — titled
+   * sections (overview, positioning, target audience, design, pricing/area
+   * insights…) that explain the PROJECT as a whole. Wizard-facing; persisted
+   * on the migration record, never written into the imported record. */
+  intelligence?: ProjectIntelligenceSection[];
+  /** mode='project' only: the Arabic project knowledge document (source of
+   * truth for sales / content / marketing) — saved onto the project record's
+   * marketing_document field at import time. */
   document?: string;
   truncated: boolean;
   files_processed: number;
@@ -107,12 +119,31 @@ function buildExtractTool(mode: ExtractMode): Anthropic.Tool {
     },
   };
   if (mode === 'project') {
+    properties.intelligence = {
+      type: 'array',
+      description:
+        'PROJECT-LEVEL INTELLIGENCE: titled sections that explain the project as a whole (overview, developer, ' +
+        'location & neighborhood, concept & positioning, target audience, advantages, amenities, construction status, ' +
+        'guarantees, design philosophy, architecture & facades, unit mix, pricing insights, area insights, ' +
+        'distinguishing features, unique selling points, anything else important). Concise and factual; ' +
+        'OMIT any section the files do not support.',
+      items: {
+        type: 'object',
+        properties: {
+          title: { type: 'string', description: 'Short section title.' },
+          content: { type: 'string', description: 'The section briefing — a few sentences or bullet lines ("- ").' },
+        },
+        required: ['title', 'content'],
+      },
+    };
     properties.document = {
       type: 'string',
       description:
-        'The complete Arabic marketing / reference document describing the project (Markdown, with headings). ' +
-        'Comprehensive: overview, location, developer, every unit model with its specs, finishes, amenities, ' +
-        'guarantees, prices / payment terms as stated, and the key selling points. Grounded ONLY in the files — never invent.',
+        'The complete Arabic Project Knowledge Document (Markdown, with headings) — the permanent source of truth ' +
+        'for sales / content / marketing teams. Comprehensive: description & story, positioning, location, developer, ' +
+        'unit models & categories, design & architecture, construction info, finishes, amenities, guarantees, ' +
+        'prices / payment terms as stated, key selling points, competitive advantages, target customer profile, ' +
+        'and a quick-facts list. Grounded ONLY in the files — never invent.',
     };
   }
   return {
@@ -120,14 +151,17 @@ function buildExtractTool(mode: ExtractMode): Anthropic.Tool {
     description:
       mode === 'project'
         ? 'Return the PROJECT-level information extracted from the uploaded files as ONE table (one row per project — ' +
-          'normally exactly one row), PLUS the Arabic marketing document describing the project.'
+          'normally exactly one row), PLUS the project intelligence sections, PLUS the Arabic Project Knowledge Document.'
         : 'Return ALL tabular data extracted from the uploaded files as ONE unified table. ' +
           'Union every distinct column seen across files into a single header row; a row ' +
           'lacking a column gets an empty string. One logical record per row.',
     input_schema: {
       type: 'object',
       properties,
-      required: mode === 'project' ? ['headers', 'rows', 'truncated', 'document'] : ['headers', 'rows', 'truncated'],
+      required:
+        mode === 'project'
+          ? ['headers', 'rows', 'truncated', 'intelligence', 'document']
+          : ['headers', 'rows', 'truncated'],
     } as Anthropic.Tool['input_schema'],
   };
 }
@@ -159,26 +193,39 @@ ONE TABLE:
 
 /** Appended to EXTRACT_SYSTEM when mode='project' — overrides the one-row-per-
  * unit framing: the destination is the PROJECTS model, so the operator wants
- * the project itself (plus an Arabic marketing document), never a unit table. */
+ * the project itself (plus the intelligence layer + the Arabic knowledge
+ * document), never a unit table. */
 const EXTRACT_PROJECT_MODE = `
 
 PROJECT-PROFILE MODE — THIS RUN OVERRIDES "one unit per row":
-The destination is the PROJECTS model. The operator wants the PROJECT in detail — NOT its units.
+The destination is the PROJECTS model. The operator wants a detailed understanding of the PROJECT as a whole — NOT individual unit records. You produce THREE outputs in one tool call: (1) the migration table, (2) the project intelligence sections, (3) the Arabic Project Knowledge Document.
+
+1) THE TABLE — one row per project:
 - Output ONE ROW PER PROJECT (normally exactly one row). NEVER one row per unit — do not produce a unit table.
 - Columns = project-level facts, in DETAIL: project name, developer, city / district, location link, project type, construction status, total number of units (as the source states or as you count), unit TYPES / MODELS offered (comma-separated, e.g. "شقة، دوبلكس، فيلا" or model names "نموذج A، نموذج B"), amenities & services, guarantees / warranties (الضمانات), payment terms, handover / completion date, licenses (رخصة البيع على الخارطة، الوسيط العقاري…), and ANY other project-level information the files contain.
-- STILL read every unit list and floor plan DEEPLY — but to UNDERSTAND the project as a whole: aggregate what you learn (which models exist, what each model offers, the span of areas / prices / rooms across the project). That understanding feeds the columns above and the document below — it must NOT become per-unit rows.
+- STILL read every unit list and floor plan DEEPLY — but to UNDERSTAND the project as a whole: aggregate what you learn (which models exist, what each model offers, the span of areas / prices / rooms across the project). That understanding feeds the table, the intelligence, and the document — it must NOT become per-unit rows.
 
-THE DOCUMENT (required in this mode):
-Also write "document": a comprehensive Arabic descriptive / marketing document about the project — the single source of truth content writers will work from instead of reading unit tables. Markdown with clear headings. Cover everything the files support, typically:
-- نظرة عامة على المشروع (the concept, scale, what it is)
-- الموقع وسهولة الوصول (district, city, nearby landmarks/roads as stated)
-- المطوّر (who they are, as stated)
-- نماذج الوحدات (one subsection PER MODEL/TYPE: its areas, rooms, components — combine the floor plan and the text)
-- المواصفات والتشطيبات
-- المرافق والخدمات
-- الضمانات
+2) THE INTELLIGENCE ("intelligence", required) — the project-level understanding layer:
+Titled sections, each a concise factual briefing (a few sentences or "- " bullet lines) that together explain the project itself. Cover every dimension the files support — typically:
+- نظرة عامة على المشروع (overview) · المطوّر (developer) · الموقع والحي (location & neighborhood)
+- مفهوم المشروع وتموضعه (concept & positioning) · الجمهور المستهدف (target audience)
+- مزايا المشروع (advantages) · المرافق والخدمات (amenities & facilities) · حالة الإنشاء (construction status)
+- الضمانات (guarantees & warranties) · الفلسفة التصميمية (design philosophy) · العمارة والواجهات (architecture & facades)
+- مزيج الوحدات وأنواعها (unit mix & types) · رؤى الأسعار (pricing insights) · رؤى المساحات (area insights)
+- الملامح المميزة (distinguishing features) · نقاط البيع الفريدة (unique selling points) · plus any other important project-level dimension you find.
+Rules: factual and analytical, grounded ONLY in the files. Insights may include arithmetic DERIVED from in-file numbers (e.g. price-per-m² from a stated price and area) — clearly phrased as derived — but NEVER external market knowledge. Where the files imply but don't state a dimension (e.g. target audience implied by unit sizes and tone), say so explicitly ("يُستدل من…"). OMIT dimensions with nothing to support them — no padding.
+
+3) THE DOCUMENT ("document", required) — the Arabic Project Knowledge Document:
+A comprehensive Arabic document — the PERMANENT source of truth about this project for the sales, content, and marketing teams, so they understand the entire project without reading brochures, floor plans, or unit tables. Markdown with clear headings. Informative and marketing-oriented prose (not raw extracted data). Cover everything the files support, typically:
+- نظرة عامة ووصف كامل للمشروع (complete description) · قصة المشروع وتموضعه (story & positioning)
+- الموقع وسهولة الوصول (district, city, nearby landmarks/roads as stated) · المطوّر (who they are, as stated)
+- نماذج الوحدات وفئاتها (one subsection PER MODEL/TYPE: its areas, rooms, components — combine the floor plan and the text)
+- الفلسفة التصميمية والعمارة والواجهات (design features) · المواصفات والتشطيبات
+- معلومات الإنشاء والتسليم · المرافق والخدمات · الضمانات
 - الأسعار وخطط السداد (exactly as the source states them)
-- أبرز نقاط البيع (the strongest selling points, drawn from the facts)
+- أبرز نقاط البيع (key selling points) · المزايا التنافسية (competitive advantages, as supported by the files)
+- العميل المستهدف (target customer profile, where supported or clearly implied)
+- حقائق سريعة (a closing quick-facts list of the most frequently referenced numbers: prices, areas, yields, dates, contacts)
 Rules for the document: write it in Arabic ALWAYS (regardless of the UI language); a confident marketing register but 100% grounded — every claim must come from the files; if the files don't state something, OMIT it (never invent, never pad with generic real-estate filler); keep numbers exactly as the source gives them.`;
 
 function fileExtensionMime(name: string): string | null {
@@ -328,6 +375,7 @@ export async function runExtract(
     rows?: unknown;
     notes?: unknown;
     summary?: unknown;
+    intelligence?: unknown;
     document?: unknown;
     truncated?: unknown;
   };
@@ -338,11 +386,25 @@ export async function runExtract(
     Array.isArray(r) ? r.map((c) => String(c ?? '')) : [],
   );
 
+  const intelligence: ProjectIntelligenceSection[] | undefined =
+    mode === 'project' && Array.isArray(out.intelligence)
+      ? out.intelligence
+          .map((s) => {
+            const o = s as Record<string, unknown>;
+            return {
+              title: typeof o.title === 'string' ? o.title.trim() : '',
+              content: typeof o.content === 'string' ? o.content.trim() : '',
+            };
+          })
+          .filter((s) => s.title && s.content)
+      : undefined;
+
   return {
     headers,
     rows,
     notes: typeof out.notes === 'string' ? out.notes : undefined,
     summary: typeof out.summary === 'string' ? out.summary : undefined,
+    intelligence: intelligence && intelligence.length > 0 ? intelligence : undefined,
     document:
       mode === 'project' && typeof out.document === 'string' && out.document.trim()
         ? out.document
