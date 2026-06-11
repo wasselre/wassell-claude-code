@@ -130,6 +130,21 @@ export async function assertCanAccessFile(
   }
 }
 
+/** Folder twin of assertCanAccessFile — calls wassell_can_access_folder under
+ *  the caller's JWT before any service-role folder operation. */
+export async function assertCanAccessFolder(
+  jwtClient: SupabaseClient,
+  folderId: string,
+  kind: 'view' | 'edit' | 'delete',
+): Promise<void> {
+  const { data, error } = await jwtClient.rpc('wassell_can_access_folder', {
+    p_folder_id: folderId,
+    p_kind: kind,
+  });
+  if (error) throw new AuthError(500, `permission check failed: ${error.message}`);
+  if (!data) throw new AuthError(403, 'not allowed');
+}
+
 export interface FileMetadata {
   id: string;
   storage_bucket: string;

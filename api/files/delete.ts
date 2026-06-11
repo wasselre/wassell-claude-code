@@ -42,7 +42,15 @@ export default async function handler(req: Request): Promise<Response> {
     const { error: rowErr } = await svc.from('files').delete().eq('id', file.id);
     if (rowErr) return jsonError(500, `file delete failed: ${rowErr.message}`);
 
-    const { error: storageErr } = await svc.storage.from(file.storage_bucket).remove([file.storage_path]);
+    // Remove the original + the office-preview artifact (if one was ever
+    // converted). wassel_doc sentinel paths have no storage object.
+    const paths = [
+      ...(file.storage_path.startsWith('doc:') ? [] : [file.storage_path]),
+      ...(file.preview_storage_path ? [file.preview_storage_path] : []),
+    ];
+    const { error: storageErr } = paths.length
+      ? await svc.storage.from(file.storage_bucket).remove(paths)
+      : { error: null };
     if (storageErr) {
       console.warn('[files] storage object removal failed (row deleted, orphan left):', storageErr.message);
     }

@@ -30,6 +30,7 @@ import {
 import { formatBytes, kindAccent, kindIcon } from '@/lib/files/format';
 import { useAppStore } from '@/stores/appStore';
 import type { AttachmentRef, FileRow, FolderRow } from '@/types';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 import FilePreviewModal from './FilePreviewModal';
 import TileMenu from './TileMenu';
 
@@ -337,11 +338,16 @@ export default function DriveBrowserModal({
     }
   };
 
-  const handleDeleteFile = async (f: FileRow) => {
-    const msg = isAr
-      ? `حذف "${f.original_name}"؟ لا يمكن التراجع.`
-      : `Delete "${f.original_name}"? This cannot be undone.`;
-    if (!window.confirm(msg)) return;
+  /** Pending delete — app-styled ConfirmModal instead of window.confirm. */
+  const [confirmTarget, setConfirmTarget] = useState<
+    { kind: 'file'; file: FileRow } | { kind: 'folder'; folder: FolderRow } | null
+  >(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
+  const handleDeleteFile = (f: FileRow) => setConfirmTarget({ kind: 'file', file: f });
+  const handleDeleteFolder = (folder: FolderRow) => setConfirmTarget({ kind: 'folder', folder });
+
+  const doDeleteFile = async (f: FileRow) => {
     try {
       await deleteFile(f.id);
       setFiles((prev) => prev.filter((x) => x.id !== f.id));
@@ -358,13 +364,9 @@ export default function DriveBrowserModal({
     }
   };
 
-  const handleDeleteFolder = async (folder: FolderRow) => {
-    const msg = isAr
-      ? `حذف "${folder.name}"؟ لا يمكن التراجع.`
-      : `Delete "${folder.name}"? This cannot be undone.`;
-    if (!window.confirm(msg)) return;
+  const doDeleteFolder = async (folder: FolderRow) => {
     try {
-      await deleteFolder(folder.id);
+      await deleteFolder(folder.id); // recursive — contents included
       setFolders((prev) => prev.filter((x) => x.id !== folder.id));
       setSelectedFolderIds((prev) => {
         if (!prev.has(folder.id)) return prev;
@@ -373,7 +375,7 @@ export default function DriveBrowserModal({
         return next;
       });
     } catch {
-      /* surfaced by client (typically "Folder is not empty") */
+      /* surfaced by client */
     }
   };
 
@@ -607,6 +609,31 @@ export default function DriveBrowserModal({
         onRenamed={(updated) => {
           setFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)));
           setPreviewFile(updated);
+        }}
+      />
+      <ConfirmModal
+        open={!!confirmTarget}
+        busy={confirmBusy}
+        title={confirmTarget?.kind === 'folder' ? t('files.delete.folder_title') : t('files.delete.file_title')}
+        message={
+          confirmTarget?.kind === 'folder'
+            ? t('files.delete.folder_message', { name: confirmTarget.folder.name })
+            : t('files.delete.file_message', {
+                name: confirmTarget?.kind === 'file' ? confirmTarget.file.original_name : '',
+              })
+        }
+        confirmLabel={t('files.actions.delete')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmTarget(null)}
+        onConfirm={() => {
+          if (!confirmTarget) return;
+          setConfirmBusy(true);
+          const run =
+            confirmTarget.kind === 'file' ? doDeleteFile(confirmTarget.file) : doDeleteFolder(confirmTarget.folder);
+          void run.finally(() => {
+            setConfirmBusy(false);
+            setConfirmTarget(null);
+          });
         }}
       />
     </div>,

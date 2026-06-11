@@ -607,26 +607,28 @@ export async function renameFolder(folderId: string, name: string): Promise<Fold
   return data as FolderRow;
 }
 
-export async function deleteFolder(folderId: string): Promise<void> {
-  if (!supabase) throw surfaceError('delete folder', new Error('Supabase not configured'));
-  // Refuse delete if non-empty — the FK on folders.parent_folder_id is RESTRICT
-  // so PG would error anyway, but a clearer toast helps.
-  const [{ count: subCount }, { count: fileCount }] = await Promise.all([
-    supabase.from('folders').select('id', { count: 'exact', head: true }).eq('parent_folder_id', folderId),
-    supabase.from('files').select('id', { count: 'exact', head: true }).eq('folder_id', folderId),
-  ]);
-  if ((subCount ?? 0) > 0 || (fileCount ?? 0) > 0) {
-    throw surfaceError('delete folder', new Error('Folder is not empty'));
-  }
-  const { error } = await supabase.from('folders').delete().eq('id', folderId);
-  if (error) throw surfaceError('delete folder', error);
-
-  void logFileActivity({
-    event_type: 'folder_delete',
-    summary_ar: 'حذف مجلد',
-    summary_en: 'Deleted folder',
-    details: { folder_id: folderId },
+/**
+ * Recursively delete a folder — every file and subfolder inside, at any
+ * depth (server-side endpoint; permission-gated on DELETE of the root
+ * folder). The Google-Drive expectation. Callers MUST confirm with the
+ * user first (ConfirmModal), spelling out that contents go too.
+ */
+export async function deleteFolder(folderId: string): Promise<{ folders: number; files: number }> {
+  const res = await fetch('/api/files/delete-folder', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ folderId }),
   });
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    folders_deleted?: number;
+    files_deleted?: number;
+    error?: string;
+  };
+  if (!res.ok || !body.ok) {
+    throw surfaceError('delete folder', new Error(body.error ?? `HTTP ${res.status}`));
+  }
+  return { folders: body.folders_deleted ?? 1, files: body.files_deleted ?? 0 };
 }
 
 // ─── File operations ────────────────────────────────────────────────────

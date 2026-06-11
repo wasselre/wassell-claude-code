@@ -21,6 +21,7 @@ import {
   signViewUrls,
   type DriveSearchResult,
 } from '@/lib/files/client';
+import ConfirmModal from '@/components/ui/ConfirmModal';
 import FilesTabs from './components/FilesTabs';
 import NewDocumentModal from './components/NewDocumentModal';
 import FilesBreadcrumb from './components/FilesBreadcrumb';
@@ -597,8 +598,21 @@ export default function FilesPage({ forceShared = false }: Props) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     }
   };
-  const onDeleteFile = async (f: FileRow) => {
-    if (!window.confirm(t('files.delete.confirm', { name: f.original_name }))) return;
+  /** Pending destructive action — drives the app-styled ConfirmModal (the
+   *  native window.confirm popups are gone; they were off-brand and couldn't
+   *  explain that folder deletion takes the contents too). */
+  const [confirmAction, setConfirmAction] = useState<
+    | { kind: 'file'; file: FileRow }
+    | { kind: 'folder'; folder: FolderRow }
+    | { kind: 'bulk' }
+    | null
+  >(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
+  const onDeleteFile = (f: FileRow) => setConfirmAction({ kind: 'file', file: f });
+  const onDeleteFolder = (folder: FolderRow) => setConfirmAction({ kind: 'folder', folder });
+
+  const doDeleteFile = async (f: FileRow) => {
     try {
       await deleteFile(f.id);
       addToast(t('toast.deleted'), 'success');
@@ -608,11 +622,10 @@ export default function FilesPage({ forceShared = false }: Props) {
       // surfaceError already toasted
     }
   };
-  const onDeleteFolder = async (folder: FolderRow) => {
-    if (!window.confirm(t('files.delete.confirm', { name: folder.name }))) return;
+  const doDeleteFolder = async (folder: FolderRow) => {
     try {
-      await deleteFolder(folder.id);
-      addToast(t('toast.deleted'), 'success');
+      const { files: removedFiles } = await deleteFolder(folder.id);
+      addToast(t('files.delete.folder_done', { count: removedFiles }), 'success');
       await reload();
     } catch {
       /* surfaced */
@@ -696,17 +709,18 @@ export default function FilesPage({ forceShared = false }: Props) {
     }
   }, [selectedFiles, addToast, t]);
 
-  const onBulkDelete = useCallback(async () => {
+  const onBulkDelete = useCallback(() => {
     if (deletableSelected.total === 0) {
       addToast(t('files.bulk.no_deletable'), 'error');
       return;
     }
-    if (!window.confirm(t('files.bulk.delete_confirm', { count: deletableSelected.total }))) return;
+    setConfirmAction({ kind: 'bulk' });
+  }, [deletableSelected, addToast, t]);
+
+  const doBulkDelete = useCallback(async () => {
     setBulkBusy(true);
     let ok = 0;
     const total = deletableSelected.total;
-    // Files first, then folders (folders may become empty after files inside
-    // them get removed by a future folder-bulk-delete extension; harmless now).
     for (const f of deletableSelected.files) {
       try {
         await deleteFile(f.id);
@@ -715,12 +729,14 @@ export default function FilesPage({ forceShared = false }: Props) {
         /* toasted */
       }
     }
+    // Folders delete recursively (contents included) — the confirm modal
+    // already warned about it.
     for (const folder of deletableSelected.folders) {
       try {
         await deleteFolder(folder.id);
         ok += 1;
       } catch {
-        /* toasted (typically "Folder is not empty") */
+        /* toasted */
       }
     }
     setBulkBusy(false);
@@ -976,6 +992,41 @@ export default function FilesPage({ forceShared = false }: Props) {
       <UploadDropzone folderId={currentFolderId} enabled={uploadEnabled} onUploaded={onUploaded} />
 
       {/* Modals */}
+      <ConfirmModal
+        open={!!confirmAction}
+        busy={confirmBusy}
+        title={
+          confirmAction?.kind === 'folder'
+            ? t('files.delete.folder_title')
+            : confirmAction?.kind === 'bulk'
+            ? t('files.bulk.delete_title')
+            : t('files.delete.file_title')
+        }
+        message={
+          confirmAction?.kind === 'folder'
+            ? t('files.delete.folder_message', { name: confirmAction.folder.name })
+            : confirmAction?.kind === 'bulk'
+            ? t('files.bulk.delete_message', { count: deletableSelected.total })
+            : t('files.delete.file_message', { name: confirmAction?.kind === 'file' ? confirmAction.file.original_name : '' })
+        }
+        confirmLabel={t('files.actions.delete')}
+        cancelLabel={t('common.cancel')}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={() => {
+          if (!confirmAction) return;
+          setConfirmBusy(true);
+          const run =
+            confirmAction.kind === 'file'
+              ? doDeleteFile(confirmAction.file)
+              : confirmAction.kind === 'folder'
+              ? doDeleteFolder(confirmAction.folder)
+              : doBulkDelete();
+          void run.finally(() => {
+            setConfirmBusy(false);
+            setConfirmAction(null);
+          });
+        }}
+      />
       <NewDocumentModal
         open={newDocOpen}
         folderId={currentFolderId}
