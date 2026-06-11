@@ -115,6 +115,8 @@ export function buildHtmlShell(
   hr { border: none; border-top: 1px solid #D4B896; margin: 1.4em 0; }
   a { color: #8E4E3A; }
   [data-mention] { background: rgba(184,115,79,.12); border-radius: 6px; padding: 0 4px; color: #8E4E3A; font-weight: 700; }
+  span[data-suggest='insert'] { color: #8E4E3A; background: rgba(184,115,79,.08); text-decoration: underline; text-underline-offset: 3px; }
+  span[data-suggest='delete'] { color: #B91C1C; background: rgba(185,28,28,.06); text-decoration: line-through; }
   .doc-page-break { border-top: 1px dashed #C09B5F; margin: 1.4em 0; }
   .page-running { display: none; }
   @media print {
@@ -265,6 +267,9 @@ function inlineToMd(nodes: JSONContent[]): string {
       if (has('strike')) text = `~~${text}~~`;
       const link = marks.find((x) => x.type === 'link');
       if (link) text = `[${text}](${String(link.attrs?.href ?? '')})`;
+      // Tracked changes export faithfully — <ins>/<del> are valid in GFM.
+      if (has('suggestInsert')) text = `<ins>${text}</ins>`;
+      if (has('suggestDelete')) text = `<del>${text}</del>`;
       return text;
     })
     .join('');
@@ -476,12 +481,17 @@ function inlineToDocx(nodes: JSONContent[], bidi: boolean): Array<TextRun | Exte
     }
     const marks = n.marks ?? [];
     const has = (m: string) => marks.some((x) => x.type === m);
+    // Tracked changes render faithfully: proposed inserts copper+underline,
+    // proposed deletes red+strikethrough (matching the editor's look).
+    const sIns = has('suggestInsert');
+    const sDel = has('suggestDelete');
     const run = new TextRun({
       text: n.text ?? '',
       bold: has('bold'),
       italics: has('italic'),
-      strike: has('strike'),
-      underline: has('underline') ? {} : undefined,
+      strike: has('strike') || sDel,
+      underline: has('underline') || sIns ? {} : undefined,
+      color: sDel ? 'B91C1C' : sIns ? '8E4E3A' : undefined,
       rightToLeft: bidi,
     });
     const link = marks.find((x) => x.type === 'link');

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Editor } from '@tiptap/react';
+import { useAppStore } from '@/stores/appStore';
+import { findRunAtSelection, findSuggestionRuns } from './SuggestionExtensions';
 import {
   Bold,
   Italic,
@@ -36,6 +38,10 @@ import {
   AlignEndVertical,
   WrapText,
   MessageSquarePlus,
+  PencilLine,
+  Check,
+  X,
+  CheckCheck,
 } from 'lucide-react';
 
 /**
@@ -56,10 +62,21 @@ interface Props {
   /** Comment on the current selection — the parent snapshots the range and
    *  opens the comments panel composer. Disabled on empty selections. */
   onAddComment?: () => void;
+  /** Suggestions (tracked changes) toggle — owned by the page. */
+  suggesting?: boolean;
+  onToggleSuggesting?: () => void;
 }
 
-export default function DocumentToolbar({ editor, onInsertImage, onAddComment }: Props) {
+export default function DocumentToolbar({
+  editor,
+  onInsertImage,
+  onAddComment,
+  suggesting,
+  onToggleSuggesting,
+}: Props) {
   const { t } = useTranslation();
+  const isAr = useAppStore((s) => s.language === 'ar');
+  const users = useAppStore((s) => s.users);
 
   // Re-render on every editor transaction so SELECTION-driven state is live:
   // the contextual table controls must appear the moment the caret enters a
@@ -87,6 +104,16 @@ export default function DocumentToolbar({ editor, onInsertImage, onAddComment }:
   }, [editor, t]);
 
   if (!editor) return null;
+
+  // Suggestions: live per-transaction (this component re-renders on every
+  // editor transaction — see the effect above).
+  const activeRun = findRunAtSelection(editor.state);
+  const suggestionCount = findSuggestionRuns(editor.state.doc).length;
+  const authorName = (id: string | null): string => {
+    if (!id) return t('doc.comments.unknown_user');
+    const u = users.find((x) => x.id === id);
+    return u ? (isAr ? u.name_ar : u.name_en) || u.email : t('doc.comments.unknown_user');
+  };
 
   return (
     <div className="border-b border-sand/30 bg-white/80 backdrop-blur-sm sticky top-0 z-10">
@@ -233,6 +260,14 @@ export default function DocumentToolbar({ editor, onInsertImage, onAddComment }:
               onClick={onAddComment}
             />
           )}
+          {onToggleSuggesting && (
+            <Btn
+              icon={PencilLine}
+              label={t('doc.suggest.toggle')}
+              active={!!suggesting}
+              onClick={onToggleSuggesting}
+            />
+          )}
         </Group>
 
         <Divider />
@@ -346,6 +381,53 @@ export default function DocumentToolbar({ editor, onInsertImage, onAddComment }:
                   const next = cur === 'wrap-start' ? 'wrap-end' : cur === 'wrap-end' ? 'center' : 'wrap-start';
                   editor.chain().focus().updateAttributes('image', { align: next }).run();
                 }}
+              />
+            </Group>
+          </>
+        )}
+
+        {/* Contextual suggestion review — appears when the caret touches a
+            tracked-changes run; doc-wide accept/reject-all alongside. */}
+        {activeRun && (
+          <>
+            <Divider />
+            <Group>
+              <span
+                className={`px-2 py-0.5 rounded-md text-[0.6875rem] font-bold ${
+                  activeRun.kind === 'insert' ? 'bg-copper/10 text-copper' : 'bg-red-50 text-red-700'
+                }`}
+                title={authorName(activeRun.author)}
+              >
+                {t(activeRun.kind === 'insert' ? 'doc.suggest.insert_by' : 'doc.suggest.delete_by', {
+                  name: authorName(activeRun.author),
+                })}
+              </span>
+              <Btn
+                icon={Check}
+                label={t('doc.suggest.accept')}
+                onClick={() => editor.chain().focus().acceptSuggestionRun(activeRun).run()}
+              />
+              <Btn
+                icon={X}
+                label={t('doc.suggest.reject')}
+                onClick={() => editor.chain().focus().rejectSuggestionRun(activeRun).run()}
+              />
+            </Group>
+          </>
+        )}
+        {suggestionCount > 0 && (
+          <>
+            <Divider />
+            <Group>
+              <Btn
+                icon={CheckCheck}
+                label={t('doc.suggest.accept_all', { count: suggestionCount })}
+                onClick={() => editor.chain().focus().acceptAllSuggestions().run()}
+              />
+              <Btn
+                icon={Trash2}
+                label={t('doc.suggest.reject_all', { count: suggestionCount })}
+                onClick={() => editor.chain().focus().rejectAllSuggestions().run()}
               />
             </Group>
           </>

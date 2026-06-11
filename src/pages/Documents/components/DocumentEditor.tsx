@@ -3,6 +3,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
 import { CrmVariables } from './CrmVariablesExtension';
 import { CommentMark } from './CommentMarkExtension';
+import { SuggestDelete, SuggestInsert, SuggestionMode, type SuggestionModeStorage } from './SuggestionExtensions';
 import { MentionNode, mentionSuggestion, type MentionAttrs } from './MentionExtension';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { PageBreak } from './PageBreakExtension';
@@ -127,10 +128,26 @@ interface Props {
   onMentionClick?: (attrs: MentionAttrs) => void;
   /** Comment anchor clicked — the page activates that thread in the panel. */
   onCommentClick?: (commentId: string) => void;
+  /** Suggestions mode: edits become tracked proposals instead of changes. */
+  suggesting?: boolean;
+  /** App user id stamped onto proposals (suggestions mode). */
+  suggestAuthor?: string | null;
 }
 
 const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function DocumentEditor(
-  { initialContent, editable, onChange, placeholder, baseDir, onReady, crmVars, onMentionClick, onCommentClick },
+  {
+    initialContent,
+    editable,
+    onChange,
+    placeholder,
+    baseDir,
+    onReady,
+    crmVars,
+    onMentionClick,
+    onCommentClick,
+    suggesting,
+    suggestAuthor,
+  },
   ref,
 ) {
   const onReadyRef = useRef(onReady);
@@ -175,6 +192,10 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
       // Comment anchors (highlight decorations driven by the page via
       // refreshCommentHighlights — see CommentMarkExtension).
       CommentMark,
+      // Tracked changes: proposal marks + the suggesting-mode interceptor.
+      SuggestInsert,
+      SuggestDelete,
+      SuggestionMode,
       MentionNode.configure({ suggestion: mentionSuggestion }),
       // Google-Docs-style tables: drag column borders to resize; the rest of
       // the operations (rows/cols/merge/split/header) live in the toolbar.
@@ -251,6 +272,16 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
     dom.addEventListener('mousedown', onMouseDown);
     return () => dom.removeEventListener('mousedown', onMouseDown);
   }, [editor]);
+
+  // Suggestions mode flag + author flow into the interceptor's storage —
+  // read at event time, so no re-render or dispatch is needed on toggle.
+  useEffect(() => {
+    if (!editor) return;
+    const storage = (editor.storage as unknown as Record<string, SuggestionModeStorage>)['suggestionMode'];
+    if (!storage) return;
+    storage.enabled = !!suggesting && editable;
+    storage.author = suggestAuthor ?? '';
+  }, [editor, suggesting, suggestAuthor, editable]);
 
   // Push fresh CRM variable values into the decoration extension whenever
   // the linked records (or their data) change — the token text in the doc

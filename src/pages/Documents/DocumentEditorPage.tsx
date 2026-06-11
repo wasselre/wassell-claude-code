@@ -140,6 +140,8 @@ export default function DocumentEditorPage() {
   const [approvalBusy, setApprovalBusy] = useState(false);
   const approvalRef = useRef<DocApprovalStatus>('draft');
   approvalRef.current = approvalStatus;
+  /** Suggestions (tracked changes) mode — per-session, off by default. */
+  const [suggesting, setSuggesting] = useState(false);
   /** Record relationships — drive CRM variable resolution. Refreshed after
    *  the Linked-records modal closes (links may have changed). */
   const [docLinks, setDocLinks] = useState<DocumentLink[]>([]);
@@ -720,7 +722,13 @@ export default function DocumentEditorPage() {
           </div>
 
           {canEdit && (
-            <DocumentToolbar editor={editor} onInsertImage={onInsertImage} onAddComment={onAddComment} />
+            <DocumentToolbar
+              editor={editor}
+              onInsertImage={onInsertImage}
+              onAddComment={onAddComment}
+              suggesting={suggesting}
+              onToggleSuggesting={() => setSuggesting((v) => !v)}
+            />
           )}
         </div>
       )}
@@ -758,6 +766,8 @@ export default function DocumentEditorPage() {
               setCommentsOpen(true);
               localStorage.setItem('wassell_doc_comments_open', '1');
             }}
+            suggesting={suggesting}
+            suggestAuthor={currentUserId}
           />
         </div>
         </div>

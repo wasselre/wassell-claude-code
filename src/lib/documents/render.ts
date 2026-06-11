@@ -21,6 +21,7 @@ import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table
 import { MentionNode } from '@/pages/Documents/components/MentionExtension';
 import { PageBreak } from '@/pages/Documents/components/PageBreakExtension';
 import { CommentMark } from '@/pages/Documents/components/CommentMarkExtension';
+import { SuggestDelete, SuggestInsert } from '@/pages/Documents/components/SuggestionExtensions';
 
 const SCHEMA_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -33,6 +34,9 @@ const SCHEMA_EXTENSIONS = [
   // Comment anchors — serialize as data-comment-id spans (unstyled outside
   // the editor, so share views/exports show the text plainly).
   CommentMark,
+  // Tracked-changes proposal marks (mode interceptor is editor-only).
+  SuggestInsert,
+  SuggestDelete,
   // Tables (resizable is editor-only behavior; schema is identical).
   Table,
   TableRow,

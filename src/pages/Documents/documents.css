@@ -491,3 +491,22 @@ html.doc-fullscreen .wassel-toasts {
 .doc-version-preview th, .doc-version-preview td { border: 1px solid #d4b896; padding: 6px 10px; }
 .doc-version-preview th { background: #f5ede0; font-weight: 700; }
 .doc-version-preview hr { border: none; border-top: 1px solid #d4b896; margin: 1em 0; }
+
+/* ─── Suggestions (tracked changes) ───────────────────────────────────────
+   Proposal marks render everywhere their spans serialize (editor, version
+   previews, HTML/PDF export shells get their own copy of these rules).
+   insert = copper proposal; delete = red strikethrough. */
+.wassel-doc-surface .ProseMirror span[data-suggest='insert'],
+.doc-version-preview span[data-suggest='insert'] {
+  color: #8e4e3a;
+  background: rgba(184, 115, 79, 0.08);
+  text-decoration: underline;
+  text-decoration-color: rgba(184, 115, 79, 0.65);
+  text-underline-offset: 3px;
+}
+.wassel-doc-surface .ProseMirror span[data-suggest='delete'],
+.doc-version-preview span[data-suggest='delete'] {
+  color: #b91c1c;
+  background: rgba(185, 28, 28, 0.06);
+  text-decoration: line-through;
+}
