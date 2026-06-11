@@ -11,16 +11,17 @@ import {
   Loader2,
   PlusSquare,
   Building2,
+  AlertCircle,
+  RotateCcw,
 } from 'lucide-react';
 import {
   uploadMigrationFile,
   deleteMigrationFile,
-  extractRawTable,
   type MigrationUpload,
 } from '../../lib/client';
-import { targetFieldLites } from '../../lib/targetFields';
+import { startExtractionJob, useMigrationJobs } from '../../lib/jobRunner';
 import { isProjectProfileTarget } from '../../lib/types';
-import type { RawTable, ProjectIntelligenceSection } from '../../lib/types';
+import type { RawTable, ProjectIntelligenceSection, MigrationStatus } from '../../lib/types';
 import type { AppModel } from '@/types';
 
 /** PROJECT-PROFILE mode extras returned alongside the table. */
@@ -35,7 +36,14 @@ interface StepUploadProps {
   /** The chosen target model — its fields are sent to extraction as a
    * "what to look for" hunt-list (extraction is model-aware). */
   model: AppModel;
-  /** extras are set only in PROJECT-PROFILE mode (projects target). */
+  /** Persisted uploads (record.data.source_files) — survives navigation, so an
+   * extraction started here can be watched/retried from any later visit. */
+  sourceFiles: MigrationUpload[] | undefined;
+  onSourceFiles: (files: MigrationUpload[]) => void;
+  status: MigrationStatus | undefined;
+  errorMessage: string | null | undefined;
+  /** Excel/CSV + blank-table paths only — AI extraction completes through the
+   * jobRunner (this component may be unmounted by then). */
   onTable: (table: RawTable, sourceFiles?: MigrationUpload[], extras?: ProjectExtras) => void;
 }
 
@@ -46,14 +54,26 @@ const isExcel = (f: File) => EXCEL_EXT.test(f.name) || f.type.includes('sheet') 
  * Step "upload" — two entry modes from one drop zone:
  *  (a) clean Excel/CSV → parsed client-side (no AI) → straight to review
  *      (the "start at step 5" path the user asked for).
- *  (b) PDF / screenshots / images → uploaded to storage, then AI-extracted.
+ *  (b) PDF / screenshots / images → uploaded to storage, then AI-extracted by
+ *      the module jobRunner — the job keeps running if the user opens another
+ *      migration, and any number of migrations can extract concurrently.
  * Also "start with a blank table" for fully manual entry.
  */
-export default function StepUpload({ isAr, recordId, model, onTable }: StepUploadProps) {
+export default function StepUpload({
+  isAr,
+  recordId,
+  model,
+  sourceFiles,
+  onSourceFiles,
+  status,
+  errorMessage,
+  onTable,
+}: StepUploadProps) {
   const addToast = useAppStore((s) => s.addToast);
+  const job = useMigrationJobs((s) => s.jobs[recordId]);
   const fileRef = useRef<HTMLInputElement>(null);
-  const [uploads, setUploads] = useState<MigrationUpload[]>([]);
-  const [busy, setBusy] = useState<'idle' | 'uploading' | 'extracting'>('idle');
+  const uploads = sourceFiles ?? [];
+  const [busy, setBusy] = useState<'idle' | 'uploading'>('idle');
   // Projects target → extraction returns ONE project row (no unit table) plus
   // the Arabic marketing document for the content writers.
   const projectMode = isProjectProfileTarget(model);
@@ -99,7 +119,7 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
           'info',
         );
       }
-      setUploads((prev) => [...prev, ...added]);
+      onSourceFiles([...uploads, ...added]);
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     } finally {
@@ -108,55 +128,11 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
   };
 
   const removeUpload = async (u: MigrationUpload) => {
-    setUploads((prev) => prev.filter((x) => x.path !== u.path));
+    onSourceFiles(uploads.filter((x) => x.path !== u.path));
     try {
       await deleteMigrationFile(u.path);
     } catch {
       // Orphan left in the bucket — not worth a toast; a GC sweep can reclaim it.
-    }
-  };
-
-  const runExtract = async () => {
-    if (uploads.length === 0) return;
-    setBusy('extracting');
-    try {
-      const result = await extractRawTable(
-        uploads,
-        isAr ? 'ar' : 'en',
-        targetFieldLites(model),
-        projectMode ? 'project' : 'records',
-      );
-      if (result.files_skipped.length > 0) {
-        addToast(
-          (isAr ? 'تم تخطي: ' : 'Skipped: ') +
-            result.files_skipped.map((s) => `${s.name} (${s.reason})`).join('، '),
-          'info',
-        );
-      }
-      if (result.truncated) {
-        addToast(
-          isAr
-            ? 'البيانات كبيرة — تم استخراج جزء منها فقط. راجع وأكمل، أو قسّم الملف.'
-            : 'Large input — only part was extracted. Review, or split the file and retry.',
-          'info',
-        );
-      }
-      onTable(
-        {
-          headers: result.headers,
-          rows: result.rows,
-          notes: result.notes,
-          summary: result.summary,
-          truncated: result.truncated,
-          source: 'ai_extract',
-        },
-        uploads,
-        { projectDocument: result.document, projectIntelligence: result.intelligence },
-      );
-    } catch (err) {
-      addToast(err instanceof Error ? err.message : String(err), 'error');
-    } finally {
-      setBusy('idle');
     }
   };
 
@@ -167,7 +143,7 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
       source: 'manual',
     });
 
-  if (busy === 'extracting') {
+  if (job?.kind === 'extract') {
     return (
       <div className="flex flex-col items-center justify-center text-center p-12 gap-3">
         <Loader2 size={32} className="text-copper animate-spin" />
@@ -183,12 +159,57 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
               ? 'يقرأ Claude ملفاتك ويحوّلها إلى جدول واحد. قد يستغرق هذا دقيقة.'
               : 'Claude is reading your files into one table. This can take a minute.'}
         </p>
+        <p className="text-xs text-charcoal/40 max-w-sm">
+          {isAr
+            ? 'يستمر الاستخراج في الخلفية — يمكنك فتح ترحيل آخر أو بدء واحد جديد الآن.'
+            : 'Extraction keeps running in the background — you can open or start another migration now.'}
+        </p>
+      </div>
+    );
+  }
+
+  if (status === 'extracting') {
+    // Record says extracting but no job runs in this tab — a reload (or
+    // another tab) interrupted the run. Files are persisted, so retry is safe.
+    return (
+      <div className="flex flex-col items-center justify-center text-center p-12 gap-3">
+        <div className="w-14 h-14 rounded-full bg-gold/15 flex items-center justify-center">
+          <AlertCircle size={28} className="text-gold" />
+        </div>
+        <div className="font-semibold text-charcoal">
+          {isAr ? 'توقّف الاستخراج' : 'Extraction was interrupted'}
+        </div>
+        <p className="text-sm text-charcoal/60 max-w-md">
+          {isAr
+            ? 'انقطع الاستخراج (غالبًا بسبب إعادة تحميل الصفحة). ملفاتك محفوظة — أعد تشغيله.'
+            : 'The run was interrupted (usually a page reload). Your files are saved — run it again.'}
+        </p>
+        <button
+          onClick={() => void startExtractionJob(recordId)}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-copper text-white hover:bg-terracotta transition-colors"
+        >
+          <RotateCcw size={15} />
+          {isAr ? 'إعادة الاستخراج' : 'Retry extraction'}
+        </button>
       </div>
     );
   }
 
   return (
     <div className="p-5">
+      {/* Extraction failed → loud banner; the persisted files below + the
+          extract button double as the retry path. */}
+      {status === 'failed' && errorMessage && (
+        <div className="mb-3 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-charcoal/80">
+          <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold text-charcoal">
+              {isAr ? 'فشل الاستخراج: ' : 'Extraction failed: '}
+            </span>
+            {errorMessage}
+          </div>
+        </div>
+      )}
       {/* PROJECT-PROFILE mode explainer — the projects target behaves differently. */}
       {projectMode && (
         <div className="mb-3 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-gold/[0.08] border border-gold/30 text-sm text-charcoal/80">
@@ -275,12 +296,14 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
             ))}
           </div>
           <button
-            onClick={() => void runExtract()}
+            onClick={() => void startExtractionJob(recordId)}
             disabled={busy !== 'idle'}
             className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors font-medium"
           >
             <Sparkles size={16} />
-            {isAr ? 'استخراج البيانات' : 'Extract data'}
+            {status === 'failed'
+              ? isAr ? 'إعادة الاستخراج' : 'Retry extraction'
+              : isAr ? 'استخراج البيانات' : 'Extract data'}
           </button>
         </div>
       )}

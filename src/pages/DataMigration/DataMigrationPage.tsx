@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { AppRecord } from '@/types';
 import { DATA_MIGRATION_MODEL_NAME, readMigrationData, type MigrationStatus } from './lib/types';
+import { useMigrationJobs } from './lib/jobRunner';
 import MigrationWizard from './components/MigrationWizard';
 
 /**
@@ -35,6 +36,9 @@ export default function DataMigrationPage() {
   const recordsByModel = useAppStore((s) => s.records);
   const saveRecord = useAppStore((s) => s.saveRecord);
   const currentUserId = useAppStore((s) => s.currentUserId);
+  // Live jobs (extract / migrate) keyed by record id — any number can run at
+  // once; each row shows its own progress.
+  const jobs = useMigrationJobs((s) => s.jobs);
 
   const migrationModel = useMemo(
     () => models.find((m) => m.name === DATA_MIGRATION_MODEL_NAME),
@@ -109,6 +113,7 @@ export default function DataMigrationPage() {
                 : undefined;
               const subtitle = targetModel ? (isAr ? targetModel.label_ar : targetModel.label_en) : null;
               const active = mig.id === recordId;
+              const job = jobs[mig.id];
               return (
                 <button
                   key={mig.id}
@@ -125,6 +130,19 @@ export default function DataMigrationPage() {
                   {subtitle && (
                     <div className="text-xs text-charcoal/50 truncate mt-1 ps-6">
                       {isAr ? `إلى: ${subtitle}` : `Into: ${subtitle}`}
+                    </div>
+                  )}
+                  {job?.kind === 'migrate' && job.total > 0 && (
+                    <div className="mt-1.5 ps-6 flex items-center gap-2">
+                      <div className="h-1 flex-1 rounded-full bg-sand/30 overflow-hidden">
+                        <div
+                          className="h-full bg-copper transition-all"
+                          style={{ width: `${Math.round((job.done / job.total) * 100)}%` }}
+                        />
+                      </div>
+                      <span className="text-[10px] text-charcoal/50 tabular-nums shrink-0">
+                        {job.done}/{job.total}
+                      </span>
                     </div>
                   )}
                 </button>

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
+import { startMigrationJob } from '../lib/jobRunner';
 import { readMigrationData, type MigrationData, type MigrationStep } from '../lib/types';
 import StepPickModel from './steps/StepPickModel';
 import StepUpload from './steps/StepUpload';
@@ -100,6 +101,10 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               isAr={isAr}
               recordId={recordId}
               model={targetModel}
+              sourceFiles={data.source_files}
+              onSourceFiles={(files) => patch({ source_files: files })}
+              status={data.status}
+              errorMessage={data.error_message}
               onTable={(table, sourceFiles, extras) =>
                 patch({
                   raw_table: table,
@@ -146,6 +151,10 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 isAr={isAr}
                 recordId={recordId}
                 model={targetModel}
+                sourceFiles={data.source_files}
+                onSourceFiles={(files) => patch({ source_files: files })}
+                status={data.status}
+                errorMessage={data.error_message}
                 onTable={(table, sourceFiles, extras) =>
                   patch({
                     raw_table: table,
@@ -205,7 +214,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               projectDocument={data.project_document}
               excludedRows={data.excluded_rows}
               onChangeExcluded={(next) => patch({ excluded_rows: next })}
-              onConfirm={() => patch({ step: 'migrating', status: 'migrating' })}
+              onConfirm={() => void startMigrationJob(recordId)}
               onBack={() => patch({ step: 'standardize' })}
             />
           </div>
@@ -215,14 +224,10 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
           <div className="flex-1 min-h-0">
             <StepMigrating
               isAr={isAr}
-              model={targetModel}
-              table={data.raw_table}
-              mappings={data.mappings}
-              standardization={data.standardization}
-              projectDocument={data.project_document}
-              excludedRows={data.excluded_rows}
-              onDone={(result) => patch({ result, step: 'done', status: 'done' })}
-              onBack={() => patch({ step: 'preview', status: 'draft' })}
+              recordId={recordId}
+              status={data.status}
+              errorMessage={data.error_message}
+              onBack={() => patch({ step: 'preview', status: 'draft', error_message: null })}
             />
           </div>
         )}

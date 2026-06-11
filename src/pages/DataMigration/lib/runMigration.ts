@@ -152,6 +152,14 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
     done++;
     args.onProgress?.(done, total);
   };
+  // Offline saves resolve in microtasks, so a long run would otherwise hog
+  // the main thread end-to-end (no paint, frozen progress, "page unresponsive").
+  // A macrotask yield every few rows keeps the tab responsive; online the
+  // per-row network await dwarfs it.
+  const YIELD_EVERY = 20;
+  const breathe = async () => {
+    if (done % YIELD_EVERY === 0) await new Promise<void>((r) => setTimeout(r, 0));
+  };
 
   // New lookup records first (so links resolve), then the approved rows. Sequential.
   for (const rec of plan.newLookupRecords) {
@@ -164,6 +172,7 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
       result.errors.push({ id: rec.id, error: err instanceof Error ? err.message : String(err) });
     }
     tick();
+    await breathe();
   }
 
   const now = new Date().toISOString();
@@ -187,6 +196,7 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
       result.errors.push({ id: rec.id, error: err instanceof Error ? err.message : String(err) });
     }
     tick();
+    await breathe();
   }
 
   return result;
