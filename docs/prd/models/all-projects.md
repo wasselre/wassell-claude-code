@@ -42,7 +42,7 @@
 | `project_status` | Project Status / حالة المشروع | Dropdown | no | half | yes | 6 options |
 | `data_sources` | Data Sources / مصادر البيانات | Multi-select | no | half | yes | 5 options · multi |
 | `construction_status` | Construction Status / حالة الإنشاء | Dropdown | no | half | yes | 6 options |
-| `project_type` | Project Type / نوع المشروع | Dropdown | no | half | yes | 2 options |
+| `project_type` | Project Type / نوع المشروع | Dropdown | no | half | yes | 3 options |
 
 **Field details:**
 
@@ -96,8 +96,9 @@
   - API value `facade_installation` → "Facade Installation" / "تركيب الواجهات " · color `#14B8A6`
   - API value `ready` → "Ready" / "جاهز " · color `#EF4444`
 - **Project Type / نوع المشروع** (`project_type`, type `dropdown`) — options:
-  - API value `basic` → "Basic" / "اساسي" · color `#3B82F6`
-  - API value `additional` → "adittional" / "إضافي" · color `#10B981`
+  - API value `general` → "general" / "عام" · color `#3B82F6`
+  - API value `targetted` → "targetted" / "مستهدف" · color `#10B981`
+  - API value `our_projects` → "Our Projects" / "مشاريعنا" · color `#F59E0B`
 
 ### 2. Geographic Information / المعلومات الجغرافية  _(color #3B82F6)_
 
