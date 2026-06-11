@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   ArrowLeft,
+  Braces,
   Check,
   Cloud,
   CloudOff,
@@ -24,6 +25,9 @@ import ShareLinkModal from '@/pages/Files/components/ShareLinkModal';
 import PermissionsPanel from '@/pages/Files/components/PermissionsPanel';
 import MoveToFolderModal from '@/pages/Files/components/MoveToFolderModal';
 import LinkedRecordsModal from './components/LinkedRecordsModal';
+import CrmVariablesPopover from './components/CrmVariablesPopover';
+import { listLinksForFile, type DocumentLink } from '@/lib/documents/links';
+import { resolveDocVariables } from '@/lib/documents/variables';
 import DocumentEditor, { type DocumentEditorHandle } from './components/DocumentEditor';
 import DocumentToolbar from './components/DocumentToolbar';
 import './documents.css';
@@ -63,6 +67,12 @@ export default function DocumentEditorPage() {
   const [permsOpen, setPermsOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
+  const [varsOpen, setVarsOpen] = useState(false);
+  /** Record relationships — drive CRM variable resolution. Refreshed after
+   *  the Linked-records modal closes (links may have changed). */
+  const [docLinks, setDocLinks] = useState<DocumentLink[]>([]);
+  const models = useAppStore((s) => s.models);
+  const recordsMap = useAppStore((s) => s.records);
 
   const editorRef = useRef<DocumentEditorHandle>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -70,6 +80,27 @@ export default function DocumentEditorPage() {
   const fileImageInputRef = useRef<HTMLInputElement>(null);
 
   const canEdit = !!file && !!currentUserId && file.uploaded_by_user_id === currentUserId;
+
+  // Load the document's record links (CRM variable sources) once the file is
+  // known, and re-load after the Linked-records modal closes.
+  const refreshLinks = useCallback(() => {
+    if (!fileId) return;
+    listLinksForFile(fileId)
+      .then(setDocLinks)
+      .catch(() => {
+        /* surfaced by the links client */
+      });
+  }, [fileId]);
+  useEffect(() => {
+    refreshLinks();
+  }, [refreshLinks]);
+
+  /** slug → resolved value + grouped list for the insert popover. Recomputes
+   *  when links or the underlying records change (store subscription). */
+  const resolvedVars = useMemo(
+    () => resolveDocVariables(docLinks, models, recordsMap, isAr),
+    [docLinks, models, recordsMap, isAr],
+  );
 
   // Load document on mount / fileId change.
   useEffect(() => {
@@ -343,6 +374,7 @@ export default function DocumentEditorPage() {
                 <HeaderIconBtn icon={Users} label={t('files.actions.permissions')} onClick={() => setPermsOpen(true)} />
                 <HeaderIconBtn icon={FolderInput} label={t('files.actions.move')} onClick={() => setMoveOpen(true)} />
                 <HeaderIconBtn icon={Link2} label={t('doc.links.title')} onClick={() => setLinksOpen(true)} />
+                <HeaderIconBtn icon={Braces} label={t('doc.vars.title')} onClick={() => setVarsOpen(true)} />
               </div>
             )}
 
@@ -391,6 +423,7 @@ export default function DocumentEditorPage() {
             placeholder={t('doc.editor.placeholder')}
             baseDir={isAr ? 'rtl' : 'ltr'}
             onReady={(ed) => setEditor(ed)}
+            crmVars={resolvedVars.values}
           />
         </div>
       </div>
@@ -444,7 +477,24 @@ export default function DocumentEditorPage() {
           });
         }}
       />
-      <LinkedRecordsModal fileId={file.id} open={linksOpen} onClose={() => setLinksOpen(false)} />
+      <LinkedRecordsModal
+        fileId={file.id}
+        open={linksOpen}
+        onClose={() => {
+          setLinksOpen(false);
+          refreshLinks();
+        }}
+      />
+      <CrmVariablesPopover
+        open={varsOpen}
+        groups={resolvedVars.groups}
+        onClose={() => setVarsOpen(false)}
+        onManageLinks={() => setLinksOpen(true)}
+        onInsert={(slug) => {
+          editor?.chain().focus().insertContent(`{{${slug}}}`).run();
+          setVarsOpen(false);
+        }}
+      />
     </div>
   );
 }

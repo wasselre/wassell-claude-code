@@ -225,3 +225,39 @@ html.doc-fullscreen .wassel-toasts {
 .wassel-doc-surface .ProseMirror [style*="text-align: left"] {
   text-align: left;
 }
+
+/* ── CRM variables ────────────────────────────────────────────────────────
+ * `{{slug}}` tokens stay as plain text in the stored doc; a ProseMirror
+ * inline decoration swaps their VISUAL for the live resolved value:
+ * the token glyphs collapse to font-size:0 and the value renders via
+ * ::after { content: attr(data-resolved) }. --doc-fs carries the correct
+ * font size through the zero-sized span (custom properties inherit even
+ * when font-size doesn't survive), so a chip inside an H1 renders at H1
+ * size. Unresolved tokens keep their raw text with a dashed gold
+ * underline so authors can see what's missing. Hovering either shows the
+ * raw token via title=. */
+.wassel-doc-surface .ProseMirror { --doc-fs: 1.0625rem; }
+.wassel-doc-surface .ProseMirror h1 { --doc-fs: 1.875rem; }
+.wassel-doc-surface .ProseMirror h2 { --doc-fs: 1.5rem; }
+.wassel-doc-surface .ProseMirror h3 { --doc-fs: 1.25rem; }
+
+.wassel-doc-surface .crm-var {
+  border-radius: 4px;
+}
+.wassel-doc-surface .crm-var--resolved {
+  font-size: 0;
+  background: rgba(184, 115, 79, 0.10);          /* copper/10 */
+  box-shadow: inset 0 0 0 1px rgba(184, 115, 79, 0.22);
+  padding: 0 1px;
+}
+.wassel-doc-surface .crm-var--resolved::after {
+  content: attr(data-resolved);
+  font-size: var(--doc-fs, 1.0625rem);
+  font-family: 'Amiri', serif;
+  color: inherit;
+  padding: 0 2px;
+}
+.wassel-doc-surface .crm-var--missing {
+  background: rgba(192, 155, 95, 0.12);          /* gold/12 */
+  border-bottom: 1px dashed #C09B5F;             /* subtle gold */
+}

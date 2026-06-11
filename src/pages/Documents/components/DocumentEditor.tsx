@@ -1,6 +1,7 @@
 import { useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
+import { CrmVariables } from './CrmVariablesExtension';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -114,10 +115,14 @@ interface Props {
   baseDir: 'rtl' | 'ltr';
   /** Receives the live Editor instance so the parent toolbar can mount. */
   onReady: (editor: Editor) => void;
+  /** Resolved CRM variable values (slug → display value) from the document's
+   *  linked records. {{slug}} tokens display these via decorations — the
+   *  stored content keeps the raw tokens. */
+  crmVars?: Record<string, string>;
 }
 
 const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function DocumentEditor(
-  { initialContent, editable, onChange, placeholder, baseDir, onReady },
+  { initialContent, editable, onChange, placeholder, baseDir, onReady, crmVars },
   ref,
 ) {
   const onReadyRef = useRef(onReady);
@@ -158,6 +163,7 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
         types: ['heading', 'paragraph'],
       }),
       ListIndentShortcuts,
+      CrmVariables,
     ],
     editorProps: {
       attributes: {
@@ -190,6 +196,19 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
     if (!editor) return;
     editor.view.dom.setAttribute('dir', baseDir);
   }, [editor, baseDir]);
+
+  // Push fresh CRM variable values into the decoration extension whenever
+  // the linked records (or their data) change — the token text in the doc
+  // is untouched; only the displayed values update.
+  useEffect(() => {
+    if (!editor) return;
+    // TipTap types editor.storage per-extension via module augmentation we
+    // don't declare; the runtime shape is the extension's addStorage() value.
+    const storage = (editor.storage as unknown as Record<string, { vars: Record<string, string> }>)['crmVariables'];
+    if (!storage) return;
+    storage.vars = crmVars ?? {};
+    editor.view.dispatch(editor.state.tr.setMeta('crmVarsRefresh', true));
+  }, [editor, crmVars]);
 
   useImperativeHandle(
     ref,

@@ -370,8 +370,8 @@ const propertyReport: DocumentTemplate = {
           h(2, t('المواصفات')),
           bullets([
             [b('نطاق المساحات: '), t('{{area_range}}')],
-            [b('غرف النوم: '), t('{{bedrooms_range}}')],
-            [b('دورات المياه: '), t('{{bathrooms_range}}')],
+            [b('غرف النوم: '), t('{{bedroom_range}}')],
+            [b('دورات المياه: '), t('{{bathroom_range}}')],
           ]),
           h(2, t('الأسعار')),
           bullets([
@@ -403,8 +403,8 @@ const propertyReport: DocumentTemplate = {
           h(2, t('Specifications')),
           bullets([
             [b('Area range: '), t('{{area_range}}')],
-            [b('Bedrooms: '), t('{{bedrooms_range}}')],
-            [b('Bathrooms: '), t('{{bathrooms_range}}')],
+            [b('Bedrooms: '), t('{{bedroom_range}}')],
+            [b('Bathrooms: '), t('{{bathroom_range}}')],
           ]),
           h(2, t('Pricing')),
           bullets([
