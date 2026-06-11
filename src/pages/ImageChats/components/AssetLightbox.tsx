@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useAppStore } from '@/stores/appStore';
-import { X, ChevronLeft, ChevronRight, ChevronDown, Palette, PencilRuler } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, ChevronDown, Palette, PencilRuler, Paperclip } from 'lucide-react';
 
 interface Props {
   /** Outputs to navigate (a generation's grid; a single asset in the library). */
@@ -15,6 +15,9 @@ interface Props {
   brandingName?: string | null;
   /** The user's design instruction (the "design prompt"). */
   designPrompt?: string | null;
+  /** Reference images fed INTO this generation (to create/edit). Shown as a
+   *  collapsible "Attached images" section below the design prompt when present. */
+  references?: string[];
   /** Compact provenance shown above the actions. */
   meta?: { model?: string | null; aspect?: string | null; created?: string | null };
   /** Right-column action buttons (composed per surface, via AssetActions). */
@@ -42,6 +45,7 @@ export default function AssetLightbox({
   brandingPrompt,
   brandingName,
   designPrompt,
+  references,
   meta,
   actions,
 }: Props) {
@@ -92,6 +96,9 @@ export default function AssetLightbox({
           empty="—"
           body={designPrompt ?? ''}
         />
+        {references && references.length > 0 && (
+          <ImageSection title={isAr ? 'الصور المرفقة' : 'Attached images'} images={references} />
+        )}
       </aside>
 
       {/* CENTER — image stage (click empty area to close) */}
@@ -220,6 +227,40 @@ function Section({
           dir="auto"
         >
           {hasBody ? body : empty}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImageSection({ title, images }: { title: string; images: string[] }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="border-b border-sand/20">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-cream/60 transition-colors text-start"
+      >
+        <ChevronDown size={14} className={`text-charcoal/40 transition-transform shrink-0 ${open ? '' : '-rotate-90'}`} />
+        <Paperclip size={14} className="text-copper" />
+        <span className="font-semibold text-xs text-charcoal flex-1 truncate">{title}</span>
+        <span className="text-[11px] text-charcoal/50">{images.length}</span>
+      </button>
+      {open && (
+        <div className="px-3 pb-3 grid grid-cols-2 gap-2">
+          {images.map((url, i) => (
+            <a
+              key={url + i}
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block aspect-square rounded-lg overflow-hidden border border-sand/30 hover:border-copper/60 bg-cream/40 transition-colors"
+              title={url}
+            >
+              <img src={url} alt="" className="w-full h-full object-cover" loading="lazy" />
+            </a>
+          ))}
         </div>
       )}
     </div>

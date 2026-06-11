@@ -93,7 +93,12 @@ export default function MediaLibraryModal({ onClose }: Props) {
     return map;
   }, [models, recordsByModel]);
 
-  function partsFor(asset: MediaAsset): { brandingPrompt: string | null; brandingName: string | null; designPrompt: string } {
+  function partsFor(asset: MediaAsset): {
+    brandingPrompt: string | null;
+    brandingName: string | null;
+    designPrompt: string;
+    references: string[];
+  } {
     const session = asset.source_session_id ? sessionsById.get(asset.source_session_id) : undefined;
     const gens = session && Array.isArray(session.data.generations) ? (session.data.generations as Generation[]) : [];
     const gen = asset.source_generation_id ? gens.find((g) => g.id === asset.source_generation_id) : undefined;
@@ -104,6 +109,7 @@ export default function MediaLibraryModal({ onClose }: Props) {
       // Fallback: the asset's stored (merged) prompt as Design when the source
       // generation can't be resolved (e.g. migrated outputs).
       designPrompt: gen?.prompt ?? asset.prompt ?? '',
+      references: gen?.reference_urls ?? [],
     };
   }
 
@@ -190,6 +196,7 @@ export default function MediaLibraryModal({ onClose }: Props) {
           brandingPrompt={parts.brandingPrompt}
           brandingName={parts.brandingName}
           designPrompt={parts.designPrompt}
+          references={parts.references}
           meta={{
             model: selected.model_id,
             aspect: (selected.settings?.aspect_ratio as string | undefined) ?? null,

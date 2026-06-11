@@ -289,6 +289,7 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
           brandingPrompt={selPreset?.promptText ?? null}
           brandingName={selectedGen.preset_name ?? selPreset?.name ?? null}
           designPrompt={selectedGen.prompt}
+          references={selectedGen.reference_urls ?? []}
           meta={{
             model: chatModelDisplayName(selectedGen.model_id, isAr),
             aspect: selectedGen.aspect_ratio,
