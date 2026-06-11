@@ -367,8 +367,8 @@ FOURTH queue on the same Fly worker: `pdf_compress_jobs` compresses PDFs with Gh
 
 **Hard rules — never violate:**
 1. **Never hold an HTTP request open for the compression** (same rule as the other three queues).
-2. **Kill gs as a process GROUP** (`spawn detached:true` + `kill(-pid)`) — same posture as soffice (rule 3 above); 240 s timeout, 150 MB input cap.
-3. **complete/fail RPCs only touch `status='running'` jobs**; `pdf_compress_watchdog()` sweeps running >10 min.
+2. **Kill gs as a process GROUP** (`spawn detached:true` + `kill(-pid)`) — same posture as soffice (rule 3 above); 540 s timeout (240 s proved too low live — a 19 MB brochure, the primary use case, is CPU-bound JPEG re-encoding on shared-cpu), 150 MB input cap.
+3. **complete/fail RPCs only touch `status='running'` jobs**; `pdf_compress_watchdog()` sweeps running >15 min (must stay above the 540 s job ceiling).
 4. **Never compress in place.** The result is always a NEW files row + NEW storage object (file bytes are immutable — the office-preview cache depends on it, and a bad compression must never destroy a source document). A failed `files` INSERT must remove the just-uploaded object.
 
 ## Offline / Local Fallback

@@ -33,9 +33,12 @@ const PDF_MIME = 'application/pdf';
  *  this we refuse with a clear error instead of OOMing the machine. */
 const MAX_COMPRESS_BYTES = 150 * 1024 * 1024;
 
-/** Hard ceiling on a single gs run — same backstop posture as soffice in
- *  runPreviewJob.ts. The SQL watchdog (10 min) is the crash backstop above. */
-const COMPRESS_TIMEOUT_MS = 240_000;
+/** Hard ceiling on a single gs run. 240 s (the soffice value) proved too low
+ *  live on 2026-06-11: a 19 MB image-heavy brochure — the PRIMARY use case —
+ *  timed out on a shared-cpu-1x machine. gs is CPU-bound JPEG re-encoding, so
+ *  big brochures legitimately need minutes. Must stay under the SQL watchdog
+ *  (15 min), which is the crash backstop above this. */
+const COMPRESS_TIMEOUT_MS = 540_000;
 
 /** Result must be below 95% of the input to count as a win. */
 const NO_GAIN_RATIO = 0.95;
@@ -116,6 +119,10 @@ export async function runCompressJob({ supabase, env, job }: RunCompressJobArgs)
       // on mixed Arabic/Latin brochures that mangles page orientation.
       '-dAutoRotatePages=/None',
       '-dDetectDuplicateImages=true',
+      // /ebook defaults to Bicubic downsampling — Average is markedly faster
+      // on the shared-cpu machines with negligible quality loss at 150 dpi.
+      '-dColorImageDownsampleType=/Average',
+      '-dGrayImageDownsampleType=/Average',
       `-sOutputFile=${outPath}`,
       inPath,
     ]);

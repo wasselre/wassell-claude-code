@@ -199,9 +199,11 @@ REVOKE ALL ON FUNCTION public.pdf_compress_fail(uuid, text) FROM PUBLIC, anon, a
 GRANT EXECUTE ON FUNCTION public.pdf_compress_fail(uuid, text) TO service_role;
 
 -- ─── 6. Watchdog ────────────────────────────────────────────────────────────
--- A gs run is bounded at 240s in the worker — 10 min of 'running' means a
--- crashed worker / stopped machine. Sweep to failed so the UI exits its
--- spinner and offers retry. Invoked by the Fly worker on its watchdog interval.
+-- A gs run is bounded at 540s in the worker (raised from 240s after a live
+-- 19 MB brochure — the primary use case — hit the shared-cpu ceiling on
+-- 2026-06-11) — 15 min of 'running' means a crashed worker / stopped machine.
+-- Sweep to failed so the UI exits its spinner and offers retry. Invoked by
+-- the Fly worker on its watchdog interval.
 CREATE OR REPLACE FUNCTION public.pdf_compress_watchdog()
 RETURNS int
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
@@ -212,9 +214,9 @@ BEGIN
     UPDATE public.pdf_compress_jobs
        SET status = 'failed',
            finished_at = now(),
-           error = 'watchdog: compression did not finish within 10 minutes — likely crashed mid-run.'
+           error = 'watchdog: compression did not finish within 15 minutes — likely crashed mid-run.'
      WHERE status = 'running'
-       AND started_at < now() - interval '10 minutes'
+       AND started_at < now() - interval '15 minutes'
     RETURNING 1
   )
   SELECT COUNT(*) INTO v_count FROM stale;
