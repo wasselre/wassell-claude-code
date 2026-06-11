@@ -406,6 +406,12 @@ export function AttachmentCell({ refs }: { refs: AttachmentRef[]; isAr?: boolean
 function SignedThumb({ fileId }: { fileId: string }) {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
+    // Legacy public-URL value — already a fetchable src; signing would 400
+    // (the endpoint expects a files.id UUID).
+    if (/^https?:\/\//i.test(fileId)) {
+      setUrl(fileId);
+      return;
+    }
     let cancelled = false;
     void signViewUrl(fileId)
       .then((res) => {
@@ -436,8 +442,10 @@ function SignedThumb({ fileId }: { fileId: string }) {
 }
 
 /** Backwards-compat lightbox for legacy public URLs (pre-Files-system data).
- *  Reuses the simple ImagePreview lightbox shape so the user sees the same UX. */
-function LegacyImagePreview({ url, onClose }: { url: string; onClose: () => void }) {
+ *  Reuses the simple ImagePreview lightbox shape so the user sees the same UX.
+ *  Exported for the form-level inputs (DriveFieldInputs) which need the same
+ *  shim when a record's image field holds a raw URL instead of a files.id. */
+export function LegacyImagePreview({ url, onClose }: { url: string; onClose: () => void }) {
   // Lazy-load to avoid pulling the ImagePreview component into the main bundle.
   const [Comp, setComp] = useState<React.ComponentType<{
     url: string;

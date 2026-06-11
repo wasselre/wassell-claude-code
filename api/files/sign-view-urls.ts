@@ -22,7 +22,7 @@
  */
 
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
-import { getJwtClient, signFileUrl, VIEW_URL_TTL_SECONDS } from '../_lib/files.js';
+import { getJwtClient, isFileIdShape, signFileUrl, VIEW_URL_TTL_SECONDS } from '../_lib/files.js';
 
 export const config = { runtime: 'edge' };
 
@@ -40,9 +40,12 @@ export default async function handler(req: Request): Promise<Response> {
     }
     if (!Array.isArray(body.fileIds)) return jsonError(400, 'fileIds (array) is required');
 
-    // De-dupe + validate to non-empty strings, cap the batch.
+    // De-dupe + validate to uuid-shaped ids, cap the batch. Non-UUID values
+    // (e.g. legacy public-URL strings from record image fields) are dropped —
+    // one bad id in `.in('id', ...)` would otherwise uuid-cast-error the whole
+    // query and blank every thumbnail in the grid.
     const ids = Array.from(
-      new Set(body.fileIds.filter((x): x is string => typeof x === 'string' && x.length > 0)),
+      new Set(body.fileIds.filter((x): x is string => typeof x === 'string' && isFileIdShape(x))),
     ).slice(0, MAX_BATCH);
     if (ids.length === 0) return jsonOk({ urls: {} });
 

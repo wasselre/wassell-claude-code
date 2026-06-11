@@ -17,6 +17,14 @@ import DriveBrowserModal, {
 } from '@/pages/Files/components/DriveBrowserModal';
 import type { FileRow } from '@/types';
 import { useFileRowMap, updateFileRowCache } from './useFileRowMap';
+import { LegacyImagePreview } from './DriveCells';
+
+/** Legacy public-URL value (pre-Files-system data, still written by the
+ *  marketing/image flows) — render directly instead of treating it as a
+ *  files.id. Mirrors the shim in DriveCells. */
+function isLegacyUrlValue(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
 
 /** Tiny thumbnail loader for image files. Hits /api/files/sign-view-url so
  *  the URL is bound to the caller's identity (RLS-gated) and short-lived. */
@@ -25,6 +33,12 @@ function useSignedImageUrl(fileId: string | null): string | null {
   useEffect(() => {
     if (!fileId) {
       setUrl(null);
+      return;
+    }
+    // Legacy public URL — already a fetchable src; the sign endpoint would
+    // reject it (expects a files.id UUID).
+    if (isLegacyUrlValue(fileId)) {
+      setUrl(fileId);
       return;
     }
     let cancelled = false;
@@ -146,9 +160,14 @@ export function ImageFieldInput({
   const { t } = useTranslation();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const { rows, missing } = useFileRowMap(value ? [value] : []);
+  // A legacy public-URL value renders as a plain image (and previews via the
+  // legacy lightbox); it has no files row, so keep it out of useFileRowMap and
+  // the missing-ref branch. Replace/Remove still work — Replace writes a
+  // proper files.id.
+  const isLegacy = !!value && isLegacyUrlValue(value);
+  const { rows, missing } = useFileRowMap(value && !isLegacy ? [value] : []);
   const row = value ? rows.get(value) ?? null : null;
-  const isMissing = value && missing.includes(value);
+  const isMissing = value && !isLegacy && missing.includes(value);
 
   const handlePicked = (result: DrivePickerResult) => {
     if (result.kind !== 'files') return;
@@ -216,17 +235,21 @@ export function ImageFieldInput({
         onClose={() => setPickerOpen(false)}
         onSelect={handlePicked}
       />
-      <FilePreviewModal
-        file={row}
-        open={previewOpen && !!row}
-        canEdit={false}
-        canDelete={false}
-        onClose={() => setPreviewOpen(false)}
-        onShare={() => {}}
-        onPermissions={() => {}}
-        onDelete={() => {}}
-        onRenamed={updateFileRowCache}
-      />
+      {isLegacy && previewOpen ? (
+        <LegacyImagePreview url={value} onClose={() => setPreviewOpen(false)} />
+      ) : (
+        <FilePreviewModal
+          file={row}
+          open={previewOpen && !!row}
+          canEdit={false}
+          canDelete={false}
+          onClose={() => setPreviewOpen(false)}
+          onShare={() => {}}
+          onPermissions={() => {}}
+          onDelete={() => {}}
+          onRenamed={updateFileRowCache}
+        />
+      )}
     </div>
   );
 }
@@ -260,7 +283,11 @@ export function MultiImageFieldInput({
   const { t } = useTranslation();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [previewFile, setPreviewFile] = useState<FileRow | null>(null);
-  const { rows, missing } = useFileRowMap(value);
+  // Entries may mix files.id UUIDs with legacy public URLs — only the former
+  // have rows to resolve; legacy ones render directly + preview via the
+  // legacy lightbox.
+  const [legacyPreviewUrl, setLegacyPreviewUrl] = useState<string | null>(null);
+  const { rows, missing } = useFileRowMap(value.filter((v) => !isLegacyUrlValue(v)));
 
   const handlePicked = (result: DrivePickerResult) => {
     if (result.kind !== 'files') return;
@@ -278,7 +305,8 @@ export function MultiImageFieldInput({
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-start gap-2">
         {value.map((id) => {
-          if (missing.includes(id)) {
+          const legacy = isLegacyUrlValue(id);
+          if (!legacy && missing.includes(id)) {
             return (
               <MissingChip
                 key={id}
@@ -290,7 +318,12 @@ export function MultiImageFieldInput({
           }
           return (
             <div key={id} className="relative group">
-              <ImageThumb fileId={id} onClick={() => setPreviewFile(rows.get(id) ?? null)} />
+              <ImageThumb
+                fileId={id}
+                onClick={() =>
+                  legacy ? setLegacyPreviewUrl(id) : setPreviewFile(rows.get(id) ?? null)
+                }
+              />
               <button
                 type="button"
                 onClick={() => handleRemove(id)}
@@ -339,6 +372,9 @@ export function MultiImageFieldInput({
           setPreviewFile(updated);
         }}
       />
+      {legacyPreviewUrl && (
+        <LegacyImagePreview url={legacyPreviewUrl} onClose={() => setLegacyPreviewUrl(null)} />
+      )}
     </div>
   );
 }

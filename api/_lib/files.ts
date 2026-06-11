@@ -84,6 +84,14 @@ export function getAnonClient(): SupabaseClient {
   return createClient(supabaseUrl, anonKey, { auth: { persistSession: false } });
 }
 
+/** Shape of a `files.id`. Record image fields can carry legacy public-URL
+ *  strings instead — those must be rejected up-front, not fed to a uuid cast. */
+const FILE_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isFileIdShape(value: string): boolean {
+  return FILE_ID_RE.test(value);
+}
+
 /**
  * Calls the SQL `wassell_can_access_file(file_id, kind)` helper under the
  * caller's JWT. Throws AuthError(403) on false. RLS is the authoritative
@@ -96,6 +104,11 @@ export async function assertCanAccessFile(
   kind: 'view' | 'edit' | 'delete',
   actor?: { email?: string | null },
 ): Promise<void> {
+  // A non-UUID can never be a files row — fail it as a clean 400 instead of
+  // letting Postgres raise a uuid-cast error that every caller would surface
+  // as a confusing 500 ("permission check failed: invalid input syntax for
+  // type uuid: ...").
+  if (!isFileIdShape(fileId)) throw new AuthError(400, 'invalid file id (expected a files.id uuid)');
   const { data, error } = await jwtClient.rpc('wassell_can_access_file', {
     p_file_id: fileId,
     p_kind: kind,

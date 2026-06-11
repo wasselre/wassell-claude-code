@@ -19,7 +19,20 @@ const fileRowInflight = new Map<string, Promise<FileRow | null>>();
 /** Mounted hooks subscribe here so a cache update can re-render them. */
 const cacheSubscribers = new Set<() => void>();
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** True when a stored field value is a `files.id` UUID (vs. a legacy public
+ *  URL or other pre-Files-system string that can never resolve to a row). */
+export function isFileIdValue(value: string): boolean {
+  return UUID_RE.test(value);
+}
+
 export async function loadFileRow(id: string): Promise<FileRow | null> {
+  // Legacy values (raw public URLs from the pre-Files-system era, still
+  // written by the marketing/image flows) aren't files.id UUIDs — querying
+  // them would just make Postgres throw a uuid-cast error. Resolve null so
+  // callers fall through to their legacy-URL render shims.
+  if (!isFileIdValue(id)) return null;
   const cached = fileRowCache.get(id);
   if (cached) return cached;
   const pending = fileRowInflight.get(id);
@@ -28,6 +41,12 @@ export async function loadFileRow(id: string): Promise<FileRow | null> {
     .then((row) => {
       if (row) fileRowCache.set(id, row);
       return row;
+    })
+    .catch(() => {
+      // getFile already surfaced the failure loudly (console.error + toast in
+      // surfaceError). Resolve null so the Promise.all in useFileRowMap doesn't
+      // turn one bad id into an unhandled rejection that kills the whole batch.
+      return null;
     })
     .finally(() => {
       fileRowInflight.delete(id);
