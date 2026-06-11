@@ -372,6 +372,17 @@ FOURTH queue on the same Fly worker: `pdf_compress_jobs` compresses PDFs with Gh
 4. **Never compress in place.** The result is always a NEW files row + NEW storage object (file bytes are immutable — the office-preview cache depends on it, and a bad compression must never destroy a source document). A failed `files` INSERT must remove the just-uploaded object.
 5. **Timeouts requeue, they don't fail (attempts < 3).** Fly shared-cpu machines throttle to 1/16 vCPU once burst credits drain — measured live 2026-06-11: the SAME 19 MB brochure took 2m50s on a credit-fresh machine and >9 min (timeout) on a drained one. On a gs timeout the worker calls `pdf_compress_requeue` so a different machine claims the job, and sits out 2 poll intervals so the throttled machine doesn't re-claim its own requeue. Don't "fix" a timeout by only raising the ceiling — check which MACHINE ran it first.
 
+## Documents real-time collaboration (Yjs CRDT) (added 2026-06-11)
+
+Wassel documents (`kind='wassel_doc'`) are co-editable: TipTap `Collaboration` binds the editor to a shared Y.Doc; updates flow over Supabase Realtime **broadcast** channel `ydoc:<file_id>` via `SupabaseCollabProvider` (`src/lib/documents/collab.ts`) — no websocket server. `wassel_documents` now has THREE content representations: `content_json`/`content_html` (readable derivations — previews, share links, exports) and `ydoc_state` (base64 CRDT blob — the collaboration source of truth).
+
+**Hard rules — never violate:**
+1. **Never bootstrap a Y.Doc from `content_json` when `ydoc_state` exists.** CRDT merging depends on shared internal identities; two independent JSON bootstraps duplicate every paragraph on merge. Seeding happens EXACTLY ONCE, guarded by `UPDATE … WHERE ydoc_state IS NULL` (losers re-fetch the winner's blob). If you ever rewrite a doc's content server-side (migration/script), either go through a live editor session or NULL out `ydoc_state` in the same transaction so the next open re-seeds.
+2. **Never set TipTap `content` on a collab-bound editor** (it would re-insert the body into the shared doc for every joiner — duplication). The page mounts `DocumentEditor` only after `bootstrapCollabDoc` resolves and passes `ydoc`; `initialContent` is used only in the no-Supabase fallback.
+3. **StarterKit `undoRedo` must stay OFF under collab** — `Collaboration` registers Y.UndoManager-backed undo/redo (undo only reverts YOUR edits).
+4. **Suggestions/automation must ignore remote transactions** — filter with `isChangeOrigin(tr)` (see SuggestionExtensions' appendTransaction) or remote edits get marked as local proposals.
+5. `canEdit` on the doc editor page is **effective-role-aware** (`wassell_effective_file_roles` RPC), NOT uploader-only — shared editors need the editing surface for co-editing. RLS remains the server-side gate.
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline
