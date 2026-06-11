@@ -17,6 +17,7 @@ import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
 import TextAlign from '@tiptap/extension-text-align';
+import { MentionNode } from '@/pages/Documents/components/MentionExtension';
 
 const SCHEMA_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -24,6 +25,8 @@ const SCHEMA_EXTENSIONS = [
   Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer' } }),
   Image.configure({ inline: false, allowBase64: false }),
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
+  // Mention chips (no suggestion plugin needed for serialization).
+  MentionNode,
 ];
 
 export function renderDocumentHtml(json: JSONContent): string {

@@ -424,6 +424,14 @@ export default function DocumentEditorPage() {
             baseDir={isAr ? 'rtl' : 'ltr'}
             onReady={(ed) => setEditor(ed)}
             crmVars={resolvedVars.values}
+            onMentionClick={(attrs) => {
+              const m = models.find((x) => x.id === attrs.modelId);
+              if (!m) {
+                addToast(t('doc.mentions.record_gone'), 'error');
+                return;
+              }
+              navigate(`/model/${m.name}/${attrs.id}`);
+            }}
           />
         </div>
       </div>

@@ -2,6 +2,7 @@ import { useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
 import { CrmVariables } from './CrmVariablesExtension';
+import { MentionNode, mentionSuggestion, type MentionAttrs } from './MentionExtension';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -119,16 +120,20 @@ interface Props {
    *  linked records. {{slug}} tokens display these via decorations — the
    *  stored content keeps the raw tokens. */
   crmVars?: Record<string, string>;
+  /** Record-mention chip clicked — the page navigates to the record. */
+  onMentionClick?: (attrs: MentionAttrs) => void;
 }
 
 const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function DocumentEditor(
-  { initialContent, editable, onChange, placeholder, baseDir, onReady, crmVars },
+  { initialContent, editable, onChange, placeholder, baseDir, onReady, crmVars, onMentionClick },
   ref,
 ) {
   const onReadyRef = useRef(onReady);
   onReadyRef.current = onReady;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  const onMentionClickRef = useRef(onMentionClick);
+  onMentionClickRef.current = onMentionClick;
 
   const editor = useEditor({
     editable,
@@ -164,6 +169,7 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
       }),
       ListIndentShortcuts,
       CrmVariables,
+      MentionNode.configure({ suggestion: mentionSuggestion }),
     ],
     editorProps: {
       attributes: {
@@ -175,6 +181,18 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
         spellcheck: 'true',
       },
       transformPastedHTML: (html) => stripFontFamily(html),
+      // Record-mention chips navigate to their record on click. User
+      // mentions are inert (no user-profile page exists).
+      handleClickOn: (_view, _pos, node) => {
+        if (node.type.name === 'mention') {
+          const attrs = node.attrs as unknown as MentionAttrs;
+          if (attrs.kind === 'record') {
+            onMentionClickRef.current?.(attrs);
+            return true;
+          }
+        }
+        return false;
+      },
     },
     onUpdate: () => {
       onChangeRef.current();
