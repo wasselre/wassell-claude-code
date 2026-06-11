@@ -26,6 +26,18 @@ export const EXTRACT_FALLBACK_MODEL = 'claude-sonnet-4-6';
 
 export type AgentLanguage = 'ar' | 'en';
 
+/**
+ * How extraction reads the files:
+ *  - 'records' (default): one logical record per ROW — the classic unit-list /
+ *    client-list import.
+ *  - 'project': the destination is a PROJECTS model. One row per PROJECT
+ *    (normally exactly one) with the project's general information in detail —
+ *    units are read deeply but AGGREGATED, never enumerated as rows. The model
+ *    additionally writes `document`: a comprehensive Arabic marketing /
+ *    reference document for the project (the content writers' source of truth).
+ */
+export type ExtractMode = 'records' | 'project';
+
 /** Force the model's human-readable text (notes / reasons) into the UI
  * language. Cell DATA is always preserved verbatim regardless. */
 function langLine(language: AgentLanguage, field: string): string {
@@ -52,6 +64,9 @@ export interface RawTableResult {
   /** Human-readable report of what was extracted — esp. how each numeric column
    * was derived (which text mentions / plan features) and its source. */
   summary?: string;
+  /** mode='project' only: the Arabic marketing / reference document describing
+   * the whole project — saved onto the project record at import time. */
+  document?: string;
   truncated: boolean;
   files_processed: number;
   files_skipped: { name: string; reason: string }[];
@@ -63,44 +78,59 @@ const MAX_FILES = 20;
 // Keep comfortably under the Anthropic ~32 MB request cap once base64-inflated.
 const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
 
-const EXTRACT_TOOL: Anthropic.Tool = {
-  name: 'emit_raw_table',
-  description:
-    'Return ALL tabular data extracted from the uploaded files as ONE unified table. ' +
-    'Union every distinct column seen across files into a single header row; a row ' +
-    'lacking a column gets an empty string. One logical record per row.',
-  input_schema: {
-    type: 'object',
-    properties: {
-      headers: {
-        type: 'array',
-        items: { type: 'string' },
-        description: 'Unified column headers, left-to-right. Use the clearest source label per column.',
-      },
-      rows: {
-        type: 'array',
-        items: { type: 'array', items: { type: 'string' } },
-        description:
-          'Each inner array is one record, positionally aligned to `headers`. Cell text VERBATIM; ' +
-          'empty string where a source lacked that column.',
-      },
-      notes: {
-        type: 'string',
-        description: 'Optional: ambiguities (merged cells, unreadable regions, inferred units). One short paragraph.',
-      },
-      summary: {
-        type: 'string',
-        description:
-          'A short report of what you extracted, for the operator to verify. For EVERY numeric column (counts, prices, areas) state how you derived the values — which text mentions and/or which floor-plan features you counted — and the source of each (text / plan / both). Mention any unit where the plan and text disagreed and which you trusted.',
-      },
-      truncated: {
-        type: 'boolean',
-        description: 'True if you could not include every row/page because the input was larger than what fits in one response.',
-      },
+function buildExtractTool(mode: ExtractMode): Anthropic.Tool {
+  const properties: Record<string, unknown> = {
+    headers: {
+      type: 'array',
+      items: { type: 'string' },
+      description: 'Unified column headers, left-to-right. Use the clearest source label per column.',
     },
-    required: ['headers', 'rows', 'truncated'],
-  },
-};
+    rows: {
+      type: 'array',
+      items: { type: 'array', items: { type: 'string' } },
+      description:
+        'Each inner array is one record, positionally aligned to `headers`. Cell text VERBATIM; ' +
+        'empty string where a source lacked that column.',
+    },
+    notes: {
+      type: 'string',
+      description: 'Optional: ambiguities (merged cells, unreadable regions, inferred units). One short paragraph.',
+    },
+    summary: {
+      type: 'string',
+      description:
+        'A short report of what you extracted, for the operator to verify. For EVERY numeric column (counts, prices, areas) state how you derived the values — which text mentions and/or which floor-plan features you counted — and the source of each (text / plan / both). Mention any unit where the plan and text disagreed and which you trusted.',
+    },
+    truncated: {
+      type: 'boolean',
+      description: 'True if you could not include every row/page because the input was larger than what fits in one response.',
+    },
+  };
+  if (mode === 'project') {
+    properties.document = {
+      type: 'string',
+      description:
+        'The complete Arabic marketing / reference document describing the project (Markdown, with headings). ' +
+        'Comprehensive: overview, location, developer, every unit model with its specs, finishes, amenities, ' +
+        'guarantees, prices / payment terms as stated, and the key selling points. Grounded ONLY in the files — never invent.',
+    };
+  }
+  return {
+    name: 'emit_raw_table',
+    description:
+      mode === 'project'
+        ? 'Return the PROJECT-level information extracted from the uploaded files as ONE table (one row per project — ' +
+          'normally exactly one row), PLUS the Arabic marketing document describing the project.'
+        : 'Return ALL tabular data extracted from the uploaded files as ONE unified table. ' +
+          'Union every distinct column seen across files into a single header row; a row ' +
+          'lacking a column gets an empty string. One logical record per row.',
+    input_schema: {
+      type: 'object',
+      properties,
+      required: mode === 'project' ? ['headers', 'rows', 'truncated', 'document'] : ['headers', 'rows', 'truncated'],
+    } as Anthropic.Tool['input_schema'],
+  };
+}
 
 const EXTRACT_SYSTEM = `You extract structured data from messy real-estate documents for a Saudi Arabian CRM (Wassel / وصل العقارية). Files are developer hand-offs — unit lists, price tables, project specs, brochures with floor plans — as PDFs, screenshots, or photos, usually in Arabic.
 
@@ -126,6 +156,30 @@ ONE TABLE:
 3. Keep Arabic in Arabic; keep a multi-value cell (e.g. amenities) comma-separated — never drop any value.
 4. Use clear, human-readable headers (from the source, or your own where you derived a column like a plan-based count).
 5. If the input is larger than you can faithfully fit, extract as many COMPLETE rows as possible and set "truncated": true. Never invent or pad.`;
+
+/** Appended to EXTRACT_SYSTEM when mode='project' — overrides the one-row-per-
+ * unit framing: the destination is the PROJECTS model, so the operator wants
+ * the project itself (plus an Arabic marketing document), never a unit table. */
+const EXTRACT_PROJECT_MODE = `
+
+PROJECT-PROFILE MODE — THIS RUN OVERRIDES "one unit per row":
+The destination is the PROJECTS model. The operator wants the PROJECT in detail — NOT its units.
+- Output ONE ROW PER PROJECT (normally exactly one row). NEVER one row per unit — do not produce a unit table.
+- Columns = project-level facts, in DETAIL: project name, developer, city / district, location link, project type, construction status, total number of units (as the source states or as you count), unit TYPES / MODELS offered (comma-separated, e.g. "شقة، دوبلكس، فيلا" or model names "نموذج A، نموذج B"), amenities & services, guarantees / warranties (الضمانات), payment terms, handover / completion date, licenses (رخصة البيع على الخارطة، الوسيط العقاري…), and ANY other project-level information the files contain.
+- STILL read every unit list and floor plan DEEPLY — but to UNDERSTAND the project as a whole: aggregate what you learn (which models exist, what each model offers, the span of areas / prices / rooms across the project). That understanding feeds the columns above and the document below — it must NOT become per-unit rows.
+
+THE DOCUMENT (required in this mode):
+Also write "document": a comprehensive Arabic descriptive / marketing document about the project — the single source of truth content writers will work from instead of reading unit tables. Markdown with clear headings. Cover everything the files support, typically:
+- نظرة عامة على المشروع (the concept, scale, what it is)
+- الموقع وسهولة الوصول (district, city, nearby landmarks/roads as stated)
+- المطوّر (who they are, as stated)
+- نماذج الوحدات (one subsection PER MODEL/TYPE: its areas, rooms, components — combine the floor plan and the text)
+- المواصفات والتشطيبات
+- المرافق والخدمات
+- الضمانات
+- الأسعار وخطط السداد (exactly as the source states them)
+- أبرز نقاط البيع (the strongest selling points, drawn from the facts)
+Rules for the document: write it in Arabic ALWAYS (regardless of the UI language); a confident marketing register but 100% grounded — every claim must come from the files; if the files don't state something, OMIT it (never invent, never pad with generic real-estate filler); keep numbers exactly as the source gives them.`;
 
 function fileExtensionMime(name: string): string | null {
   const ext = name.toLowerCase().split('.').pop() ?? '';
@@ -214,6 +268,7 @@ export async function runExtract(
   files: ExtractFileInput[],
   language: AgentLanguage = 'ar',
   targetFields: TargetFieldLite[] = [],
+  mode: ExtractMode = 'records',
 ): Promise<RawTableResult> {
   const { blocks: fileBlocks, skipped, truncated: truncatedInput, used } = await buildFileBlocks(files);
   if (used === 0) {
@@ -228,7 +283,9 @@ export async function runExtract(
     {
       type: 'text',
       text:
-        'Extract every record from the file(s) below into one unified table, following the rules.\n\n' +
+        (mode === 'project'
+          ? 'Extract the PROJECT-level information from the file(s) below into one table (one row per project — normally exactly one), and write the Arabic marketing document, following the rules.\n\n'
+          : 'Extract every record from the file(s) below into one unified table, following the rules.\n\n') +
         (fieldList
           ? 'The destination model cares about these fields — use them as your hunt-list (find a value for each where the source has one; add extra columns for any other useful data; do NOT clean or coerce):\n' +
             fieldList +
@@ -244,12 +301,13 @@ export async function runExtract(
     language === 'ar'
       ? '\n\nIMPORTANT: Write your "notes" and "summary" in Arabic (العربية). Never translate or alter the extracted cell DATA itself.'
       : '\n\nIMPORTANT: Write your "notes" and "summary" in English. Never translate or alter the extracted cell DATA itself.';
+  const extractTool = buildExtractTool(mode);
   const call = (model: string) =>
     client.messages.create({
       model,
       max_tokens: 16000,
-      system: EXTRACT_SYSTEM + langNote,
-      tools: [EXTRACT_TOOL],
+      system: EXTRACT_SYSTEM + (mode === 'project' ? EXTRACT_PROJECT_MODE : '') + langNote,
+      tools: [extractTool],
       tool_choice: { type: 'tool', name: 'emit_raw_table' },
       messages: [{ role: 'user', content: blocks }],
     });
@@ -270,6 +328,7 @@ export async function runExtract(
     rows?: unknown;
     notes?: unknown;
     summary?: unknown;
+    document?: unknown;
     truncated?: unknown;
   };
 
@@ -284,6 +343,10 @@ export async function runExtract(
     rows,
     notes: typeof out.notes === 'string' ? out.notes : undefined,
     summary: typeof out.summary === 'string' ? out.summary : undefined,
+    document:
+      mode === 'project' && typeof out.document === 'string' && out.document.trim()
+        ? out.document
+        : undefined,
     truncated: Boolean(out.truncated) || truncatedInput,
     files_processed: used,
     files_skipped: skipped,

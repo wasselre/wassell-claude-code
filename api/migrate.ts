@@ -62,8 +62,11 @@ interface MigrateRequestBody {
   // UI language for the model's human-readable text (notes / reasons / reply).
   language?: 'ar' | 'en';
   // extract — `fields` is the destination model's field list (a hunt-list).
+  // mode='project' = the projects-model special case: one row per project
+  // (no unit table) + an Arabic marketing document.
   files?: ExtractFileInput[];
   fields?: TargetFieldLite[];
+  mode?: 'records' | 'project';
   // suggest_mappings
   headers?: string[];
   sampleRows?: string[][];
@@ -106,6 +109,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             files,
             body.language ?? 'ar',
             Array.isArray(body.fields) ? body.fields : [],
+            body.mode === 'project' ? 'project' : 'records',
           );
           return jsonOk({ ok: true, ...result });
         } catch (err) {

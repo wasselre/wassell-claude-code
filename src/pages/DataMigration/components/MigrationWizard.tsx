@@ -100,7 +100,14 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               isAr={isAr}
               recordId={recordId}
               model={targetModel}
-              onTable={(table, sourceFiles) => patch({ raw_table: table, step: 'review_raw', source_files: sourceFiles })}
+              onTable={(table, sourceFiles, projectDocument) =>
+                patch({
+                  raw_table: table,
+                  step: 'review_raw',
+                  source_files: sourceFiles,
+                  project_document: projectDocument,
+                })
+              }
             />
           </div>
         )}
@@ -114,6 +121,8 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 table={data.raw_table}
                 sourceFiles={data.source_files}
                 chat={data.chat}
+                projectDocument={data.project_document}
+                onProjectDocument={(d) => patch({ project_document: d })}
                 onChange={(t) => patch({ raw_table: t })}
                 onReplace={(t) =>
                   patch({
@@ -135,7 +144,14 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 isAr={isAr}
                 recordId={recordId}
                 model={targetModel}
-                onTable={(table, sourceFiles) => patch({ raw_table: table, step: 'review_raw', source_files: sourceFiles })}
+                onTable={(table, sourceFiles, projectDocument) =>
+                  patch({
+                    raw_table: table,
+                    step: 'review_raw',
+                    source_files: sourceFiles,
+                    project_document: projectDocument,
+                  })
+                }
               />
             </div>
           ))}
@@ -183,6 +199,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               table={data.raw_table}
               mappings={data.mappings}
               standardization={data.standardization}
+              projectDocument={data.project_document}
               excludedRows={data.excluded_rows}
               onChangeExcluded={(next) => patch({ excluded_rows: next })}
               onConfirm={() => patch({ step: 'migrating', status: 'migrating' })}
@@ -199,6 +216,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               table={data.raw_table}
               mappings={data.mappings}
               standardization={data.standardization}
+              projectDocument={data.project_document}
               excludedRows={data.excluded_rows}
               onDone={(result) => patch({ result, step: 'done', status: 'done' })}
               onBack={() => patch({ step: 'preview', status: 'draft' })}

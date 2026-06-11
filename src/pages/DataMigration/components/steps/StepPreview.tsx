@@ -13,6 +13,8 @@ interface StepPreviewProps {
   table: RawTable;
   mappings: Record<number, string | null>;
   standardization: Record<number, ColumnStandardization> | undefined;
+  /** PROJECT-PROFILE mode: injected into each record's marketing_document. */
+  projectDocument?: string;
   excludedRows: number[] | undefined;
   onChangeExcluded: (next: number[]) => void;
   onConfirm: () => void;
@@ -33,6 +35,7 @@ export default function StepPreview({
   table,
   mappings,
   standardization,
+  projectDocument,
   excludedRows,
   onChangeExcluded,
   onConfirm,
@@ -50,11 +53,12 @@ export default function StepPreview({
         table,
         mappings,
         standardization: standardization ?? {},
+        projectDocument,
         allModels,
         allRecords,
         makeId: uuid,
       }),
-    [model, table, mappings, standardization, allModels, allRecords],
+    [model, table, mappings, standardization, projectDocument, allModels, allRecords],
   );
 
   // Columns = the importable fields actually populated by any record, in schema order.
@@ -94,6 +98,10 @@ export default function StepPreview({
               (isAr
                 ? ` (+${plan.newLookupRecords.length} سجل مرتبط جديد)`
                 : ` (+${plan.newLookupRecords.length} new linked records)`)}
+            {(projectDocument ?? '').trim() !== '' &&
+              (isAr
+                ? ' تتضمن الوثيقة التسويقية للمشروع.'
+                : ' Includes the project marketing document.')}
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs">
@@ -152,7 +160,16 @@ export default function StepPreview({
                     </td>
                     {columns.map((f) => (
                       <td key={f.id} className="border-b border-e border-sand/10 p-2 text-charcoal align-middle">
-                        {resolveDisplay(f, rec.data[f.name], allRecords, plan.newLookupRecords, isAr)}
+                        {f.type === 'textarea' ? (
+                          // Long-text fields (e.g. the project marketing document)
+                          // would blow the row open — clamp the cell, full text
+                          // is editable back in the review step.
+                          <div className="max-w-[320px] line-clamp-3 whitespace-pre-wrap text-xs">
+                            {resolveDisplay(f, rec.data[f.name], allRecords, plan.newLookupRecords, isAr)}
+                          </div>
+                        ) : (
+                          resolveDisplay(f, rec.data[f.name], allRecords, plan.newLookupRecords, isAr)
+                        )}
                       </td>
                     ))}
                   </tr>

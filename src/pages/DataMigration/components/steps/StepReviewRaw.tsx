@@ -12,6 +12,7 @@ import {
   MessageSquareText,
   ChevronDown,
   ChevronRight,
+  FileText,
 } from 'lucide-react';
 import EditableRawGrid from '../EditableRawGrid';
 import { discussExtraction, type MigrationUpload } from '../../lib/client';
@@ -28,6 +29,11 @@ interface StepReviewRawProps {
   sourceFiles?: MigrationUpload[];
   /** The post-extraction discussion thread (persisted on the record). */
   chat?: ChatMessage[];
+  /** PROJECT-PROFILE mode: the Arabic marketing document — shown in its own
+   * editable panel and saved onto the project record at import. */
+  projectDocument?: string;
+  /** Persist document edits (debounced by this component). */
+  onProjectDocument?: (doc: string) => void;
   /** Persist edits (debounced by this component). */
   onChange: (t: RawTable) => void;
   /** Re-upload replaces the table AND resets downstream mappings/standardization. */
@@ -76,6 +82,8 @@ export default function StepReviewRaw({
   table,
   sourceFiles,
   chat,
+  projectDocument,
+  onProjectDocument,
   onChange,
   onReplace,
   onChat,
@@ -88,8 +96,12 @@ export default function StepReviewRaw({
   const [aiInput, setAiInput] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [discussOpen, setDiscussOpen] = useState(true);
+  const [docOpen, setDocOpen] = useState(false);
+  const [docDraft, setDocDraft] = useState(projectDocument ?? '');
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<RawTable>(table);
+  const docTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const docLatest = useRef(projectDocument ?? '');
   const Next = isAr ? ArrowLeft : ArrowRight;
   const Back = isAr ? ArrowRight : ArrowLeft;
 
@@ -150,6 +162,11 @@ export default function StepReviewRaw({
       timer.current = null;
       onChange(latest.current);
     }
+    if (docTimer.current) {
+      clearTimeout(docTimer.current);
+      docTimer.current = null;
+      onProjectDocument?.(docLatest.current);
+    }
   };
   // Flush any pending debounced save when leaving the step.
   useEffect(() => () => flush(), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -161,6 +178,16 @@ export default function StepReviewRaw({
     timer.current = setTimeout(() => {
       timer.current = null;
       onChange(t);
+    }, 700);
+  };
+
+  const handleDocChange = (doc: string) => {
+    setDocDraft(doc);
+    docLatest.current = doc;
+    if (docTimer.current) clearTimeout(docTimer.current);
+    docTimer.current = setTimeout(() => {
+      docTimer.current = null;
+      onProjectDocument?.(doc);
     }, 700);
   };
 
@@ -238,6 +265,47 @@ export default function StepReviewRaw({
         <div className="mb-3 shrink-0 max-h-40 overflow-y-auto flex items-start gap-2 px-3 py-2 rounded-lg bg-copper/[0.06] border border-copper/20 text-xs text-charcoal/70">
           <Info size={14} className="text-copper shrink-0 mt-0.5" />
           <span>{draft.notes}</span>
+        </div>
+      )}
+
+      {/* PROJECT-PROFILE mode: the Arabic marketing document — the content
+          writers' source of truth. Editable; saved onto the project record's
+          marketing_document field at import. (Gated on the prop, not the
+          draft, so clearing the textarea doesn't unmount the editor.) */}
+      {projectDocument !== undefined && onProjectDocument && (
+        <div className="mb-3 rounded-xl border border-gold/40 bg-gold/[0.05] overflow-hidden shrink-0">
+          <button
+            onClick={() => setDocOpen((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-charcoal hover:bg-gold/[0.08] transition-colors"
+          >
+            {docOpen ? (
+              <ChevronDown size={15} />
+            ) : (
+              <ChevronRight size={15} className={isAr ? 'rotate-180' : ''} />
+            )}
+            <FileText size={15} className="text-gold" />
+            <span className="flex-1 text-start">
+              {isAr ? 'الوثيقة التسويقية للمشروع' : 'Project marketing document'}
+            </span>
+            <span className="text-[11px] text-charcoal/40 font-normal">
+              {isAr ? `${docDraft.length} حرف` : `${docDraft.length} chars`}
+            </span>
+          </button>
+          {docOpen && (
+            <div className="px-3 pb-3">
+              <p className="text-[11px] text-charcoal/50 mb-2">
+                {isAr
+                  ? 'مرجع كتّاب المحتوى — تُحفظ في حقل «الوثيقة التسويقية» بسجل المشروع عند الترحيل. حرّرها بحرّية قبل المتابعة.'
+                  : 'The content writers’ source of truth — saved into the project record’s "Marketing Document" field on import. Edit it freely before continuing.'}
+              </p>
+              <textarea
+                dir="auto"
+                value={docDraft}
+                onChange={(e) => handleDocChange(e.target.value)}
+                className="form-input w-full text-sm leading-relaxed min-h-[260px] max-h-[420px] resize-y"
+              />
+            </div>
+          )}
         </div>
       )}
 

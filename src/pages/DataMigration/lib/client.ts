@@ -89,6 +89,8 @@ export async function deleteMigrationFile(path: string): Promise<void> {
 }
 
 export interface ExtractResult extends RawTable {
+  /** mode='project' only: the Arabic marketing document about the project. */
+  document?: string;
   files_processed: number;
   files_skipped: { name: string; reason: string }[];
 }
@@ -96,12 +98,15 @@ export interface ExtractResult extends RawTable {
 /**
  * Run AI extraction over the given uploaded files. Mints a fresh signed URL
  * per file, then POSTs to /api/migrate (action=extract). Returns the unified
- * raw table. Throws on failure.
+ * raw table. mode='project' (the projects-model target) returns one project
+ * row + the Arabic marketing `document` instead of a per-unit table. Throws
+ * on failure.
  */
 export async function extractRawTable(
   uploads: MigrationUpload[],
   language: 'ar' | 'en' = 'ar',
   fields: TargetFieldLite[] = [],
+  mode: 'records' | 'project' = 'records',
 ): Promise<ExtractResult> {
   if (!supabase) throw new Error('Supabase is not configured.');
   if (uploads.length === 0) throw new Error('No files to extract.');
@@ -120,7 +125,7 @@ export async function extractRawTable(
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'extract', files, language, fields }),
+    body: JSON.stringify({ action: 'extract', files, language, fields, mode }),
   }, 300_000);
   const body = (await res.json().catch(() => ({}))) as Partial<ExtractResult> & {
     ok?: boolean;
@@ -134,6 +139,7 @@ export async function extractRawTable(
     rows: Array.isArray(body.rows) ? body.rows : [],
     notes: body.notes,
     summary: body.summary,
+    document: typeof body.document === 'string' && body.document.trim() ? body.document : undefined,
     truncated: Boolean(body.truncated),
     source: 'ai_extract',
     files_processed: body.files_processed ?? uploads.length,

@@ -1,6 +1,7 @@
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { mapImportedRows } from '@/lib/excelUtils';
 import { applyStandardization, modelWithNewOptions } from './applyStandardization';
+import { MARKETING_DOC_FIELD } from './types';
 import type { ColumnStandardization, MigrationResult, RawTable } from './types';
 
 interface SaveResultLike {
@@ -13,6 +14,9 @@ export interface BuildPlanArgs {
   table: RawTable;
   mappings: Record<number, string | null>;
   standardization: Record<number, ColumnStandardization>;
+  /** PROJECT-PROFILE mode: the Arabic marketing document — written into each
+   * built record's `marketing_document` field (when the model has one). */
+  projectDocument?: string;
   allModels: AppModel[];
   allRecords: Record<string, AppRecord[]>;
   makeId: () => string;
@@ -106,6 +110,16 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
       }
     }
     records.push({ rowIndex, data });
+  }
+
+  // 5 — PROJECT-PROFILE mode: attach the marketing document. Done here (not in
+  // runMigration) so the preview shows exactly what gets written. An explicit
+  // column mapped to the same field wins over the injection.
+  const doc = (args.projectDocument ?? '').trim();
+  if (doc && allFields.some((f) => f.name === MARKETING_DOC_FIELD)) {
+    for (const rec of records) {
+      if (!(MARKETING_DOC_FIELD in rec.data)) rec.data[MARKETING_DOC_FIELD] = doc;
+    }
   }
 
   return { model2, records, newLookupRecords, skipped };

@@ -10,6 +10,7 @@ import {
   X,
   Loader2,
   PlusSquare,
+  Building2,
 } from 'lucide-react';
 import {
   uploadMigrationFile,
@@ -18,6 +19,7 @@ import {
   type MigrationUpload,
 } from '../../lib/client';
 import { targetFieldLites } from '../../lib/targetFields';
+import { isProjectProfileTarget } from '../../lib/types';
 import type { RawTable } from '../../lib/types';
 import type { AppModel } from '@/types';
 
@@ -27,7 +29,8 @@ interface StepUploadProps {
   /** The chosen target model — its fields are sent to extraction as a
    * "what to look for" hunt-list (extraction is model-aware). */
   model: AppModel;
-  onTable: (table: RawTable, sourceFiles?: MigrationUpload[]) => void;
+  /** projectDocument is set only in PROJECT-PROFILE mode (projects target). */
+  onTable: (table: RawTable, sourceFiles?: MigrationUpload[], projectDocument?: string) => void;
 }
 
 const EXCEL_EXT = /\.(xlsx|xls|csv)$/i;
@@ -45,6 +48,9 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploads, setUploads] = useState<MigrationUpload[]>([]);
   const [busy, setBusy] = useState<'idle' | 'uploading' | 'extracting'>('idle');
+  // Projects target → extraction returns ONE project row (no unit table) plus
+  // the Arabic marketing document for the content writers.
+  const projectMode = isProjectProfileTarget(model);
 
   const handleFiles = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
@@ -108,7 +114,12 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
     if (uploads.length === 0) return;
     setBusy('extracting');
     try {
-      const result = await extractRawTable(uploads, isAr ? 'ar' : 'en', targetFieldLites(model));
+      const result = await extractRawTable(
+        uploads,
+        isAr ? 'ar' : 'en',
+        targetFieldLites(model),
+        projectMode ? 'project' : 'records',
+      );
       if (result.files_skipped.length > 0) {
         addToast(
           (isAr ? 'تم تخطي: ' : 'Skipped: ') +
@@ -129,10 +140,12 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
           headers: result.headers,
           rows: result.rows,
           notes: result.notes,
+          summary: result.summary,
           truncated: result.truncated,
           source: 'ai_extract',
         },
         uploads,
+        result.document,
       );
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -156,9 +169,13 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
           {isAr ? 'جارٍ استخراج البيانات…' : 'Extracting data…'}
         </div>
         <p className="text-sm text-charcoal/50 max-w-sm">
-          {isAr
-            ? 'يقرأ Claude ملفاتك ويحوّلها إلى جدول واحد. قد يستغرق هذا دقيقة.'
-            : 'Claude is reading your files into one table. This can take a minute.'}
+          {projectMode
+            ? isAr
+              ? 'يقرأ Claude ملفات المشروع بالكامل، يستخرج معلوماته العامة، ويكتب الوثيقة التسويقية. قد يستغرق هذا بضع دقائق.'
+              : 'Claude is reading the whole project, extracting its general information, and writing the marketing document. This can take a few minutes.'
+            : isAr
+              ? 'يقرأ Claude ملفاتك ويحوّلها إلى جدول واحد. قد يستغرق هذا دقيقة.'
+              : 'Claude is reading your files into one table. This can take a minute.'}
         </p>
       </div>
     );
@@ -166,6 +183,20 @@ export default function StepUpload({ isAr, recordId, model, onTable }: StepUploa
 
   return (
     <div className="p-5">
+      {/* PROJECT-PROFILE mode explainer — the projects target behaves differently. */}
+      {projectMode && (
+        <div className="mb-3 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-gold/[0.08] border border-gold/30 text-sm text-charcoal/80">
+          <Building2 size={18} className="text-gold shrink-0 mt-0.5" />
+          <div>
+            <span className="font-bold text-charcoal">
+              {isAr ? 'وضع ملف المشروع: ' : 'Project profile mode: '}
+            </span>
+            {isAr
+              ? 'سيستخرج Claude المعلومات العامة للمشروع بالتفصيل (صفًا واحدًا — بدون جدول وحدات)، ويكتب وثيقة تسويقية شاملة بالعربية تُحفظ في سجل المشروع لتكون مرجع كتّاب المحتوى.'
+              : "Claude will extract the project's general information in detail (one row — no units table) and write a comprehensive Arabic marketing document, saved on the project record as the content writers' source of truth."}
+          </div>
+        </div>
+      )}
       <div
         onDrop={(e) => {
           e.preventDefault();

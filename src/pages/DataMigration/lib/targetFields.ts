@@ -16,7 +16,13 @@ const IMPORTABLE_TYPES = new Set<string>([
 const STANDARDIZABLE_TYPES = new Set<string>(['dropdown', 'multiselect', 'lookup']);
 
 export function importableFields(model: AppModel): ModelField[] {
-  return model.schema.sections.flatMap((s) => s.fields).filter((f) => IMPORTABLE_TYPES.has(f.type));
+  // `is_computed` rollups (the all_projects unit-derived ranges/counts) are
+  // recomputed live from the project's units at render time — an imported
+  // value would be silently ignored, so they are neither mapping targets nor
+  // part of the extraction hunt-list.
+  return model.schema.sections
+    .flatMap((s) => s.fields)
+    .filter((f) => IMPORTABLE_TYPES.has(f.type) && !f.is_computed);
 }
 
 /** Mapping-target options for the column→field selects. Range fields expose two

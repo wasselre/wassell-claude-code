@@ -12,6 +12,8 @@ interface StepMigratingProps {
   table: RawTable;
   mappings: Record<number, string | null>;
   standardization: Record<number, ColumnStandardization> | undefined;
+  /** PROJECT-PROFILE mode: written into each record's marketing_document. */
+  projectDocument?: string;
   excludedRows: number[] | undefined;
   onDone: (result: MigrationResult) => void;
   onBack: () => void;
@@ -23,6 +25,7 @@ export default function StepMigrating({
   table,
   mappings,
   standardization,
+  projectDocument,
   excludedRows,
   onDone,
   onBack,
@@ -48,6 +51,7 @@ export default function StepMigrating({
           table,
           mappings,
           standardization: standardization ?? {},
+          projectDocument,
           excludedRows,
           allModels,
           allRecords,

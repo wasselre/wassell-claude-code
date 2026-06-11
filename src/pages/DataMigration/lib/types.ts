@@ -24,6 +24,23 @@ export function listTargetModels(models: AppModel[]): AppModel[] {
   return models.filter((m) => !NON_TARGET_MODEL_NAMES.has(m.name));
 }
 
+/**
+ * Models whose migration runs in PROJECT-PROFILE mode: extraction returns ONE
+ * row per project (the project's general information in detail — units are
+ * read deeply but aggregated, never enumerated as a unit table) PLUS an Arabic
+ * marketing document that is saved into the project record's
+ * `marketing_document` field at import. The document is the content writers'
+ * source of truth, so they never have to read unit tables.
+ */
+export const PROJECT_PROFILE_MODEL_NAMES = new Set<string>(['all_projects']);
+
+export function isProjectProfileTarget(model: AppModel): boolean {
+  return PROJECT_PROFILE_MODEL_NAMES.has(model.name);
+}
+
+/** Target-model field slug that receives the generated marketing document. */
+export const MARKETING_DOC_FIELD = 'marketing_document';
+
 /** Fine-grained wizard position, persisted on `record.data.step`. */
 export type MigrationStep =
   | 'pick_model'
@@ -86,6 +103,10 @@ export interface MigrationData {
   /** Realtime progress sub-phase for the async (worker) steps. */
   phase?: string;
   raw_table?: RawTable;
+  /** PROJECT-PROFILE mode only: the Arabic marketing document the extraction
+   * wrote about the project. Editable in the review step; injected into the
+   * target record's `marketing_document` field by buildMigrationPlan. */
+  project_document?: string;
   /** Uploaded source files (storage paths) — kept so the post-extraction
    * discussion can re-read the brochure (incl. floor plans). */
   source_files?: { path: string; name: string; mimeType: string; size: number }[];

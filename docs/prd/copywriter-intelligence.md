@@ -1,7 +1,7 @@
 # PRD: Real-Estate Copywriter Intelligence
 
 **Status:** Live (Phase 1–4 — knowledge base + copywriter agent + structured reel output → Reels records)
-**Last updated:** 2026-06-10
+**Last updated:** 2026-06-11 (get_project fact sheets now surface the project's `marketing_document` — the Arabic source-of-truth written by Data Migration's project-profile mode — and the prompt tells the agent to mine it first)
 **Related PRDs:** [models/competitors.md](models/competitors.md) (auto-generated field list), [models/reel-scripts.md](models/reel-scripts.md) (the "Reels" model the agent fills), [ai-agent.md](ai-agent.md) (the agent pattern Phase 3 mirrors), [record-management.md](record-management.md) (the prefilled record form reused), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
@@ -49,7 +49,7 @@ Auto-generated transcripts are too noisy to learn from (wrong/misheard words, br
 | `src/data/seedModels.ts` | Canonical `competitors` model definition (fields + button), kept in sync with the migration. |
 | `src/types/index.ts` · `src/pages/Records/RecordFormPage.tsx` · `src/pages/Builder/components/CustomButtonsTab.tsx` | The `analyze_reel` custom-button action type + its dispatch + Builder display. |
 | **Phase 3 — Copywriter agent** | |
-| `api/_lib/copywriterAgent.ts` | The agent brain: system prompt (methodology) + all four tool executors. `search_reels`/`get_reel` over the reel library; `search_projects`/`get_project` scoped to **`all_projects`** — `get_project` returns a fact sheet splitting `details` (team-entered) from `calculated`, and **computes the rollups LIVE from the project's units** (price/area/bedroom/bathroom ranges, unit counts, price per m²) the same way the app does — because those `is_computed` values are NOT persisted in `records.data`, so reading the stored slot wrongly reported "no numbers" for projects whose form shows them. Rollup math is ported from `src/lib/ourProjectsRollup.ts` (keep in sync). |
+| `api/_lib/copywriterAgent.ts` | The agent brain: system prompt (methodology) + all four tool executors. `search_reels`/`get_reel` over the reel library; `search_projects`/`get_project` scoped to **`all_projects`** — `get_project` returns a fact sheet splitting `details` (team-entered) from `calculated`, and **computes the rollups LIVE from the project's units** (price/area/bedroom/bathroom ranges, unit counts, price per m²) the same way the app does — because those `is_computed` values are NOT persisted in `records.data`, so reading the stored slot wrongly reported "no numbers" for projects whose form shows them. Rollup math is ported from `src/lib/ourProjectsRollup.ts` (keep in sync). When a project carries a `marketing_document` (the Arabic source-of-truth document written by the Data Migration project-profile mode — see [data-migration.md](data-migration.md)), it flows into `details` automatically and the system prompt tells the agent to treat it as the PRIMARY source for qualitative facts and selling points. |
 | `api/copywriter.ts` | `POST /api/copywriter` — SSE tool-use loop (edge), clone of `api/agent.ts`. |
 | `src/lib/copywriter/client.ts` | Browser SSE client (`streamCopywriterTurn`). |
 | `src/pages/Copywriter/CopywriterPage.tsx` · `components/CopywriterThread.tsx` | Split-pane chat UI (list + thread), clone of the AI sales agent's. The thread now also catches the `reel_script` event, renders the table card, persists the structured script on the message, and opens the Create-Reel form. |

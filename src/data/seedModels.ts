@@ -1860,6 +1860,23 @@ const allProjectsModel: AppModel = {
             width: 'full',
             show_in_table: false,
           },
+          {
+            // The Arabic source-of-truth marketing document written by the
+            // Data Migration PROJECT-PROFILE mode (docs/prd/data-migration.md).
+            // Mirrors the field added to the LIVE all_projects on 2026-06-11 —
+            // the by-name backfill never overwrites prod; this is for fresh
+            // installs. The copywriter's get_project surfaces it automatically.
+            id: uuid(),
+            name: 'marketing_document',
+            label_ar: 'الوثيقة التسويقية',
+            label_en: 'Marketing Document',
+            type: 'textarea',
+            required: false,
+            order: 12,
+            section_id: apBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
         ],
       },
       // Website-only knobs live in their own non-base section so admins see
