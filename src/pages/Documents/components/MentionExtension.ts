@@ -65,11 +65,13 @@ export const MentionNode = Mention.extend({
   renderText({ node }) {
     return `@${String(node.attrs.label ?? '')}`;
   },
-  renderHTML({ options, node }) {
-    return ['span', { ...options.HTMLAttributes }, `@${String(node.attrs.label ?? '')}`];
-  },
-  // Suggestion is attached separately in buildMentionExtension so the bare
-  // node stays usable by renderDocumentHtml (no editor, no suggestion).
+  // NO renderHTML override: the extension's default merges the per-attribute
+  // renderHTML outputs (data-kind / data-id / data-model-id / data-label)
+  // into the span. A custom override that spread only options.HTMLAttributes
+  // dropped those attrs from the live DOM — which silently broke the
+  // delegated click-to-navigate (live incident 2026-06-11).
+  // Suggestion is attached separately in DocumentEditor so this bare node
+  // stays usable by renderDocumentHtml (no editor, no suggestion plugin).
 });
 
 // ─── In-memory search ─────────────────────────────────────────────────────
