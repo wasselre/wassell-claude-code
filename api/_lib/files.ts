@@ -22,6 +22,33 @@ export const VIEW_URL_TTL_SECONDS = 60 * 5;
 /** Signed URLs for the public /share/:token route. 10-minute TTL. */
 export const SHARE_URL_TTL_SECONDS = 60 * 10;
 
+/** Office documents that get a LibreOffice→PDF preview conversion on the Fly
+ *  worker. KEEP IN SYNC with worker/src/runPreviewJob.ts (the worker is a
+ *  standalone package and cannot import this module). */
+export const OFFICE_PREVIEW_MIMES = new Set([
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
+
+export function isOfficePreviewMime(mime: string | null | undefined): boolean {
+  return OFFICE_PREVIEW_MIMES.has((mime ?? '').toLowerCase());
+}
+
+/** Fire-and-forget /wake ping to the Fly worker so a freshly enqueued preview
+ *  job skips the 3s polling latency. Missing env or a dead worker is fine —
+ *  the poll loop catches the job anyway (same posture as /api/generate-deck). */
+export function wakePreviewWorker(): void {
+  const base = process.env.WASSEL_DECK_WORKER_URL;
+  if (!base) return;
+  void fetch(`${base.replace(/\/$/, '')}/wake`, { method: 'POST' }).catch(() => {
+    // Best-effort by design — the worker's poll loop is the reliable path.
+  });
+}
+
 export function getJwtClient(req: Request): SupabaseClient {
   const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
   const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
@@ -98,6 +125,10 @@ export interface FileMetadata {
   mime_type: string;
   size_bytes: number;
   kind: string;
+  /** Office-preview cache state (2026-06-11 migration). Null = never requested. */
+  preview_status: 'pending' | 'ready' | 'failed' | null;
+  preview_storage_path: string | null;
+  preview_error: string | null;
 }
 
 /** Load file metadata via service-role (used after a permission check passes). */
@@ -105,7 +136,9 @@ export async function loadFileBypassRls(fileId: string): Promise<FileMetadata | 
   const svc = getServiceClient();
   const { data, error } = await svc
     .from('files')
-    .select('id, storage_bucket, storage_path, original_name, mime_type, size_bytes, kind')
+    .select(
+      'id, storage_bucket, storage_path, original_name, mime_type, size_bytes, kind, preview_status, preview_storage_path, preview_error',
+    )
     .eq('id', fileId)
     .maybeSingle();
   if (error) throw new AuthError(500, `file lookup failed: ${error.message}`);

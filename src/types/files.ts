@@ -41,8 +41,24 @@ export interface FileRow {
   /** Server-generated path: `<auth.uid()>/<file_id>.<safe_ext>`. */
   storage_path: string;
   kind: FilePreviewKind;
+  /** Office-preview conversion cache (LibreOffice→PDF on the Fly worker).
+   *  Null = never requested. See docs/prd/files.md "Office document preview". */
+  preview_status: 'pending' | 'ready' | 'failed' | null;
+  preview_storage_path: string | null;
+  preview_error: string | null;
+  preview_generated_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Response of POST /api/files/office-preview — the SPA polls this while
+ *  status='pending'. */
+export interface OfficePreviewResponse {
+  status: 'ready' | 'pending' | 'failed';
+  /** Signed URL of the converted PDF. Present only when status='ready'. */
+  url?: string;
+  expires_at?: string;
+  error?: string;
 }
 
 export interface FilePermission {
@@ -100,6 +116,9 @@ export interface SharedLink {
 export interface SharedFileResponse {
   /** Short-lived signed URL for inline preview. Absent until password (if any) is satisfied. */
   url?: string;
+  /** Office documents only: signed URL of the cached PDF conversion, when it
+   *  exists. The share page renders this inline instead of a download card. */
+  preview_url?: string;
   original_name?: string;
   mime_type?: string;
   size_bytes?: number;

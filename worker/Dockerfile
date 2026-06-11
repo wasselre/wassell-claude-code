@@ -28,7 +28,24 @@ ENV NODE_ENV=production
 # blocks have a predictable ~1.5k tokens each). Adds ~10 MB to the image
 # but skips Node-native PDF rendering (pdfjs + node-canvas) which would
 # add ~30 MB and need extra system libs anyway.
-RUN apk add --no-cache poppler-utils
+#
+# libreoffice-writer/-impress/-calc give us headless `soffice` — used by
+# runPreviewJob.ts to convert DOC/DOCX/PPT/PPTX/XLS/XLSX to PDF for in-app
+# previews WITHOUT shipping bytes to a third-party viewer (~400 MB, the
+# price of keeping documents private). The font packages matter: Arabic
+# documents need Amiri (the Wassel brand font) + Noto Arabic installed or
+# converted PDFs render as tofu boxes.
+RUN apk add --no-cache \
+    poppler-utils \
+    libreoffice-writer \
+    libreoffice-impress \
+    libreoffice-calc \
+    fontconfig \
+    font-amiri \
+    font-noto-arabic \
+    font-noto \
+    ttf-dejavu \
+    font-liberation
 
 # Install production deps only — keeps the image small.
 COPY package.json package-lock.json* ./

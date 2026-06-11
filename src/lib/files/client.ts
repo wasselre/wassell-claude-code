@@ -22,6 +22,7 @@ import type {
   FilePreviewKind,
   FolderPermission,
   FolderRow,
+  OfficePreviewResponse,
   SharedFileResponse,
   SharedLink,
 } from '@/types';
@@ -715,6 +716,46 @@ export async function signDownloadUrl(fileId: string): Promise<{ url: string }> 
     throw surfaceError('sign download url', new Error(body.error ?? `HTTP ${res.status}`));
   }
   return { url: body.url };
+}
+
+// ─── Office document preview ────────────────────────────────────────────
+
+/** Office documents that get a server-side LibreOffice→PDF preview. Mirrors
+ *  OFFICE_PREVIEW_MIMES in api/_lib/files.ts. */
+export const OFFICE_PREVIEW_MIMES = new Set([
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+]);
+
+export function isOfficePreviewMime(mime: string | null | undefined): boolean {
+  return OFFICE_PREVIEW_MIMES.has((mime ?? '').toLowerCase());
+}
+
+/**
+ * Request (and poll) the office→PDF preview state for a file. Callers loop on
+ * status==='pending'. `retry=true` clears a failed conversion and re-enqueues.
+ * Deliberately does NOT toast on failure — the preview modal renders the
+ * failed state inline with a Retry button; a toast would double-report.
+ */
+export async function requestOfficePreview(
+  fileId: string,
+  retry = false,
+): Promise<OfficePreviewResponse> {
+  const res = await fetch('/api/files/office-preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ fileId, retry }),
+  });
+  const body = (await res.json().catch(() => ({}))) as OfficePreviewResponse & { error?: string };
+  if (!res.ok) {
+    console.error(`[files] office preview request failed: HTTP ${res.status}`, body.error);
+    return { status: 'failed', error: body.error ?? `HTTP ${res.status}` };
+  }
+  return body;
 }
 
 // ─── Sharing (public links) ─────────────────────────────────────────────

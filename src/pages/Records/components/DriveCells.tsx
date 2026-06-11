@@ -52,6 +52,10 @@ export function ImageCell({ fileId, isAr }: { fileId: string; isAr: boolean }) {
               storage_bucket: '',
               storage_path: '',
               kind: 'image',
+              preview_status: null,
+              preview_storage_path: null,
+              preview_error: null,
+              preview_generated_at: null,
               created_at: '',
               updated_at: '',
             });
@@ -144,6 +148,10 @@ export function MultiImageCell({ fileIds, isAr }: { fileIds: string[]; isAr: boo
               storage_bucket: '',
               storage_path: '',
               kind: 'image',
+              preview_status: null,
+              preview_storage_path: null,
+              preview_error: null,
+              preview_generated_at: null,
               created_at: '',
               updated_at: '',
             });

@@ -422,6 +422,45 @@ function SharePreviewBody({ data }: { data: SharedFileResponse }) {
       </div>
     );
   }
+  // Office documents with a cached PDF conversion → render inline exactly
+  // like a native PDF. (The server only sends preview_url when the converted
+  // artifact exists; cold-cache viewers fall through to the card below while
+  // the warm-up conversion runs for the next visit.)
+  if (data.preview_url) {
+    if (isNarrow) {
+      const DocIcon = kindIcon.document;
+      return (
+        <div className="flex flex-col items-center justify-center px-6 py-12 text-center gap-5">
+          <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-copper/15 to-terracotta/10 ring-1 ring-copper/20 flex items-center justify-center">
+            <DocIcon size={48} className="text-copper" />
+          </div>
+          <p className="text-charcoal/70 text-sm max-w-sm leading-relaxed">
+            {isAr
+              ? 'افتح المعاينة في عارض الجهاز للحصول على كامل الصفحات والتكبير.'
+              : 'Open the preview in your device viewer for full pages and zoom.'}
+          </p>
+          <a
+            href={data.preview_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-copper text-white hover:bg-terracotta font-bold text-sm transition-colors shadow-md shadow-copper/20"
+          >
+            <ExternalLink size={16} />
+            {t('files.actions.preview')}
+          </a>
+        </div>
+      );
+    }
+    return (
+      <div className="p-3 lg:p-4">
+        <iframe
+          src={data.preview_url}
+          title={data.original_name ?? 'Preview'}
+          className="w-full h-[75vh] rounded-2xl border border-sand/40 bg-white"
+        />
+      </div>
+    );
+  }
   // document / archive / other → big card
   const Icon = kindIcon[kind];
   return (

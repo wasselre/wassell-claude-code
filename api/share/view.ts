@@ -21,8 +21,10 @@ import { jsonError, jsonOk } from '../_lib/auth.js';
 import {
   getAnonClient,
   getServiceClient,
+  isOfficePreviewMime,
   signFileUrl,
   SHARE_URL_TTL_SECONDS,
+  wakePreviewWorker,
 } from '../_lib/files.js';
 
 export const config = { runtime: 'edge' };
@@ -72,18 +74,42 @@ export default async function handler(req: Request): Promise<Response> {
   const svc = getServiceClient();
   const { data: fileRow, error: fileErr } = await svc
     .from('files')
-    .select('storage_bucket, storage_path')
+    .select('storage_bucket, storage_path, preview_status, preview_storage_path')
     .eq('id', row.file_id)
     .maybeSingle();
   if (fileErr || !fileRow) return jsonError(500, 'file metadata missing');
 
   const url = await signFileUrl(fileRow.storage_bucket, fileRow.storage_path, SHARE_URL_TTL_SECONDS);
 
+  // Office documents: ship the cached PDF preview alongside, so the share
+  // page renders inline instead of a download-only card. If the preview is
+  // missing, warm it (fire-and-forget) — the NEXT viewer gets the inline
+  // render. The share token already validated access; the enqueue RPC is
+  // service-role-only so anon can't reach it any other way.
+  let previewUrl: string | null = null;
+  if (isOfficePreviewMime(row.mime_type)) {
+    if (fileRow.preview_status === 'ready' && fileRow.preview_storage_path) {
+      previewUrl = await signFileUrl(
+        fileRow.storage_bucket,
+        fileRow.preview_storage_path,
+        SHARE_URL_TTL_SECONDS,
+      );
+    } else if (fileRow.preview_status !== 'failed') {
+      void svc
+        .rpc('file_preview_enqueue', { p_file_id: row.file_id, p_force: false })
+        .then(({ error: enqErr }) => {
+          if (enqErr) console.error('[share/view] preview warm enqueue failed:', enqErr.message);
+          else wakePreviewWorker();
+        });
+    }
+  }
+
   // Bump view counter + write activity_log. Fire-and-forget.
   void anon.rpc('record_shared_link_view', { p_token: body.token });
 
   return jsonOk({
     url,
+    preview_url: previewUrl ?? undefined,
     original_name: row.original_name,
     mime_type: row.mime_type,
     size_bytes: row.size_bytes,

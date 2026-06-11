@@ -42,6 +42,10 @@ export interface WorkerEnv {
   POLL_INTERVAL_MS: number;
   /** How often to invoke deck_jobs_watchdog() to sweep stale jobs. */
   WATCHDOG_INTERVAL_MS: number;
+  /** LibreOffice binary for office→PDF preview conversion. Default 'soffice'
+   *  (installed in the Docker image). Override for local dev, e.g. on Windows:
+   *  SOFFICE_BIN="C:\Program Files\LibreOffice\program\soffice.exe". */
+  SOFFICE_BIN: string;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -64,5 +68,6 @@ export function loadEnv(): WorkerEnv {
       `local-${process.pid}-${Date.now()}`,
     POLL_INTERVAL_MS: parseInt(process.env.POLL_INTERVAL_MS ?? '3000', 10),
     WATCHDOG_INTERVAL_MS: parseInt(process.env.WATCHDOG_INTERVAL_MS ?? '300000', 10),
+    SOFFICE_BIN: process.env.SOFFICE_BIN ?? 'soffice',
   };
 }

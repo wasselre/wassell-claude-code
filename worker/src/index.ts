@@ -28,6 +28,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
+import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 
 const env = loadEnv();
 
@@ -45,6 +46,10 @@ let wakeRequested = false;
 // vice-versa). Both loops share this one process + Supabase client.
 let imageBusy = false;
 let imageWakeRequested = false;
+// Office-preview conversions (file_preview_jobs) get a THIRD independent loop
+// for the same reason — a 2-10s soffice run should never wait behind a deck.
+let previewBusy = false;
+let previewWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -224,6 +229,99 @@ async function runImageWatchdog(): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Office preview — file_preview_jobs queue (LibreOffice → PDF).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued preview job (if any) and run it to completion. Mirrors the
+ * deck/image claim-run-complete shape against file_preview_jobs. Returns true
+ * if a job was claimed.
+ */
+async function claimAndRunOnePreview(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('file_preview_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] preview claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    file_id: string;
+    attempts: number;
+    storage_bucket: string;
+    storage_path: string;
+    mime_type: string;
+    size_bytes: number;
+    original_name: string;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: PreviewJob = {
+    id: row.job_id,
+    fileId: row.file_id,
+    attempts: row.attempts,
+    storageBucket: row.storage_bucket,
+    storagePath: row.storage_path,
+    mimeType: row.mime_type,
+    sizeBytes: row.size_bytes,
+    originalName: row.original_name,
+  };
+  console.log(
+    `[worker] claimed preview job=${job.id} file=${job.fileId} mime=${job.mimeType} attempts=${job.attempts}`,
+  );
+
+  try {
+    const previewPath = await runPreviewJob({ supabase, env, job });
+    // file_preview_complete only touches status='running' rows — a late finish
+    // after the watchdog already failed the job is a harmless no-op.
+    const { error: doneErr } = await supabase.rpc('file_preview_complete', {
+      p_job_id: job.id,
+      p_preview_path: previewPath,
+    });
+    if (doneErr) {
+      console.error(`[worker] file_preview_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed preview job=${job.id} → ${previewPath}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] preview job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('file_preview_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] file_preview_fail RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(
+        `[worker] could not mark preview job failed: ${(innerErr as Error).message}`,
+      );
+    }
+  }
+  return true;
+}
+
+async function runPreviewWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('file_preview_watchdog');
+    if (error) {
+      console.error(`[worker] preview watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) {
+      console.warn(`[worker] preview watchdog swept ${swept} stale job(s)`);
+    }
+  } catch (err) {
+    console.error(`[worker] preview watchdog threw:`, err);
+  }
+}
+
 /**
  * Main loop. Stays in this function for the lifetime of the process.
  * Drains the queue as fast as it can, then sleeps POLL_INTERVAL_MS
@@ -297,6 +395,38 @@ async function imagePollLoop(): Promise<void> {
   }
 }
 
+/**
+ * Preview-queue twin of pollLoop/imagePollLoop. Runs concurrently with its
+ * own busy/wake flags. Ticks file_preview_watchdog() on the same interval.
+ */
+async function previewPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    previewBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOnePreview();
+    } catch (err) {
+      console.error('[worker] preview poll iteration error:', err);
+    }
+    previewBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runPreviewWatchdog();
+    }
+
+    if (didClaim || previewWakeRequested) {
+      previewWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !previewWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP server: /healthz for Fly health checks, /wake for API ping.
 // ─────────────────────────────────────────────────────────────────────────
@@ -308,6 +438,7 @@ const server = http.createServer((req, res) => {
         ok: true,
         busy,
         image_busy: imageBusy,
+        preview_busy: previewBusy,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -315,10 +446,11 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (req.method === 'POST' && req.url === '/wake') {
-    // Wake BOTH queues — the endpoint that pings /wake doesn't say which kind
-    // of job it enqueued, and an extra poll on the idle loop is cheap.
+    // Wake ALL queues — the endpoint that pings /wake doesn't say which kind
+    // of job it enqueued, and an extra poll on the idle loops is cheap.
     wakeRequested = true;
     imageWakeRequested = true;
+    previewWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -339,7 +471,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || previewBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -348,8 +480,8 @@ async function shutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
-// Drain both queues concurrently for the lifetime of the process.
-Promise.all([pollLoop(), imagePollLoop()]).catch((err) => {
+// Drain all three queues concurrently for the lifetime of the process.
+Promise.all([pollLoop(), imagePollLoop(), previewPollLoop()]).catch((err) => {
   console.error('[worker] poll loop crashed:', err);
   process.exit(1);
 });

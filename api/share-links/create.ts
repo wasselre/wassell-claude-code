@@ -19,8 +19,10 @@ import {
   assertCanAccessFile,
   getJwtClient,
   getServiceClient,
+  isOfficePreviewMime,
   loadFileBypassRls,
   logFileActivityServer,
+  wakePreviewWorker,
 } from '../_lib/files.js';
 
 export const config = { runtime: 'edge' };
@@ -85,6 +87,18 @@ export default async function handler(req: Request): Promise<Response> {
         void svc.from('shared_links').delete().eq('id', ins.id);
         return jsonError(500, `password hash failed: ${setErr.message}`);
       }
+    }
+
+    // Warm the office-preview cache at link creation so the FIRST external
+    // viewer gets an inline render instead of a download card. Fire-and-forget
+    // — a failure here only costs the first viewer the warm cache.
+    if (isOfficePreviewMime(file.mime_type) && file.preview_status !== 'ready') {
+      void svc
+        .rpc('file_preview_enqueue', { p_file_id: file.id, p_force: false })
+        .then(({ error: enqErr }) => {
+          if (enqErr) console.error('[share-links/create] preview warm failed:', enqErr.message);
+          else wakePreviewWorker();
+        });
     }
 
     void logFileActivityServer({
