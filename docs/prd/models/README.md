@@ -9,14 +9,14 @@
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [AI Agent](ai-chats.md) | `ai_chats` | JSONB | New Group | 1 | 5 | yes | 2026-06-10 |
-| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 5 | 30 | no | 2026-06-10 |
+| [All Projects](all-projects.md) | `all_projects` | JSONB | Projects | 6 | 32 | no | 2026-06-11 |
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 9 | no | 2026-06-08 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 11 | yes | 2026-06-08 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 12 | yes | 2026-06-10 |
 | [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 20 | no | 2026-06-09 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-06-09 |
 | [Contacts](contacts.md) | `contacts` | JSONB | New Group | 1 | 3 | no | 2026-06-08 |
-| [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | — | 1 | 6 | no | 2026-06-10 |
+| [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | Designs | 1 | 6 | no | 2026-06-11 |
 | [Data Migration](data-migration.md) | `data_migration` | JSONB | — | 1 | 5 | yes | 2026-06-08 |
 | [Decks](decks.md) | `decks` | JSONB | — | 1 | 11 | yes | 2026-06-08 |
 | [Templates Library](design-templates.md) | `design_templates` | JSONB | Designs | 1 | 7 | yes | 2026-05-09 |
@@ -29,9 +29,9 @@
 | [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | New Group | 2 | 14 | no | 2026-06-10 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
-| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | — | 4 | 15 | no | 2026-06-10 |
+| [Reels](reel-scripts.md) | `reel_scripts` | JSONB | Designs | 4 | 15 | no | 2026-06-11 |
 | [Website Settings](site-settings.md) | `site_settings` | JSONB | — | 14 | 214 | yes | 2026-05-17 |
-| [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 2 | 5 | no | 2026-06-08 |
+| [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 2 | 5 | no | 2026-06-11 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Units](units.md) | `units` | JSONB | Projects | 1 | 31 | no | 2026-06-08 |
 | [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 8 | no | 2026-06-08 |

@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-10
+**Last updated (from DB):** 2026-06-11
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -13,8 +13,8 @@
 **Icon:** `building-2`   ·   **Color:** `#8E4E3A`
 
 ## Overview
-- Sections: **5** (1 base, 4 non-base)
-- Fields: **30**
+- Sections: **6** (1 base, 5 non-base)
+- Fields: **32**
 - Section-selector field: none
 - Duplicate-check field: Project ID (`project_id`)
 - Custom buttons: 1
@@ -39,10 +39,8 @@
 | `project_id` | Project ID / معرف المشروع | Auto ID | no | half | yes | م ش### |
 | `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 12 options · multi |
 | `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 7 options · multi |
-| `project_stage` | Project Stage / مرحلة المشروع | Dropdown | no | half | yes | 7 options |
 | `project_status` | Project Status / حالة المشروع | Dropdown | no | half | yes | 6 options |
 | `data_sources` | Data Sources / مصادر البيانات | Multi-select | no | half | yes | 5 options · multi |
-| `is_targeted` | Project Targeting / إستهداف المشروع | Checkbox | no | half | yes |  |
 | `construction_status` | Construction Status / حالة الإنشاء | Dropdown | no | half | yes | 6 options |
 | `project_type` | Project Type / نوع المشروع | Dropdown | no | half | yes | 2 options |
 
@@ -77,14 +75,6 @@
   - API value `حوش` → "Yard" / "حوش"
   - API value `سطح` → "Rooftop" / "سطح"
   - API value `مصعد` → "Elevator" / "مصعد"
-- **Project Stage / مرحلة المشروع** (`project_stage`, type `dropdown`) — options:
-  - API value `new` → "New" / "جديد" · color `#3B82F6`
-  - API value `study` → "Study" / "الدراسة" · color `#10B981`
-  - API value `field_survey_scheduled` → "Field Survey Visit Scheduled" / "تم جدولة زيارة مسح ميداني" · color `#14B8A6`
-  - API value `targeted` → "Targeted" / "مستهدف" · color `#F59E0B`
-  - API value `not_targeted` → "Not Targeted" / "غير مستهدف" · color `#EF4444`
-  - API value `exclusive` → "Exclusive" / "حصري" · color `#8B5CF6`
-  - API value `shared` → "Shared" / "مشترك" · color `#EC4899`
 - **Project Status / حالة المشروع** (`project_status`, type `dropdown`) — options:
   - API value `under_construction` → "Under Construction" / "تحت الإنشاء" · color `#3B82F6`
   - API value `available_on_map` → "Available On Map" / "متاح على الخارطة" · color `#10B981`
@@ -612,12 +602,14 @@
 - **Avg Price per m² / متوسط السعر الإجمالي للمتر** (`avg_price_per_m2`, type `currency`):
   - computed rollup (`avg_price_per_meter`), read-only
 
-### 4. Project Content / محتوى المشروع  _(color #B8734F)_
+### 4. Project Content / محتوى المشروع-المطور  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `brochure_url` | Brochure / البروشور | URL | no | half | yes |  |
 | `project_page_url` | Project Page / صفحة المشروع | URL | no | half | yes |  |
+| `developer_content` | Developer Content / المحتوى من المطور | Attachment | no | half | yes |  |
+| `marketing_document` | Marketing Document / الوثيقة التسويقية | Text area | no | full | no |  |
 
 ### 5. Website Settings / إعدادات الموقع  _(color #B8734F)_
 
@@ -625,6 +617,24 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | `image_url` | Project Image / صورة المشروع | Image | no | full | no |  |
 | `is_public` | Show on Website / عرض على الموقع | Checkbox | no | half | yes |  |
+
+### 6. Project Targeting / استهداف المشروع  _(color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `project_targt_status` | Project Stage / مرحلة إستهداف المشروع | Dropdown | no | half | yes | 7 options |
+| `is_targeted` | Project Targeting / إستهداف المشروع | Checkbox | no | half | yes |  |
+
+**Field details:**
+
+- **Project Stage / مرحلة إستهداف المشروع** (`project_targt_status`, type `dropdown`) — options:
+  - API value `new` → "New" / "جديد" · color `#3B82F6`
+  - API value `study` → "Study" / "الدراسة" · color `#10B981`
+  - API value `field_survey_scheduled` → "Field Survey Visit Scheduled" / "تم جدولة زيارة مسح ميداني" · color `#14B8A6`
+  - API value `targeted` → "Targeted" / "مستهدف" · color `#F59E0B`
+  - API value `not_targeted` → "Not Targeted" / "غير مستهدف" · color `#EF4444`
+  - API value `exclusive` → "Exclusive" / "حصري" · color `#8B5CF6`
+  - API value `shared` → "Shared" / "مشترك" · color `#EC4899`
 
 ## Custom buttons
 

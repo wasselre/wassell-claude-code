@@ -5,7 +5,7 @@
 # Workflow: Targeted Projects / المشاريع - المستهدفة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-05-11
+**Last updated (from DB):** 2026-06-11
 **Workflow id:** `f9a636dd-f83c-4a07-8190-09ec1d886dd8`   ·   **Active:** yes
 **Group:** Marketing
 **Trigger:** When a record is updated
@@ -28,4 +28,4 @@ Create a **Targeted Projects / المشاريع المستهدفة** record with
 
 **Action 2 — Update Record**
 Update **All Projects / جميع المشاريع** records where Project ID (`project_id`) = the trigger record's Project ID (`project_id`), setting:
-- Project Stage (`project_stage`) ← static value study
+- Project Stage (`project_targt_status`) ← static value study
