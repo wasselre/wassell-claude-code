@@ -15,6 +15,7 @@ import {
   PanelTopClose,
   PanelTopOpen,
   Share2,
+  Sparkles,
   Users,
 } from 'lucide-react';
 import type { Editor, JSONContent } from '@tiptap/react';
@@ -26,8 +27,10 @@ import PermissionsPanel from '@/pages/Files/components/PermissionsPanel';
 import MoveToFolderModal from '@/pages/Files/components/MoveToFolderModal';
 import LinkedRecordsModal from './components/LinkedRecordsModal';
 import CrmVariablesPopover from './components/CrmVariablesPopover';
+import DocAssistModal from './components/DocAssistModal';
 import { listLinksForFile, type DocumentLink } from '@/lib/documents/links';
 import { resolveDocVariables } from '@/lib/documents/variables';
+import { buildAssistContext } from '@/lib/documents/assist';
 import DocumentEditor, { type DocumentEditorHandle } from './components/DocumentEditor';
 import DocumentToolbar from './components/DocumentToolbar';
 import './documents.css';
@@ -68,6 +71,9 @@ export default function DocumentEditorPage() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
   const [varsOpen, setVarsOpen] = useState(false);
+  /** AI assist — selection snapshot captured the moment the modal opens, so
+   *  Replace targets the exact original range even after the editor blurs. */
+  const [assist, setAssist] = useState<{ from: number; to: number; text: string } | null>(null);
   /** Record relationships — drive CRM variable resolution. Refreshed after
    *  the Linked-records modal closes (links may have changed). */
   const [docLinks, setDocLinks] = useState<DocumentLink[]>([]);
@@ -375,6 +381,19 @@ export default function DocumentEditorPage() {
                 <HeaderIconBtn icon={FolderInput} label={t('files.actions.move')} onClick={() => setMoveOpen(true)} />
                 <HeaderIconBtn icon={Link2} label={t('doc.links.title')} onClick={() => setLinksOpen(true)} />
                 <HeaderIconBtn icon={Braces} label={t('doc.vars.title')} onClick={() => setVarsOpen(true)} />
+                <HeaderIconBtn
+                  icon={Sparkles}
+                  label={t('doc.assist.title')}
+                  onClick={() => {
+                    if (!editor) return;
+                    const { from, to, empty } = editor.state.selection;
+                    setAssist({
+                      from,
+                      to,
+                      text: empty ? '' : editor.state.doc.textBetween(from, to, '\n'),
+                    });
+                  }}
+                />
               </div>
             )}
 
@@ -493,6 +512,25 @@ export default function DocumentEditorPage() {
           refreshLinks();
         }}
       />
+      <DocAssistModal
+        open={!!assist}
+        selectionText={assist?.text ?? ''}
+        docTitle={file.original_name}
+        context={buildAssistContext(resolvedVars.groups)}
+        onClose={() => setAssist(null)}
+        onReplace={(result) => {
+          if (!editor || !assist) return;
+          editor
+            .chain()
+            .focus()
+            .insertContentAt({ from: assist.from, to: assist.to }, assistResultContent(result))
+            .run();
+        }}
+        onInsertBelow={(result) => {
+          if (!editor || !assist) return;
+          editor.chain().focus().insertContentAt(assist.to, assistResultContent(result, true)).run();
+        }}
+      />
       <CrmVariablesPopover
         open={varsOpen}
         groups={resolvedVars.groups}
@@ -511,6 +549,20 @@ interface HeaderIconBtnProps {
   icon: typeof Share2;
   label: string;
   onClick: () => void;
+}
+
+/** Build TipTap content from an assist result: inline text for a single-line
+ *  result (keeps the surrounding paragraph intact), paragraph nodes for
+ *  multi-line. forceBlocks makes insert-below always land as paragraphs. */
+function assistResultContent(result: string, forceBlocks = false): JSONContent | JSONContent[] {
+  const lines = result
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  if (!forceBlocks && lines.length <= 1) {
+    return { type: 'text', text: lines[0] ?? result };
+  }
+  return lines.map((line) => ({ type: 'paragraph', content: [{ type: 'text', text: line }] }));
 }
 
 function HeaderIconBtn({ icon: Icon, label, onClick }: HeaderIconBtnProps) {
