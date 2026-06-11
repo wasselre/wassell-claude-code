@@ -23,7 +23,7 @@ import { PageBreak } from '@/pages/Documents/components/PageBreakExtension';
 import { CommentMark } from '@/pages/Documents/components/CommentMarkExtension';
 import { SuggestDelete, SuggestInsert } from '@/pages/Documents/components/SuggestionExtensions';
 
-const SCHEMA_EXTENSIONS = [
+export const SCHEMA_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
   Underline,
   Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer' } }),

@@ -510,3 +510,29 @@ html.doc-fullscreen .wassel-toasts {
   background: rgba(185, 28, 28, 0.06);
   text-decoration: line-through;
 }
+
+/* ─── Collaboration carets ────────────────────────────────────────────────
+   Remote peers' cursors (TipTap CollaborationCaret). The element gets
+   border-color inline from the peer's color; the label rides above it. */
+.wassel-doc-surface .collaboration-carets__caret {
+  position: relative;
+  border-inline-start: 1px solid;
+  border-inline-end: 1px solid;
+  margin-inline: -1px;
+  pointer-events: none;
+  word-break: normal;
+}
+.wassel-doc-surface .collaboration-carets__label {
+  position: absolute;
+  top: -1.35em;
+  inset-inline-start: -1px;
+  font-size: 0.625rem;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  padding: 2px 5px;
+  border-radius: 4px 4px 4px 0;
+  white-space: nowrap;
+  user-select: none;
+  pointer-events: none;
+}

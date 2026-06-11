@@ -35,6 +35,7 @@ import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import type { EditorState } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
 import type { Node as PMNode } from '@tiptap/pm/model';
+import { isChangeOrigin } from '@tiptap/extension-collaboration';
 
 // ─── Marks ────────────────────────────────────────────────────────────────────
 
@@ -304,6 +305,7 @@ export const SuggestionMode = Extension.create<Record<string, never>, Suggestion
             if (!transaction.docChanged) continue;
             if (transaction.getMeta('suggestionSkip')) continue;
             if (transaction.getMeta('history$')) continue; // undo/redo restores state, not new proposals
+            if (isChangeOrigin(transaction)) continue; // remote collab edits are NOT our proposals
             const ranges: Range[] = [];
             for (const step of transaction.steps) {
               const map = step.getMap();

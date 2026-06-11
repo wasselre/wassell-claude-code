@@ -103,6 +103,12 @@ export async function createDocument(opts: CreateDocumentOpts = {}): Promise<Fil
 export interface LoadedDocument {
   file: FileRow;
   doc: WasselDocumentRow;
+  /** The caller's STRONGEST effective role on the file (owner grant, direct
+   *  file grant, or folder cascade — via wassell_effective_file_roles).
+   *  Drives canEdit so shared editors actually get the editing surface
+   *  (required for real-time co-editing). 'viewer' when the RPC fails —
+   *  fail closed. */
+  myRole: 'viewer' | 'editor' | 'owner';
 }
 
 /**
@@ -111,16 +117,26 @@ export interface LoadedDocument {
  */
 export async function loadDocument(fileId: string): Promise<LoadedDocument | null> {
   if (!supabase) return null;
-  const [fileRes, docRes] = await Promise.all([
+  const [fileRes, docRes, roleRes] = await Promise.all([
     supabase.from('files').select('*').eq('id', fileId).maybeSingle(),
     supabase.from('wassel_documents').select('*').eq('file_id', fileId).maybeSingle(),
+    supabase.rpc('wassell_effective_file_roles', { p_file_ids: [fileId] }),
   ]);
   if (fileRes.error) throw surfaceError('load document', fileRes.error);
   if (docRes.error) throw surfaceError('load document', docRes.error);
   if (!fileRes.data || !docRes.data) return null;
+  let myRole: LoadedDocument['myRole'] = 'viewer';
+  if (roleRes.error) {
+    // Fail closed but loud — the doc still opens read-only.
+    surfaceError('load role', roleRes.error);
+  } else {
+    const row = (roleRes.data as Array<{ file_id: string; role: string }> | null)?.[0];
+    if (row?.role === 'owner' || row?.role === 'editor') myRole = row.role;
+  }
   return {
     file: fileRes.data as FileRow,
     doc: docRes.data as WasselDocumentRow,
+    myRole,
   };
 }
 
@@ -128,6 +144,9 @@ export interface SaveDocumentInput {
   fileId: string;
   contentJson: Record<string, unknown>;
   contentHtml: string;
+  /** Merged Yjs CRDT state (base64) — persisted whenever collab is active so
+   *  late joiners hydrate with shared identities. Omitted = untouched. */
+  ydocState?: string;
 }
 
 /**
@@ -157,6 +176,7 @@ export async function saveDocument(input: SaveDocumentInput): Promise<{ version:
       content_html: input.contentHtml,
       version: nextVersion,
       last_edited_by_user_id: appUserId,
+      ...(input.ydocState !== undefined ? { ydoc_state: input.ydocState } : {}),
     })
     .eq('file_id', input.fileId)
     .select('version, updated_at')

@@ -1,6 +1,10 @@
 import { useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
-import { Extension } from '@tiptap/core';
+import { Extension, type Extensions } from '@tiptap/core';
+import Collaboration from '@tiptap/extension-collaboration';
+import { CollaborationCaret } from '@tiptap/extension-collaboration-caret';
+import type * as Y from 'yjs';
+import { Y_FIELD, type SupabaseCollabProvider } from '@/lib/documents/collab';
 import { CrmVariables } from './CrmVariablesExtension';
 import { CommentMark } from './CommentMarkExtension';
 import { SuggestDelete, SuggestInsert, SuggestionMode, type SuggestionModeStorage } from './SuggestionExtensions';
@@ -132,6 +136,13 @@ interface Props {
   suggesting?: boolean;
   /** App user id stamped onto proposals (suggestions mode). */
   suggestAuthor?: string | null;
+  /** Real-time collaboration. When ydoc is provided the SHARED CRDT doc is
+   *  the source of truth — `initialContent` is ignored (the page hydrates
+   *  the ydoc before mounting this component) and built-in undo/redo is
+   *  swapped for the Yjs undo manager. Mount with a stable key per session. */
+  ydoc?: Y.Doc | null;
+  collabProvider?: SupabaseCollabProvider | null;
+  collabUser?: { name: string; color: string } | null;
 }
 
 const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function DocumentEditor(
@@ -147,6 +158,9 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
     onCommentClick,
     suggesting,
     suggestAuthor,
+    ydoc,
+    collabProvider,
+    collabUser,
   },
   ref,
 ) {
@@ -159,15 +173,32 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
   const onCommentClickRef = useRef(onCommentClick);
   onCommentClickRef.current = onCommentClick;
 
+  // Collaboration swaps the content source (shared Y.Doc) and the undo stack
+  // (Y.UndoManager — undoing your own edits without undoing your peers').
+  const collab = !!ydoc;
+  const collabExtensions: Extensions = collab
+    ? [
+        Collaboration.configure({ document: ydoc, field: Y_FIELD }),
+        ...(collabProvider && collabUser
+          ? [CollaborationCaret.configure({ provider: collabProvider, user: collabUser })]
+          : []),
+      ]
+    : [];
+
   const editor = useEditor({
     editable,
-    content: initialContent,
+    // With collab the ydoc IS the content — setting content would re-insert
+    // it into the shared doc and duplicate it for every joiner.
+    content: collab ? undefined : initialContent,
     extensions: [
       StarterKit.configure({
         // We want headings, lists, blockquote, code, all from StarterKit.
         // No special config needed for the defaults.
         heading: { levels: [1, 2, 3] },
+        // Yjs owns history under collab (Collaboration registers undo/redo).
+        ...(collab ? { undoRedo: false } : {}),
       }),
+      ...collabExtensions,
       Underline,
       Link.configure({
         openOnClick: false,

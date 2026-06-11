@@ -1,0 +1,21 @@
+-- ============================================================================
+-- 2026-06-11: wassel_documents.ydoc_state — persisted Yjs CRDT state
+-- ----------------------------------------------------------------------------
+-- Real-time collaboration (Files & Documents upgrade, Part 2 §3). The column
+-- stores the full Yjs document state as a base64-encoded update blob.
+--
+-- WHY A BLOB NEXT TO content_json: CRDT merging depends on shared internal
+-- identities. If two clients each bootstrapped a fresh Y.Doc from
+-- content_json, their docs would have DIFFERENT identities for the same
+-- text, and merging would duplicate every paragraph. So the FIRST client to
+-- open a document seeds ydoc_state from content_json exactly once (guarded
+-- by `WHERE ydoc_state IS NULL` — first writer wins; losers re-fetch), and
+-- every later client hydrates from the blob. content_json/content_html stay
+-- the readable derivations used by previews, share links, and exports —
+-- they're re-derived from the live editor on every save.
+--
+-- Updates flow over Supabase Realtime broadcast (channel `ydoc:<file_id>`,
+-- see src/lib/documents/collab.ts) — no Yjs websocket server needed.
+-- ============================================================================
+
+ALTER TABLE public.wassel_documents ADD COLUMN IF NOT EXISTS ydoc_state text;

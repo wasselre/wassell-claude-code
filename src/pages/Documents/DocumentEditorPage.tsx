@@ -34,6 +34,13 @@ import {
   setApprovalStatus,
 } from '@/lib/documents/client';
 import { maybeAutoSnapshot, snapshotVersion, type DocVersionFull } from '@/lib/documents/versions';
+import {
+  bootstrapCollabDoc,
+  caretColorFor,
+  encodeYDocState,
+  type CollabPeer,
+  type CollabSession,
+} from '@/lib/documents/collab';
 import VersionHistoryModal from './components/VersionHistoryModal';
 import ApprovalStatusPill from './components/ApprovalStatusPill';
 import {
@@ -142,6 +149,18 @@ export default function DocumentEditorPage() {
   approvalRef.current = approvalStatus;
   /** Suggestions (tracked changes) mode — per-session, off by default. */
   const [suggesting, setSuggesting] = useState(false);
+  /** Real-time collaboration. The editor mounts only after the bootstrap
+   *  resolves (shared Y.Doc hydrated, Realtime channel joined) — or with a
+   *  null session as the plain single-user fallback. */
+  const [collabSession, setCollabSession] = useState<CollabSession | null>(null);
+  const [collabReady, setCollabReady] = useState(false);
+  const [peers, setPeers] = useState<CollabPeer[]>([]);
+  const collabRef = useRef<CollabSession | null>(null);
+  /** Caller's effective role (owner grant / direct grant / folder cascade).
+   *  Shared editors get the full editing surface — that's what makes
+   *  co-editing real. Viewers stay read-only. */
+  const [myRole, setMyRole] = useState<'viewer' | 'editor' | 'owner'>('viewer');
+  const users = useAppStore((s) => s.users);
   /** Record relationships — drive CRM variable resolution. Refreshed after
    *  the Linked-records modal closes (links may have changed). */
   const [docLinks, setDocLinks] = useState<DocumentLink[]>([]);
@@ -155,7 +174,11 @@ export default function DocumentEditorPage() {
   /** Latest persisted wassel_documents.version — stamped onto snapshots. */
   const docVersionRef = useRef(1);
 
-  const canEdit = !!file && !!currentUserId && file.uploaded_by_user_id === currentUserId;
+  // Effective-role-aware (was uploader-only): folder-cascade and direct
+  // grants give shared editors the real editing surface — co-editing needs
+  // that. RLS remains the authoritative server-side gate.
+  const canEdit = !!file && !!currentUserId && myRole !== 'viewer';
+  const isOwner = myRole === 'owner';
 
   // Load the document's record links (CRM variable sources) once the file is
   // known, and re-load after the Linked-records modal closes.
@@ -296,6 +319,7 @@ export default function DocumentEditorPage() {
         setPageSettings(normalizePageSettings(res.doc.settings));
         setApprovalStatusState(res.doc.approval_status ?? 'draft');
         docVersionRef.current = res.doc.version;
+        setMyRole(res.myRole);
         setLoading(false);
       })
       .catch((err) => {
@@ -307,6 +331,55 @@ export default function DocumentEditorPage() {
       cancelled = true;
     };
   }, [fileId, t]);
+
+  // Real-time collaboration bootstrap: hydrate (or first-seed) the shared
+  // Y.Doc, join the Realtime channel, and surface peer presence. The editor
+  // mounts only after this resolves; a null session = plain single-user
+  // editor (Supabase absent or bootstrap failure — both stay editable).
+  useEffect(() => {
+    if (!file || !doc) return;
+    let cancelled = false;
+    let session: CollabSession | null = null;
+    const me = users.find((u) => u.id === currentUserId);
+    const myName = me ? (isAr ? me.name_ar : me.name_en) || me.email : '—';
+    bootstrapCollabDoc(file.id, doc, { name: myName, color: caretColorFor(currentUserId ?? '') })
+      .then((s) => {
+        if (cancelled) {
+          s?.provider.destroy();
+          s?.ydoc.destroy();
+          return;
+        }
+        session = s;
+        collabRef.current = s;
+        setCollabSession(s);
+        setCollabReady(true);
+        if (s) {
+          s.provider.awareness.on('change', () => {
+            setPeers(s ? s.provider.peers() : []);
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('[collab] bootstrap failed — opening single-user:', err);
+        if (!cancelled) {
+          collabRef.current = null;
+          setCollabSession(null);
+          setCollabReady(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+      session?.provider.destroy();
+      session?.ydoc.destroy();
+      collabRef.current = null;
+      setCollabSession(null);
+      setCollabReady(false);
+      setPeers([]);
+    };
+    // Re-bootstrapping on every doc-row update would tear down live sessions;
+    // file identity is the real dependency (doc is loaded alongside it).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [file?.id, doc?.file_id]);
 
   // Flush any pending autosave on unmount so a quick exit doesn't drop the
   // last 1.5 s of edits.
@@ -370,7 +443,15 @@ export default function DocumentEditorPage() {
     const contentHtml = editorRef.current.getHTML();
     setSaveStatus('saving');
     try {
-      const { version } = await saveDocument({ fileId, contentJson, contentHtml });
+      const { version } = await saveDocument({
+        fileId,
+        contentJson,
+        contentHtml,
+        // Persist the merged CRDT state so late joiners share identities.
+        // Remote peers' updates land in OUR ydoc too, so whichever client
+        // saves last persists everyone's edits.
+        ...(collabRef.current ? { ydocState: encodeYDocState(collabRef.current.ydoc) } : {}),
+      });
       docVersionRef.current = version;
       setSaveStatus('saved');
       // Edits may have deleted (or restored via undo) comment anchors —
@@ -627,11 +708,32 @@ export default function DocumentEditorPage() {
             />
             <SaveStatusBadge status={canEdit ? saveStatus : 'idle'} canEdit={canEdit} />
 
+            {/* Live peers editing/viewing this doc right now (awareness). */}
+            {peers.length > 0 && (
+              <div className="hidden sm:flex items-center -space-x-1.5 shrink-0" dir="ltr">
+                {peers.slice(0, 5).map((p) => (
+                  <span
+                    key={p.clientId}
+                    title={p.name}
+                    style={{ backgroundColor: p.color }}
+                    className="w-6 h-6 rounded-full text-white text-[0.625rem] font-bold flex items-center justify-center ring-2 ring-white"
+                  >
+                    {p.name.trim().charAt(0) || '?'}
+                  </span>
+                ))}
+                {peers.length > 5 && (
+                  <span className="w-6 h-6 rounded-full bg-charcoal/30 text-white text-[0.625rem] font-bold flex items-center justify-center ring-2 ring-white">
+                    +{peers.length - 5}
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* Approval workflow pill (draft/review/approved/published). */}
             <ApprovalStatusPill
               status={approvalStatus}
               canEdit={canEdit}
-              isOwner={!!file && file.uploaded_by_user_id === currentUserId}
+              isOwner={isOwner}
               busy={approvalBusy}
               onChange={(next) => void onChangeApproval(next)}
             />
@@ -744,7 +846,13 @@ export default function DocumentEditorPage() {
         )}
         <div className="flex-1 min-w-0">
         <div className="wassel-doc-page" style={{ ...pageCanvasStyle(pageSettings), maxWidth: '100%' }}>
+          {!collabReady ? (
+            <div className="min-h-[40vh] flex items-center justify-center">
+              <Loader2 size={22} className="animate-spin text-copper/60" />
+            </div>
+          ) : (
           <DocumentEditor
+            key={`${file.id}:${collabSession ? 'collab' : 'solo'}`}
             ref={editorRef}
             initialContent={(doc.content_json as JSONContent) ?? { type: 'doc', content: [{ type: 'paragraph' }] }}
             editable={canEdit}
@@ -752,6 +860,20 @@ export default function DocumentEditorPage() {
             placeholder={t('doc.editor.placeholder')}
             baseDir={isAr ? 'rtl' : 'ltr'}
             onReady={(ed) => setEditor(ed)}
+            ydoc={collabSession?.ydoc ?? null}
+            collabProvider={collabSession?.provider ?? null}
+            collabUser={
+              collabSession
+                ? {
+                    name:
+                      (() => {
+                        const me = users.find((u) => u.id === currentUserId);
+                        return me ? (isAr ? me.name_ar : me.name_en) || me.email : '—';
+                      })(),
+                    color: caretColorFor(currentUserId ?? ''),
+                  }
+                : null
+            }
             crmVars={resolvedVars.values}
             onMentionClick={(attrs) => {
               const m = models.find((x) => x.id === attrs.modelId);
@@ -769,6 +891,7 @@ export default function DocumentEditorPage() {
             suggesting={suggesting}
             suggestAuthor={currentUserId}
           />
+          )}
         </div>
         </div>
         {commentsOpen && (

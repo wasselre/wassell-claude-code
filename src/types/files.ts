@@ -112,6 +112,9 @@ export interface WasselDocumentRow {
   approval_status: DocApprovalStatus;
   approval_updated_by: string | null;
   approval_updated_at: string | null;
+  /** Persisted Yjs CRDT state (base64) — collaboration bootstrap blob.
+   *  NULL until the first collab-capable client seeds it. */
+  ydoc_state: string | null;
   updated_at: string;
 }
 
