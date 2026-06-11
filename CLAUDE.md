@@ -344,6 +344,20 @@ v3 replaced the chat framing with a **Creative Workspace**: the session's primar
 - **UI:** `src/pages/ImageChats/components/StudioWorkspace.tsx` (canvas + timeline + composer + `SelectedAssetPanel`) replaced `ChatThread`/`MessageBubble`/`AssetActionsMenu` (deleted). Outputs resolve via `src/pages/ImageChats/lib/generations.ts` (`media_assets` for v3, inline `output_urls` for migrated). PRD: `docs/prd/image-chats.md`.
 - The same hard rules above apply (no held HTTP for fal; optimistic concurrency on every session write; complete/fail/watchdog guards; `worker/src/imageGen.ts` is a copy).
 
+## Office preview pipeline (files) (added 2026-06-11)
+
+THIRD queue on the same Fly worker: `file_preview_jobs` converts office documents (DOC/DOCX/PPT/PPTX/XLS/XLSX) to PDF with headless LibreOffice so the Files preview modal + public share links render them inline. **Self-hosted by explicit decision** — Microsoft/Google embed viewers were rejected because they require giving an external service a fetchable URL of the file (contradicts the Files system's private-by-default posture).
+
+- Flow: `POST /api/files/office-preview` (poll surface: ready→signed URL / pending / failed+retry) → `file_preview_enqueue` RPC (atomic, one active job per file via partial unique index) → worker `runPreviewJob.ts` (download → `soffice --convert-to pdf` in an isolated profile → upload `<uid>/<file_id>.preview.pdf` to the same private bucket) → `file_preview_complete` flips `files.preview_status='ready'`. Cache never invalidates (file bytes are immutable). Share-link creation + anon share views warm the cache.
+- Migration: `supabase/migrations/2026-06-11_office_preview_pipeline.sql` (files.preview_* columns + queue + enqueue/claim/complete/fail/watchdog RPCs, service-role only).
+
+**Hard rules — never violate:**
+1. **Never hold an HTTP request open for the conversion** (same rule as decks/image-chats).
+2. **`OFFICE_MIMES` in `worker/src/runPreviewJob.ts` is a COPY of `OFFICE_PREVIEW_MIMES` in `api/_lib/files.ts`** (and mirrored in `src/lib/files/client.ts`) — change all three together.
+3. **Kill soffice as a process GROUP** (`spawn detached:true` + `kill(-pid)`), never via execFile's built-in timeout — the launcher re-spawns `soffice.bin`, and killing only the parent leaves an orphan that ate a 512 MB machine's memory until its health check went critical (live incident 2026-06-11).
+4. **Alpine has NO `font-amiri` package** — Amiri TTFs are ADDed from google/fonts in the Dockerfile; `font-noto-arabic` comes from apk. Removing the fonts makes Arabic docs render as tofu.
+5. **Known capacity limit:** `shared-cpu-1x:512MB` machines cannot convert very large image-heavy decks (a 17 MB pptx exceeded the 240 s ceiling). That's a graceful degradation (failure card + Download), not a bug. Scaling worker memory is a user billing decision.
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline
