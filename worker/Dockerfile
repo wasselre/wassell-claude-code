@@ -33,19 +33,28 @@ ENV NODE_ENV=production
 # runPreviewJob.ts to convert DOC/DOCX/PPT/PPTX/XLS/XLSX to PDF for in-app
 # previews WITHOUT shipping bytes to a third-party viewer (~400 MB, the
 # price of keeping documents private). The font packages matter: Arabic
-# documents need Amiri (the Wassel brand font) + Noto Arabic installed or
-# converted PDFs render as tofu boxes.
+# documents need real Arabic fonts installed or converted PDFs render as
+# tofu boxes. NOTE: Alpine has NO font-amiri package (deploy 2026-06-11
+# failed on it) — Amiri (the Wassel brand font) is fetched straight from
+# the google/fonts repo below instead.
 RUN apk add --no-cache \
     poppler-utils \
     libreoffice-writer \
     libreoffice-impress \
     libreoffice-calc \
     fontconfig \
-    font-amiri \
     font-noto-arabic \
     font-noto \
     ttf-dejavu \
     font-liberation
+
+# Amiri TTFs (OFL-licensed) from the google/fonts repo — ADD fetches the
+# files at build time; fc-cache registers them so soffice can use them.
+ADD https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf /usr/share/fonts/amiri/Amiri-Regular.ttf
+ADD https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Bold.ttf /usr/share/fonts/amiri/Amiri-Bold.ttf
+ADD https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Italic.ttf /usr/share/fonts/amiri/Amiri-Italic.ttf
+ADD https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-BoldItalic.ttf /usr/share/fonts/amiri/Amiri-BoldItalic.ttf
+RUN chmod 644 /usr/share/fonts/amiri/*.ttf && fc-cache -f
 
 # Install production deps only — keeps the image small.
 COPY package.json package-lock.json* ./
