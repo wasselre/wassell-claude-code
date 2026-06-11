@@ -21,8 +21,8 @@ import {
   signViewUrls,
   type DriveSearchResult,
 } from '@/lib/files/client';
-import { createDocument } from '@/lib/documents/client';
 import FilesTabs from './components/FilesTabs';
+import NewDocumentModal from './components/NewDocumentModal';
 import FilesBreadcrumb from './components/FilesBreadcrumb';
 import FolderTile from './components/FolderTile';
 import FileCard from './components/FileCard';
@@ -582,17 +582,9 @@ export default function FilesPage({ forceShared = false }: Props) {
     setPreviewFile(f);
   };
 
-  const onCreateDocument = async () => {
-    try {
-      const row = await createDocument({
-        title: isAr ? 'مستند بدون عنوان' : 'Untitled document',
-        folderId: currentFolderId,
-      });
-      navigate(`/files/doc/${row.id}`);
-    } catch {
-      /* surfaced */
-    }
-  };
+  /** New Document opens the template picker (Blank + business templates);
+   *  the modal owns creation and hands back the row to navigate. */
+  const [newDocOpen, setNewDocOpen] = useState(false);
   const onShare = (f: FileRow) => setShareFile(f);
   const onPermissionsFile = (f: FileRow) => setPermsTarget({ kind: 'file', row: f });
   const onPermissionsFolder = (f: FolderRow) => setPermsTarget({ kind: 'folder', row: f });
@@ -789,7 +781,7 @@ export default function FilesPage({ forceShared = false }: Props) {
           {uploadEnabled && (
             <>
               <button
-                onClick={() => void onCreateDocument()}
+                onClick={() => setNewDocOpen(true)}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white border border-sand/40 text-charcoal hover:bg-cream font-bold text-sm transition-colors"
               >
                 <FilePlus size={16} />
@@ -984,6 +976,15 @@ export default function FilesPage({ forceShared = false }: Props) {
       <UploadDropzone folderId={currentFolderId} enabled={uploadEnabled} onUploaded={onUploaded} />
 
       {/* Modals */}
+      <NewDocumentModal
+        open={newDocOpen}
+        folderId={currentFolderId}
+        onClose={() => setNewDocOpen(false)}
+        onCreated={(row) => {
+          setNewDocOpen(false);
+          navigate(`/files/doc/${row.id}`);
+        }}
+      />
       <CreateFolderModal
         open={createOpen}
         parentFolderId={currentFolderId}

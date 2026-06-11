@@ -40,6 +40,11 @@ export interface CreateDocumentOpts {
   /** Display title; becomes files.original_name. Defaults to "Untitled". */
   title?: string;
   folderId?: string | null;
+  /** Initial TipTap JSON body — used by template creation. Defaults to an
+   *  empty paragraph. Pass contentHtml alongside so previews/export read
+   *  correctly before the first editor autosave. */
+  contentJson?: Record<string, unknown>;
+  contentHtml?: string;
 }
 
 /**
@@ -80,8 +85,8 @@ export async function createDocument(opts: CreateDocumentOpts = {}): Promise<Fil
 
   const { error: bodyErr } = await supabase.from('wassel_documents').insert({
     file_id: fileId,
-    content_json: EMPTY_DOC_JSON,
-    content_html: '',
+    content_json: opts.contentJson ?? EMPTY_DOC_JSON,
+    content_html: opts.contentHtml ?? '',
     version: 1,
     last_edited_by_user_id: appUserId,
   });
