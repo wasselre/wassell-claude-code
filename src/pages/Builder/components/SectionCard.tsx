@@ -123,6 +123,19 @@ export default function SectionCard({
             className="flex-1 flex items-center gap-2"
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              // The header carries dnd-kit's keyboard listeners, which treat
+              // Space/Enter as "pick up the section" — without this, typing a
+              // space in the name inputs starts a drag (section fades) and
+              // the character is swallowed.
+              e.stopPropagation();
+              if (e.key === 'Enter' && !savingEdit) saveEdit();
+              if (e.key === 'Escape') {
+                setEditAr(section.label_ar);
+                setEditEn(section.label_en);
+                setEditing(false);
+              }
+            }}
           >
             <input
               value={editAr}
@@ -190,12 +203,14 @@ export default function SectionCard({
               </span>
             )}
 
-            {/* Actions — muted, grouped. stopPropagation on pointerdown so dnd-kit
-                doesn't start a drag when the user presses an action button. */}
+            {/* Actions — muted, grouped. stopPropagation on pointerdown/keydown so
+                dnd-kit doesn't start a drag when the user presses an action button
+                (its KeyboardSensor picks up the section on Space/Enter). */}
             <div
               className="flex items-center gap-0.5"
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
             >
               <button
                 onClick={() => onUpdate({ default_collapsed: !section.default_collapsed })}
