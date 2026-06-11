@@ -106,7 +106,12 @@ export function buildHtmlShell(
   table { border-collapse: collapse; width: 100%; margin: 0.8em 0; }
   th, td { border: 1px solid #D4B896; padding: 6px 10px; text-align: start; vertical-align: top; }
   th { background: #F5EDE0; color: #4A2C2A; }
-  img { max-width: 100%; border-radius: 8px; }
+  img { max-width: 100%; height: auto; border-radius: 8px; }
+  img[data-align='start'] { display: block; margin-inline-end: auto; }
+  img[data-align='center'] { display: block; margin-inline: auto; }
+  img[data-align='end'] { display: block; margin-inline-start: auto; }
+  img[data-align='wrap-start'] { float: inline-start; margin: 4px 0 8px; margin-inline-end: 16px; }
+  img[data-align='wrap-end'] { float: inline-end; margin: 4px 0 8px; margin-inline-start: 16px; }
   hr { border: none; border-top: 1px solid #D4B896; margin: 1.4em 0; }
   a { color: #8E4E3A; }
   [data-mention] { background: rgba(184,115,79,.12); border-radius: 6px; padding: 0 4px; color: #8E4E3A; font-weight: 700; }

@@ -31,6 +31,10 @@ import {
   TableCellsSplit,
   TableProperties,
   Trash2,
+  AlignStartVertical,
+  AlignCenterVertical,
+  AlignEndVertical,
+  WrapText,
 } from 'lucide-react';
 
 /**
@@ -279,6 +283,61 @@ export default function DocumentToolbar({ editor, onInsertImage }: Props) {
             </>
           )}
         </Group>
+
+        {/* Contextual image controls — width presets + alignment/wrap, shown
+            only while an image node is selected (Google-Docs style). */}
+        {editor.isActive('image') && (
+          <>
+            <Divider />
+            <Group>
+              {[25, 50, 75, 100].map((w) => (
+                <button
+                  key={w}
+                  type="button"
+                  onClick={() => editor.chain().focus().updateAttributes('image', { width: w }).run()}
+                  title={t('doc.editor.img.width', { percent: w })}
+                  className={`px-1.5 py-1 rounded-md text-[0.6875rem] font-bold transition-colors ${
+                    editor.getAttributes('image').width === w
+                      ? 'bg-copper text-white'
+                      : 'text-charcoal/60 hover:bg-cream hover:text-charcoal'
+                  }`}
+                >
+                  {w}%
+                </button>
+              ))}
+              <Btn
+                icon={AlignStartVertical}
+                label={t('doc.editor.img.align_start')}
+                active={editor.getAttributes('image').align === 'start'}
+                onClick={() => editor.chain().focus().updateAttributes('image', { align: 'start' }).run()}
+              />
+              <Btn
+                icon={AlignCenterVertical}
+                label={t('doc.editor.img.align_center')}
+                active={editor.getAttributes('image').align === 'center'}
+                onClick={() => editor.chain().focus().updateAttributes('image', { align: 'center' }).run()}
+              />
+              <Btn
+                icon={AlignEndVertical}
+                label={t('doc.editor.img.align_end')}
+                active={editor.getAttributes('image').align === 'end'}
+                onClick={() => editor.chain().focus().updateAttributes('image', { align: 'end' }).run()}
+              />
+              <Btn
+                icon={WrapText}
+                label={t('doc.editor.img.wrap')}
+                active={String(editor.getAttributes('image').align ?? '').startsWith('wrap')}
+                onClick={() => {
+                  const cur = String(editor.getAttributes('image').align ?? '');
+                  // Toggle wrap on the document's start side; click again for
+                  // the end side; third click back to centered block.
+                  const next = cur === 'wrap-start' ? 'wrap-end' : cur === 'wrap-end' ? 'center' : 'wrap-start';
+                  editor.chain().focus().updateAttributes('image', { align: next }).run();
+                }}
+              />
+            </Group>
+          </>
+        )}
       </div>
     </div>
   );

@@ -414,3 +414,35 @@ html.doc-fullscreen .wassel-toasts {
 .wassel-doc-surface .doc-page-break.ProseMirror-selectednode {
   border-top-color: #B8734F;
 }
+
+/* ── Image layout (width % + align/wrap attrs from ImageExtension) ──────── */
+.wassel-doc-surface .ProseMirror img {
+  height: auto;
+  border-radius: 8px;
+}
+.wassel-doc-surface .ProseMirror img[data-align='start'] {
+  display: block;
+  margin-inline-end: auto;
+}
+.wassel-doc-surface .ProseMirror img[data-align='center'] {
+  display: block;
+  margin-inline: auto;
+}
+.wassel-doc-surface .ProseMirror img[data-align='end'] {
+  display: block;
+  margin-inline-start: auto;
+}
+.wassel-doc-surface .ProseMirror img[data-align='wrap-start'] {
+  float: inline-start;
+  margin: 4px 0 8px;
+  margin-inline-end: 16px;
+}
+.wassel-doc-surface .ProseMirror img[data-align='wrap-end'] {
+  float: inline-end;
+  margin: 4px 0 8px;
+  margin-inline-start: 16px;
+}
+.wassel-doc-surface .ProseMirror img.ProseMirror-selectednode {
+  outline: 3px solid rgba(184, 115, 79, 0.5);   /* copper selection ring */
+  outline-offset: 2px;
+}

@@ -8,7 +8,7 @@ import { PageBreak } from './PageBreakExtension';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
-import Image from '@tiptap/extension-image';
+import { WasselImage } from './ImageExtension';
 import Placeholder from '@tiptap/extension-placeholder';
 import TextAlign from '@tiptap/extension-text-align';
 import type { JSONContent } from '@tiptap/react';
@@ -156,13 +156,9 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
           rel: 'noopener noreferrer',
         },
       }),
-      Image.configure({
-        // We hand-roll the image insert (uploads to wassel-files via the
-        // documents page's onInsertImage handler), so the extension just
-        // needs to know how to render <img> nodes — no inline-upload UX.
-        inline: false,
-        allowBase64: false,
-      }),
+      // Extended Image (width % + align/wrap attrs). The insert flow is
+      // still hand-rolled by the page's onInsertImage handler.
+      WasselImage,
       Placeholder.configure({
         placeholder,
       }),

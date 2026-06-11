@@ -15,8 +15,8 @@ import { generateHTML, type JSONContent } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
-import Image from '@tiptap/extension-image';
 import TextAlign from '@tiptap/extension-text-align';
+import { WasselImage } from '@/pages/Documents/components/ImageExtension';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { MentionNode } from '@/pages/Documents/components/MentionExtension';
 import { PageBreak } from '@/pages/Documents/components/PageBreakExtension';
@@ -25,7 +25,7 @@ const SCHEMA_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
   Underline,
   Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { rel: 'noopener noreferrer' } }),
-  Image.configure({ inline: false, allowBase64: false }),
+  WasselImage,
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
   // Mention chips (no suggestion plugin needed for serialization).
   MentionNode,
