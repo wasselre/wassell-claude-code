@@ -31,6 +31,7 @@ import Modal from '@/components/ui/Modal';
 import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import SectionBlock from './components/SectionBlock';
 import RecordFormModal from './components/RecordFormModal';
+import LinkedDocumentsPanel from './components/LinkedDocumentsPanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
 import UnitsTabPane from './components/UnitsTabPane';
@@ -1285,6 +1286,13 @@ export default function RecordFormPage() {
           />
         ))}
       </div>
+      )}
+
+      {/* Documents linked to this record via document↔record relationships.
+        * Renders nothing when there are none — zero visual change for
+        * records without documents. */}
+      {model && existingRecord?.id && (
+        <LinkedDocumentsPanel modelId={model.id} recordId={existingRecord.id} />
       )}
 
       {/* Call history is no longer a bottom-of-form fallback on every model

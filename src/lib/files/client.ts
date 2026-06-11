@@ -489,6 +489,15 @@ export async function getFolder(folderId: string): Promise<FolderRow | null> {
   return (data as FolderRow) ?? null;
 }
 
+/** Batch fetch file rows by id (RLS-filtered — ids the caller can't view are
+ *  simply absent). Used by the record-side linked-documents panel. */
+export async function listFilesByIds(fileIds: string[]): Promise<FileRow[]> {
+  if (!supabase || fileIds.length === 0) return [];
+  const { data, error } = await supabase.from('files').select('*').in('id', fileIds);
+  if (error) throw surfaceError('list files by ids', error);
+  return (data ?? []) as FileRow[];
+}
+
 export async function getFile(fileId: string): Promise<FileRow | null> {
   if (!supabase) return null;
   const { data, error } = await supabase.from('files').select('*').eq('id', fileId).maybeSingle();

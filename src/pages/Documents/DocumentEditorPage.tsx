@@ -7,6 +7,7 @@ import {
   Cloud,
   CloudOff,
   FolderInput,
+  Link2,
   Loader2,
   Maximize2,
   Minimize2,
@@ -22,6 +23,7 @@ import { loadDocument, renameDocument, saveDocument } from '@/lib/documents/clie
 import ShareLinkModal from '@/pages/Files/components/ShareLinkModal';
 import PermissionsPanel from '@/pages/Files/components/PermissionsPanel';
 import MoveToFolderModal from '@/pages/Files/components/MoveToFolderModal';
+import LinkedRecordsModal from './components/LinkedRecordsModal';
 import DocumentEditor, { type DocumentEditorHandle } from './components/DocumentEditor';
 import DocumentToolbar from './components/DocumentToolbar';
 import './documents.css';
@@ -60,6 +62,7 @@ export default function DocumentEditorPage() {
   const [shareOpen, setShareOpen] = useState(false);
   const [permsOpen, setPermsOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [linksOpen, setLinksOpen] = useState(false);
 
   const editorRef = useRef<DocumentEditorHandle>(null);
   const saveTimerRef = useRef<number | null>(null);
@@ -339,6 +342,7 @@ export default function DocumentEditorPage() {
                 <HeaderIconBtn icon={Share2} label={t('files.actions.share')} onClick={() => setShareOpen(true)} />
                 <HeaderIconBtn icon={Users} label={t('files.actions.permissions')} onClick={() => setPermsOpen(true)} />
                 <HeaderIconBtn icon={FolderInput} label={t('files.actions.move')} onClick={() => setMoveOpen(true)} />
+                <HeaderIconBtn icon={Link2} label={t('doc.links.title')} onClick={() => setLinksOpen(true)} />
               </div>
             )}
 
@@ -440,6 +444,7 @@ export default function DocumentEditorPage() {
           });
         }}
       />
+      <LinkedRecordsModal fileId={file.id} open={linksOpen} onClose={() => setLinksOpen(false)} />
     </div>
   );
 }
