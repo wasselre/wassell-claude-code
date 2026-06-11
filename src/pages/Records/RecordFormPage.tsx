@@ -5,7 +5,7 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
 import * as lucideIcons from 'lucide-react';
-import { ArrowRight, Save, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, type LucideIcon } from 'lucide-react';
+import { ArrowRight, Save, Trash2, ChevronLeft, ChevronRight, Sparkles, Loader2, SquarePen, type LucideIcon } from 'lucide-react';
 import { resolveSectionMirror } from '@/lib/sectionMirrorResolver';
 import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
 import { isFieldVisible } from '@/lib/fieldVisibility';
@@ -1084,6 +1084,48 @@ export default function RecordFormPage() {
   const backTo = (location.state as { backTo?: string } | null)?.backTo ?? null;
   const exitTarget = backTo ?? (isSettingsOnly ? '/settings' : `/model/${model.name}`);
 
+  // "Edit at source" header buttons — when this model embeds another record's
+  // sections as mirrors via a single-select lookup (e.g. Our Projects mirrors
+  // the linked All Projects record read-only), offer to open the source
+  // record's own form. The navigation carries `state.backTo` (this page's
+  // exact URL incl. the ?tab= params), so the source form's back button AND
+  // its post-save exit return HERE — the same origin-preserving mechanism the
+  // Units tab uses. Opening the source model normally (from its list, no
+  // backTo) keeps its default exit to the model list. Covers both mirror
+  // mechanisms — section-level (section.is_mirrored) and field-level
+  // (type 'section_mirror') — with one button per distinct sibling lookup.
+  // Hidden on /new: returning to a draft URL after the round-trip would land
+  // on an empty form.
+  const mirrorEditTargets = (() => {
+    if (isNew) return [];
+    const allFields = model.schema.sections.flatMap((s) => s.fields);
+    const viaLookupIds = [
+      ...model.schema.sections
+        .filter((s) => s.is_mirrored && s.mirror_via_lookup_field_id)
+        .map((s) => s.mirror_via_lookup_field_id as string),
+      ...allFields
+        .filter((f) => f.type === 'section_mirror' && f.section_mirror_via_lookup_field_id)
+        .map((f) => f.section_mirror_via_lookup_field_id as string),
+    ];
+    const targets: { key: string; label: string; path: string }[] = [];
+    for (const lookupId of [...new Set(viaLookupIds)]) {
+      const lookup = allFields.find((f) => f.id === lookupId);
+      if (!lookup || lookup.type !== 'lookup' || lookup.is_multi || !lookup.lookup_model_id) continue;
+      const targetModel = models.find((m) => m.id === lookup.lookup_model_id);
+      if (!targetModel) continue;
+      const selected = formData[lookup.name];
+      if (typeof selected !== 'string' || !selected.trim()) continue;
+      targets.push({
+        key: lookup.id,
+        label: t('records.edit_linked_record', {
+          name: (isAr ? lookup.label_ar : lookup.label_en) || lookup.name,
+        }),
+        path: `/model/${targetModel.name}/${selected}`,
+      });
+    }
+    return targets;
+  })();
+
   return (
     <div>
       {isSettingsOnly && <BackToSettings />}
@@ -1133,6 +1175,25 @@ export default function RecordFormPage() {
               </button>
             </>
           )}
+          {/* Open the record a mirrored section reads from (e.g. Our Projects →
+           *  "Edit Project"). Goes through tryExit so unsaved local edits get
+           *  the Save / Discard / Cancel prompt before leaving. */}
+          {mirrorEditTargets.map((target) => (
+            <Button
+              key={target.key}
+              variant="secondary"
+              onClick={() =>
+                tryExit(() =>
+                  navigate(target.path, {
+                    state: { backTo: location.pathname + location.search },
+                  }),
+                )
+              }
+            >
+              <SquarePen size={16} />
+              {target.label}
+            </Button>
+          ))}
           {model.name === 'all_projects' && existingRecord && (
             <Button
               variant="secondary"
