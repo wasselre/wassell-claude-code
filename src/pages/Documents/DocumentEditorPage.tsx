@@ -381,6 +381,21 @@ export default function DocumentEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file?.id, doc?.file_id]);
 
+  // The bootstrap above can run before the store's users list arrives, which
+  // would leave the awareness name as the '—' fallback. Re-stamp the local
+  // awareness user whenever identity data lands (peers see names via
+  // awareness, so this is what their avatars + caret labels read).
+  useEffect(() => {
+    const s = collabRef.current;
+    if (!s || !currentUserId) return;
+    const me = users.find((u) => u.id === currentUserId);
+    if (!me) return;
+    s.provider.awareness.setLocalStateField('user', {
+      name: (isAr ? me.name_ar : me.name_en) || me.email,
+      color: caretColorFor(currentUserId),
+    });
+  }, [users, currentUserId, isAr, collabSession]);
+
   // Flush any pending autosave on unmount so a quick exit doesn't drop the
   // last 1.5 s of edits.
   useEffect(() => {
