@@ -17,6 +17,7 @@ import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
 import Image from '@tiptap/extension-image';
 import TextAlign from '@tiptap/extension-text-align';
+import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { MentionNode } from '@/pages/Documents/components/MentionExtension';
 
 const SCHEMA_EXTENSIONS = [
@@ -27,6 +28,11 @@ const SCHEMA_EXTENSIONS = [
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
   // Mention chips (no suggestion plugin needed for serialization).
   MentionNode,
+  // Tables (resizable is editor-only behavior; schema is identical).
+  Table,
+  TableRow,
+  TableHeader,
+  TableCell,
 ];
 
 export function renderDocumentHtml(json: JSONContent): string {

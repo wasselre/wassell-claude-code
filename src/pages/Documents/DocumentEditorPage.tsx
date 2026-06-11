@@ -9,6 +9,7 @@ import {
   CloudOff,
   FolderInput,
   Link2,
+  ListTree,
   Loader2,
   Maximize2,
   Minimize2,
@@ -28,6 +29,7 @@ import MoveToFolderModal from '@/pages/Files/components/MoveToFolderModal';
 import LinkedRecordsModal from './components/LinkedRecordsModal';
 import CrmVariablesPopover from './components/CrmVariablesPopover';
 import DocAssistModal from './components/DocAssistModal';
+import DocumentOutline from './components/DocumentOutline';
 import { listLinksForFile, type DocumentLink } from '@/lib/documents/links';
 import { resolveDocVariables } from '@/lib/documents/variables';
 import { buildAssistContext } from '@/lib/documents/assist';
@@ -71,6 +73,17 @@ export default function DocumentEditorPage() {
   const [moveOpen, setMoveOpen] = useState(false);
   const [linksOpen, setLinksOpen] = useState(false);
   const [varsOpen, setVarsOpen] = useState(false);
+  /** Outline panel visibility — persisted so the preference sticks. Only
+   *  rendered on lg+ screens (the canvas margin hosts it). */
+  const [outlineOpen, setOutlineOpen] = useState<boolean>(
+    () => localStorage.getItem('wassell_doc_outline_open') !== '0',
+  );
+  const toggleOutline = () => {
+    setOutlineOpen((v) => {
+      localStorage.setItem('wassell_doc_outline_open', v ? '0' : '1');
+      return !v;
+    });
+  };
   /** AI assist — selection snapshot captured the moment the modal opens, so
    *  Replace targets the exact original range even after the editor blurs. */
   const [assist, setAssist] = useState<{ from: number; to: number; text: string } | null>(null);
@@ -407,6 +420,13 @@ export default function DocumentEditorPage() {
               />
             )}
 
+            {/* Outline toggle — available to everyone (readers navigate too). */}
+            <HeaderIconBtn
+              icon={ListTree}
+              label={t('doc.outline.title')}
+              onClick={toggleOutline}
+            />
+
             {/* Fullscreen enter / exit — available to everyone (viewers can
                 focus-read too). Exit lives HERE in the header, not floating. */}
             <HeaderIconBtn
@@ -431,8 +451,15 @@ export default function DocumentEditorPage() {
       )}
 
       {/* Canvas padding around the page. The page itself is the white A4-style
-          rectangle; the editor fills it (margins come from the page padding). */}
-      <div className="px-3 sm:px-6 py-6 sm:py-10">
+          rectangle; the editor fills it (margins come from the page padding).
+          On lg+ the outline panel docks at the inline-start of the canvas. */}
+      <div className="px-3 sm:px-6 py-6 sm:py-10 lg:flex lg:items-start lg:gap-3">
+        {outlineOpen && (
+          <div className="hidden lg:block w-56 shrink-0 sticky top-36 max-h-[70vh] overflow-y-auto">
+            <DocumentOutline editor={editor} />
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
         <div className="wassel-doc-page">
           <DocumentEditor
             ref={editorRef}
@@ -452,6 +479,7 @@ export default function DocumentEditorPage() {
               navigate(`/model/${m.name}/${attrs.id}`);
             }}
           />
+        </div>
         </div>
       </div>
 

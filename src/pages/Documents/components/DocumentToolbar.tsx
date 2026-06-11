@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { Editor } from '@tiptap/react';
 import {
@@ -21,6 +21,15 @@ import {
   Undo,
   Redo,
   Minus,
+  Table as TableIcon,
+  Rows3,
+  Columns3,
+  TableRowsSplit,
+  TableColumnsSplit,
+  TableCellsMerge,
+  TableCellsSplit,
+  TableProperties,
+  Trash2,
 } from 'lucide-react';
 
 /**
@@ -42,6 +51,19 @@ interface Props {
 
 export default function DocumentToolbar({ editor, onInsertImage }: Props) {
   const { t } = useTranslation();
+
+  // Re-render on every editor transaction so SELECTION-driven state is live:
+  // the contextual table controls must appear the moment the caret enters a
+  // table (and bold/align active states must track caret moves, not just doc
+  // edits). TipTap v3 doesn't re-render owners on transactions by default.
+  const [, forceRender] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => {
+    if (!editor) return;
+    editor.on('transaction', forceRender);
+    return () => {
+      editor.off('transaction', forceRender);
+    };
+  }, [editor]);
 
   const setLink = useCallback(() => {
     if (!editor) return;
@@ -189,6 +211,67 @@ export default function DocumentToolbar({ editor, onInsertImage }: Props) {
             label={t('doc.editor.divider')}
             onClick={() => editor.chain().focus().setHorizontalRule().run()}
           />
+        </Group>
+
+        <Divider />
+
+        <Group>
+          <Btn
+            icon={TableIcon}
+            label={t('doc.editor.table.insert')}
+            active={editor.isActive('table')}
+            onClick={() =>
+              editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()
+            }
+          />
+          {/* The rest of the table operations only make sense INSIDE a table —
+              they appear contextually, Google-Docs style. */}
+          {editor.isActive('table') && (
+            <>
+              <Btn
+                icon={Rows3}
+                label={t('doc.editor.table.add_row')}
+                onClick={() => editor.chain().focus().addRowAfter().run()}
+              />
+              <Btn
+                icon={TableRowsSplit}
+                label={t('doc.editor.table.delete_row')}
+                onClick={() => editor.chain().focus().deleteRow().run()}
+              />
+              <Btn
+                icon={Columns3}
+                label={t('doc.editor.table.add_col')}
+                onClick={() => editor.chain().focus().addColumnAfter().run()}
+              />
+              <Btn
+                icon={TableColumnsSplit}
+                label={t('doc.editor.table.delete_col')}
+                onClick={() => editor.chain().focus().deleteColumn().run()}
+              />
+              <Btn
+                icon={TableCellsMerge}
+                label={t('doc.editor.table.merge')}
+                disabled={!editor.can().mergeCells()}
+                onClick={() => editor.chain().focus().mergeCells().run()}
+              />
+              <Btn
+                icon={TableCellsSplit}
+                label={t('doc.editor.table.split')}
+                disabled={!editor.can().splitCell()}
+                onClick={() => editor.chain().focus().splitCell().run()}
+              />
+              <Btn
+                icon={TableProperties}
+                label={t('doc.editor.table.header_row')}
+                onClick={() => editor.chain().focus().toggleHeaderRow().run()}
+              />
+              <Btn
+                icon={Trash2}
+                label={t('doc.editor.table.delete')}
+                onClick={() => editor.chain().focus().deleteTable().run()}
+              />
+            </>
+          )}
         </Group>
       </div>
     </div>

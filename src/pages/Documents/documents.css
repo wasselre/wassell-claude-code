@@ -330,3 +330,64 @@ html.doc-fullscreen .wassel-toasts {
   white-space: nowrap;
   max-width: 45%;
 }
+
+/* ── Tables ───────────────────────────────────────────────────────────────
+ * Google-Docs-like tables: sand borders, cream header row, drag-to-resize
+ * column handles (prosemirror-tables classes), copper-tinted cell selection. */
+.wassel-doc-surface .ProseMirror .tableWrapper {
+  margin: 0.8em 0;
+  overflow-x: auto;
+}
+.wassel-doc-surface .ProseMirror table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  border: 1px solid rgba(212, 184, 150, 0.7);        /* sand */
+}
+.wassel-doc-surface .ProseMirror th,
+.wassel-doc-surface .ProseMirror td {
+  border: 1px solid rgba(212, 184, 150, 0.7);
+  padding: 6px 10px;
+  vertical-align: top;
+  position: relative;
+  min-width: 3em;
+}
+.wassel-doc-surface .ProseMirror th {
+  background: #F5EDE0;                                /* cream */
+  font-weight: 700;
+  color: #4A2C2A;                                     /* chocolate */
+  text-align: start;
+}
+.wassel-doc-surface .ProseMirror th p,
+.wassel-doc-surface .ProseMirror td p {
+  margin: 0;
+}
+/* Cell-range selection tint. */
+.wassel-doc-surface .ProseMirror .selectedCell::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(184, 115, 79, 0.12);               /* copper/12 */
+  pointer-events: none;
+}
+/* Column drag-resize handle. */
+.wassel-doc-surface .ProseMirror .column-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: -2px;
+  inset-inline-end: -2px;
+  width: 4px;
+  background: #B8734F;                                /* copper */
+  pointer-events: none;
+}
+.wassel-doc-surface .ProseMirror.resize-cursor {
+  cursor: col-resize;
+}
+
+/* ── Outline panel ──────────────────────────────────────────────────────── */
+.doc-outline {
+  padding: 10px 8px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(212, 184, 150, 0.35);
+}

@@ -3,6 +3,7 @@ import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
 import { CrmVariables } from './CrmVariablesExtension';
 import { MentionNode, mentionSuggestion, type MentionAttrs } from './MentionExtension';
+import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import Link from '@tiptap/extension-link';
@@ -170,6 +171,12 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
       ListIndentShortcuts,
       CrmVariables,
       MentionNode.configure({ suggestion: mentionSuggestion }),
+      // Google-Docs-style tables: drag column borders to resize; the rest of
+      // the operations (rows/cols/merge/split/header) live in the toolbar.
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableHeader,
+      TableCell,
     ],
     editorProps: {
       attributes: {
