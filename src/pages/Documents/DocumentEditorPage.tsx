@@ -13,6 +13,7 @@ import {
   ListTree,
   Loader2,
   Maximize2,
+  MessageSquareText,
   Minimize2,
   PanelTopClose,
   PanelTopOpen,
@@ -43,6 +44,17 @@ import ExportModal from './components/ExportModal';
 import { listLinksForFile, type DocumentLink } from '@/lib/documents/links';
 import { resolveDocVariables } from '@/lib/documents/variables';
 import { buildAssistContext } from '@/lib/documents/assist';
+import {
+  addComment,
+  deleteComment,
+  listCommentThreads,
+  replyToComment,
+  setThreadResolved,
+  type CommentThread,
+  type DocComment,
+} from '@/lib/documents/comments';
+import { collectCommentAnchors, refreshCommentHighlights } from './components/CommentMarkExtension';
+import CommentsPanel, { type PendingAnchor } from './components/CommentsPanel';
 import DocumentEditor, { type DocumentEditorHandle } from './components/DocumentEditor';
 import DocumentToolbar from './components/DocumentToolbar';
 import './documents.css';
@@ -100,6 +112,16 @@ export default function DocumentEditorPage() {
   /** AI assist — selection snapshot captured the moment the modal opens, so
    *  Replace targets the exact original range even after the editor blurs. */
   const [assist, setAssist] = useState<{ from: number; to: number; text: string } | null>(null);
+  /** Comments — the PAGE owns thread state so highlights + the header badge
+   *  work even while the panel is closed. anchorPositions maps thread id →
+   *  first mark position (sorting + orphan detection). */
+  const [commentsOpen, setCommentsOpen] = useState<boolean>(
+    () => localStorage.getItem('wassell_doc_comments_open') === '1',
+  );
+  const [threads, setThreads] = useState<CommentThread[]>([]);
+  const [anchorPositions, setAnchorPositions] = useState<Map<string, number>>(new Map());
+  const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
+  const [pendingComment, setPendingComment] = useState<PendingAnchor | null>(null);
   /** Record relationships — drive CRM variable resolution. Refreshed after
    *  the Linked-records modal closes (links may have changed). */
   const [docLinks, setDocLinks] = useState<DocumentLink[]>([]);
@@ -132,6 +154,100 @@ export default function DocumentEditorPage() {
   const resolvedVars = useMemo(
     () => resolveDocVariables(docLinks, models, recordsMap, isAr),
     [docLinks, models, recordsMap, isAr],
+  );
+
+  // ─── Comments ───────────────────────────────────────────────────────────
+
+  const refreshThreads = useCallback(() => {
+    if (!fileId) return;
+    listCommentThreads(fileId)
+      .then(setThreads)
+      .catch(() => {
+        /* surfaced by the comments client */
+      });
+  }, [fileId]);
+  useEffect(() => {
+    refreshThreads();
+  }, [refreshThreads]);
+
+  const recomputeAnchors = useCallback(() => {
+    const ed = editorRef.current?.editor;
+    if (ed) setAnchorPositions(collectCommentAnchors(ed));
+  }, []);
+  // First map once the editor mounts (anchors live in the loaded content).
+  useEffect(() => {
+    if (editor) recomputeAnchors();
+  }, [editor, recomputeAnchors]);
+
+  // Paint highlights for unresolved threads; strongest tint for the active
+  // one. Resolved threads keep their mark in the content (Reopen restores
+  // the highlight) but get no decoration.
+  useEffect(() => {
+    if (!editor) return;
+    const openIds = new Set(threads.filter((th) => !th.root.resolved).map((th) => th.root.id));
+    refreshCommentHighlights(editor, openIds, activeCommentId);
+  }, [editor, threads, activeCommentId]);
+
+  const openThreadCount = useMemo(() => threads.filter((th) => !th.root.resolved).length, [threads]);
+
+  const toggleComments = useCallback(() => {
+    setCommentsOpen((v) => {
+      localStorage.setItem('wassell_doc_comments_open', v ? '0' : '1');
+      if (v) setActiveCommentId(null);
+      return !v;
+    });
+  }, []);
+
+  /** Toolbar "comment" — snapshot the selection and open the composer. */
+  const onAddComment = useCallback(() => {
+    if (!editor) return;
+    const { from, to, empty } = editor.state.selection;
+    if (empty) return;
+    setPendingComment({ from, to, text: editor.state.doc.textBetween(from, to, ' ') });
+    setCommentsOpen(true);
+    localStorage.setItem('wassell_doc_comments_open', '1');
+  }, [editor]);
+
+  const onReplyComment = useCallback(
+    async (rootId: string, body: string) => {
+      if (!fileId) return;
+      await replyToComment(fileId, rootId, body);
+      refreshThreads();
+    },
+    [fileId, refreshThreads],
+  );
+
+  const onSetThreadResolved = useCallback(
+    async (rootId: string, resolved: boolean) => {
+      await setThreadResolved(rootId, resolved);
+      refreshThreads();
+    },
+    [refreshThreads],
+  );
+
+  const onDeleteComment = useCallback(
+    async (comment: DocComment, isRoot: boolean) => {
+      await deleteComment(comment.id);
+      if (isRoot && editor) {
+        // Drop the anchor mark everywhere; autosave persists the change.
+        editor.commands.unsetCommentById(comment.id);
+        recomputeAnchors();
+      }
+      if (activeCommentId === comment.id) setActiveCommentId(null);
+      refreshThreads();
+    },
+    [editor, activeCommentId, recomputeAnchors, refreshThreads],
+  );
+
+  /** Thread card clicked — highlight + scroll the document to its anchor. */
+  const onActivateThread = useCallback(
+    (id: string | null) => {
+      setActiveCommentId(id);
+      if (!id || !editor) return;
+      const el = editor.view.dom.querySelector(`span[data-comment-id="${id}"]`);
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    },
+    [editor],
   );
 
   // Load document on mount / fileId change.
@@ -232,11 +348,14 @@ export default function DocumentEditorPage() {
     try {
       await saveDocument({ fileId, contentJson, contentHtml });
       setSaveStatus('saved');
+      // Edits may have deleted (or restored via undo) comment anchors —
+      // refresh the position map so the panel's orphan badges stay honest.
+      recomputeAnchors();
     } catch {
       // surfaceError already toasted.
       setSaveStatus('error');
     }
-  }, [fileId, canEdit]);
+  }, [fileId, canEdit, recomputeAnchors]);
 
   /** Debounced autosave — every onChange resets a 1.5 s timer. We serialize
    *  with `inFlightSaveRef` so a fast typist can't queue two overlapping
@@ -274,6 +393,27 @@ export default function DocumentEditorPage() {
     }
     await doSave();
   }, [doSave]);
+
+  /** Comment composer submit: insert the row, anchor it with the mark on the
+   *  snapshotted selection, persist immediately (a comment whose mark never
+   *  saves would reload as orphaned). Lives below flushSave on purpose. */
+  const submitPendingComment = useCallback(
+    async (body: string) => {
+      if (!fileId || !editor || !pendingComment) return;
+      const row = await addComment(fileId, body, pendingComment.text);
+      editor
+        .chain()
+        .setTextSelection({ from: pendingComment.from, to: pendingComment.to })
+        .setComment(row.id)
+        .run();
+      setPendingComment(null);
+      setActiveCommentId(row.id);
+      await flushSave();
+      recomputeAnchors();
+      refreshThreads();
+    },
+    [fileId, editor, pendingComment, flushSave, recomputeAnchors, refreshThreads],
+  );
 
   const onTitleBlur = useCallback(async () => {
     if (!file || !canEdit) return;
@@ -435,6 +575,21 @@ export default function DocumentEditorPage() {
               />
             )}
 
+            {/* Comments toggle — available to everyone (viewers can read and
+                reply; only editors can create anchors). Badge = open threads. */}
+            <div className="relative shrink-0">
+              <HeaderIconBtn
+                icon={MessageSquareText}
+                label={t('doc.comments.title')}
+                onClick={toggleComments}
+              />
+              {openThreadCount > 0 && (
+                <span className="absolute -top-0.5 -end-0.5 min-w-[1rem] h-4 px-1 rounded-full bg-copper text-white text-[0.625rem] font-bold flex items-center justify-center pointer-events-none">
+                  {openThreadCount}
+                </span>
+              )}
+            </div>
+
             {/* Outline toggle — available to everyone (readers navigate too). */}
             <HeaderIconBtn
               icon={ListTree}
@@ -464,7 +619,9 @@ export default function DocumentEditorPage() {
             )}
           </div>
 
-          {canEdit && <DocumentToolbar editor={editor} onInsertImage={onInsertImage} />}
+          {canEdit && (
+            <DocumentToolbar editor={editor} onInsertImage={onInsertImage} onAddComment={onAddComment} />
+          )}
         </div>
       )}
 
@@ -496,9 +653,32 @@ export default function DocumentEditorPage() {
               }
               navigate(`/model/${m.name}/${attrs.id}`);
             }}
+            onCommentClick={(id) => {
+              setActiveCommentId(id);
+              setCommentsOpen(true);
+              localStorage.setItem('wassell_doc_comments_open', '1');
+            }}
           />
         </div>
         </div>
+        {commentsOpen && (
+          <div className="hidden lg:block w-80 shrink-0 sticky top-36">
+            <CommentsPanel
+              threads={threads}
+              anchorPositions={anchorPositions}
+              activeId={activeCommentId}
+              onActivate={onActivateThread}
+              pending={pendingComment}
+              onSubmitPending={submitPendingComment}
+              onCancelPending={() => setPendingComment(null)}
+              onReply={onReplyComment}
+              onSetResolved={onSetThreadResolved}
+              onDelete={onDeleteComment}
+              onClose={toggleComments}
+              canComment={canEdit}
+            />
+          </div>
+        )}
       </div>
 
       {/* Header-less focus view (fullscreen + headerHidden): a tiny floating

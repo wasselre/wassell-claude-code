@@ -2,6 +2,7 @@ import { useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { EditorContent, useEditor, type Editor } from '@tiptap/react';
 import { Extension } from '@tiptap/core';
 import { CrmVariables } from './CrmVariablesExtension';
+import { CommentMark } from './CommentMarkExtension';
 import { MentionNode, mentionSuggestion, type MentionAttrs } from './MentionExtension';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { PageBreak } from './PageBreakExtension';
@@ -124,10 +125,12 @@ interface Props {
   crmVars?: Record<string, string>;
   /** Record-mention chip clicked — the page navigates to the record. */
   onMentionClick?: (attrs: MentionAttrs) => void;
+  /** Comment anchor clicked — the page activates that thread in the panel. */
+  onCommentClick?: (commentId: string) => void;
 }
 
 const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function DocumentEditor(
-  { initialContent, editable, onChange, placeholder, baseDir, onReady, crmVars, onMentionClick },
+  { initialContent, editable, onChange, placeholder, baseDir, onReady, crmVars, onMentionClick, onCommentClick },
   ref,
 ) {
   const onReadyRef = useRef(onReady);
@@ -136,6 +139,8 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
   onChangeRef.current = onChange;
   const onMentionClickRef = useRef(onMentionClick);
   onMentionClickRef.current = onMentionClick;
+  const onCommentClickRef = useRef(onCommentClick);
+  onCommentClickRef.current = onCommentClick;
 
   const editor = useEditor({
     editable,
@@ -167,6 +172,9 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
       }),
       ListIndentShortcuts,
       CrmVariables,
+      // Comment anchors (highlight decorations driven by the page via
+      // refreshCommentHighlights — see CommentMarkExtension).
+      CommentMark,
       MentionNode.configure({ suggestion: mentionSuggestion }),
       // Google-Docs-style tables: drag column borders to resize; the rest of
       // the operations (rows/cols/merge/split/header) live in the toolbar.
@@ -220,7 +228,15 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
     const dom = editor.view.dom;
     const onMouseDown = (e: MouseEvent) => {
       if (e.button !== 0) return;
-      const el = (e.target as HTMLElement | null)?.closest?.('[data-mention]');
+      const target = e.target as HTMLElement | null;
+      // Comment anchors activate their thread in the panel. No preventDefault —
+      // the caret should still land where the user clicked.
+      const commentEl = target?.closest?.('[data-comment-id]');
+      if (commentEl) {
+        const id = commentEl.getAttribute('data-comment-id');
+        if (id) onCommentClickRef.current?.(id);
+      }
+      const el = target?.closest?.('[data-mention]');
       if (!el) return;
       if (el.getAttribute('data-kind') !== 'record') return;
       e.preventDefault();

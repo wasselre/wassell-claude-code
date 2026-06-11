@@ -20,6 +20,7 @@ import { WasselImage } from '@/pages/Documents/components/ImageExtension';
 import { Table, TableRow, TableHeader, TableCell } from '@tiptap/extension-table';
 import { MentionNode } from '@/pages/Documents/components/MentionExtension';
 import { PageBreak } from '@/pages/Documents/components/PageBreakExtension';
+import { CommentMark } from '@/pages/Documents/components/CommentMarkExtension';
 
 const SCHEMA_EXTENSIONS = [
   StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
@@ -29,6 +30,9 @@ const SCHEMA_EXTENSIONS = [
   TextAlign.configure({ types: ['heading', 'paragraph'] }),
   // Mention chips (no suggestion plugin needed for serialization).
   MentionNode,
+  // Comment anchors — serialize as data-comment-id spans (unstyled outside
+  // the editor, so share views/exports show the text plainly).
+  CommentMark,
   // Tables (resizable is editor-only behavior; schema is identical).
   Table,
   TableRow,

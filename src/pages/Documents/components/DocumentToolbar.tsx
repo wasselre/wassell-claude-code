@@ -35,6 +35,7 @@ import {
   AlignCenterVertical,
   AlignEndVertical,
   WrapText,
+  MessageSquarePlus,
 } from 'lucide-react';
 
 /**
@@ -52,9 +53,12 @@ interface Props {
    *  because it has the file id needed to associate the upload with this
    *  document's owning file (so RLS works the same as any other upload). */
   onInsertImage: () => void;
+  /** Comment on the current selection — the parent snapshots the range and
+   *  opens the comments panel composer. Disabled on empty selections. */
+  onAddComment?: () => void;
 }
 
-export default function DocumentToolbar({ editor, onInsertImage }: Props) {
+export default function DocumentToolbar({ editor, onInsertImage, onAddComment }: Props) {
   const { t } = useTranslation();
 
   // Re-render on every editor transaction so SELECTION-driven state is live:
@@ -221,6 +225,14 @@ export default function DocumentToolbar({ editor, onInsertImage }: Props) {
             label={t('doc.editor.page_break')}
             onClick={() => editor.chain().focus().setPageBreak().run()}
           />
+          {onAddComment && (
+            <Btn
+              icon={MessageSquarePlus}
+              label={t('doc.comments.add')}
+              disabled={editor.state.selection.empty}
+              onClick={onAddComment}
+            />
+          )}
         </Group>
 
         <Divider />

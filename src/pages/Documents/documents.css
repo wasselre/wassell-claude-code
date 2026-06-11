@@ -446,3 +446,23 @@ html.doc-fullscreen .wassel-toasts {
   outline: 3px solid rgba(184, 115, 79, 0.5);   /* copper selection ring */
   outline-offset: 2px;
 }
+
+/* ─── Comment anchors ─────────────────────────────────────────────────────
+   `span[data-comment-id]` is the persistent anchor mark — UNSTYLED by
+   default so resolved threads (and share views / exports, which never load
+   this on an editor surface) show plain text. The highlight is a ProseMirror
+   DECORATION class painted only for unresolved threads; the active thread
+   (focused in the panel) gets the stronger tint. Subtle Gold #C09B5F. */
+.wassel-doc-surface .doc-comment-hl {
+  background: rgba(192, 155, 95, 0.22);
+  border-bottom: 2px solid rgba(192, 155, 95, 0.6);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.wassel-doc-surface .doc-comment-hl:hover {
+  background: rgba(192, 155, 95, 0.35);
+}
+.wassel-doc-surface .doc-comment-hl--active {
+  background: rgba(192, 155, 95, 0.45);
+  border-bottom-color: #b8734f; /* copper — ties to the active panel card */
+}
