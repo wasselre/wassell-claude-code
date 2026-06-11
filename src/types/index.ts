@@ -1360,6 +1360,7 @@ export type {
   SharedLink,
   SharedFileResponse,
   WasselDocumentRow,
+  DocApprovalStatus,
 } from './files';
 
 export type ActivityLogStatus = 'success' | 'error' | 'warning' | 'info';

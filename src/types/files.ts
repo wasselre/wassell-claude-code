@@ -97,6 +97,8 @@ export interface FolderPermission {
  * 'wassel_doc'. `content_json` is the TipTap document state; `content_html`
  * is the rendered HTML used by preview/export paths that can't run TipTap.
  */
+export type DocApprovalStatus = 'draft' | 'review' | 'approved' | 'published';
+
 export interface WasselDocumentRow {
   file_id: string;
   content_json: Record<string, unknown>;
@@ -105,6 +107,11 @@ export interface WasselDocumentRow {
   last_edited_by_user_id: string | null;
   /** Page settings JSONB ({} = defaults) — see lib/documents/pageSettings. */
   settings: Record<string, unknown> | null;
+  /** Approval workflow (draft → review → approved → published). Content
+   *  edits on approved/published docs auto-demote back to draft. */
+  approval_status: DocApprovalStatus;
+  approval_updated_by: string | null;
+  approval_updated_at: string | null;
   updated_at: string;
 }
 

@@ -9,6 +9,7 @@ import {
   CloudOff,
   FileDown,
   FolderInput,
+  History,
   Link2,
   ListTree,
   Loader2,
@@ -24,8 +25,17 @@ import {
 } from 'lucide-react';
 import type { Editor, JSONContent } from '@tiptap/react';
 import { useAppStore } from '@/stores/appStore';
-import type { FileRow, WasselDocumentRow } from '@/types';
-import { loadDocument, renameDocument, saveDocument, saveDocumentSettings } from '@/lib/documents/client';
+import type { DocApprovalStatus, FileRow, WasselDocumentRow } from '@/types';
+import {
+  loadDocument,
+  renameDocument,
+  saveDocument,
+  saveDocumentSettings,
+  setApprovalStatus,
+} from '@/lib/documents/client';
+import { maybeAutoSnapshot, snapshotVersion, type DocVersionFull } from '@/lib/documents/versions';
+import VersionHistoryModal from './components/VersionHistoryModal';
+import ApprovalStatusPill from './components/ApprovalStatusPill';
 import {
   DEFAULT_PAGE_SETTINGS,
   normalizePageSettings,
@@ -122,6 +132,14 @@ export default function DocumentEditorPage() {
   const [anchorPositions, setAnchorPositions] = useState<Map<string, number>>(new Map());
   const [activeCommentId, setActiveCommentId] = useState<string | null>(null);
   const [pendingComment, setPendingComment] = useState<PendingAnchor | null>(null);
+  /** Version history + approval workflow. approvalRef mirrors the state so
+   *  doSave's auto-demote check doesn't have to re-create the save closure
+   *  on every status change. */
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [approvalStatus, setApprovalStatusState] = useState<DocApprovalStatus>('draft');
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const approvalRef = useRef<DocApprovalStatus>('draft');
+  approvalRef.current = approvalStatus;
   /** Record relationships — drive CRM variable resolution. Refreshed after
    *  the Linked-records modal closes (links may have changed). */
   const [docLinks, setDocLinks] = useState<DocumentLink[]>([]);
@@ -132,6 +150,8 @@ export default function DocumentEditorPage() {
   const saveTimerRef = useRef<number | null>(null);
   const inFlightSaveRef = useRef<Promise<void> | null>(null);
   const fileImageInputRef = useRef<HTMLInputElement>(null);
+  /** Latest persisted wassel_documents.version — stamped onto snapshots. */
+  const docVersionRef = useRef(1);
 
   const canEdit = !!file && !!currentUserId && file.uploaded_by_user_id === currentUserId;
 
@@ -272,6 +292,8 @@ export default function DocumentEditorPage() {
         setDoc(res.doc);
         setTitleDraft(res.file.original_name);
         setPageSettings(normalizePageSettings(res.doc.settings));
+        setApprovalStatusState(res.doc.approval_status ?? 'draft');
+        docVersionRef.current = res.doc.version;
         setLoading(false);
       })
       .catch((err) => {
@@ -346,16 +368,30 @@ export default function DocumentEditorPage() {
     const contentHtml = editorRef.current.getHTML();
     setSaveStatus('saving');
     try {
-      await saveDocument({ fileId, contentJson, contentHtml });
+      const { version } = await saveDocument({ fileId, contentJson, contentHtml });
+      docVersionRef.current = version;
       setSaveStatus('saved');
       // Edits may have deleted (or restored via undo) comment anchors —
       // refresh the position map so the panel's orphan badges stay honest.
       recomputeAnchors();
+      // Version history: throttled auto snapshot (self-noops within 10 min).
+      void maybeAutoSnapshot({ fileId, docVersion: version, contentJson, contentHtml });
+      // A content edit on an approved/published doc invalidates its stamp —
+      // demote to draft loudly so a stale stamp never covers newer text.
+      if (approvalRef.current === 'approved' || approvalRef.current === 'published') {
+        try {
+          const updated = await setApprovalStatus(fileId, 'draft');
+          setApprovalStatusState(updated.approval_status);
+          addToast(t('doc.approval.demoted'), 'info');
+        } catch {
+          // surfaceError already toasted inside the client.
+        }
+      }
     } catch {
       // surfaceError already toasted.
       setSaveStatus('error');
     }
-  }, [fileId, canEdit, recomputeAnchors]);
+  }, [fileId, canEdit, recomputeAnchors, addToast, t]);
 
   /** Debounced autosave — every onChange resets a 1.5 s timer. We serialize
    *  with `inFlightSaveRef` so a fast typist can't queue two overlapping
@@ -413,6 +449,57 @@ export default function DocumentEditorPage() {
       refreshThreads();
     },
     [fileId, editor, pendingComment, flushSave, recomputeAnchors, refreshThreads],
+  );
+
+  /** Approval transition. Moving INTO approved/published stamps an
+   *  'approval' version snapshot — the audit trail of what was approved. */
+  const onChangeApproval = useCallback(
+    async (next: DocApprovalStatus) => {
+      if (!fileId || approvalBusy) return;
+      setApprovalBusy(true);
+      try {
+        const updated = await setApprovalStatus(fileId, next);
+        setApprovalStatusState(updated.approval_status);
+        if (next === 'approved' || next === 'published') {
+          await snapshotVersion({
+            fileId,
+            docVersion: docVersionRef.current,
+            kind: 'approval',
+            label: t(`doc.approval.${next}`),
+            contentJson: editorRef.current?.getJSON() as Record<string, unknown>,
+            contentHtml: editorRef.current?.getHTML() ?? '',
+          });
+        }
+        addToast(t('doc.approval.changed', { status: t(`doc.approval.${next}`) }), 'success');
+      } catch {
+        // surfaced by the client libs
+      } finally {
+        setApprovalBusy(false);
+      }
+    },
+    [fileId, approvalBusy, addToast, t],
+  );
+
+  /** Restore a version: safety-snapshot the CURRENT content first, then
+   *  swap the editor content and persist. */
+  const onRestoreVersion = useCallback(
+    async (v: DocVersionFull) => {
+      const ed = editorRef.current?.editor;
+      if (!fileId || !ed) return;
+      await snapshotVersion({
+        fileId,
+        docVersion: docVersionRef.current,
+        kind: 'restore',
+        label: t('doc.versions.before_restore'),
+        contentJson: editorRef.current?.getJSON() as Record<string, unknown>,
+        contentHtml: editorRef.current?.getHTML() ?? '',
+      });
+      ed.commands.setContent(v.content_json as Parameters<typeof ed.commands.setContent>[0]);
+      await flushSave();
+      recomputeAnchors();
+      addToast(t('doc.versions.restored'), 'success');
+    },
+    [fileId, flushSave, recomputeAnchors, addToast, t],
   );
 
   const onTitleBlur = useCallback(async () => {
@@ -538,6 +625,15 @@ export default function DocumentEditorPage() {
             />
             <SaveStatusBadge status={canEdit ? saveStatus : 'idle'} canEdit={canEdit} />
 
+            {/* Approval workflow pill (draft/review/approved/published). */}
+            <ApprovalStatusPill
+              status={approvalStatus}
+              canEdit={canEdit}
+              isOwner={!!file && file.uploaded_by_user_id === currentUserId}
+              busy={approvalBusy}
+              onChange={(next) => void onChangeApproval(next)}
+            />
+
             {/* Share / Permissions / Move — only for users who can edit the doc.
                 These reuse the exact Files-section modals so behavior is
                 identical to managing the file from the Files grid. */}
@@ -596,6 +692,10 @@ export default function DocumentEditorPage() {
               label={t('doc.outline.title')}
               onClick={toggleOutline}
             />
+
+            {/* Version history — list/preview for anyone with view access;
+                restore + manual snapshots are edit-gated inside the modal. */}
+            <HeaderIconBtn icon={History} label={t('doc.versions.title')} onClick={() => setVersionsOpen(true)} />
 
             {/* Export — also for read-only viewers. */}
             <HeaderIconBtn icon={FileDown} label={t('doc.export.title')} onClick={() => setExportOpen(true)} />
@@ -764,6 +864,16 @@ export default function DocumentEditorPage() {
         getJson={() => editorRef.current?.getJSON() ?? { type: 'doc', content: [] }}
         getHtml={() => editorRef.current?.getHTML() ?? ''}
         onClose={() => setExportOpen(false)}
+      />
+      <VersionHistoryModal
+        open={versionsOpen}
+        fileId={file.id}
+        docVersion={docVersionRef.current}
+        getJson={() => (editorRef.current?.getJSON() ?? { type: 'doc' }) as Record<string, unknown>}
+        getHtml={() => editorRef.current?.getHTML() ?? ''}
+        canEdit={canEdit}
+        onClose={() => setVersionsOpen(false)}
+        onRestore={onRestoreVersion}
       />
       <PageSettingsModal
         open={pageSetupOpen}

@@ -191,6 +191,31 @@ export async function saveDocumentSettings(
   if (error) throw surfaceError('save settings', error);
 }
 
+/** Set the approval status (draft/review/approved/published). Stamps who +
+ *  when. The owner-only gate for approve/publish is enforced by the UI in v1
+ *  (DB allows any editor — internal-tool posture, documented in the
+ *  migration). Returns the updated row so the page can sync local state. */
+export async function setApprovalStatus(
+  fileId: string,
+  status: import('@/types/files').DocApprovalStatus,
+): Promise<WasselDocumentRow> {
+  if (!supabase) throw surfaceError('update status', new Error('Supabase not configured'));
+  const appUserId = useAppStore.getState().currentUserId;
+  if (!appUserId) throw surfaceError('update status', new Error('Not signed in'));
+  const { data, error } = await supabase
+    .from('wassel_documents')
+    .update({
+      approval_status: status,
+      approval_updated_by: appUserId,
+      approval_updated_at: new Date().toISOString(),
+    })
+    .eq('file_id', fileId)
+    .select('*')
+    .single();
+  if (error || !data) throw surfaceError('update status', error ?? new Error('update returned no row'));
+  return data as WasselDocumentRow;
+}
+
 /** Rename a document. Reuses the existing files.renameFile semantics — kept
  *  here so callers in the editor don't have to import from two places. */
 export async function renameDocument(fileId: string, newTitle: string): Promise<FileRow> {
