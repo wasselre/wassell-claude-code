@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { readExcelFile } from '@/lib/excelUtils';
+import { excelFileToCsvTexts, readExcelFile } from '@/lib/excelUtils';
 import {
   Upload,
   FileSpreadsheet,
@@ -49,14 +49,35 @@ interface StepUploadProps {
 
 const EXCEL_EXT = /\.(xlsx|xls|csv)$/i;
 const isExcel = (f: File) => EXCEL_EXT.test(f.name) || f.type.includes('sheet') || f.type === 'text/csv';
+const isCsv = (f: File) => /\.csv$/i.test(f.name) || f.type === 'text/csv';
+
+/** Convert one Excel/CSV File into the File(s) that join the AI extraction
+ * set: a .csv passes through as-is; an .xlsx/.xls becomes one CSV file per
+ * non-empty sheet (Claude can't ingest raw workbooks — text it can). */
+async function excelToAiFiles(f: File): Promise<File[]> {
+  if (isCsv(f)) return [f];
+  const base = f.name.replace(EXCEL_EXT, '');
+  const sheets = await excelFileToCsvTexts(f);
+  return sheets.map(
+    (s) =>
+      new File(
+        [s.csv],
+        sheets.length === 1 ? `${base}.csv` : `${base} — ${s.sheetName}.csv`,
+        { type: 'text/csv' },
+      ),
+  );
+}
 
 /**
  * Step "upload" — two entry modes from one drop zone:
  *  (a) clean Excel/CSV → parsed client-side (no AI) → straight to review
  *      (the "start at step 5" path the user asked for).
- *  (b) PDF / screenshots / images → uploaded to storage, then AI-extracted by
- *      the module jobRunner — the job keeps running if the user opens another
- *      migration, and any number of migrations can extract concurrently.
+ *  (b) PDF / screenshots / images / messy Excel → uploaded to storage, then
+ *      AI-extracted by the module jobRunner — the job keeps running if the
+ *      user opens another migration, and any number of migrations can extract
+ *      concurrently. Excel joins this path as per-sheet CSV text.
+ * An Excel-only drop asks which mode you want (direct table vs AI); Excel
+ * mixed with PDFs/images goes to AI extraction together with them.
  * Also "start with a blank table" for fully manual entry.
  */
 export default function StepUpload({
@@ -74,50 +95,44 @@ export default function StepUpload({
   const fileRef = useRef<HTMLInputElement>(null);
   const uploads = sourceFiles ?? [];
   const [busy, setBusy] = useState<'idle' | 'uploading'>('idle');
+  // An Excel-only drop with nothing uploaded yet → ask the user which mode
+  // they want (use the table directly vs AI extraction) before doing anything.
+  const [pendingExcel, setPendingExcel] = useState<File[] | null>(null);
   // Projects target → extraction returns ONE project row (no unit table) plus
   // the Arabic marketing document for the content writers.
   const projectMode = isProjectProfileTarget(model);
 
-  const handleFiles = async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
-    const excels = files.filter(isExcel);
-    const aiFiles = files.filter((f) => !isExcel(f));
-
-    // Excel/CSV with no messy files → parse the first one client-side and jump
-    // straight to review (no AI, no upload).
-    if (excels.length > 0 && aiFiles.length === 0) {
-      try {
-        const result = await readExcelFile(excels[0]!);
-        if (excels.length > 1) {
-          addToast(
-            isAr
-              ? `تم استخدام "${excels[0]!.name}" فقط. ارفع ملفًا واحدًا في كل مرة.`
-              : `Used only "${excels[0]!.name}". Upload one sheet at a time.`,
-            'info',
-          );
-        }
-        onTable({ headers: result.headers, rows: result.rows, source: 'excel_upload' });
-      } catch {
-        addToast(isAr ? 'تعذّرت قراءة الملف' : 'Could not read the file', 'error');
+  /** Fast path: parse the first Excel client-side → straight to review (no AI). */
+  const useExcelDirectly = async (excels: File[]) => {
+    setPendingExcel(null);
+    try {
+      const result = await readExcelFile(excels[0]!);
+      if (excels.length > 1) {
+        addToast(
+          isAr
+            ? `تم استخدام "${excels[0]!.name}" فقط. للجداول المتعددة استخدم الاستخراج بالذكاء.`
+            : `Used only "${excels[0]!.name}". For multiple sheets, use AI extraction.`,
+          'info',
+        );
       }
-      return;
+      onTable({ headers: result.headers, rows: result.rows, source: 'excel_upload' });
+    } catch {
+      addToast(isAr ? 'تعذّرت قراءة الملف' : 'Could not read the file', 'error');
     }
+  };
 
-    // PDF / images → upload to storage for AI extraction.
+  /** Upload a mixed batch into the AI extraction set — Excel converted to
+   * per-sheet CSV text so the model can read it like a PDF. */
+  const addToAiSet = async (files: File[]) => {
+    setPendingExcel(null);
     setBusy('uploading');
     try {
       const added: MigrationUpload[] = [];
-      for (const f of aiFiles) {
-        added.push(await uploadMigrationFile(recordId, f));
-      }
-      if (excels.length > 0) {
-        addToast(
-          isAr
-            ? 'تم تجاهل ملفات Excel هنا — ارفعها وحدها لاستخدامها مباشرة.'
-            : 'Excel files were skipped here — upload them alone to use directly.',
-          'info',
-        );
+      for (const f of files) {
+        const toUpload = isExcel(f) ? await excelToAiFiles(f) : [f];
+        for (const u of toUpload) {
+          added.push(await uploadMigrationFile(recordId, u));
+        }
       }
       onSourceFiles([...uploads, ...added]);
     } catch (err) {
@@ -125,6 +140,20 @@ export default function StepUpload({
     } finally {
       setBusy('idle');
     }
+  };
+
+  const handleFiles = async (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const files = Array.from(fileList);
+    const excels = files.filter(isExcel);
+
+    // Excel/CSV only, nothing uploaded yet → let the user pick the mode.
+    // (Already in AI mode — files uploaded — Excel just joins the AI set.)
+    if (excels.length === files.length && uploads.length === 0) {
+      setPendingExcel(excels);
+      return;
+    }
+    await addToAiSet(files);
   };
 
   const removeUpload = async (u: MigrationUpload) => {
@@ -259,13 +288,63 @@ export default function StepUpload({
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-charcoal/50">
         <div className="flex items-center gap-1.5">
           <FileSpreadsheet size={14} className="text-copper/70" />
-          {isAr ? 'Excel/CSV → جدول مباشرة' : 'Excel/CSV → straight to table'}
+          {isAr ? 'Excel/CSV → مباشرة أو بالذكاء' : 'Excel/CSV → direct or AI'}
         </div>
         <div className="flex items-center gap-1.5">
           <ImageIcon size={14} className="text-copper/70" />
           {isAr ? 'PDF/صور → استخراج ذكي' : 'PDF/images → AI extraction'}
         </div>
       </div>
+
+      {/* Excel-only drop → choose the mode before anything happens. */}
+      {pendingExcel && (
+        <div className="mt-5 p-4 rounded-xl border border-copper/30 bg-copper/[0.03]">
+          <div className="flex items-start gap-2">
+            <FileSpreadsheet size={18} className="text-copper shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-bold text-charcoal">
+                {isAr ? 'كيف تريد قراءة هذا الملف؟' : 'How should this file be read?'}
+              </div>
+              <div className="text-xs text-charcoal/50 truncate">
+                {pendingExcel.map((f) => f.name).join('، ')}
+              </div>
+            </div>
+            <button
+              onClick={() => setPendingExcel(null)}
+              className="text-charcoal/30 hover:text-red-500 transition-colors shrink-0"
+            >
+              <X size={15} />
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              onClick={() => void addToAiSet(pendingExcel)}
+              disabled={busy !== 'idle'}
+              className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors"
+            >
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <Sparkles size={15} />
+                {isAr ? 'استخراج بالذكاء' : 'Extract with AI'}
+              </span>
+              <span className="text-[11px] opacity-80">
+                {isAr ? 'لملف فوضوي أو متعدد الأوراق — يُقرأ مثل PDF' : 'Messy or multi-sheet — read like a PDF'}
+              </span>
+            </button>
+            <button
+              onClick={() => void useExcelDirectly(pendingExcel)}
+              className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-lg border border-sand/50 text-charcoal hover:bg-cream transition-colors"
+            >
+              <span className="flex items-center gap-1.5 text-sm font-medium">
+                <FileSpreadsheet size={15} />
+                {isAr ? 'استخدام الجدول مباشرة' : 'Use table directly'}
+              </span>
+              <span className="text-[11px] text-charcoal/50">
+                {isAr ? 'لجدول نظيف — بدون ذكاء، فورًا' : 'Clean sheet — no AI, instant'}
+              </span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Uploaded (AI) files awaiting extraction */}
       {uploads.length > 0 && (
@@ -281,6 +360,8 @@ export default function StepUpload({
               >
                 {u.mimeType.includes('pdf') ? (
                   <FileText size={16} className="text-copper shrink-0" />
+                ) : u.mimeType.includes('csv') || /\.csv$/i.test(u.name) ? (
+                  <FileSpreadsheet size={16} className="text-copper shrink-0" />
                 ) : (
                   <ImageIcon size={16} className="text-copper shrink-0" />
                 )}

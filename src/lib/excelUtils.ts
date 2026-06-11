@@ -444,6 +444,30 @@ export async function readExcelFile(
   return { headers, rows };
 }
 
+/**
+ * Convert a workbook to one CSV text per non-empty sheet. Used by the Data
+ * Migration wizard's "extract Excel with AI" path: Claude can't ingest raw
+ * .xlsx, so each sheet is serialized to CSV and sent as a text file —
+ * preserving every sheet and the raw cell grid (messy layouts included).
+ */
+export async function excelFileToCsvTexts(
+  file: File,
+): Promise<{ sheetName: string; csv: string }[]> {
+  const buffer = await file.arrayBuffer();
+  const wb = XLSX.read(buffer, { type: 'array', codepage: 65001 });
+  const out: { sheetName: string; csv: string }[] = [];
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    if (!ws) continue;
+    const csv = XLSX.utils.sheet_to_csv(ws);
+    // Skip sheets with no meaningful content (just separators/whitespace).
+    if (csv.replace(/[,\s]/g, '') === '') continue;
+    out.push({ sheetName, csv });
+  }
+  if (out.length === 0) throw new Error('Empty workbook');
+  return out;
+}
+
 export interface MapImportedRowsResult {
   data: Record<string, unknown>[];
   // Records auto-created in lookup-target models when the imported display-value

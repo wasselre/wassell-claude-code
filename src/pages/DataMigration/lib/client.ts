@@ -5,8 +5,9 @@
  *   <authUid>/<recordId>/uploads/<ts>_<name>
  * (RLS scopes read/write to the owner). For the AI EXTRACT step the client
  * mints a short-lived signed URL per file and passes it to POST /api/migrate
- * — no service-role, the function just fetches the URL. Excel/CSV never hit
- * the AI (parsed client-side by readExcelFile).
+ * — no service-role, the function just fetches the URL. Excel can go either
+ * way: parsed client-side by readExcelFile (the direct fast path) OR converted
+ * to per-sheet CSV text and uploaded into the AI extraction set like a PDF.
  *
  * Every call throws on failure (no silent failure — see CLAUDE.md); callers
  * surface the message via addToast + a retry affordance.

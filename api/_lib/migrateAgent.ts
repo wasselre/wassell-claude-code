@@ -2,7 +2,7 @@
  * Anthropic helpers for the Data Migration wizard (POST /api/migrate).
  *
  * Four actions, each forced-tool so the model always returns structured JSON:
- *   - extract          : files (PDF/image) → ONE unified raw table. Model-aware
+ *   - extract          : files (PDF/image/CSV-text) → ONE unified raw table. Model-aware
  *                        (given the target model's fields as a hunt-list),
  *                        numeric (bare numbers for counts/quantities), and
  *                        plan-deep (counts a unit's components from its floor
@@ -86,9 +86,15 @@ export interface RawTableResult {
 
 // Claude vision accepts these image media types only.
 const IMAGE_MEDIA_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+// Spreadsheet/text sources (the client converts .xlsx sheets to CSV text —
+// Claude can't ingest raw workbooks) are included as plain text blocks.
+const TEXT_MEDIA_TYPES = new Set(['text/csv', 'text/plain', 'text/tab-separated-values']);
 const MAX_FILES = 20;
 // Keep comfortably under the Anthropic ~32 MB request cap once base64-inflated.
 const MAX_TOTAL_BYTES = 24 * 1024 * 1024;
+// Text files are token-bounded separately (they go into the prompt verbatim).
+const MAX_TEXT_CHARS_PER_FILE = 120_000;
+const MAX_TEXT_CHARS_TOTAL = 300_000;
 
 function buildExtractTool(mode: ExtractMode): Anthropic.Tool {
   const properties: Record<string, unknown> = {
@@ -166,7 +172,10 @@ function buildExtractTool(mode: ExtractMode): Anthropic.Tool {
   };
 }
 
-const EXTRACT_SYSTEM = `You extract structured data from messy real-estate documents for a Saudi Arabian CRM (Wassel / وصل العقارية). Files are developer hand-offs — unit lists, price tables, project specs, brochures with floor plans — as PDFs, screenshots, or photos, usually in Arabic.
+const EXTRACT_SYSTEM = `You extract structured data from messy real-estate documents for a Saudi Arabian CRM (Wassel / وصل العقارية). Files are developer hand-offs — unit lists, price tables, project specs, brochures with floor plans — as PDFs, screenshots, photos, or spreadsheet text (CSV converted from Excel, one file per sheet), usually in Arabic.
+
+SPREADSHEET (CSV) FILES:
+A CSV file is one sheet of a workbook, raw. Real-world sheets are MESSY: title/logo rows above the real header, merged cells appearing as blanks, repeated header rows, several sub-tables on one sheet, footer notes. Find the real tabular data, use the true header row, fill values implied by merged cells (a project name spanning rows applies to each row), and ignore decoration — same judgment as reading a PDF page.
 
 Always call the \`emit_raw_table\` tool — never reply in prose.
 
@@ -237,13 +246,18 @@ function fileExtensionMime(name: string): string | null {
     case 'gif': return 'image/gif';
     case 'webp': return 'image/webp';
     case 'pdf': return 'application/pdf';
+    case 'csv': return 'text/csv';
+    case 'tsv': return 'text/tab-separated-values';
+    case 'txt': return 'text/plain';
     default: return null;
   }
 }
 
 /**
- * Fetch each signed-URL file (image/PDF) and build Claude content blocks.
- * Skips unsupported/oversized files (reported, never silently dropped).
+ * Fetch each signed-URL file (image / PDF / CSV-text) and build Claude content
+ * blocks. Spreadsheets arrive as CSV text (the client converts workbooks per
+ * sheet) and are inlined as fenced text blocks, char-capped. Skips
+ * unsupported/oversized files (reported, never silently dropped).
  * Shared by extract + discuss.
  */
 async function buildFileBlocks(
@@ -252,6 +266,7 @@ async function buildFileBlocks(
   const skipped: { name: string; reason: string }[] = [];
   const blocks: Anthropic.ContentBlockParam[] = [];
   let totalBytes = 0;
+  let totalTextChars = 0;
   let used = 0;
   let truncated = false;
 
@@ -267,8 +282,46 @@ async function buildFileBlocks(
 
     const isImage = IMAGE_MEDIA_TYPES.has(mime);
     const isPdf = mime === 'application/pdf';
-    if (!isImage && !isPdf) {
-      skipped.push({ name: file.name, reason: `unsupported type "${mime || 'unknown'}" — convert to PNG/JPG/PDF` });
+    const isText = TEXT_MEDIA_TYPES.has(mime);
+    if (!isImage && !isPdf && !isText) {
+      skipped.push({ name: file.name, reason: `unsupported type "${mime || 'unknown'}" — convert to PNG/JPG/PDF/CSV` });
+      continue;
+    }
+
+    if (isText) {
+      if (totalTextChars >= MAX_TEXT_CHARS_TOTAL) {
+        truncated = true;
+        skipped.push({ name: file.name, reason: 'total text size limit reached' });
+        continue;
+      }
+      let text: string;
+      try {
+        const res = await fetch(file.url);
+        if (!res.ok) {
+          skipped.push({ name: file.name, reason: `download failed (${res.status})` });
+          continue;
+        }
+        text = await res.text();
+      } catch (err) {
+        skipped.push({ name: file.name, reason: `download error: ${err instanceof Error ? err.message : String(err)}` });
+        continue;
+      }
+      const budget = Math.min(MAX_TEXT_CHARS_PER_FILE, MAX_TEXT_CHARS_TOTAL - totalTextChars);
+      let body = text;
+      if (body.length > budget) {
+        // Cut on a line boundary so the model never sees half a row.
+        body = body.slice(0, budget);
+        const lastNl = body.lastIndexOf('\n');
+        if (lastNl > 0) body = body.slice(0, lastNl);
+        body += '\n… (truncated)';
+        truncated = true;
+      }
+      totalTextChars += body.length;
+      blocks.push({
+        type: 'text',
+        text: `File: ${file.name} (spreadsheet/text — CSV content below)\n\`\`\`csv\n${body}\n\`\`\``,
+      });
+      used += 1;
       continue;
     }
 

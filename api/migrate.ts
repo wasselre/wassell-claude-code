@@ -2,7 +2,7 @@
  * POST /api/migrate — the AI backend for the Data Migration wizard.
  *
  * One Node function, dispatched on `action`:
- *   - extract          : signed-URL files (PDF/image) → one unified raw table
+ *   - extract          : signed-URL files (PDF/image/CSV-text) → one unified raw table
  *   - suggest_mappings : raw headers + samples + target fields → column→field map  (Phase 4)
  *   - standardize      : a column's distinct values → canonical option/lookup map (Phase 4)
  *
