@@ -203,14 +203,18 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
     editor.view.dom.setAttribute('dir', baseDir);
   }, [editor, baseDir]);
 
-  // Record-mention chips navigate on click. Delegated DOM listener on the
-  // editor surface (NOT ProseMirror's handleClickOn — that callback doesn't
-  // reliably fire for inline leaf atoms; verified live 2026-06-11). The chip
-  // span carries data-mention/data-kind/data-id/data-model-id from renderHTML.
+  // Record-mention chips navigate on click. Delegated MOUSEDOWN listener on
+  // the editor surface — neither ProseMirror's handleClickOn nor a DOM
+  // 'click' listener works here (verified live 2026-06-11): on mousedown PM
+  // sets a NodeSelection and re-renders the chip, so mouseup lands on a NEW
+  // element instance and the browser retargets the click to the common
+  // ancestor, which no longer matches [data-mention]. At mousedown time the
+  // original chip element is still intact.
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;
-    const onClick = (e: MouseEvent) => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0) return;
       const el = (e.target as HTMLElement | null)?.closest?.('[data-mention]');
       if (!el) return;
       if (el.getAttribute('data-kind') !== 'record') return;
@@ -223,8 +227,8 @@ const DocumentEditor = forwardRef<DocumentEditorHandle, Props>(function Document
       };
       onMentionClickRef.current?.(attrs);
     };
-    dom.addEventListener('click', onClick);
-    return () => dom.removeEventListener('click', onClick);
+    dom.addEventListener('mousedown', onMouseDown);
+    return () => dom.removeEventListener('mousedown', onMouseDown);
   }, [editor]);
 
   // Push fresh CRM variable values into the decoration extension whenever
