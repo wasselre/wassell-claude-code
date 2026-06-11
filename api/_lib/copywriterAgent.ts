@@ -662,6 +662,44 @@ async function getProject(supabase: SupabaseClient, input: { project_id: string 
   });
 }
 
+const REEL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve the authoritative all_projects record id to link an emitted reel
+ * script to. The model OFTEN echoes a wrong/short project_id (observed: "26")
+ * in emit_reel_script — especially on later-turn rewrites where it composes
+ * from memory instead of re-calling get_project — which leaves the new Reel
+ * record's Project lookup unresolved. So never trust the echoed id blindly:
+ *   1. the id the agent actually fetched via get_project THIS request (exact), else
+ *   2. resolve from project_name via the name-first search (finds the real
+ *      project despite the stored trailing-space / Arabic-digit quirks), else
+ *   3. the echoed id, only if it's a well-formed UUID, else null (no link).
+ */
+export async function resolveReelScriptProjectId(
+  supabase: SupabaseClient,
+  rawProjectId: unknown,
+  projectName: unknown,
+  fetchedProjectId: string | null,
+): Promise<string | null> {
+  if (typeof fetchedProjectId === 'string' && REEL_UUID_RE.test(fetchedProjectId)) return fetchedProjectId;
+
+  const name = typeof projectName === 'string' ? projectName.trim() : '';
+  if (name) {
+    try {
+      const res = JSON.parse(await searchProjects(supabase, { query: name, limit: 1 })) as {
+        projects?: Array<{ id?: string }>;
+      };
+      const id = res.projects?.[0]?.id;
+      if (typeof id === 'string' && REEL_UUID_RE.test(id)) return id;
+    } catch {
+      // fall through to the echoed id
+    }
+  }
+
+  const raw = typeof rawProjectId === 'string' ? rawProjectId.trim() : '';
+  return REEL_UUID_RE.test(raw) ? raw : null;
+}
+
 /**
  * Dispatch a copywriter tool call. All four tools are implemented here — the
  * copywriter reads project facts from all_projects (with computed rollups),

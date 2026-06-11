@@ -23,6 +23,7 @@ import {
   COPYWRITER_SYSTEM_PROMPT,
   COPYWRITER_TOOLS,
   executeCopywriterTool,
+  resolveReelScriptProjectId,
 } from './_lib/copywriterAgent.js';
 import { logAiAgentTurn } from './_lib/activityLogger.js';
 
@@ -79,6 +80,10 @@ export default async function handler(req: Request): Promise<Response> {
 
         try {
           const conversation: Anthropic.MessageParam[] = [...body.messages];
+          // The project id the agent actually fetched via get_project this
+          // request — the authoritative link for an emitted reel script (the
+          // model sometimes echoes a bogus project_id in emit_reel_script).
+          let lastFetchedProjectId: string | null = null;
 
           for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
             const turnStartedAt = Date.now();
@@ -127,12 +132,31 @@ export default async function handler(req: Request): Promise<Response> {
               }> = [];
               for (const toolUse of toolUses) {
                 send({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
+                if (toolUse.name === 'get_project') {
+                  // The project the agent actually fetched — authoritative id to
+                  // link a reel to (validated as a UUID by the resolver).
+                  const pid = (toolUse.input as { project_id?: unknown } | null)?.project_id;
+                  if (typeof pid === 'string') lastFetchedProjectId = pid;
+                }
                 if (toolUse.name === 'emit_reel_script') {
                   // Surface the structured reel script to the browser as a
                   // dedicated event the thread renders as a table card with a
-                  // "Create Reel" button. Still runs through the normal tool
-                  // loop below so the model gets an ack and writes a closing line.
-                  send({ type: 'reel_script', data: toolUse.input });
+                  // "Create Reel" button. Resolve the project link server-side —
+                  // the model sometimes echoes a bogus project_id (e.g. "26"), so
+                  // prefer the fetched id / name match so the Reel record links
+                  // to the real project. Still runs through the normal tool loop
+                  // below so the model gets an ack and writes a closing line.
+                  const input = (toolUse.input ?? {}) as Record<string, unknown>;
+                  const projectId = await resolveReelScriptProjectId(
+                    supabase,
+                    input.project_id,
+                    input.project_name,
+                    lastFetchedProjectId,
+                  );
+                  const payload: Record<string, unknown> = { ...input };
+                  if (projectId) payload.project_id = projectId;
+                  else delete payload.project_id;
+                  send({ type: 'reel_script', data: payload });
                 }
                 const toolStartedAt = Date.now();
                 let toolResult = '';
