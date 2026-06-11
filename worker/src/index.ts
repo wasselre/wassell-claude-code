@@ -26,6 +26,7 @@
 import http from 'node:http';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
+import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
@@ -50,6 +51,10 @@ let imageWakeRequested = false;
 // for the same reason — a 2-10s soffice run should never wait behind a deck.
 let previewBusy = false;
 let previewWakeRequested = false;
+// PDF compression (pdf_compress_jobs) gets a FOURTH independent loop — bulk
+// compress fan-outs should drain at full speed regardless of deck/image load.
+let compressBusy = false;
+let compressWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -322,6 +327,111 @@ async function runPreviewWatchdog(): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// PDF compression — pdf_compress_jobs queue (Ghostscript).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued compress job (if any) and run it to completion. Mirrors
+ * the deck/image/preview claim-run-complete shape against pdf_compress_jobs.
+ * Returns true if a job was claimed.
+ */
+async function claimAndRunOneCompress(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('pdf_compress_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] compress claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    file_id: string;
+    attempts: number;
+    storage_bucket: string;
+    storage_path: string;
+    mime_type: string;
+    size_bytes: number;
+    original_name: string;
+    folder_id: string | null;
+    model_id: string | null;
+    record_id: string | null;
+    uploaded_by_user_id: string;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: CompressJob = {
+    id: row.job_id,
+    fileId: row.file_id,
+    attempts: row.attempts,
+    storageBucket: row.storage_bucket,
+    storagePath: row.storage_path,
+    mimeType: row.mime_type,
+    sizeBytes: row.size_bytes,
+    originalName: row.original_name,
+    folderId: row.folder_id,
+    modelId: row.model_id,
+    recordId: row.record_id,
+    uploadedByUserId: row.uploaded_by_user_id,
+  };
+  console.log(
+    `[worker] claimed compress job=${job.id} file=${job.fileId} size=${job.sizeBytes} attempts=${job.attempts}`,
+  );
+
+  try {
+    const result = await runCompressJob({ supabase, env, job });
+    // pdf_compress_complete only touches status='running' rows — a late finish
+    // after the watchdog already failed the job is a harmless no-op.
+    const { error: doneErr } = await supabase.rpc('pdf_compress_complete', {
+      p_job_id: job.id,
+      p_result_file_id: result.resultFileId,
+      p_original_bytes: result.originalBytes,
+      p_compressed_bytes: result.compressedBytes,
+    });
+    if (doneErr) {
+      console.error(`[worker] pdf_compress_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(
+        `[worker] completed compress job=${job.id} → ${result.resultFileId ?? 'no-gain'} (${result.originalBytes} → ${result.compressedBytes})`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] compress job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('pdf_compress_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] pdf_compress_fail RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(
+        `[worker] could not mark compress job failed: ${(innerErr as Error).message}`,
+      );
+    }
+  }
+  return true;
+}
+
+async function runCompressWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('pdf_compress_watchdog');
+    if (error) {
+      console.error(`[worker] compress watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) {
+      console.warn(`[worker] compress watchdog swept ${swept} stale job(s)`);
+    }
+  } catch (err) {
+    console.error(`[worker] compress watchdog threw:`, err);
+  }
+}
+
 /**
  * Main loop. Stays in this function for the lifetime of the process.
  * Drains the queue as fast as it can, then sleeps POLL_INTERVAL_MS
@@ -427,6 +537,38 @@ async function previewPollLoop(): Promise<void> {
   }
 }
 
+/**
+ * Compress-queue twin of the other poll loops. Runs concurrently with its
+ * own busy/wake flags. Ticks pdf_compress_watchdog() on the same interval.
+ */
+async function compressPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    compressBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneCompress();
+    } catch (err) {
+      console.error('[worker] compress poll iteration error:', err);
+    }
+    compressBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runCompressWatchdog();
+    }
+
+    if (didClaim || compressWakeRequested) {
+      compressWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !compressWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP server: /healthz for Fly health checks, /wake for API ping.
 // ─────────────────────────────────────────────────────────────────────────
@@ -439,6 +581,7 @@ const server = http.createServer((req, res) => {
         busy,
         image_busy: imageBusy,
         preview_busy: previewBusy,
+        compress_busy: compressBusy,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -451,6 +594,7 @@ const server = http.createServer((req, res) => {
     wakeRequested = true;
     imageWakeRequested = true;
     previewWakeRequested = true;
+    compressWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -471,7 +615,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || previewBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || previewBusy || compressBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -480,8 +624,8 @@ async function shutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
-// Drain all three queues concurrently for the lifetime of the process.
-Promise.all([pollLoop(), imagePollLoop(), previewPollLoop()]).catch((err) => {
+// Drain all four queues concurrently for the lifetime of the process.
+Promise.all([pollLoop(), imagePollLoop(), previewPollLoop(), compressPollLoop()]).catch((err) => {
   console.error('[worker] poll loop crashed:', err);
   process.exit(1);
 });

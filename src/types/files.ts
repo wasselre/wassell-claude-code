@@ -61,6 +61,19 @@ export interface OfficePreviewResponse {
   error?: string;
 }
 
+/** Response of POST /api/files/compress-pdf — the SPA polls this while
+ *  status='pending'. 'none' = no compression job ever ran for the file. */
+export interface PdfCompressResponse {
+  status: 'none' | 'pending' | 'done' | 'failed';
+  /** Id of the compressed COPY (a new files row). Null when no_gain. */
+  result_file_id?: string | null;
+  /** True when the PDF was already optimized and no copy was created. */
+  no_gain?: boolean;
+  original_bytes?: number | null;
+  compressed_bytes?: number | null;
+  error?: string;
+}
+
 export interface FilePermission {
   id: string;
   file_id: string;

@@ -1356,6 +1356,7 @@ export type {
   FilePermission,
   FolderPermission,
   OfficePreviewResponse,
+  PdfCompressResponse,
   SharedLink,
   SharedFileResponse,
   WasselDocumentRow,

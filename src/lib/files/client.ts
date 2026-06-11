@@ -23,6 +23,7 @@ import type {
   FolderPermission,
   FolderRow,
   OfficePreviewResponse,
+  PdfCompressResponse,
   SharedFileResponse,
   SharedLink,
 } from '@/types';
@@ -764,6 +765,30 @@ export async function requestOfficePreview(
   const body = (await res.json().catch(() => ({}))) as OfficePreviewResponse & { error?: string };
   if (!res.ok) {
     console.error(`[files] office preview request failed: HTTP ${res.status}`, body.error);
+    return { status: 'failed', error: body.error ?? `HTTP ${res.status}` };
+  }
+  return body;
+}
+
+// ─── PDF compression ────────────────────────────────────────────────────
+
+/**
+ * Start (start=true) or poll the Ghostscript compression of a PDF file.
+ * Compression runs on the Fly worker (pdf_compress_jobs queue); callers loop
+ * on status==='pending'. On 'done', `result_file_id` points at the NEW
+ * "<name> (مضغوط).pdf" copy (null + no_gain when the PDF was already
+ * optimized). Deliberately does NOT toast — FilesPage owns the per-file and
+ * bulk-summary toasts; a toast here would double-report.
+ */
+export async function requestPdfCompress(fileId: string, start = false): Promise<PdfCompressResponse> {
+  const res = await fetch('/api/files/compress-pdf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ fileId, start }),
+  });
+  const body = (await res.json().catch(() => ({}))) as PdfCompressResponse & { error?: string };
+  if (!res.ok) {
+    console.error(`[files] compress request failed: HTTP ${res.status}`, body.error);
     return { status: 'failed', error: body.error ?? `HTTP ${res.status}` };
   }
   return body;

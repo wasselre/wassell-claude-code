@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check, Download, Eye, FolderInput, MoreVertical, Pencil, Share2, Shield, Trash2 } from 'lucide-react';
+import { Check, Download, Eye, FolderInput, MoreVertical, Pencil, Share2, Shield, Shrink, Trash2 } from 'lucide-react';
 import type { FileRow } from '@/types';
 import { kindAccent, kindIcon, formatBytes } from '@/lib/files/format';
 import { useAppStore } from '@/stores/appStore';
@@ -35,6 +35,10 @@ interface Props {
   onPermissions: (f: FileRow) => void;
   onDelete: (f: FileRow) => void;
   onRename: (f: FileRow) => void;
+  /** Ghostscript PDF compression — shown only for kind==='pdf' + canEdit. */
+  onCompress: (f: FileRow) => void;
+  /** True while a compression job for this file is in flight. */
+  compressing: boolean;
 }
 
 export default function FileCard({
@@ -53,6 +57,8 @@ export default function FileCard({
   onPermissions,
   onDelete,
   onRename,
+  onCompress,
+  compressing,
   thumbUrl,
 }: Props) {
   const { t } = useTranslation();
@@ -169,6 +175,14 @@ export default function FileCard({
                 <MenuItem icon={FolderInput} label={t('files.actions.move')} onClick={() => { setMenuOpen(false); onMove(file); }} />
                 <MenuItem icon={Share2} label={t('files.actions.share')} onClick={() => { setMenuOpen(false); onShare(file); }} />
                 <MenuItem icon={Shield} label={t('files.actions.permissions')} onClick={() => { setMenuOpen(false); onPermissions(file); }} />
+                {file.kind === 'pdf' && (
+                  <MenuItem
+                    icon={Shrink}
+                    label={compressing ? t('files.compress.in_progress') : t('files.actions.compress')}
+                    disabled={compressing}
+                    onClick={() => { setMenuOpen(false); onCompress(file); }}
+                  />
+                )}
               </>
             )}
             {canDelete && (
@@ -189,14 +203,18 @@ interface MIProps {
   label: string;
   onClick: () => void;
   danger?: boolean;
+  disabled?: boolean;
 }
 
-function MenuItem({ icon: Icon, label, onClick, danger }: MIProps) {
+function MenuItem({ icon: Icon, label, onClick, danger, disabled }: MIProps) {
   return (
     <button
       onClick={onClick}
+      disabled={disabled}
       className={`w-full flex items-center gap-2 px-3 py-2 text-sm transition-colors ${
-        danger
+        disabled
+          ? 'text-charcoal/30 cursor-not-allowed'
+          : danger
           ? 'text-red-600 hover:bg-red-50'
           : 'text-charcoal/80 hover:bg-cream hover:text-charcoal'
       }`}

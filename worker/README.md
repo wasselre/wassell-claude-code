@@ -206,4 +206,4 @@ the Supabase ap-south-1 project so the per-record-update round-trip is
 See the decision discussion preserved in CLAUDE.md → "Decks worker"
 section.
 
-Note: the worker also drains the `file_preview_jobs` queue (office→PDF previews; see docs/prd/files.md "Office document preview").
+Note: the worker also drains the `file_preview_jobs` queue (office→PDF previews; see docs/prd/files.md "Office document preview") and the `pdf_compress_jobs` queue (Ghostscript PDF compression; see docs/prd/files.md "PDF compression"). Each queue gets its own independent poll loop so short file jobs never wait behind multi-minute decks.

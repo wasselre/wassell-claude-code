@@ -37,8 +37,13 @@ ENV NODE_ENV=production
 # tofu boxes. NOTE: Alpine has NO font-amiri package (deploy 2026-06-11
 # failed on it) — Amiri (the Wassel brand font) is fetched straight from
 # the google/fonts repo below instead.
+#
+# ghostscript gives us `gs` — used by runCompressJob.ts to compress PDFs
+# (pdfwrite + /ebook downsampling) entirely in-house (~30 MB). The iLovePDF
+# API was rejected: bytes to a third party + a 250 files/month cap.
 RUN apk add --no-cache \
     poppler-utils \
+    ghostscript \
     libreoffice-writer \
     libreoffice-impress \
     libreoffice-calc \

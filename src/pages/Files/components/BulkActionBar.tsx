@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { Download, FolderInput, Trash2, X } from 'lucide-react';
+import { Download, FolderInput, Shrink, Trash2, X } from 'lucide-react';
 
 interface Props {
   count: number;
@@ -9,10 +9,13 @@ interface Props {
   movableFileCount: number;
   /** How many file rows are in the selection (for the Download button). */
   fileCount: number;
+  /** How many selected files are PDFs the user can compress (kind + edit role). */
+  compressibleCount: number;
   onClear: () => void;
   onDelete: () => void;
   onMove: () => void;
   onDownload: () => void;
+  onCompress: () => void;
 }
 
 /**
@@ -32,10 +35,12 @@ export default function BulkActionBar({
   deletableCount,
   movableFileCount,
   fileCount,
+  compressibleCount,
   onClear,
   onDelete,
   onMove,
   onDownload,
+  onCompress,
 }: Props) {
   const { t } = useTranslation();
   if (count === 0) return null;
@@ -69,6 +74,12 @@ export default function BulkActionBar({
           label={t('files.bulk.move')}
           disabled={movableFileCount === 0}
           onClick={onMove}
+        />
+        <BarButton
+          icon={Shrink}
+          label={t('files.bulk.compress')}
+          disabled={compressibleCount === 0}
+          onClick={onCompress}
         />
         <BarButton
           icon={Trash2}

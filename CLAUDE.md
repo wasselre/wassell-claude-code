@@ -358,6 +358,19 @@ THIRD queue on the same Fly worker: `file_preview_jobs` converts office document
 4. **Alpine has NO `font-amiri` package** — Amiri TTFs are ADDed from google/fonts in the Dockerfile; `font-noto-arabic` comes from apk. Removing the fonts makes Arabic docs render as tofu.
 5. **Known capacity limit:** `shared-cpu-1x:512MB` machines cannot convert very large image-heavy decks (a 17 MB pptx exceeded the 240 s ceiling). That's a graceful degradation (failure card + Download), not a bug. Scaling worker memory is a user billing decision.
 
+## PDF compression pipeline (files) (added 2026-06-11)
+
+FOURTH queue on the same Fly worker: `pdf_compress_jobs` compresses PDFs with Ghostscript (`gs -sDEVICE=pdfwrite -dPDFSETTINGS=/ebook`, apk `ghostscript` in the Dockerfile) for the Files "Compress PDF" action (single + bulk). **Self-hosted by explicit decision** — the iLovePDF API was evaluated (user supplied its docs) and rejected: file bytes to a third party + a 250 files/month cap that dies under bulk compression.
+
+- Flow: `POST /api/files/compress-pdf` (start=true → `pdf_compress_enqueue` RPC, atomic one-active-job-per-file; no flag → poll latest-job state) → worker `runCompressJob.ts` (download → gs → upload NEW object → INSERT NEW `files` row `"<name> (مضغوط).pdf"` carrying the source's folder/record-link/owner) → `pdf_compress_complete` with result id + before/after bytes. Saving <5% = complete with `result_file_id=NULL` ("no gain", no copy created). Bulk in the SPA enqueues all targets up-front, then watches with one sequential round-robin poll sweep.
+- Migration: `supabase/migrations/2026-06-11_pdf_compress_pipeline.sql` (queue + enqueue/claim/complete/fail/watchdog RPCs, service-role only).
+
+**Hard rules — never violate:**
+1. **Never hold an HTTP request open for the compression** (same rule as the other three queues).
+2. **Kill gs as a process GROUP** (`spawn detached:true` + `kill(-pid)`) — same posture as soffice (rule 3 above); 240 s timeout, 150 MB input cap.
+3. **complete/fail RPCs only touch `status='running'` jobs**; `pdf_compress_watchdog()` sweeps running >10 min.
+4. **Never compress in place.** The result is always a NEW files row + NEW storage object (file bytes are immutable — the office-preview cache depends on it, and a bad compression must never destroy a source document). A failed `files` INSERT must remove the just-uploaded object.
+
 ## Offline / Local Fallback
 - All data is mirrored to localStorage
 - If Supabase is not configured, the app works fully offline

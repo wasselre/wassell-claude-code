@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { FilePlus, FolderPlus, FolderUp, Loader2, Search, Upload, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { FileRow, FilePermissionRole, FolderRow } from '@/types';
+import type { FileRow, FilePermissionRole, FolderRow, PdfCompressResponse } from '@/types';
 import {
   deleteFile,
   deleteFolder,
@@ -15,12 +15,14 @@ import {
   listSharedWithMe,
   renameFile,
   renameFolder,
+  requestPdfCompress,
   roleSatisfies,
   searchDrive,
   signDownloadUrl,
   signViewUrls,
   type DriveSearchResult,
 } from '@/lib/files/client';
+import { formatBytes } from '@/lib/files/format';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import FilesTabs from './components/FilesTabs';
 import NewDocumentModal from './components/NewDocumentModal';
@@ -38,6 +40,35 @@ import BulkMoveModal from './components/BulkMoveModal';
 import { clickMode, useFilesSelection, type SelectableItem } from './useFilesSelection';
 
 type View = 'mine' | 'shared' | 'folder';
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Compression keeps running server-side past this — we just stop *watching*
+ *  and tell the user the copies will appear on a later refresh. */
+const COMPRESS_POLL_TIMEOUT_MS = 15 * 60_000;
+
+/**
+ * Poll /api/files/compress-pdf for many files with ONE sequential round-robin
+ * sweep (bounded request rate no matter how many files were bulk-selected —
+ * N parallel pollers would hammer the API). Ids still pending at the timeout
+ * are simply absent from the result map.
+ */
+async function pollCompressMany(fileIds: string[]): Promise<Map<string, PdfCompressResponse>> {
+  const out = new Map<string, PdfCompressResponse>();
+  const pending = new Set(fileIds);
+  const t0 = Date.now();
+  while (pending.size > 0 && Date.now() - t0 < COMPRESS_POLL_TIMEOUT_MS) {
+    await sleep(2500);
+    for (const id of [...pending]) {
+      const res = await requestPdfCompress(id);
+      if (res.status === 'done' || res.status === 'failed') {
+        out.set(id, res);
+        pending.delete(id);
+      }
+    }
+  }
+  return out;
+}
 
 interface Props {
   /** 'shared' tab when forced by the route /files/shared. Otherwise the URL
@@ -93,6 +124,9 @@ export default function FilesPage({ forceShared = false }: Props) {
   const [renameFileValue, setRenameFileValue] = useState('');
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [bulkBusy, setBulkBusy] = useState(false);
+  /** Files with a compression start+poll cycle in flight — disables the
+   *  per-card menu item and excludes them from a second bulk run. */
+  const [compressingIds, setCompressingIds] = useState<Set<string>>(new Set());
 
   const currentFolderId = view === 'folder' ? folderIdParam ?? null : null;
 
@@ -753,6 +787,118 @@ export default function FilesPage({ forceShared = false }: Props) {
     setBulkMoveOpen(true);
   }, [movableFiles, addToast, t]);
 
+  // ─── PDF compression (Ghostscript on the Fly worker) ──────────────────
+  // Start is fire-and-forget on the server (queue + worker); the handlers
+  // here only watch for the outcome to toast + refresh. Closing the tab
+  // mid-compress loses nothing — the copies appear on the next reload.
+
+  const compressibleSelected = useMemo(
+    () => selectedFiles.filter((f) => f.kind === 'pdf' && canEditFile(f)),
+    [selectedFiles, canEditFile],
+  );
+
+  const markCompressing = useCallback((ids: string[], on: boolean) => {
+    setCompressingIds((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const onCompressFile = useCallback(
+    async (f: FileRow) => {
+      if (compressingIds.has(f.id)) return;
+      markCompressing([f.id], true);
+      try {
+        const startRes = await requestPdfCompress(f.id, true);
+        if (startRes.status === 'failed') {
+          addToast(t('files.compress.failed', { name: f.original_name, error: startRes.error ?? '' }), 'error');
+          return;
+        }
+        addToast(t('files.compress.started', { name: f.original_name }), 'info');
+        const res = (await pollCompressMany([f.id])).get(f.id);
+        if (!res) {
+          addToast(t('files.compress.still_running', { count: 1 }), 'info');
+          return;
+        }
+        if (res.status === 'failed') {
+          addToast(t('files.compress.failed', { name: f.original_name, error: res.error ?? '' }), 'error');
+          return;
+        }
+        if (res.no_gain) {
+          addToast(t('files.compress.no_gain', { name: f.original_name }), 'info');
+          return;
+        }
+        addToast(
+          t('files.compress.done', {
+            name: f.original_name,
+            from: formatBytes(res.original_bytes ?? 0, isAr),
+            to: formatBytes(res.compressed_bytes ?? 0, isAr),
+          }),
+          'success',
+        );
+        await reload();
+      } finally {
+        markCompressing([f.id], false);
+      }
+    },
+    [compressingIds, markCompressing, addToast, t, isAr, reload],
+  );
+
+  const onBulkCompress = useCallback(async () => {
+    const targets = compressibleSelected.filter((f) => !compressingIds.has(f.id));
+    if (targets.length === 0) {
+      addToast(t('files.bulk.no_compressible'), 'error');
+      return;
+    }
+    markCompressing(targets.map((f) => f.id), true);
+    selection.clear();
+    addToast(t('files.compress.started_many', { count: targets.length }), 'info');
+    try {
+      // Enqueue EVERYTHING up front — jobs finish server-side across the 5
+      // worker machines even if this tab closes mid-poll.
+      const started: FileRow[] = [];
+      let failed = 0;
+      for (const f of targets) {
+        const res = await requestPdfCompress(f.id, true);
+        if (res.status === 'failed') failed += 1;
+        else started.push(f);
+      }
+      const outcomes = await pollCompressMany(started.map((f) => f.id));
+      // Ids absent from `outcomes` were still running when we stopped watching.
+      const stillRunning = started.length - outcomes.size;
+      let done = 0;
+      let saved = 0;
+      for (const res of outcomes.values()) {
+        if (res.status === 'failed') {
+          failed += 1;
+        } else {
+          done += 1;
+          if (!res.no_gain) {
+            saved += Math.max(0, (res.original_bytes ?? 0) - (res.compressed_bytes ?? 0));
+          }
+        }
+      }
+      addToast(
+        t('files.compress.bulk_summary', {
+          ok: done,
+          total: targets.length,
+          saved: formatBytes(saved, isAr),
+        }),
+        failed > 0 ? 'error' : 'success',
+      );
+      if (stillRunning > 0) {
+        addToast(t('files.compress.still_running', { count: stillRunning }), 'info');
+      }
+      await reload();
+    } finally {
+      markCompressing(targets.map((f) => f.id), false);
+    }
+  }, [compressibleSelected, compressingIds, markCompressing, selection, addToast, t, isAr, reload]);
+
   // ─── Existing folder names for create dedupe ────────────────────────
   const existingNames = useMemo(() => folders.map((f) => f.name), [folders]);
 
@@ -869,10 +1015,12 @@ export default function FilesPage({ forceShared = false }: Props) {
         deletableCount={deletableSelected.total}
         movableFileCount={movableFiles.length}
         fileCount={selectedFiles.length}
+        compressibleCount={compressibleSelected.filter((f) => !compressingIds.has(f.id)).length}
         onClear={selection.clear}
         onDelete={onBulkDelete}
         onMove={onBulkMove}
         onDownload={onBulkDownload}
+        onCompress={() => void onBulkCompress()}
       />
 
       {/* Content */}
@@ -959,6 +1107,8 @@ export default function FilesPage({ forceShared = false }: Props) {
                     onPermissions={onPermissionsFile}
                     onDelete={onDeleteFile}
                     onRename={onRenameFileStart}
+                    onCompress={(file) => void onCompressFile(file)}
+                    compressing={compressingIds.has(f.id)}
                   />
                 ))}
               </div>

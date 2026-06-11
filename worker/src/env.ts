@@ -46,6 +46,10 @@ export interface WorkerEnv {
    *  (installed in the Docker image). Override for local dev, e.g. on Windows:
    *  SOFFICE_BIN="C:\Program Files\LibreOffice\program\soffice.exe". */
   SOFFICE_BIN: string;
+  /** Ghostscript binary for PDF compression (pdf_compress_jobs queue).
+   *  Default 'gs' (installed in the Docker image). Override for local dev,
+   *  e.g. on Windows: GS_BIN="C:\Program Files\gs\gs10\bin\gswin64c.exe". */
+  GS_BIN: string;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -69,5 +73,6 @@ export function loadEnv(): WorkerEnv {
     POLL_INTERVAL_MS: parseInt(process.env.POLL_INTERVAL_MS ?? '3000', 10),
     WATCHDOG_INTERVAL_MS: parseInt(process.env.WATCHDOG_INTERVAL_MS ?? '300000', 10),
     SOFFICE_BIN: process.env.SOFFICE_BIN ?? 'soffice',
+    GS_BIN: process.env.GS_BIN ?? 'gs',
   };
 }
