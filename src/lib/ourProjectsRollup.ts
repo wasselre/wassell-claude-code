@@ -19,6 +19,22 @@
 
 import type { AppModel, AppRecord, ModelField, OurProjectsComputedKind } from '@/types';
 
+// ── Rollup-flag accessors (transitional dual-read) ─────────────────────
+//
+// The schema flags were renamed is_computed → is_rollup, computed_kind →
+// rollup_kind (the values are now STORED aggregates maintained by a DB
+// trigger, not virtual). Old rows / seeds may still carry the legacy keys,
+// so every read goes through these accessors until the Phase-2 cleanup drops
+// the aliases.
+
+export function fieldRollupKind(f: ModelField): OurProjectsComputedKind | undefined {
+  return f.rollup_kind ?? f.computed_kind;
+}
+
+export function fieldIsRollup(f: ModelField): boolean {
+  return !!(f.is_rollup ?? f.is_computed) && !!fieldRollupKind(f);
+}
+
 // ── Status matchers ────────────────────────────────────────────────────
 //
 // `unit_status` is a dropdown whose option `value` is whatever the admin
@@ -232,8 +248,9 @@ function computeRollupPatch(
   const patch: Record<string, unknown> = {};
   for (const section of model.schema.sections) {
     for (const f of section.fields) {
-      if (!f.is_computed || !f.computed_kind) continue;
-      patch[f.name] = computeRollupKind(f.computed_kind, matchingUnits);
+      const kind = fieldRollupKind(f);
+      if (!fieldIsRollup(f) || !kind) continue;
+      patch[f.name] = computeRollupKind(kind, matchingUnits);
     }
   }
   return patch;
@@ -342,5 +359,5 @@ export function rollupRecordForMirror(
  * must never be written back to the record by user edits.
  */
 export function isOurProjectsRollupField(field: ModelField): boolean {
-  return !!field.is_computed && !!field.computed_kind;
+  return fieldIsRollup(field);
 }

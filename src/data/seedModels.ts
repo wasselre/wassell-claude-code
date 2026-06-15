@@ -2157,14 +2157,14 @@ const ourProjectsModel: AppModel = {
             lookup_model_id: allProjectsId,
             lookup_display_field: 'project_name',
           },
-          // ── Computed unit rollups (read-only) ────────────────────────────
+          // ── Stored unit rollups (read-only) ──────────────────────────────
           // All eleven fields below are auto-calculated from the units
           // model — the rollup walks units whose `project_id` matches the
           // all_projects record this our_projects record links to via the
           // `project` lookup. See src/lib/ourProjectsRollup.ts for the
-          // recipe per `computed_kind`. Never user-edited: the form
-          // disables the input, the table cell renders read-only, and
-          // saveRecord strips these slugs from the persisted data.
+          // recipe per `rollup_kind`. Never user-edited: a DB trigger
+          // (re)computes and STORES them on every write; the form disables
+          // the input and the permissions resolver forces read-only.
           //
           // The existing `total_units` and `sold_units` field SLUGS are
           // preserved (the user opted to keep them as the destination
@@ -2182,8 +2182,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'half',
             show_in_table: true,
-            is_computed: true,
-            computed_kind: 'units_count',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'units_count',
           },
           {
             id: uuid(),
@@ -2196,8 +2197,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'half',
             show_in_table: true,
-            is_computed: true,
-            computed_kind: 'units_available_count',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'units_available_count',
           },
           {
             id: uuid(),
@@ -2210,8 +2212,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'half',
             show_in_table: true,
-            is_computed: true,
-            computed_kind: 'units_sold_count',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'units_sold_count',
           },
           {
             id: uuid(),
@@ -2224,8 +2227,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'half',
             show_in_table: true,
-            is_computed: true,
-            computed_kind: 'units_reserved_count',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'units_reserved_count',
           },
           {
             id: uuid(),
@@ -2240,8 +2244,9 @@ const ourProjectsModel: AppModel = {
             show_in_table: true,
             range_unit_ar: 'ر.س',
             range_unit_en: 'SAR',
-            is_computed: true,
-            computed_kind: 'price_range',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'price_range',
           },
           {
             id: uuid(),
@@ -2256,8 +2261,9 @@ const ourProjectsModel: AppModel = {
             show_in_table: true,
             range_unit_ar: 'م²',
             range_unit_en: 'm²',
-            is_computed: true,
-            computed_kind: 'area_range',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'area_range',
           },
           {
             id: uuid(),
@@ -2270,8 +2276,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'half',
             show_in_table: false,
-            is_computed: true,
-            computed_kind: 'bedroom_range',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'bedroom_range',
           },
           {
             id: uuid(),
@@ -2284,8 +2291,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'half',
             show_in_table: false,
-            is_computed: true,
-            computed_kind: 'bathroom_range',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'bathroom_range',
           },
           {
             id: uuid(),
@@ -2298,8 +2306,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'third',
             show_in_table: false,
-            is_computed: true,
-            computed_kind: 'min_price_per_meter',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'min_price_per_meter',
           },
           {
             id: uuid(),
@@ -2312,8 +2321,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'third',
             show_in_table: false,
-            is_computed: true,
-            computed_kind: 'max_price_per_meter',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'max_price_per_meter',
           },
           {
             id: uuid(),
@@ -2326,8 +2336,9 @@ const ourProjectsModel: AppModel = {
             section_id: opBaseSectionId,
             width: 'third',
             show_in_table: false,
-            is_computed: true,
-            computed_kind: 'avg_price_per_meter',
+            is_rollup: true,
+            read_only: true,
+            rollup_kind: 'avg_price_per_meter',
           },
           {
             id: uuid(),

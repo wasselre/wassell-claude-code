@@ -421,8 +421,8 @@ function collectFields(schema: unknown): SchemaField[] {
         label_en: asStr(f.label_en) || name,
         label_ar: asStr(f.label_ar),
         type: asStr(f.type),
-        is_computed: f.is_computed === true,
-        computed_kind: asStr(f.computed_kind),
+        is_computed: f.is_rollup === true || f.is_computed === true,
+        computed_kind: asStr(f.rollup_kind) || asStr(f.computed_kind),
       });
     }
   }

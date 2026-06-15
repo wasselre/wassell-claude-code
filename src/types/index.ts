@@ -321,18 +321,24 @@ export interface ModelField {
   // the field. Visits uses 'current_user' on sales_representative and 'now' on
   // scheduled_datetime.
   default_dynamic?: 'current_user' | 'now' | 'today';
-  // Cross-record rollup. When `is_computed` is true the field's value is
-  // never user-edited; it's computed live at read time from related records
-  // (the units → project rollups on both our_projects and all_projects —
-  // see src/lib/ourProjectsRollup.ts). `computed_kind` selects which rollup
-  // recipe runs and writes into this field's slug. The field's underlying
-  // `type` still controls rendering (a count uses `number`, a min/max uses
-  // `range`, a per-meter average uses `currency`) so the existing form +
-  // table cells render the value with no special casing — they only need
-  // to treat the input as read-only, which the permissions resolver
-  // already does for any `is_computed` field.
+  // Cross-record rollup. When `is_rollup` is true the field is never
+  // user-edited; it's a STORED aggregate maintained by a DB trigger
+  // (units → project rollups on all_projects — see
+  // src/lib/ourProjectsRollup.ts and 2026-06-15_persist_project_rollups.sql).
+  // `rollup_kind` selects which recipe the trigger runs into this field's
+  // slug. The field's underlying `type` still controls rendering (a count
+  // uses `number`, a min/max uses `range`, a per-meter average uses
+  // `currency`) so the form + table cells render it with no special casing —
+  // they only treat the input as read-only, which the permissions resolver
+  // does for any `is_rollup` / `read_only` field.
+  //
+  // @deprecated transitional aliases — dual-read during rollout, removed in
+  // the Phase-2 cleanup once every consumer reads is_rollup / rollup_kind.
   is_computed?: boolean;
   computed_kind?: OurProjectsComputedKind;
+  is_rollup?: boolean;
+  rollup_kind?: OurProjectsComputedKind;
+  read_only?: boolean;
 }
 
 // ── Computed-field rollup kinds ────────────────────────────────────────

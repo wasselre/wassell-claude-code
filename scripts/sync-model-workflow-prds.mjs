@@ -300,7 +300,7 @@ function fieldDetailHint(field) {
   if (t === 'mirror') return 'computed mirror';
   if (t === 'section_mirror') return 'embedded section';
   if (t === 'assignee') return field.assignee_user_filter_mode === 'restricted' ? 'restricted' : 'any user';
-  if (field.is_computed) return `computed: ${field.computed_kind || '?'}`;
+  if (field.is_rollup ?? field.is_computed) return `rollup: ${field.rollup_kind ?? field.computed_kind ?? '?'}`;
   return '';
 }
 function truncate(s, n) {
@@ -372,7 +372,7 @@ function fieldDetailBlock(field, model) {
 
   // Cross-cutting extras that apply on top of (or instead of) a type block.
   const extras = [];
-  if (field.is_computed && t !== 'mirror') extras.push(`computed rollup (${bt(field.computed_kind || '?')}), read-only`);
+  if ((field.is_rollup ?? field.is_computed) && t !== 'mirror') extras.push(`stored rollup (${bt(field.rollup_kind ?? field.computed_kind ?? '?')}), read-only`);
   if (field.visible_when && field.visible_when.field_id) {
     extras.push(`shown only when ${fieldLabelById(model, field.visible_when.field_id)} is one of: ${(field.visible_when.values || []).map((v) => bt(v)).join(', ')}`);
   }

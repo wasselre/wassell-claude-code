@@ -105,7 +105,7 @@ function slugByComputedKind(model: AppModel | undefined, kind: string): string |
   return (
     model.schema.sections
       .flatMap((s) => s.fields)
-      .find((f) => f.is_computed && f.computed_kind === kind)?.name ?? null
+      .find((f) => (f.is_rollup ?? f.is_computed) && (f.rollup_kind ?? f.computed_kind) === kind)?.name ?? null
   );
 }
 
