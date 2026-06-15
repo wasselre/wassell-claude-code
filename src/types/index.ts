@@ -331,11 +331,6 @@ export interface ModelField {
   // `currency`) so the form + table cells render it with no special casing —
   // they only treat the input as read-only, which the permissions resolver
   // does for any `is_rollup` / `read_only` field.
-  //
-  // @deprecated transitional aliases — dual-read during rollout, removed in
-  // the Phase-2 cleanup once every consumer reads is_rollup / rollup_kind.
-  is_computed?: boolean;
-  computed_kind?: OurProjectsComputedKind;
   is_rollup?: boolean;
   rollup_kind?: OurProjectsComputedKind;
   read_only?: boolean;

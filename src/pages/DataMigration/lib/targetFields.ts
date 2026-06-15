@@ -19,10 +19,10 @@ export function importableFields(model: AppModel): ModelField[] {
   // Rollup fields (is_rollup, the all_projects unit-derived ranges/counts) are
   // stored aggregates maintained by a DB trigger — an imported value would be
   // overwritten by the trigger, so they are neither mapping targets nor part of
-  // the extraction hunt-list. (The legacy is_computed alias is still honored.)
+  // the extraction hunt-list.
   return model.schema.sections
     .flatMap((s) => s.fields)
-    .filter((f) => IMPORTABLE_TYPES.has(f.type) && !(f.is_rollup ?? f.is_computed));
+    .filter((f) => IMPORTABLE_TYPES.has(f.type) && !f.is_rollup);
 }
 
 /** Mapping-target options for the column→field selects. Range fields expose two

@@ -14,7 +14,6 @@
 //     distinct unit types available.
 
 import type { AppModel, AppRecord, ModelField } from '@/types';
-import { applyProjectRollups } from './ourProjectsRollup';
 import { parseGoogleMapsUrl } from './locationUtils';
 
 export interface Bilingual {
@@ -100,12 +99,12 @@ function slugByCandidates(model: AppModel | undefined, candidates: string[]): st
  * unit rollups — price/bedroom/bathroom ranges, unit counts — which on the
  * live model live on all_projects, and on the seed live on our_projects.
  */
-function slugByComputedKind(model: AppModel | undefined, kind: string): string | null {
+function slugByRollupKind(model: AppModel | undefined, kind: string): string | null {
   if (!model) return null;
   return (
     model.schema.sections
       .flatMap((s) => s.fields)
-      .find((f) => (f.is_rollup ?? f.is_computed) && (f.rollup_kind ?? f.computed_kind) === kind)?.name ?? null
+      .find((f) => f.is_rollup && f.rollup_kind === kind)?.name ?? null
   );
 }
 
@@ -196,18 +195,16 @@ export function resolveProjectFacts(
     }
   }
 
-  // Auto-calculated unit rollups (bedroom/bathroom/price ranges). They're
-  // `is_computed` and never stored, so recompute via the shared engine. On the
-  // LIVE model they live on all_projects; on the seed on our_projects. Compute
-  // both, then read each rollup BY its computed_kind from whichever model
-  // defines it — robust to slug renames and to the field moving between models.
-  const apRolled = allProject && allProjectsModel ? applyProjectRollups(allProject, allProjectsModel, units) : null;
-  const opRolled = ourProjectsModel ? applyProjectRollups(ourProject, ourProjectsModel, units) : null;
+  // Auto-calculated unit rollups (bedroom/bathroom/price ranges). They're now
+  // STORED on the record (maintained by a DB trigger). On the LIVE model they
+  // live on all_projects; on the seed on our_projects. Read each rollup BY its
+  // rollup_kind from whichever model defines it — robust to slug renames.
+  const opData = (ourProject.data ?? {}) as Record<string, unknown>;
   const readRollup = (kind: string): unknown => {
-    const apSlug = slugByComputedKind(allProjectsModel, kind);
-    if (apSlug && apRolled?.data?.[apSlug] != null) return apRolled.data[apSlug];
-    const opSlug = slugByComputedKind(ourProjectsModel, kind);
-    if (opSlug && opRolled?.data?.[opSlug] != null) return opRolled.data[opSlug];
+    const apSlug = slugByRollupKind(allProjectsModel, kind);
+    if (apSlug && ap[apSlug] != null) return ap[apSlug];
+    const opSlug = slugByRollupKind(ourProjectsModel, kind);
+    if (opSlug && opData[opSlug] != null) return opData[opSlug];
     return null;
   };
 

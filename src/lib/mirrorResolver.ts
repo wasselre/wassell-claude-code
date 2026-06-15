@@ -1,4 +1,3 @@
-import { rollupRecordForMirror } from './ourProjectsRollup';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { collectViewFields, readExpandedValue, VIRTUAL_FIELD_SEPARATOR } from './sectionMirrorExpand';
 
@@ -69,12 +68,8 @@ export function resolveMirror(
     const ids = Array.isArray(siblingValue) ? (siblingValue as string[]).filter((v) => typeof v === 'string' && v) : [];
     if (ids.length === 0) return { ...empty, status: 'sibling_not_selected', targetField };
     const linkedRecords = allRecords[targetModel.id] ?? [];
-    // Roll up each source record so a mirrored COMPUTED field (e.g. all_projects'
-    // unit rollups, never stored) surfaces its live value. Identity for non-rollup models.
-    const resolved = ids.map((id) => {
-      const r = linkedRecords.find((rec) => rec.id === id) ?? null;
-      return r ? rollupRecordForMirror(r, targetModel, allModels, allRecords) : null;
-    });
+    // Rollups are STORED on the source record now (DB trigger) — raw read is live.
+    const resolved = ids.map((id) => linkedRecords.find((rec) => rec.id === id) ?? null);
     // If every referenced record is missing, flag target_record_missing; otherwise return what we have.
     if (resolved.every((r) => !r)) {
       return { ...empty, status: 'target_record_missing', targetField };
@@ -96,9 +91,8 @@ export function resolveMirror(
   if (!rawTarget) {
     return { ...empty, status: 'target_record_missing', targetField };
   }
-  // Roll up the source record so a mirrored COMPUTED field surfaces its live
-  // value (rollups are never stored). Identity for non-rollup source models.
-  const targetRecord = rollupRecordForMirror(rawTarget, targetModel, allModels, allRecords);
+  // Rollups are STORED on the source record now (DB trigger) — raw read is live.
+  const targetRecord = rawTarget;
 
   return {
     status: 'ok',

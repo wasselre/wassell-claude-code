@@ -20,7 +20,6 @@
  */
 
 import type { AppModel, AppRecord, ModelField } from '@/types';
-import { rollupRecordForMirror } from '@/lib/ourProjectsRollup';
 import { recordTitle } from './links';
 import type { DocumentLink } from './links';
 
@@ -76,9 +75,9 @@ export function resolveDocVariables(
     const rawRecord = (recordsMap[link.model_id] ?? []).find((r) => r.id === link.record_id);
     if (!model || !rawRecord) continue;
 
-    // Apply unit rollups so computed fields (price_range, unit counts…)
-    // resolve — identity for models without rollups.
-    const record = rollupRecordForMirror(rawRecord, model, models, recordsMap);
+    // Project rollups are STORED on the record now (DB trigger), so the raw
+    // record already carries price_range / unit counts.
+    const record = rawRecord;
 
     const groupVars: DocVariable[] = [];
     for (const section of model.schema.sections) {

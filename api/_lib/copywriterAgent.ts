@@ -13,9 +13,9 @@
  *    `get_project` returns a labeled fact sheet that SEPARATES the team-entered
  *    details from the AUTO-CALCULATED rollups (price / area / bedroom / bathroom
  *    ranges, unit counts, price per m²) — derived from each project's units and
- *    stored on the record with `is_computed:true`. The tool reads the LIVE model
- *    schema (labels + computed_kind) so it stays correct even though the live
- *    all_projects was Builder-rebuilt with different slugs than the seed.
+ *    STORED on the record (`is_rollup:true`, maintained by a DB trigger). The
+ *    tool reads the stored values + the LIVE model schema (labels + rollup_kind)
+ *    so it stays correct even though the live all_projects was Builder-rebuilt.
  *  - The system prompt is one deterministic const so prompt caching works.
  */
 
@@ -421,8 +421,8 @@ function collectFields(schema: unknown): SchemaField[] {
         label_en: asStr(f.label_en) || name,
         label_ar: asStr(f.label_ar),
         type: asStr(f.type),
-        is_computed: f.is_rollup === true || f.is_computed === true,
-        computed_kind: asStr(f.rollup_kind) || asStr(f.computed_kind),
+        is_computed: f.is_rollup === true,
+        computed_kind: asStr(f.rollup_kind),
       });
     }
   }
@@ -441,107 +441,10 @@ function hasValue(v: unknown): boolean {
   return true;
 }
 
-// ── Unit rollups (ported from src/lib/ourProjectsRollup.ts — KEEP IN SYNC) ──
-// The all_projects `is_computed` fields (price/area/bedroom/bathroom ranges,
-// unit counts, price per m²) are NOT reliably persisted in records.data — the
-// app recomputes them LIVE from the project's units at render time. So the
-// agent must compute them the same way, otherwise get_project reads the stale/
-// empty stored slot and reports "no numbers" for a project whose form clearly
-// shows them. Match toFiniteNumber/status-matching to the source so the agent's
-// figures equal what the form displays.
-
-const AVAILABLE_KEYS = ['available', 'متاح', 'متاحة'];
-const RESERVED_KEYS = ['reserved', 'محجوز', 'محجوزة'];
-const SOLD_KEYS = ['sold', 'مباع', 'مباعة', 'مبيع'];
-
-function matchesStatus(value: unknown, needles: string[]): boolean {
-  if (value == null) return false;
-  const s = String(value).toLowerCase().trim();
-  if (!s) return false;
-  return needles.some((n) => s === n || s.includes(n));
-}
-
-function toFiniteNumber(v: unknown): number | null {
-  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
-  if (typeof v === 'string') {
-    const t = v.trim();
-    if (!t) return null;
-    const n = Number(t);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-function collectNumbers(units: RecordRow[], slug: string): number[] {
-  const out: number[] = [];
-  for (const u of units) {
-    const n = toFiniteNumber(u.data?.[slug]);
-    if (n != null) out.push(n);
-  }
-  return out;
-}
-
-function rangeOf(nums: number[]): { min: number; max: number } | null {
-  if (nums.length === 0) return null;
-  let min = nums[0]!;
-  let max = nums[0]!;
-  for (const v of nums) {
-    if (v < min) min = v;
-    if (v > max) max = v;
-  }
-  return { min, max };
-}
-
-function pricePerMeter(units: RecordRow[]): number[] {
-  const out: number[] = [];
-  for (const u of units) {
-    const price = toFiniteNumber(u.data?.total_price);
-    const area = toFiniteNumber(u.data?.unit_area);
-    if (price == null || area == null || area <= 0) continue;
-    out.push(price / area);
-  }
-  return out;
-}
-
-/** Compute one all_projects rollup `computed_kind` against a project's units. */
-function computeRollupKind(kind: string, units: RecordRow[]): unknown {
-  switch (kind) {
-    case 'units_count': return units.length;
-    case 'units_available_count': return units.filter((u) => matchesStatus(u.data?.unit_status, AVAILABLE_KEYS)).length;
-    case 'units_reserved_count': return units.filter((u) => matchesStatus(u.data?.unit_status, RESERVED_KEYS)).length;
-    case 'units_sold_count': return units.filter((u) => matchesStatus(u.data?.unit_status, SOLD_KEYS)).length;
-    case 'price_range': return rangeOf(collectNumbers(units, 'total_price'));
-    case 'area_range': return rangeOf(collectNumbers(units, 'unit_area'));
-    case 'bedroom_range': return rangeOf(collectNumbers(units, 'bedrooms'));
-    case 'bathroom_range': return rangeOf(collectNumbers(units, 'bathrooms'));
-    case 'min_price_per_meter': { const p = pricePerMeter(units); return p.length ? Math.min(...p) : null; }
-    case 'max_price_per_meter': { const p = pricePerMeter(units); return p.length ? Math.max(...p) : null; }
-    case 'avg_price_per_meter': { const p = pricePerMeter(units); return p.length ? p.reduce((a, b) => a + b, 0) / p.length : null; }
-    default: return null;
-  }
-}
-
-/** Units linked to one all_projects record (units.data.project_id === project id). */
-async function unitsForProject(supabase: SupabaseClient, projectId: string): Promise<RecordRow[]> {
-  const unitsModel = await getModelByName(supabase, 'units');
-  if (!unitsModel) return [];
-  const pageSize = 1000;
-  const rows: RecordRow[] = [];
-  for (let page = 0; page < 10; page++) {
-    const from = page * pageSize;
-    const { data, error } = await supabase
-      .from('unified_records')
-      .select('id, data')
-      .eq('model_id', unitsModel.id)
-      .eq('data->>project_id', projectId)
-      .range(from, from + pageSize - 1);
-    if (error) break;
-    const batch = (data ?? []) as RecordRow[];
-    rows.push(...batch);
-    if (batch.length < pageSize) break;
-  }
-  return rows;
-}
+// Unit rollups are now STORED on the all_projects record by a DB trigger (see
+// supabase/migrations/2026-06-15_persist_project_rollups.sql). get_project
+// reads the stored values directly, so the previously-ported recompute logic
+// (unitsForProject + computeRollupKind + the status/number helpers) was removed.
 
 interface ProjectSearchInput {
   query?: string;
@@ -634,14 +537,13 @@ async function getProject(supabase: SupabaseClient, input: { project_id: string 
   // are NOT reliably persisted in records.data (the app recomputes them at
   // render). Reading the stored slot would report empty for projects whose
   // form clearly shows numbers. This makes the agent's figures equal the form.
-  const units = await unitsForProject(supabase, rec.id);
-
   const details: Record<string, { label: string; label_ar: string; value: unknown }> = {};
   const calculated: Record<string, { label: string; label_ar: string; computed_kind: string; value: unknown }> = {};
 
   for (const f of fields) {
     if (f.is_computed) {
-      const val = f.computed_kind ? computeRollupKind(f.computed_kind, units) : d[f.name];
+      // Rollups are STORED on the record now (DB trigger) — read the slot.
+      const val = d[f.name];
       if (hasValue(val)) {
         calculated[f.name] = { label: f.label_en, label_ar: f.label_ar, computed_kind: f.computed_kind, value: val };
       }
@@ -652,13 +554,18 @@ async function getProject(supabase: SupabaseClient, input: { project_id: string 
     details[f.name] = { label: f.label_en, label_ar: f.label_ar, value: raw };
   }
 
+  // units_total comes from the stored unit_count rollup (kind 'units_count').
+  const unitCountField = fields.find((f) => f.is_computed && f.computed_kind === 'units_count');
+  const unitsTotalRaw = unitCountField ? Number(d[unitCountField.name]) : NaN;
+  const unitsTotal = Number.isFinite(unitsTotalRaw) ? unitsTotalRaw : 0;
+
   return JSON.stringify({
     id: rec.id,
     project_name: asStr(d.project_name),
-    units_total: units.length,
+    units_total: unitsTotal,
     details,
     calculated,
-    note: 'The `calculated` group is computed live from the project’s units — real pricing/size data. An empty/absent metric means there is no unit data for it; use a [placeholder], never invent a number.',
+    note: 'The `calculated` group holds the project’s stored unit aggregates (maintained from real unit data). An empty/absent metric means there is no unit data for it; use a [placeholder], never invent a number.',
   });
 }
 

@@ -7,11 +7,10 @@
 // or a structured object (range → { min, max }). Sorting those raw produces
 // the "random-looking" order users complain about.
 //
-// Computed / rollup fields (e.g. All Projects' Project-Details fields, which
-// aren't stored but are injected into `record.data` at read time by
-// `useRolledUpRecordList`) sort correctly too: the caller must pass records
-// whose `data` already carries the computed value, and `buildSortKey` keys
-// each by its declared field type (range → lower bound, currency → numeric…).
+// Rollup fields (e.g. All Projects' Project-Details fields) are STORED in
+// `record.data` (maintained by a DB trigger), so they sort correctly too:
+// `buildSortKey` keys each by its declared field type (range → lower bound,
+// currency → numeric…).
 
 import type { AppModel, AppRecord, ModelField, User } from '@/types';
 import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';

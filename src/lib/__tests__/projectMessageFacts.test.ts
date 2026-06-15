@@ -49,9 +49,9 @@ const allProjects = model('all_projects', AP_ID, [
 const ourProjects = model('our_projects', OP_ID, [
   field({ name: 'project_name', type: 'text' }),
   field({ name: 'project', type: 'lookup', lookup_model_id: AP_ID, lookup_display_field: 'project_name' }),
-  field({ name: 'price_range', type: 'range', is_computed: true, computed_kind: 'price_range' }),
-  field({ name: 'bedroom_range', type: 'range', is_computed: true, computed_kind: 'bedroom_range' }),
-  field({ name: 'bathroom_range', type: 'range', is_computed: true, computed_kind: 'bathroom_range' }),
+  field({ name: 'price_range', type: 'range', is_rollup: true, rollup_kind:'price_range' }),
+  field({ name: 'bedroom_range', type: 'range', is_rollup: true, rollup_kind:'bedroom_range' }),
+  field({ name: 'bathroom_range', type: 'range', is_rollup: true, rollup_kind:'bathroom_range' }),
 ]);
 
 const units = model('units', UN_ID, [
@@ -76,7 +76,7 @@ describe('resolveProjectFacts', () => {
         brochure_link: 'https://wassel.re/brochure.pdf',
         location: '24.7,46.6',
       })],
-      [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1' })],
+      [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1', price_range: { min: 500000, max: 750000 }, bedroom_range: { min: 2, max: 5 }, bathroom_range: { min: 2, max: 4 } })],
       [UN_ID]: [
         rec('u1', UN_ID, { project_id: 'ap1', unit_type: 'apartment', bedrooms: 2, bathrooms: 2, total_price: 500000 }),
         rec('u2', UN_ID, { project_id: 'ap1', unit_type: 'villa', bedrooms: 5, bathrooms: 4, total_price: 750000 }),
@@ -156,9 +156,9 @@ describe('resolveProjectFacts', () => {
       field({ name: 'unit_types', type: 'multiselect', options: [opt('apartment', 'شقة', 'Apartment'), opt('villa', 'فيلا', 'Villa')] }),
       field({ name: 'brochure_url', type: 'url' }),
       field({ name: 'project_location', type: 'url' }),
-      field({ name: 'price_range', type: 'range', is_computed: true, computed_kind: 'price_range' }),
-      field({ name: 'bedroom_range', type: 'range', is_computed: true, computed_kind: 'bedroom_range' }),
-      field({ name: 'bathroom_range', type: 'range', is_computed: true, computed_kind: 'bathroom_range' }),
+      field({ name: 'price_range', type: 'range', is_rollup: true, rollup_kind:'price_range' }),
+      field({ name: 'bedroom_range', type: 'range', is_rollup: true, rollup_kind:'bedroom_range' }),
+      field({ name: 'bathroom_range', type: 'range', is_rollup: true, rollup_kind:'bathroom_range' }),
     ]);
     // Live our_projects is a thin sidecar: just the lookup, no rollup fields.
     const ourLive = model('our_projects', OP, [
@@ -179,6 +179,9 @@ describe('resolveProjectFacts', () => {
         unit_types: ['apartment'],
         brochure_url: 'https://wassel.re/m52.pdf',
         project_location: 'https://maps.app.goo.gl/KvrmddYBhAjiQfcNA',
+        price_range: { min: 1200000, max: 1700000 },
+        bedroom_range: { min: 2, max: 3 },
+        bathroom_range: { min: 2, max: 3 },
       })],
       [OP]: [rec('op', OP, { project: 'ap' })],
       [UN]: [

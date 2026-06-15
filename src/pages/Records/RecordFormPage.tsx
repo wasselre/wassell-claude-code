@@ -45,7 +45,6 @@ import DuplicateWarningModal from './components/DuplicateWarningModal';
 import { buildCreatePrefill, buildPrefill, findLatestMatch } from './utils/recordButtonActions';
 import { applyFollowupAutoStamp } from './utils/followupAutoStamp';
 import { useCanEditRecord, useCanViewRecord, useFieldPermissionResolver, usePermission } from '@/hooks/usePermission';
-import { useRolledUpRecord } from '@/hooks/useRolledUpRecords';
 import { isButtonVisible } from '@/lib/permissions';
 
 /**
@@ -89,7 +88,9 @@ export default function RecordFormPage() {
   // the form shows live computed counts/ranges/per-meter stats. Pass-
   // through for every other model. Computed values are render-only —
   // the save path (appStore.saveRecord) strips them before persist.
-  const existingRecord = useRolledUpRecord(model?.id, rawExistingRecord);
+  // Project rollups are now STORED in record.data (DB trigger), so the raw
+  // record already carries them — no read-time rollup needed.
+  const existingRecord = rawExistingRecord;
   // For existing records, view/edit eligibility threads through view_scope and
   // edit_scope (canViewRecord/canEditRecord compose both with the model-level
   // perms). For new records, we still gate on the create permission only —

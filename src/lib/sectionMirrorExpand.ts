@@ -1,4 +1,3 @@
-import { rollupRecordForMirror } from './ourProjectsRollup';
 import type { AppModel, AppRecord, ModelField, ModelSection } from '@/types';
 
 export const VIRTUAL_FIELD_SEPARATOR = '::';
@@ -259,10 +258,10 @@ export function readExpandedValue(
   record: AppRecord,
   allRecords: Record<string, AppRecord[]>,
   currentModel: AppModel,
-  // Optional: when provided, a mirrored COMPUTED source field (e.g. all_projects'
-  // unit rollups — never stored) is resolved through the source model's rollups
-  // instead of reading the empty stored slot. Omit to keep the raw-read behavior.
-  allModels?: AppModel[],
+  // Deprecated: project rollups are STORED on the record now (DB trigger), so
+  // this arg is no longer used to resolve them. Kept for positional-arg/caller
+  // compatibility until callers are cleaned up.
+  _allModels?: AppModel[],
 ): unknown {
   if (rvf.kind === 'local') return record.data[rvf.field.name];
   const container = rvf.container;
@@ -290,10 +289,7 @@ export function readExpandedValue(
 
   const rawTarget = allRecords[sibling.lookup_model_id]?.find((r) => r.id === targetId);
   if (!rawTarget) return undefined;
-  // Surface live rollup values for mirrored computed source fields when the
-  // caller supplies allModels; otherwise read raw (unchanged legacy behavior).
-  const targetRecord = allModels
-    ? rollupRecordForMirror(rawTarget, rvf.sourceModel, allModels, allRecords)
-    : rawTarget;
-  return targetRecord.data[rvf.field.name];
+  // Project rollups are STORED on the source record now (DB trigger), so a raw
+  // read already returns the live value.
+  return rawTarget.data[rvf.field.name];
 }
