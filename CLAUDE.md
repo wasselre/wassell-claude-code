@@ -253,6 +253,27 @@ Every model in `models` has a corresponding `v_<name>` view in the `public` sche
 
 If you add a new field type to the codebase, update the type mapping in `regenerate_model_view` so the new type lands in views with an appropriate column type. Otherwise it falls through to `text` (still works, just not natively typed).
 
+## Persisted project rollups (units → all_projects) (added 2026-06-15)
+
+The eleven `all_projects` aggregate fields (`unit_count`, `available_units` / `sold_units` / `reserved_units`, `price_range` / `area_range` / `bedroom_range` / `bathroom_range`, `avg_min_price_per_m2` / `avg_max_price_per_m2` / `avg_price_per_m2`) are **STORED aggregates maintained by Postgres triggers** — NOT virtual. They were live-computed in JS and stripped before persist until 2026-06-15, so the database was blind (SQL views, the AI sales agent, BI, frozen models all read `records.data` and saw null). Now they live in `records.data` and every reader uses the same stored value.
+
+**Architecture (all in `supabase/migrations/2026-06-15_persist_project_rollups.sql`):**
+- `recalc_project_rollups_data(project_id) → jsonb` recomputes the patch from the project's units. **SECURITY DEFINER** so it counts ALL units regardless of the writer's RLS (else a salesperson who can create a unit but not edit the project would under-count it). Honors BOTH `is_rollup` and the legacy `is_computed` flag.
+- **BEFORE INSERT/UPDATE trigger `records_fill_project_rollups`** on the all_projects rows fills the patch inline (`NEW.data := NEW.data || recalc(...)`) on EVERY write — so a user edit (or the removed save-strip) can never wipe them; the DB is authoritative.
+- **AFTER INSERT/UPDATE/DELETE trigger `records_touch_project_on_unit_change`** on the units rows "touches" the linked project(s) (`UPDATE records SET data=data WHERE id=<project>`), which fires the BEFORE-fill recompute. Handles the **unit-moved-between-projects** case by touching BOTH old and new project. SECURITY DEFINER so the project UPDATE bypasses RLS. Realtime then pushes the new project row to the SPA (this replaces the old `useRolledUpRecords` subscription for live updates).
+- No recursion: the touch targets a DIFFERENT model_id (all_projects) than units, and the BEFORE-fill mutates `NEW` inline (no second write).
+- Schema flags renamed `is_computed → is_rollup`, `computed_kind → rollup_kind`, `+ read_only:true`. The app **dual-reads** both (`fieldIsRollup` / `fieldRollupKind` in `src/lib/ourProjectsRollup.ts`) so the rename is zero-downtime — ship the app FIRST, rename the DB flags AFTER.
+
+**Hard rules — never violate:**
+
+1. **The SQL aggregation in `recalc_project_rollups_data` MUST stay semantically identical to the JS in `src/lib/ourProjectsRollup.ts`** (bilingual `unit_status` matching, `try_numeric` coercion, skip `unit_area<=0` for price/m², `{min,max}` range shape, counts→0 when empty). They are two implementations of the same recipe; drift = the stored number disagrees with what the UI computes. Verified equal for all 11 projects-with-units before cutover.
+2. **Never re-introduce the save-strip** for `is_rollup` fields in `appStore.saveRecord`. The trigger is the source of truth; stripping is pointless and the comment there explains why.
+3. **Both triggers are SECURITY DEFINER for a reason** (count all units / bypass project RLS). Don't downgrade them to invoker rights or rollups silently under-count for non-admin writers.
+4. **`all_projects` and `units` are UNFROZEN** (JSONB in `records`). If either is ever frozen, the triggers (which key off `records`) must move to the frozen table's write path — revisit before freezing.
+5. **Phase 2 (not yet done):** delete the now-redundant JS rollup fallback — `applyProjectRollups` / `useRolledUpRecords` / `rollupRecordForMirror` and the ported math in `api/_lib/copywriterAgent.ts` — once the stored values are trusted in production. Until then both paths run and agree.
+
+**Backfill snapshot:** `public._backup_all_projects_rollups_20260615` (full pre-backfill `records` rows for all_projects). Drop once confirmed unneeded.
+
 ## Decks generation pipeline (added 2026-05-17 — refactored off Vercel Edge)
 
 Deck generation runs on a Fly.io Node worker, NOT in `/api/generate-deck`. The endpoint just enqueues work.
