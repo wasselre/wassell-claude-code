@@ -1162,8 +1162,27 @@ export interface Workflow {
   conditions: WorkflowCondition[];
   actions: WorkflowAction[];
   is_active: boolean;
+  // Free-form metadata (JSONB column). Used by the Sales Process Studio to mark
+  // workflows it manages/links and to drive drift detection. Round-trips
+  // automatically: `workflowToSupabaseRow` spreads the whole object and
+  // `supabaseLoad` selects '*', so no mapping code is needed — only the column.
+  metadata?: WorkflowMetadata | null;
   created_at: string;
   updated_at: string;
+}
+
+// Sales Process Studio binding metadata stamped on a Workflow's `metadata`
+// column. `last_generated_hash` is a hash of the simple-generated shape used to
+// detect manual ("advanced") edits in the Workflow Builder (drift detection).
+export interface WorkflowMetadata {
+  sales_process_id?: string;
+  managed_by?: 'sales_process_studio' | string;
+  sales_stage?: string;
+  activity_type?: string;
+  outcome?: string;
+  compatibility?: 'simple' | 'advanced';
+  last_generated_hash?: string;
+  [key: string]: unknown;
 }
 
 // --- Workflow execution logs (fine-grained audit trail) ---

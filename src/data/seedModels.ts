@@ -1,6 +1,7 @@
 import { v4 as uuid } from 'uuid';
 import { MAPS_CONFIG_DEFAULT } from '@/types';
 import type { AppModel, FieldOption, ModelGroup } from '@/types';
+import { OUTCOME_CATALOG } from '@/lib/salesProcess/outcomes';
 
 // --- Groups ---
 // Stable, deterministic ID for the Projects group. DO NOT CHANGE — returning users'
@@ -912,14 +913,24 @@ const fuAppointmentFieldId = uuid();
 
 // Shared "call result" options — duplicated per-section with fresh IDs to keep option
 // instances independent in the builder.
-const CALL_RESULT_OPTIONS = (): FieldOption[] => [
-  { id: uuid(), label_ar: 'مهتم', label_en: 'Interested', value: 'interested', color: '#10B981' },
-  { id: uuid(), label_ar: 'غير مهتم', label_en: 'Not Interested', value: 'not_interested', color: '#EF4444' },
-  { id: uuid(), label_ar: 'لم يرد', label_en: 'No Answer', value: 'no_answer', color: '#6B7280' },
-  { id: uuid(), label_ar: 'مؤجل', label_en: 'Postponed', value: 'postponed', color: '#F59E0B' },
-  { id: uuid(), label_ar: 'تم تحديد موعد', label_en: 'Rescheduled', value: 'rescheduled', color: '#8B5CF6' },
-  { id: uuid(), label_ar: 'يحتاج متابعة', label_en: 'Needs Follow-Up', value: 'needs_followup', color: '#3B82F6' },
-];
+// Sales-OS: the follow-up outcome vocabulary now has ONE source of truth — the
+// OUTCOME_CATALOG (src/lib/salesProcess/outcomes.ts). A fresh install seeds the
+// full set so the custom Follow-up Workspace's outcomes are all storable and the
+// runtime enum guard passes. (The live prod model is maintained by the
+// 2026-06-16_sales_os_phase1 migration; this keeps brand-new installs in sync.)
+const OUTCOME_TONE_COLOR: Record<string, string> = {
+  positive: '#10B981',
+  neutral: '#C09B5F',
+  negative: '#EF4444',
+};
+const CALL_RESULT_OPTIONS = (): FieldOption[] =>
+  OUTCOME_CATALOG.map((o) => ({
+    id: uuid(),
+    label_ar: o.label_ar,
+    label_en: o.label_en,
+    value: o.value,
+    color: OUTCOME_TONE_COLOR[o.tone],
+  }));
 
 const WHATSAPP_RESULT_OPTIONS: FieldOption[] = [
   { id: uuid(), label_ar: 'تم الرد', label_en: 'Replied', value: 'replied', color: '#10B981' },
