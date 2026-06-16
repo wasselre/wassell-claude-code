@@ -16,6 +16,7 @@ import GaugeWidget from './widgets/GaugeWidget';
 import ProgressWidget from './widgets/ProgressWidget';
 import PivotWidget from './widgets/PivotWidget';
 import HeatmapWidget from './widgets/HeatmapWidget';
+import MapWidget from './widgets/MapWidget';
 import type { DashboardFilter, DashboardWidget, VizStat } from '@/types';
 
 interface WidgetRendererProps {
@@ -111,6 +112,9 @@ export default function WidgetRenderer({ widget, isPublic, dashboardFilters, fil
       break;
     case 'heatmap':
       body = <HeatmapWidget widget={widget} result={data} />;
+      break;
+    case 'map':
+      body = <MapWidget widget={widget} result={data} onDrill={onDrill} />;
       break;
     default:
       body = <div className="text-xs text-charcoal/40">Unknown widget</div>;

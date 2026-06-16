@@ -1447,7 +1447,7 @@ export interface WorkflowRun {
 
 // Dashboard types
 
-export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot' | 'heatmap';
+export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot' | 'heatmap' | 'map';
 
 export type WidgetFilterOperator =
   | 'equals'
@@ -1606,7 +1606,15 @@ export interface VizHeatmap {
   color?: string; // base hue; cells scale its opacity by value
   number_format?: WidgetNumberFormat;
 }
-export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress | VizPivot | VizHeatmap;
+// Map: a single-level grouped result (a city/region field) as a bubble map over
+// a built-in simplified Saudi outline — bubble area ∝ value. Self-contained (no
+// map tiles / API keys); unmatched cities surface as a footnote count.
+export interface VizMap {
+  family: 'map';
+  color?: string;
+  number_format?: WidgetNumberFormat;
+}
+export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress | VizPivot | VizHeatmap | VizMap;
 
 // Dashboard-level global filters + per-widget opt-in.
 export type DashboardFilterControl = 'date_range' | 'select' | 'search';

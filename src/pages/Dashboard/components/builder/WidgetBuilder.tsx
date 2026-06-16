@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { v4 as uuid } from 'uuid';
-import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2, Filter, Trophy, Gauge as GaugeIcon, Target, Grid3x3, Grid2x2 } from 'lucide-react';
+import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2, Filter, Trophy, Gauge as GaugeIcon, Target, Grid3x3, Grid2x2, MapPin } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { translateLabel } from '@/lib/translateLabel';
 import Modal from '@/components/ui/Modal';
@@ -50,6 +50,7 @@ const WIDGET_TYPES: { type: WidgetType; icon: typeof Hash; ar: string; en: strin
   { type: 'progress', icon: Target, ar: 'تقدم', en: 'Progress' },
   { type: 'pivot', icon: Grid3x3, ar: 'مصفوفة', en: 'Pivot' },
   { type: 'heatmap', icon: Grid2x2, ar: 'خريطة حرارية', en: 'Heatmap' },
+  { type: 'map', icon: MapPin, ar: 'خريطة', en: 'Map' },
 ];
 
 const AGG_TYPES: { value: AggregationType; ar: string; en: string }[] = [
@@ -186,7 +187,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const family = vizFamilyFor(type);
 
   const needsField = aggType === 'sum' || aggType === 'avg' || aggType === 'min' || aggType === 'max' || aggType === 'count_distinct';
-  const needsGroup = family === 'bars' || family === 'pies' || family === 'lines' || family === 'funnel' || family === 'leaderboard' || family === 'pivot' || family === 'heatmap';
+  const needsGroup = family === 'bars' || family === 'pies' || family === 'lines' || family === 'funnel' || family === 'leaderboard' || family === 'pivot' || family === 'heatmap' || family === 'map';
 
   function buildAggregation(): AggregationConfig {
     if (metricId) return { type: 'count', metric_id: metricId };
@@ -270,6 +271,8 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
         return { family: 'pivot', number_format: numFmt };
       case 'heatmap':
         return { family: 'heatmap', color, number_format: numFmt };
+      case 'map':
+        return { family: 'map', color, number_format: numFmt };
       default:
         return { family: 'table', column_field_ids: tableFieldIds, page_size: maxRows };
     }
