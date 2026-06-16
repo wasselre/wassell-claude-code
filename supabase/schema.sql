@@ -198,6 +198,13 @@ CREATE TABLE IF NOT EXISTS dashboards (
   label_en TEXT NOT NULL,
   description TEXT,
   widgets JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- Dashboard-level global filter controls (Phase A analytics builder). The SPA
+  -- writes the whole Dashboard object via saveDashboard, so these columns must
+  -- exist or the upsert fails. See docs/prd/dashboards.md.
+  filters JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- Owner whose RLS scope public snapshots are computed with (reserved; snapshots
+  -- are currently computed with the refreshing user's scope).
+  owner_user_id UUID,
   is_public BOOLEAN NOT NULL DEFAULT false,
   public_token TEXT UNIQUE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
