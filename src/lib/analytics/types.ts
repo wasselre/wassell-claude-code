@@ -89,6 +89,7 @@ export interface GroupByConfig {
   numeric_bucket?: NumericBucket; // number/currency fields only
   fan_out_multi?: boolean; // multiselect / multi-lookup: one contribution per value (default true)
   top_n?: number; // cap distinct groups at this level; the remainder folds into one "Other" group
+  include_empty?: boolean; // dropdown levels: seed zero-count options (default true). Set false to hide categories with no records.
 }
 
 export type AggregationType =

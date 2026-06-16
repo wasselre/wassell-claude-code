@@ -128,6 +128,8 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const [metricId, setMetricId] = useState('');
   const [goal, setGoal] = useState(''); // gauge max / progress target
   const [stacked, setStacked] = useState(false);
+  const [topN, setTopN] = useState(''); // cap primary group level
+  const [hideEmpty, setHideEmpty] = useState(false); // drop zero-count categories
 
   // Seed from existing widget (via the engine-effective query/viz) or reset.
   useEffect(() => {
@@ -163,12 +165,15 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       setIgnoreFilters(existingWidget.filter_behavior?.mode === 'ignore_dashboard_filters');
       setMetricId(q.aggregation.metric_id ?? '');
       setGoal(v.family === 'gauge' ? (v.max != null ? String(v.max) : '') : v.family === 'progress' ? (v.target != null ? String(v.target) : '') : '');
+      setTopN(q.group_by?.[0]?.top_n ? String(q.group_by[0].top_n) : '');
+      setHideEmpty(q.group_by?.[0]?.include_empty === false);
     } else {
       setType('stat'); setTitleAr(''); setTitleEn(''); setSourceModelId('');
       setConditions([]); setPartConditions([]); setAggType('count'); setAggFieldId('');
       setGroupLevels([]); setDateFieldId(''); setDateMode('');
       setColor('#B8734F'); setComparison(false); setGoodDir('up'); setDonut(false); setArea(false); setStacked(false);
       setTableFieldIds([]); setMaxRows(10); setIgnoreFilters(false); setMetricId(''); setGoal('');
+      setStacked(false); setTopN(''); setHideEmpty(false);
     }
   }, [existingWidget, open]);
 
@@ -210,6 +215,14 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
         }
         return cfg;
       });
+    // top_n + hide-empty apply to the primary (first) group level. Funnel /
+    // leaderboard / pivot always hide zero-count categories (they look broken
+    // otherwise); bar/pie/line opt in via the checkbox.
+    if (group_by[0]) {
+      const n = Number(topN);
+      if (n > 0) group_by[0].top_n = n;
+      if (hideEmpty || family === 'funnel' || family === 'leaderboard' || family === 'pivot') group_by[0].include_empty = false;
+    }
     const q: AnalyticsQuery = {
       source_model_id: sourceModelId,
       filters: condsToGroup(conditions),
@@ -300,7 +313,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       x: 0, y: 0, w: 4, h: 4,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters, metricId, goal, stacked],
+    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters, metricId, goal, stacked, topN, hideEmpty],
   );
 
   const handleSave = () => {
@@ -449,6 +462,20 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
                 })}
                 {groupLevels.length < 2 && (
                   <button onClick={() => setGroupLevels((ls) => [...ls, { field_id: '' }])} className="pill border-copper/30 text-xs text-copper hover:bg-copper/5"><Plus size={12} /> {isAr ? 'مستوى تجميع' : 'Group level'}</button>
+                )}
+                {groupLevels.some((g) => g.field_id) && (
+                  <div className="flex flex-wrap items-center gap-3 border-t border-sand/40 pt-2">
+                    <label className="flex items-center gap-1.5 text-xs text-charcoal/60">
+                      {isAr ? 'أعلى' : 'Top'}
+                      <input type="number" min="0" value={topN} onChange={(e) => setTopN(e.target.value)} placeholder={isAr ? 'الكل' : 'All'} className="form-input w-16 bg-white py-1 text-xs" />
+                    </label>
+                    {(family === 'bars' || family === 'pies' || family === 'lines') && (
+                      <label className="flex items-center gap-1.5 text-xs text-charcoal/60">
+                        <input type="checkbox" checked={hideEmpty} onChange={(e) => setHideEmpty(e.target.checked)} className="h-3.5 w-3.5 text-copper" />
+                        {isAr ? 'إخفاء الفئات الفارغة' : 'Hide empty categories'}
+                      </label>
+                    )}
+                  </div>
                 )}
               </div>
             </Section>

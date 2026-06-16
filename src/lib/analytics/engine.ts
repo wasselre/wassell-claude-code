@@ -321,8 +321,10 @@ function runInternal(
     }
   }
 
-  // Zero-count option seeding for a single dropdown level.
-  if (groupBy.length === 1 && levelFields[0]) {
+  // Zero-count option seeding for a single dropdown level. Skipped when the
+  // level opts out via include_empty:false (hides categories with no records —
+  // e.g. a "by district" chart over a 120-option dropdown that only uses 10).
+  if (groupBy.length === 1 && levelFields[0] && groupBy[0]?.include_empty !== false) {
     for (const k of seedOptionKeys(levelFields[0])) {
       if (!groups.has(k.raw)) groups.set(k.raw, { keys: [k], records: [] });
     }
