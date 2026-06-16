@@ -22,9 +22,9 @@
     }
   },
   "include": ["src"],
-  // Unit tests run via `npx vitest` (vitest applies its own esbuild transform and
-  // is not a project dependency), so the production typecheck `tsc -b` must not try
-  // to compile them — they import `vitest` and use test-only object builders that
-  // don't satisfy the full app types.
+  // Unit tests run via `npx vitest` (a devDependency; it applies its own esbuild
+  // transform), so the production typecheck `tsc -b` must not try to compile them —
+  // they import `vitest` and use test-only object builders that don't satisfy the
+  // full app types.
   "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx"]
 }

@@ -1,3 +1,5 @@
+import type { AnalyticsQuery } from '../lib/analytics/types';
+
 export type FieldType =
   | 'text'
   | 'textarea'
@@ -1478,12 +1480,102 @@ export type WidgetConfig =
   | WidgetConfigLine
   | WidgetConfigTable;
 
+// ── Universal analytics widget layer (Phase A) ─────────────────────────
+// A widget is a visualization of an `AnalyticsQuery`. `viz` is visualization-
+// only config, grouped BY FAMILY so switching variants within a family keeps
+// the viz object. The 5 Phase-A families: stat, bars, pies, lines, table.
+
+export interface WidgetNumberFormat {
+  decimals?: number;
+  thousands_separator?: boolean;
+  currency?: string | null; // e.g. 'SAR'
+  percent?: boolean;
+  compact?: boolean; // 1.2K / 3.4M
+}
+
+export type WidgetColorMode =
+  | { kind: 'by_group_option' } // use the group-by field's option colors
+  | { kind: 'single'; color: string }
+  | { kind: 'palette'; colors: string[] };
+
+export interface VizStat {
+  family: 'stat';
+  color: string;
+  number_format?: WidgetNumberFormat;
+  icon?: string;
+  // Comparison metrics (current vs previous/target/secondary) for the stat card.
+  comparison?: {
+    mode: 'previous_period' | 'target' | 'secondary_query';
+    target_value?: number;
+    secondary_query?: AnalyticsQuery;
+    good_direction?: 'up' | 'down'; // colors the delta arrow
+  };
+}
+export interface VizBars {
+  family: 'bars';
+  orientation?: 'vertical' | 'horizontal';
+  color_mode?: WidgetColorMode;
+  stacked?: boolean; // when a 2nd group-by level supplies the series
+  show_legend?: boolean;
+  number_format?: WidgetNumberFormat;
+}
+export interface VizPies {
+  family: 'pies';
+  donut?: boolean;
+  color_mode?: WidgetColorMode;
+  show_legend?: boolean;
+  number_format?: WidgetNumberFormat;
+}
+export interface VizLines {
+  family: 'lines';
+  area?: boolean;
+  smooth?: boolean;
+  stacked?: boolean;
+  color_mode?: WidgetColorMode;
+  number_format?: WidgetNumberFormat;
+}
+export interface VizTable {
+  family: 'table';
+  // record_list mode: raw records (legacy table). column_field_ids = columns shown.
+  column_field_ids?: string[];
+  page_size?: number;
+}
+export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable;
+
+// Dashboard-level global filters + per-widget opt-in.
+export type DashboardFilterControl = 'date_range' | 'select' | 'search';
+export interface DashboardFilter {
+  id: string;
+  label_ar: string;
+  label_en: string;
+  control: DashboardFilterControl;
+  ref_model_id?: string | null; // model whose field defines the option set (select)
+  ref_field_id?: string | null;
+  is_multi?: boolean;
+  default_value?: unknown;
+}
+export interface WidgetFilterMapping {
+  dashboard_filter_id: string;
+  target_field_id: string | null; // field on the widget's source model; null = ignore this filter
+  target_field_path?: 'min' | 'max';
+}
+export type WidgetFilterBehavior =
+  | { mode: 'inherit_dashboard_filters' }
+  | { mode: 'ignore_dashboard_filters' }
+  | { mode: 'custom_mapping'; mappings: WidgetFilterMapping[] };
+
 export interface DashboardWidget {
   id: string;
   type: WidgetType;
   title_ar: string;
   title_en: string;
   source_model_id: string;
+  // NEW (Phase A) — the universal query + visualization. Optional for back-compat:
+  // legacy widgets render through `migrateLegacyWidget(widget, model)` which derives
+  // these from `config` on the fly. The builder persists them; `config` is retained.
+  query?: AnalyticsQuery;
+  viz?: WidgetViz;
+  filter_behavior?: WidgetFilterBehavior;
   config: WidgetConfig;
   x: number;
   y: number;
@@ -1497,8 +1589,46 @@ export interface Dashboard {
   label_en: string;
   description?: string;
   widgets: DashboardWidget[];
+  // NEW (Phase A) — dashboard-level global filters + the owner whose RLS scope
+  // public snapshots are computed with. Optional for back-compat (default []).
+  filters?: DashboardFilter[];
+  owner_user_id?: string | null;
   is_public: boolean;
   public_token?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Semantic Metric — a named, reusable business measure (Revenue, Response Rate,
+ * Average Deal Size, …). VALUE-ONLY by design: it answers "what is the value?"
+ * and carries NO target. A future `KPIDefinition { metric_id, target_value,
+ * warning_threshold, critical_threshold }` (answering "are we hitting target?")
+ * layers on top WITHOUT changing this type or the engine. Persisted in the
+ * `metric_definitions` table; resolved by the analytics engine via
+ * `AggregationConfig.metric_id`.
+ */
+export interface MetricDefinition {
+  id: string;
+  label_ar: string;
+  label_en: string;
+  description?: string;
+  // The query that produces the metric's value (a scalar, or per-group when a
+  // consumer supplies a group_by). May itself use a percentage/ratio aggregation.
+  query: AnalyticsQuery;
+  // Optional composite: combine other metrics' scalar values via a safe formula
+  // (evaluated by formulaEngine). Each `inputs[].name` is referenced in `formula`
+  // as a `{name}` token, e.g. formula '{answered} / {total} * 100'.
+  formula?: string;
+  inputs?: { name: string; metric_id: string }[];
+  format?: {
+    decimals?: number;
+    currency?: string | null;
+    percent?: boolean;
+    thousands_separator?: boolean;
+  };
+  is_system: boolean;
+  owner_user_id?: string | null;
   created_at: string;
   updated_at: string;
 }

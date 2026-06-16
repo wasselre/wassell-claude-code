@@ -1,38 +1,26 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { useAppStore } from '@/stores/appStore';
-import { groupRecordsByField } from '@/lib/dashboardUtils';
-import type { DashboardWidget, WidgetConfigChart } from '@/types';
+import { resultToChartData } from '../../lib/resultToChartData';
+import { effectiveViz } from '@/lib/analytics/widgetAdapter';
+import type { AnalyticsResult } from '@/lib/analytics/types';
+import type { DashboardWidget, VizPies } from '@/types';
 
-interface PieChartWidgetProps {
-  widget: DashboardWidget;
-}
-
-export default function PieChartWidget({ widget }: PieChartWidgetProps) {
-  const { records, models, language } = useAppStore();
+export default function PieChartWidget({ widget, result, onDrill }: { widget: DashboardWidget; result: AnalyticsResult | null; onDrill?: (recordIds: string[], title: string) => void }) {
+  const language = useAppStore((s) => s.language);
   const isAr = language === 'ar';
-  const config = widget.config as WidgetConfigChart;
-
-  const model = models.find((m) => m.id === widget.source_model_id);
-  const allFields = model?.schema.sections.flatMap((s) => s.fields) ?? [];
-  const groupField = allFields.find((f) => f.id === config.group_by_field_id);
-  const modelRecords = records[widget.source_model_id] ?? [];
-
-  if (!groupField) return <div className="text-sm text-charcoal/30 text-center">Configure group by field</div>;
-
-  const data = groupRecordsByField(modelRecords, groupField, config.conditions, allFields)
-    .filter((d) => d.count > 0)
-    .map((d) => ({ name: isAr ? d.label_ar : d.label_en, value: d.count, color: d.color }));
+  const viz = effectiveViz(widget) as VizPies;
+  const data = resultToChartData(result, isAr).filter((d) => d.value > 0);
 
   return (
     <ResponsiveContainer width="100%" height="100%">
       <PieChart>
-        <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="45%" outerRadius="70%" label>
+        <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="45%" innerRadius={viz.donut ? '50%' : 0} outerRadius="70%" paddingAngle={1} cursor={onDrill ? 'pointer' : undefined} onClick={onDrill ? (_d, index) => onDrill(data[index]?.recordIds ?? [], data[index]?.name ?? '') : undefined}>
           {data.map((entry, i) => (
             <Cell key={i} fill={entry.color} />
           ))}
         </Pie>
         <Tooltip />
-        <Legend />
+        {viz.show_legend !== false && <Legend wrapperStyle={{ fontSize: 11 }} />}
       </PieChart>
     </ResponsiveContainer>
   );

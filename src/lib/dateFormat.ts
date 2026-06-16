@@ -28,7 +28,11 @@
  * literal token to the customer.
  */
 
-const RIYADH_TZ_OFFSET_HOURS = 3;
+// Asia/Riyadh runs at UTC+3 year-round with no DST, so this is a true constant.
+// Exported as the SINGLE source of the offset — the analytics engine's
+// `src/lib/analytics/dateWindows.ts` (the one home for all analytics date math)
+// imports it rather than redefining `3`.
+export const RIYADH_TZ_OFFSET_HOURS = 3;
 const MS_PER_HOUR = 3600 * 1000;
 const MS_PER_DAY = 24 * MS_PER_HOUR;
 
@@ -36,7 +40,7 @@ const DAY_NAMES_AR = ['الأحد', 'الإثنين', 'الثلاثاء', 'ال�
 
 // Saudi/Gregorian month names (شهور ميلادية) — what business users say in
 // daily speech. Not Hijri.
-const MONTH_NAMES_AR = [
+export const MONTH_NAMES_AR = [
   'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
   'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
 ];

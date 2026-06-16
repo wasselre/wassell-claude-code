@@ -7,7 +7,7 @@ import { translateLabel } from '@/lib/translateLabel';
 import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import WidgetRenderer from './components/WidgetRenderer';
-import WidgetConfigModal from './components/WidgetConfigModal';
+import WidgetBuilder from './components/builder/WidgetBuilder';
 import { autoLayoutWidgets, findPositionForNew } from '@/lib/widgetLayout';
 import type { DashboardWidget } from '@/types';
 
@@ -182,7 +182,7 @@ export default function DashboardEditorPage() {
         </div>
       )}
 
-      <WidgetConfigModal
+      <WidgetBuilder
         open={showWidgetConfig}
         onClose={() => { setShowWidgetConfig(false); setEditingWidget(undefined); }}
         onSave={addWidget}
