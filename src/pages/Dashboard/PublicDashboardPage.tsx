@@ -61,6 +61,12 @@ export default function PublicDashboardPage() {
     );
   }
 
+  const asOf = dashboard.widgets
+    .map((w) => w.snapshot?.computed_at)
+    .filter((x): x is string => !!x)
+    .sort()
+    .pop();
+
   return (
     <div className="min-h-screen bg-cream-light">
       {/* Header */}
@@ -69,6 +75,11 @@ export default function PublicDashboardPage() {
         <h1 className="text-lg font-bold text-chocolate">
           {isAr ? dashboard.label_ar : dashboard.label_en}
         </h1>
+        {asOf && (
+          <span className="ms-auto text-xs text-charcoal/40">
+            {isAr ? 'البيانات حتى' : 'Data as of'} {new Date(asOf).toLocaleString(isAr ? 'ar' : 'en')}
+          </span>
+        )}
       </div>
 
       {/* Widgets */}

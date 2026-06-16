@@ -4,15 +4,16 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { translateLabel } from '@/lib/translateLabel';
-import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid, SlidersHorizontal } from 'lucide-react';
+import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid, SlidersHorizontal, RefreshCw } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import WidgetRenderer from './components/WidgetRenderer';
 import WidgetBuilder from './components/builder/WidgetBuilder';
 import DashboardFilterBar from './components/DashboardFilterBar';
 import DashboardFiltersConfigModal from './components/DashboardFiltersConfigModal';
 import type { GlobalFilterState } from './lib/globalFilters';
+import { refreshDashboardSnapshots } from './lib/snapshots';
 import { autoLayoutWidgets, findPositionForNew } from '@/lib/widgetLayout';
-import type { DashboardWidget } from '@/types';
+import type { Dashboard, DashboardWidget } from '@/types';
 
 export default function DashboardEditorPage() {
   const { dashboardId } = useParams();
@@ -26,6 +27,7 @@ export default function DashboardEditorPage() {
   const [editingWidget, setEditingWidget] = useState<DashboardWidget | undefined>();
   const [showFiltersConfig, setShowFiltersConfig] = useState(false);
   const [filterState, setFilterState] = useState<GlobalFilterState>({});
+  const [refreshing, setRefreshing] = useState(false);
 
   if (!dashboard) {
     return <div className="text-center py-20 text-charcoal/40">Dashboard not found</div>;
@@ -61,12 +63,34 @@ export default function DashboardEditorPage() {
     saveDashboard({ ...dashboard, widgets: dashboard.widgets.filter((w) => w.id !== widgetId) });
   };
 
+  const refreshShared = async (dash: Dashboard) => {
+    setRefreshing(true);
+    try {
+      const { widgets, refreshed, failed } = await refreshDashboardSnapshots(dash);
+      saveDashboard({ ...dash, widgets, updated_at: new Date().toISOString() });
+      addToast(
+        isAr
+          ? `تم تحديث ${refreshed} عنصر${failed ? ` (فشل ${failed})` : ''}`
+          : `Refreshed ${refreshed} widget(s)${failed ? `, ${failed} failed` : ''}`,
+        failed ? 'error' : 'success',
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      addToast(isAr ? `تعذّر تحديث البيانات: ${msg}` : `Refresh failed: ${msg}`, 'error');
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const togglePublic = () => {
-    saveDashboard({
+    const makingPublic = !dashboard.is_public;
+    const next = {
       ...dashboard,
-      is_public: !dashboard.is_public,
-      public_token: !dashboard.is_public ? uuid() : dashboard.public_token,
-    });
+      is_public: makingPublic,
+      public_token: makingPublic ? dashboard.public_token || uuid() : dashboard.public_token,
+    };
+    saveDashboard(next);
+    if (makingPublic) void refreshShared(next);
   };
 
   const copyLink = () => {
@@ -129,6 +153,12 @@ export default function DashboardEditorPage() {
             <button onClick={copyLink} className="p-2 rounded-lg border border-sand hover:bg-cream text-charcoal/40 hover:text-copper">
               <Copy size={14} />
             </button>
+          )}
+          {dashboard.is_public && (
+            <Button variant="ghost" onClick={() => refreshShared(dashboard)} disabled={refreshing}>
+              <RefreshCw size={16} className={refreshing ? 'animate-spin' : ''} />
+              {isAr ? 'تحديث البيانات' : 'Refresh data'}
+            </Button>
           )}
           {dashboard.widgets.length > 0 && (
             <Button variant="ghost" onClick={fixLayout}>

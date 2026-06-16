@@ -1,4 +1,4 @@
-import type { AnalyticsQuery } from '../lib/analytics/types';
+import type { AnalyticsQuery, AnalyticsResult } from '../lib/analytics/types';
 
 export type FieldType =
   | 'text'
@@ -1576,6 +1576,10 @@ export interface DashboardWidget {
   query?: AnalyticsQuery;
   viz?: WidgetViz;
   filter_behavior?: WidgetFilterBehavior;
+  // Pre-computed result for PUBLIC sharing. Filled on publish/refresh by running
+  // the engine with the owner's scope; the public page renders this so anon
+  // never reads raw records. Recomputed on demand; stale until refreshed.
+  snapshot?: { result: AnalyticsResult; computed_at: string };
   config: WidgetConfig;
   x: number;
   y: number;

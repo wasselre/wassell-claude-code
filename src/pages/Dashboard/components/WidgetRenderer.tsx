@@ -37,16 +37,22 @@ export default function WidgetRenderer({ widget, isPublic, dashboardFilters, fil
   // Hooks must run unconditionally — null query for the table family skips the
   // engine. Global dashboard filters merge in per the widget's filter_behavior
   // (composeWidgetQuery returns the base query untouched when none are active).
+  // Public dashboards render a pre-computed snapshot (anon never reads records);
+  // authenticated views run the live engine.
+  const useSnapshot = !!isPublic && !!widget.snapshot;
   const query = useMemo(
-    () => (family === 'table' ? null : composeWidgetQuery(widget, dashboardFilters, filterState ?? {}, models)),
-    [widget, family, dashboardFilters, filterState, models],
+    () => (family === 'table' || useSnapshot ? null : composeWidgetQuery(widget, dashboardFilters, filterState ?? {}, models)),
+    [widget, family, useSnapshot, dashboardFilters, filterState, models],
   );
   const viz = effectiveViz(widget);
   const wantComparison = viz.family === 'stat' && !!(viz as VizStat).comparison;
-  const { data, loading, error } = useAnalyticsQuery(query, { comparison: wantComparison, includeRecordIds: true });
+  const { data: liveData, loading, error } = useAnalyticsQuery(query, { comparison: wantComparison, includeRecordIds: true });
+  const data = useSnapshot ? widget.snapshot!.result : liveData;
 
-  const onDrill = (recordIds: string[], title: string) =>
-    setDrill({ sourceModelId: widget.source_model_id, recordIds, title });
+  // Drill-through is editor-only (anon has no record access + no write path).
+  const onDrill = isPublic
+    ? undefined
+    : (recordIds: string[], title: string) => setDrill({ sourceModelId: widget.source_model_id, recordIds, title });
 
   if (family === 'table') return <TableWidget widget={widget} isPublic={isPublic} />;
 
@@ -86,7 +92,7 @@ export default function WidgetRenderer({ widget, isPublic, dashboardFilters, fil
   return (
     <>
       {body}
-      <DrillThroughModal ctx={drill} onClose={() => setDrill(null)} isPublic={isPublic} />
+      {!isPublic && <DrillThroughModal ctx={drill} onClose={() => setDrill(null)} />}
     </>
   );
 }
