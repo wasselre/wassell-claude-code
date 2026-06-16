@@ -97,7 +97,7 @@ function condsToGroup(conds: WidgetFilterCondition[]): FilterGroup | undefined {
 }
 
 export default function WidgetBuilder({ open, onClose, onSave, existingWidget }: Props) {
-  const { models, language, addToast } = useAppStore();
+  const { models, language, addToast, metricDefinitions } = useAppStore();
   const isAr = language === 'ar';
 
   const [type, setType] = useState<WidgetType>('stat');
@@ -120,6 +120,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const [tableFieldIds, setTableFieldIds] = useState<string[]>([]);
   const [maxRows, setMaxRows] = useState(10);
   const [ignoreFilters, setIgnoreFilters] = useState(false);
+  const [metricId, setMetricId] = useState('');
 
   // Seed from existing widget (via the engine-effective query/viz) or reset.
   useEffect(() => {
@@ -152,12 +153,13 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       setTableFieldIds(v.family === 'table' ? v.column_field_ids ?? [] : []);
       setMaxRows(v.family === 'table' ? v.page_size ?? 10 : 10);
       setIgnoreFilters(existingWidget.filter_behavior?.mode === 'ignore_dashboard_filters');
+      setMetricId(q.aggregation.metric_id ?? '');
     } else {
       setType('stat'); setTitleAr(''); setTitleEn(''); setSourceModelId('');
       setConditions([]); setPartConditions([]); setAggType('count'); setAggFieldId('');
       setGroupLevels([]); setDateFieldId(''); setDateMode('');
       setColor('#B8734F'); setComparison(false); setGoodDir('up'); setDonut(false); setArea(false);
-      setTableFieldIds([]); setMaxRows(10); setIgnoreFilters(false);
+      setTableFieldIds([]); setMaxRows(10); setIgnoreFilters(false); setMetricId('');
     }
   }, [existingWidget, open]);
 
@@ -172,6 +174,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const needsGroup = family === 'bars' || family === 'pies' || family === 'lines';
 
   function buildAggregation(): AggregationConfig {
+    if (metricId) return { type: 'count', metric_id: metricId };
     if (aggType === 'percentage') {
       return {
         type: 'percentage',
@@ -210,9 +213,11 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   }
 
   function buildViz(): WidgetViz {
+    const metric = metricId ? metricDefinitions.find((m) => m.id === metricId) : undefined;
     const aggF = allFields.find((x) => x.id === aggFieldId);
-    const numFmt =
-      aggType === 'percentage'
+    const numFmt = metric?.format
+      ? metric.format
+      : aggType === 'percentage'
         ? { percent: true }
         : aggF?.type === 'currency'
           ? { currency: 'SAR' }
@@ -254,7 +259,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   // types one language must still be able to save).
   const valid =
     (!!titleAr.trim() || !!titleEn.trim()) && !!sourceModelId &&
-    (!needsField || !!aggFieldId) &&
+    (!!metricId || !needsField || !!aggFieldId) &&
     (!needsGroup || groupLevels.some((g) => g.field_id)) &&
     (family !== 'table' || tableFieldIds.length > 0);
 
@@ -272,7 +277,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       x: 0, y: 0, w: 4, h: 4,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters],
+    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters, metricId],
   );
 
   const handleSave = () => {
@@ -330,7 +335,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
           />
 
           <Section label={isAr ? 'النموذج المصدر' : 'Source model'}>
-            <select value={sourceModelId} onChange={(e) => { setSourceModelId(e.target.value); setAggFieldId(''); setGroupLevels([]); setDateFieldId(''); setConditions([]); setTableFieldIds([]); }} className="form-input text-sm">
+            <select value={sourceModelId} onChange={(e) => { setSourceModelId(e.target.value); setAggFieldId(''); setGroupLevels([]); setDateFieldId(''); setConditions([]); setTableFieldIds([]); setMetricId(''); }} className="form-input text-sm">
               <option value="">—</option>
               {models.map((m) => <option key={m.id} value={m.id}>{isAr ? m.label_ar : m.label_en}</option>)}
             </select>
@@ -350,7 +355,26 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
             </div>
           </Section>
 
-          {sourceModelId && family !== 'table' && (
+          {metricDefinitions.length > 0 && family !== 'table' && (
+            <Section label={isAr ? 'مقياس محفوظ' : 'Saved metric'}>
+              <select
+                value={metricId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setMetricId(id);
+                  const m = metricDefinitions.find((x) => x.id === id);
+                  if (m) { setSourceModelId(m.query.source_model_id); setAggFieldId(''); setAggType('count'); setGroupLevels([]); }
+                }}
+                className="form-input text-sm"
+              >
+                <option value="">{isAr ? '— تجميع مخصص —' : '— Custom aggregation —'}</option>
+                {metricDefinitions.map((m) => <option key={m.id} value={m.id}>{isAr ? m.label_ar : m.label_en}</option>)}
+              </select>
+              {metricId && <p className="mt-1 text-[11px] text-charcoal/50">{isAr ? 'يُحسب القياس تلقائياً. أضف "تجميع حسب" أدناه للتقسيم.' : 'The metric drives the value. Add a Group by below to break it down.'}</p>}
+            </Section>
+          )}
+
+          {sourceModelId && family !== 'table' && !metricId && (
             <Section label={isAr ? 'القياس' : 'Aggregation'}>
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {AGG_TYPES.map((a) => (

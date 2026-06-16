@@ -3,7 +3,6 @@ import { useAppStore } from '@/stores/appStore';
 import { runAnalyticsQuery } from '@/lib/analytics/engine';
 import type { AnalyticsContext } from '@/lib/analytics/context';
 import type { AnalyticsQuery, AnalyticsResult } from '@/lib/analytics/types';
-import type { MetricDefinition } from '@/types';
 
 export interface UseAnalyticsQueryResult {
   data: AnalyticsResult | null;
@@ -30,9 +29,7 @@ export function useAnalyticsQuery(
   const users = useAppStore((s) => s.users);
   const views = useAppStore((s) => s.views);
   const language = useAppStore((s) => s.language);
-  // metricDefinitions slice is added with the Semantic Metrics layer; default []
-  // until then so metric-backed widgets resolve as soon as it lands.
-  const metrics = useAppStore((s) => (s as unknown as { metricDefinitions?: MetricDefinition[] }).metricDefinitions);
+  const metrics = useAppStore((s) => s.metricDefinitions);
 
   const comparison = !!opts.comparison;
   const includeRecordIds = !!opts.includeRecordIds;

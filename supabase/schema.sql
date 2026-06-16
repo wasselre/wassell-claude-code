@@ -211,6 +211,24 @@ CREATE TABLE IF NOT EXISTS dashboards (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Semantic metrics — named, reusable measures stored as a value-only
+-- AnalyticsQuery. Admin-RLS + updated_at trigger, mirroring dashboards. See
+-- supabase/migrations/2026-06-16_metric_definitions.sql + docs/prd/dashboards.md.
+CREATE TABLE IF NOT EXISTS metric_definitions (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  label_ar      TEXT NOT NULL,
+  label_en      TEXT NOT NULL,
+  description   TEXT,
+  query         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  formula       TEXT,
+  inputs        JSONB,
+  format        JSONB,
+  is_system     BOOLEAN NOT NULL DEFAULT false,
+  owner_user_id UUID,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Saved table views (per-model, per-user, optionally shared)
 CREATE TABLE IF NOT EXISTS model_views (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -383,6 +401,10 @@ DROP TRIGGER IF EXISTS set_updated_at_dashboards ON dashboards;
 CREATE TRIGGER set_updated_at_dashboards BEFORE UPDATE ON dashboards
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS set_updated_at_metric_definitions ON metric_definitions;
+CREATE TRIGGER set_updated_at_metric_definitions BEFORE UPDATE ON metric_definitions
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
 DROP TRIGGER IF EXISTS set_updated_at_model_views ON model_views;
 CREATE TRIGGER set_updated_at_model_views BEFORE UPDATE ON model_views
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -440,6 +462,7 @@ ALTER TABLE workflows       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_groups ENABLE ROW LEVEL SECURITY;
 ALTER TABLE workflow_runs   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE dashboards      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE metric_definitions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE model_views     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles        ENABLE ROW LEVEL SECURITY;
@@ -756,6 +779,8 @@ CREATE POLICY "workflow_runs_insert" ON workflow_runs FOR INSERT TO authenticate
 CREATE POLICY "workflow_runs_modify" ON workflow_runs FOR UPDATE TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "workflow_runs_delete" ON workflow_runs FOR DELETE TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "dashboards_admin"      ON dashboards      FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+DROP POLICY IF EXISTS "metric_definitions_admin" ON metric_definitions;
+CREATE POLICY "metric_definitions_admin" ON metric_definitions FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 
 -- Public dashboards: anon access goes through `get_public_dashboard`,
 -- not a direct SELECT. The function checks BOTH is_public AND a token

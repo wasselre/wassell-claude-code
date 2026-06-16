@@ -2087,6 +2087,7 @@ export interface AppState {
    *  Older entries live in Supabase only and are paged in by the LogsPage. */
   activityLog: ActivityLogEntry[];
   dashboards: Dashboard[];
+  metricDefinitions: MetricDefinition[];
   views: ModelView[];
   users: User[];
   profiles: Profile[];
@@ -2257,6 +2258,9 @@ export interface AppState {
   // Dashboards
   saveDashboard: (dashboard: Dashboard) => void;
   deleteDashboard: (dashboardId: string) => void;
+  // Semantic metrics
+  saveMetricDefinition: (metric: MetricDefinition) => void;
+  deleteMetricDefinition: (metricId: string) => void;
 
   // Views (per-model saved table configurations)
   saveView: (view: ModelView) => void;

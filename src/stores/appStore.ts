@@ -33,6 +33,7 @@ import type {
   WorkflowGroup,
   WorkflowRun,
   Dashboard,
+  MetricDefinition,
   ModelView,
   User,
   Profile,
@@ -1283,6 +1284,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   workflowRuns: [],
   activityLog: loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [],
   dashboards: [],
+  metricDefinitions: [],
   views: [],
   users: [],
   profiles: [],
@@ -1385,6 +1387,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       return error ? null : (data as ActivityLogEntry[] | null);
     })();
     const dashboardsP        = supabaseLoad<Dashboard>('dashboards');
+    const metricDefinitionsP = supabaseLoad<MetricDefinition>('metric_definitions');
     const whiteboardFoldersP = supabaseLoad<WhiteboardFolder>('whiteboard_folders');
     const whiteboardsP       = supabaseLoad<Whiteboard>('whiteboards');
     const viewsP             = supabaseLoad<ModelView>('model_views');
@@ -1499,6 +1502,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     let dashboards = await dashboardsP;
     if (!dashboards) dashboards = loadLocal<Dashboard[]>('wassell_dashboards') ?? [];
     saveLocal('wassell_dashboards', dashboards);
+
+    let metricDefinitions = await metricDefinitionsP;
+    if (!metricDefinitions) metricDefinitions = loadLocal<MetricDefinition[]>('wassell_metric_definitions') ?? [];
+    saveLocal('wassell_metric_definitions', metricDefinitions);
 
     // Saved table views (chrome — view selector on each model page).
     let views = await viewsP;
@@ -1863,7 +1870,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // (records, workflow_runs, whiteboards, activity_log) finishes
     // in the background. Pages that need records gate on `initialized`.
     set({
-      models, groups, profiles, roles, users, views, dashboards,
+      models, groups, profiles, roles, users, views, dashboards, metricDefinitions,
       fieldTemplates, webhookSlugs, workflowGroups, workflows,
       currentUserId, criticalDataReady: true,
     });
@@ -3194,6 +3201,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_dashboards', dashboards);
       supabaseDelete('dashboards', dashboardId);
       return { dashboards };
+    });
+  },
+
+  // --- Semantic metrics ---
+  saveMetricDefinition: (metric: MetricDefinition) => {
+    set((s) => {
+      const idx = s.metricDefinitions.findIndex((m) => m.id === metric.id);
+      const metricDefinitions = idx >= 0
+        ? s.metricDefinitions.map((m) => (m.id === metric.id ? metric : m))
+        : [...s.metricDefinitions, metric];
+      saveLocal('wassell_metric_definitions', metricDefinitions);
+      supabaseUpsert('metric_definitions', metric);
+      return { metricDefinitions };
+    });
+  },
+  deleteMetricDefinition: (metricId: string) => {
+    set((s) => {
+      const metricDefinitions = s.metricDefinitions.filter((m) => m.id !== metricId);
+      saveLocal('wassell_metric_definitions', metricDefinitions);
+      supabaseDelete('metric_definitions', metricId);
+      return { metricDefinitions };
     });
   },
 

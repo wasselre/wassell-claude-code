@@ -4,12 +4,13 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { translateLabel } from '@/lib/translateLabel';
-import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid, SlidersHorizontal, RefreshCw } from 'lucide-react';
+import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid, SlidersHorizontal, RefreshCw, Sigma } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import WidgetRenderer from './components/WidgetRenderer';
 import WidgetBuilder from './components/builder/WidgetBuilder';
 import DashboardFilterBar from './components/DashboardFilterBar';
 import DashboardFiltersConfigModal from './components/DashboardFiltersConfigModal';
+import MetricsManagerModal from './components/MetricsManagerModal';
 import type { GlobalFilterState } from './lib/globalFilters';
 import { refreshDashboardSnapshots } from './lib/snapshots';
 import { autoLayoutWidgets, findPositionForNew } from '@/lib/widgetLayout';
@@ -26,6 +27,7 @@ export default function DashboardEditorPage() {
   const [showWidgetConfig, setShowWidgetConfig] = useState(false);
   const [editingWidget, setEditingWidget] = useState<DashboardWidget | undefined>();
   const [showFiltersConfig, setShowFiltersConfig] = useState(false);
+  const [showMetrics, setShowMetrics] = useState(false);
   const [filterState, setFilterState] = useState<GlobalFilterState>({});
   const [refreshing, setRefreshing] = useState(false);
 
@@ -170,6 +172,10 @@ export default function DashboardEditorPage() {
             <SlidersHorizontal size={16} />
             {isAr ? 'التصفية' : 'Filters'}
           </Button>
+          <Button variant="ghost" onClick={() => setShowMetrics(true)}>
+            <Sigma size={16} />
+            {isAr ? 'المقاييس' : 'Metrics'}
+          </Button>
           <Button onClick={() => setShowWidgetConfig(true)}>
             <Plus size={16} />
             {t('dashboard.add_widget')}
@@ -236,6 +242,8 @@ export default function DashboardEditorPage() {
         initial={dashboard.filters ?? []}
         onSave={(filters) => saveDashboard({ ...dashboard, filters, updated_at: new Date().toISOString() })}
       />
+
+      <MetricsManagerModal open={showMetrics} onClose={() => setShowMetrics(false)} />
     </div>
   );
 }
