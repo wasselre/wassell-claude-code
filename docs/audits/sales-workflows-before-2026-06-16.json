@@ -1,0 +1,1183 @@
+[
+  {
+    "id": "34af4560-bd30-44fd-ab47-5a2f1a8afbbf",
+    "actions": [
+      {
+        "id": "0de52782-a86c-47c2-aed7-dded887354a2",
+        "type": "create_record",
+        "field_mappings": [
+          {
+            "id": "0ec24321-e92c-44ec-b46c-326be0747e8c",
+            "source_type": "trigger_field",
+            "static_value": "",
+            "target_field_id": "client_id",
+            "trigger_field_id": "client_name"
+          }
+        ],
+        "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+      },
+      {
+        "id": "6f47759d-a493-4c99-b3e1-ffd0fff448e1",
+        "type": "send_notification",
+        "message_ar": "0",
+        "message_en": ""
+      }
+    ],
+    "branches": null,
+    "group_id": "ed8766a4-a11d-48b0-8786-d3d4e61d4ed8",
+    "label_ar": "1",
+    "label_en": "1",
+    "metadata": null,
+    "is_active": false,
+    "conditions": [
+      {
+        "id": "1985914f-c3c2-44fe-b3a7-95f0d58b39f1",
+        "value": "interested",
+        "field_id": "status",
+        "operator": "equals"
+      }
+    ],
+    "created_at": "2026-04-16T22:09:41.305+00:00",
+    "updated_at": "2026-04-26T00:25:42.184023+00:00",
+    "trigger_event": "update",
+    "trigger_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+    "trigger_webhook_slug_id": null
+  },
+  {
+    "id": "f9a636dd-f83c-4a07-8190-09ec1d886dd8",
+    "actions": [
+      {
+        "id": "e9f54544-2be0-47b6-a7fe-cf440cce6ce7",
+        "type": "create_record",
+        "field_mappings": [
+          {
+            "id": "9824c7b1-b7a0-4679-8275-96ff2274fbcd",
+            "source_type": "record_id",
+            "static_value": "",
+            "target_field_id": "project",
+            "trigger_field_id": ""
+          }
+        ],
+        "skip_if_exists": true,
+        "target_model_id": "8550651a-8d65-4e4d-a842-c800be336f78",
+        "dedup_target_field_id": "project"
+      },
+      {
+        "id": "2c7347c8-e64b-468e-ace9-c27c94a93309",
+        "type": "update_record",
+        "filter_value": "",
+        "field_mappings": [
+          {
+            "id": "5928595a-893e-4570-9cb9-31d762877bca",
+            "source_type": "static",
+            "static_value": "study",
+            "target_field_id": "project_targt_status",
+            "trigger_field_id": ""
+          }
+        ],
+        "filter_field_id": "project_id",
+        "target_model_id": "220c49b9-de57-492d-9eca-c0d9f54fd40f",
+        "filter_value_source": "trigger_field",
+        "filter_trigger_field_id": "project_id"
+      }
+    ],
+    "branches": [
+      {
+        "id": "0af86545-ddd5-4923-b221-0c7467c5a350",
+        "actions": [
+          {
+            "id": "e9f54544-2be0-47b6-a7fe-cf440cce6ce7",
+            "type": "create_record",
+            "field_mappings": [
+              {
+                "id": "9824c7b1-b7a0-4679-8275-96ff2274fbcd",
+                "source_type": "record_id",
+                "static_value": "",
+                "target_field_id": "project",
+                "trigger_field_id": ""
+              }
+            ],
+            "skip_if_exists": true,
+            "target_model_id": "8550651a-8d65-4e4d-a842-c800be336f78",
+            "dedup_target_field_id": "project"
+          },
+          {
+            "id": "2c7347c8-e64b-468e-ace9-c27c94a93309",
+            "type": "update_record",
+            "filter_value": "",
+            "field_mappings": [
+              {
+                "id": "5928595a-893e-4570-9cb9-31d762877bca",
+                "source_type": "static",
+                "static_value": "study",
+                "target_field_id": "project_targt_status",
+                "trigger_field_id": ""
+              }
+            ],
+            "filter_field_id": "project_id",
+            "target_model_id": "220c49b9-de57-492d-9eca-c0d9f54fd40f",
+            "filter_value_source": "trigger_field",
+            "filter_trigger_field_id": "project_id"
+          }
+        ],
+        "conditions": [
+          {
+            "id": "dc429f4f-7e7f-4407-934e-7d154255abd9",
+            "value": true,
+            "field_id": "is_targeted",
+            "operator": "equals",
+            "only_on_change": true
+          }
+        ]
+      }
+    ],
+    "group_id": "f803981d-97a0-42dc-b8af-d2b26cc12e2d",
+    "label_ar": "المشاريع - المستهدفة",
+    "label_en": "Targeted Projects",
+    "metadata": null,
+    "is_active": true,
+    "conditions": [
+      {
+        "id": "dc429f4f-7e7f-4407-934e-7d154255abd9",
+        "value": true,
+        "field_id": "is_targeted",
+        "operator": "equals",
+        "only_on_change": true
+      }
+    ],
+    "created_at": "2026-04-18T19:56:43.658+00:00",
+    "updated_at": "2026-06-11T07:59:41.776929+00:00",
+    "trigger_event": "update",
+    "trigger_model_id": "220c49b9-de57-492d-9eca-c0d9f54fd40f",
+    "trigger_webhook_slug_id": null
+  },
+  {
+    "id": "a336e134-2d79-44f3-8219-a4bd8e2f76f8",
+    "actions": [
+      {
+        "id": "595322de-6855-4e49-a453-90694fd2b858",
+        "type": "create_record",
+        "field_mappings": [
+          {
+            "id": "d6525fd0-c07b-4bd5-abf4-030590b90a16",
+            "source_type": "record_id",
+            "static_value": "",
+            "target_field_id": "client_id",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "124abe34-a293-4fb8-962b-84fb81f81a22",
+            "source_type": "static",
+            "static_value": "50526b19-e686-4220-ae95-10dd76f7c482",
+            "target_field_id": "sales_rep",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "e5effc0c-624a-4ea8-a470-02599acf42f2",
+            "source_type": "static",
+            "static_value": [
+              "appointment_booking_call"
+            ],
+            "target_field_id": "followup_type",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "9617c9c0-09b6-43c5-bc0f-a9248d8ed6a2",
+            "date_base": "current_date",
+            "source_type": "date_expression",
+            "static_value": "",
+            "date_expression": "",
+            "target_field_id": "scheduled_datetime",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "ba8ce5a5-392b-4aa9-82b0-67ac33a134b7",
+            "source_type": "static",
+            "static_value": 1,
+            "target_field_id": "followup_number",
+            "trigger_field_id": ""
+          }
+        ],
+        "skip_if_exists": false,
+        "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+      }
+    ],
+    "branches": [
+      {
+        "id": "10e41932-108e-4ae3-b13d-14c5ea05d080",
+        "actions": [
+          {
+            "id": "595322de-6855-4e49-a453-90694fd2b858",
+            "type": "create_record",
+            "field_mappings": [
+              {
+                "id": "d6525fd0-c07b-4bd5-abf4-030590b90a16",
+                "source_type": "record_id",
+                "static_value": "",
+                "target_field_id": "client_id",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "124abe34-a293-4fb8-962b-84fb81f81a22",
+                "source_type": "static",
+                "static_value": "50526b19-e686-4220-ae95-10dd76f7c482",
+                "target_field_id": "sales_rep",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "e5effc0c-624a-4ea8-a470-02599acf42f2",
+                "source_type": "static",
+                "static_value": [
+                  "appointment_booking_call"
+                ],
+                "target_field_id": "followup_type",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "9617c9c0-09b6-43c5-bc0f-a9248d8ed6a2",
+                "date_base": "current_date",
+                "source_type": "date_expression",
+                "static_value": "",
+                "date_expression": "",
+                "target_field_id": "scheduled_datetime",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "ba8ce5a5-392b-4aa9-82b0-67ac33a134b7",
+                "source_type": "static",
+                "static_value": 1,
+                "target_field_id": "followup_number",
+                "trigger_field_id": ""
+              }
+            ],
+            "skip_if_exists": false,
+            "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+          }
+        ],
+        "conditions": [
+          {
+            "id": "f024a191-e746-4946-b438-3a4fd817c1c8",
+            "value": "جديد",
+            "field_id": "client_stage",
+            "operator": "equals"
+          },
+          {
+            "id": "7da408f9-5192-4aa9-a1e7-3818f4cd0926",
+            "value": "غير مهتم",
+            "field_id": "client_status",
+            "operator": "not_equals"
+          },
+          {
+            "id": "fbd37ffc-62cf-4758-b63f-5cb13b9b141c",
+            "value": "غير مؤهل",
+            "field_id": "client_status",
+            "operator": "not_equals"
+          }
+        ]
+      }
+    ],
+    "group_id": "ed8766a4-a11d-48b0-8786-d3d4e61d4ed8",
+    "label_ar": "اول متابعة (العملاء - المتابعة )",
+    "label_en": "First Follow-up (Clients - Follow-ups)",
+    "metadata": null,
+    "is_active": true,
+    "conditions": [
+      {
+        "id": "f024a191-e746-4946-b438-3a4fd817c1c8",
+        "value": "جديد",
+        "field_id": "client_stage",
+        "operator": "equals"
+      },
+      {
+        "id": "7da408f9-5192-4aa9-a1e7-3818f4cd0926",
+        "value": "غير مهتم",
+        "field_id": "client_status",
+        "operator": "not_equals"
+      },
+      {
+        "id": "fbd37ffc-62cf-4758-b63f-5cb13b9b141c",
+        "value": "غير مؤهل",
+        "field_id": "client_status",
+        "operator": "not_equals"
+      }
+    ],
+    "created_at": "2026-04-19T13:40:18.525+00:00",
+    "updated_at": "2026-06-09T13:29:18.00737+00:00",
+    "trigger_event": "create",
+    "trigger_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+    "trigger_webhook_slug_id": null
+  },
+  {
+    "id": "d997425a-0c8d-48c4-afef-b5792792cfae",
+    "actions": [
+      {
+        "id": "406c956c-46ce-4e4f-8ad0-2253af0fe8a5",
+        "type": "create_record",
+        "field_mappings": [
+          {
+            "id": "79d63dee-2bc6-43a4-afb5-89c963c575e6",
+            "source_type": "trigger_field",
+            "static_value": "",
+            "target_field_id": "client_id",
+            "trigger_field_id": "client_id"
+          },
+          {
+            "id": "1e989bd5-08c3-4e28-93cf-a69c73f11e2b",
+            "role_id": "0a64a077-98ab-422e-98df-26e23567e1ac",
+            "source_type": "role_variable",
+            "static_value": "",
+            "role_conditions": [],
+            "target_field_id": "sales_rep",
+            "trigger_field_id": "",
+            "selection_strategy": "least_workload"
+          },
+          {
+            "id": "98157dee-b648-4627-9bfa-73a64af63828",
+            "source_type": "static",
+            "static_value": [
+              "appointment_booking_call"
+            ],
+            "target_field_id": "followup_type",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "8e950042-0ddf-47c7-b62b-128d7a1286c9",
+            "source_type": "formula",
+            "static_value": "",
+            "target_field_id": "followup_number",
+            "trigger_field_id": "",
+            "formula_expression": "{followup_number} + 1"
+          },
+          {
+            "id": "7c9ff85b-b0e7-402c-98cf-25c0727f03d3",
+            "date_base": "trigger_field",
+            "source_type": "date_expression",
+            "static_value": "",
+            "date_expression": "+1d",
+            "target_field_id": "scheduled_datetime",
+            "trigger_field_id": "",
+            "date_base_field_id": "actual_datetime"
+          }
+        ],
+        "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+      },
+      {
+        "id": "b9727166-9ac2-40b2-9de4-78079cb1dc08",
+        "type": "update_record",
+        "filter_value": "",
+        "field_mappings": [
+          {
+            "id": "6a3a365d-9e47-4b0f-85ad-e22e6bd5e6f4",
+            "source_type": "static",
+            "static_value": "الاتصال لحجز موعد",
+            "target_field_id": "client_stage",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "10ed8685-eab0-4557-ac11-5ce258d9beeb",
+            "source_type": "static",
+            "static_value": "لا يوجد رد",
+            "target_field_id": "client_status",
+            "trigger_field_id": ""
+          }
+        ],
+        "filter_field_id": "client_id",
+        "target_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+        "filter_value_source": "trigger_field",
+        "filter_trigger_field_id": "client_id"
+      }
+    ],
+    "branches": [
+      {
+        "id": "cfe6b37b-f459-4a02-8eae-0a01e2ea7fca",
+        "actions": [
+          {
+            "id": "406c956c-46ce-4e4f-8ad0-2253af0fe8a5",
+            "type": "create_record",
+            "field_mappings": [
+              {
+                "id": "79d63dee-2bc6-43a4-afb5-89c963c575e6",
+                "source_type": "trigger_field",
+                "static_value": "",
+                "target_field_id": "client_id",
+                "trigger_field_id": "client_id"
+              },
+              {
+                "id": "1e989bd5-08c3-4e28-93cf-a69c73f11e2b",
+                "role_id": "0a64a077-98ab-422e-98df-26e23567e1ac",
+                "source_type": "role_variable",
+                "static_value": "",
+                "role_conditions": [],
+                "target_field_id": "sales_rep",
+                "trigger_field_id": "",
+                "selection_strategy": "least_workload"
+              },
+              {
+                "id": "98157dee-b648-4627-9bfa-73a64af63828",
+                "source_type": "static",
+                "static_value": [
+                  "appointment_booking_call"
+                ],
+                "target_field_id": "followup_type",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "8e950042-0ddf-47c7-b62b-128d7a1286c9",
+                "source_type": "formula",
+                "static_value": "",
+                "target_field_id": "followup_number",
+                "trigger_field_id": "",
+                "formula_expression": "{followup_number} + 1"
+              },
+              {
+                "id": "7c9ff85b-b0e7-402c-98cf-25c0727f03d3",
+                "date_base": "trigger_field",
+                "source_type": "date_expression",
+                "static_value": "",
+                "date_expression": "+1d",
+                "target_field_id": "scheduled_datetime",
+                "trigger_field_id": "",
+                "date_base_field_id": "actual_datetime"
+              }
+            ],
+            "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+          },
+          {
+            "id": "b9727166-9ac2-40b2-9de4-78079cb1dc08",
+            "type": "update_record",
+            "filter_value": "",
+            "field_mappings": [
+              {
+                "id": "6a3a365d-9e47-4b0f-85ad-e22e6bd5e6f4",
+                "source_type": "static",
+                "static_value": "الاتصال لحجز موعد",
+                "target_field_id": "client_stage",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "10ed8685-eab0-4557-ac11-5ce258d9beeb",
+                "source_type": "static",
+                "static_value": "لا يوجد رد",
+                "target_field_id": "client_status",
+                "trigger_field_id": ""
+              }
+            ],
+            "filter_field_id": "client_id",
+            "target_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+            "filter_value_source": "trigger_field",
+            "filter_trigger_field_id": "client_id"
+          }
+        ],
+        "label_ar": "لم يتم الرد",
+        "conditions": [
+          {
+            "id": "39350c6e-4839-449c-99fc-2bfa556412f5",
+            "value": "no_answer",
+            "field_id": "call_result",
+            "operator": "equals",
+            "only_on_change": true
+          },
+          {
+            "id": "53e03675-7761-42f6-9bde-1d3fde5dd655",
+            "value": "",
+            "field_id": "actual_datetime",
+            "operator": "is_not_empty"
+          },
+          {
+            "id": "40d9fb44-59f6-4541-8d5e-a07d06970ecb",
+            "value": 10,
+            "field_id": "followup_number",
+            "operator": "less_than"
+          },
+          {
+            "id": "e94aa5db-a9bb-40e2-90cf-92152ca5f73d",
+            "value": [
+              "appointment_booking_call"
+            ],
+            "field_id": "followup_type",
+            "operator": "equals"
+          }
+        ]
+      },
+      {
+        "id": "610757d0-c69d-4347-822b-f7f056b87ae0",
+        "actions": [
+          {
+            "id": "17bbc395-842e-4b35-abe0-878cb962ae00",
+            "type": "create_record",
+            "field_mappings": [
+              {
+                "id": "108e3b94-64b3-45f6-86bf-a24161396a67",
+                "source_type": "trigger_field",
+                "static_value": "",
+                "target_field_id": "client_id",
+                "trigger_field_id": "client_id"
+              },
+              {
+                "id": "afa0c52d-6db9-4756-952d-4eaa1c4e4dd6",
+                "role_id": "bc217747-73cf-4405-b176-1da43d8f972a",
+                "source_type": "role_variable",
+                "static_value": "",
+                "role_conditions": [],
+                "target_field_id": "sales_rep",
+                "trigger_field_id": "",
+                "selection_strategy": "least_workload"
+              },
+              {
+                "id": "a99dc909-fdab-4c77-9661-4fb6ced5827c",
+                "source_type": "static",
+                "static_value": [
+                  "whatsapp_follow_up"
+                ],
+                "target_field_id": "followup_type",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "e7390e3e-113a-4831-9122-f3de583dd309",
+                "source_type": "formula",
+                "static_value": "",
+                "target_field_id": "followup_number",
+                "trigger_field_id": "",
+                "formula_expression": "{followup_number} + 1"
+              },
+              {
+                "id": "9ba26c91-8070-4e89-860e-93c33fa52e02",
+                "date_base": "trigger_field",
+                "source_type": "date_expression",
+                "static_value": "",
+                "date_expression": "+1d",
+                "target_field_id": "scheduled_datetime",
+                "trigger_field_id": "",
+                "date_base_field_id": "actual_datetime"
+              }
+            ],
+            "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+          },
+          {
+            "id": "b0a976f7-a372-4f68-afc6-5bb3ef7af50f",
+            "type": "update_record",
+            "filter_value": "",
+            "field_mappings": [
+              {
+                "id": "98af7444-7c1d-4376-8b80-04b529a68b11",
+                "source_type": "static",
+                "static_value": "الاتصال لحجز موعد",
+                "target_field_id": "client_stage",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "54d613ea-ed8c-4843-93d7-894760cd19a6",
+                "source_type": "static",
+                "static_value": "مهتم",
+                "target_field_id": "client_status",
+                "trigger_field_id": ""
+              }
+            ],
+            "filter_field_id": "client_id",
+            "target_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+            "filter_value_source": "trigger_field",
+            "filter_trigger_field_id": "client_id"
+          }
+        ],
+        "label_ar": "مهتم",
+        "conditions": [
+          {
+            "id": "55231725-aacc-4c61-88af-aea0ed1a6733",
+            "value": "interested",
+            "field_id": "call_result",
+            "operator": "equals",
+            "only_on_change": true
+          },
+          {
+            "id": "f2b5f8be-91de-4e22-aaa4-f7043a8cbd82",
+            "value": "",
+            "field_id": "actual_datetime",
+            "operator": "is_not_empty"
+          },
+          {
+            "id": "389052fd-db87-48da-9ab7-4dc679f4a039",
+            "value": [
+              "appointment_booking_call"
+            ],
+            "field_id": "followup_type",
+            "operator": "equals"
+          }
+        ]
+      },
+      {
+        "id": "c1734813-6e2e-419b-aa58-a45f84625ba6",
+        "actions": [
+          {
+            "id": "79242b47-6bfd-424c-9361-ece9d87da025",
+            "type": "create_record",
+            "field_mappings": [
+              {
+                "id": "3b788242-5d2e-42b6-a350-034cf1944618",
+                "source_type": "trigger_field",
+                "static_value": "",
+                "target_field_id": "client_id",
+                "trigger_field_id": "client_id"
+              },
+              {
+                "id": "d32c4736-e326-4338-a207-816e8c8c7c16",
+                "role_id": "0a64a077-98ab-422e-98df-26e23567e1ac",
+                "source_type": "role_variable",
+                "static_value": "",
+                "role_conditions": [],
+                "target_field_id": "sales_rep",
+                "trigger_field_id": "",
+                "selection_strategy": "least_workload"
+              },
+              {
+                "id": "c8177446-901c-4ad8-b95e-ab70bfcb4830",
+                "source_type": "static",
+                "static_value": [
+                  "appointment_booking_call"
+                ],
+                "target_field_id": "followup_type",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "e6232675-878b-4b2e-b030-55b2cf851e9a",
+                "source_type": "formula",
+                "static_value": "",
+                "target_field_id": "followup_number",
+                "trigger_field_id": "",
+                "formula_expression": "{followup_number} + 1"
+              },
+              {
+                "id": "22cc79ff-249c-45f6-bd29-48b6fefb85db",
+                "date_base": "trigger_field",
+                "source_type": "date_expression",
+                "static_value": "",
+                "date_expression": "",
+                "target_field_id": "scheduled_datetime",
+                "trigger_field_id": "",
+                "date_base_field_id": "reschedule_contact_date"
+              }
+            ],
+            "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+          },
+          {
+            "id": "f6ef57f9-2c28-41c8-8cc5-9f427a38bb03",
+            "type": "update_record",
+            "filter_value": "",
+            "field_mappings": [
+              {
+                "id": "dd779c8a-c295-45ca-bc47-ffa1624ac7c4",
+                "source_type": "static",
+                "static_value": "الاتصال لحجز موعد",
+                "target_field_id": "client_stage",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "a0223e07-2fc0-43a9-b211-a3aaa6ae7452",
+                "source_type": "static",
+                "static_value": "الوقت غير مناسب",
+                "target_field_id": "client_status",
+                "trigger_field_id": ""
+              }
+            ],
+            "filter_field_id": "client_id",
+            "target_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+            "filter_value_source": "trigger_field",
+            "filter_trigger_field_id": "client_id"
+          }
+        ],
+        "label_ar": "الوقت غير مناسب",
+        "conditions": [
+          {
+            "id": "c1d5088e-1bc1-445f-b0d7-74eda1bf1c31",
+            "value": "wrong_time",
+            "field_id": "call_result",
+            "operator": "equals",
+            "only_on_change": true
+          },
+          {
+            "id": "11f8af1c-e847-4bd2-915c-1176c245d5d6",
+            "value": "",
+            "field_id": "actual_datetime",
+            "operator": "is_not_empty"
+          },
+          {
+            "id": "cbbee5fa-00bb-4262-9218-2c54aad270f5",
+            "value": [
+              "appointment_booking_call"
+            ],
+            "field_id": "followup_type",
+            "operator": "equals"
+          }
+        ]
+      },
+      {
+        "id": "605c6e26-2724-4354-93ee-65564ce121a7",
+        "actions": [
+          {
+            "id": "e384f9e9-1fcc-4c75-8112-a2644bcec33c",
+            "type": "update_record",
+            "filter_value": "",
+            "field_mappings": [
+              {
+                "id": "82a41155-fa85-4e9d-9769-6c7190badaf2",
+                "source_type": "static",
+                "static_value": "غير مؤهل",
+                "target_field_id": "client_stage",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "a98d713d-3d8e-46b2-b8ee-07b4a2645320",
+                "source_type": "static",
+                "static_value": "غير مهتم",
+                "target_field_id": "client_status",
+                "trigger_field_id": ""
+              }
+            ],
+            "filter_field_id": "client_id",
+            "target_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+            "filter_value_source": "trigger_field",
+            "filter_trigger_field_id": "client_id"
+          }
+        ],
+        "label_ar": "غير مهتم",
+        "conditions": [
+          {
+            "id": "4c2a15ff-17e6-43d3-b66a-21842c05613a",
+            "value": "not_interested",
+            "field_id": "call_result",
+            "operator": "equals",
+            "only_on_change": true
+          },
+          {
+            "id": "4fdcfe74-d511-46ba-90d7-033c9f19f966",
+            "value": "",
+            "field_id": "actual_datetime",
+            "operator": "is_not_empty"
+          }
+        ]
+      }
+    ],
+    "group_id": "ed8766a4-a11d-48b0-8786-d3d4e61d4ed8",
+    "label_ar": "المتابعات - إتصال حجز موعد",
+    "label_en": "Follow-ups - Booking Call",
+    "metadata": null,
+    "is_active": true,
+    "conditions": [
+      {
+        "id": "39350c6e-4839-449c-99fc-2bfa556412f5",
+        "value": "no_answer",
+        "field_id": "call_result",
+        "operator": "equals",
+        "only_on_change": true
+      },
+      {
+        "id": "53e03675-7761-42f6-9bde-1d3fde5dd655",
+        "value": "",
+        "field_id": "actual_datetime",
+        "operator": "is_not_empty"
+      },
+      {
+        "id": "40d9fb44-59f6-4541-8d5e-a07d06970ecb",
+        "value": 10,
+        "field_id": "followup_number",
+        "operator": "less_than"
+      },
+      {
+        "id": "e94aa5db-a9bb-40e2-90cf-92152ca5f73d",
+        "value": [
+          "appointment_booking_call"
+        ],
+        "field_id": "followup_type",
+        "operator": "equals"
+      }
+    ],
+    "created_at": "2026-04-20T09:22:14.56+00:00",
+    "updated_at": "2026-06-16T15:40:08.213156+00:00",
+    "trigger_event": "update",
+    "trigger_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63",
+    "trigger_webhook_slug_id": null
+  },
+  {
+    "id": "a10fd4c9-a360-4caa-9421-c9501409bd68",
+    "actions": [
+      {
+        "id": "5be95c98-74d4-4ab6-9c75-caba007b783e",
+        "type": "send_whatsapp_message",
+        "to_field_id": "phone",
+        "body_template": "مرحبا اثنين"
+      }
+    ],
+    "branches": [
+      {
+        "id": "03df2550-6c5a-4d57-bcbc-bbd4a49a8ecd",
+        "actions": [
+          {
+            "id": "5be95c98-74d4-4ab6-9c75-caba007b783e",
+            "type": "send_whatsapp_message",
+            "to_field_id": "phone",
+            "body_template": "مرحبا اثنين"
+          }
+        ],
+        "is_else": false,
+        "label_ar": "إرسال الترحيب",
+        "label_en": "Send welcome",
+        "conditions": []
+      }
+    ],
+    "group_id": "ed8766a4-a11d-48b0-8786-d3d4e61d4ed8",
+    "label_ar": "ترحيب جهة اتصال جديدة عبر واتساب",
+    "label_en": "Welcome new contact via WhatsApp",
+    "metadata": null,
+    "is_active": false,
+    "conditions": [],
+    "created_at": "2026-04-25T23:43:24.687+00:00",
+    "updated_at": "2026-06-09T13:28:41.445068+00:00",
+    "trigger_event": "create",
+    "trigger_model_id": "f08c674a-0808-4c5e-8421-101d76b30187",
+    "trigger_webhook_slug_id": null
+  },
+  {
+    "id": "58392e9e-62bb-4a50-bcdb-81c7781b0539",
+    "actions": [
+      {
+        "id": "f0fe9951-7e33-4a89-8722-3c62594fb8d7",
+        "type": "send_whatsapp_message",
+        "to_field_id": "customer_phone",
+        "body_template": "عذراً لعدم تمكننا من الرد على اتصالكم. سنقوم بمعاودة الاتصال بكم في أقرب وقت ممكن.\n\nشكراً لتواصلكم مع وصل العقارية 🌹"
+      }
+    ],
+    "branches": [
+      {
+        "id": "544ac45d-445d-4789-ba35-c43d44a88f1a",
+        "actions": [
+          {
+            "id": "f0fe9951-7e33-4a89-8722-3c62594fb8d7",
+            "type": "send_whatsapp_message",
+            "to_field_id": "customer_phone",
+            "body_template": "عذراً لعدم تمكننا من الرد على اتصالكم. سنقوم بمعاودة الاتصال بكم في أقرب وقت ممكن.\n\nشكراً لتواصلكم مع وصل العقارية 🌹"
+          }
+        ],
+        "is_else": false,
+        "label_ar": "مكالمة واردة بدون رد",
+        "label_en": "Inbound missed/no-answer",
+        "conditions": [
+          {
+            "id": "71e79871-d111-4f45-9ca0-0541d6cda10c",
+            "value": "inbound",
+            "field_id": "direction",
+            "operator": "equals"
+          },
+          {
+            "id": "3fc0c09e-633e-4171-8545-2cf707c3bc4e",
+            "value": "missed",
+            "field_id": "status",
+            "operator": "intersects"
+          }
+        ]
+      }
+    ],
+    "group_id": "ed8766a4-a11d-48b0-8786-d3d4e61d4ed8",
+    "label_ar": "رسالة اعتذار عند مكالمة فائتة",
+    "label_en": "Apology WhatsApp on missed call",
+    "metadata": null,
+    "is_active": true,
+    "conditions": [
+      {
+        "id": "71e79871-d111-4f45-9ca0-0541d6cda10c",
+        "value": "inbound",
+        "field_id": "direction",
+        "operator": "equals"
+      },
+      {
+        "id": "3fc0c09e-633e-4171-8545-2cf707c3bc4e",
+        "value": "missed",
+        "field_id": "status",
+        "operator": "intersects"
+      }
+    ],
+    "created_at": "2026-04-27T15:03:48.753+00:00",
+    "updated_at": "2026-04-27T15:32:55.517445+00:00",
+    "trigger_event": "create",
+    "trigger_model_id": "1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4",
+    "trigger_webhook_slug_id": null
+  },
+  {
+    "id": "4b60ef83-5e16-4ff1-b522-b88e7ae2ab35",
+    "actions": [
+      {
+        "id": "ac45562a-6c1d-4224-8b13-3ca25f5ceffa",
+        "type": "update_record",
+        "filter_value": "",
+        "field_mappings": [
+          {
+            "id": "f049f771-b696-4824-aeb9-40889b685241",
+            "source_type": "static",
+            "static_value": "تم حجز موعد",
+            "target_field_id": "client_status",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "d47fae80-2374-4363-b01c-d01c4a878462",
+            "source_type": "static",
+            "static_value": "موعد زيارة",
+            "target_field_id": "client_stage",
+            "trigger_field_id": ""
+          }
+        ],
+        "filter_field_id": "id",
+        "target_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+        "filter_value_source": "trigger_field",
+        "filter_trigger_field_id": "client_id"
+      },
+      {
+        "id": "f880b519-1c14-4c1b-bb74-983978a5b83d",
+        "to": {
+          "kind": "lookup",
+          "lookup_field_name": "client_id",
+          "target_phone_field_name": "phone_number"
+        },
+        "type": "send_whatsapp_message",
+        "body_template": "عزيزنا عميل وصل العقارية، تم حجز موعد زيارة لمشروع {project_id.project_name}، {appointment_date|human_ar}، نسعد بزيارتكم.\nرابط موقع المشروع: {project_id.project_location}"
+      },
+      {
+        "id": "38af41fb-a738-4bfd-ad80-42a2c3eb828f",
+        "type": "create_record",
+        "field_mappings": [
+          {
+            "id": "b38aa2a7-3c4a-4e4c-8269-7822447f8601",
+            "source_type": "trigger_field",
+            "static_value": "",
+            "target_field_id": "client_id",
+            "trigger_field_id": "client_id"
+          },
+          {
+            "id": "bc8c62ea-6d25-4ce9-9284-89b8bd0cbe40",
+            "source_type": "static",
+            "static_value": "appointment_confirmation_call",
+            "target_field_id": "followup_type",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "7ef473d1-65b5-4dbb-a7de-df99087aa6ab",
+            "source_type": "record_id",
+            "static_value": "",
+            "target_field_id": "appointment_id",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "94c60799-330b-4985-878f-b30a6e804129",
+            "date_base": "trigger_field",
+            "source_type": "date_expression",
+            "static_value": "",
+            "date_expression": "-1d @10:00",
+            "target_field_id": "scheduled_datetime",
+            "trigger_field_id": "",
+            "date_base_field_id": "appointment_date"
+          },
+          {
+            "id": "71431f9a-d0a4-4779-9ea3-be685c6676cd",
+            "source_type": "current_user",
+            "static_value": "",
+            "target_field_id": "sales_rep",
+            "trigger_field_id": ""
+          }
+        ],
+        "skip_if_exists": false,
+        "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+      },
+      {
+        "id": "66962966-14d8-4c08-9752-85d3fdf10d92",
+        "type": "create_record",
+        "field_mappings": [
+          {
+            "id": "ce9f46cc-ea9e-4bae-b874-7e176d08302a",
+            "source_type": "trigger_field",
+            "static_value": "",
+            "target_field_id": "client_id",
+            "trigger_field_id": "client_id"
+          },
+          {
+            "id": "dfaa4fda-a578-4a08-9b60-3b7c4ab63cee",
+            "source_type": "static",
+            "static_value": "appointment_confirmation_call",
+            "target_field_id": "followup_type",
+            "trigger_field_id": ""
+          },
+          {
+            "id": "19e95486-2cc1-4650-aef9-98a6827b5fbe",
+            "date_base": "trigger_field",
+            "source_type": "date_expression",
+            "static_value": "",
+            "date_expression": "+0d @10:00",
+            "target_field_id": "scheduled_datetime",
+            "trigger_field_id": "",
+            "date_base_field_id": "appointment_date"
+          },
+          {
+            "id": "f031218b-f024-42b1-be91-928a1fe47f1e",
+            "source_type": "current_user",
+            "static_value": "",
+            "target_field_id": "sales_rep",
+            "trigger_field_id": ""
+          }
+        ],
+        "skip_if_exists": false,
+        "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+      }
+    ],
+    "branches": [
+      {
+        "id": "27f41c88-120b-4fd7-aa23-95377c5b253c",
+        "actions": [
+          {
+            "id": "ac45562a-6c1d-4224-8b13-3ca25f5ceffa",
+            "type": "update_record",
+            "filter_value": "",
+            "field_mappings": [
+              {
+                "id": "f049f771-b696-4824-aeb9-40889b685241",
+                "source_type": "static",
+                "static_value": "تم حجز موعد",
+                "target_field_id": "client_status",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "d47fae80-2374-4363-b01c-d01c4a878462",
+                "source_type": "static",
+                "static_value": "موعد زيارة",
+                "target_field_id": "client_stage",
+                "trigger_field_id": ""
+              }
+            ],
+            "filter_field_id": "id",
+            "target_model_id": "2e86f197-385f-4853-908f-b4cb7237f7d8",
+            "filter_value_source": "trigger_field",
+            "filter_trigger_field_id": "client_id"
+          },
+          {
+            "id": "f880b519-1c14-4c1b-bb74-983978a5b83d",
+            "to": {
+              "kind": "lookup",
+              "lookup_field_name": "client_id",
+              "target_phone_field_name": "phone_number"
+            },
+            "type": "send_whatsapp_message",
+            "body_template": "عزيزنا عميل وصل العقارية، تم حجز موعد زيارة لمشروع {project_id.project_name}، {appointment_date|human_ar}، نسعد بزيارتكم.\nرابط موقع المشروع: {project_id.project_location}"
+          },
+          {
+            "id": "38af41fb-a738-4bfd-ad80-42a2c3eb828f",
+            "type": "create_record",
+            "field_mappings": [
+              {
+                "id": "b38aa2a7-3c4a-4e4c-8269-7822447f8601",
+                "source_type": "trigger_field",
+                "static_value": "",
+                "target_field_id": "client_id",
+                "trigger_field_id": "client_id"
+              },
+              {
+                "id": "bc8c62ea-6d25-4ce9-9284-89b8bd0cbe40",
+                "source_type": "static",
+                "static_value": "appointment_confirmation_call",
+                "target_field_id": "followup_type",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "7ef473d1-65b5-4dbb-a7de-df99087aa6ab",
+                "source_type": "record_id",
+                "static_value": "",
+                "target_field_id": "appointment_id",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "94c60799-330b-4985-878f-b30a6e804129",
+                "date_base": "trigger_field",
+                "source_type": "date_expression",
+                "static_value": "",
+                "date_expression": "-1d @10:00",
+                "target_field_id": "scheduled_datetime",
+                "trigger_field_id": "",
+                "date_base_field_id": "appointment_date"
+              },
+              {
+                "id": "71431f9a-d0a4-4779-9ea3-be685c6676cd",
+                "source_type": "current_user",
+                "static_value": "",
+                "target_field_id": "sales_rep",
+                "trigger_field_id": ""
+              }
+            ],
+            "skip_if_exists": false,
+            "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+          },
+          {
+            "id": "66962966-14d8-4c08-9752-85d3fdf10d92",
+            "type": "create_record",
+            "field_mappings": [
+              {
+                "id": "ce9f46cc-ea9e-4bae-b874-7e176d08302a",
+                "source_type": "trigger_field",
+                "static_value": "",
+                "target_field_id": "client_id",
+                "trigger_field_id": "client_id"
+              },
+              {
+                "id": "dfaa4fda-a578-4a08-9b60-3b7c4ab63cee",
+                "source_type": "static",
+                "static_value": "appointment_confirmation_call",
+                "target_field_id": "followup_type",
+                "trigger_field_id": ""
+              },
+              {
+                "id": "19e95486-2cc1-4650-aef9-98a6827b5fbe",
+                "date_base": "trigger_field",
+                "source_type": "date_expression",
+                "static_value": "",
+                "date_expression": "+0d @10:00",
+                "target_field_id": "scheduled_datetime",
+                "trigger_field_id": "",
+                "date_base_field_id": "appointment_date"
+              },
+              {
+                "id": "f031218b-f024-42b1-be91-928a1fe47f1e",
+                "source_type": "current_user",
+                "static_value": "",
+                "target_field_id": "sales_rep",
+                "trigger_field_id": ""
+              }
+            ],
+            "skip_if_exists": false,
+            "target_model_id": "764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63"
+          }
+        ],
+        "label_ar": "تم الحجز",
+        "label_en": "Booked",
+        "conditions": [
+          {
+            "id": "71a4252e-c56e-4588-adaf-6bff881bea79",
+            "value": "scheduled",
+            "field_id": "appointment_status",
+            "operator": "equals"
+          }
+        ]
+      }
+    ],
+    "group_id": "e348ce41-a55c-47d6-b2be-9a97a551547c",
+    "label_ar": "حجز موعد عبر مكالمة",
+    "label_en": "Appointment booked via call",
+    "metadata": null,
+    "is_active": true,
+    "conditions": [
+      {
+        "id": "71a4252e-c56e-4588-adaf-6bff881bea79",
+        "value": "scheduled",
+        "field_id": "appointment_status",
+        "operator": "equals"
+      }
+    ],
+    "created_at": "2026-05-11T12:33:13.244225+00:00",
+    "updated_at": "2026-06-09T13:19:52.720702+00:00",
+    "trigger_event": "create",
+    "trigger_model_id": "b032a675-6237-4436-9783-a1a253855f74",
+    "trigger_webhook_slug_id": null
+  }
+]
