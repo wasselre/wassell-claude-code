@@ -1,7 +1,7 @@
 # PRD: Dashboards
 
 **Status:** Live
-**Last updated:** 2026-06-16 (**Universal Analytics Engine — Phase A (in progress).** Dashboards now run on a shared, isomorphic analytics engine (`src/lib/analytics/`) instead of the old COUNT-only client utilities. New: all aggregations (count / count_distinct / sum / avg / min / max / percentage / ratio), multi-level grouping, lookup/assignee/date/number grouping, **time bucketing in Asia/Riyadh** (hour…year — the old UTC bucketing bug is fixed), numeric range bucketing, **relative date ranges** (today / yesterday / this·last week·month·quarter / this year / last 7 · 30 days / all-time), **comparison metrics** on stat cards (vs previous period), a new 6-section **widget builder** with a live preview, and **drill-through** (click any number / bar / slice / point → the records behind it, openable in the record form). A server endpoint `POST /api/analytics` runs the *same* engine for large datasets + (upcoming) public snapshots. Legacy widgets migrate-on-read losslessly. **Still in progress for Phase A:** dashboard-level global filters, public-dashboard stored snapshots, and the Semantic Metrics manager UI.) | 2026-05-07 (Realtime + access hardening) | 2026-04-19 (range-field filters)
+**Last updated:** 2026-06-16 (**Universal Analytics Engine — Phase A (in progress).** Dashboards now run on a shared, isomorphic analytics engine (`src/lib/analytics/`) instead of the old COUNT-only client utilities. New: all aggregations (count / count_distinct / sum / avg / min / max / percentage / ratio), multi-level grouping, lookup/assignee/date/number grouping, **time bucketing in Asia/Riyadh** (hour…year — the old UTC bucketing bug is fixed), numeric range bucketing, **relative date ranges** (today / yesterday / this·last week·month·quarter / this year / last 7 · 30 days / all-time), **comparison metrics** on stat cards (vs previous period), a new 6-section **widget builder** with a live preview, and **drill-through** (click any number / bar / slice / point → the records behind it, openable in the record form). A server endpoint `POST /api/analytics` runs the *same* engine for large datasets + (upcoming) public snapshots. Legacy widgets migrate-on-read losslessly. **Now also live:** dashboard-level global filters (a configured filter bar that fans out to widgets by `filter_behavior`), public-dashboard **stored snapshots** (anon renders an `AnalyticsResult` from JSONB — never reads raw records or runs analytics), and the **Semantic Metrics** layer — reusable named measures (a `metric_definitions` table + a Metrics manager + a "Saved metric" picker in the builder). Phase A is functionally complete; the remaining 12 widget types are Phase B.) | 2026-05-07 (Realtime + access hardening) | 2026-04-19 (range-field filters)
 **Related PRDs:** model-builder.md, record-management.md, access-control.md, data-storage.md
 
 ## What it is (in plain English)
@@ -17,6 +17,8 @@ Managers need at-a-glance views of the business: today's calls per agent, respon
 - **5 widget families (Phase A):** Stat (single number, with optional comparison vs previous period), Bar, Pie/Donut, Line/Area, Table (record list). (12 more widget types — KPI card, stacked/grouped bar, pivot, funnel, gauge, leaderboard, map, heatmap… — are Phase B.)
 - **The query** (`AnalyticsQuery`, a pure-JSON document) carries: `source_model_id`, optional `saved_view_id`, `filters` (AND/OR group), `date_filter` (a date field + a relative/custom range), `group_by[]` (multi-level; each level can carry a time bucket for dates or a numeric bin width for numbers), `aggregation` (type + field, or numerator/denominator sub-queries for ratio/percentage, or a `metric_id`), `sort`, `limit`. It never contains code — all resolution happens in the engine.
 - **Aggregations:** count, count_distinct, sum, avg, min, max, percentage (part / whole), ratio (numerator / denominator).
+- **Semantic Metrics:** reusable named measures (e.g. "Revenue" = Σ total_price on Units). A `MetricDefinition` is a value-only `AnalyticsQuery` plus a display `format`, stored in `metric_definitions` (admin-RLS, `updated_at` trigger — mirrors `dashboards`). Manage them in the **Metrics** manager (dashboard editor → "Metrics"); pick one in the builder's **Saved metric** dropdown to drive a widget. The metric supplies source + aggregation + base filters while the widget overlays `group_by` / `date_filter`, so "Revenue **by district**" = the metric plus a district group level. KPI targets are deliberately out of scope (a future `KPIDefinition { metric_id, target_value, … }` layers on top without changing the metric or engine).
+- **Global filters:** an admin configures filter controls (date / select / search) bound to a reference field; the bar renders atop the dashboard and each widget merges the active filters into its query per its `filter_behavior` — inherit (match by field slug), `custom_mapping`, or ignore (per-widget toggle).
 - **Grouping:** dropdown (option order + colors, zero-count options shown), multiselect (fan-out), lookup (resolved display value), assignee (user name), checkbox (Yes/No), date (hour…year, Riyadh), number/currency (range bins). Multi-level → cartesian groups.
 - **Dates:** all date math is Asia/Riyadh via one module (`src/lib/analytics/dateWindows.ts`). User `date`/`datetime` fields are read as Riyadh wall-clock; `created_at`/`updated_at` as UTC instants shifted to Riyadh.
 - **Drill-through (mandatory):** clicking any number/bar/slice/point opens a modal listing the underlying records (reusing the record table + `DynamicCell`); clicking a row opens it in `RecordFormModal` (read-only on public).
@@ -29,11 +31,12 @@ Managers need at-a-glance views of the business: today's calls per agent, respon
 2. **Add a widget:** "+ Widget" → builder opens → choose model, visualization, aggregation, grouping, date range, filters → live preview updates → Save.
 3. **Arrange:** drag / resize on the grid.
 4. **Drill in:** click a bar/number → see and open the records behind it.
-5. **Share publicly:** toggle "Make public" → copy the URL → stakeholder views without logging in.
+5. **Share publicly:** toggle "Make public" → snapshots refresh with the owner's scope → copy the URL → stakeholder views without logging in.
+6. **Define a metric:** dashboard editor → "Metrics" → New metric → name it, pick a source model + aggregation (+ optional filters) → Save. Then in any widget's builder, choose it under "Saved metric" (optionally add a Group by to break it down).
 
 ## Data touched
 - Reads/writes: `dashboards` (widgets `{ query, viz, filter_behavior, config (legacy), x/y/w/h }` + `filters[]` + `owner_user_id` + `public_token`/`is_public`, all JSONB).
-- Reads (engine): `unified_records` (server) / the store's RLS-scoped records (client), `models`, `model_views` (saved-view filters), `users` (labels), and (upcoming) `metric_definitions`.
+- Reads (engine): `unified_records` (server) / the store's RLS-scoped records (client), `models`, `model_views` (saved-view filters), `users` (labels), and `metric_definitions` (named metrics resolved by the engine).
 
 ## Key files
 | File | What it does |
@@ -44,15 +47,17 @@ Managers need at-a-glance views of the business: today's calls per agent, respon
 | `src/pages/Dashboard/components/WidgetRenderer.tsx` | Runs the engine, dispatches by family, drill-through host |
 | `src/pages/Dashboard/components/builder/WidgetBuilder.tsx` | The widget builder (+ `ConditionsEditor.tsx`) |
 | `src/pages/Dashboard/components/DrillThroughModal.tsx` | Records-behind-the-number modal |
+| `src/pages/Dashboard/components/MetricsManagerModal.tsx` | Semantic-metrics CRUD (opened from the editor's "Metrics" button) |
+| `src/pages/Dashboard/components/{DashboardFilterBar,DashboardFiltersConfigModal}.tsx` | Global filter bar + admin config |
 | `src/pages/Dashboard/components/widgets/{Stat,BarChart,PieChart,LineChart,Table}Widget.tsx` | Presentational renderers |
-| `src/pages/Dashboard/lib/{widgetViz,resultToChartData,format}.ts` | Viz families, chart adapter, number formatting |
+| `src/pages/Dashboard/lib/{widgetViz,resultToChartData,format,globalFilters,snapshots}.ts` | Viz families, chart adapter, number formatting, global-filter compose, public-snapshot refresh |
 | `src/types/index.ts` | `Dashboard`, `DashboardWidget`, `WidgetViz`, `DashboardFilter`, `MetricDefinition` |
-| `src/stores/appStore.ts` | `dashboards` state, `saveDashboard` |
+| `src/stores/appStore.ts` | `dashboards` + `metricDefinitions` state; `saveDashboard` / `saveMetricDefinition` / `deleteMetricDefinition` |
+| `supabase/migrations/2026-06-16_metric_definitions.sql` | `metric_definitions` table + admin RLS + `updated_at` trigger |
 
 ## Open questions / known limitations
 - **Phase B widget types** (KPI card, stacked/grouped bar, pivot, funnel, gauge, progress, leaderboard, map, heatmap) not built yet.
-- **Dashboard-level global filters** (date / district / agent controls that fan out to widgets) — designed, not yet shipped.
-- **Public stored snapshots** — the engine + endpoint exist; the publish/refresh flow + `PublicDashboardPage` rewrite are pending. Until then public dashboards render from client records (limited for anon).
-- **Semantic Metrics manager UI** — the `MetricDefinition` type + engine resolution exist; the table + manager UI are pending.
+- **High-cardinality dropdown grouping** shows **all options including zero-count** ones (e.g. grouping units "by district" renders ~120 district options, most empty). Ideal for small categoricals (stages/statuses), noisy for large ones — a `top_n` / hide-empty control is Phase B.
 - Composite-metric grouping is scalar-only in Phase A.
+- The record-list (table) widget family isn't snapshotted for public dashboards in Phase A.
 - No scheduled email of snapshots.
