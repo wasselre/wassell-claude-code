@@ -1447,7 +1447,7 @@ export interface WorkflowRun {
 
 // Dashboard types
 
-export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress';
+export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot';
 
 export type WidgetFilterOperator =
   | 'equals'
@@ -1591,7 +1591,14 @@ export interface VizProgress {
   color?: string;
   number_format?: WidgetNumberFormat;
 }
-export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress;
+// Pivot: a two-level grouped result as a matrix — first level = rows, second
+// level = columns, cells = the aggregated value. Collapses to a one-column
+// table when only one group level is set.
+export interface VizPivot {
+  family: 'pivot';
+  number_format?: WidgetNumberFormat;
+}
+export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress | VizPivot;
 
 // Dashboard-level global filters + per-widget opt-in.
 export type DashboardFilterControl = 'date_range' | 'select' | 'search';

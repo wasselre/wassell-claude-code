@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { v4 as uuid } from 'uuid';
-import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2, Filter, Trophy, Gauge as GaugeIcon, Target } from 'lucide-react';
+import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2, Filter, Trophy, Gauge as GaugeIcon, Target, Grid3x3 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { translateLabel } from '@/lib/translateLabel';
 import Modal from '@/components/ui/Modal';
@@ -48,6 +48,7 @@ const WIDGET_TYPES: { type: WidgetType; icon: typeof Hash; ar: string; en: strin
   { type: 'leaderboard', icon: Trophy, ar: 'المتصدرون', en: 'Leaderboard' },
   { type: 'gauge', icon: GaugeIcon, ar: 'عداد', en: 'Gauge' },
   { type: 'progress', icon: Target, ar: 'تقدم', en: 'Progress' },
+  { type: 'pivot', icon: Grid3x3, ar: 'مصفوفة', en: 'Pivot' },
 ];
 
 const AGG_TYPES: { value: AggregationType; ar: string; en: string }[] = [
@@ -126,6 +127,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const [ignoreFilters, setIgnoreFilters] = useState(false);
   const [metricId, setMetricId] = useState('');
   const [goal, setGoal] = useState(''); // gauge max / progress target
+  const [stacked, setStacked] = useState(false);
 
   // Seed from existing widget (via the engine-effective query/viz) or reset.
   useEffect(() => {
@@ -155,6 +157,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       setGoodDir(v.family === 'stat' ? v.comparison?.good_direction ?? 'up' : 'up');
       setDonut(v.family === 'pies' ? !!v.donut : false);
       setArea(v.family === 'lines' ? !!v.area : false);
+      setStacked(v.family === 'bars' ? !!v.stacked : false);
       setTableFieldIds(v.family === 'table' ? v.column_field_ids ?? [] : []);
       setMaxRows(v.family === 'table' ? v.page_size ?? 10 : 10);
       setIgnoreFilters(existingWidget.filter_behavior?.mode === 'ignore_dashboard_filters');
@@ -164,7 +167,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       setType('stat'); setTitleAr(''); setTitleEn(''); setSourceModelId('');
       setConditions([]); setPartConditions([]); setAggType('count'); setAggFieldId('');
       setGroupLevels([]); setDateFieldId(''); setDateMode('');
-      setColor('#B8734F'); setComparison(false); setGoodDir('up'); setDonut(false); setArea(false);
+      setColor('#B8734F'); setComparison(false); setGoodDir('up'); setDonut(false); setArea(false); setStacked(false);
       setTableFieldIds([]); setMaxRows(10); setIgnoreFilters(false); setMetricId(''); setGoal('');
     }
   }, [existingWidget, open]);
@@ -177,7 +180,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const family = vizFamilyFor(type);
 
   const needsField = aggType === 'sum' || aggType === 'avg' || aggType === 'min' || aggType === 'max' || aggType === 'count_distinct';
-  const needsGroup = family === 'bars' || family === 'pies' || family === 'lines' || family === 'funnel' || family === 'leaderboard';
+  const needsGroup = family === 'bars' || family === 'pies' || family === 'lines' || family === 'funnel' || family === 'leaderboard' || family === 'pivot';
 
   function buildAggregation(): AggregationConfig {
     if (metricId) return { type: 'count', metric_id: metricId };
@@ -232,7 +235,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       case 'stat':
         return { family: 'stat', color, number_format: numFmt, comparison: comparison ? { mode: 'previous_period', good_direction: goodDir } : undefined };
       case 'bars':
-        return { family: 'bars', color_mode: { kind: 'by_group_option' } };
+        return { family: 'bars', color_mode: { kind: 'by_group_option' }, stacked };
       case 'pies':
         return { family: 'pies', donut, color_mode: { kind: 'by_group_option' }, show_legend: true };
       case 'lines':
@@ -249,6 +252,8 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
         const g = Number(goal);
         return { family: 'progress', target: g > 0 ? g : numFmt?.percent ? 100 : undefined, color, number_format: numFmt };
       }
+      case 'pivot':
+        return { family: 'pivot', number_format: numFmt };
       default:
         return { family: 'table', column_field_ids: tableFieldIds, page_size: maxRows };
     }
@@ -295,7 +300,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       x: 0, y: 0, w: 4, h: 4,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters, metricId, goal],
+    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters, metricId, goal, stacked],
   );
 
   const handleSave = () => {
@@ -498,6 +503,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
               )}
               {family === 'pies' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={donut} onChange={(e) => setDonut(e.target.checked)} className="h-3.5 w-3.5 text-copper" />{isAr ? 'حلقي (دونات)' : 'Donut'}</label>}
               {family === 'lines' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={area} onChange={(e) => setArea(e.target.checked)} className="h-3.5 w-3.5 text-copper" />{isAr ? 'مساحة' : 'Area'}</label>}
+              {family === 'bars' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={stacked} onChange={(e) => setStacked(e.target.checked)} className="h-3.5 w-3.5 text-copper" />{isAr ? 'متراكم (مع مستويين تجميع)' : 'Stacked (with 2 group levels)'}</label>}
               {(family === 'gauge' || family === 'progress') && (
                 <div className="space-y-2">
                   <div className="flex items-center gap-2">

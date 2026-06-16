@@ -30,3 +30,42 @@ export function resultToChartData(result: AnalyticsResult | null, isAr: boolean)
     };
   });
 }
+
+export interface SeriesPoint {
+  name: string; // first-level (x-axis) label
+  [series: string]: number | string;
+}
+export interface SeriesResult {
+  data: SeriesPoint[];
+  series: { key: string; color: string }[]; // second-level series (legend)
+}
+
+/**
+ * Pivots a TWO-level AnalyticsResult into recharts series shape: the first group
+ * level becomes the x-axis category, the second becomes the series (one bar/area
+ * per second-level value within each category). Series color follows the second
+ * level's option color, else the brand palette. Powers stacked/grouped bars and
+ * the pivot table. A single-level result collapses to one unnamed series.
+ */
+export function resultToSeries(result: AnalyticsResult | null, isAr: boolean): SeriesResult {
+  if (!result) return { data: [], series: [] };
+  const xOrder: string[] = [];
+  const sOrder: string[] = [];
+  const sColor: Record<string, string> = {};
+  const cell: Record<string, Record<string, number>> = {};
+  result.rows.forEach((row) => {
+    const k0 = row.keys[0];
+    const k1 = row.keys[1];
+    const x = k0 ? (isAr ? k0.label_ar : k0.label_en) : '—';
+    const s = k1 ? (isAr ? k1.label_ar : k1.label_en) : '—';
+    if (!xOrder.includes(x)) xOrder.push(x);
+    if (!(s in sColor)) {
+      sColor[s] = k1?.color ?? BRAND_PALETTE[sOrder.length % BRAND_PALETTE.length]!;
+      sOrder.push(s);
+    }
+    cell[x] ??= {};
+    cell[x]![s] = (cell[x]![s] ?? 0) + (row.value ?? 0);
+  });
+  const data: SeriesPoint[] = xOrder.map((x) => ({ name: x, ...cell[x] }));
+  return { data, series: sOrder.map((s) => ({ key: s, color: sColor[s]! })) };
+}
