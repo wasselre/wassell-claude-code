@@ -19,6 +19,7 @@ import {
   Globe,
   Folder,
   FolderOpen,
+  ClipboardList,
   Briefcase,
   Calendar,
   Mail,
@@ -262,6 +263,16 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
           >
             <FolderOpen size={20} />
             {!railCollapsed && <span>{t('nav.files')}</span>}
+          </NavLink>
+
+          {/* Sales Queue — the daily follow-up work surface (Sales OS) */}
+          <NavLink
+            to="/sales/tasks"
+            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+            title={railCollapsed ? (isAr ? 'مهام المبيعات' : 'Sales Tasks') : undefined}
+          >
+            <ClipboardList size={20} />
+            {!railCollapsed && <span>{isAr ? 'مهام المبيعات' : 'Sales Tasks'}</span>}
           </NavLink>
 
           {/* Divider label */}

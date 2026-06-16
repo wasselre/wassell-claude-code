@@ -39,6 +39,7 @@ import CopywriterPage from '@/pages/Copywriter/CopywriterPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
+import SalesTasksPage from '@/pages/Sales/SalesTasksPage';
 import ImageChatsPage from '@/pages/ImageChats/ImageChatsPage';
 import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import FilesPage from '@/pages/Files/FilesPage';
@@ -251,6 +252,7 @@ export default function App() {
               doesn't get matched as a folder id. */}
           <Route path="/files/doc/:fileId" element={<DocumentEditorPage />} />
           <Route path="/files/:folderId" element={<FilesPage />} />
+          <Route path="/sales/tasks" element={<SalesTasksPage />} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />
