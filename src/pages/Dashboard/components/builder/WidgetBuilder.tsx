@@ -244,8 +244,11 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
     }
   }
 
+  // Only one title side is required — the other defaults to it on save (the
+  // bilingual auto-translate-on-blur is best-effort and can fail; a user who
+  // types one language must still be able to save).
   const valid =
-    !!titleAr && !!titleEn && !!sourceModelId &&
+    (!!titleAr.trim() || !!titleEn.trim()) && !!sourceModelId &&
     (!needsField || !!aggFieldId) &&
     (!needsGroup || groupLevels.some((g) => g.field_id)) &&
     (family !== 'table' || tableFieldIds.length > 0);
@@ -254,9 +257,9 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
     () => ({
       id: existingWidget?.id ?? 'preview',
       type,
-      title_ar: titleAr || ' ',
-      title_en: titleEn || ' ',
       source_model_id: sourceModelId,
+      title_ar: titleAr.trim() || titleEn.trim() || ' ',
+      title_en: titleEn.trim() || titleAr.trim() || ' ',
       query: buildQuery(),
       viz: buildViz(),
       config: buildConfig(),
