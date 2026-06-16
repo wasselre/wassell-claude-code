@@ -1447,7 +1447,7 @@ export interface WorkflowRun {
 
 // Dashboard types
 
-export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table';
+export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard';
 
 export type WidgetFilterOperator =
   | 'equals'
@@ -1559,7 +1559,22 @@ export interface VizTable {
   column_field_ids?: string[];
   page_size?: number;
 }
-export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable;
+// Funnel: an ordered single-level grouped result rendered as descending stages
+// (preserves the group order — e.g. pipeline stages — and scales each bar to the
+// largest stage). Leaderboard: the same data ranked desc with inline bars + rank.
+export interface VizFunnel {
+  family: 'funnel';
+  color_mode?: WidgetColorMode;
+  number_format?: WidgetNumberFormat;
+  show_pct?: boolean; // show each stage as % of the largest stage
+}
+export interface VizLeaderboard {
+  family: 'leaderboard';
+  color_mode?: WidgetColorMode;
+  number_format?: WidgetNumberFormat;
+  max_rows?: number;
+}
+export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard;
 
 // Dashboard-level global filters + per-widget opt-in.
 export type DashboardFilterControl = 'date_range' | 'select' | 'search';

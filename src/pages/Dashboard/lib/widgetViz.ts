@@ -1,6 +1,6 @@
 import type { WidgetType, WidgetViz } from '@/types';
 
-export type VizFamily = 'stat' | 'bars' | 'pies' | 'lines' | 'table';
+export type VizFamily = 'stat' | 'bars' | 'pies' | 'lines' | 'table' | 'funnel' | 'leaderboard';
 
 // On-brand default chart palette (copper → terracotta → gold → sand → chocolate
 // → charcoal) so charts look like Wassel with zero configuration.
@@ -18,6 +18,10 @@ export function vizFamilyFor(type: WidgetType): VizFamily {
       return 'lines';
     case 'table':
       return 'table';
+    case 'funnel':
+      return 'funnel';
+    case 'leaderboard':
+      return 'leaderboard';
     default:
       return 'stat';
   }
@@ -35,6 +39,10 @@ export function defaultVizForType(type: WidgetType): WidgetViz {
       return { family: 'lines', area: false, smooth: false };
     case 'table':
       return { family: 'table', page_size: 10 };
+    case 'funnel':
+      return { family: 'funnel', show_pct: true, color_mode: { kind: 'by_group_option' } };
+    case 'leaderboard':
+      return { family: 'leaderboard', max_rows: 10, color_mode: { kind: 'by_group_option' } };
     default:
       return { family: 'stat', color: '#B8734F' };
   }

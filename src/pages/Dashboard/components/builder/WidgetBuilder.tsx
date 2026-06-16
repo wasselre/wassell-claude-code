@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { v4 as uuid } from 'uuid';
-import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2 } from 'lucide-react';
+import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2, Filter, Trophy } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { translateLabel } from '@/lib/translateLabel';
 import Modal from '@/components/ui/Modal';
@@ -44,6 +44,8 @@ const WIDGET_TYPES: { type: WidgetType; icon: typeof Hash; ar: string; en: strin
   { type: 'pie_chart', icon: PieChart, ar: 'دائري', en: 'Pie' },
   { type: 'line_chart', icon: TrendingUp, ar: 'خطي', en: 'Line' },
   { type: 'table', icon: Table2, ar: 'جدول', en: 'Table' },
+  { type: 'funnel', icon: Filter, ar: 'قمع', en: 'Funnel' },
+  { type: 'leaderboard', icon: Trophy, ar: 'المتصدرون', en: 'Leaderboard' },
 ];
 
 const AGG_TYPES: { value: AggregationType; ar: string; en: string }[] = [
@@ -171,7 +173,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const family = vizFamilyFor(type);
 
   const needsField = aggType === 'sum' || aggType === 'avg' || aggType === 'min' || aggType === 'max' || aggType === 'count_distinct';
-  const needsGroup = family === 'bars' || family === 'pies' || family === 'lines';
+  const needsGroup = family === 'bars' || family === 'pies' || family === 'lines' || family === 'funnel' || family === 'leaderboard';
 
   function buildAggregation(): AggregationConfig {
     if (metricId) return { type: 'count', metric_id: metricId };
@@ -231,6 +233,10 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
         return { family: 'pies', donut, color_mode: { kind: 'by_group_option' }, show_legend: true };
       case 'lines':
         return { family: 'lines', area, smooth: false };
+      case 'funnel':
+        return { family: 'funnel', show_pct: true, color_mode: { kind: 'by_group_option' }, number_format: numFmt };
+      case 'leaderboard':
+        return { family: 'leaderboard', max_rows: 10, color_mode: { kind: 'by_group_option' }, number_format: numFmt };
       default:
         return { family: 'table', column_field_ids: tableFieldIds, page_size: maxRows };
     }

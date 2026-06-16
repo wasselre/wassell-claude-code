@@ -10,6 +10,8 @@ import BarChartWidget from './widgets/BarChartWidget';
 import PieChartWidget from './widgets/PieChartWidget';
 import LineChartWidget from './widgets/LineChartWidget';
 import TableWidget from './widgets/TableWidget';
+import FunnelWidget from './widgets/FunnelWidget';
+import LeaderboardWidget from './widgets/LeaderboardWidget';
 import type { DashboardFilter, DashboardWidget, VizStat } from '@/types';
 
 interface WidgetRendererProps {
@@ -84,6 +86,12 @@ export default function WidgetRenderer({ widget, isPublic, dashboardFilters, fil
       break;
     case 'lines':
       body = <LineChartWidget widget={widget} result={data} onDrill={onDrill} />;
+      break;
+    case 'funnel':
+      body = <FunnelWidget widget={widget} result={data} onDrill={onDrill} />;
+      break;
+    case 'leaderboard':
+      body = <LeaderboardWidget widget={widget} result={data} onDrill={onDrill} />;
       break;
     default:
       body = <div className="text-xs text-charcoal/40">Unknown widget</div>;
