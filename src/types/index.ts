@@ -1447,7 +1447,7 @@ export interface WorkflowRun {
 
 // Dashboard types
 
-export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard';
+export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress';
 
 export type WidgetFilterOperator =
   | 'equals'
@@ -1574,7 +1574,24 @@ export interface VizLeaderboard {
   number_format?: WidgetNumberFormat;
   max_rows?: number;
 }
-export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard;
+// Gauge: a scalar (result.total) drawn as a radial arc filling to value/max.
+// Progress: the same scalar as a linear bar filling to value/target. Both ignore
+// grouping (they use the grand total) and drill to the records behind the number.
+export interface VizGauge {
+  family: 'gauge';
+  max?: number; // scale top; defaults to 100 for percent metrics, else the value
+  target?: number; // optional goal marker
+  color?: string;
+  number_format?: WidgetNumberFormat;
+  good_direction?: 'up' | 'down';
+}
+export interface VizProgress {
+  family: 'progress';
+  target?: number; // the 100% point; defaults to 100 for percent metrics
+  color?: string;
+  number_format?: WidgetNumberFormat;
+}
+export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress;
 
 // Dashboard-level global filters + per-widget opt-in.
 export type DashboardFilterControl = 'date_range' | 'select' | 'search';

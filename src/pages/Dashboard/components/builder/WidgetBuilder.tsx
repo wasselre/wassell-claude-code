@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
 import { v4 as uuid } from 'uuid';
-import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2, Filter, Trophy } from 'lucide-react';
+import { BarChart3, PieChart, TrendingUp, Hash, Table2, Plus, Trash2, Filter, Trophy, Gauge as GaugeIcon, Target } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { translateLabel } from '@/lib/translateLabel';
 import Modal from '@/components/ui/Modal';
@@ -46,6 +46,8 @@ const WIDGET_TYPES: { type: WidgetType; icon: typeof Hash; ar: string; en: strin
   { type: 'table', icon: Table2, ar: 'جدول', en: 'Table' },
   { type: 'funnel', icon: Filter, ar: 'قمع', en: 'Funnel' },
   { type: 'leaderboard', icon: Trophy, ar: 'المتصدرون', en: 'Leaderboard' },
+  { type: 'gauge', icon: GaugeIcon, ar: 'عداد', en: 'Gauge' },
+  { type: 'progress', icon: Target, ar: 'تقدم', en: 'Progress' },
 ];
 
 const AGG_TYPES: { value: AggregationType; ar: string; en: string }[] = [
@@ -123,6 +125,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const [maxRows, setMaxRows] = useState(10);
   const [ignoreFilters, setIgnoreFilters] = useState(false);
   const [metricId, setMetricId] = useState('');
+  const [goal, setGoal] = useState(''); // gauge max / progress target
 
   // Seed from existing widget (via the engine-effective query/viz) or reset.
   useEffect(() => {
@@ -147,7 +150,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       );
       setDateFieldId(q.date_filter?.field.kind === 'field' ? q.date_filter.field.field_id : '');
       setDateMode(q.date_filter?.mode && q.date_filter.mode !== 'custom' ? q.date_filter.mode : '');
-      setColor(v.family === 'stat' ? v.color : '#B8734F');
+      setColor(v.family === 'stat' || v.family === 'gauge' || v.family === 'progress' ? v.color ?? '#B8734F' : '#B8734F');
       setComparison(v.family === 'stat' && !!v.comparison);
       setGoodDir(v.family === 'stat' ? v.comparison?.good_direction ?? 'up' : 'up');
       setDonut(v.family === 'pies' ? !!v.donut : false);
@@ -156,12 +159,13 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       setMaxRows(v.family === 'table' ? v.page_size ?? 10 : 10);
       setIgnoreFilters(existingWidget.filter_behavior?.mode === 'ignore_dashboard_filters');
       setMetricId(q.aggregation.metric_id ?? '');
+      setGoal(v.family === 'gauge' ? (v.max != null ? String(v.max) : '') : v.family === 'progress' ? (v.target != null ? String(v.target) : '') : '');
     } else {
       setType('stat'); setTitleAr(''); setTitleEn(''); setSourceModelId('');
       setConditions([]); setPartConditions([]); setAggType('count'); setAggFieldId('');
       setGroupLevels([]); setDateFieldId(''); setDateMode('');
       setColor('#B8734F'); setComparison(false); setGoodDir('up'); setDonut(false); setArea(false);
-      setTableFieldIds([]); setMaxRows(10); setIgnoreFilters(false); setMetricId('');
+      setTableFieldIds([]); setMaxRows(10); setIgnoreFilters(false); setMetricId(''); setGoal('');
     }
   }, [existingWidget, open]);
 
@@ -237,6 +241,14 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
         return { family: 'funnel', show_pct: true, color_mode: { kind: 'by_group_option' }, number_format: numFmt };
       case 'leaderboard':
         return { family: 'leaderboard', max_rows: 10, color_mode: { kind: 'by_group_option' }, number_format: numFmt };
+      case 'gauge': {
+        const g = Number(goal);
+        return { family: 'gauge', max: g > 0 ? g : numFmt?.percent ? 100 : undefined, color, number_format: numFmt, good_direction: goodDir };
+      }
+      case 'progress': {
+        const g = Number(goal);
+        return { family: 'progress', target: g > 0 ? g : numFmt?.percent ? 100 : undefined, color, number_format: numFmt };
+      }
       default:
         return { family: 'table', column_field_ids: tableFieldIds, page_size: maxRows };
     }
@@ -283,7 +295,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       x: 0, y: 0, w: 4, h: 4,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters, metricId],
+    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters, metricId, goal],
   );
 
   const handleSave = () => {
@@ -486,6 +498,15 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
               )}
               {family === 'pies' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={donut} onChange={(e) => setDonut(e.target.checked)} className="h-3.5 w-3.5 text-copper" />{isAr ? 'حلقي (دونات)' : 'Donut'}</label>}
               {family === 'lines' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={area} onChange={(e) => setArea(e.target.checked)} className="h-3.5 w-3.5 text-copper" />{isAr ? 'مساحة' : 'Area'}</label>}
+              {(family === 'gauge' || family === 'progress') && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-charcoal/60">{isAr ? 'اللون' : 'Color'}</span>
+                    <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-7 w-10 rounded border border-sand" />
+                  </div>
+                  <Input label={family === 'gauge' ? (isAr ? 'الحد الأقصى' : 'Max value') : isAr ? 'الهدف' : 'Target'} type="number" value={goal} onChange={(e) => setGoal(e.target.value)} placeholder={isAr ? 'مثال: ١٠٠' : 'e.g. 100'} />
+                </div>
+              )}
               <label className="mt-2 flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={ignoreFilters} onChange={(e) => setIgnoreFilters(e.target.checked)} className="h-3.5 w-3.5 text-copper" />
                 {isAr ? 'تجاهل تصفية اللوحة' : 'Ignore dashboard filters'}

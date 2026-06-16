@@ -12,6 +12,8 @@ import LineChartWidget from './widgets/LineChartWidget';
 import TableWidget from './widgets/TableWidget';
 import FunnelWidget from './widgets/FunnelWidget';
 import LeaderboardWidget from './widgets/LeaderboardWidget';
+import GaugeWidget from './widgets/GaugeWidget';
+import ProgressWidget from './widgets/ProgressWidget';
 import type { DashboardFilter, DashboardWidget, VizStat } from '@/types';
 
 interface WidgetRendererProps {
@@ -68,8 +70,11 @@ export default function WidgetRenderer({ widget, isPublic, dashboardFilters, fil
     );
   }
 
+  // Scalar families read result.total (a 0 is valid), so they never bail on
+  // "no rows"; grouped families show an explicit empty state.
+  const scalar = family === 'stat' || family === 'gauge' || family === 'progress';
   const noRows = !data || data.rows.length === 0;
-  if (family !== 'stat' && noRows) {
+  if (!scalar && noRows) {
     return <div className="flex h-full items-center justify-center text-xs text-charcoal/40">{isAr ? 'لا توجد بيانات' : 'No data'}</div>;
   }
 
@@ -92,6 +97,12 @@ export default function WidgetRenderer({ widget, isPublic, dashboardFilters, fil
       break;
     case 'leaderboard':
       body = <LeaderboardWidget widget={widget} result={data} onDrill={onDrill} />;
+      break;
+    case 'gauge':
+      body = <GaugeWidget widget={widget} result={data} onDrill={onDrill} />;
+      break;
+    case 'progress':
+      body = <ProgressWidget widget={widget} result={data} onDrill={onDrill} />;
       break;
     default:
       body = <div className="text-xs text-charcoal/40">Unknown widget</div>;
