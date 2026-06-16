@@ -275,6 +275,18 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             {!railCollapsed && <span>{isAr ? 'مهام المبيعات' : 'Sales Tasks'}</span>}
           </NavLink>
 
+          {/* Sales Process Studio — admin-only read-only lifecycle map */}
+          {isAdmin && (
+            <NavLink
+              to="/sales/process"
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              title={railCollapsed ? (isAr ? 'استوديو المبيعات' : 'Sales Process') : undefined}
+            >
+              <Activity size={20} />
+              {!railCollapsed && <span>{isAr ? 'استوديو المبيعات' : 'Sales Process'}</span>}
+            </NavLink>
+          )}
+
           {/* Divider label */}
           {!railCollapsed && (
             <div className="pt-5 pb-2 px-3">
