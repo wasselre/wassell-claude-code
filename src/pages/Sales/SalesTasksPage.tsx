@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Phone, MessageCircle, AlertTriangle, ClipboardList } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { telUrl, whatsappUrl } from '@/lib/phone';
@@ -22,7 +22,15 @@ export default function SalesTasksPage() {
   const { models, records, language, currentUserId, users } = useAppStore();
   const isAr = language === 'ar';
   const navigate = useNavigate();
-  const [view, setView] = useState<QueueViewId>('my_tasks');
+  const [searchParams] = useSearchParams();
+  const qv = searchParams.get('view');
+  const [view, setView] = useState<QueueViewId>(
+    qv && (QUEUE_VIEW_ORDER as string[]).includes(qv) ? (qv as QueueViewId) : 'my_tasks',
+  );
+  const [sortDir, setSortDir] = useState<'newest' | 'oldest'>('newest');
+  const [filterRep, setFilterRep] = useState('');
+  const [filterType, setFilterType] = useState('');
+  const [filterStage, setFilterStage] = useState('');
 
   const now = Date.now();
   const followupsModel = models.find((m) => m.name === 'followups');
@@ -51,6 +59,23 @@ export default function SalesTasksPage() {
     const d = new Date(iso);
     return Number.isNaN(d.getTime()) ? '' : d.toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'short', timeStyle: 'short' });
   };
+
+  // Triage: filter + sort the active view's items.
+  const viewItems: QueueItem[] = view === 'no_next_action' ? [] : buckets[view];
+  const repOptions = [...new Set(viewItems.map((i) => i.salesRep).filter(Boolean))] as string[];
+  const typeOptions = [...new Set(viewItems.map((i) => i.typeKey).filter(Boolean))] as string[];
+  const stageOptions = [...new Set(viewItems.map((i) => i.clientStage).filter(Boolean))] as string[];
+  const displayItems = viewItems
+    .filter((i) => !filterRep || i.salesRep === filterRep)
+    .filter((i) => !filterType || i.typeKey === filterType)
+    .filter((i) => !filterStage || i.clientStage === filterStage)
+    .slice()
+    .sort((a, b) => {
+      const av = a.scheduledISO ? new Date(a.scheduledISO).getTime() : 0;
+      const bv = b.scheduledISO ? new Date(b.scheduledISO).getTime() : 0;
+      return sortDir === 'newest' ? bv - av : av - bv;
+    });
+  const selectCls = 'rounded-lg border border-[#D4B896] bg-white px-2 py-1 text-sm text-[#4A4E54]';
 
   return (
     <div className="mx-auto max-w-6xl p-4">
@@ -95,27 +120,64 @@ export default function SalesTasksPage() {
         })}
       </nav>
 
-      {/* No Next Action view (client rows) */}
       {view === 'no_next_action' ? (
-        noNextAction.length === 0 ? (
-          <p className="rounded-lg bg-[#10B981]/10 p-4 text-center text-[#10B981]">{isAr ? 'كل العملاء النشطين لديهم إجراء تالٍ ✓' : 'Every active client has a next action ✓'}</p>
-        ) : (
-          <ul className="space-y-2">
-            {noNextAction.map((r) => (
-              <li key={r.clientId}>
-                <button type="button" onClick={() => navigate(`/model/clients/${r.clientId}`)} className="flex w-full items-center justify-between rounded-lg border border-[#D4B896] bg-white p-3 text-start hover:bg-[#F5EDE0]">
-                  <span>
-                    <span className="font-semibold text-[#4A4E54]">{r.clientName || (isAr ? 'عميل' : 'Client')}</span>
-                    <span dir="ltr" className="ms-2 text-sm text-[#8E4E3A]">{r.phone}</span>
-                  </span>
-                  <span className="text-sm text-[#8E4E3A]">{r.stage}{r.status ? ` · ${r.status}` : ''}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )
+        <>
+          <p className="mb-3 rounded-lg bg-[#F5EDE0] p-2 text-sm text-[#4A4E54]">
+            {isAr
+              ? 'العملاء النشطون (ليسوا في «غير مؤهل» أو «خاسر» أو «مغلق ناجح») الذين ليس لديهم متابعة مفتوحة. الهدف: صفر.'
+              : 'Active clients (not Unqualified / Lost / Closed Won) with no open follow-up. Target: zero.'}
+          </p>
+          {noNextAction.length === 0 ? (
+            <p className="rounded-lg bg-[#10B981]/10 p-4 text-center text-[#10B981]">{isAr ? 'كل العملاء النشطين لديهم إجراء تالٍ ✓' : 'Every active client has a next action ✓'}</p>
+          ) : (
+            <ul className="space-y-2">
+              {noNextAction.map((r) => (
+                <li key={r.clientId}>
+                  <button type="button" onClick={() => navigate(`/model/clients/${r.clientId}`)} className="flex w-full items-center justify-between rounded-lg border border-[#D4B896] bg-white p-3 text-start hover:bg-[#F5EDE0]">
+                    <span>
+                      <span className="font-semibold text-[#4A4E54]">{r.clientName || (isAr ? 'عميل' : 'Client')}</span>
+                      <span dir="ltr" className="ms-2 text-sm text-[#8E4E3A]">{r.phone}</span>
+                    </span>
+                    <span className="text-sm text-[#8E4E3A]">{r.stage}{r.status ? ` · ${r.status}` : ''}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       ) : (
-        <QueueList items={buckets[view]} isAr={isAr} fmt={fmt} repName={repName} navigate={navigate} />
+        <>
+          {/* triage controls — sort + filter by rep / type / stage */}
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <select className={selectCls} value={sortDir} onChange={(e) => setSortDir(e.target.value as 'newest' | 'oldest')}>
+              <option value="newest">{isAr ? 'الأحدث أولاً' : 'Newest first'}</option>
+              <option value="oldest">{isAr ? 'الأقدم أولاً' : 'Oldest first'}</option>
+            </select>
+            {repOptions.length > 0 && (
+              <select className={selectCls} value={filterRep} onChange={(e) => setFilterRep(e.target.value)}>
+                <option value="">{isAr ? 'كل المندوبين' : 'All reps'}</option>
+                {repOptions.map((r) => <option key={r} value={r}>{repName(r)}</option>)}
+              </select>
+            )}
+            {typeOptions.length > 0 && (
+              <select className={selectCls} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+                <option value="">{isAr ? 'كل الأنواع' : 'All types'}</option>
+                {typeOptions.map((tk) => { const c = getFollowUpTypeConfig(tk); return <option key={tk} value={tk}>{c ? (isAr ? c.label_ar : c.label_en) : tk}</option>; })}
+              </select>
+            )}
+            {stageOptions.length > 0 && (
+              <select className={selectCls} value={filterStage} onChange={(e) => setFilterStage(e.target.value)}>
+                <option value="">{isAr ? 'كل المراحل' : 'All stages'}</option>
+                {stageOptions.map((s) => <option key={s} value={s}>{s}</option>)}
+              </select>
+            )}
+            {(filterRep || filterType || filterStage) && (
+              <button type="button" onClick={() => { setFilterRep(''); setFilterType(''); setFilterStage(''); }} className="text-sm text-[#B8734F] hover:underline">{isAr ? 'مسح' : 'Clear'}</button>
+            )}
+            <span className="ms-auto text-sm text-[#8E4E3A]">{displayItems.length}</span>
+          </div>
+          <QueueList items={displayItems} isAr={isAr} fmt={fmt} repName={repName} navigate={navigate} />
+        </>
       )}
     </div>
   );

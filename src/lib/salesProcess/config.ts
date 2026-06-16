@@ -331,6 +331,17 @@ export function getSalesProcessConfig(): SalesProcessConfig {
   return DEFAULT_SALES_PROCESS;
 }
 
+/** Localized label for a follow-up primary channel. */
+export function channelLabel(channel: string | undefined, isAr: boolean): string {
+  const map: Record<string, { ar: string; en: string }> = {
+    call: { ar: 'مكالمة', en: 'Call' },
+    whatsapp: { ar: 'واتساب', en: 'WhatsApp' },
+    manual: { ar: 'يدوي', en: 'Manual' },
+  };
+  const e = channel ? map[channel] : undefined;
+  return e ? (isAr ? e.ar : e.en) : (channel ?? '');
+}
+
 export function getFollowUpTypeConfig(
   type: string | null | undefined,
   config: SalesProcessConfig = DEFAULT_SALES_PROCESS,

@@ -49,7 +49,7 @@ export default function PreferenceSummary({ client, onEditFull }: PreferenceSumm
       {rows.length === 0 ? (
         <p className="text-sm text-[#8E4E3A]">{isAr ? 'لا توجد تفضيلات مسجلة' : 'No preferences recorded'}</p>
       ) : (
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+        <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1.5 text-sm">
           {rows.map((r) => (
             <div key={r.label} className="contents">
               <dt className="text-[#8E4E3A]">{r.label}</dt>

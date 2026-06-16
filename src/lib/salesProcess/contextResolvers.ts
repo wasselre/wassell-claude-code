@@ -11,6 +11,7 @@ import type { ContextBlockId } from './types';
 export interface ContextInput {
   client?: Record<string, unknown> | null;
   appointment?: Record<string, unknown> | null;
+  /** The resolved project RECORD (so we render its name, never a raw id). */
   project?: Record<string, unknown> | null;
   followup?: Record<string, unknown> | null;
   latestCallSummary?: string | null;
@@ -18,6 +19,10 @@ export interface ContextInput {
   attemptNumber?: number | null;
   previousConfirmations?: number | null;
   suggestedTemplate?: string | null;
+  /** Resolve a user id to a display name (so reps never see a raw UUID). */
+  resolveUser?: (id: unknown) => string | undefined;
+  /** Locale for date formatting. */
+  isAr?: boolean;
 }
 
 export interface ContextValue {
@@ -80,12 +85,19 @@ export function resolveContext(blockId: ContextBlockId, ctx: ContextInput): Cont
   const client = ctx.client ?? {};
   const appt = ctx.appointment ?? {};
   const project = ctx.project ?? {};
+  const fmtDate = (v: unknown): string | undefined => {
+    if (typeof v !== 'string' || !v.trim()) return undefined;
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? str(v) : d.toLocaleString(ctx.isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' });
+  };
 
   switch (blockId) {
     case 'lead_source':
       return { ...base, value: str(client.client_sources) };
+    // Resolve the project lookup to its name — never the raw id.
     case 'preferred_project':
-      return { ...base, value: str(client.preferred_projects) };
+    case 'visited_project':
+      return { ...base, value: str(project.project_name) };
     case 'budget':
       return { ...base, value: str(client.budget) };
     case 'preferred_area':
@@ -99,21 +111,19 @@ export function resolveContext(blockId: ContextBlockId, ctx: ContextInput): Cont
     case 'latest_whatsapp':
       return { ...base, value: str(ctx.latestWhatsApp) };
     case 'appointment':
-      return { ...base, value: str(appt.appointment_date) };
+    case 'missed_appointment_date':
+      return { ...base, value: fmtDate(appt.appointment_date) };
     case 'appointment_status':
       return { ...base, value: str(appt.appointment_status) };
     case 'project_location':
       return { ...base, value: str(project.location ?? project.project_location) };
+    // Resolve the user id to a name — never the raw UUID.
     case 'sales_rep':
-      return { ...base, value: str(appt.sales_rep ?? client.client_owner) };
+      return { ...base, value: ctx.resolveUser?.(appt.sales_rep ?? client.client_owner) };
     case 'previous_confirmations':
       return { ...base, value: ctx.previousConfirmations != null ? String(ctx.previousConfirmations) : undefined };
     case 'suggested_template':
       return { ...base, value: str(ctx.suggestedTemplate) };
-    case 'missed_appointment_date':
-      return { ...base, value: str(appt.appointment_date) };
-    case 'visited_project':
-      return { ...base, value: str(project.project_name ?? client.preferred_projects) };
     default:
       // Blocks without a direct field (campaign, preference_summary, objections,
       // offer_details, etc.) are rendered by the Workspace from richer sources.

@@ -9,6 +9,7 @@ import {
   resolveBoundWorkflow,
   resolveBoundWorkflows,
   isWorkflowDrifted,
+  channelLabel,
   type SalesStageConfig,
   type FollowUpTypeConfig,
 } from '@/lib/salesProcess';
@@ -69,6 +70,12 @@ export default function SalesProcessStudioPage() {
         <span className="ms-2 rounded-full bg-[#F5EDE0] px-2 py-0.5 text-xs text-[#8E4E3A]">{isAr ? 'للعرض فقط' : 'Read-only'}</span>
       </header>
 
+      <p className="mb-2 text-xs text-[#8E4E3A]">
+        {isAr
+          ? 'لكل مرحلة: عدد العملاء النشطين، المتابعات المتأخرة، 🔗 سير العمل المرتبط، ⚠ الأنشطة بدون سير عمل.'
+          : 'Per stage: active clients, overdue follow-ups, 🔗 linked workflows, ⚠ activities with no workflow.'}
+      </p>
+
       {/* Lifecycle map */}
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
         {config.stages.map((s) => (
@@ -128,8 +135,12 @@ function StageCard({
       <div className="mt-1 text-xs text-[#4A4E54]">{isAr ? `${active} عميل نشط` : `${active} active`}</div>
       {overdue > 0 && <div className="text-xs text-[#8E4E3A]">{isAr ? `${overdue} متأخرة` : `${overdue} overdue`}</div>}
       <div className="mt-1 flex items-center gap-2 text-xs text-[#8E4E3A]">
-        {linked > 0 && <span className="inline-flex items-center gap-0.5"><WorkflowIcon size={11} /> {linked}</span>}
-        {missing > 0 && <span className="inline-flex items-center gap-0.5 text-[#8E4E3A]"><AlertTriangle size={11} /> {missing}</span>}
+        {linked > 0 && (
+          <span title={isAr ? 'سير عمل مرتبط' : 'Linked workflows'} className="inline-flex items-center gap-0.5"><WorkflowIcon size={11} /> {linked}</span>
+        )}
+        {missing > 0 && (
+          <span title={isAr ? 'أنشطة بدون سير عمل' : 'Activities with no workflow'} className="inline-flex items-center gap-0.5"><AlertTriangle size={11} /> {missing}</span>
+        )}
       </div>
     </button>
   );
@@ -149,7 +160,7 @@ function ActivityBlock({
       <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-start justify-between gap-2 p-3 text-start">
         <div>
           <div className="font-semibold text-[#4A4E54]">{isAr ? typeConfig.label_ar : typeConfig.label_en}</div>
-          <div className="text-xs text-[#8E4E3A]">{isAr ? typeConfig.objective_ar : typeConfig.objective_en} · {typeConfig.primary_channel}</div>
+          <div className="text-xs text-[#8E4E3A]">{isAr ? typeConfig.objective_ar : typeConfig.objective_en} · {channelLabel(typeConfig.primary_channel, isAr)}</div>
         </div>
         <div className="shrink-0">
           {bound ? (

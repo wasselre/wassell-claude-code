@@ -96,24 +96,53 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     <section className="card">
       <h2 className="mb-2 text-sm font-bold text-[#4A2C2A]">{isAr ? 'النتيجة' : 'Outcome'}</h2>
 
-      <div className="flex flex-wrap gap-2">
-        {typeConfig.allowed_outcomes.map((o) => {
-          const meta = getOutcome(o.value);
-          const on = outcomeKey === o.value;
-          return (
-            <button
-              key={o.value}
-              type="button"
-              data-on={on}
-              disabled={readOnly}
-              onClick={() => selectOutcome(o.value)}
-              className={`rounded-full border px-3 py-1 text-sm font-medium transition ${toneClasses[meta?.tone ?? 'neutral']}`}
-            >
-              {isAr ? meta?.label_ar ?? o.value : meta?.label_en ?? o.value}
-            </button>
-          );
-        })}
-      </div>
+      {(() => {
+        // The first config outcome is the primary success path (e.g. حجز موعد for
+        // a booking call) — render it as a prominent filled button; the rest as pills.
+        const [primary, ...secondary] = typeConfig.allowed_outcomes;
+        const fill: Record<string, string> = { positive: '#10B981', neutral: '#C09B5F', negative: '#8E4E3A' };
+        return (
+          <div className="space-y-2">
+            {primary && (() => {
+              const meta = getOutcome(primary.value);
+              const on = outcomeKey === primary.value;
+              const c = fill[meta?.tone ?? 'positive'];
+              return (
+                <button
+                  type="button"
+                  disabled={readOnly}
+                  onClick={() => selectOutcome(primary.value)}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-base font-bold text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+                  style={{ backgroundColor: c, outline: on ? `3px solid ${c}66` : 'none', outlineOffset: 2 }}
+                >
+                  {on && <CheckCircle2 size={18} />}
+                  {isAr ? meta?.label_ar ?? primary.value : meta?.label_en ?? primary.value}
+                </button>
+              );
+            })()}
+            {secondary.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {secondary.map((o) => {
+                  const meta = getOutcome(o.value);
+                  const on = outcomeKey === o.value;
+                  return (
+                    <button
+                      key={o.value}
+                      type="button"
+                      data-on={on}
+                      disabled={readOnly}
+                      onClick={() => selectOutcome(o.value)}
+                      className={`rounded-full border px-3 py-1 text-sm font-medium transition ${toneClasses[meta?.tone ?? 'neutral']}`}
+                    >
+                      {isAr ? meta?.label_ar ?? o.value : meta?.label_en ?? o.value}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {outcomeKey && (
         <div className="mt-4 space-y-3">

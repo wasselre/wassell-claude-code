@@ -175,7 +175,7 @@ export const QUEUE_VIEW_ORDER: QueueViewId[] = [
 ];
 
 export const QUEUE_VIEW_LABELS: Record<QueueViewId, { ar: string; en: string }> = {
-  my_tasks: { ar: 'مهامي', en: 'My Tasks' },
+  my_tasks: { ar: 'مهامي الحالية', en: 'My Tasks' },
   due_now: { ar: 'مستحقة الآن', en: 'Due Now' },
   overdue: { ar: 'متأخرة', en: 'Overdue' },
   today: { ar: 'اليوم', en: 'Today' },

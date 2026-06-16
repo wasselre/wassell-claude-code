@@ -34,7 +34,8 @@ export default function SalesManagerPage() {
   const outcomeLabel = (v: string) => { const o = getOutcome(v); return o ? (isAr ? o.label_ar : o.label_en) : v; };
 
   const funnel = [...m.byStage].sort((a, b) => stageOrder(a.key) - stageOrder(b.key));
-  const pct = (x: number | null) => (x == null ? '—' : `${Math.round(x * 100)}%`);
+  const noData = isAr ? 'لا توجد بيانات كافية' : 'Not enough data';
+  const pct = (x: number | null) => (x == null ? noData : `${Math.round(x * 100)}%`);
 
   return (
     <div className="mx-auto max-w-6xl p-4">
@@ -45,7 +46,7 @@ export default function SalesManagerPage() {
 
       {/* headline stats */}
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-        <button type="button" onClick={() => navigate('/sales/tasks')} className="text-start">
+        <button type="button" onClick={() => navigate('/sales/tasks?view=no_next_action')} className="text-start">
           <Stat
             label={isAr ? 'بدون إجراء تالٍ' : 'No Next Action'}
             value={m.noNextAction}
@@ -65,6 +66,12 @@ export default function SalesManagerPage() {
         <span><b>{isAr ? 'نسبة عدم الرد (مكالمات الحجز): ' : 'No-answer rate (booking): '}</b>{pct(m.rates.noAnswerRate)}</span>
         <span><b>{isAr ? 'نسبة الإكمال في الوقت: ' : 'On-time completion: '}</b>{pct(m.rates.onTimeRate)}</span>
       </div>
+
+      <p className="mb-4 text-xs text-[#8E4E3A]">
+        {isAr
+          ? 'تعتمد مقاييس «المكتملة / في الوقت» على حالة المتابعة (followup_status). وقد تم تحديث المتابعات التاريخية المكتملة لتُحتسب هنا.'
+          : 'Completed / on-time metrics are based on followup_status; historical completed follow-ups were backfilled so they count here.'}
+      </p>
 
       <div className="grid gap-4 md:grid-cols-2">
         <BarList title={isAr ? 'مسار العملاء حسب المرحلة' : 'Pipeline by Stage'} items={funnel} label={stageLabel} />

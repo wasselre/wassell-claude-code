@@ -26,8 +26,13 @@ import OutcomePanel from './components/OutcomePanel';
 export default function FollowUpWorkspacePage() {
   const { recordId } = useParams();
   const navigate = useNavigate();
-  const { models, records, language, saveRecord, addToast, currentUserId } = useAppStore();
+  const { models, records, language, saveRecord, addToast, currentUserId, users } = useAppStore();
   const isAr = language === 'ar';
+  const resolveUser = (id: unknown): string | undefined => {
+    if (typeof id !== 'string' || !id) return undefined;
+    const u = users.find((x) => x.id === id);
+    return u ? ((isAr ? u.name_ar : u.name_en) || u.email || undefined) : undefined;
+  };
 
   const model = models.find((m) => m.name === 'followups');
   const record = useMemo(
@@ -144,7 +149,7 @@ export default function FollowUpWorkspacePage() {
         <div className="space-y-4">
           <ContextPanel
             typeConfig={typeConfig}
-            ctx={{ client: ctx.client, appointment: ctx.appointment, project: ctx.project, followup: draft, attemptNumber: ctx.attemptNumber }}
+            ctx={{ client: ctx.client, appointment: ctx.appointment, project: ctx.project, followup: draft, attemptNumber: ctx.attemptNumber, resolveUser, isAr }}
           />
           <PreferenceSummary client={ctx.client} onEditFull={goAdvanced} />
           <TimelinePanel clientId={ctx.clientId} currentFollowupId={record.id} phones={ctx.phones} />
