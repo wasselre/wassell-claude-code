@@ -8,8 +8,8 @@
  */
 import type { AppRecord, ModelField } from '../../types';
 import type { AnalyticsFieldRef, AnalyticsOperator, FilterCondition, FilterGroup } from './types';
-import { toNumeric } from './numeric';
-import { valueRiyadhMs } from './dateWindows';
+import { toNumeric } from './numeric.js';
+import { valueRiyadhMs } from './dateWindows.js';
 
 /** Read a record's value for any field ref. Returns undefined for unknown fields. */
 export function readRefValue(

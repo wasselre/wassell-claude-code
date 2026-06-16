@@ -3,10 +3,10 @@
  * `/api/analytics` endpoint, future reports/AI/automations) import from here.
  * The engine is pure + isomorphic — see engine.ts.
  */
-export * from './types';
-export { runAnalyticsQuery } from './engine';
-export type { AnalyticsContext } from './context';
-export { validateAnalyticsQuery, assertSerializable } from './validate';
+export * from './types.js';
+export { runAnalyticsQuery } from './engine.js';
+export type { AnalyticsContext } from './context.js';
+export { validateAnalyticsQuery, assertSerializable } from './validate.js';
 export {
   analyticsRoleFor,
   canAggregateFieldType,
@@ -14,7 +14,7 @@ export {
   fieldMapById,
   findFieldById,
   type FieldRole,
-} from './fieldResolver';
-export { resolveDateRange, previousWindow, bucketDate, valueRiyadhMs, toRiyadhParts } from './dateWindows';
-export { viewConditionsToFilterGroup } from './savedViewAdapter';
-export { toNumeric } from './numeric';
+} from './fieldResolver.js';
+export { resolveDateRange, previousWindow, bucketDate, valueRiyadhMs, toRiyadhParts } from './dateWindows.js';
+export { viewConditionsToFilterGroup } from './savedViewAdapter.js';
+export { toNumeric } from './numeric.js';

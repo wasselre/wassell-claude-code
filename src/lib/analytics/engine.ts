@@ -25,14 +25,14 @@ import type {
   SortConfig,
 } from './types';
 import type { AnalyticsContext } from './context';
-import { canAggregateFieldType, fieldMapById } from './fieldResolver';
-import { readRefValue, recordPassesGroup } from './filter';
-import { inDateRange, previousWindow, resolveDateRange } from './dateWindows';
-import { viewConditionsToFilterGroup } from './savedViewAdapter';
-import { groupKeysForRecord, seedOptionKeys } from './grouping';
-import { aggregateRecords } from './aggregate';
-import { mergeSimpleMetric } from './metricResolver';
-import { evaluateFormula } from '../formulaEngine';
+import { canAggregateFieldType, fieldMapById } from './fieldResolver.js';
+import { readRefValue, recordPassesGroup } from './filter.js';
+import { inDateRange, previousWindow, resolveDateRange } from './dateWindows.js';
+import { viewConditionsToFilterGroup } from './savedViewAdapter.js';
+import { groupKeysForRecord, seedOptionKeys } from './grouping.js';
+import { aggregateRecords } from './aggregate.js';
+import { mergeSimpleMetric } from './metricResolver.js';
+import { evaluateFormula } from '../formulaEngine.js';
 
 const MAX_DEPTH = 6;
 const PATH_SEP = '';

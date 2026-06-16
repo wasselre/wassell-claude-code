@@ -13,7 +13,7 @@
  * (the server passes `new Date()`; tests pass a fixed instant). This module is
  * isomorphic — no browser- or Node-only APIs.
  */
-import { RIYADH_TZ_OFFSET_HOURS, MONTH_NAMES_AR } from '../dateFormat';
+import { RIYADH_TZ_OFFSET_HOURS, MONTH_NAMES_AR } from '../dateFormat.js';
 import type { DateFilterMode, DateRange, TimeBucket } from './types';
 
 const MS_PER_HOUR = 3_600_000;

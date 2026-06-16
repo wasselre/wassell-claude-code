@@ -11,9 +11,9 @@
 import type { AppRecord, ModelField } from '../../types';
 import type { AggregationConfig } from './types';
 import type { AnalyticsContext } from './context';
-import { toNumeric } from './numeric';
-import { valueRiyadhMs } from './dateWindows';
-import { readRefValue } from './filter';
+import { toNumeric } from './numeric.js';
+import { valueRiyadhMs } from './dateWindows.js';
+import { readRefValue } from './filter.js';
 
 export interface AggregateOutcome {
   value: number | null;

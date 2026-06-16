@@ -1,5 +1,5 @@
 import type { AppModel, AppRecord, ModelField } from '@/types';
-import { collectViewFields, readExpandedValue, VIRTUAL_FIELD_SEPARATOR } from './sectionMirrorExpand';
+import { collectViewFields, readExpandedValue, VIRTUAL_FIELD_SEPARATOR } from './sectionMirrorExpand.js';
 
 export type MirrorStatus =
   | 'ok'

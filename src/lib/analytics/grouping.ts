@@ -9,9 +9,9 @@
 import type { AppRecord, ModelField } from '../../types';
 import type { GroupByConfig, GroupKey, NumericBucket, TimeBucket } from './types';
 import type { AnalyticsContext } from './context';
-import { toNumeric } from './numeric';
-import { bucketDate } from './dateWindows';
-import { resolveLookupDisplayValue, resolveMirror } from '../mirrorResolver';
+import { toNumeric } from './numeric.js';
+import { bucketDate } from './dateWindows.js';
+import { resolveLookupDisplayValue, resolveMirror } from '../mirrorResolver.js';
 
 const EMPTY_AR = '(فارغ)';
 const EMPTY_EN = '(Empty)';
