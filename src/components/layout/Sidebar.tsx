@@ -20,6 +20,7 @@ import {
   Folder,
   FolderOpen,
   ClipboardList,
+  BarChart3,
   Briefcase,
   Calendar,
   Mail,
@@ -284,6 +285,18 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             >
               <Activity size={20} />
               {!railCollapsed && <span>{isAr ? 'استوديو المبيعات' : 'Sales Process'}</span>}
+            </NavLink>
+          )}
+
+          {/* Sales Manager — admin-only operational metrics */}
+          {isAdmin && (
+            <NavLink
+              to="/sales/manager"
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+              title={railCollapsed ? (isAr ? 'مدير المبيعات' : 'Sales Manager') : undefined}
+            >
+              <BarChart3 size={20} />
+              {!railCollapsed && <span>{isAr ? 'مدير المبيعات' : 'Sales Manager'}</span>}
             </NavLink>
           )}
 
