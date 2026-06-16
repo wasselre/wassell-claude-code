@@ -459,6 +459,64 @@ async function runCompressWatchdog(): Promise<void> {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Conflict-storm watchdog (2026-06-16) — the safety net for the record_save
+// version-conflict retry storm. Runs on its OWN short interval (independent of
+// the per-queue watchdogs) so detection is fast. conflict_storm_sweep() is
+// read-only; on a storm it raises a system_alerts row + we log LOUDLY here +
+// optionally ping CONFLICT_ALERT_WEBHOOK_URL. The client-side fixes (permanent
+// breaker + reload-on-conflict) make storms rare; this is the last line of
+// defense so one can never again run unnoticed for days.
+const CONFLICT_SWEEP_INTERVAL_MS = 30_000;
+
+async function runConflictStormSweep(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('conflict_storm_sweep');
+    if (error) {
+      console.error(`[worker] conflict_storm_sweep RPC error: ${error.message}`);
+      return;
+    }
+    const res = (data ?? {}) as {
+      storm?: boolean;
+      aborted?: number;
+      active?: number;
+      alert_id?: number | null;
+    };
+    if (res.storm) {
+      console.error(
+        `[worker] 🚨 CONFLICT STORM DETECTED — ${res.aborted} record_save backend(s) wedged in version conflicts (alert #${res.alert_id ?? '-'}). ` +
+          `A client is hammering record_save with a stale version. Find the record in the Postgres logs (version_mismatch lines) and run SELECT kill_conflict_storm_record('<id>').`,
+      );
+      const hook = process.env.CONFLICT_ALERT_WEBHOOK_URL;
+      if (hook) {
+        try {
+          await fetch(hook, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: `🚨 Wassell: record_save conflict storm detected (${res.aborted} wedged backends). Check Postgres logs + run kill_conflict_storm_record(<id>).`,
+            }),
+          });
+        } catch (hookErr) {
+          console.error(`[worker] conflict alert webhook failed:`, hookErr);
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`[worker] conflict_storm_sweep threw:`, err);
+  }
+}
+
+async function conflictWatchdogLoop(): Promise<void> {
+  while (!shuttingDown) {
+    await runConflictStormSweep();
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < CONFLICT_SWEEP_INTERVAL_MS && !shuttingDown) {
+      await sleep(1000);
+    }
+  }
+}
+
 /**
  * Main loop. Stays in this function for the lifetime of the process.
  * Drains the queue as fast as it can, then sleeps POLL_INTERVAL_MS
@@ -651,8 +709,15 @@ async function shutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
-// Drain all four queues concurrently for the lifetime of the process.
-Promise.all([pollLoop(), imagePollLoop(), previewPollLoop(), compressPollLoop()]).catch((err) => {
+// Drain all four queues concurrently for the lifetime of the process, plus the
+// conflict-storm watchdog (its own short-interval loop).
+Promise.all([
+  pollLoop(),
+  imagePollLoop(),
+  previewPollLoop(),
+  compressPollLoop(),
+  conflictWatchdogLoop(),
+]).catch((err) => {
   console.error('[worker] poll loop crashed:', err);
   process.exit(1);
 });

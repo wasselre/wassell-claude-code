@@ -791,28 +791,36 @@ const recordConflicts = new Map<string, { count: number; first: number; tripped:
 function noteRecordConflict(id: string): boolean {
   const now = Date.now();
   const cur = recordConflicts.get(id);
-  if (!cur || now - cur.first > RECORD_CONFLICT_WINDOW_MS) {
+  if (!cur) {
+    recordConflicts.set(id, { count: 1, first: now, tripped: false });
+    return false;
+  }
+  // Once tripped, the breaker is PERMANENT until a successful save clears it
+  // (clearRecordConflict) or the page reloads (this module state resets).
+  // Deliberate: a stale tab whose local version is wedged behind the server
+  // never advances on its own, so re-opening the breaker every window just
+  // leaks RECORD_CONFLICT_LIMIT conflicts to the DB forever. That is exactly
+  // what the 2026-06-16 storm was — a pre-fix tab hammering at ~1k req/s.
+  if (cur.tripped) return false;
+  // Still counting toward the trip: only the COUNTING window rolls over.
+  if (now - cur.first > RECORD_CONFLICT_WINDOW_MS) {
     recordConflicts.set(id, { count: 1, first: now, tripped: false });
     return false;
   }
   cur.count += 1;
-  if (cur.count >= RECORD_CONFLICT_LIMIT && !cur.tripped) {
+  if (cur.count >= RECORD_CONFLICT_LIMIT) {
     cur.tripped = true;
     return true;
   }
   return false;
 }
 
-/** Whether saves for this record are currently short-circuited (breaker tripped
- *  and still inside the window). Expired windows auto-clear. */
+/** Whether saves for this record are currently short-circuited. Once the
+ *  breaker trips it stays blocked until a successful save (clearRecordConflict)
+ *  or a page reload — it does NOT auto-clear on a timer, so a wedged client
+ *  can never resume hammering the DB every window. */
 function recordSaveBlocked(id: string): boolean {
-  const cur = recordConflicts.get(id);
-  if (!cur) return false;
-  if (Date.now() - cur.first > RECORD_CONFLICT_WINDOW_MS) {
-    recordConflicts.delete(id);
-    return false;
-  }
-  return cur.tripped;
+  return recordConflicts.get(id)?.tripped ?? false;
 }
 
 /** Clear the breaker for a record (called after any successful save). */
@@ -2669,6 +2677,48 @@ export const useAppStore = create<AppState>((set, get) => ({
         saveLocalRecordsForModel(record.model_id, bumped);
         return { records: { ...s.records, [record.model_id]: bumped } };
       });
+    }
+
+    // Reload-on-conflict (2026-06-16): a version_mismatch means our local copy
+    // is behind the server. Re-fetch the live row so (a) the user sees the
+    // latest and (b) the NEXT save sends the CURRENT version instead of
+    // re-sending the same stale one forever. This is the root-cause cure for
+    // the conflict retry-storm — a client can no longer get permanently wedged
+    // on an old version (the 2026-06-16 incident). Best-effort + guarded; the
+    // permanent breaker still protects the DB if this read fails. Frozen models
+    // live in dedicated tables (not `records`) and don't hit this path.
+    if (result.status === 'conflict' && supabase && !isModelHardcoded(record.model_id)) {
+      void (async () => {
+        try {
+          const { data: fresh, error } = await supabase!
+            .from('records')
+            .select('data, created_by_user_id, updated_at, version')
+            .eq('id', record.id)
+            .maybeSingle();
+          if (error || !fresh) return;
+          set((s) => {
+            const list = s.records[record.model_id] ?? [];
+            const idx = list.findIndex((r) => r.id === record.id);
+            if (idx < 0) return {};
+            const next = list.slice();
+            next[idx] = {
+              ...next[idx]!,
+              data: (fresh.data as Record<string, unknown>) ?? next[idx]!.data,
+              created_by_user_id:
+                (fresh.created_by_user_id as string | null) ?? next[idx]!.created_by_user_id ?? null,
+              updated_at: (fresh.updated_at as string) ?? next[idx]!.updated_at,
+              version: (fresh.version as number | null) ?? undefined,
+            };
+            saveLocalRecordsForModel(record.model_id, next);
+            return { records: { ...s.records, [record.model_id]: next } };
+          });
+          // Fresh version is now loaded → the next save can succeed, so release
+          // the breaker for this record.
+          clearRecordConflict(record.id);
+        } catch {
+          /* best-effort reload; the conflict breaker still protects the DB */
+        }
+      })();
     }
 
     // Execute workflows after state is settled
