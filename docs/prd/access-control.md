@@ -1,7 +1,7 @@
 # PRD: Access Control (Users, Roles, Profiles)
 
 **Status:** Live (user-management feature complete; locked for ~6 months)
-**Last updated:** 2026-06-08 (deleting a user now also removes the Supabase Auth identity (`auth.users`) via the new `delete-user` Edge Function — previously "Delete user" only cleared the app-level `public.users` row and left the Auth identity orphaned, so re-inviting that same email failed with `email_exists`. Also: the invite/delete error toasts now surface the real GoTrue reason instead of the opaque "Edge Function returned a non-2xx status code". Prior: 2026-05-31)
+**Last updated:** 2026-06-16 (duplicate seeded profiles/roles fixed: a DB restore/branch can reintroduce a system seed under a drifted id alongside the canonical one, so id-only seed matching produced label duplicates (prod had 2× Administrator, 2× Sales Manager, 2× Sales Rep). Cleaned up + added DB-level `profiles_system_label_uniq` / `roles_system_label_uniq` partial unique indexes and made the SPA seed backfill dedupe by id AND system-seed label — see migration `2026-06-16_dedup_seed_roles_profiles.sql`. Prior: 2026-06-08 — deleting a user now also removes the Supabase Auth identity via the `delete-user` Edge Function, and invite/delete toasts surface the real GoTrue reason)
 **Related PRDs:** model-builder.md, record-management.md, workflow-automation.md, data-storage.md, logs.md
 
 > **2026-05-24 — `auth_uid` binding deadlock fixed.**
@@ -200,6 +200,7 @@ The 2026-05-07 hardening pass moved enforcement out of the client. Treat the cli
   - **Deprecated `wa_*` tables** (`wa_conversations`, `wa_errors`, `wa_leads`) — admin-only for ALL operations (per CLAUDE.md these are unused, scheduled for drop).
   - **Intentionally permissive (USING(true))**: `whiteboards`, `whiteboard_folders` (multi-user collaboration design); `workflow_runs_insert` (any user save can produce a run that needs to log).
 - **Frozen tables.** Each frozen table runs `frozen_view` / `frozen_insert` / `frozen_update` / `frozen_delete` policies + `frozen_junction_view` / `frozen_junction_write` for junctions, all wrapped with `(SELECT auth.uid())`. `wassell_can_view_jsonb` / `wassell_can_edit_jsonb` build a synthetic `records` row from the frozen-table columns and delegate to `wassell_record_passes_scope`. See data-storage.md "Frozen models" for details.
+- **Seed uniqueness (2026-06-16).** Partial unique indexes `profiles_system_label_uniq` and `roles_system_label_uniq` — `UNIQUE (lower(btrim(label_en))) WHERE is_system` — guarantee at most one `is_system` profile/role per label, so a future restore/branch/backup-copy can no longer reintroduce a duplicate seed silently (it fails loudly with a 23505 unique violation). User-created non-system rows (e.g. several "New Profile") are unconstrained (partial predicate). The SPA seed backfill in `appStore.initialize()` mirrors this — it skips inserting a system seed whose label already exists under a different id, adopting the existing row instead of duplicating it. Migration: `supabase/migrations/2026-06-16_dedup_seed_roles_profiles.sql`.
 
 ## Invariants (enforced in the store)
 Every destructive mutation returns `{ ok: true } | { ok: false, reason }`. UI guards (disabled buttons, hidden options) are ergonomic; the store is the single source of truth.

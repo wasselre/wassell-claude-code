@@ -1540,9 +1540,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     saveLocal('wassell_profiles', profiles);
     // Backfill missing profiles to Supabase and AWAIT — users FK into profiles.
+    // Dedupe by id AND (for system seeds) by label: a DB restore/branch/backup-copy
+    // can leave a seed under a DRIFTED id, and id-only matching would then re-insert
+    // the seed as a label duplicate (this happened on prod — see the 2026-06-16
+    // dedup migration). When a same-label system row already exists we ADOPT it
+    // instead of inserting, which also keeps the app from tripping the DB-level
+    // `profiles_system_label_uniq` guard. Scoped to is_system so user-created
+    // same-label profiles (e.g. several "New Profile" rows) are never collapsed.
     if (supabaseProfiles !== null) {
       const existingProfileIds = new Set(supabaseProfiles.map((p) => p.id));
-      const missingProfiles = profiles.filter((p) => !existingProfileIds.has(p.id));
+      const existingSystemProfileLabels = new Set(
+        supabaseProfiles
+          .filter((p) => p.is_system)
+          .map((p) => (p.label_en ?? '').trim().toLowerCase())
+          .filter(Boolean),
+      );
+      const missingProfiles = profiles.filter((p) => {
+        if (existingProfileIds.has(p.id)) return false;
+        if (p.is_system && existingSystemProfileLabels.has((p.label_en ?? '').trim().toLowerCase())) {
+          return false; // adopt the existing same-label seed; don't duplicate it
+        }
+        return true;
+      });
       if (missingProfiles.length > 0) {
         await Promise.all(
           missingProfiles.map((p) =>
@@ -1617,12 +1636,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     saveLocal('wassell_roles', roles);
     // Backfill missing roles to Supabase. No FK dependents — fire-and-forget OK.
+    // Same id-AND-label dedupe as profiles above: skip a system seed whose label
+    // already exists under a drifted id (restore/branch), so we adopt it rather
+    // than re-inserting a duplicate and tripping `roles_system_label_uniq`.
     if (supabaseRoles !== null) {
       const existingRoleIds = new Set(supabaseRoles.map((r) => r.id));
+      const existingSystemRoleLabels = new Set(
+        supabaseRoles
+          .filter((r) => r.is_system)
+          .map((r) => (r.label_en ?? '').trim().toLowerCase())
+          .filter(Boolean),
+      );
       for (const r of roles) {
-        if (!existingRoleIds.has(r.id)) {
-          supabaseUpsert('roles', r);
+        if (existingRoleIds.has(r.id)) continue;
+        if (r.is_system && existingSystemRoleLabels.has((r.label_en ?? '').trim().toLowerCase())) {
+          continue; // adopt the existing same-label seed; don't duplicate it
         }
+        supabaseUpsert('roles', r);
       }
     }
 

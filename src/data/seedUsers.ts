@@ -30,6 +30,14 @@ function salesPermissionsFor(modelName: string): ModelPermission[] {
 // make the seed idempotent: the first install inserts these rows; every
 // subsequent load sees them already exist and skips. See bug postmortem in
 // the 2026-05-17 cleanup commit.
+//
+// 2026-06-16: hardcoded ids alone aren't enough — a DB restore/branch can
+// reintroduce a seed under a DIFFERENT (older-lineage) id, which then collides
+// by label with the canonical one. Two further guards now backstop this:
+// (1) the seed backfill in appStore.initialize() also skips a system seed whose
+// label already exists under another id (adopt, don't duplicate), and (2) the
+// DB enforces it with the partial unique indexes profiles_system_label_uniq /
+// roles_system_label_uniq. See supabase/migrations/2026-06-16_dedup_seed_roles_profiles.sql.
 const adminProfileId = 'ed8349bc-e083-46cb-9bcb-34727fb7fb78';
 const salesProfileId = 'b303acd7-eaea-47f2-a9b7-404d3dc79ea8';
 
