@@ -186,7 +186,10 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       .map((g) => {
         const f = allFields.find((x) => x.id === g.field_id);
         const cfg: GroupByConfig = { field: { kind: 'field', field_id: g.field_id } };
-        if ((f?.type === 'date' || f?.type === 'datetime') && g.time_bucket) cfg.time_bucket = g.time_bucket;
+        // Date/datetime group levels always bucket — default to day so the query
+        // matches the bucket selector's default (it shows "Day" before the user
+        // touches it). Without this, a date group falls back to raw-value grouping.
+        if (f?.type === 'date' || f?.type === 'datetime') cfg.time_bucket = g.time_bucket ?? 'day';
         if ((f?.type === 'number' || f?.type === 'currency') && g.numeric_width) {
           const w = Number(g.numeric_width);
           if (w > 0) cfg.numeric_bucket = { width: w };
@@ -378,7 +381,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
                   const f = allFields.find((x) => x.id === lvl.field_id);
                   return (
                     <div key={i} className="flex flex-wrap items-center gap-2 rounded-lg bg-cream-light p-2">
-                      <select value={lvl.field_id} onChange={(e) => setLevel(i, { field_id: e.target.value, time_bucket: undefined, numeric_width: undefined })} className="form-input min-w-[130px] flex-1 bg-white py-1 text-xs">
+                      <select value={lvl.field_id} onChange={(e) => { const nf = allFields.find((x) => x.id === e.target.value); const isDate = nf?.type === 'date' || nf?.type === 'datetime'; setLevel(i, { field_id: e.target.value, time_bucket: isDate ? 'day' : undefined, numeric_width: undefined }); }} className="form-input min-w-[130px] flex-1 bg-white py-1 text-xs">
                         <option value="">— {isAr ? 'حقل' : 'Field'} —</option>
                         {groupableFields.map((gf) => <option key={gf.id} value={gf.id}>{isAr ? gf.label_ar : gf.label_en}</option>)}
                       </select>
