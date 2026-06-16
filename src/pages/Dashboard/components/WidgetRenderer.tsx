@@ -15,6 +15,7 @@ import LeaderboardWidget from './widgets/LeaderboardWidget';
 import GaugeWidget from './widgets/GaugeWidget';
 import ProgressWidget from './widgets/ProgressWidget';
 import PivotWidget from './widgets/PivotWidget';
+import HeatmapWidget from './widgets/HeatmapWidget';
 import type { DashboardFilter, DashboardWidget, VizStat } from '@/types';
 
 interface WidgetRendererProps {
@@ -107,6 +108,9 @@ export default function WidgetRenderer({ widget, isPublic, dashboardFilters, fil
       break;
     case 'pivot':
       body = <PivotWidget widget={widget} result={data} />;
+      break;
+    case 'heatmap':
+      body = <HeatmapWidget widget={widget} result={data} />;
       break;
     default:
       body = <div className="text-xs text-charcoal/40">Unknown widget</div>;

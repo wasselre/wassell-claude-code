@@ -1,6 +1,6 @@
 import type { WidgetType, WidgetViz } from '@/types';
 
-export type VizFamily = 'stat' | 'bars' | 'pies' | 'lines' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot';
+export type VizFamily = 'stat' | 'bars' | 'pies' | 'lines' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot' | 'heatmap';
 
 // On-brand default chart palette (copper → terracotta → gold → sand → chocolate
 // → charcoal) so charts look like Wassel with zero configuration.
@@ -28,6 +28,8 @@ export function vizFamilyFor(type: WidgetType): VizFamily {
       return 'progress';
     case 'pivot':
       return 'pivot';
+    case 'heatmap':
+      return 'heatmap';
     default:
       return 'stat';
   }
@@ -55,6 +57,8 @@ export function defaultVizForType(type: WidgetType): WidgetViz {
       return { family: 'progress', color: '#B8734F' };
     case 'pivot':
       return { family: 'pivot' };
+    case 'heatmap':
+      return { family: 'heatmap', color: '#B8734F' };
     default:
       return { family: 'stat', color: '#B8734F' };
   }

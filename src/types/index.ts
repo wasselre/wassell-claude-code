@@ -1447,7 +1447,7 @@ export interface WorkflowRun {
 
 // Dashboard types
 
-export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot';
+export type WidgetType = 'stat' | 'bar_chart' | 'pie_chart' | 'line_chart' | 'table' | 'funnel' | 'leaderboard' | 'gauge' | 'progress' | 'pivot' | 'heatmap';
 
 export type WidgetFilterOperator =
   | 'equals'
@@ -1598,7 +1598,15 @@ export interface VizPivot {
   family: 'pivot';
   number_format?: WidgetNumberFormat;
 }
-export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress | VizPivot;
+// Heatmap: a two-level grouped result as a colored matrix — first level = rows,
+// second level = columns, each cell shaded by value intensity (relative to the
+// max cell). Reuses the pivot's 2-level shape; reads as a density grid.
+export interface VizHeatmap {
+  family: 'heatmap';
+  color?: string; // base hue; cells scale its opacity by value
+  number_format?: WidgetNumberFormat;
+}
+export type WidgetViz = VizStat | VizBars | VizPies | VizLines | VizTable | VizFunnel | VizLeaderboard | VizGauge | VizProgress | VizPivot | VizHeatmap;
 
 // Dashboard-level global filters + per-widget opt-in.
 export type DashboardFilterControl = 'date_range' | 'select' | 'search';
