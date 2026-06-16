@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { effectiveQuery, effectiveViz } from '@/lib/analytics/widgetAdapter';
+import { effectiveViz } from '@/lib/analytics/widgetAdapter';
+import { composeWidgetQuery, type GlobalFilterState } from '../lib/globalFilters';
 import { vizFamilyFor } from '../lib/widgetViz';
 import { useAnalyticsQuery } from '../hooks/useAnalyticsQuery';
 import DrillThroughModal, { type DrillContext } from './DrillThroughModal';
@@ -9,11 +10,13 @@ import BarChartWidget from './widgets/BarChartWidget';
 import PieChartWidget from './widgets/PieChartWidget';
 import LineChartWidget from './widgets/LineChartWidget';
 import TableWidget from './widgets/TableWidget';
-import type { DashboardWidget, VizStat } from '@/types';
+import type { DashboardFilter, DashboardWidget, VizStat } from '@/types';
 
 interface WidgetRendererProps {
   widget: DashboardWidget;
   isPublic?: boolean;
+  dashboardFilters?: DashboardFilter[];
+  filterState?: GlobalFilterState;
 }
 
 /**
@@ -24,14 +27,20 @@ interface WidgetRendererProps {
  * mark is clickable → DrillThroughModal shows the records behind the number.
  * The `table` family renders raw records (not an aggregation) via TableWidget.
  */
-export default function WidgetRenderer({ widget, isPublic }: WidgetRendererProps) {
+export default function WidgetRenderer({ widget, isPublic, dashboardFilters, filterState }: WidgetRendererProps) {
   const language = useAppStore((s) => s.language);
+  const models = useAppStore((s) => s.models);
   const isAr = language === 'ar';
   const family = vizFamilyFor(widget.type);
   const [drill, setDrill] = useState<DrillContext | null>(null);
 
-  // Hooks must run unconditionally — null query for the table family skips the engine.
-  const query = useMemo(() => (family === 'table' ? null : effectiveQuery(widget)), [widget, family]);
+  // Hooks must run unconditionally — null query for the table family skips the
+  // engine. Global dashboard filters merge in per the widget's filter_behavior
+  // (composeWidgetQuery returns the base query untouched when none are active).
+  const query = useMemo(
+    () => (family === 'table' ? null : composeWidgetQuery(widget, dashboardFilters, filterState ?? {}, models)),
+    [widget, family, dashboardFilters, filterState, models],
+  );
   const viz = effectiveViz(widget);
   const wantComparison = viz.family === 'stat' && !!(viz as VizStat).comparison;
   const { data, loading, error } = useAnalyticsQuery(query, { comparison: wantComparison, includeRecordIds: true });

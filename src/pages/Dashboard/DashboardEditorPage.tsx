@@ -4,10 +4,13 @@ import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { translateLabel } from '@/lib/translateLabel';
-import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid } from 'lucide-react';
+import { ArrowRight, Save, Plus, Pencil, Trash2, Globe, Copy, LayoutGrid, SlidersHorizontal } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import WidgetRenderer from './components/WidgetRenderer';
 import WidgetBuilder from './components/builder/WidgetBuilder';
+import DashboardFilterBar from './components/DashboardFilterBar';
+import DashboardFiltersConfigModal from './components/DashboardFiltersConfigModal';
+import type { GlobalFilterState } from './lib/globalFilters';
 import { autoLayoutWidgets, findPositionForNew } from '@/lib/widgetLayout';
 import type { DashboardWidget } from '@/types';
 
@@ -15,12 +18,14 @@ export default function DashboardEditorPage() {
   const { dashboardId } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { dashboards, saveDashboard, addToast, language } = useAppStore();
+  const { dashboards, models, saveDashboard, addToast, language } = useAppStore();
   const isAr = language === 'ar';
 
   const dashboard = dashboards.find((d) => d.id === dashboardId);
   const [showWidgetConfig, setShowWidgetConfig] = useState(false);
   const [editingWidget, setEditingWidget] = useState<DashboardWidget | undefined>();
+  const [showFiltersConfig, setShowFiltersConfig] = useState(false);
+  const [filterState, setFilterState] = useState<GlobalFilterState>({});
 
   if (!dashboard) {
     return <div className="text-center py-20 text-charcoal/40">Dashboard not found</div>;
@@ -131,6 +136,10 @@ export default function DashboardEditorPage() {
               {isAr ? 'إعادة ترتيب' : 'Fix Layout'}
             </Button>
           )}
+          <Button variant="ghost" onClick={() => setShowFiltersConfig(true)}>
+            <SlidersHorizontal size={16} />
+            {isAr ? 'التصفية' : 'Filters'}
+          </Button>
           <Button onClick={() => setShowWidgetConfig(true)}>
             <Plus size={16} />
             {t('dashboard.add_widget')}
@@ -141,6 +150,8 @@ export default function DashboardEditorPage() {
           </Button>
         </div>
       </div>
+
+      <DashboardFilterBar filters={dashboard.filters} state={filterState} onChange={setFilterState} models={models} />
 
       {/* Widget Grid */}
       {dashboard.widgets.length === 0 ? (
@@ -175,7 +186,7 @@ export default function DashboardEditorPage() {
               </div>
               {/* Widget content */}
               <div className="p-3 h-full">
-                <WidgetRenderer widget={widget} />
+                <WidgetRenderer widget={widget} dashboardFilters={dashboard.filters} filterState={filterState} />
               </div>
             </div>
           ))}
@@ -187,6 +198,13 @@ export default function DashboardEditorPage() {
         onClose={() => { setShowWidgetConfig(false); setEditingWidget(undefined); }}
         onSave={addWidget}
         existingWidget={editingWidget}
+      />
+
+      <DashboardFiltersConfigModal
+        open={showFiltersConfig}
+        onClose={() => setShowFiltersConfig(false)}
+        initial={dashboard.filters ?? []}
+        onSave={(filters) => saveDashboard({ ...dashboard, filters, updated_at: new Date().toISOString() })}
       />
     </div>
   );

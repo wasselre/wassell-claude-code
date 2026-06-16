@@ -119,6 +119,7 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
   const [area, setArea] = useState(false);
   const [tableFieldIds, setTableFieldIds] = useState<string[]>([]);
   const [maxRows, setMaxRows] = useState(10);
+  const [ignoreFilters, setIgnoreFilters] = useState(false);
 
   // Seed from existing widget (via the engine-effective query/viz) or reset.
   useEffect(() => {
@@ -150,12 +151,13 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       setArea(v.family === 'lines' ? !!v.area : false);
       setTableFieldIds(v.family === 'table' ? v.column_field_ids ?? [] : []);
       setMaxRows(v.family === 'table' ? v.page_size ?? 10 : 10);
+      setIgnoreFilters(existingWidget.filter_behavior?.mode === 'ignore_dashboard_filters');
     } else {
       setType('stat'); setTitleAr(''); setTitleEn(''); setSourceModelId('');
       setConditions([]); setPartConditions([]); setAggType('count'); setAggFieldId('');
       setGroupLevels([]); setDateFieldId(''); setDateMode('');
       setColor('#B8734F'); setComparison(false); setGoodDir('up'); setDonut(false); setArea(false);
-      setTableFieldIds([]); setMaxRows(10);
+      setTableFieldIds([]); setMaxRows(10); setIgnoreFilters(false);
     }
   }, [existingWidget, open]);
 
@@ -266,10 +268,11 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
       query: buildQuery(),
       viz: buildViz(),
       config: buildConfig(),
+      filter_behavior: ignoreFilters ? { mode: 'ignore_dashboard_filters' as const } : { mode: 'inherit_dashboard_filters' as const },
       x: 0, y: 0, w: 4, h: 4,
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows],
+    [type, titleAr, titleEn, sourceModelId, conditions, partConditions, aggType, aggFieldId, groupLevels, dateFieldId, dateMode, color, comparison, goodDir, donut, area, tableFieldIds, maxRows, ignoreFilters],
   );
 
   const handleSave = () => {
@@ -453,6 +456,10 @@ export default function WidgetBuilder({ open, onClose, onSave, existingWidget }:
               )}
               {family === 'pies' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={donut} onChange={(e) => setDonut(e.target.checked)} className="h-3.5 w-3.5 text-copper" />{isAr ? 'حلقي (دونات)' : 'Donut'}</label>}
               {family === 'lines' && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={area} onChange={(e) => setArea(e.target.checked)} className="h-3.5 w-3.5 text-copper" />{isAr ? 'مساحة' : 'Area'}</label>}
+              <label className="mt-2 flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={ignoreFilters} onChange={(e) => setIgnoreFilters(e.target.checked)} className="h-3.5 w-3.5 text-copper" />
+                {isAr ? 'تجاهل تصفية اللوحة' : 'Ignore dashboard filters'}
+              </label>
               <div className="mt-3 border-t border-sand/50 pt-3">
                 <ConditionsEditor conditions={conditions} onChange={setConditions} allFields={allFields} />
               </div>
