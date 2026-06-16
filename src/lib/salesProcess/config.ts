@@ -1,0 +1,381 @@
+// DEFAULT_SALES_PROCESS — the authoritative sales-process recipe.
+//
+// This is a hardcoded TS constant in v1 (reviewable in PRs, diff-able, and
+// type-gated: every stage/status literal below is checked against the generated
+// Arabic unions, so a typo is a build error — correction #7's build-time half).
+// `getSalesProcessConfig()` is the single accessor a future persisted/Studio-
+// editable layer slots into. The config previews what each outcome will do; the
+// bound workflows (Phase 5/7) actually execute it — never a second write path.
+
+import type {
+  SalesProcessConfig,
+  FollowUpTypeConfig,
+  FollowUpOutcomeConfig,
+  SalesStageConfig,
+  FollowUpTypeKey,
+} from './types';
+import type { OutcomeValue } from './outcomes';
+import type { ClientStageValue, ClientStatusValue } from './arabicEnums.generated';
+
+// ── small builders for the outcomes that recur with the same shape ───────────
+
+const REQ_ACTUAL = { actual_datetime: true } as const;
+
+/** No-answer retry: same type, +delay days. */
+function noAnswer(nextType: FollowUpTypeKey, delayDays = 1): FollowUpOutcomeConfig {
+  return {
+    value: 'no_answer',
+    requires: { ...REQ_ACTUAL },
+    warn: ['completed_by_call_id'],
+    client_update_preview: { status: 'لا يوجد رد', note_en: 'No answer — schedule retry', note_ar: 'لا يوجد رد — جدولة محاولة' },
+    next_action_preview: { kind: 'create_followup', create_followup_type: nextType, delay_days: delayDays },
+  };
+}
+
+/** Wrong time: requires reschedule_contact_date; reschedules the same activity. */
+function wrongTime(nextType: FollowUpTypeKey): FollowUpOutcomeConfig {
+  return {
+    value: 'wrong_time',
+    requires: { ...REQ_ACTUAL, reschedule_contact_date: true },
+    client_update_preview: { status: 'الوقت غير مناسب' },
+    next_action_preview: { kind: 'schedule_recontact', create_followup_type: nextType, use_field: 'reschedule_contact_date' },
+  };
+}
+
+/** Terminal not-interested with a required lost reason. */
+function notInterested(stage: ClientStageValue, status: ClientStatusValue = 'غير مهتم'): FollowUpOutcomeConfig {
+  return {
+    value: 'not_interested',
+    requires: { ...REQ_ACTUAL, lost_reason: true, outcome_notes: true },
+    client_update_preview: { stage, status },
+    is_terminal: true,
+  };
+}
+
+const APPOINTMENT_BOOKED: FollowUpOutcomeConfig = {
+  // Owned by the Appointment Created workflow (W3). The Workspace requires an
+  // Appointment record to be created+linked; it does NOT move the client here.
+  value: 'appointment_booked',
+  requires: { ...REQ_ACTUAL, appointment_created: true },
+  next_action_preview: { kind: 'book_appointment', note_en: 'Create appointment → confirmation follow-ups', note_ar: 'إنشاء موعد → متابعات تأكيد' },
+};
+
+// ── stages (Arabic values, ordered along the lifecycle) ──────────────────────
+
+const STAGES: SalesStageConfig[] = [
+  { value: 'جديد', label_ar: 'جديد', label_en: 'New', order: 0, color: '#3B82F6', followup_types: ['appointment_booking_call'] },
+  { value: 'الاتصال لحجز موعد', label_ar: 'الاتصال لحجز موعد', label_en: 'Appointment Booking', order: 1, color: '#C09B5F', followup_types: ['appointment_booking_call', 'whatsapp_follow_up'] },
+  { value: 'موعد زيارة', label_ar: 'موعد زيارة', label_en: 'Appointment Scheduled', order: 2, color: '#10B981', followup_types: ['appointment_confirmation_call', 'same_day_appointment_confirmation', 'no_show_recovery_call'] },
+  { value: 'زيارة', label_ar: 'زيارة', label_en: 'Visit', order: 3, color: '#10B981', followup_types: ['follow_up_call_after_visit'] },
+  { value: 'متابعة بعد الزيارة', label_ar: 'متابعة بعد الزيارة', label_en: 'After-Visit Follow-up', order: 4, color: '#C09B5F', followup_types: ['follow_up_call_after_visit'] },
+  { value: 'عرض سعر', label_ar: 'عرض سعر', label_en: 'Offer', order: 5, color: '#C09B5F', followup_types: ['offer_follow_up'] },
+  { value: 'حجز', label_ar: 'حجز', label_en: 'Reservation', order: 6, color: '#10B981', followup_types: ['reservation_payment_follow_up'] },
+  { value: 'تمويل', label_ar: 'تمويل', label_en: 'Financing', order: 7, color: '#C09B5F', followup_types: ['financing_follow_up'] },
+  { value: 'الإفراغ', label_ar: 'الإفراغ', label_en: 'Ownership Transfer', order: 8, color: '#C09B5F', followup_types: ['ownership_transfer_follow_up'] },
+  { value: 'مغلق ناجح', label_ar: 'مغلق ناجح', label_en: 'Closed Won', order: 9, color: '#10B981', followup_types: [] },
+  { value: 'غير مؤهل', label_ar: 'غير مؤهل', label_en: 'Unqualified', order: 10, color: '#6B7280', followup_types: [] },
+  { value: 'خاسر', label_ar: 'خاسر', label_en: 'Lost', order: 11, color: '#8E4E3A', followup_types: [] },
+];
+
+// ── follow-up types with their per-type outcome matrix ───────────────────────
+
+const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
+  {
+    type: 'appointment_booking_call',
+    label_ar: 'مكالمة حجز موعد',
+    label_en: 'Appointment Booking Call',
+    objective_ar: 'حجز موعد زيارة للمشروع',
+    objective_en: 'Book a project visit',
+    primary_channel: 'call',
+    stage: 'الاتصال لحجز موعد',
+    context_blocks: ['lead_source', 'campaign', 'preferred_project', 'budget', 'preferred_area', 'preferred_unit_type', 'previous_attempts', 'latest_call_summary', 'latest_whatsapp'],
+    preference_summary_fields: ['budget', 'preferred_projects', 'preferred_neighborhoods', 'preferred_unit_type', 'preferred_area', 'preferred_language'],
+    script: {
+      ar: ['ما المنطقة التي تهمك؟', 'ما نطاق الميزانية المناسب لك؟', 'هل البحث للاستخدام الشخصي أم للاستثمار؟', 'هل يناسبك تحديد موعد زيارة قريبًا؟'],
+      en: ['Which area interests you?', 'What budget range are you considering?', 'Personal use or investment?', 'Could we schedule a project visit soon?'],
+    },
+    allowed_outcomes: [
+      APPOINTMENT_BOOKED,
+      {
+        value: 'interested',
+        requires: { ...REQ_ACTUAL },
+        client_update_preview: { stage: 'الاتصال لحجز موعد', status: 'مهتم' },
+        next_action_preview: { kind: 'create_followup', create_followup_type: 'whatsapp_follow_up', delay_days: 1 },
+      },
+      noAnswer('appointment_booking_call', 1),
+      wrongTime('appointment_booking_call'),
+      {
+        value: 'recontact_later',
+        requires: { ...REQ_ACTUAL, reschedule_contact_date: true },
+        client_update_preview: { status: 'إعادة تواصل لاحقًا' },
+        next_action_preview: { kind: 'schedule_recontact', create_followup_type: 'appointment_booking_call', use_field: 'reschedule_contact_date' },
+      },
+      notInterested('غير مؤهل'),
+      { value: 'invalid_number', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'رقم خاطئ' }, is_terminal: true },
+      { value: 'duplicate', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'مكرر' }, is_terminal: true },
+    ],
+  },
+  {
+    type: 'whatsapp_follow_up',
+    label_ar: 'متابعة واتساب',
+    label_en: 'WhatsApp Follow-up',
+    objective_ar: 'الحفاظ على التفاعل ودفع العميل نحو موعد أو عرض',
+    objective_en: 'Keep engagement and move toward an appointment or offer',
+    primary_channel: 'whatsapp',
+    stage: 'الاتصال لحجز موعد',
+    context_blocks: ['latest_whatsapp', 'suggested_template', 'preference_summary', 'next_recommended'],
+    preference_summary_fields: ['budget', 'preferred_projects', 'preferred_unit_type', 'preferred_language'],
+    allowed_outcomes: [
+      {
+        value: 'message_sent',
+        requires: { ...REQ_ACTUAL },
+        warn: ['completed_by_chat_id'],
+        client_update_preview: { status: 'تم إرسال واتساب' },
+        next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 1 },
+      },
+      {
+        value: 'message_replied',
+        requires: { ...REQ_ACTUAL, outcome_notes: true },
+        warn: ['completed_by_chat_id'],
+        client_update_preview: { status: 'مهتم' },
+        next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 0 },
+      },
+      APPOINTMENT_BOOKED,
+      wrongTime('appointment_booking_call'),
+      noAnswer('whatsapp_follow_up', 1),
+      notInterested('غير مؤهل'),
+    ],
+  },
+  {
+    type: 'appointment_confirmation_call',
+    label_ar: 'مكالمة تأكيد الموعد',
+    label_en: 'Appointment Confirmation Call',
+    objective_ar: 'ضمان حضور العميل للموعد',
+    objective_en: 'Ensure the client attends the appointment',
+    primary_channel: 'call',
+    stage: 'موعد زيارة',
+    context_blocks: ['appointment', 'project_location', 'appointment_status', 'sales_rep', 'previous_confirmations'],
+    preference_summary_fields: ['preferred_projects', 'preferred_language'],
+    script: {
+      ar: ['تأكيد تاريخ ووقت الموعد', 'تأكيد اسم المشروع وموقعه', 'هل تحتاج إلى الاتجاهات؟'],
+      en: ['Confirm the appointment date and time', 'Confirm the project name and location', 'Do you need directions?'],
+    },
+    allowed_outcomes: [
+      { value: 'attendance_confirmed', requires: { ...REQ_ACTUAL, appointment_id: true }, client_update_preview: { stage: 'موعد زيارة', status: 'تم تأكيد الحضور' }, next_action_preview: { kind: 'none' } },
+      {
+        value: 'no_answer',
+        requires: { ...REQ_ACTUAL, appointment_id: true },
+        warn: ['completed_by_call_id'],
+        client_update_preview: { status: 'لا يوجد رد' },
+        next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_confirmation_call', delay_days: 0, note_en: 'WhatsApp reminder + retry if not same-day', note_ar: 'تذكير واتساب + إعادة محاولة إن لم يكن نفس اليوم' },
+      },
+      {
+        value: 'rescheduled',
+        requires: { ...REQ_ACTUAL, appointment_id: true, new_appointment_datetime: true },
+        client_update_preview: { status: 'تمت إعادة الجدولة' },
+        next_action_preview: { kind: 'book_appointment', use_field: 'new_appointment_datetime', note_en: 'Update appointment + new confirmations', note_ar: 'تحديث الموعد + متابعات تأكيد جديدة' },
+      },
+      {
+        value: 'appointment_cancelled_rebook',
+        requires: { ...REQ_ACTUAL, appointment_id: true, outcome_notes: true },
+        client_update_preview: { status: 'تم إلغاء الموعد' },
+        next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 0 },
+      },
+      {
+        value: 'appointment_cancelled_lost',
+        requires: { ...REQ_ACTUAL, appointment_id: true, lost_reason: true },
+        client_update_preview: { stage: 'غير مؤهل', status: 'تم إلغاء الموعد' },
+        is_terminal: true,
+      },
+      wrongTime('appointment_confirmation_call'),
+      notInterested('غير مؤهل'),
+    ],
+  },
+  {
+    // Same-day confirmation shares the confirmation outcome set.
+    type: 'same_day_appointment_confirmation',
+    label_ar: 'تأكيد الموعد في نفس اليوم',
+    label_en: 'Same-Day Appointment Confirmation',
+    objective_ar: 'تأكيد الحضور في يوم الموعد',
+    objective_en: 'Confirm attendance on the appointment day',
+    primary_channel: 'call',
+    stage: 'موعد زيارة',
+    context_blocks: ['appointment', 'project_location', 'appointment_status', 'sales_rep'],
+    preference_summary_fields: ['preferred_projects'],
+    allowed_outcomes: [
+      { value: 'attendance_confirmed', requires: { ...REQ_ACTUAL, appointment_id: true }, client_update_preview: { stage: 'موعد زيارة', status: 'تم تأكيد الحضور' }, next_action_preview: { kind: 'none' } },
+      { value: 'no_answer', requires: { ...REQ_ACTUAL, appointment_id: true }, warn: ['completed_by_call_id'], client_update_preview: { status: 'لا يوجد رد' }, next_action_preview: { kind: 'none', note_en: 'Same-day — keep appointment, flag risk', note_ar: 'نفس اليوم — إبقاء الموعد مع الإشارة للخطورة' } },
+      { value: 'rescheduled', requires: { ...REQ_ACTUAL, appointment_id: true, new_appointment_datetime: true }, client_update_preview: { status: 'تمت إعادة الجدولة' }, next_action_preview: { kind: 'book_appointment', use_field: 'new_appointment_datetime' } },
+      { value: 'appointment_cancelled_lost', requires: { ...REQ_ACTUAL, appointment_id: true, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'تم إلغاء الموعد' }, is_terminal: true },
+    ],
+  },
+  {
+    type: 'no_show_recovery_call',
+    label_ar: 'مكالمة استرجاع بعد عدم الحضور',
+    label_en: 'No-Show Recovery Call',
+    objective_ar: 'استرجاع العملاء الذين فاتهم الموعد',
+    objective_en: 'Recover clients who missed the appointment',
+    primary_channel: 'call',
+    stage: 'موعد زيارة',
+    context_blocks: ['missed_appointment_date', 'appointment', 'previous_confirmations', 'reschedule_suggestion'],
+    preference_summary_fields: ['preferred_projects', 'budget'],
+    allowed_outcomes: [
+      { value: 'rescheduled', requires: { ...REQ_ACTUAL, new_appointment_datetime: true }, client_update_preview: { status: 'تمت إعادة الجدولة' }, next_action_preview: { kind: 'book_appointment', use_field: 'new_appointment_datetime' } },
+      { value: 'still_interested', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'مهتم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 0 } },
+      notInterested('غير مؤهل'),
+      noAnswer('no_show_recovery_call', 1),
+      wrongTime('no_show_recovery_call'),
+    ],
+  },
+  {
+    type: 'follow_up_call_after_visit',
+    label_ar: 'مكالمة متابعة بعد الزيارة',
+    label_en: 'After-Visit Follow-up',
+    objective_ar: 'نقل العميل من الزيارة إلى طلب عرض السعر',
+    objective_en: 'Move the client from visit to offer request',
+    primary_channel: 'call',
+    stage: 'متابعة بعد الزيارة',
+    context_blocks: ['visited_project', 'visit_date', 'visited_units', 'customer_feedback', 'budget', 'objections', 'offer_readiness'],
+    preference_summary_fields: ['budget', 'preferred_projects', 'preferred_unit_type'],
+    allowed_outcomes: [
+      { value: 'request_offer', requires: { ...REQ_ACTUAL, outcome_notes: true }, client_update_preview: { stage: 'عرض سعر', status: 'تم طلب عرض سعر' }, next_action_preview: { kind: 'create_offer', note_en: 'Create/open offer + offer follow-up', note_ar: 'إنشاء/فتح عرض سعر + متابعة العرض' } },
+      { value: 'still_interested', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'مهتم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 2 } },
+      { value: 'needs_financing_info', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'يحتاج معلومات تمويل' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 2, note_en: 'Send financing info on WhatsApp', note_ar: 'إرسال معلومات التمويل عبر واتساب' } },
+      { value: 'family_discussion', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'نقاش عائلي' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 3 } },
+      notInterested('خاسر'),
+      noAnswer('follow_up_call_after_visit', 1),
+      wrongTime('follow_up_call_after_visit'),
+    ],
+  },
+  {
+    type: 'offer_follow_up',
+    label_ar: 'متابعة عرض السعر',
+    label_en: 'Offer Follow-up',
+    objective_ar: 'تحويل العرض إلى دفعة حجز',
+    objective_en: 'Convert the offer into a reservation payment',
+    primary_channel: 'call',
+    stage: 'عرض سعر',
+    context_blocks: ['offer_details', 'preference_summary'],
+    preference_summary_fields: ['budget', 'preferred_projects'],
+    allowed_outcomes: [
+      { value: 'offer_accepted', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'حجز', status: 'بانتظار دفعة الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'reservation_payment_follow_up', delay_days: 1 } },
+      { value: 'waiting_decision', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'بانتظار القرار' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'offer_follow_up', delay_days: 2 } },
+      { value: 'needs_financing_info', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'يحتاج معلومات تمويل' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'offer_follow_up', delay_days: 2 } },
+      { value: 'offer_rejected', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'خاسر', status: 'تم رفض العرض' }, is_terminal: true },
+      noAnswer('offer_follow_up', 1),
+      wrongTime('offer_follow_up'),
+    ],
+  },
+  {
+    type: 'reservation_payment_follow_up',
+    label_ar: 'متابعة دفعة الحجز',
+    label_en: 'Reservation Payment Follow-up',
+    objective_ar: 'تأكيد استلام دفعة الحجز والانتقال للتمويل',
+    objective_en: 'Confirm the reservation payment and move to financing',
+    primary_channel: 'call',
+    stage: 'حجز',
+    context_blocks: ['offer_details'],
+    preference_summary_fields: ['preferred_projects'],
+    allowed_outcomes: [
+      { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'تمويل', status: 'تم الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 1 } },
+      { value: 'payment_pending', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'بانتظار دفعة الحجز' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'reservation_payment_follow_up', delay_days: 2 } },
+      noAnswer('reservation_payment_follow_up', 1),
+      wrongTime('reservation_payment_follow_up'),
+    ],
+  },
+  {
+    type: 'financing_follow_up',
+    label_ar: 'متابعة التمويل',
+    label_en: 'Financing Follow-up',
+    objective_ar: 'متابعة مراحل التمويل البنكي حتى الإفراغ',
+    objective_en: 'Track financing stages toward title transfer',
+    primary_channel: 'call',
+    stage: 'تمويل',
+    context_blocks: ['preference_summary'],
+    preference_summary_fields: ['preferred_projects'],
+    allowed_outcomes: [
+      { value: 'documents_pending', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'البنك' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 2 } },
+      { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'التقييم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 3 } },
+      { value: 'waiting_decision', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'البنك' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'financing_follow_up', delay_days: 2 } },
+      noAnswer('financing_follow_up', 1),
+      wrongTime('financing_follow_up'),
+    ],
+  },
+  {
+    type: 'ownership_transfer_follow_up',
+    label_ar: 'متابعة الإفراغ',
+    label_en: 'Ownership Transfer Follow-up',
+    objective_ar: 'إتمام نقل الملكية (الإفراغ) وإغلاق الصفقة',
+    objective_en: 'Complete the title transfer and close the deal',
+    primary_channel: 'call',
+    stage: 'الإفراغ',
+    context_blocks: ['preference_summary'],
+    preference_summary_fields: ['preferred_projects'],
+    allowed_outcomes: [
+      { value: 'documents_pending', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'تم إصدار نموذج الإفراغ' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'ownership_transfer_follow_up', delay_days: 2 } },
+      { value: 'payment_received', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'مغلق ناجح', status: 'تم الإفراغ' }, is_terminal: true },
+      noAnswer('ownership_transfer_follow_up', 1),
+    ],
+  },
+];
+
+export const DEFAULT_SALES_PROCESS: SalesProcessConfig = {
+  stages: STAGES,
+  followup_types: FOLLOWUP_TYPES,
+};
+
+// ── accessors ────────────────────────────────────────────────────────────────
+
+/** The single seam a future persisted/Studio-editable config slots into. */
+export function getSalesProcessConfig(): SalesProcessConfig {
+  return DEFAULT_SALES_PROCESS;
+}
+
+export function getFollowUpTypeConfig(
+  type: string | null | undefined,
+  config: SalesProcessConfig = DEFAULT_SALES_PROCESS,
+): FollowUpTypeConfig | undefined {
+  if (!type) return undefined;
+  return config.followup_types.find((t) => t.type === type);
+}
+
+export function getOutcomeConfig(
+  type: string | null | undefined,
+  outcomeValue: string | null | undefined,
+  config: SalesProcessConfig = DEFAULT_SALES_PROCESS,
+): FollowUpOutcomeConfig | undefined {
+  if (!outcomeValue) return undefined;
+  return getFollowUpTypeConfig(type, config)?.allowed_outcomes.find((o) => o.value === outcomeValue);
+}
+
+export function getStageConfig(
+  stage: string | null | undefined,
+  config: SalesProcessConfig = DEFAULT_SALES_PROCESS,
+): SalesStageConfig | undefined {
+  if (!stage) return undefined;
+  return config.stages.find((s) => s.value === stage);
+}
+
+/**
+ * Every stage/status/outcome value the config references — fed to
+ * assertSalesProcessEnums() so a drift between the config and the live model
+ * options fails loudly (correction #7's runtime half).
+ */
+export function collectConfigEnumRefs(config: SalesProcessConfig = DEFAULT_SALES_PROCESS): {
+  stages: ClientStageValue[];
+  statuses: ClientStatusValue[];
+  outcomes: OutcomeValue[];
+} {
+  const stages = new Set<ClientStageValue>();
+  const statuses = new Set<ClientStatusValue>();
+  const outcomes = new Set<OutcomeValue>();
+  for (const stage of config.stages) stages.add(stage.value);
+  for (const type of config.followup_types) {
+    for (const outcome of type.allowed_outcomes) {
+      outcomes.add(outcome.value);
+      if (outcome.client_update_preview?.stage) stages.add(outcome.client_update_preview.stage);
+      if (outcome.client_update_preview?.status) statuses.add(outcome.client_update_preview.status);
+    }
+  }
+  return { stages: [...stages], statuses: [...statuses], outcomes: [...outcomes] };
+}
