@@ -31,6 +31,16 @@ export interface ContextValue {
 function str(v: unknown): string | undefined {
   if (v === null || v === undefined) return undefined;
   if (Array.isArray(v)) return v.length ? v.map(String).join('، ') : undefined;
+  if (typeof v === 'object') {
+    // Range fields (budget / area) store { min, max } — format as "min – max".
+    const r = v as { min?: unknown; max?: unknown };
+    if ('min' in r || 'max' in r) {
+      const min = r.min != null ? String(r.min) : '';
+      const max = r.max != null ? String(r.max) : '';
+      return min || max ? `${min || '…'} – ${max || '…'}` : undefined;
+    }
+    return undefined; // other objects have no sensible inline display
+  }
   const s = String(v).trim();
   return s.length ? s : undefined;
 }
