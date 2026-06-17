@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle2, CalendarPlus, Loader2 } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle2, CalendarPlus, Loader2, MessageCircle, Clock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppModel } from '@/types';
 import {
@@ -21,6 +21,8 @@ interface OutcomePanelProps {
   clientId: string | null;
   phones: string[];
   onBookAppointment: () => void;
+  /** Open the WhatsApp composer (used by the send→waiting→response flow). */
+  onSendWhatsApp?: () => void;
   onComplete: (outcomeKey: string) => void;
   saving: boolean;
 }
@@ -46,7 +48,7 @@ const toneClasses: Record<string, string> = {
 };
 
 export default function OutcomePanel(props: OutcomePanelProps) {
-  const { followupModel, typeKey, draft, patchDraft, readOnly, clientId, phones, onBookAppointment, onComplete, saving } = props;
+  const { followupModel, typeKey, draft, patchDraft, readOnly, clientId, phones, onBookAppointment, onSendWhatsApp, onComplete, saving } = props;
   const isAr = useAppStore((s) => s.language === 'ar');
   const [outcomeKey, setOutcomeKey] = useState<string | null>(
     typeof draft.call_result === 'string' && draft.followup_status === 'completed' ? draft.call_result : null,
@@ -85,6 +87,19 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     ? validateFollowUpCompletion({ followupType: typeKey ?? '', selectedOutcome: outcomeKey, draft, fieldLabels })
     : null;
 
+  // FOLLOWUP_3: WhatsApp is a two-phase flow — SEND (an action) then RECORD the
+  // reply (the outcome). Sending puts the follow-up into a waiting state; show
+  // the Send button until then, and the response-outcome buttons only once a
+  // reply is awaited. Non-WhatsApp types are unaffected.
+  const isWhatsapp = typeConfig.primary_channel === 'whatsapp';
+  const isCompleted = draft.followup_status === 'completed';
+  const waState = typeof draft.whatsapp_state === 'string' ? draft.whatsapp_state : undefined;
+  const sendPhase = isWhatsapp && !isCompleted && waState !== 'message_sent_waiting_response';
+  const waitingPhase = isWhatsapp && !isCompleted && waState === 'message_sent_waiting_response';
+  const sentAtLabel = typeof draft.sent_at === 'string' && draft.sent_at
+    ? new Date(draft.sent_at).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'short', timeStyle: 'short' })
+    : null;
+
   const dt = (slug: string, label: string) => (
     <label className="block text-sm">
       <span className="mb-1 block text-[#8E4E3A]">{label}</span>
@@ -102,7 +117,40 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     <section className="card p-5" style={{ border: '1.5px solid rgba(184, 115, 79, 0.45)' }}>
       <h2 className="mb-3 text-base font-bold text-chocolate">{isAr ? 'النتيجة' : 'Outcome'}</h2>
 
-      {(() => {
+      {sendPhase ? (
+        <div className="space-y-2">
+          <button
+            type="button"
+            disabled={readOnly}
+            onClick={() => onSendWhatsApp?.()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40"
+          >
+            <MessageCircle size={18} /> {isAr ? 'إرسال رسالة واتساب' : 'Send WhatsApp message'}
+          </button>
+          <p className="text-xs text-charcoal/55">
+            {isAr
+              ? 'إرسال الرسالة إجراء وليس نتيجة — بعد رد العميل ستظهر أزرار تسجيل النتيجة هنا.'
+              : 'Sending is an action, not an outcome — after the customer replies the outcome buttons appear here.'}
+          </p>
+        </div>
+      ) : (
+        <>
+          {waitingPhase && (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 rounded-xl border border-[#C09B5F]/40 bg-[#C09B5F]/10 px-3 py-2.5 text-sm text-[#8E4E3A]">
+                <Clock size={16} className="shrink-0" />
+                <span className="flex-1">
+                  {isAr ? 'تم إرسال الرسالة — بانتظار رد العميل' : 'Message sent — awaiting the customer reply'}
+                  {sentAtLabel && <span className="text-charcoal/50"> · {sentAtLabel}</span>}
+                </span>
+                <button type="button" onClick={() => onSendWhatsApp?.()} className="shrink-0 text-xs font-semibold text-copper hover:underline">
+                  {isAr ? 'إرسال رسالة أخرى' : 'Send another'}
+                </button>
+              </div>
+              <p className="mt-3 text-sm font-semibold text-chocolate">{isAr ? 'سجّل رد العميل:' : "Record the customer's reply:"}</p>
+            </div>
+          )}
+          {(() => {
         // The first config outcome is the primary success path (e.g. حجز موعد for
         // a booking call) — render it as a prominent filled button; the rest as pills.
         const [primary, ...secondary] = typeConfig.allowed_outcomes;
@@ -244,6 +292,8 @@ export default function OutcomePanel(props: OutcomePanelProps) {
             </button>
           )}
         </div>
+      )}
+        </>
       )}
     </section>
   );

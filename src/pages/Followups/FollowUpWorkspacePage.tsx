@@ -133,6 +133,51 @@ export default function FollowUpWorkspacePage() {
     navigate('/model/followups');
   };
 
+  // FOLLOWUP_3: sending a WhatsApp is an ACTION, not a completion. Stamp the
+  // follow-up into the waiting-for-response state (NOT 'completed') and bake the
+  // escalation deadline into scheduled_datetime — attempt 1 → +24h; attempt ≥2 →
+  // day 5 from the first message. The on_due "WhatsApp No-Response Escalation"
+  // workflow fires at that deadline IF still waiting; recording a response
+  // clears whatsapp_state first, so the escalation skips. Workflows do the
+  // transitions; this only records the action's data on THIS record.
+  const handleWhatsAppSent = async (chatId: string) => {
+    if (ctx.typeKey !== 'whatsapp_follow_up' || readOnly) return;
+    const now = new Date();
+    const attempt = typeof draft.whatsapp_attempt_number === 'number' && draft.whatsapp_attempt_number > 0
+      ? draft.whatsapp_attempt_number : 1;
+    const firstSent = typeof draft.first_whatsapp_sent_at === 'string' && draft.first_whatsapp_sent_at
+      ? draft.first_whatsapp_sent_at : now.toISOString();
+    const day5 = new Date(new Date(firstSent).getTime() + 5 * 24 * 3600 * 1000);
+    const deadline = attempt >= 2
+      ? (day5.getTime() > now.getTime() + 60_000 ? day5 : new Date(now.getTime() + 60_000))
+      : new Date(now.getTime() + 24 * 3600 * 1000);
+    const patch: Record<string, unknown> = {
+      whatsapp_state: 'message_sent_waiting_response',
+      sent_at: now.toISOString(),
+      first_whatsapp_sent_at: firstSent,
+      whatsapp_attempt_number: attempt,
+      completed_by_chat_id: chatId,
+      sent_by_user: currentUserId ?? draft.sent_by_user ?? null,
+      followup_status: 'in_progress',
+      scheduled_datetime: deadline.toISOString(),
+    };
+    patchDraft(patch);
+    setSaving(true);
+    const toSave: AppRecord = { ...record, data: { ...draft, ...patch }, updated_at: now.toISOString() };
+    const res = await saveRecord(toSave, { expectedVersion: versionRef.current?.version ?? null });
+    setSaving(false);
+    if (res.status === 'conflict') {
+      addToast(isAr ? 'تم تعديل هذا السجل من مستخدم آخر — حدّث الصفحة.' : 'This record was just edited by someone else — reload.', 'error');
+      return;
+    }
+    // Our own write bumped the version; track it so the later "record response"
+    // save (handleComplete) uses the fresh version instead of self-conflicting.
+    if (res.status !== 'queued' && versionRef.current) {
+      versionRef.current = { id: versionRef.current.id, version: (versionRef.current.version ?? 0) + 1 };
+    }
+    addToast(isAr ? 'تم إرسال الرسالة — بانتظار رد العميل' : 'Message sent — awaiting the customer reply', 'success');
+  };
+
   return (
     <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
       <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1 text-sm font-semibold text-terracotta hover:underline">
@@ -161,6 +206,7 @@ export default function FollowUpWorkspacePage() {
             clientId={ctx.clientId}
             phones={ctx.phones}
             onBookAppointment={() => setShowApptModal(true)}
+            onSendWhatsApp={() => setShowChatModal(true)}
             onComplete={handleComplete}
             saving={saving}
           />
@@ -206,7 +252,7 @@ export default function FollowUpWorkspacePage() {
           onClose={() => setShowChatModal(false)}
           initialClient={initialChatClient}
           initialPhone={ctx.phones[0]}
-          onSent={(chatId) => { setShowChatModal(false); setChatThreadId(chatId); }}
+          onSent={(chatId) => { setShowChatModal(false); setChatThreadId(chatId); void handleWhatsAppSent(chatId); }}
         />
       )}
 

@@ -37,8 +37,9 @@ export const OUTCOME_CATALOG: readonly OutcomeCatalogEntry[] = [
   // --- new values appended by the Phase-1 migration ---
   { value: 'invalid_number', label_ar: 'رقم خاطئ', label_en: 'Invalid Number', tone: 'negative' },
   { value: 'duplicate', label_ar: 'مكرر', label_en: 'Duplicate', tone: 'negative' },
-  { value: 'message_sent', label_ar: 'تم إرسال الرسالة', label_en: 'Message Sent', tone: 'neutral' },
-  { value: 'message_replied', label_ar: 'تم الرد', label_en: 'Message Replied', tone: 'positive' },
+  { value: 'message_sent', label_ar: 'تم إرسال الرسالة', label_en: 'Message Sent', tone: 'neutral' }, // legacy — no longer a selectable outcome (see whatsapp_state)
+  { value: 'message_replied', label_ar: 'تم الرد', label_en: 'Message Replied', tone: 'positive' }, // legacy — replaced by the real response outcomes
+  { value: 'no_response', label_ar: 'لا يوجد رد', label_en: 'No Response', tone: 'neutral' }, // auto-set by the WhatsApp no-response escalation workflow
   { value: 'request_offer', label_ar: 'طلب عرض سعر', label_en: 'Request Offer', tone: 'positive' },
   { value: 'still_interested', label_ar: 'لا يزال مهتمًا', label_en: 'Still Interested', tone: 'positive' },
   { value: 'needs_financing_info', label_ar: 'يحتاج معلومات تمويل', label_en: 'Needs Financing Info', tone: 'neutral' },

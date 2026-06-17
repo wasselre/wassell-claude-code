@@ -126,24 +126,35 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     stage: 'الاتصال لحجز موعد',
     context_blocks: ['latest_whatsapp', 'suggested_template', 'preference_summary', 'next_recommended'],
     preference_summary_fields: ['budget', 'preferred_projects', 'preferred_unit_type', 'preferred_language'],
+    // FOLLOWUP_3: sending a WhatsApp is an ACTION (the Workspace puts the
+    // follow-up into a waiting state — whatsapp_state='message_sent_waiting_response'),
+    // NOT an outcome. These are the REAL customer-response outcomes the rep
+    // records after a reply. `message_sent`/`message_replied` are no longer
+    // selectable (message_sent is reused as the whatsapp_state send marker);
+    // `no_response` is written by the escalation workflow, not picked here.
     allowed_outcomes: [
       {
-        value: 'message_sent',
+        value: 'interested',
         requires: { ...REQ_ACTUAL },
         warn: ['completed_by_chat_id'],
-        client_update_preview: { status: 'تم إرسال واتساب' },
-        next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 1 },
-      },
-      {
-        value: 'message_replied',
-        requires: { ...REQ_ACTUAL, outcome_notes: true },
-        warn: ['completed_by_chat_id'],
         client_update_preview: { status: 'مهتم' },
-        next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 0 },
+        next_action_preview: { kind: 'create_followup', create_followup_type: 'whatsapp_follow_up', delay_days: 5 },
       },
       APPOINTMENT_BOOKED,
-      wrongTime('appointment_booking_call'),
-      noAnswer('whatsapp_follow_up', 1),
+      {
+        value: 'request_offer',
+        requires: { ...REQ_ACTUAL },
+        warn: ['completed_by_chat_id'],
+        client_update_preview: { stage: 'عرض سعر', status: 'تم طلب عرض سعر' },
+        next_action_preview: { kind: 'none', note_en: 'Offer follow-up is created in the offer stage', note_ar: 'تُنشأ متابعة العرض في مرحلة العرض' },
+      },
+      wrongTime('whatsapp_follow_up'),
+      {
+        value: 'recontact_later',
+        requires: { ...REQ_ACTUAL, reschedule_contact_date: true },
+        client_update_preview: { status: 'إعادة تواصل لاحقًا' },
+        next_action_preview: { kind: 'schedule_recontact', create_followup_type: 'whatsapp_follow_up', use_field: 'reschedule_contact_date' },
+      },
       notInterested('غير مؤهل'),
     ],
   },
