@@ -1703,6 +1703,18 @@ export interface SalesProcessOverride {
   updated_at?: string;
 }
 
+/**
+ * Target for the app-level WhatsApp composer (GlobalChatComposer). Any phone
+ * WhatsApp action sets this via openChatComposer; the host pre-connects to the
+ * matching client (by explicit id, else by phone match) and shows the chat
+ * popup + the conversation thread popup WITHOUT navigating — the caller stays
+ * exactly where they were.
+ */
+export interface ChatComposerTarget {
+  phone?: string;
+  clientRecordId?: string;
+}
+
 export interface DashboardWidget {
   id: string;
   type: WidgetType;
@@ -2210,6 +2222,8 @@ export interface AppState {
   metricDefinitions: MetricDefinition[];
   scheduledReports: ScheduledReport[];
   salesProcessOverrides: SalesProcessOverride[];
+  /** Non-null while the app-level WhatsApp composer popup is open. */
+  chatComposerTarget: ChatComposerTarget | null;
   views: ModelView[];
   users: User[];
   profiles: Profile[];
@@ -2388,6 +2402,9 @@ export interface AppState {
   deleteScheduledReport: (reportId: string) => void;
   // Sales-process instruction overrides (manager-editable follow-up objectives)
   saveSalesProcessOverride: (override: SalesProcessOverride) => void;
+  // App-level WhatsApp composer (phone icons + Workspace button → one popup)
+  openChatComposer: (target: ChatComposerTarget) => void;
+  closeChatComposer: () => void;
 
   // Views (per-model saved table configurations)
   saveView: (view: ModelView) => void;

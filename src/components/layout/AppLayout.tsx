@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
+import GlobalChatComposer from '@/pages/Chats/components/GlobalChatComposer';
 
 export default function AppLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -30,6 +31,9 @@ export default function AppLayout() {
           <Outlet />
         </main>
       </div>
+      {/* App-level WhatsApp composer — any phone WhatsApp action opens the chat
+          popup here without navigating away from the current page. */}
+      <GlobalChatComposer />
     </div>
   );
 }

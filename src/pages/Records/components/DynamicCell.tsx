@@ -25,7 +25,7 @@ interface DynamicCellProps {
 
 export default function DynamicCell({ field, value, allRecords, recordData }: DynamicCellProps) {
   const { t } = useTranslation();
-  const { language, addToast, models } = useAppStore();
+  const { language, addToast, models, openChatComposer } = useAppStore();
   const isAr = language === 'ar';
 
   // Mirror fields resolve at render time by hopping through a sibling lookup.
@@ -257,17 +257,15 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
         <span className="inline-flex items-center gap-2" dir="ltr">
           <span>{raw}</span>
           {wa && (
-            <a
-              href={wa}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openChatComposer({ phone: raw }); }}
               aria-label={isAr ? 'واتساب' : 'WhatsApp'}
               title={isAr ? 'واتساب' : 'WhatsApp'}
               className="text-copper hover:text-terracotta transition-colors"
             >
               <WhatsAppIcon size={14} />
-            </a>
+            </button>
           )}
           {tel && (
             <a

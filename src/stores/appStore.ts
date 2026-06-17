@@ -1305,6 +1305,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   metricDefinitions: [],
   scheduledReports: [],
   salesProcessOverrides: [],
+  chatComposerTarget: null,
   views: [],
   users: [],
   profiles: [],
@@ -3324,6 +3325,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { salesProcessOverrides };
     });
   },
+
+  // --- App-level WhatsApp composer ---
+  openChatComposer: (target) => set({ chatComposerTarget: target }),
+  closeChatComposer: () => set({ chatComposerTarget: null }),
 
   // --- Whiteboards ---
   createWhiteboardFolder: (name: string) => {
