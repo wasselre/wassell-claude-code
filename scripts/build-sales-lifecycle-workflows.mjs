@@ -24,6 +24,11 @@ export const PROD_IDS = {
   appointments: 'b032a675-6237-4436-9783-a1a253855f74',
   clients: '2e86f197-385f-4853-908f-b4cb7237f7d8',
   visits: '372ed642-3753-40b4-9dd7-e8390f91b1f8',
+  // Phase 7 downstream models (created by 2026-06-17_sales_os_downstream_models.sql)
+  offer_prices: '5a1e0ffe-0000-4000-8000-000000000001',
+  reservations: '5a1e0ffe-0000-4000-8000-000000000002',
+  financing: '5a1e0ffe-0000-4000-8000-000000000003',
+  ownership_transfer: '5a1e0ffe-0000-4000-8000-000000000004',
   group: 'f1e1d1c1-5a1e-4000-8000-000000000001', // Sales Lifecycle
 };
 
@@ -228,7 +233,161 @@ export function buildW7(ids) {
   };
 }
 
-const BUILDERS = { w4: buildW4, w5: buildW5, w6: buildW6, w7: buildW7 };
+// ── W8 — Offer Created → Offer Follow-up (on_create offer_prices) ─────────────
+// W7's request_offer is status-only; W8 is what creates the offer_follow_up once
+// the rep actually drafts an Offer record. Moves the client to "offer sent".
+export function buildW8(ids) {
+  const { followups, offer_prices, clients, group } = ids;
+  const conditions = [{ id: U(), value: '', field_id: 'client_id', operator: 'is_not_empty' }];
+  const branch = {
+    id: U(), label_en: 'Offer Created', label_ar: 'تم إنشاء العرض', condition_mode: 'all', conditions,
+    actions: [
+      updateRecord(clients, 'client_id', [
+        mStatic('client_stage', 'عرض سعر'), mStatic('client_status', 'تم إرسال عرض السعر'),
+      ]),
+      createRecord(followups, [
+        mTrigger('client_id', 'client_id'),
+        mStatic('followup_type', 'offer_follow_up'),
+        mDate('scheduled_datetime', '+1d @10:00', ''),
+        mStatic('followup_status', 'open'),
+        mTrigger('sales_rep', 'sales_rep'),
+      ]),
+    ],
+  };
+  return {
+    id: U(), label_ar: 'إنشاء العرض ← متابعة العرض', label_en: 'Offer Created → Offer Follow-up',
+    group_id: group, trigger_model_id: offer_prices, trigger_event: 'create', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'عرض سعر', activity_type: 'offer_follow_up', compatibility: 'simple' },
+    branches: [branch], conditions: branch.conditions, actions: branch.actions,
+  };
+}
+
+// ── W9 — Offer Follow-up Completed (on_update followups) ──────────────────────
+export function buildW9(ids) {
+  const { followups, clients, group } = ids;
+  const updateClient = (maps) => updateRecord(clients, 'client_id', maps);
+  const nextFollowup = (type, delay, baseField) => createRecord(followups, [
+    mTrigger('client_id', 'client_id'),
+    mStatic('followup_type', type),
+    mDate('scheduled_datetime', delay, baseField || ''),
+    mStatic('followup_status', 'open'),
+  ]);
+  const gcond = (cr) => ([
+    { id: U(), value: ['offer_follow_up'], field_id: 'followup_type', operator: 'equals' },
+    { id: U(), value: '', field_id: 'actual_datetime', operator: 'is_not_empty' },
+    { id: U(), value: cr, field_id: 'call_result', operator: 'equals', only_on_change: true },
+  ]);
+  const br = (en, ar, cr, actions) => ({ id: U(), label_en: en, label_ar: ar, conditions: gcond(cr), condition_mode: 'all', actions });
+  const branches = [
+    br('Offer Accepted', 'تم قبول العرض', 'offer_accepted', [
+      updateClient([mStatic('client_stage', 'حجز'), mStatic('client_status', 'بانتظار دفعة الحجز')]),
+      nextFollowup('reservation_payment_follow_up', '+1d @10:00'),
+    ]),
+    br('Waiting Decision', 'بانتظار القرار', 'waiting_decision', [
+      updateClient([mStatic('client_status', 'بانتظار القرار')]),
+      nextFollowup('offer_follow_up', '+2d @10:00'),
+    ]),
+    br('Needs Financing Info', 'يحتاج معلومات تمويل', 'needs_financing_info', [
+      updateClient([mStatic('client_status', 'يحتاج معلومات تمويل')]),
+      nextFollowup('offer_follow_up', '+2d @10:00'),
+    ]),
+    br('Offer Rejected', 'تم رفض العرض', 'offer_rejected', [
+      updateClient([mStatic('client_stage', 'خاسر'), mStatic('client_status', 'تم رفض العرض'), mTrigger('lost_reason', 'lost_reason')]),
+    ]),
+    br('No Answer', 'لا يوجد رد', 'no_answer', [nextFollowup('offer_follow_up', '+1d')]),
+    br('Wrong Time', 'الوقت غير مناسب', 'wrong_time', [
+      updateClient([mStatic('client_status', 'الوقت غير مناسب')]),
+      nextFollowup('offer_follow_up', '+0d', 'reschedule_contact_date'),
+    ]),
+  ];
+  return {
+    id: U(), label_ar: 'إكمال متابعة العرض', label_en: 'Offer Follow-up Completed',
+    group_id: group, trigger_model_id: followups, trigger_event: 'update', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'عرض سعر', activity_type: 'offer_follow_up', compatibility: 'simple' },
+    branches, conditions: branches[0].conditions, actions: branches[0].actions,
+  };
+}
+
+// ── W10 — Reservation Created → Financing Follow-up (on_create reservations) ───
+export function buildW10(ids) {
+  const { followups, reservations, clients, group } = ids;
+  const conditions = [{ id: U(), value: '', field_id: 'client_id', operator: 'is_not_empty' }];
+  const branch = {
+    id: U(), label_en: 'Reservation Created', label_ar: 'تم إنشاء الحجز', condition_mode: 'all', conditions,
+    actions: [
+      updateRecord(clients, 'client_id', [
+        mStatic('client_stage', 'تمويل'), mStatic('client_status', 'تم الحجز'),
+      ]),
+      createRecord(followups, [
+        mTrigger('client_id', 'client_id'),
+        mStatic('followup_type', 'financing_follow_up'),
+        mDate('scheduled_datetime', '+1d @10:00', ''),
+        mStatic('followup_status', 'open'),
+        mTrigger('sales_rep', 'sales_rep'),
+      ]),
+    ],
+  };
+  return {
+    id: U(), label_ar: 'إنشاء الحجز ← متابعة التمويل', label_en: 'Reservation Created → Financing Follow-up',
+    group_id: group, trigger_model_id: reservations, trigger_event: 'create', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'حجز', activity_type: 'financing_follow_up', compatibility: 'simple' },
+    branches: [branch], conditions: branch.conditions, actions: branch.actions,
+  };
+}
+
+// ── W11 — Financing Status Updated (on_update financing) ──────────────────────
+// Mirrors each financing_status to the client-visible status; 'completed' moves
+// the client into the title-transfer stage and spawns the ownership follow-up.
+export function buildW11(ids) {
+  const { followups, financing, clients, group } = ids;
+  const updateClient = (maps) => updateRecord(clients, 'client_id', maps);
+  const gcond = (status) => ([
+    { id: U(), value: status, field_id: 'financing_status', operator: 'equals', only_on_change: true },
+  ]);
+  const br = (en, ar, status, actions) => ({ id: U(), label_en: en, label_ar: ar, conditions: gcond(status), condition_mode: 'all', actions });
+  const branches = [
+    br('Submitted to Bank', 'تم التقديم للبنك', 'bank_submitted', [updateClient([mStatic('client_status', 'البنك')])]),
+    br('Valuation', 'التقييم', 'valuation', [updateClient([mStatic('client_status', 'التقييم')])]),
+    br('Financing Completed', 'اكتمل التمويل', 'completed', [
+      updateClient([mStatic('client_stage', 'الإفراغ'), mStatic('client_status', 'تم الحجز')]),
+      createRecord(followups, [
+        mTrigger('client_id', 'client_id'),
+        mStatic('followup_type', 'ownership_transfer_follow_up'),
+        mDate('scheduled_datetime', '+1d @10:00', ''),
+        mStatic('followup_status', 'open'),
+        mTrigger('sales_rep', 'sales_rep'),
+      ]),
+    ]),
+  ];
+  return {
+    id: U(), label_ar: 'تحديث حالة التمويل', label_en: 'Financing Status Updated',
+    group_id: group, trigger_model_id: financing, trigger_event: 'update', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'تمويل', activity_type: 'financing_follow_up', compatibility: 'simple' },
+    branches, conditions: branches[0].conditions, actions: branches[0].actions,
+  };
+}
+
+// ── W12 — Ownership Transfer Completed → Closed Won (on_update ownership) ──────
+export function buildW12(ids) {
+  const { ownership_transfer, clients, group } = ids;
+  const conditions = [
+    { id: U(), value: 'completed', field_id: 'transfer_status', operator: 'equals', only_on_change: true },
+  ];
+  const branch = {
+    id: U(), label_en: 'Ownership Transfer Completed', label_ar: 'اكتمل الإفراغ', condition_mode: 'all', conditions,
+    actions: [
+      updateRecord(clients, 'client_id', [mStatic('client_stage', 'مغلق ناجح'), mStatic('client_status', 'تم الإفراغ')]),
+    ],
+  };
+  return {
+    id: U(), label_ar: 'اكتمال الإفراغ ← إغلاق ناجح', label_en: 'Ownership Transfer Completed → Closed Won',
+    group_id: group, trigger_model_id: ownership_transfer, trigger_event: 'update', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'الإفراغ', activity_type: 'ownership_transfer_follow_up', compatibility: 'simple' },
+    branches: [branch], conditions: branch.conditions, actions: branch.actions,
+  };
+}
+
+const BUILDERS = { w4: buildW4, w5: buildW5, w6: buildW6, w7: buildW7, w8: buildW8, w9: buildW9, w10: buildW10, w11: buildW11, w12: buildW12 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 const which = process.argv[2];
