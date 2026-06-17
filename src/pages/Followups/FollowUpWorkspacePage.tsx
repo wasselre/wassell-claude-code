@@ -160,6 +160,10 @@ export default function FollowUpWorkspacePage() {
       sent_by_user: currentUserId ?? draft.sent_by_user ?? null,
       followup_status: 'in_progress',
       scheduled_datetime: deadline.toISOString(),
+      // Self-reference so the on_due "WhatsApp No-Response Escalation" workflow
+      // can close THIS exact waiting record (it filters update_record by id =
+      // trigger.source_followup_id; the sweeper can't otherwise self-target).
+      source_followup_id: record.id,
     };
     patchDraft(patch);
     setSaving(true);

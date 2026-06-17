@@ -391,7 +391,125 @@ export function buildW12(ids) {
   };
 }
 
-const BUILDERS = { w4: buildW4, w5: buildW5, w6: buildW6, w7: buildW7, w8: buildW8, w9: buildW9, w10: buildW10, w11: buildW11, w12: buildW12 };
+// ── WA-RESPONSE — WhatsApp Response Completed (on_update followups) ───────────
+// FOLLOWUP_3: when the rep records the REAL customer reply on a WhatsApp
+// follow-up, move the client + create the next step. (Sending is an action that
+// only sets the waiting state; appointment_booked is owned by W3, so it has no
+// branch here. no_response is written by the escalation, never recorded here.)
+export function buildWAResponse(ids) {
+  const { followups, clients, group } = ids;
+  const updateClient = (maps) => updateRecord(clients, 'client_id', maps);
+  const gcond = (cr) => ([
+    { id: U(), value: ['whatsapp_follow_up'], field_id: 'followup_type', operator: 'equals' },
+    { id: U(), value: '', field_id: 'actual_datetime', operator: 'is_not_empty' },
+    { id: U(), value: cr, field_id: 'call_result', operator: 'equals', only_on_change: true },
+  ]);
+  const br = (label_en, label_ar, cr, actions) => ({ id: U(), label_en, label_ar, conditions: gcond(cr), condition_mode: 'all', actions });
+  // A fresh WhatsApp follow-up for the next touch (the rep will send → new waiting cycle).
+  const nextWhatsapp = (expr, baseField) => createRecord(followups, [
+    mTrigger('client_id', 'client_id'),
+    mFollowupType('whatsapp_follow_up'),
+    mDate('scheduled_datetime', expr, baseField),
+    mStatic('followup_status', 'open'),
+    mStatic('whatsapp_attempt_number', 1),
+    mTrigger('sales_rep', 'sales_rep'),
+    mRecordId('previous_followup_id'),
+  ]);
+  const branches = [
+    br('Interested', 'مهتم', 'interested', [
+      updateClient([mStatic('client_status', 'مهتم')]),
+      nextWhatsapp('+5d', ''),
+    ]),
+    br('Request Offer', 'طلب عرض سعر', 'request_offer', [
+      updateClient([mStatic('client_stage', 'عرض سعر'), mStatic('client_status', 'تم طلب عرض سعر')]),
+    ]),
+    br('Wrong Time', 'الوقت غير مناسب', 'wrong_time', [
+      updateClient([mStatic('client_status', 'الوقت غير مناسب')]),
+      nextWhatsapp('+0d', 'reschedule_contact_date'),
+    ]),
+    br('Recontact Later', 'إعادة تواصل لاحقًا', 'recontact_later', [
+      updateClient([mStatic('client_status', 'إعادة تواصل لاحقًا')]),
+      nextWhatsapp('+0d', 'reschedule_contact_date'),
+    ]),
+    br('Not Interested', 'غير مهتم', 'not_interested', [
+      updateClient([mStatic('client_stage', 'غير مؤهل'), mStatic('client_status', 'غير مهتم'), mTrigger('lost_reason', 'lost_reason')]),
+    ]),
+  ];
+  return {
+    id: U(), label_ar: 'إكمال رد الواتساب', label_en: 'WhatsApp Response Completed',
+    group_id: group, trigger_model_id: followups, trigger_event: 'update', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'الاتصال لحجز موعد', activity_type: 'whatsapp_follow_up', compatibility: 'simple' },
+    branches, conditions: branches[0].conditions, actions: branches[0].actions,
+  };
+}
+
+// ── WA-ESCALATION — WhatsApp No-Response Escalation (on_due followups) ─────────
+// FOLLOWUP_3: fires when a waiting WhatsApp follow-up's scheduled_datetime
+// (the deadline baked in at send) passes WHILE still waiting (a recorded reply
+// flips whatsapp_state first → no escalation). attempt 1 → 2nd WhatsApp now;
+// attempt 2 (the day-5 deadline) → a call follow-up. Each branch closes THIS
+// record (filter id = source_followup_id, self-stamped at send) then creates
+// the next. The new record self-stamps its own source_followup_id at its send.
+export function buildWAEscalation(ids) {
+  const { followups, group } = ids;
+  const closeSelf = () => updateRecord(followups, 'source_followup_id', [
+    mStatic('call_result', 'no_response'),
+    mStatic('whatsapp_state', 'no_response_expired'),
+    mStatic('followup_status', 'completed'),
+  ]);
+  const gate = (extra) => ([
+    { id: U(), value: ['whatsapp_follow_up'], field_id: 'followup_type', operator: 'equals' },
+    { id: U(), value: 'message_sent_waiting_response', field_id: 'whatsapp_state', operator: 'equals' },
+    ...extra,
+  ]);
+  const branches = [
+    // First-match wins: attempt 2's deadline IS the day-5 mark → escalate to a call.
+    {
+      id: U(), label_en: 'No Response (day 5) → Call', label_ar: 'لا رد (5 أيام) ← مكالمة', condition_mode: 'all',
+      conditions: gate([{ id: U(), value: 2, field_id: 'whatsapp_attempt_number', operator: 'equals' }]),
+      actions: [
+        closeSelf(),
+        createRecord(followups, [
+          mTrigger('client_id', 'client_id'),
+          mFollowupType('appointment_booking_call'),
+          mDate('scheduled_datetime', '+0d', ''),
+          mStatic('followup_status', 'open'),
+          mStatic('followup_number', 1),
+          mStatic('escalation_reason', 'whatsapp_no_response_5d'),
+          mTrigger('sales_rep', 'sales_rep'),
+          mRecordId('previous_followup_id'),
+        ]),
+      ],
+    },
+    // Otherwise (attempt 1, the 24h deadline) → a second WhatsApp follow-up now.
+    {
+      id: U(), label_en: 'No Response (24h) → WhatsApp #2', label_ar: 'لا رد (24 ساعة) ← واتساب 2', condition_mode: 'all',
+      conditions: gate([]),
+      actions: [
+        closeSelf(),
+        createRecord(followups, [
+          mTrigger('client_id', 'client_id'),
+          mFollowupType('whatsapp_follow_up'),
+          mDate('scheduled_datetime', '+0d', ''),
+          mStatic('followup_status', 'open'),
+          mStatic('whatsapp_attempt_number', 2),
+          mTrigger('first_whatsapp_sent_at', 'first_whatsapp_sent_at'),
+          mStatic('escalation_reason', 'whatsapp_no_response_24h'),
+          mTrigger('sales_rep', 'sales_rep'),
+          mRecordId('previous_followup_id'),
+        ]),
+      ],
+    },
+  ];
+  return {
+    id: U(), label_ar: 'تصعيد عدم رد الواتساب', label_en: 'WhatsApp No-Response Escalation',
+    group_id: group, trigger_model_id: followups, trigger_event: 'on_due', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'الاتصال لحجز موعد', activity_type: 'whatsapp_follow_up', compatibility: 'simple' },
+    branches, conditions: branches[0].conditions, actions: branches[0].actions,
+  };
+}
+
+const BUILDERS = { w4: buildW4, w5: buildW5, w6: buildW6, w7: buildW7, w8: buildW8, w9: buildW9, w10: buildW10, w11: buildW11, w12: buildW12, wa_response: buildWAResponse, wa_escalation: buildWAEscalation };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 const which = process.argv[2];
