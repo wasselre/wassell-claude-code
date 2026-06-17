@@ -40,6 +40,10 @@ const updateRecord = (modelId, filterTriggerField, maps) => ({ id: U(), type: 'u
 const createRecord = (modelId, maps) => ({ id: U(), type: 'create_record', field_mappings: maps, skip_if_exists: false, target_model_id: modelId });
 const whatsapp = (body) => ({ id: U(), to: { kind: 'lookup', lookup_field_name: 'client_id', target_phone_field_name: 'phone_number' }, type: 'send_whatsapp_message', body_template: body });
 const mRecordId = (target) => ({ id: U(), source_type: 'record_id', static_value: '', target_field_id: target, trigger_field_id: '' });
+// followup_type is a section_selector → stored as an ARRAY. Always write it as a
+// single-element array so the write matches the (array) gate conditions via
+// strict array-equality, not the 'x'==['x'] loose-equality fallback (F-1).
+const mFollowupType = (type) => mStatic('followup_type', Array.isArray(type) ? type : [type]);
 
 const REMINDER = 'عزيزنا عميل وصل العقارية، نذكّركم بموعد زيارتكم المجدول. نتطلّع لحضوركم، ولأي استفسار يسعدنا تواصلكم معنا.';
 
@@ -72,7 +76,7 @@ export function buildW4(ids) {
       updateClient([mStatic('client_status', 'تمت إعادة الجدولة')]),
       createFollowup([
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'appointment_confirmation_call'),
+        mFollowupType('appointment_confirmation_call'),
         mTrigger('appointment_id', 'appointment_id'),
         mDate('scheduled_datetime', '-1d @10:00', 'new_appointment_datetime'),
         mStatic('followup_status', 'open'),
@@ -83,7 +87,7 @@ export function buildW4(ids) {
       updateClient([mStatic('client_status', 'تم إلغاء الموعد')]),
       createFollowup([
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'appointment_booking_call'),
+        mFollowupType('appointment_booking_call'),
         mDate('scheduled_datetime', '+0d', ''),
         mStatic('followup_status', 'open'),
         mStatic('followup_number', 1),
@@ -97,7 +101,7 @@ export function buildW4(ids) {
       updateClient([mStatic('client_status', 'الوقت غير مناسب')]),
       createFollowup([
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'appointment_confirmation_call'),
+        mFollowupType('appointment_confirmation_call'),
         mTrigger('appointment_id', 'appointment_id'),
         mDate('scheduled_datetime', '+0d', 'reschedule_contact_date'),
         mStatic('followup_status', 'open'),
@@ -135,7 +139,7 @@ export function buildW5(ids) {
       updateRecord(clients, 'client_id', [mStatic('client_status', 'لم يحضر الموعد')]),
       createRecord(followups, [
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'no_show_recovery_call'),
+        mFollowupType('no_show_recovery_call'),
         mRecordId('appointment_id'), // the appointment IS the trigger record
         mDate('scheduled_datetime', '+0d', ''),
         mStatic('followup_status', 'open'),
@@ -163,7 +167,7 @@ export function buildW6(ids) {
       updateRecord(clients, 'client_id', [mStatic('client_stage', 'زيارة')]),
       createRecord(followups, [
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'follow_up_call_after_visit'),
+        mFollowupType('follow_up_call_after_visit'),
         mRecordId('visit'), // the visit IS the trigger record
         mDate('scheduled_datetime', '+1d @10:00', ''),
         mStatic('followup_status', 'open'),
@@ -192,7 +196,7 @@ export function buildW7(ids) {
   const br = (en, ar, cr, actions) => ({ id: U(), label_en: en, label_ar: ar, conditions: gcond(cr), condition_mode: 'all', actions });
   const nextAfterVisit = (delay, baseField) => createFollowup([
     mTrigger('client_id', 'client_id'),
-    mStatic('followup_type', 'follow_up_call_after_visit'),
+    mFollowupType('follow_up_call_after_visit'),
     mDate('scheduled_datetime', delay, baseField || ''),
     mStatic('followup_status', 'open'),
   ]);
@@ -247,7 +251,7 @@ export function buildW8(ids) {
       ]),
       createRecord(followups, [
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'offer_follow_up'),
+        mFollowupType('offer_follow_up'),
         mDate('scheduled_datetime', '+1d @10:00', ''),
         mStatic('followup_status', 'open'),
         mTrigger('sales_rep', 'sales_rep'),
@@ -268,7 +272,7 @@ export function buildW9(ids) {
   const updateClient = (maps) => updateRecord(clients, 'client_id', maps);
   const nextFollowup = (type, delay, baseField) => createRecord(followups, [
     mTrigger('client_id', 'client_id'),
-    mStatic('followup_type', type),
+    mFollowupType(type),
     mDate('scheduled_datetime', delay, baseField || ''),
     mStatic('followup_status', 'open'),
   ]);
@@ -320,7 +324,7 @@ export function buildW10(ids) {
       ]),
       createRecord(followups, [
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'financing_follow_up'),
+        mFollowupType('financing_follow_up'),
         mDate('scheduled_datetime', '+1d @10:00', ''),
         mStatic('followup_status', 'open'),
         mTrigger('sales_rep', 'sales_rep'),
@@ -352,7 +356,7 @@ export function buildW11(ids) {
       updateClient([mStatic('client_stage', 'الإفراغ'), mStatic('client_status', 'تم الحجز')]),
       createRecord(followups, [
         mTrigger('client_id', 'client_id'),
-        mStatic('followup_type', 'ownership_transfer_follow_up'),
+        mFollowupType('ownership_transfer_follow_up'),
         mDate('scheduled_datetime', '+1d @10:00', ''),
         mStatic('followup_status', 'open'),
         mTrigger('sales_rep', 'sales_rep'),
