@@ -5,9 +5,9 @@
 # Workflow: Appointment booked via call / حجز موعد عبر مكالمة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-09
+**Last updated (from DB):** 2026-06-16
 **Workflow id:** `4b60ef83-5e16-4ff1-b522-b88e7ae2ab35`   ·   **Active:** yes
-**Group:** مجلد جديد
+**Group:** Sales Lifecycle
 **Trigger:** When a record is created
 **Trigger model:** Appointments / المواعيد `appointments`
 
@@ -49,5 +49,6 @@ Create a **Follow-ups / المتابعات** record with:
 Create a **Follow-ups / المتابعات** record with:
 - Client ID (`client_id`) ← the trigger record's Client (`client_id`)
 - Follow-up Type (`followup_type`) ← static value appointment_confirmation_call
+- Appointment (`appointment_id`) ← the trigger record's id
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Appointment Date (`appointment_date`) offset by `+0d @10:00`
 - Sales Rep (`sales_rep`) ← the current user

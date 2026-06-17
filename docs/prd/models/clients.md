@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-09
+**Last updated (from DB):** 2026-06-16
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **4** (2 base, 2 non-base)
-- Fields: **20**
+- Fields: **28**
 - Section-selector field: none
 - Duplicate-check field: Mobile Number (`phone_number`)
 - Custom buttons: 0
@@ -34,10 +34,18 @@
 | `client_id` | Client ID / معرف العميل | Auto ID | no | half | yes | ع### |
 | `client_name` | Client Name / اسم العميل | Text | yes | half | yes |  |
 | `phone_number` | Mobile Number / رقم الجوال | Phone | yes | half | yes |  |
-| `client_status` | Client Status / حالة العميل | Dropdown | no | half | yes | 23 options |
-| `client_stage` | Client Stage / مرحلة العميل | Dropdown | no | half | yes | 10 options |
+| `client_status` | Client Status / حالة العميل | Dropdown | no | half | yes | 33 options |
+| `client_stage` | Client Stage / مرحلة العميل | Dropdown | no | half | yes | 12 options |
 | `client_sources` | Client Sources / مصادر العميل | Multi-select | no | half | yes | 9 options · multi |
 | `notes` | Notes / الملاحظات | Notes | no | full | no |  |
+| `client_owner` | Client Owner / مالك العميل | Assignee | no | half | no | any user |
+| `next_followup_id` | Next Follow-up / المتابعة التالية | Lookup | no | half | no | → Follow-ups |
+| `next_action_type` | Next Action Type / نوع الإجراء التالي | Dropdown | no | half | no | 6 options |
+| `next_action_due_at` | Next Action Due / موعد الإجراء التالي | Date & time | no | half | no |  |
+| `last_activity_at` | Last Activity / آخر نشاط | Date & time | no | half | no |  |
+| `lost_reason` | Lost Reason / سبب الخسارة | Dropdown | no | half | no | 10 options |
+| `lost_at` | Lost At / تاريخ الخسارة | Date & time | no | half | no |  |
+| `lifecycle_health` | Lifecycle Health / صحة دورة الحياة | Dropdown | no | half | no | 4 options |
 
 **Field details:**
 
@@ -69,6 +77,16 @@
   - API value `التقييم` → "Appraisal" / "التقييم"
   - API value `تم إصدار نموذج الإفراغ` → "Title Form Issued" / "تم إصدار نموذج الإفراغ"
   - API value `تم الإفراغ` → "Title Transferred" / "تم الإفراغ"
+  - API value `رقم خاطئ` → "Invalid Number" / "رقم خاطئ"
+  - API value `مكرر` → "Duplicate" / "مكرر"
+  - API value `تم رفض العرض` → "Offer Rejected" / "تم رفض العرض"
+  - API value `يحتاج معلومات تمويل` → "Needs Financing Info" / "يحتاج معلومات تمويل"
+  - API value `نقاش عائلي` → "Family Discussion" / "نقاش عائلي"
+  - API value `بانتظار القرار` → "Waiting Decision" / "بانتظار القرار"
+  - API value `تم إرسال واتساب` → "WhatsApp Sent" / "تم إرسال واتساب"
+  - API value `إعادة تواصل لاحقًا` → "Recontact Later" / "إعادة تواصل لاحقًا"
+  - API value `بارد` → "Cold" / "بارد"
+  - API value `بانتظار دفعة الحجز` → "Waiting Reservation Payment" / "بانتظار دفعة الحجز"
 - **Client Stage / مرحلة العميل** (`client_stage`, type `dropdown`) — options:
   - API value `جديد` → "New" / "جديد"
   - API value `غير مؤهل` → "Not Qualified" / "غير مؤهل"
@@ -80,6 +98,8 @@
   - API value `حجز` → "Booking" / "حجز"
   - API value `تمويل` → "Financing" / "تمويل"
   - API value `الإفراغ` → "Title Transfer" / "الإفراغ"
+  - API value `خاسر` → "Lost" / "خاسر" · color `#8E4E3A`
+  - API value `مغلق ناجح` → "Closed Won" / "مغلق ناجح" · color `#10B981`
 - **Client Sources / مصادر العميل** (`client_sources`, type `multiselect`) — multi-value. Options:
   - API value `ترويج` → "Promotion" / "ترويج"
   - API value `زيارة مشروع` → "Project Visit" / "زيارة مشروع"
@@ -90,6 +110,35 @@
   - API value `عرض سعر` → "Quotation" / "عرض سعر"
   - API value `تمويل` → "Financing" / "تمويل"
   - API value `الإفراغ` → "Title Transfer" / "الإفراغ"
+- **Client Owner / مالك العميل** (`client_owner`, type `assignee`):
+  - eligible users: any active user
+- **Next Follow-up / المتابعة التالية** (`next_followup_id`, type `lookup`):
+  - target model: Follow-ups
+  - shows field: `scheduled_datetime`
+  - multiple: no
+- **Next Action Type / نوع الإجراء التالي** (`next_action_type`, type `dropdown`) — options:
+  - API value `call` → "Call" / "اتصال"
+  - API value `whatsapp` → "WhatsApp" / "واتساب"
+  - API value `appointment` → "Appointment" / "موعد"
+  - API value `offer` → "Offer" / "عرض سعر"
+  - API value `financing` → "Financing" / "تمويل"
+  - API value `ownership` → "Ownership Transfer" / "إفراغ"
+- **Lost Reason / سبب الخسارة** (`lost_reason`, type `dropdown`) — options:
+  - API value `price` → "Price" / "السعر"
+  - API value `location` → "Location" / "الموقع"
+  - API value `unit_not_suitable` → "Unit Not Suitable" / "الوحدة غير مناسبة"
+  - API value `bought_elsewhere` → "Bought Elsewhere" / "اشترى من جهة أخرى"
+  - API value `not_serious` → "Not Serious" / "غير جاد"
+  - API value `financing_issue` → "Financing Issue" / "مشكلة تمويل"
+  - API value `timing_issue` → "Timing" / "التوقيت"
+  - API value `invalid_number` → "Invalid Number" / "رقم خاطئ"
+  - API value `duplicate` → "Duplicate" / "مكرر"
+  - API value `other` → "Other" / "أخرى"
+- **Lifecycle Health / صحة دورة الحياة** (`lifecycle_health`, type `dropdown`) — options:
+  - API value `on_track` → "On Track" / "على المسار" · color `#10B981`
+  - API value `overdue` → "Overdue" / "متأخر" · color `#8E4E3A`
+  - API value `no_next_action` → "No Next Action" / "لا يوجد إجراء تالٍ" · color `#C09B5F`
+  - API value `closed` → "Closed" / "مغلق" · color `#6B7280`
 
 ### 2. Client Preferences / تفضيلات العميل  _(base, color #C09B5F)_
 

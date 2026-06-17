@@ -5,7 +5,7 @@
 # Model: Appointments / المواعيد  `appointments`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-06-16
 **Model id:** `b032a675-6237-4436-9783-a1a253855f74`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **9**
+- Fields: **10**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -39,6 +39,7 @@
 | `sales_rep` | Sales Rep / مندوب المبيعات | Assignee | no | half | yes | any user |
 | `appointment_status` | Appointment Status / حالة الموعد | Dropdown | no | half | yes | 6 options |
 | `notes` | Notes / ملاحظات | Text area | no | full | no |  |
+| `source_followup_id` | Source Follow-up / المتابعة المصدر | Lookup | no | half | no | → Follow-ups |
 
 **Field details:**
 
@@ -67,3 +68,7 @@
   - API value `completed` → "Completed" / "منتهي" · color `#8B5CF6`
   - API value `no_show` → "No-show" / "لم يحضر" · color `#EF4444`
   - API value `cancelled` → "Cancelled" / "ملغي" · color `#6B7280`
+- **Source Follow-up / المتابعة المصدر** (`source_followup_id`, type `lookup`):
+  - target model: Follow-ups
+  - shows field: `scheduled_datetime`
+  - multiple: no

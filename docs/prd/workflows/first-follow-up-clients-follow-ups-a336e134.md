@@ -5,9 +5,9 @@
 # Workflow: First Follow-up (Clients - Follow-ups) / اول متابعة (العملاء - المتابعة )
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-09
+**Last updated (from DB):** 2026-06-16
 **Workflow id:** `a336e134-2d79-44f3-8219-a4bd8e2f76f8`   ·   **Active:** yes
-**Group:** Sales
+**Group:** Sales Lifecycle
 **Trigger:** When a record is created
 **Trigger model:** Clients / العملاء `clients`
 

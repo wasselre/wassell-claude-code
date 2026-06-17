@@ -5,7 +5,7 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-01
+**Last updated (from DB):** 2026-06-16
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **3** (3 base, 0 non-base)
-- Fields: **18**
+- Fields: **28**
 - Section-selector field: Follow-up Type (`followup_type`)
 - Duplicate-check field: none
 - Custom buttons: 3
@@ -41,6 +41,8 @@
 | `sales_rep` | Sales Rep / مستشار المبيعات | Assignee | no | half | yes | any user |
 | `followup_type` | Follow-up Type / نوع المتابعة | Section selector | yes | half | yes | controls section visibility |
 | `followup_number` | Follow-up Number / رقم المتابعة | Number | no | half | yes |  |
+| `followup_status` | Status / حالة المتابعة | Dropdown | no | half | yes | 5 options |
+| `priority` | Priority / الأولوية | Dropdown | no | half | yes | 4 options |
 | `fired_at` | Auto-Reminder Fired At / وقت تشغيل التذكير الآلي | Date & time | no | half | no |  |
 
 **Field details:**
@@ -74,6 +76,17 @@
   - `follow_up_call_after_visit` → "Follow-Up Call After Visit" (custom, non-section)
   - `whatsapp_follow_up` → "WhatsApp Follow-Up" (custom, non-section)
   - `appointment_booking_call` → "Appointment Booking Call" (custom, non-section)
+- **Status / حالة المتابعة** (`followup_status`, type `dropdown`) — options:
+  - API value `open` → "Open" / "مفتوحة" · color `#3B82F6`
+  - API value `in_progress` → "In Progress" / "قيد التنفيذ" · color `#C09B5F`
+  - API value `completed` → "Completed" / "مكتملة" · color `#10B981`
+  - API value `cancelled` → "Cancelled" / "ملغاة" · color `#6B7280`
+  - API value `skipped` → "Skipped" / "متخطاة" · color `#8E4E3A`
+- **Priority / الأولوية** (`priority`, type `dropdown`) — options:
+  - API value `low` → "Low" / "منخفضة" · color `#6B7280`
+  - API value `normal` → "Normal" / "عادية" · color `#3B82F6`
+  - API value `high` → "High" / "عالية" · color `#C09B5F`
+  - API value `urgent` → "Urgent" / "عاجلة" · color `#8E4E3A`
 
 ### 2. Client Preferences / تفضيلات العميل  _(base, color #B8734F)_
 
@@ -92,14 +105,22 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `call_result` | Call Result / نتيجة المتابعة | Dropdown | no | full | yes | 9 options |
+| `call_result` | Outcome / النتيجة | Dropdown | no | full | yes | 25 options |
 | `next_followup_after_days` | Next Follow-up After (days) / المتابعة التالية بعد (أيام) | Number | no | half | no |  |
 | `reschedule_contact_date` | Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة | Date & time | no | half | yes |  |
 | `actual_datetime` | Actual Follow-up / موعد المتابعة الفعلي | Date & time | no | half | yes |  |
+| `outcome_notes` | Outcome Notes / ملاحظات النتيجة | Text area | no | full | no |  |
+| `lost_reason` | Lost Reason / سبب الخسارة | Dropdown | no | half | no | 10 options |
+| `completed_by_call_id` | Linked Call / المكالمة المرتبطة | Lookup | no | half | no | → Phone Calls |
+| `completed_by_chat_id` | Linked Chat / المحادثة المرتبطة | Lookup | no | half | no | → Chats |
+| `completed_by_user` | Completed By / أكملها | Assignee | no | half | no | any user |
+| `new_appointment_datetime` | New Appointment Time / موعد الزيارة الجديد | Date & time | no | half | no |  |
+| `source_stage_snapshot` | Stage at Creation / مرحلة العميل عند الإنشاء | Text | no | half | no |  |
+| `source_status_snapshot` | Status at Creation / حالة العميل عند الإنشاء | Text | no | half | no |  |
 
 **Field details:**
 
-- **Call Result / نتيجة المتابعة** (`call_result`, type `dropdown`) — options:
+- **Outcome / النتيجة** (`call_result`, type `dropdown`) — options:
   - API value `interested` → "Interested" / "مهتم" · color `#10B981`
   - API value `not_interested` → "Not Interested" / "غير مهتم" · color `#EF4444`
   - API value `no_answer` → "No Answer" / "لم يرد" · color `#6B7280`
@@ -109,10 +130,47 @@
   - API value `attendance_confirmed` → "Attendance Confirmed" / "تم تأكيد الحضور" · color `#14B8A6`
   - API value `appointment_cancelled` → "Appointment Cancelled" / "تم إلغاء الموعد" · color `#F97316`
   - API value `recontact_later` → "Recontact Later To Reschedule" / "إعادة التواصل لاحقا لإعادة الجدولة" · color `#6366F1`
+  - API value `invalid_number` → "Invalid Number" / "رقم خاطئ"
+  - API value `duplicate` → "Duplicate" / "مكرر"
+  - API value `message_sent` → "Message Sent" / "تم إرسال الرسالة"
+  - API value `message_replied` → "Message Replied" / "تم الرد"
+  - API value `request_offer` → "Request Offer" / "طلب عرض سعر"
+  - API value `still_interested` → "Still Interested" / "لا يزال مهتمًا"
+  - API value `needs_financing_info` → "Needs Financing Info" / "يحتاج معلومات تمويل"
+  - API value `family_discussion` → "Family Discussion" / "نقاش عائلي"
+  - API value `offer_accepted` → "Offer Accepted" / "قبول العرض"
+  - API value `offer_rejected` → "Offer Rejected" / "رفض العرض"
+  - API value `waiting_decision` → "Waiting Decision" / "بانتظار القرار"
+  - API value `payment_pending` → "Payment Pending" / "بانتظار الدفع"
+  - API value `payment_received` → "Payment Received" / "تم استلام الدفعة"
+  - API value `documents_pending` → "Documents Pending" / "بانتظار المستندات"
+  - API value `appointment_cancelled_rebook` → "Cancelled — Rebook" / "إلغاء الموعد - إعادة حجز"
+  - API value `appointment_cancelled_lost` → "Cancelled — Lost" / "إلغاء الموعد - خسارة"
 - **Next Follow-up After (days) / المتابعة التالية بعد (أيام)** (`next_followup_after_days`, type `number`):
   - shown only when Follow-up Type (`followup_type`) is one of: `whatsapp_follow_up`
 - **Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة** (`reschedule_contact_date`, type `datetime`):
   - shown only when Follow-up Type (`followup_type`) is one of: `appointment_confirmation_call`
+- **Lost Reason / سبب الخسارة** (`lost_reason`, type `dropdown`) — options:
+  - API value `price` → "Price" / "السعر"
+  - API value `location` → "Location" / "الموقع"
+  - API value `unit_not_suitable` → "Unit Not Suitable" / "الوحدة غير مناسبة"
+  - API value `bought_elsewhere` → "Bought Elsewhere" / "اشترى من جهة أخرى"
+  - API value `not_serious` → "Not Serious" / "غير جاد"
+  - API value `financing_issue` → "Financing Issue" / "مشكلة تمويل"
+  - API value `timing_issue` → "Timing" / "التوقيت"
+  - API value `invalid_number` → "Invalid Number" / "رقم خاطئ"
+  - API value `duplicate` → "Duplicate" / "مكرر"
+  - API value `other` → "Other" / "أخرى"
+- **Linked Call / المكالمة المرتبطة** (`completed_by_call_id`, type `lookup`):
+  - target model: Phone Calls
+  - shows field: `call_time`
+  - multiple: no
+- **Linked Chat / المحادثة المرتبطة** (`completed_by_chat_id`, type `lookup`):
+  - target model: Chats
+  - shows field: `name`
+  - multiple: no
+- **Completed By / أكملها** (`completed_by_user`, type `assignee`):
+  - eligible users: any active user
 
 ## Custom buttons
 

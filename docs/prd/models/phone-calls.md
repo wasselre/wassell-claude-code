@@ -5,7 +5,7 @@
 # Model: Phone Calls / المكالمات  `phone_calls`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-10
+**Last updated (from DB):** 2026-06-16
 **Model id:** `1ef36cc7-a5bb-4fdc-b3ef-9fc965c2b2d4`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **2** (2 base, 0 non-base)
-- Fields: **14**
+- Fields: **15**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -43,6 +43,7 @@
 | `ai_summary` | AI Summary / ملخص الذكاء الاصطناعي | Text area | no | full | no |  |
 | `recording_url` | Recording URL / رابط التسجيل | URL | no | full | no |  |
 | `client_link` | Linked Client / العميل المرتبط | Lookup | no | half | yes | → Clients |
+| `linked_followup_id` | Linked Follow-up / المتابعة المرتبطة | Lookup | no | half | no | → Follow-ups |
 
 **Field details:**
 
@@ -73,6 +74,10 @@
   - target model: Clients
   - shows field: `client_id`
   - multiple: no · max in dropdown: 2000
+- **Linked Follow-up / المتابعة المرتبطة** (`linked_followup_id`, type `lookup`):
+  - target model: Follow-ups
+  - shows field: `scheduled_datetime`
+  - multiple: no
 
 ### 2. Call Transcript / نص المكالمة  _(base, color #B8734F)_
 

@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-11
+**Last updated (from DB):** 2026-06-15
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -562,46 +562,46 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `available_units` | Available Units / عدد الوحدات المتاحة | Number | no | half | yes | computed: units_available_count |
-| `sold_units` | Sold Units / عدد الوحدات المباعة | Number | no | half | yes | computed: units_sold_count |
-| `reserved_units` | Reserved Units / عدد الوحدات المحجوزة | Number | no | half | yes | computed: units_reserved_count |
+| `available_units` | Available Units / عدد الوحدات المتاحة | Number | no | half | yes | rollup: units_available_count |
+| `sold_units` | Sold Units / عدد الوحدات المباعة | Number | no | half | yes | rollup: units_sold_count |
+| `reserved_units` | Reserved Units / عدد الوحدات المحجوزة | Number | no | half | yes | rollup: units_reserved_count |
 | `price_range` | Area Range / نطاق السعر | Range | no | half | yes | 30000–1000000 |
 | `area_range` | Area Range / نطاق المساحة | Range | no | half | yes | 50–10000 |
-| `unit_count` | Unit Count / عدد الوحدات | Number | no | half | yes | computed: units_count |
+| `unit_count` | Unit Count / عدد الوحدات | Number | no | half | yes | rollup: units_count |
 | `bedroom_range` | Bedroom Range / نطاق غرف النوم | Range | no | half | yes | 0–10 |
 | `bathroom_range` | Bathroom Range / نطاق دورات المياة | Range | no | half | yes | 0–10 |
-| `avg_max_price_per_m2` | Avg Max Price per m² / متوسط السعر الأعلى للمتر | Currency | no | half | yes | computed: max_price_per_meter |
-| `avg_min_price_per_m2` | Avg Min Price per m² / متوسط السعر الأدنى للمتر | Currency | no | half | yes | computed: min_price_per_meter |
-| `avg_price_per_m2` | Avg Price per m² / متوسط السعر الإجمالي للمتر | Currency | no | half | yes | computed: avg_price_per_meter |
+| `avg_max_price_per_m2` | Avg Max Price per m² / متوسط السعر الأعلى للمتر | Currency | no | half | yes | rollup: max_price_per_meter |
+| `avg_min_price_per_m2` | Avg Min Price per m² / متوسط السعر الأدنى للمتر | Currency | no | half | yes | rollup: min_price_per_meter |
+| `avg_price_per_m2` | Avg Price per m² / متوسط السعر الإجمالي للمتر | Currency | no | half | yes | rollup: avg_price_per_meter |
 
 **Field details:**
 
 - **Available Units / عدد الوحدات المتاحة** (`available_units`, type `number`):
-  - computed rollup (`units_available_count`), read-only
+  - stored rollup (`units_available_count`), read-only
 - **Sold Units / عدد الوحدات المباعة** (`sold_units`, type `number`):
-  - computed rollup (`units_sold_count`), read-only
+  - stored rollup (`units_sold_count`), read-only
 - **Reserved Units / عدد الوحدات المحجوزة** (`reserved_units`, type `number`):
-  - computed rollup (`units_reserved_count`), read-only
+  - stored rollup (`units_reserved_count`), read-only
 - **Area Range / نطاق السعر** (`price_range`, type `range`):
   - 30000 to 1000000 step 10000 SAR
-  - computed rollup (`price_range`), read-only
+  - stored rollup (`price_range`), read-only
 - **Area Range / نطاق المساحة** (`area_range`, type `range`):
   - 50 to 10000 step 1 m²
-  - computed rollup (`area_range`), read-only
+  - stored rollup (`area_range`), read-only
 - **Unit Count / عدد الوحدات** (`unit_count`, type `number`):
-  - computed rollup (`units_count`), read-only
+  - stored rollup (`units_count`), read-only
 - **Bedroom Range / نطاق غرف النوم** (`bedroom_range`, type `range`):
   - 0 to 10 step 1
-  - computed rollup (`bedroom_range`), read-only
+  - stored rollup (`bedroom_range`), read-only
 - **Bathroom Range / نطاق دورات المياة** (`bathroom_range`, type `range`):
   - 0 to 10 step 1
-  - computed rollup (`bathroom_range`), read-only
+  - stored rollup (`bathroom_range`), read-only
 - **Avg Max Price per m² / متوسط السعر الأعلى للمتر** (`avg_max_price_per_m2`, type `currency`):
-  - computed rollup (`max_price_per_meter`), read-only
+  - stored rollup (`max_price_per_meter`), read-only
 - **Avg Min Price per m² / متوسط السعر الأدنى للمتر** (`avg_min_price_per_m2`, type `currency`):
-  - computed rollup (`min_price_per_meter`), read-only
+  - stored rollup (`min_price_per_meter`), read-only
 - **Avg Price per m² / متوسط السعر الإجمالي للمتر** (`avg_price_per_m2`, type `currency`):
-  - computed rollup (`avg_price_per_meter`), read-only
+  - stored rollup (`avg_price_per_meter`), read-only
 
 ### 4. Project Content / محتوى المشروع-المطور  _(color #B8734F)_
 
