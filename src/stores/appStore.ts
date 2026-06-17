@@ -36,6 +36,7 @@ import type {
   WorkflowRun,
   Dashboard,
   MetricDefinition,
+  ScheduledReport,
   ModelView,
   User,
   Profile,
@@ -1300,6 +1301,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activityLog: loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [],
   dashboards: [],
   metricDefinitions: [],
+  scheduledReports: [],
   views: [],
   users: [],
   profiles: [],
@@ -1403,6 +1405,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     })();
     const dashboardsP        = supabaseLoad<Dashboard>('dashboards');
     const metricDefinitionsP = supabaseLoad<MetricDefinition>('metric_definitions');
+    const scheduledReportsP  = supabaseLoad<ScheduledReport>('scheduled_reports');
     const whiteboardFoldersP = supabaseLoad<WhiteboardFolder>('whiteboard_folders');
     const whiteboardsP       = supabaseLoad<Whiteboard>('whiteboards');
     const viewsP             = supabaseLoad<ModelView>('model_views');
@@ -1521,6 +1524,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     let metricDefinitions = await metricDefinitionsP;
     if (!metricDefinitions) metricDefinitions = loadLocal<MetricDefinition[]>('wassell_metric_definitions') ?? [];
     saveLocal('wassell_metric_definitions', metricDefinitions);
+
+    let scheduledReports = await scheduledReportsP;
+    if (!scheduledReports) scheduledReports = loadLocal<ScheduledReport[]>('wassell_scheduled_reports') ?? [];
+    saveLocal('wassell_scheduled_reports', scheduledReports);
 
     // Saved table views (chrome — view selector on each model page).
     let views = await viewsP;
@@ -1885,7 +1892,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // (records, workflow_runs, whiteboards, activity_log) finishes
     // in the background. Pages that need records gate on `initialized`.
     set({
-      models, groups, profiles, roles, users, views, dashboards, metricDefinitions,
+      models, groups, profiles, roles, users, views, dashboards, metricDefinitions, scheduledReports,
       fieldTemplates, webhookSlugs, workflowGroups, workflows,
       currentUserId, criticalDataReady: true,
     });
@@ -3253,6 +3260,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_metric_definitions', metricDefinitions);
       supabaseDelete('metric_definitions', metricId);
       return { metricDefinitions };
+    });
+  },
+
+  // --- Scheduled reports ---
+  saveScheduledReport: (report: ScheduledReport) => {
+    set((s) => {
+      const idx = s.scheduledReports.findIndex((r) => r.id === report.id);
+      const scheduledReports = idx >= 0
+        ? s.scheduledReports.map((r) => (r.id === report.id ? report : r))
+        : [...s.scheduledReports, report];
+      saveLocal('wassell_scheduled_reports', scheduledReports);
+      supabaseUpsert('scheduled_reports', report);
+      return { scheduledReports };
+    });
+  },
+  deleteScheduledReport: (reportId: string) => {
+    set((s) => {
+      const scheduledReports = s.scheduledReports.filter((r) => r.id !== reportId);
+      saveLocal('wassell_scheduled_reports', scheduledReports);
+      supabaseDelete('scheduled_reports', reportId);
+      return { scheduledReports };
     });
   },
 

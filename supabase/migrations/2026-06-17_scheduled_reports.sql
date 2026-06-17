@@ -177,3 +177,31 @@ CREATE POLICY scheduled_report_runs_admin ON public.scheduled_report_runs
 DROP TRIGGER IF EXISTS set_updated_at_scheduled_reports ON public.scheduled_reports;
 CREATE TRIGGER set_updated_at_scheduled_reports BEFORE UPDATE ON public.scheduled_reports
   FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Fill next_run_at on insert / schedule-edit / resume. Excludes the running→active
+-- transition so the runner's own next_run_at write is never clobbered.
+-- (Applied separately as 2026-06-17_scheduled_reports_fill_next_run; recorded here.)
+CREATE OR REPLACE FUNCTION public.scheduled_reports_fill_next_run() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.next_run_at IS NULL THEN
+      NEW.next_run_at := public.scheduled_report_next_run(NEW.frequency, NEW.hour_of_day, NEW.day_of_week, NEW.day_of_month, now());
+    END IF;
+  ELSE
+    IF NEW.frequency   IS DISTINCT FROM OLD.frequency
+    OR NEW.hour_of_day IS DISTINCT FROM OLD.hour_of_day
+    OR NEW.day_of_week IS DISTINCT FROM OLD.day_of_week
+    OR NEW.day_of_month IS DISTINCT FROM OLD.day_of_month
+    OR (NEW.status = 'active' AND OLD.status NOT IN ('active','running'))
+    THEN
+      NEW.next_run_at := public.scheduled_report_next_run(NEW.frequency, NEW.hour_of_day, NEW.day_of_week, NEW.day_of_month, now());
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS scheduled_reports_fill_next_run ON public.scheduled_reports;
+CREATE TRIGGER scheduled_reports_fill_next_run
+  BEFORE INSERT OR UPDATE ON public.scheduled_reports
+  FOR EACH ROW EXECUTE FUNCTION public.scheduled_reports_fill_next_run();

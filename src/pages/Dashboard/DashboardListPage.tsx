@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Plus, Pencil, Trash2, LayoutDashboard, Copy, Globe, Lock } from 'lucide-react';
+import { Plus, Pencil, Trash2, LayoutDashboard, Copy, Globe, Lock, Clock } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import BackToSettings from '@/pages/Settings/components/BackToSettings';
 
@@ -45,10 +45,16 @@ export default function DashboardListPage() {
       <BackToSettings />
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold text-charcoal">{t('dashboard.title')}</h1>
-        <Button onClick={createDashboard}>
-          <Plus size={16} />
-          {t('dashboard.new')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" onClick={() => navigate('/scheduled-reports')}>
+            <Clock size={16} />
+            {isAr ? 'التقارير المجدولة' : 'Scheduled Reports'}
+          </Button>
+          <Button onClick={createDashboard}>
+            <Plus size={16} />
+            {t('dashboard.new')}
+          </Button>
+        </div>
       </div>
 
       {dashboards.length === 0 ? (

@@ -17,6 +17,7 @@ import WorkflowLogsPage from '@/pages/Workflow/WorkflowLogsPage';
 import WorkflowRunDetailPage from '@/pages/Workflow/WorkflowRunDetailPage';
 import DashboardListPage from '@/pages/Dashboard/DashboardListPage';
 import DashboardEditorPage from '@/pages/Dashboard/DashboardEditorPage';
+import ScheduledReportsPage from '@/pages/Dashboard/ScheduledReportsPage';
 import PublicDashboardPage from '@/pages/Dashboard/PublicDashboardPage';
 import SettingsPage from '@/pages/Settings/SettingsPage';
 import LogsPage from '@/pages/Logs/LogsPage';
@@ -270,6 +271,7 @@ export default function App() {
           <Route path="/workflow/:workflowId" element={<RequireAdmin><WorkflowEditorPage /></RequireAdmin>} />
           <Route path="/dashboards" element={<RequireAdmin><DashboardListPage /></RequireAdmin>} />
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
+          <Route path="/scheduled-reports" element={<RequireAdmin><ScheduledReportsPage /></RequireAdmin>} />
           <Route
             path="/whiteboard"
             element={

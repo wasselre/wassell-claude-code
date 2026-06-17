@@ -1638,6 +1638,54 @@ export type WidgetFilterBehavior =
   | { mode: 'ignore_dashboard_filters' }
   | { mode: 'custom_mapping'; mappings: WidgetFilterMapping[] };
 
+// ── Scheduled Reports (analytics consumer #2) ──────────────────────────────
+export type ReportFrequency = 'daily' | 'weekly' | 'monthly';
+export type ReportSourceType = 'dashboard' | 'widget' | 'metric' | 'custom';
+export type ReportStatus = 'active' | 'paused' | 'running' | 'error';
+
+export interface ScheduledReport {
+  id: string;
+  title: string;
+  owner_user_id?: string | null;
+  owner_auth_uid?: string | null; // auth.users id — lets the runner mint an owner-scoped token
+  frequency: ReportFrequency;
+  hour_of_day: number;        // 0..23, Asia/Riyadh
+  day_of_week?: number | null;  // 0=Sun, weekly
+  day_of_month?: number | null; // 1..28, monthly
+  timezone: string;
+  recipients: string[];
+  delivery_channel: 'email';
+  source_type: ReportSourceType;
+  dashboard_id?: string | null;
+  widget_id?: string | null;
+  metric_id?: string | null;
+  query?: AnalyticsQuery | null;
+  status: ReportStatus;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  last_status?: string | null;
+  last_result_snapshot?: unknown;
+  error_message?: string | null;
+  created_by_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ScheduledReportRun {
+  id: string;
+  report_id: string;
+  started_at: string;
+  finished_at?: string | null;
+  status: 'running' | 'sent' | 'draft' | 'failed' | 'partial';
+  triggered_by: 'schedule' | 'manual';
+  data_as_of?: string | null;
+  result_snapshot?: unknown;
+  warnings?: unknown;
+  recipients?: string[];
+  delivery?: string | null;
+  error_message?: string | null;
+}
+
 export interface DashboardWidget {
   id: string;
   type: WidgetType;
@@ -2143,6 +2191,7 @@ export interface AppState {
   activityLog: ActivityLogEntry[];
   dashboards: Dashboard[];
   metricDefinitions: MetricDefinition[];
+  scheduledReports: ScheduledReport[];
   views: ModelView[];
   users: User[];
   profiles: Profile[];
@@ -2316,6 +2365,9 @@ export interface AppState {
   // Semantic metrics
   saveMetricDefinition: (metric: MetricDefinition) => void;
   deleteMetricDefinition: (metricId: string) => void;
+  // Scheduled reports
+  saveScheduledReport: (report: ScheduledReport) => void;
+  deleteScheduledReport: (reportId: string) => void;
 
   // Views (per-model saved table configurations)
   saveView: (view: ModelView) => void;
