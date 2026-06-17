@@ -72,7 +72,10 @@ BEGIN
   FROM public.records f
   WHERE f.model_id = v_followups
     AND public._followup_client_id_of(f.data) = v_cid
-    AND COALESCE(f.data->>'followup_status', '') IN ('open', 'in_progress')
+    -- "Open" mirrors the Sales Queue EXACTLY: NULL/'' coalesce to 'open' (legacy
+    -- follow-ups were never stamped a status). Without this the trio + lifecycle
+    -- disagree with the queue. (Matches the fix in _client_next_action.sql.)
+    AND COALESCE(NULLIF(f.data->>'followup_status', ''), 'open') IN ('open', 'in_progress')
   ORDER BY public.try_timestamptz(f.data->>'scheduled_datetime') ASC NULLS LAST, f.created_at ASC
   LIMIT 1;
   IF v_na.id IS NOT NULL THEN
