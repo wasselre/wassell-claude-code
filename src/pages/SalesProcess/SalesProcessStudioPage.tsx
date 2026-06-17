@@ -63,21 +63,26 @@ export default function SalesProcessStudioPage() {
   const stage = config.stages.find((s) => s.value === selectedStage);
 
   return (
-    <div className="mx-auto max-w-6xl p-4">
-      <header className="mb-4 flex items-center gap-2">
-        <Activity className="text-[#B8734F]" />
-        <h1 className="text-xl font-bold text-[#4A2C2A]">{isAr ? 'استوديو عملية المبيعات' : 'Sales Process Studio'}</h1>
-        <span className="ms-2 rounded-full bg-[#F5EDE0] px-2 py-0.5 text-xs text-[#8E4E3A]">{isAr ? 'للعرض فقط' : 'Read-only'}</span>
+    <div className="mx-auto max-w-6xl p-6">
+      <header className="mb-6 flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-copper/10 text-copper">
+            <Activity size={20} />
+          </span>
+          <div>
+            <h1 className="text-2xl font-bold text-chocolate">{isAr ? 'استوديو عملية المبيعات' : 'Sales Process Studio'}</h1>
+            <p className="mt-1 max-w-2xl text-xs leading-relaxed text-terracotta">
+              {isAr
+                ? 'لكل مرحلة: عدد العملاء النشطين، المتابعات المتأخرة، 🔗 سير العمل المرتبط، ⚠ الأنشطة بدون سير عمل.'
+                : 'Per stage: active clients, overdue follow-ups, 🔗 linked workflows, ⚠ activities with no workflow.'}
+            </p>
+          </div>
+        </div>
+        <span className="badge shrink-0 border border-sand/40 bg-cream text-terracotta">{isAr ? 'للعرض فقط' : 'Read-only'}</span>
       </header>
 
-      <p className="mb-2 text-xs text-[#8E4E3A]">
-        {isAr
-          ? 'لكل مرحلة: عدد العملاء النشطين، المتابعات المتأخرة، 🔗 سير العمل المرتبط، ⚠ الأنشطة بدون سير عمل.'
-          : 'Per stage: active clients, overdue follow-ups, 🔗 linked workflows, ⚠ activities with no workflow.'}
-      </p>
-
       {/* Lifecycle map */}
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
         {config.stages.map((s) => (
           <StageCard
             key={s.value}
@@ -94,15 +99,18 @@ export default function SalesProcessStudioPage() {
 
       {/* Selected stage detail */}
       {stage && (
-        <section className="card">
-          <h2 className="mb-3 text-lg font-bold text-[#4A2C2A]">
-            {isAr ? stage.label_ar : stage.label_en}
-            <span className="ms-2 text-sm font-normal text-[#8E4E3A]">{isAr ? `(${stats.activeByStage.get(stage.value) ?? 0} عميل نشط)` : `(${stats.activeByStage.get(stage.value) ?? 0} active clients)`}</span>
-          </h2>
+        <section className="card p-6">
+          <div className="mb-4 flex items-center gap-3 border-b border-sand/30 pb-4">
+            <span className="h-7 w-1.5 shrink-0 rounded-full" style={{ background: stage.color ?? '#C09B5F' }} />
+            <h2 className="text-xl font-bold text-chocolate">
+              {isAr ? stage.label_ar : stage.label_en}
+              <span className="ms-2 text-sm font-normal text-terracotta">{isAr ? `(${stats.activeByStage.get(stage.value) ?? 0} عميل نشط)` : `(${stats.activeByStage.get(stage.value) ?? 0} active clients)`}</span>
+            </h2>
+          </div>
           {stage.followup_types.length === 0 ? (
-            <p className="text-sm text-[#8E4E3A]">{isAr ? 'لا توجد أنشطة لهذه المرحلة (مرحلة نهائية).' : 'No activities for this stage (terminal/side-exit).'}</p>
+            <p className="text-sm text-terracotta">{isAr ? 'لا توجد أنشطة لهذه المرحلة (مرحلة نهائية).' : 'No activities for this stage (terminal/side-exit).'}</p>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {stage.followup_types.map((typeKey) => {
                 const tc = config.followup_types.find((t) => t.type === typeKey);
                 if (!tc) return null;
@@ -128,20 +136,24 @@ function StageCard({
     <button
       type="button"
       onClick={onSelect}
-      className={`rounded-xl border p-3 text-start transition ${selected ? 'border-[#B8734F] bg-[#F5EDE0]' : 'border-[#D4B896] bg-white hover:bg-[#F5EDE0]'}`}
-      style={{ borderTop: `3px solid ${stage.color ?? '#C09B5F'}` }}
+      className={`group relative overflow-hidden rounded-2xl border p-4 text-start shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md ${selected ? 'border-copper bg-cream shadow-md' : 'border-sand/40 bg-white hover:border-sand'}`}
     >
-      <div className="text-sm font-bold text-[#4A2C2A]">{isAr ? stage.label_ar : stage.label_en}</div>
-      <div className="mt-1 text-xs text-[#4A4E54]">{isAr ? `${active} عميل نشط` : `${active} active`}</div>
-      {overdue > 0 && <div className="text-xs text-[#8E4E3A]">{isAr ? `${overdue} متأخرة` : `${overdue} overdue`}</div>}
-      <div className="mt-1 flex items-center gap-2 text-xs text-[#8E4E3A]">
-        {linked > 0 && (
-          <span title={isAr ? 'سير عمل مرتبط' : 'Linked workflows'} className="inline-flex items-center gap-0.5"><WorkflowIcon size={11} /> {linked}</span>
-        )}
-        {missing > 0 && (
-          <span title={isAr ? 'أنشطة بدون سير عمل' : 'Activities with no workflow'} className="inline-flex items-center gap-0.5"><AlertTriangle size={11} /> {missing}</span>
-        )}
+      <span className="absolute inset-x-0 top-0 h-[3px]" style={{ background: stage.color ?? '#C09B5F' }} />
+      <div className="mt-1 text-sm font-bold text-chocolate">{isAr ? stage.label_ar : stage.label_en}</div>
+      <div className="mt-2 flex flex-col gap-0.5">
+        <span className="text-xs font-semibold text-charcoal">{isAr ? `${active} عميل نشط` : `${active} active`}</span>
+        {overdue > 0 && <span className="text-xs font-medium text-terracotta">{isAr ? `${overdue} متأخرة` : `${overdue} overdue`}</span>}
       </div>
+      {(linked > 0 || missing > 0) && (
+        <div className="mt-3 flex flex-wrap items-center gap-1.5">
+          {linked > 0 && (
+            <span title={isAr ? 'سير عمل مرتبط' : 'Linked workflows'} className="inline-flex items-center gap-1 rounded-full bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper"><WorkflowIcon size={11} /> {linked}</span>
+          )}
+          {missing > 0 && (
+            <span title={isAr ? 'أنشطة بدون سير عمل' : 'Activities with no workflow'} className="inline-flex items-center gap-1 rounded-full bg-terracotta/10 px-2 py-0.5 text-[11px] font-semibold text-terracotta"><AlertTriangle size={11} /> {missing}</span>
+          )}
+        </div>
+      )}
     </button>
   );
 }
@@ -156,38 +168,41 @@ function ActivityBlock({
   const drifted = bound ? isWorkflowDrifted(bound) : false;
 
   return (
-    <div className="rounded-lg border border-[#D4B896]">
-      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-start justify-between gap-2 p-3 text-start">
-        <div>
-          <div className="font-semibold text-[#4A4E54]">{isAr ? typeConfig.label_ar : typeConfig.label_en}</div>
-          <div className="text-xs text-[#8E4E3A]">{isAr ? typeConfig.objective_ar : typeConfig.objective_en} · {channelLabel(typeConfig.primary_channel, isAr)}</div>
+    <div className={`overflow-hidden rounded-2xl border transition-colors ${open ? 'border-sand bg-cream/40' : 'border-sand/40 bg-white hover:border-sand'}`}>
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-3 p-4 text-start">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-bold text-chocolate">{isAr ? typeConfig.label_ar : typeConfig.label_en}</span>
+            <span className="inline-flex items-center rounded-full border border-sand/40 bg-cream px-2 py-0.5 text-[11px] font-medium text-charcoal">{channelLabel(typeConfig.primary_channel, isAr)}</span>
+          </div>
+          <div className="mt-1 text-xs text-terracotta">{isAr ? typeConfig.objective_ar : typeConfig.objective_en}</div>
         </div>
         <div className="shrink-0">
           {bound ? (
             drifted ? (
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#C09B5F]/20 px-2 py-0.5 text-xs text-[#8E4E3A]"><GitBranch size={11} /> {isAr ? 'محرر يدويًا' : 'Advanced'}</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-gold/20 px-2.5 py-1 text-xs font-semibold text-terracotta"><GitBranch size={11} /> {isAr ? 'محرر يدويًا' : 'Advanced'}</span>
             ) : (
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#10B981]/15 px-2 py-0.5 text-xs text-[#10B981]"><CheckCircle2 size={11} /> {isAr ? 'مرتبط' : 'Linked'}</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#10B981]/15 px-2.5 py-1 text-xs font-semibold text-[#10B981]"><CheckCircle2 size={11} /> {isAr ? 'مرتبط' : 'Linked'}</span>
             )
           ) : (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#8E4E3A]/15 px-2 py-0.5 text-xs text-[#8E4E3A]"><AlertTriangle size={11} /> {isAr ? 'لا يوجد سير عمل' : 'Missing workflow'}</span>
+            <span className="inline-flex items-center gap-1 rounded-full bg-terracotta/15 px-2.5 py-1 text-xs font-semibold text-terracotta"><AlertTriangle size={11} /> {isAr ? 'لا يوجد سير عمل' : 'Missing workflow'}</span>
           )}
         </div>
       </button>
 
       {open && (
-        <div className="border-t border-[#D4B896] p-3">
+        <div className="border-t border-sand/30 p-4">
           {/* outcomes */}
-          <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
             {typeConfig.allowed_outcomes.map((o) => {
               const meta = getOutcome(o.value);
               const req = requiredFieldSlugs(o);
               return (
-                <div key={o.value} className="rounded-md bg-[#F5EDE0] p-2 text-sm">
-                  <span className="font-medium text-[#B8734F]">{isAr ? meta?.label_ar ?? o.value : meta?.label_en ?? o.value}</span>
-                  {req.length > 0 && <span className="ms-2 text-xs text-[#8E4E3A]">{isAr ? 'يتطلب: ' : 'requires: '}{req.join(', ')}</span>}
+                <div key={o.value} className="rounded-2xl border border-sand/40 bg-white px-3 py-2 text-sm shadow-sm">
+                  <span className="font-bold text-copper">{isAr ? meta?.label_ar ?? o.value : meta?.label_en ?? o.value}</span>
+                  {req.length > 0 && <span className="ms-2 text-xs text-terracotta">{isAr ? 'يتطلب: ' : 'requires: '}{req.join(', ')}</span>}
                   {(o.client_update_preview?.stage || o.client_update_preview?.status) && (
-                    <span className="ms-2 text-xs text-[#4A4E54]">→ {o.client_update_preview?.stage ?? ''}{o.client_update_preview?.status ? ` · ${o.client_update_preview.status}` : ''}</span>
+                    <span className="ms-2 text-xs text-charcoal">→ {o.client_update_preview?.stage ?? ''}{o.client_update_preview?.status ? ` · ${o.client_update_preview.status}` : ''}</span>
                   )}
                 </div>
               );
@@ -195,18 +210,18 @@ function ActivityBlock({
           </div>
 
           {/* workflow links */}
-          <div className="mt-3 flex flex-wrap gap-2">
+          <div className="mt-4 flex flex-wrap gap-2">
             {bound ? (
               <>
-                <button type="button" onClick={() => navigate(`/workflow/${bound.id}`)} className="inline-flex items-center gap-1 rounded-lg border border-[#B8734F] px-3 py-1.5 text-sm text-[#B8734F] hover:bg-[#F5EDE0]">
+                <button type="button" onClick={() => navigate(`/workflow/${bound.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-copper bg-copper/5 px-4 py-2 text-sm font-bold text-copper transition-colors hover:bg-copper hover:text-white">
                   <ExternalLink size={14} /> {isAr ? 'فتح في محرر سير العمل' : 'Open in Workflow Builder'}
                 </button>
-                <button type="button" onClick={() => navigate(`/workflow/logs?workflow=${bound.id}`)} className="inline-flex items-center gap-1 rounded-lg border border-[#D4B896] px-3 py-1.5 text-sm text-[#4A4E54] hover:bg-[#F5EDE0]">
+                <button type="button" onClick={() => navigate(`/workflow/logs?workflow=${bound.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-sand/50 bg-white px-4 py-2 text-sm font-bold text-charcoal transition-colors hover:bg-cream">
                   <Activity size={14} /> {isAr ? 'عرض عمليات التشغيل' : 'View Workflow Runs'}
                 </button>
               </>
             ) : (
-              <p className="text-sm text-[#8E4E3A]">{isAr ? 'لا يوجد سير عمل يطبق هذا النشاط بعد — أنشئه في محرر سير العمل.' : 'No workflow implements this activity yet — create one in the Workflow Builder.'}</p>
+              <p className="text-sm text-terracotta">{isAr ? 'لا يوجد سير عمل يطبق هذا النشاط بعد — أنشئه في محرر سير العمل.' : 'No workflow implements this activity yet — create one in the Workflow Builder.'}</p>
             )}
           </div>
         </div>

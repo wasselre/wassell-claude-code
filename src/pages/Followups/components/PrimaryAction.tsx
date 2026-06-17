@@ -19,13 +19,14 @@ export default function PrimaryAction({ channel, phones, clientId, appointmentId
   const tel = telUrl(phone);
   const wa = whatsappUrl(phone);
 
-  const callBtn = 'inline-flex items-center gap-2 rounded-lg bg-[#B8734F] px-4 py-2 font-semibold text-white hover:bg-[#8E4E3A] disabled:opacity-40';
-  const waBtn = 'inline-flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2 font-semibold text-white hover:opacity-90 disabled:opacity-40';
-  const ghost = 'inline-flex items-center gap-2 rounded-lg border border-[#D4B896] px-4 py-2 font-semibold text-[#4A4E54] hover:bg-[#F5EDE0]';
+  const callBtn = 'flex flex-1 items-center justify-center gap-2 rounded-xl bg-copper px-4 py-3 text-base font-bold text-white transition hover:bg-terracotta disabled:opacity-40';
+  const waBtn = 'flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40';
+  const ghost = 'inline-flex items-center gap-2 rounded-xl border border-sand px-4 py-2.5 text-sm font-semibold text-charcoal transition hover:bg-cream';
 
   return (
-    <section className="card">
-      <div className="flex flex-wrap items-center gap-2">
+    <section className="card p-5">
+      <h2 className="mb-3 text-sm font-bold text-chocolate">{isAr ? 'ابدأ بالتواصل' : 'Start outreach'}</h2>
+      <div className="flex gap-2">
         {channel === 'whatsapp' ? (
           <>
             <a className={wa ? waBtn : `${waBtn} pointer-events-none`} href={wa ?? undefined} target="_blank" rel="noreferrer">
@@ -45,17 +46,21 @@ export default function PrimaryAction({ channel, phones, clientId, appointmentId
             </a>
           </>
         )}
-        {appointmentId && (
-          <button type="button" className={ghost} onClick={() => navigate(`/model/appointments/${appointmentId}`)}>
-            <Calendar size={18} /> {isAr ? 'فتح الموعد' : 'Open Appointment'}
-          </button>
-        )}
-        {clientId && (
-          <button type="button" className={ghost} onClick={() => navigate(`/model/clients/${clientId}`)}>
-            <User size={18} /> {isAr ? 'عرض العميل' : 'View Client'}
-          </button>
-        )}
       </div>
+      {(appointmentId || clientId) && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {appointmentId && (
+            <button type="button" className={ghost} onClick={() => navigate(`/model/appointments/${appointmentId}`)}>
+              <Calendar size={18} /> {isAr ? 'فتح الموعد' : 'Open Appointment'}
+            </button>
+          )}
+          {clientId && (
+            <button type="button" className={ghost} onClick={() => navigate(`/model/clients/${clientId}`)}>
+              <User size={18} /> {isAr ? 'عرض العميل' : 'View Client'}
+            </button>
+          )}
+        </div>
+      )}
     </section>
   );
 }

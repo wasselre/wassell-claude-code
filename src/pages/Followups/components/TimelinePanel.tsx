@@ -67,10 +67,10 @@ export default function TimelinePanel({ clientId, currentFollowupId, phones }: T
   };
 
   return (
-    <section className="card">
-      <h2 className="mb-2 text-sm font-bold text-[#4A2C2A]">{isAr ? 'السجل الزمني' : 'Timeline'}</h2>
+    <section className="card p-5">
+      <h2 className="mb-3 text-sm font-bold text-chocolate">{isAr ? 'السجل الزمني' : 'Timeline'}</h2>
       {entries.length === 0 ? (
-        <p className="text-sm text-[#8E4E3A]">{isAr ? 'لا توجد أحداث سابقة' : 'No prior activity'}</p>
+        <p className="text-sm text-terracotta">{isAr ? 'لا توجد أحداث سابقة' : 'No prior activity'}</p>
       ) : (
         <ol className="space-y-2">
           {entries.slice(0, 12).map((e) => (
@@ -78,15 +78,15 @@ export default function TimelinePanel({ clientId, currentFollowupId, phones }: T
               <button
                 type="button"
                 onClick={() => e.model_name && e.record_id && navigate(`/model/${e.model_name}/${e.record_id}`)}
-                className="flex w-full items-start gap-2 rounded-md p-1 text-start hover:bg-[#F5EDE0]"
+                className="flex w-full items-start gap-2.5 rounded-xl p-2 text-start transition hover:bg-cream"
               >
-                <span className="mt-1 h-2 w-2 shrink-0 rounded-full" style={{ background: toneColor(e.tone) }} />
+                <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: toneColor(e.tone) }} />
                 <span className="flex-1">
-                  <span className="text-sm font-medium text-[#4A4E54]">{isAr ? e.title_ar : e.title_en}</span>
+                  <span className="text-sm font-semibold text-chocolate">{isAr ? e.title_ar : e.title_en}</span>
                   {(isAr ? e.subtitle_ar : e.subtitle_en) && (
-                    <span className="text-sm text-[#8E4E3A]"> — {isAr ? e.subtitle_ar : e.subtitle_en}</span>
+                    <span className="text-sm text-terracotta"> — {isAr ? e.subtitle_ar : e.subtitle_en}</span>
                   )}
-                  <span className="block text-xs text-[#8E4E3A]">{fmt(e.at)}</span>
+                  <span className="block text-xs text-charcoal/50">{fmt(e.at)}</span>
                 </span>
               </button>
             </li>
@@ -94,8 +94,8 @@ export default function TimelinePanel({ clientId, currentFollowupId, phones }: T
         </ol>
       )}
       {phones.length > 0 && (
-        <div className="mt-3 border-t border-[#D4B896] pt-3">
-          <h3 className="mb-1 text-xs font-bold text-[#8E4E3A]">{isAr ? 'المكالمات' : 'Calls'}</h3>
+        <div className="mt-4 border-t border-sand/60 pt-4">
+          <h3 className="mb-1 text-xs font-bold text-charcoal/70">{isAr ? 'المكالمات' : 'Calls'}</h3>
           <CallHistoryPanel phones={phones} chrome="naked" />
         </div>
       )}

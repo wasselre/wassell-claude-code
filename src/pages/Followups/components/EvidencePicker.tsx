@@ -44,9 +44,9 @@ export default function EvidencePicker({ clientId, phones, value, onAttach }: Ev
 
   if (value) {
     return (
-      <div className="flex items-center justify-between rounded-md border border-[#10B981] bg-[#10B981]/10 px-3 py-2 text-sm">
-        <span className="inline-flex items-center gap-1 text-[#10B981]"><Check size={15} /> {isAr ? 'تم إرفاق مكالمة' : 'Call attached'}</span>
-        <button type="button" onClick={() => onAttach(null)} className="inline-flex items-center gap-1 text-[#8E4E3A] hover:underline">
+      <div className="flex items-center justify-between rounded-xl border border-[#10B981] bg-[#10B981]/10 px-3 py-2.5 text-sm">
+        <span className="inline-flex items-center gap-1 font-semibold text-[#10B981]"><Check size={15} /> {isAr ? 'تم إرفاق مكالمة' : 'Call attached'}</span>
+        <button type="button" onClick={() => onAttach(null)} className="inline-flex items-center gap-1 text-terracotta hover:underline">
           <X size={13} /> {isAr ? 'إلغاء الإرفاق' : 'Detach'}
         </button>
       </div>
@@ -54,20 +54,20 @@ export default function EvidencePicker({ clientId, phones, value, onAttach }: Ev
   }
 
   return (
-    <div className="rounded-md border border-[#D4B896] p-2">
-      <p className="mb-1 text-xs text-[#8E4E3A]">{isAr ? 'إرفاق المكالمة (اختياري)' : 'Attach the call (optional)'}</p>
+    <div className="rounded-xl border border-sand bg-cream/40 p-3">
+      <p className="mb-2 text-xs text-terracotta">{isAr ? 'إرفاق المكالمة (اختياري)' : 'Attach the call (optional)'}</p>
       {candidates.length === 0 ? (
-        <p className="text-xs text-[#8E4E3A]">{isAr ? 'لا توجد مكالمات صادرة حديثة' : 'No recent outbound calls'}</p>
+        <p className="text-xs text-charcoal/60">{isAr ? 'لا توجد مكالمات صادرة حديثة' : 'No recent outbound calls'}</p>
       ) : (
         <ul className="space-y-1">
           {candidates.map((c) => (
             <li key={c.id} className="flex items-center justify-between gap-2 text-sm">
-              <span className="text-[#4A4E54]">
+              <span className="text-charcoal">
                 {fmt(c.data.call_time)}
                 {c.data.duration_seconds ? ` · ${c.data.duration_seconds}${isAr ? 'ث' : 's'}` : ''}
                 {c.data.status ? ` · ${c.data.status}` : ''}
               </span>
-              <button type="button" onClick={() => onAttach(c.id)} className="inline-flex items-center gap-1 text-[#B8734F] hover:underline">
+              <button type="button" onClick={() => onAttach(c.id)} className="inline-flex items-center gap-1 font-semibold text-copper hover:underline">
                 <Paperclip size={13} /> {isAr ? 'إرفاق' : 'Attach'}
               </button>
             </li>

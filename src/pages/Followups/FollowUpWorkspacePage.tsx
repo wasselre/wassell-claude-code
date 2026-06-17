@@ -117,15 +117,15 @@ export default function FollowUpWorkspacePage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-4 p-4">
-      <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1 text-sm text-[#8E4E3A] hover:underline">
+    <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+      <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1 text-sm font-semibold text-terracotta hover:underline">
         <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} /> {isAr ? 'رجوع' : 'Back'}
       </button>
 
       <MissionHeader typeConfig={typeConfig} typeKeyRaw={ctx.typeKey} client={ctx.client} draft={draft} attemptNumber={ctx.attemptNumber} />
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
+      <div className="grid gap-5 lg:grid-cols-3">
+        <div className="space-y-5 lg:col-span-2">
           <PrimaryAction
             channel={typeConfig?.primary_channel ?? 'call'}
             phones={ctx.phones}
@@ -146,7 +146,7 @@ export default function FollowUpWorkspacePage() {
             saving={saving}
           />
         </div>
-        <div className="space-y-4">
+        <div className="space-y-5">
           <ContextPanel
             typeConfig={typeConfig}
             ctx={{ client: ctx.client, appointment: ctx.appointment, project: ctx.project, followup: draft, attemptNumber: ctx.attemptNumber, resolveUser, isAr }}
@@ -156,8 +156,8 @@ export default function FollowUpWorkspacePage() {
         </div>
       </div>
 
-      <div className="border-t border-[#D4B896] pt-3">
-        <button type="button" onClick={goAdvanced} className="inline-flex items-center gap-1 text-sm text-[#B8734F] hover:underline">
+      <div className="border-t border-sand/60 pt-4">
+        <button type="button" onClick={goAdvanced} className="inline-flex items-center gap-1 text-sm font-semibold text-copper hover:underline">
           <SlidersHorizontal size={15} /> {isAr ? 'الحقول المتقدمة' : 'Advanced Fields'}
         </button>
       </div>

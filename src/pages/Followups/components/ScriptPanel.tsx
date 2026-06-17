@@ -11,9 +11,9 @@ export default function ScriptPanel({ typeConfig }: ScriptPanelProps) {
   const lines = (isAr ? typeConfig?.script?.ar : typeConfig?.script?.en) ?? [];
   if (lines.length === 0) return null;
   return (
-    <section className="card">
-      <h2 className="mb-2 text-sm font-bold text-[#4A2C2A]">{isAr ? 'إرشادات المكالمة' : 'Call Guidance'}</h2>
-      <ul className="list-disc space-y-1 ps-5 text-sm text-[#4A4E54]">
+    <section className="card p-5">
+      <h2 className="mb-2 text-sm font-bold text-chocolate">{isAr ? 'إرشادات المكالمة' : 'Call Guidance'}</h2>
+      <ul className="list-disc space-y-1.5 ps-5 text-sm text-charcoal/90 marker:text-copper">
         {lines.map((l, i) => (
           <li key={i}>{l}</li>
         ))}

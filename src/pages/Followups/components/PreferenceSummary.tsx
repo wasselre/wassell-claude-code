@@ -39,21 +39,21 @@ export default function PreferenceSummary({ client, onEditFull }: PreferenceSumm
   push(isAr ? 'اللغة' : 'Language', listStr(client.preferred_language));
 
   return (
-    <section className="card">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-bold text-[#4A2C2A]">{isAr ? 'تفضيلات العميل' : 'Preferences'}</h2>
-        <button type="button" onClick={onEditFull} className="inline-flex items-center gap-1 text-xs text-[#B8734F] hover:underline">
+    <section className="card p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="text-sm font-bold text-chocolate">{isAr ? 'تفضيلات العميل' : 'Preferences'}</h2>
+        <button type="button" onClick={onEditFull} className="inline-flex items-center gap-1 text-xs font-semibold text-copper hover:underline">
           <SlidersHorizontal size={13} /> {isAr ? 'تعديل التفضيلات الكاملة' : 'Edit Full Preferences'}
         </button>
       </div>
       {rows.length === 0 ? (
-        <p className="text-sm text-[#8E4E3A]">{isAr ? 'لا توجد تفضيلات مسجلة' : 'No preferences recorded'}</p>
+        <p className="text-sm text-terracotta">{isAr ? 'لا توجد تفضيلات مسجلة' : 'No preferences recorded'}</p>
       ) : (
-        <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-1.5 text-sm">
+        <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2.5 text-sm">
           {rows.map((r) => (
             <div key={r.label} className="contents">
-              <dt className="text-[#8E4E3A]">{r.label}</dt>
-              <dd className="font-medium text-[#4A4E54]">{r.value}</dd>
+              <dt className="text-charcoal/60">{r.label}</dt>
+              <dd className="text-end font-semibold text-chocolate">{r.value}</dd>
             </div>
           ))}
         </dl>

@@ -54,8 +54,8 @@ export default function OutcomePanel(props: OutcomePanelProps) {
   const typeConfig = getFollowUpTypeConfig(typeKey);
   if (!typeConfig) {
     return (
-      <section className="card">
-        <p className="text-sm text-[#8E4E3A]">
+      <section className="card p-5">
+        <p className="text-sm text-terracotta">
           {isAr ? 'لا تتوفر نتائج موجهة لهذا النوع — استخدم الحقول المتقدمة.' : 'No guided outcomes for this type — use Advanced Fields.'}
         </p>
       </section>
@@ -87,14 +87,14 @@ export default function OutcomePanel(props: OutcomePanelProps) {
         disabled={readOnly}
         value={toLocalInput(draft[slug])}
         onChange={(e) => patchDraft({ [slug]: fromLocalInput(e.target.value) })}
-        className="w-full rounded-lg border border-[#D4B896] bg-white px-3 py-2"
+        className="form-input"
       />
     </label>
   );
 
   return (
-    <section className="card">
-      <h2 className="mb-2 text-sm font-bold text-[#4A2C2A]">{isAr ? 'النتيجة' : 'Outcome'}</h2>
+    <section className="card p-5" style={{ border: '1.5px solid rgba(184, 115, 79, 0.45)' }}>
+      <h2 className="mb-3 text-base font-bold text-chocolate">{isAr ? 'النتيجة' : 'Outcome'}</h2>
 
       {(() => {
         // The first config outcome is the primary success path (e.g. حجز موعد for
@@ -112,7 +112,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
                   type="button"
                   disabled={readOnly}
                   onClick={() => selectOutcome(primary.value)}
-                  className="flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-base font-bold text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-base font-bold text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
                   style={{ backgroundColor: c, outline: on ? `3px solid ${c}66` : 'none', outlineOffset: 2 }}
                 >
                   {on && <CheckCircle2 size={18} />}
@@ -132,7 +132,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
                       data-on={on}
                       disabled={readOnly}
                       onClick={() => selectOutcome(o.value)}
-                      className={`rounded-full border px-3 py-1 text-sm font-medium transition ${toneClasses[meta?.tone ?? 'neutral']}`}
+                      className={`rounded-full border-[1.5px] px-4 py-1.5 text-sm font-semibold transition ${toneClasses[meta?.tone ?? 'neutral']}`}
                     >
                       {isAr ? meta?.label_ar ?? o.value : meta?.label_en ?? o.value}
                     </button>
@@ -147,12 +147,12 @@ export default function OutcomePanel(props: OutcomePanelProps) {
       {outcomeKey && (
         <div className="mt-4 space-y-3">
           {revealed.includes('appointment_id') && outcomeCfg?.requires?.appointment_created && (
-            <div className="rounded-md border border-[#D4B896] p-2">
+            <div className="rounded-xl border border-sand p-3">
               {draft.appointment_id ? (
                 <span className="inline-flex items-center gap-1 text-sm text-[#10B981]"><CheckCircle2 size={15} /> {isAr ? 'تم إنشاء الموعد وربطه' : 'Appointment created & linked'}</span>
               ) : (
                 <button type="button" onClick={onBookAppointment} disabled={readOnly}
-                  className="inline-flex items-center gap-2 rounded-lg bg-[#B8734F] px-3 py-2 text-sm font-semibold text-white hover:bg-[#8E4E3A]">
+                  className="inline-flex items-center gap-2 rounded-xl bg-copper px-3 py-2 text-sm font-semibold text-white transition hover:bg-terracotta">
                   <CalendarPlus size={16} /> {isAr ? 'حجز موعد' : 'Book Appointment'}
                 </button>
               )}
@@ -172,7 +172,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
                 disabled={readOnly}
                 value={(draft.lost_reason as string) ?? ''}
                 onChange={(e) => patchDraft({ lost_reason: e.target.value })}
-                className="w-full rounded-lg border border-[#D4B896] bg-white px-3 py-2"
+                className="form-input"
               >
                 <option value="">{isAr ? '— اختر —' : '— select —'}</option>
                 {lostReasonOptions.map((o) => (
@@ -190,7 +190,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
                 value={(draft.outcome_notes as string) ?? ''}
                 onChange={(e) => patchDraft({ outcome_notes: e.target.value })}
                 rows={2}
-                className="w-full rounded-lg border border-[#D4B896] bg-white px-3 py-2"
+                className="form-input"
               />
             </label>
           )}
@@ -205,7 +205,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
 
           {/* What will happen (preview — the workflow executes it) */}
           {(outcomeCfg?.client_update_preview || outcomeCfg?.next_action_preview) && (
-            <div className="rounded-md bg-[#F5EDE0] p-2 text-xs text-[#4A4E54]">
+            <div className="rounded-xl bg-cream p-3 text-xs text-charcoal">
               <span className="font-semibold">{isAr ? 'سيقوم النظام بـ: ' : 'The system will: '}</span>
               {outcomeCfg?.client_update_preview?.stage && (
                 <span>{isAr ? `نقل العميل إلى مرحلة «${outcomeCfg.client_update_preview.stage}». ` : `move the client to "${outcomeCfg.client_update_preview.stage}". `}</span>
@@ -220,10 +220,10 @@ export default function OutcomePanel(props: OutcomePanelProps) {
           )}
 
           {validation?.hardErrors.map((e, i) => (
-            <p key={`h${i}`} className="flex items-center gap-1 text-sm text-[#8E4E3A]"><AlertCircle size={14} /> {isAr ? e.message_ar : e.message_en}</p>
+            <p key={`h${i}`} className="flex items-center gap-1 text-sm text-terracotta"><AlertCircle size={14} /> {isAr ? e.message_ar : e.message_en}</p>
           ))}
           {validation?.warnings.map((w, i) => (
-            <p key={`w${i}`} className="flex items-center gap-1 text-sm text-[#C09B5F]"><AlertTriangle size={14} /> {isAr ? w.message_ar : w.message_en}</p>
+            <p key={`w${i}`} className="flex items-center gap-1 text-sm text-gold"><AlertTriangle size={14} /> {isAr ? w.message_ar : w.message_en}</p>
           ))}
 
           {!readOnly && (
@@ -231,7 +231,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
               type="button"
               disabled={!outcomeKey || !(validation?.ok ?? false) || saving}
               onClick={() => onComplete(outcomeKey)}
-              className="inline-flex items-center gap-2 rounded-lg bg-[#B8734F] px-5 py-2.5 font-semibold text-white hover:bg-[#8E4E3A] disabled:opacity-40"
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-copper px-5 py-3 text-base font-bold text-white transition hover:bg-terracotta disabled:opacity-40"
             >
               {saving ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
               {isAr ? 'إكمال وحفظ' : 'Complete & Save'}

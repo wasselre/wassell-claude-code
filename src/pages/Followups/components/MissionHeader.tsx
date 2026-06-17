@@ -35,32 +35,37 @@ export default function MissionHeader({ typeConfig, typeKeyRaw, client, draft, a
     new Date(draft.scheduled_datetime).getTime() < Date.now();
 
   return (
-    <section className="card" style={{ borderInlineStart: '4px solid #B8734F' }}>
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-[#4A2C2A]">{title}</h1>
-          {objective && <p className="mt-1 text-sm text-[#4A4E54]">{isAr ? 'الهدف: ' : 'Goal: '}{objective}</p>}
-          <p className="mt-2 text-lg font-semibold text-[#4A4E54]">{clientName}</p>
-          {clientPhone && <p dir="ltr" className="text-sm text-[#8E4E3A]">{clientPhone}</p>}
+    <section className="card p-5" style={{ borderInlineStart: '5px solid #B8734F' }}>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-copper">
+            {title}
+            {objective && <span className="font-normal text-charcoal/70"> · {isAr ? 'الهدف: ' : 'Goal: '}{objective}</span>}
+          </p>
+          <h1 className="mt-1.5 text-2xl font-bold text-chocolate">{clientName}</h1>
+          {clientPhone && <p dir="ltr" className="mt-0.5 text-start text-sm text-charcoal/70">{clientPhone}</p>}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {stage && <Chip label={isAr ? 'المرحلة' : 'Stage'} value={stage} color="#B8734F" />}
+            {status && <Chip label={isAr ? 'الحالة' : 'Status'} value={status} color="#8E4E3A" />}
+            {priority && <Chip label={isAr ? 'الأولوية' : 'Priority'} value={priority} color="#C09B5F" />}
+          </div>
         </div>
-        <div className="flex flex-col items-end gap-2 text-sm">
+        <div className="flex shrink-0 flex-col items-end gap-2 text-sm">
           {due && (
-            <div className={overdue ? 'flex items-center gap-1 font-semibold text-[#8E4E3A]' : 'text-[#4A4E54]'}>
-              {overdue && <AlertTriangle size={15} />}
-              <span>{isAr ? 'الاستحقاق: ' : 'Due: '}{due}</span>
+            <div className="text-end">
+              <span className="block text-xs text-charcoal/60">{isAr ? 'تاريخ الاستحقاق' : 'Due'}</span>
+              <span className={overdue ? 'inline-flex items-center gap-1 font-bold text-terracotta' : 'font-semibold text-charcoal'}>
+                {overdue && <AlertTriangle size={15} />}
+                {due}
+              </span>
             </div>
           )}
           {attemptNumber != null && (
-            <span className="rounded-full bg-[#F5EDE0] px-2 py-0.5 text-[#4A4E54]">
+            <span className="badge" style={{ backgroundColor: '#C09B5F1A', color: '#8E4E3A' }}>
               {isAr ? `المحاولة ${attemptNumber}` : `Attempt ${attemptNumber}`}
             </span>
           )}
         </div>
-      </div>
-      <div className="mt-3 flex flex-wrap gap-2 text-xs">
-        {stage && <Chip label={isAr ? 'المرحلة' : 'Stage'} value={stage} color="#B8734F" />}
-        {status && <Chip label={isAr ? 'الحالة' : 'Status'} value={status} color="#8E4E3A" />}
-        {priority && <Chip label={isAr ? 'الأولوية' : 'Priority'} value={priority} color="#C09B5F" />}
       </div>
     </section>
   );
@@ -68,9 +73,9 @@ export default function MissionHeader({ typeConfig, typeKeyRaw, client, draft, a
 
 function Chip({ label, value, color }: { label: string; value: string; color: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5" style={{ borderColor: color, color }}>
-      <span className="opacity-70">{label}:</span>
-      <span className="font-semibold">{value}</span>
+    <span className="badge gap-1" style={{ backgroundColor: `${color}1A`, color }}>
+      <span className="font-normal opacity-70">{label}:</span>
+      <span className="font-bold">{value}</span>
     </span>
   );
 }
