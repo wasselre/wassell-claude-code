@@ -50,6 +50,13 @@ export interface WorkerEnv {
    *  Default 'gs' (installed in the Docker image). Override for local dev,
    *  e.g. on Windows: GS_BIN="C:\Program Files\gs\gs10\bin\gswin64c.exe". */
   GS_BIN: string;
+  /** Base URL of the app (Vercel) the worker POSTs scheduled-report runs to.
+   *  Default https://app.wassel.re. */
+  APP_URL: string;
+  /** Shared secret for POST /api/internal/run-report. When UNSET the worker's
+   *  scheduled-reports loop self-disables (so the worker boots fine before the
+   *  Scheduled Reports feature is enabled). Set it to turn reports on. */
+  REPORTS_RUNNER_SECRET: string | null;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -74,5 +81,7 @@ export function loadEnv(): WorkerEnv {
     WATCHDOG_INTERVAL_MS: parseInt(process.env.WATCHDOG_INTERVAL_MS ?? '300000', 10),
     SOFFICE_BIN: process.env.SOFFICE_BIN ?? 'soffice',
     GS_BIN: process.env.GS_BIN ?? 'gs',
+    APP_URL: process.env.APP_URL ?? 'https://app.wassel.re',
+    REPORTS_RUNNER_SECRET: process.env.REPORTS_RUNNER_SECRET ?? null,
   };
 }

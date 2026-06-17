@@ -55,6 +55,11 @@ let previewWakeRequested = false;
 // compress fan-outs should drain at full speed regardless of deck/image load.
 let compressBusy = false;
 let compressWakeRequested = false;
+// Scheduled Reports (2026-06-17) get a FIFTH independent, time-gated loop:
+// claim due reports (next_run_at passed) and trigger the owner-scoped runner on
+// the app. Self-disables when REPORTS_RUNNER_SECRET is unset.
+let reportsBusy = false;
+let reportsWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -655,6 +660,90 @@ async function compressPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Scheduled Reports — time-gated. scheduled_report_claim_due returns only
+// reports whose next_run_at has passed (SKIP LOCKED), so no separate scheduler
+// is needed. Each due report is run by POSTing the owner-scoped runner endpoint
+// on the app (the worker can't import the analytics engine). The runner does the
+// bookkeeping (next_run_at, status, history); a crashed run is reset by the
+// reports watchdog after 10 min.
+// ─────────────────────────────────────────────────────────────────────────
+
+async function claimAndRunDueReports(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('scheduled_report_claim_due', {
+    p_worker_id: env.WORKER_ID,
+    p_limit: 5,
+  });
+  if (error) {
+    console.error(`[worker] report claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{ id: string; title: string }>;
+  if (rows.length === 0) return false;
+  for (const r of rows) {
+    console.log(`[worker] running scheduled report=${r.id} "${r.title}"`);
+    try {
+      const res = await fetch(`${env.APP_URL}/api/internal/run-report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-reports-runner-secret': env.REPORTS_RUNNER_SECRET! },
+        body: JSON.stringify({ report_id: r.id }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { result?: { status?: string }; error?: string };
+      if (!res.ok) {
+        console.error(`[worker] report=${r.id} runner HTTP ${res.status}: ${body.error ?? ''}`);
+      } else {
+        console.log(`[worker] report=${r.id} → ${body.result?.status ?? 'ok'}`);
+      }
+    } catch (err) {
+      // Left status='running'; the watchdog resets it after 10 min so it retries.
+      console.error(`[worker] report=${r.id} runner call threw:`, err);
+    }
+  }
+  return true;
+}
+
+async function runReportsWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('scheduled_reports_watchdog');
+    if (error) {
+      console.error(`[worker] reports watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] reports watchdog reset ${swept} stuck report(s)`);
+  } catch (err) {
+    console.error(`[worker] reports watchdog threw:`, err);
+  }
+}
+
+async function reportsPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    reportsBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunDueReports();
+    } catch (err) {
+      console.error('[worker] reports poll iteration error:', err);
+    }
+    reportsBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runReportsWatchdog();
+    }
+
+    if (didClaim || reportsWakeRequested) {
+      reportsWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !reportsWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // HTTP server: /healthz for Fly health checks, /wake for API ping.
 // ─────────────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
@@ -667,6 +756,8 @@ const server = http.createServer((req, res) => {
         image_busy: imageBusy,
         preview_busy: previewBusy,
         compress_busy: compressBusy,
+        reports_busy: reportsBusy,
+        reports_enabled: !!env.REPORTS_RUNNER_SECRET,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -680,6 +771,7 @@ const server = http.createServer((req, res) => {
     imageWakeRequested = true;
     previewWakeRequested = true;
     compressWakeRequested = true;
+    reportsWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -700,7 +792,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || previewBusy || compressBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || previewBusy || compressBusy || reportsBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -711,13 +803,15 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 
 // Drain all four queues concurrently for the lifetime of the process, plus the
 // conflict-storm watchdog (its own short-interval loop).
-Promise.all([
-  pollLoop(),
-  imagePollLoop(),
-  previewPollLoop(),
-  compressPollLoop(),
-  conflictWatchdogLoop(),
-]).catch((err) => {
+const loops = [pollLoop(), imagePollLoop(), previewPollLoop(), compressPollLoop(), conflictWatchdogLoop()];
+// Scheduled-reports loop only runs when the shared secret is set (feature on).
+if (env.REPORTS_RUNNER_SECRET) {
+  console.log('[worker] scheduled-reports loop enabled');
+  loops.push(reportsPollLoop());
+} else {
+  console.log('[worker] scheduled-reports loop disabled (REPORTS_RUNNER_SECRET unset)');
+}
+Promise.all(loops).catch((err) => {
   console.error('[worker] poll loop crashed:', err);
   process.exit(1);
 });
