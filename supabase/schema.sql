@@ -779,8 +779,14 @@ CREATE POLICY "workflow_runs_insert" ON workflow_runs FOR INSERT TO authenticate
 CREATE POLICY "workflow_runs_modify" ON workflow_runs FOR UPDATE TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "workflow_runs_delete" ON workflow_runs FOR DELETE TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "dashboards_admin"      ON dashboards      FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+-- Metrics: any authenticated user may READ a metric definition (so metric-driven
+-- widgets resolve for everyone who can see a dashboard; the VALUE is still scoped
+-- per viewer). Only admins may write. See 2026-06-17_metric_definitions_read_policy.sql.
 DROP POLICY IF EXISTS "metric_definitions_admin" ON metric_definitions;
-CREATE POLICY "metric_definitions_admin" ON metric_definitions FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+DROP POLICY IF EXISTS "metric_definitions_read" ON metric_definitions;
+DROP POLICY IF EXISTS "metric_definitions_write" ON metric_definitions;
+CREATE POLICY "metric_definitions_read"  ON metric_definitions FOR SELECT TO authenticated USING (true);
+CREATE POLICY "metric_definitions_write" ON metric_definitions FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 
 -- Public dashboards: anon access goes through `get_public_dashboard`,
 -- not a direct SELECT. The function checks BOTH is_public AND a token

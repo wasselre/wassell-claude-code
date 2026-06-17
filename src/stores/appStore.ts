@@ -16,6 +16,8 @@ import { markRecentlyWritten } from '@/lib/realtime/dedup';
 import { startRealtimeOrchestrator } from '@/lib/realtime/RealtimeOrchestrator';
 import { markLoaded, startStaleWhileRevalidate } from '@/lib/realtime/staleWhileRevalidate';
 import { installPerfMarkers, markEvent } from '@/lib/perfMarkers';
+import { assertSerializable, validateAnalyticsQuery } from '@/lib/analytics/validate';
+import type { AnalyticsQuery } from '@/lib/analytics/types';
 import {
   buildFilterKey,
   emptyCache,
@@ -56,6 +58,19 @@ import type {
   SaveResult,
 } from '@/types';
 import { activityLogger } from '@/lib/activityLogger';
+
+/** Returns a human-readable reason a widget/metric AnalyticsQuery must not be
+ *  persisted — non-serializable (the HARD RULE) or structurally invalid — else
+ *  null. Used by saveDashboard / saveMetricDefinition to fail loudly. */
+function analyticsQueryProblem(query: AnalyticsQuery | undefined): string | null {
+  if (!query) return null;
+  try {
+    assertSerializable(query);
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  return validateAnalyticsQuery(query);
+}
 
 // --- localStorage helpers ---
 
@@ -3185,6 +3200,16 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // --- Dashboards ---
   saveDashboard: (dashboard: Dashboard) => {
+    // Guard (AnalyticsQuery HARD RULE): never persist a non-serializable or
+    // structurally-invalid widget query. Fail loudly and abort — don't save.
+    for (const w of dashboard.widgets) {
+      const problem = analyticsQueryProblem(w.query);
+      if (problem) {
+        console.error('[saveDashboard] refusing to persist invalid widget query', w.id, problem);
+        get().addToast(`${get().language === 'ar' ? 'تعذّر الحفظ' : 'Cannot save'} — "${w.title_en || w.title_ar || w.id}": ${problem}`, 'error');
+        return;
+      }
+    }
     set((s) => {
       const idx = s.dashboards.findIndex((d) => d.id === dashboard.id);
       const dashboards = idx >= 0
@@ -3206,6 +3231,12 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // --- Semantic metrics ---
   saveMetricDefinition: (metric: MetricDefinition) => {
+    const problem = analyticsQueryProblem(metric.query);
+    if (problem) {
+      console.error('[saveMetricDefinition] refusing to persist invalid metric query', metric.id, problem);
+      get().addToast(`${get().language === 'ar' ? 'تعذّر حفظ المقياس' : 'Cannot save metric'}: ${problem}`, 'error');
+      return;
+    }
     set((s) => {
       const idx = s.metricDefinitions.findIndex((m) => m.id === metric.id);
       const metricDefinitions = idx >= 0
