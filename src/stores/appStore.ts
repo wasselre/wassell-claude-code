@@ -1738,6 +1738,25 @@ export const useAppStore = create<AppState>((set, get) => ({
       performance.measure('wassell:init:loads', 'wassell:init:loads:start', 'wassell:init:loads:end');
     } catch { /* perf API quirks — never block init on telemetry */ }
 
+    // WhatsApp device overlay — load eagerly at boot (fire-and-forget so it
+    // never blocks init). Until now `waDevices` was populated ONLY when the
+    // user opened Settings → WhatsApp Numbers (or the Workflow editor's device
+    // picker). Every other send entry point — the Chats composer, the
+    // Follow-up Workspace's in-app WhatsApp composer, the record WhatsApp
+    // panel, workflow-triggered sends — reads `waDevices` to resolve the
+    // send-from device, so opening one of those in a fresh session (before
+    // visiting Settings) left the overlay empty and the device-resolution
+    // fallback chain bottomed out at '' → the user-facing "No WhatsApp device
+    // configured" error, even when the DB had a correct default. Loading here
+    // makes the default device available app-wide from the first render.
+    // `loadWhatsAppNumbers` sets the overlay first, then best-effort fetches
+    // the live Haberchat device list (`waDevicesLive`, used as the
+    // self-healing last-resort fallback); a live-fetch failure is non-fatal
+    // because the overlay is already in place.
+    void get().loadWhatsAppNumbers().catch((err) => {
+      console.warn('[init] WhatsApp device overlay load failed (non-fatal):', err);
+    });
+
     // ────────────────────────────────────────────────────────────────────
     // Resolve the current user based on auth state.
     //
