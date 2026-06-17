@@ -58,8 +58,23 @@ export default function FollowUpWorkspacePage() {
 
   // Form-mount version snapshot for optimistic concurrency (mirrors RecordFormPage).
   const versionRef = useRef<{ id: string; version: number | null } | null>(null);
+  // Set when a save returned `conflict`. appStore's reload-on-conflict then
+  // re-fetches the live row; we adopt its fresh version below so a retry in this
+  // same mount sends the CURRENT version instead of re-conflicting forever.
+  const conflictedRef = useRef(false);
   if (record && versionRef.current?.id !== record.id) {
     versionRef.current = { id: record.id, version: record.version ?? null };
+    conflictedRef.current = false;
+  } else if (
+    record && conflictedRef.current &&
+    (record.version ?? null) !== (versionRef.current?.version ?? null)
+  ) {
+    // Post-conflict: the re-fetch landed a newer version — adopt it so the retry
+    // succeeds. Gated by conflictedRef so ordinary realtime version bumps don't
+    // silently defeat optimistic concurrency (a real concurrent edit still
+    // surfaces a conflict on the first save).
+    versionRef.current = { id: record.id, version: record.version ?? null };
+    conflictedRef.current = false;
   }
 
   const ctx = useMemo(() => resolveFollowupContext(draft, models, records), [draft, models, records]);
@@ -132,6 +147,7 @@ export default function FollowUpWorkspacePage() {
     setSaving(false);
 
     if (saveResult.status === 'conflict') {
+      conflictedRef.current = true; // adopt the re-fetched version on the next render so a retry succeeds
       addToast(isAr ? 'تم تعديل هذا السجل من مستخدم آخر — حدّث الصفحة قبل الحفظ.' : 'This record was just edited by someone else — reload before saving.', 'error');
       return;
     }
@@ -200,6 +216,7 @@ export default function FollowUpWorkspacePage() {
     const res = await saveRecord(toSave, { expectedVersion: versionRef.current?.version ?? null });
     setSaving(false);
     if (res.status === 'conflict') {
+      conflictedRef.current = true; // adopt the re-fetched version on the next render so a retry succeeds
       addToast(isAr ? 'تم تعديل هذا السجل من مستخدم آخر — حدّث الصفحة.' : 'This record was just edited by someone else — reload.', 'error');
       return;
     }
