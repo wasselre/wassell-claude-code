@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { Paperclip, Check, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { normalizePhone } from '@/lib/phone';
@@ -36,6 +36,21 @@ export default function EvidencePicker({ clientId, phones, value, onAttach }: Ev
       .slice(0, 5);
   }, [models, records, clientId, phones]);
 
+  // Auto-link the most recent matching call so its recording attaches without a
+  // manual click. The ref latches after the first attempt, so a pre-existing
+  // value is respected and a user detach is NOT immediately re-attached —
+  // re-attaching (or picking a different call) is then the rep's explicit call.
+  const autoAttachedRef = useRef(false);
+  useEffect(() => {
+    if (autoAttachedRef.current) return;
+    if (value) { autoAttachedRef.current = true; return; }
+    const first = candidates[0];
+    if (first) {
+      autoAttachedRef.current = true;
+      onAttach(first.id);
+    }
+  }, [candidates, value, onAttach]);
+
   const fmt = (iso: unknown) => {
     if (typeof iso !== 'string') return '';
     const d = new Date(iso);
@@ -43,11 +58,19 @@ export default function EvidencePicker({ clientId, phones, value, onAttach }: Ev
   };
 
   if (value) {
+    const attached = (() => {
+      const model = models.find((m) => m.name === 'phone_calls');
+      return model ? (records[model.id] ?? []).find((r) => r.id === value) ?? null : null;
+    })();
+    const when = fmt(attached?.data.call_time);
     return (
       <div className="flex items-center justify-between rounded-xl border border-[#10B981] bg-[#10B981]/10 px-3 py-2.5 text-sm">
-        <span className="inline-flex items-center gap-1 font-semibold text-[#10B981]"><Check size={15} /> {isAr ? 'تم إرفاق مكالمة' : 'Call attached'}</span>
+        <span className="inline-flex items-center gap-1 font-semibold text-[#10B981]">
+          <Check size={15} /> {isAr ? 'تم إرفاق المكالمة تلقائيًا' : 'Call linked automatically'}
+          {when ? <span className="font-normal text-charcoal" dir="ltr">· {when}</span> : null}
+        </span>
         <button type="button" onClick={() => onAttach(null)} className="inline-flex items-center gap-1 text-terracotta hover:underline">
-          <X size={13} /> {isAr ? 'إلغاء الإرفاق' : 'Detach'}
+          <X size={13} /> {isAr ? 'تغيير' : 'Change'}
         </button>
       </div>
     );

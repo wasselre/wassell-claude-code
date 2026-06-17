@@ -4,7 +4,7 @@ import { SlidersHorizontal, ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord, useCanViewRecord } from '@/hooks/usePermission';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
-import { getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
+import { buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
 import type { AppRecord } from '@/types';
 import { resolveFollowupContext } from './lib/followupContext';
 import MissionHeader from './components/MissionHeader';
@@ -77,7 +77,12 @@ export default function FollowUpWorkspacePage() {
       source_status_snapshot: draft.source_status_snapshot ?? (ctx.client?.client_status as string) ?? null,
     };
 
-    const result = validateFollowUpCompletion({ followupType: ctx.typeKey ?? '', selectedOutcome: outcomeKey, draft: finalData });
+    const result = validateFollowUpCompletion({
+      followupType: ctx.typeKey ?? '',
+      selectedOutcome: outcomeKey,
+      draft: finalData,
+      fieldLabels: buildFieldLabels(model.schema.sections.flatMap((s) => s.fields)),
+    });
     if (!result.ok) {
       addToast(isAr ? result.hardErrors[0]?.message_ar ?? 'حقول مطلوبة ناقصة' : result.hardErrors[0]?.message_en ?? 'Required fields missing', 'error');
       return;

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, CalendarPlus, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppModel } from '@/types';
 import {
+  buildFieldLabels,
   getFollowUpTypeConfig,
   getOutcome,
   getOutcomeConfig,
@@ -73,10 +74,15 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     patchDraft(patch);
   };
 
+  const fieldLabels = useMemo(
+    () => buildFieldLabels(followupModel.schema.sections.flatMap((s) => s.fields)),
+    [followupModel],
+  );
+
   const revealed = outcomeKey ? revealedFieldSlugs(typeKey ?? '', outcomeKey) : [];
   const outcomeCfg = outcomeKey ? getOutcomeConfig(typeKey, outcomeKey) : undefined;
   const validation = outcomeKey
-    ? validateFollowUpCompletion({ followupType: typeKey ?? '', selectedOutcome: outcomeKey, draft })
+    ? validateFollowUpCompletion({ followupType: typeKey ?? '', selectedOutcome: outcomeKey, draft, fieldLabels })
     : null;
 
   const dt = (slug: string, label: string) => (

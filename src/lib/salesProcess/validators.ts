@@ -46,6 +46,19 @@ function hasValue(v: unknown): boolean {
   return true; // number, boolean
 }
 
+/** A slug → bilingual label map (so required-field messages name the field in
+ *  the user's language instead of its raw API slug). */
+export type FieldLabelMap = Record<string, { label_ar: string; label_en: string }>;
+
+/** Build a {@link FieldLabelMap} from a model's fields. */
+export function buildFieldLabels(
+  fields: { name: string; label_ar: string; label_en: string }[],
+): FieldLabelMap {
+  const out: FieldLabelMap = {};
+  for (const f of fields) out[f.name] = { label_ar: f.label_ar, label_en: f.label_en };
+  return out;
+}
+
 /** The follow-up field slugs an outcome hard-requires. */
 export function requiredFieldSlugs(outcome: FollowUpOutcomeConfig): string[] {
   const r = outcome.requires ?? {};
@@ -91,6 +104,9 @@ export interface ValidateFollowUpCompletionInput {
   draft: Record<string, unknown>;
   context?: ValidationContext;
   config?: SalesProcessConfig;
+  /** slug → bilingual label, so a missing-required message names the field in
+   *  the user's language instead of the raw API slug. */
+  fieldLabels?: FieldLabelMap;
 }
 
 /**
@@ -121,10 +137,13 @@ export function validateFollowUpCompletion(input: ValidateFollowUpCompletionInpu
   for (const slug of requiredFieldSlugs(outcome)) {
     if (!hasValue(input.draft[slug])) {
       const isAppt = slug === 'appointment_id' && outcome.requires?.appointment_created;
+      const lbl = input.fieldLabels?.[slug];
+      const nameAr = lbl?.label_ar || slug;
+      const nameEn = lbl?.label_en || slug;
       hardErrors.push({
         field: slug,
-        message_ar: isAppt ? 'يجب إنشاء موعد وربطه' : `الحقل المطلوب فارغ: ${slug}`,
-        message_en: isAppt ? 'An appointment must be created and linked' : `Required field is empty: ${slug}`,
+        message_ar: isAppt ? 'يجب إنشاء موعد وربطه' : `الحقل المطلوب فارغ: ${nameAr}`,
+        message_en: isAppt ? 'An appointment must be created and linked' : `Required field is empty: ${nameEn}`,
       });
     }
   }
