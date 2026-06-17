@@ -53,6 +53,12 @@ export default function OutcomePanel(props: OutcomePanelProps) {
   const [outcomeKey, setOutcomeKey] = useState<string | null>(
     typeof draft.call_result === 'string' && draft.followup_status === 'completed' ? draft.call_result : null,
   );
+  // FOLLOWUP_3 correction: in the open phase the rep chooses between SENDING a
+  // WhatsApp (→ waiting state) or RECORDING a reply the client already sent.
+  // recordMode = chose "Record customer response" → show the outcome buttons
+  // immediately (no send required); completion runs the normal flow and never
+  // schedules escalation (whatsapp_state stays unset).
+  const [recordMode, setRecordMode] = useState(false);
 
   const typeConfig = getFollowUpTypeConfig(typeKey);
   if (!typeConfig) {
@@ -117,20 +123,31 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     <section className="card p-5" style={{ border: '1.5px solid rgba(184, 115, 79, 0.45)' }}>
       <h2 className="mb-3 text-base font-bold text-chocolate">{isAr ? 'النتيجة' : 'Outcome'}</h2>
 
-      {sendPhase ? (
-        <div className="space-y-2">
-          <button
-            type="button"
-            disabled={readOnly}
-            onClick={() => onSendWhatsApp?.()}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40"
-          >
-            <MessageCircle size={18} /> {isAr ? 'إرسال رسالة واتساب' : 'Send WhatsApp message'}
-          </button>
+      {sendPhase && !recordMode ? (
+        <div className="space-y-3">
+          <p className="text-sm font-bold text-chocolate">{isAr ? 'ما الذي حدث في واتساب؟' : 'What happened on WhatsApp?'}</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => onSendWhatsApp?.()}
+              className="flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40"
+            >
+              <MessageCircle size={18} /> {isAr ? 'إرسال رسالة واتساب' : 'Send WhatsApp message'}
+            </button>
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => setRecordMode(true)}
+              className="flex items-center justify-center gap-2 rounded-xl border-[1.5px] border-copper px-4 py-3 text-base font-bold text-copper transition hover:bg-copper/5 disabled:opacity-40"
+            >
+              <CheckCircle2 size={18} /> {isAr ? 'تسجيل رد العميل' : 'Record customer response'}
+            </button>
+          </div>
           <p className="text-xs text-charcoal/55">
             {isAr
-              ? 'إرسال الرسالة إجراء وليس نتيجة — بعد رد العميل ستظهر أزرار تسجيل النتيجة هنا.'
-              : 'Sending is an action, not an outcome — after the customer replies the outcome buttons appear here.'}
+              ? 'الإرسال يضع المتابعة في انتظار الرد. إذا ردّ العميل مسبقاً، سجّل النتيجة مباشرةً (دون تصعيد).'
+              : 'Sending puts the follow-up into a waiting state. If the client already replied, record the outcome directly (no escalation).'}
           </p>
         </div>
       ) : (
@@ -148,6 +165,14 @@ export default function OutcomePanel(props: OutcomePanelProps) {
                 </button>
               </div>
               <p className="mt-3 text-sm font-semibold text-chocolate">{isAr ? 'سجّل رد العميل:' : "Record the customer's reply:"}</p>
+            </div>
+          )}
+          {sendPhase && recordMode && (
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold text-chocolate">{isAr ? 'سجّل رد العميل (ردّ مسبق):' : "Record the customer's reply (already received):"}</p>
+              <button type="button" onClick={() => onSendWhatsApp?.()} className="shrink-0 text-xs font-semibold text-copper hover:underline">
+                {isAr ? 'إرسال رسالة بدلاً من ذلك' : 'Send a message instead'}
+              </button>
             </div>
           )}
           {(() => {
