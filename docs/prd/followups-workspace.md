@@ -39,7 +39,7 @@ The generic form treated a follow-up like any other record — every field visib
    1. Rep opens a booking-call follow-up → mission "Book a project visit," call button, script.
    2. Rep dials, talks, clicks the **Interested** outcome → `actual_datetime` auto-fills, the preview reads "set status مهتم; create the next action."
    3. Validation passes → rep clicks **Complete & Save** → toast "Follow-up completed."
-   4. The Booking Call Completed workflow (W2) sets the client status and schedules the next task; the rep returns to the follow-ups list.
+   4. The Booking Call Completed workflow (W2) sets the client status and schedules the next task; the rep returns to **where they came from** — the Sales Tasks queue (with its view/filters preserved) if the follow-up was opened from there, otherwise the follow-ups list. (The entry point passes a `returnTo` via location state; `handleComplete` honors it.)
 2. **Appointment booked:**
    1. Rep picks **Appointment Booked** → the panel shows "Book Appointment."
    2. Rep clicks it → the appointment form opens prefilled → rep saves → `appointment_id` is stamped on the draft and the panel shows "Appointment created & linked ✓."

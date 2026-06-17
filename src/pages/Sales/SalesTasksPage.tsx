@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { Phone, MessageCircle, AlertTriangle, ClipboardList } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { telUrl, whatsappUrl } from '@/lib/phone';
@@ -22,6 +22,7 @@ export default function SalesTasksPage() {
   const { models, records, language, currentUserId, users } = useAppStore();
   const isAr = language === 'ar';
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const qv = searchParams.get('view');
   const [view, setView] = useState<QueueViewId>(
@@ -186,7 +187,7 @@ export default function SalesTasksPage() {
               )}
             </div>
           </div>
-          <QueueList items={displayItems} isAr={isAr} fmt={fmt} repName={repName} navigate={navigate} />
+          <QueueList items={displayItems} isAr={isAr} fmt={fmt} repName={repName} navigate={navigate} returnTo={location.pathname + location.search} />
         </>
       )}
     </div>
@@ -194,13 +195,15 @@ export default function SalesTasksPage() {
 }
 
 function QueueList({
-  items, isAr, fmt, repName, navigate,
+  items, isAr, fmt, repName, navigate, returnTo,
 }: {
   items: QueueItem[];
   isAr: boolean;
   fmt: (iso: string | null) => string;
   repName: (id: string | null) => string;
   navigate: (to: string) => void;
+  /** Current Sales Tasks URL — passed to the follow-up so completing it returns here. */
+  returnTo: string;
 }) {
   if (items.length === 0) {
     return <p className="rounded-2xl bg-cream p-5 text-center text-terracotta">{isAr ? 'لا توجد مهام' : 'No tasks'}</p>;
@@ -226,7 +229,7 @@ function QueueList({
                   ? wa && <a href={wa} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-lg bg-[#25D366] px-4 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90" title="WhatsApp"><MessageCircle size={16} /> {isAr ? 'واتساب' : 'WhatsApp'}</a>
                   : tel && <a href={tel} className="inline-flex items-center gap-2 rounded-lg bg-copper px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-terracotta" title="Call"><Phone size={16} /> {isAr ? 'اتصال' : 'Call'}</a>}
               </div>
-              <button type="button" onClick={() => navigate(`/model/followups/${i.followupId}`)} className="flex-1 text-start">
+              <button type="button" onClick={() => navigate(`/model/followups/${i.followupId}?returnTo=${encodeURIComponent(returnTo)}`)} className="flex-1 text-start">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-bold text-chocolate">{i.clientName || (isAr ? 'عميل' : 'Client')}</span>
                   <span dir="ltr" className="text-sm text-terracotta">{i.phone}</span>

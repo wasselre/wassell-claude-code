@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { SlidersHorizontal, ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord, useCanViewRecord } from '@/hooks/usePermission';
@@ -30,6 +30,7 @@ import { resolveClientSlugs, recordToPickedClient } from '@/pages/Chats/componen
 export default function FollowUpWorkspacePage() {
   const { recordId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { models, records, language, saveRecord, addToast, currentUserId, users, salesProcessOverrides } = useAppStore();
   const isAr = language === 'ar';
   const resolveUser = (id: unknown): string | undefined => {
@@ -155,7 +156,10 @@ export default function FollowUpWorkspacePage() {
       }
     }
 
-    navigate('/model/followups');
+    // Return the rep to where they came from (e.g. the Sales Tasks queue, with
+    // its view/filters preserved) if the entry point passed a ?returnTo=; else
+    // the generic follow-ups list.
+    navigate(new URLSearchParams(location.search).get('returnTo') ?? '/model/followups');
   };
 
   // FOLLOWUP_3: sending a WhatsApp is an ACTION, not a completion. Stamp the
