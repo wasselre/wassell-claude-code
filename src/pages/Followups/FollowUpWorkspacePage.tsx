@@ -14,6 +14,8 @@ import ContextPanel from './components/ContextPanel';
 import PreferenceSummary from './components/PreferenceSummary';
 import TimelinePanel from './components/TimelinePanel';
 import OutcomePanel from './components/OutcomePanel';
+import StartChatModal from '@/pages/Chats/components/StartChatModal';
+import { resolveClientSlugs, recordToPickedClient } from '@/pages/Chats/components/ClientPicker';
 
 /**
  * The guided Follow-up Workspace — replaces the generic form for `followups`.
@@ -47,6 +49,8 @@ export default function FollowUpWorkspacePage() {
   const patchDraft = (patch: Record<string, unknown>) => setDraft((d) => ({ ...d, ...patch }));
   const [saving, setSaving] = useState(false);
   const [showApptModal, setShowApptModal] = useState(false);
+  const [showChatModal, setShowChatModal] = useState(false);
+  const [showClientModal, setShowClientModal] = useState(false);
 
   // Form-mount version snapshot for optimistic concurrency (mirrors RecordFormPage).
   const versionRef = useRef<{ id: string; version: number | null } | null>(null);
@@ -57,6 +61,11 @@ export default function FollowUpWorkspacePage() {
   const ctx = useMemo(() => resolveFollowupContext(draft, models, records), [draft, models, records]);
   const typeConfig = getFollowUpTypeConfig(ctx.typeKey);
   const appointmentsModelId = models.find((m) => m.name === 'appointments')?.id;
+  const clientsModel = models.find((m) => m.name === 'clients');
+  const clientRec = clientsModel && ctx.clientId
+    ? (records[clientsModel.id] ?? []).find((r) => r.id === ctx.clientId) ?? null
+    : null;
+  const initialChatClient = clientRec ? recordToPickedClient(clientRec, resolveClientSlugs(clientsModel), isAr) : null;
 
   if (!model) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
   if (!record) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'المتابعة غير موجودة' : 'Follow-up not found'}</div>;
@@ -136,6 +145,8 @@ export default function FollowUpWorkspacePage() {
             phones={ctx.phones}
             clientId={ctx.clientId}
             appointmentId={(draft.appointment_id as string) ?? null}
+            onWhatsApp={() => setShowChatModal(true)}
+            onViewClient={() => setShowClientModal(true)}
           />
           <ScriptPanel typeConfig={typeConfig} />
           <OutcomePanel
@@ -156,7 +167,7 @@ export default function FollowUpWorkspacePage() {
             typeConfig={typeConfig}
             ctx={{ client: ctx.client, appointment: ctx.appointment, project: ctx.project, followup: draft, attemptNumber: ctx.attemptNumber, resolveUser, isAr }}
           />
-          <PreferenceSummary client={ctx.client} onEditFull={goAdvanced} />
+          <PreferenceSummary clientId={ctx.clientId} onEditFull={() => setShowClientModal(true)} />
           <TimelinePanel clientId={ctx.clientId} currentFollowupId={record.id} phones={ctx.phones} />
         </div>
       </div>
@@ -183,6 +194,27 @@ export default function FollowUpWorkspacePage() {
             setShowApptModal(false);
             addToast(isAr ? 'تم إنشاء الموعد' : 'Appointment created', 'success');
           }}
+        />
+      )}
+
+      {/* WhatsApp → in-app composer, pre-connected to this client. */}
+      {showChatModal && (
+        <StartChatModal
+          onClose={() => setShowChatModal(false)}
+          initialClient={initialChatClient}
+          initialPhone={ctx.phones[0]}
+        />
+      )}
+
+      {/* View Client / Edit Full Preferences → client form in a modal, with an
+          "Open full page" button to hand off to the full record page. */}
+      {showClientModal && clientsModel && ctx.clientId && (
+        <RecordFormModal
+          modelId={clientsModel.id}
+          recordId={ctx.clientId}
+          openInPageHref={`/model/clients/${ctx.clientId}`}
+          onClose={() => setShowClientModal(false)}
+          onSaved={() => setShowClientModal(false)}
         />
       )}
     </div>

@@ -1,7 +1,7 @@
 import { Phone, MessageCircle, User, Calendar } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
-import { telUrl, whatsappUrl } from '@/lib/phone';
+import { telUrl } from '@/lib/phone';
 import type { PrimaryChannel } from '@/lib/salesProcess';
 
 interface PrimaryActionProps {
@@ -9,19 +9,41 @@ interface PrimaryActionProps {
   phones: string[];
   clientId: string | null;
   appointmentId: string | null;
+  /** Open the in-app "Start new chat" popup, pre-connected to this client. */
+  onWhatsApp: () => void;
+  /** Open the client preview modal (which carries an "open full page" button). */
+  onViewClient: () => void;
 }
 
 /** The big call-to-action row — call / WhatsApp / open client / open appointment. */
-export default function PrimaryAction({ channel, phones, clientId, appointmentId }: PrimaryActionProps) {
+export default function PrimaryAction({ channel, phones, clientId, appointmentId, onWhatsApp, onViewClient }: PrimaryActionProps) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const navigate = useNavigate();
   const phone = phones[0] ?? '';
   const tel = telUrl(phone);
-  const wa = whatsappUrl(phone);
+  // WhatsApp now opens the in-app composer (no wa.me hand-off); it needs a
+  // client or a phone to connect the conversation to.
+  const canChat = !!(clientId || phone);
 
   const callBtn = 'flex flex-1 items-center justify-center gap-2 rounded-xl bg-copper px-4 py-3 text-base font-bold text-white transition hover:bg-terracotta disabled:opacity-40';
   const waBtn = 'flex flex-1 items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40';
   const ghost = 'inline-flex items-center gap-2 rounded-xl border border-sand px-4 py-2.5 text-sm font-semibold text-charcoal transition hover:bg-cream';
+
+  const whatsappButton = (label: string) => (
+    <button
+      type="button"
+      onClick={onWhatsApp}
+      disabled={!canChat}
+      className={canChat ? waBtn : `${waBtn} cursor-not-allowed opacity-40`}
+    >
+      <MessageCircle size={18} /> {label}
+    </button>
+  );
+  const callButton = (label: string) => (
+    <a className={tel ? callBtn : `${callBtn} pointer-events-none`} href={tel ?? undefined}>
+      <Phone size={18} /> {label}
+    </a>
+  );
 
   return (
     <section className="card p-5">
@@ -29,21 +51,13 @@ export default function PrimaryAction({ channel, phones, clientId, appointmentId
       <div className="flex gap-2">
         {channel === 'whatsapp' ? (
           <>
-            <a className={wa ? waBtn : `${waBtn} pointer-events-none`} href={wa ?? undefined} target="_blank" rel="noreferrer">
-              <MessageCircle size={18} /> {isAr ? 'فتح محادثة واتساب' : 'Open WhatsApp'}
-            </a>
-            <a className={tel ? callBtn : `${callBtn} pointer-events-none`} href={tel ?? undefined}>
-              <Phone size={18} /> {isAr ? 'اتصال' : 'Call'}
-            </a>
+            {whatsappButton(isAr ? 'فتح محادثة واتساب' : 'Open WhatsApp')}
+            {callButton(isAr ? 'اتصال' : 'Call')}
           </>
         ) : (
           <>
-            <a className={tel ? callBtn : `${callBtn} pointer-events-none`} href={tel ?? undefined}>
-              <Phone size={18} /> {isAr ? 'اتصال بالعميل' : 'Call Customer'}
-            </a>
-            <a className={wa ? waBtn : `${waBtn} pointer-events-none`} href={wa ?? undefined} target="_blank" rel="noreferrer">
-              <MessageCircle size={18} /> {isAr ? 'واتساب' : 'WhatsApp'}
-            </a>
+            {callButton(isAr ? 'اتصال بالعميل' : 'Call Customer')}
+            {whatsappButton(isAr ? 'واتساب' : 'WhatsApp')}
           </>
         )}
       </div>
@@ -55,7 +69,7 @@ export default function PrimaryAction({ channel, phones, clientId, appointmentId
             </button>
           )}
           {clientId && (
-            <button type="button" className={ghost} onClick={() => navigate(`/model/clients/${clientId}`)}>
+            <button type="button" className={ghost} onClick={onViewClient}>
               <User size={18} /> {isAr ? 'عرض العميل' : 'View Client'}
             </button>
           )}

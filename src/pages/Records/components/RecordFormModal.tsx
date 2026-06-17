@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
-import { Save, Loader2 } from 'lucide-react';
+import { Save, Loader2, ExternalLink } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
@@ -24,6 +24,13 @@ interface RecordFormModalProps {
   onClose: () => void;
   /** Called after a successful save with the saved record's id. The parent typically refreshes its data. */
   onSaved?: (recordId: string) => void;
+  /**
+   * When set, renders an "Open full page" button in the footer that closes the
+   * modal and navigates here. Lets a modal-preview flow hand off to the full
+   * record page (used by the Follow-up Workspace's View Client / Edit Full
+   * Preferences). Omit for modal-only usage (the create-record buttons).
+   */
+  openInPageHref?: string;
 }
 
 /**
@@ -43,6 +50,7 @@ export default function RecordFormModal({
   prefill,
   onClose,
   onSaved,
+  openInPageHref,
 }: RecordFormModalProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -183,6 +191,16 @@ export default function RecordFormModal({
       maxWidth="max-w-4xl"
       footer={
         <>
+          {openInPageHref && (
+            <Button
+              variant="ghost"
+              onClick={() => { onClose(); navigate(openInPageHref); }}
+              disabled={saving}
+              className="me-auto"
+            >
+              <ExternalLink size={16} /> {isAr ? 'فتح الصفحة الكاملة' : 'Open full page'}
+            </Button>
+          )}
           <Button variant="ghost" onClick={onClose} disabled={saving}>
             {t('common.cancel')}
           </Button>

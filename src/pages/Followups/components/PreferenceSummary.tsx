@@ -1,42 +1,71 @@
-import { SlidersHorizontal } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { SlidersHorizontal, Save, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import DynamicField from '@/pages/Records/components/DynamicField';
+import type { AppRecord, ModelField } from '@/types';
 
 interface PreferenceSummaryProps {
-  client: Record<string, unknown> | null;
-  /** Opens the full generic form (where the client_pref mirror section lives). */
+  clientId: string | null;
+  /** Opens the full client record in a modal (which has an "open full page" button). */
   onEditFull: () => void;
 }
 
-function rangeStr(v: unknown): string | null {
-  if (v && typeof v === 'object' && !Array.isArray(v)) {
-    const r = v as { min?: unknown; max?: unknown };
-    const min = r.min != null ? String(r.min) : '';
-    const max = r.max != null ? String(r.max) : '';
-    if (!min && !max) return null;
-    return `${min || '…'} – ${max || '…'}`;
-  }
-  return null;
-}
+// The five preference fields the rep edits inline, in display order. Always
+// shown (even when empty) so the rep can fill them in without leaving the
+// Workspace — budget renders as the new dropdown range, the rest as pickers.
+const PREF_SLUGS = ['preferred_unit_type', 'budget', 'preferred_city', 'preferred_direction', 'preferred_neighborhoods'] as const;
 
-function listStr(v: unknown): string | null {
-  if (Array.isArray(v)) return v.length ? v.map(String).join('، ') : null;
-  if (typeof v === 'string' && v.trim()) return v;
-  return null;
-}
+/** Inline-editable client preferences — unit type, budget, city, direction, district. */
+export default function PreferenceSummary({ clientId, onEditFull }: PreferenceSummaryProps) {
+  const { models, records, language, saveRecord, addToast } = useAppStore();
+  const isAr = language === 'ar';
 
-/** Compact preferences — budget, area, neighborhoods, unit type, language. */
-export default function PreferenceSummary({ client, onEditFull }: PreferenceSummaryProps) {
-  const isAr = useAppStore((s) => s.language === 'ar');
-  if (!client) return null;
+  const clientsModel = models.find((m) => m.name === 'clients');
+  const clientRec = clientsModel && clientId
+    ? (records[clientsModel.id] ?? []).find((r) => r.id === clientId) ?? null
+    : null;
 
-  const rows: Array<{ label: string; value: string }> = [];
-  const push = (label: string, value: string | null) => { if (value) rows.push({ label, value }); };
-  push(isAr ? 'الميزانية' : 'Budget', rangeStr(client.budget));
-  push(isAr ? 'المساحة' : 'Area', rangeStr(client.preferred_area));
-  push(isAr ? 'الأحياء' : 'Neighborhoods', listStr(client.preferred_neighborhoods));
-  push(isAr ? 'نوع الوحدة' : 'Unit Type', listStr(client.preferred_unit_type));
-  push(isAr ? 'المدينة' : 'City', listStr(client.preferred_city));
-  push(isAr ? 'اللغة' : 'Language', listStr(client.preferred_language));
+  const allFields = clientsModel ? clientsModel.schema.sections.flatMap((s) => s.fields) : [];
+  const fields: ModelField[] = PREF_SLUGS
+    .map((slug) => allFields.find((f) => f.name === slug))
+    .filter((f): f is ModelField => !!f);
+
+  // Local edit buffer. Seeded from the client record on mount, when the viewed
+  // client changes, and when the record first loads (null → present). NOT
+  // re-seeded on later same-client updates, so in-progress edits survive a
+  // realtime echo; a stale base is caught at save time via expectedVersion.
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...(clientRec?.data ?? {}) }));
+  const seeded = useRef<string | null>(null);
+  useEffect(() => {
+    if (clientRec && seeded.current !== clientId) {
+      seeded.current = clientId;
+      setDraft({ ...clientRec.data });
+    }
+  }, [clientId, clientRec]);
+
+  const [saving, setSaving] = useState(false);
+
+  if (!clientsModel || !clientId || !clientRec) return null;
+
+  const eq = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const dirty = PREF_SLUGS.some((slug) => !eq(draft[slug], clientRec.data[slug]));
+
+  const setField = (slug: string, value: unknown) => setDraft((d) => ({ ...d, [slug]: value }));
+
+  const save = async () => {
+    const base = clientRec; // freshest copy from the store
+    const patch: Record<string, unknown> = {};
+    PREF_SLUGS.forEach((slug) => { patch[slug] = draft[slug]; });
+    setSaving(true);
+    const next: AppRecord = { ...base, data: { ...base.data, ...patch }, updated_at: new Date().toISOString() };
+    const res = await saveRecord(next, { expectedVersion: base.version ?? null });
+    setSaving(false);
+    if (res.status === 'conflict') {
+      addToast(isAr ? 'تم تعديل بيانات العميل في مكان آخر — أعد التحميل.' : 'Client was edited elsewhere — reload before saving.', 'error');
+      return;
+    }
+    addToast(isAr ? 'تم حفظ التفضيلات' : 'Preferences saved', 'success');
+  };
 
   return (
     <section className="card p-5">
@@ -46,17 +75,36 @@ export default function PreferenceSummary({ client, onEditFull }: PreferenceSumm
           <SlidersHorizontal size={13} /> {isAr ? 'تعديل التفضيلات الكاملة' : 'Edit Full Preferences'}
         </button>
       </div>
-      {rows.length === 0 ? (
-        <p className="text-sm text-terracotta">{isAr ? 'لا توجد تفضيلات مسجلة' : 'No preferences recorded'}</p>
-      ) : (
-        <dl className="grid grid-cols-[auto,1fr] gap-x-4 gap-y-2.5 text-sm">
-          {rows.map((r) => (
-            <div key={r.label} className="contents">
-              <dt className="text-charcoal/60">{r.label}</dt>
-              <dd className="text-end font-semibold text-chocolate">{r.value}</dd>
-            </div>
-          ))}
-        </dl>
+      <div className="space-y-3">
+        {fields.map((field) => (
+          <div key={field.id}>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">
+              {isAr ? field.label_ar : field.label_en}
+            </label>
+            <DynamicField
+              field={field}
+              value={draft[field.name]}
+              onChange={(v) => setField(field.name, v)}
+              recordData={draft}
+              compact
+              modelId={clientsModel.id}
+              recordId={clientId}
+            />
+          </div>
+        ))}
+      </div>
+      {dirty && (
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-1.5 text-xs font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+            {isAr ? 'حفظ التفضيلات' : 'Save preferences'}
+          </button>
+        </div>
       )}
     </section>
   );

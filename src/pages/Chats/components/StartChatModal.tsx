@@ -26,7 +26,17 @@ type Mode = 'client' | 'manual';
  * (which creates the conversation on Haberchat as a side-effect) and navigate
  * to the new chat detail.
  */
-export default function StartChatModal({ onClose }: { onClose: () => void }) {
+export default function StartChatModal({
+  onClose,
+  initialClient,
+  initialPhone,
+}: {
+  onClose: () => void;
+  /** Pre-select a client (opens in "existing client" mode, conversation linked). */
+  initialClient?: PickedClient | null;
+  /** Pre-fill a manual number when no client is supplied. */
+  initialPhone?: string;
+}) {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
   const waDevices = useAppStore((s) => s.waDevices);
@@ -46,9 +56,14 @@ export default function StartChatModal({ onClose }: { onClose: () => void }) {
   const clientSlugs = useMemo(() => resolveClientSlugs(clientsModel), [clientsModel]);
   const phoneSlugs = useMemo(() => phoneFieldSlugs(clientsModel), [clientsModel]);
 
-  const [mode, setMode] = useState<Mode>('client');
-  const [manualPhone, setManualPhone] = useState<string | undefined>(undefined); // E.164 from PhoneInput
-  const [client, setClient] = useState<PickedClient | null>(null);
+  // Pre-connect when opened from elsewhere (e.g. the Follow-up Workspace's
+  // WhatsApp button): a supplied client opens in 'client' mode already linked;
+  // otherwise a supplied phone opens 'manual' mode pre-filled.
+  const [mode, setMode] = useState<Mode>(initialClient ? 'client' : initialPhone ? 'manual' : 'client');
+  const [manualPhone, setManualPhone] = useState<string | undefined>(
+    () => (!initialClient && initialPhone ? normalizePhone(initialPhone) ?? undefined : undefined),
+  ); // E.164 from PhoneInput
+  const [client, setClient] = useState<PickedClient | null>(initialClient ?? null);
   const [body, setBody] = useState('');
   const [deviceId, setDeviceId] = useState<string>(defaultDevice?.device_id ?? '');
   const [sending, setSending] = useState(false);
