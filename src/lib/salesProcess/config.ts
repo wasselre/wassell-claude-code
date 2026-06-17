@@ -16,6 +16,7 @@ import type {
 } from './types';
 import type { OutcomeValue } from './outcomes';
 import type { ClientStageValue, ClientStatusValue } from './arabicEnums.generated';
+import type { SalesProcessOverride } from '@/types';
 
 // ── small builders for the outcomes that recur with the same shape ───────────
 
@@ -329,6 +330,33 @@ export const DEFAULT_SALES_PROCESS: SalesProcessConfig = {
 /** The single seam a future persisted/Studio-editable config slots into. */
 export function getSalesProcessConfig(): SalesProcessConfig {
   return DEFAULT_SALES_PROCESS;
+}
+
+/**
+ * Merge manager-edited instruction overrides (objective text per follow-up
+ * type) over the hardcoded config. A null/blank override field falls back to
+ * the default, so a partially-filled override never blanks the instruction.
+ * Keyed by override.id === FollowUpTypeConfig.type. Returns the base unchanged
+ * when there are no overrides (cheap common case).
+ */
+export function applyOverridesToConfig(
+  overrides: SalesProcessOverride[] | undefined,
+  base: SalesProcessConfig = DEFAULT_SALES_PROCESS,
+): SalesProcessConfig {
+  if (!overrides || overrides.length === 0) return base;
+  const byType = new Map(overrides.map((o) => [o.id, o]));
+  return {
+    ...base,
+    followup_types: base.followup_types.map((t) => {
+      const o = byType.get(t.type);
+      if (!o) return t;
+      return {
+        ...t,
+        objective_ar: o.objective_ar?.trim() ? o.objective_ar : t.objective_ar,
+        objective_en: o.objective_en?.trim() ? o.objective_en : t.objective_en,
+      };
+    }),
+  };
 }
 
 /** Localized label for a follow-up primary channel. */

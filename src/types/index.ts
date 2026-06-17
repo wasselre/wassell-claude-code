@@ -1690,6 +1690,19 @@ export interface ScheduledReportRun {
   error_message?: string | null;
 }
 
+/**
+ * Manager-editable override of a follow-up type's instruction (objective) text.
+ * `id` IS the follow-up type key (e.g. 'appointment_booking_call'). Merged over
+ * DEFAULT_SALES_PROCESS by applyOverridesToConfig so the Follow-up Workspace
+ * mission shows the edited text. Admin-write, all-authenticated-read (reps see it).
+ */
+export interface SalesProcessOverride {
+  id: string;
+  objective_ar: string | null;
+  objective_en: string | null;
+  updated_at?: string;
+}
+
 export interface DashboardWidget {
   id: string;
   type: WidgetType;
@@ -2196,6 +2209,7 @@ export interface AppState {
   dashboards: Dashboard[];
   metricDefinitions: MetricDefinition[];
   scheduledReports: ScheduledReport[];
+  salesProcessOverrides: SalesProcessOverride[];
   views: ModelView[];
   users: User[];
   profiles: Profile[];
@@ -2372,6 +2386,8 @@ export interface AppState {
   // Scheduled reports
   saveScheduledReport: (report: ScheduledReport) => void;
   deleteScheduledReport: (reportId: string) => void;
+  // Sales-process instruction overrides (manager-editable follow-up objectives)
+  saveSalesProcessOverride: (override: SalesProcessOverride) => void;
 
   // Views (per-model saved table configurations)
   saveView: (view: ModelView) => void;

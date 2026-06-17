@@ -4,7 +4,7 @@ import { SlidersHorizontal, ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord, useCanViewRecord } from '@/hooks/usePermission';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
-import { buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
+import { applyOverridesToConfig, buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
 import type { AppRecord } from '@/types';
 import { resolveFollowupContext } from './lib/followupContext';
 import MissionHeader from './components/MissionHeader';
@@ -28,7 +28,7 @@ import { resolveClientSlugs, recordToPickedClient } from '@/pages/Chats/componen
 export default function FollowUpWorkspacePage() {
   const { recordId } = useParams();
   const navigate = useNavigate();
-  const { models, records, language, saveRecord, addToast, currentUserId, users } = useAppStore();
+  const { models, records, language, saveRecord, addToast, currentUserId, users, salesProcessOverrides } = useAppStore();
   const isAr = language === 'ar';
   const resolveUser = (id: unknown): string | undefined => {
     if (typeof id !== 'string' || !id) return undefined;
@@ -59,7 +59,8 @@ export default function FollowUpWorkspacePage() {
   }
 
   const ctx = useMemo(() => resolveFollowupContext(draft, models, records), [draft, models, records]);
-  const typeConfig = getFollowUpTypeConfig(ctx.typeKey);
+  const salesConfig = useMemo(() => applyOverridesToConfig(salesProcessOverrides), [salesProcessOverrides]);
+  const typeConfig = getFollowUpTypeConfig(ctx.typeKey, salesConfig);
   const appointmentsModelId = models.find((m) => m.name === 'appointments')?.id;
   const clientsModel = models.find((m) => m.name === 'clients');
   const clientRec = clientsModel && ctx.clientId

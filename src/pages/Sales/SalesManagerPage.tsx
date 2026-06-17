@@ -1,9 +1,10 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BarChart3, AlertTriangle, CheckCircle2, Clock } from 'lucide-react';
+import { BarChart3, AlertTriangle, CheckCircle2, Clock, MessageSquareText, ChevronDown, Save, RotateCcw } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { getStageConfig, getOutcome } from '@/lib/salesProcess';
-import type { AppRecord } from '@/types';
+import { getStageConfig, getOutcome, getSalesProcessConfig } from '@/lib/salesProcess';
+import type { FollowUpTypeConfig } from '@/lib/salesProcess';
+import type { AppRecord, SalesProcessOverride } from '@/types';
 import { computeManagerMetrics, type Distribution } from './lib/salesMetrics';
 
 /** Admin manager view — the sales-operation health metrics (Part 13, "views
@@ -113,6 +114,10 @@ export default function SalesManagerPage() {
           )}
         </section>
       </div>
+
+      <div className="mt-4">
+        <InstructionsEditor />
+      </div>
     </div>
   );
 }
@@ -155,5 +160,109 @@ function BarList({ title, items, label, empty, tone = 'copper' }: { title: strin
         </ul>
       )}
     </section>
+  );
+}
+
+/** Manager-editable per-type follow-up instructions (the objective the rep sees
+ *  in the Workspace mission). Saved to sales_process_overrides for everyone. */
+function InstructionsEditor() {
+  const { language, salesProcessOverrides } = useAppStore();
+  const isAr = language === 'ar';
+  const types = getSalesProcessConfig().followup_types;
+  const overrideById = new Map(salesProcessOverrides.map((o) => [o.id, o]));
+
+  return (
+    <section className="card rounded-2xl p-5">
+      <div className="mb-1 flex items-center gap-2">
+        <MessageSquareText size={18} className="text-copper" />
+        <h2 className="text-base font-bold text-chocolate">{isAr ? 'تعليمات المتابعات' : 'Follow-up Instructions'}</h2>
+      </div>
+      <p className="mb-4 text-xs leading-relaxed text-charcoal/55">
+        {isAr
+          ? 'حرّر الهدف الذي يراه المندوب لكل نوع متابعة. يُحفظ لجميع المستخدمين ويظهر مباشرةً في شاشة المتابعة.'
+          : 'Edit the goal each rep sees per follow-up type. Saved for all users and shown in the Workspace mission.'}
+      </p>
+      <div className="divide-y divide-sand/40">
+        {types.map((t) => (
+          <InstructionRow key={t.type} type={t} override={overrideById.get(t.type)} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InstructionRow({ type, override }: { type: FollowUpTypeConfig; override?: SalesProcessOverride }) {
+  const { language, saveSalesProcessOverride, addToast } = useAppStore();
+  const isAr = language === 'ar';
+  const baseAr = override?.objective_ar ?? type.objective_ar;
+  const baseEn = override?.objective_en ?? type.objective_en;
+  const [open, setOpen] = useState(false);
+  const [ar, setAr] = useState(baseAr);
+  const [en, setEn] = useState(baseEn);
+
+  const dirty = ar !== baseAr || en !== baseEn;
+  const overridden = !!override && (!!override.objective_ar || !!override.objective_en);
+
+  const save = () => {
+    saveSalesProcessOverride({
+      id: type.type,
+      objective_ar: ar.trim() || null,
+      objective_en: en.trim() || null,
+      updated_at: new Date().toISOString(),
+    });
+    addToast(isAr ? 'تم حفظ التعليمات' : 'Instruction saved', 'success');
+  };
+
+  const reset = () => {
+    setAr(type.objective_ar);
+    setEn(type.objective_en);
+    saveSalesProcessOverride({ id: type.type, objective_ar: null, objective_en: null, updated_at: new Date().toISOString() });
+    addToast(isAr ? 'تمت الاستعادة للافتراضي' : 'Reset to default', 'info');
+  };
+
+  return (
+    <div className="py-3">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 text-start">
+        <ChevronDown size={15} className={`shrink-0 text-charcoal/40 transition-transform ${open ? 'rotate-180' : ''}`} />
+        <span className="flex-1 truncate text-sm font-semibold text-charcoal">{isAr ? type.label_ar : type.label_en}</span>
+        {overridden && (
+          <span className="badge shrink-0" style={{ backgroundColor: '#B8734F1A', color: '#8E4E3A' }}>
+            {isAr ? 'مُعدّل' : 'edited'}
+          </span>
+        )}
+        <span className="hidden max-w-[40%] truncate text-xs text-charcoal/45 sm:inline">{isAr ? baseAr : baseEn}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3 ps-6">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">{isAr ? 'الهدف (عربي)' : 'Goal (Arabic)'}</label>
+            <textarea value={ar} onChange={(e) => setAr(e.target.value)} rows={2} dir="rtl" className="form-input w-full text-sm" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">{isAr ? 'الهدف (إنجليزي)' : 'Goal (English)'}</label>
+            <textarea value={en} onChange={(e) => setEn(e.target.value)} rows={2} dir="ltr" className="form-input w-full text-sm" />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={!dirty}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-1.5 text-xs font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+            >
+              <Save size={13} /> {isAr ? 'حفظ' : 'Save'}
+            </button>
+            {overridden && (
+              <button
+                type="button"
+                onClick={reset}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-sand px-3 py-1.5 text-xs font-semibold text-charcoal transition hover:bg-cream"
+              >
+                <RotateCcw size={13} /> {isAr ? 'استعادة الافتراضي' : 'Reset'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

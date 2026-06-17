@@ -38,6 +38,7 @@ import type {
   Dashboard,
   MetricDefinition,
   ScheduledReport,
+  SalesProcessOverride,
   ModelView,
   User,
   Profile,
@@ -1303,6 +1304,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   dashboards: [],
   metricDefinitions: [],
   scheduledReports: [],
+  salesProcessOverrides: [],
   views: [],
   users: [],
   profiles: [],
@@ -1407,6 +1409,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const dashboardsP        = supabaseLoad<Dashboard>('dashboards');
     const metricDefinitionsP = supabaseLoad<MetricDefinition>('metric_definitions');
     const scheduledReportsP  = supabaseLoad<ScheduledReport>('scheduled_reports');
+    const salesProcessOverridesP = supabaseLoad<SalesProcessOverride>('sales_process_overrides');
     const whiteboardFoldersP = supabaseLoad<WhiteboardFolder>('whiteboard_folders');
     const whiteboardsP       = supabaseLoad<Whiteboard>('whiteboards');
     const viewsP             = supabaseLoad<ModelView>('model_views');
@@ -1529,6 +1532,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     let scheduledReports = await scheduledReportsP;
     if (!scheduledReports) scheduledReports = loadLocal<ScheduledReport[]>('wassell_scheduled_reports') ?? [];
     saveLocal('wassell_scheduled_reports', scheduledReports);
+
+    let salesProcessOverrides = await salesProcessOverridesP;
+    if (!salesProcessOverrides) salesProcessOverrides = loadLocal<SalesProcessOverride[]>('wassell_sales_process_overrides') ?? [];
+    saveLocal('wassell_sales_process_overrides', salesProcessOverrides);
 
     // Saved table views (chrome — view selector on each model page).
     let views = await viewsP;
@@ -1894,6 +1901,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     // in the background. Pages that need records gate on `initialized`.
     set({
       models, groups, profiles, roles, users, views, dashboards, metricDefinitions, scheduledReports,
+      salesProcessOverrides,
       fieldTemplates, webhookSlugs, workflowGroups, workflows,
       currentUserId, criticalDataReady: true,
     });
@@ -3282,6 +3290,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       saveLocal('wassell_scheduled_reports', scheduledReports);
       supabaseDelete('scheduled_reports', reportId);
       return { scheduledReports };
+    });
+  },
+
+  // --- Sales-process instruction overrides ---
+  saveSalesProcessOverride: (override: SalesProcessOverride) => {
+    set((s) => {
+      const idx = s.salesProcessOverrides.findIndex((o) => o.id === override.id);
+      const salesProcessOverrides = idx >= 0
+        ? s.salesProcessOverrides.map((o) => (o.id === override.id ? override : o))
+        : [...s.salesProcessOverrides, override];
+      saveLocal('wassell_sales_process_overrides', salesProcessOverrides);
+      supabaseUpsert('sales_process_overrides', override);
+      return { salesProcessOverrides };
     });
   },
 
