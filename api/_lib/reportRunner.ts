@@ -200,21 +200,36 @@ export async function runReportById(reportId: string, triggeredBy: 'schedule' | 
 
   try {
     if (!report.owner_auth_uid) throw new Error('report has no owner_auth_uid (cannot scope to owner)');
-    if (!jwtSecret) throw new Error('SUPABASE_JWT_SECRET not set (cannot mint owner-scoped token)');
 
-    // Owner-scoped client: anon key + a minted owner JWT → owner's RLS applies.
-    const ownerJwt = mintOwnerJwt(report.owner_auth_uid, jwtSecret);
-    const ownerClient = createClient(url, anonKey, {
-      auth: { persistSession: false },
-      global: { headers: { Authorization: `Bearer ${ownerJwt}` } },
-    });
+    // Choose the owner-scoped read client (rule: never run unrestricted):
+    //  A. SUPABASE_JWT_SECRET present → mint the owner's JWT; PostgREST applies
+    //     the owner's EXACT RLS (works for any owner incl. non-admins). Preferred.
+    //  B. No secret → allowed ONLY when the owner is an ADMIN, whose scope is full,
+    //     so a service-role read EQUALS the owner's scope. Verified via
+    //     wassell_is_admin. A non-admin owner is REFUSED (fail safe). Auto-upgrades
+    //     to (A) the moment SUPABASE_JWT_SECRET is set.
+    let scopedClient: SupabaseClient;
+    let scopeMode: 'minted_jwt' | 'admin_service_role';
+    if (jwtSecret) {
+      const ownerJwt = mintOwnerJwt(report.owner_auth_uid, jwtSecret);
+      scopedClient = createClient(url, anonKey, { auth: { persistSession: false }, global: { headers: { Authorization: `Bearer ${ownerJwt}` } } });
+      scopeMode = 'minted_jwt';
+    } else {
+      const { data: isAdmin, error: adminErr } = await service.rpc('wassell_is_admin', { auth_user_id: report.owner_auth_uid });
+      if (adminErr) throw new Error(`admin check failed: ${adminErr.message}`);
+      if (!isAdmin) {
+        throw new Error('SUPABASE_JWT_SECRET is not set and the report owner is not an admin — refusing to run with an unscoped service-role read (fail safe). Set SUPABASE_JWT_SECRET to enable owner-scoped reports for non-admins.');
+      }
+      scopedClient = service;
+      scopeMode = 'admin_service_role';
+    }
 
     const resolved = await resolveSections(service, report);
-    const prepared = await prepareContext(ownerClient);
+    const prepared = await prepareContext(scopedClient);
     const sections: ReportSection[] = [];
     const allWarnings: unknown[] = [];
     for (const s of resolved) {
-      const result = await runQueryWithClient(ownerClient, s.query, prepared, { includeRecordIds: false });
+      const result = await runQueryWithClient(scopedClient, s.query, prepared, { includeRecordIds: false });
       sections.push({ title: s.title, result, numberFormat: s.numberFormat });
       if (result.warnings.length) allWarnings.push({ section: s.title, warnings: result.warnings });
     }
@@ -229,7 +244,7 @@ export async function runReportById(reportId: string, triggeredBy: 'schedule' | 
     const status: RunReportResult['status'] = delivery === 'sent' ? 'sent' : delivery === 'draft' ? 'draft' : 'partial';
 
     // Snapshot: results WITHOUT record ids (engine ran with includeRecordIds:false) + the rendered email.
-    const snapshot = { data_as_of: dataAsOf, delivery, sections: sections.map((s) => ({ title: s.title, result: s.result })), email };
+    const snapshot = { data_as_of: dataAsOf, delivery, scope_mode: scopeMode, sections: sections.map((s) => ({ title: s.title, result: s.result })), email };
     await finish(status, delivery, snapshot, allWarnings, null);
     return { status, delivery, sections: sections.length, recipients, email };
   } catch (err) {
