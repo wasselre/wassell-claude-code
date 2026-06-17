@@ -30,12 +30,20 @@ export default function StartChatModal({
   onClose,
   initialClient,
   initialPhone,
+  onSent,
 }: {
   onClose: () => void;
   /** Pre-select a client (opens in "existing client" mode, conversation linked). */
   initialClient?: PickedClient | null;
   /** Pre-fill a manual number when no client is supplied. */
   initialPhone?: string;
+  /**
+   * Called after the first message is sent with the new chat's record id. When
+   * provided, the modal hands the conversation back to the caller INSTEAD of
+   * navigating to the chats page — used by the Follow-up Workspace to open the
+   * thread in a popup and keep the rep on the follow-up record.
+   */
+  onSent?: (recordId: string) => void;
 }) {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -139,8 +147,14 @@ export default function StartChatModal({
         // entry leaves linking to the phone-match heuristic in startNewChat.
         clientRecordId: mode === 'client' ? client?.recordId : undefined,
       });
-      onClose();
-      navigate(`/model/chats/${result.recordId}`);
+      if (onSent) {
+        // Caller (e.g. the Follow-up Workspace) takes over — it closes this
+        // modal and shows the thread in a popup, no navigation.
+        onSent(result.recordId);
+      } else {
+        onClose();
+        navigate(`/model/chats/${result.recordId}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

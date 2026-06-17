@@ -15,6 +15,7 @@ import PreferenceSummary from './components/PreferenceSummary';
 import TimelinePanel from './components/TimelinePanel';
 import OutcomePanel from './components/OutcomePanel';
 import StartChatModal from '@/pages/Chats/components/StartChatModal';
+import ChatThreadModal from '@/pages/Chats/components/ChatThreadModal';
 import { resolveClientSlugs, recordToPickedClient } from '@/pages/Chats/components/ClientPicker';
 
 /**
@@ -50,6 +51,7 @@ export default function FollowUpWorkspacePage() {
   const [saving, setSaving] = useState(false);
   const [showApptModal, setShowApptModal] = useState(false);
   const [showChatModal, setShowChatModal] = useState(false);
+  const [chatThreadId, setChatThreadId] = useState<string | null>(null);
   const [showClientModal, setShowClientModal] = useState(false);
 
   // Form-mount version snapshot for optimistic concurrency (mirrors RecordFormPage).
@@ -204,7 +206,14 @@ export default function FollowUpWorkspacePage() {
           onClose={() => setShowChatModal(false)}
           initialClient={initialChatClient}
           initialPhone={ctx.phones[0]}
+          onSent={(chatId) => { setShowChatModal(false); setChatThreadId(chatId); }}
         />
+      )}
+
+      {/* After sending, show the conversation in a popup — the rep stays on the
+          follow-up record; closing it returns them here (no navigation). */}
+      {chatThreadId && (
+        <ChatThreadModal recordId={chatThreadId} onClose={() => setChatThreadId(null)} />
       )}
 
       {/* View Client / Edit Full Preferences → client form in a modal, with an
