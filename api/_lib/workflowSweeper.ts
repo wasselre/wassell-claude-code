@@ -52,6 +52,12 @@ import type {
   WorkflowActionUpdateRecord,
   WorkflowActionSendWhatsAppMessage,
   FieldMapping,
+  WorkflowCondition,
+  WorkflowRun,
+  WorkflowConditionTrace,
+  WorkflowActionTrace,
+  WorkflowBranchTrace,
+  FieldMappingTrace,
 } from '../../src/types/index.js';
 import {
   applyDateExpression,
@@ -123,36 +129,80 @@ async function runWorkflow(
   triggerRecord: AppRecord,
   ctx: SweeperContext,
 ): Promise<WorkflowRunSummary> {
+  const startedMs = Date.now();
+  const startedIso = new Date().toISOString();
   const branches = getWorkflowBranches(workflow);
-  const branchTraces: BranchResult[] = [];
+  // Lightweight summary trace (returned to the cron response) + rich
+  // WorkflowBranchTrace[] (persisted to workflow_runs for the Logs page).
+  const branchSummaries: BranchResult[] = [];
+  const branchTraces: WorkflowBranchTrace[] = [];
   let winnerIdx = -1;
 
   for (let i = 0; i < branches.length; i++) {
     const b = branches[i]!;
-    if (winnerIdx >= 0) {
-      branchTraces.push({ branch_id: b.id, conditions_passed: false, was_selected: false });
+    const decided = winnerIdx >= 0;
+    if (decided) {
+      // An earlier branch already won — record this one as not-evaluated.
+      branchSummaries.push({ branch_id: b.id, conditions_passed: false, was_selected: false });
+      branchTraces.push({
+        branch_id: b.id,
+        branch_label_ar: b.label_ar,
+        branch_label_en: b.label_en,
+        is_else: b.is_else ?? false,
+        conditions_trace: [],
+        conditions_passed: false,
+        evaluated: false,
+        was_selected: false,
+      });
       continue;
     }
     if (b.is_else) {
       winnerIdx = i;
-      branchTraces.push({ branch_id: b.id, conditions_passed: true, was_selected: true });
+      branchSummaries.push({ branch_id: b.id, conditions_passed: true, was_selected: true });
+      branchTraces.push({
+        branch_id: b.id,
+        branch_label_ar: b.label_ar,
+        branch_label_en: b.label_en,
+        is_else: true,
+        conditions_trace: [],
+        conditions_passed: true,
+        evaluated: true,
+        was_selected: true,
+      });
       continue;
     }
-    const results = b.conditions.map((c) => evaluateCondition(c, triggerRecord.data));
+    const condTraces = b.conditions.map((c) => buildConditionTrace(c, triggerRecord.data));
     const mode = b.condition_mode ?? 'all';
-    const passed = results.length === 0
+    const passed = condTraces.length === 0
       ? true
-      : (mode === 'any' ? results.some(Boolean) : results.every(Boolean));
+      : (mode === 'any' ? condTraces.some((t) => t.result) : condTraces.every((t) => t.result));
     if (passed) winnerIdx = i;
-    branchTraces.push({ branch_id: b.id, conditions_passed: passed, was_selected: passed });
+    branchSummaries.push({ branch_id: b.id, conditions_passed: passed, was_selected: passed });
+    branchTraces.push({
+      branch_id: b.id,
+      branch_label_ar: b.label_ar,
+      branch_label_en: b.label_en,
+      is_else: false,
+      conditions_trace: condTraces,
+      conditions_passed: passed,
+      evaluated: true,
+      was_selected: passed,
+    });
   }
 
   if (winnerIdx < 0) {
+    // No branch matched — log a `skipped` run so the Logs page shows the
+    // sweeper evaluated this workflow and why nothing fired.
+    await insertWorkflowRun(buildRunRow({
+      workflow, triggerRecord, ctx, startedMs, startedIso,
+      branchTraces, winnerBranchTrace: branchTraces[0], actionTraces: [], status: 'skipped',
+      selectedBranchId: undefined,
+    }), ctx);
     return {
       workflow_id: workflow.id,
       workflow_label_en: workflow.label_en,
       trigger_record_id: triggerRecord.id,
-      branches: branchTraces,
+      branches: branchSummaries,
       actions: [],
       status: 'skipped',
     };
@@ -160,6 +210,7 @@ async function runWorkflow(
 
   const winner = branches[winnerIdx]!;
   const actions: ActionResult[] = [];
+  const actionTraces: WorkflowActionTrace[] = [];
   let anyFailed = false;
   let anyExecuted = false;
   // Map of action_id → record this action created. Lets `prev_action_output`
@@ -167,9 +218,11 @@ async function runWorkflow(
   // resolve against records the workflow just created.
   const prevActionOutputs: Record<string, AppRecord> = {};
 
-  for (const action of winner.actions) {
+  for (let idx = 0; idx < winner.actions.length; idx++) {
+    const action = winner.actions[idx]!;
     const result = await executeAction(action, triggerRecord, ctx, prevActionOutputs);
     actions.push(result);
+    actionTraces.push(buildActionTrace(action, result, idx, triggerRecord));
     if (result.status === 'executed') anyExecuted = true;
     if (result.status === 'failed') anyFailed = true;
   }
@@ -178,15 +231,191 @@ async function runWorkflow(
     ? (anyExecuted ? 'partial_success' : 'failed')
     : 'success';
 
+  await insertWorkflowRun(buildRunRow({
+    workflow, triggerRecord, ctx, startedMs, startedIso,
+    branchTraces, winnerBranchTrace: branchTraces[winnerIdx], actionTraces, status,
+    selectedBranchId: winner.id,
+  }), ctx);
+
   return {
     workflow_id: workflow.id,
     workflow_label_en: workflow.label_en,
     trigger_record_id: triggerRecord.id,
-    branches: branchTraces,
+    branches: branchSummaries,
     selected_branch_id: winner.id,
     actions,
     status,
   };
+}
+
+/* ─── workflow_runs logging (Phase 6 — on_due → Logs parity) ─────────── */
+
+/**
+ * Build a full WorkflowRun row from a sweeper execution. Uses the SAME closed
+ * `WorkflowRunStatus` union as the client engine — unsupported sweeper actions
+ * are recorded as per-action `failed` entries in `actions_trace` (with reason
+ * `unsupported_in_sweeper`) and roll the run up to `partial_success`/`failed`;
+ * we never invent a new status (which would need type + UI changes). The row is
+ * realtime-published, so the Logs page shows on_due runs without a reload.
+ */
+function buildRunRow(args: {
+  workflow: Workflow;
+  triggerRecord: AppRecord;
+  ctx: SweeperContext;
+  startedMs: number;
+  startedIso: string;
+  branchTraces: WorkflowBranchTrace[];
+  winnerBranchTrace: WorkflowBranchTrace | undefined;
+  actionTraces: WorkflowActionTrace[];
+  status: WorkflowRunSummary['status'];
+  selectedBranchId: string | undefined;
+}): WorkflowRun {
+  const { workflow, triggerRecord, ctx, startedMs, startedIso } = args;
+  const triggerModel = ctx.models.find((m) => m.id === triggerRecord.model_id);
+  const label = workflow.label_en || workflow.label_ar || 'workflow';
+  return {
+    id: crypto.randomUUID(),
+    workflow_id: workflow.id,
+    workflow_label_ar: workflow.label_ar || label,
+    workflow_label_en: workflow.label_en || label,
+    trigger_event: 'on_due',
+    trigger_model_id: triggerRecord.model_id,
+    trigger_model_label_ar: triggerModel?.label_ar,
+    trigger_model_label_en: triggerModel?.label_en,
+    trigger_record_id: triggerRecord.id,
+    trigger_record_snapshot: triggerRecord.data,
+    // on_due has no "before" image — the row's scheduled time arrived; it
+    // wasn't an edit. Left undefined so the Logs page hides the diff panel.
+    triggered_by_user_id: null, // cron/system, not a user action
+    depth: 0,
+    started_at: startedIso,
+    finished_at: new Date().toISOString(),
+    duration_ms: Date.now() - startedMs,
+    status: args.status,
+    conditions_trace: args.winnerBranchTrace?.conditions_trace ?? [],
+    conditions_passed: args.winnerBranchTrace?.conditions_passed ?? false,
+    actions_trace: args.actionTraces,
+    // Only attach the branch tree when there's a real if/else to show.
+    branches_trace: args.branchTraces.length > 1 ? args.branchTraces : undefined,
+    selected_branch_id: args.selectedBranchId,
+  };
+}
+
+async function insertWorkflowRun(row: WorkflowRun, ctx: SweeperContext): Promise<void> {
+  // supabase-js drops `undefined` keys on serialize, so optional columns fall
+  // back to their DB defaults/null. Service-role client → bypasses RLS.
+  const { error } = await ctx.supabase.from('workflow_runs').insert(row);
+  if (error) {
+    // Never silent: the workflow already executed; only its audit row failed.
+    // We don't fail the sweep over a logging miss, but we surface it loudly so
+    // a schema/permission drift on workflow_runs is diagnosable from cron logs.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[workflowSweeper] failed to write workflow_runs row for workflow ${row.workflow_id} / record ${row.trigger_record_id}: ${error.message}`,
+    );
+  }
+}
+
+function buildConditionTrace(c: WorkflowCondition, data: Record<string, unknown>): WorkflowConditionTrace {
+  const passes = evaluateCondition(c, data);
+  return {
+    id: c.id,
+    field_id: c.field_id,
+    operator: c.operator,
+    expected_value: c.value,
+    actual_value: data[c.field_id],
+    only_on_change: c.only_on_change ?? false,
+    // on_due fires on a scheduled time, not a field edit — there's no previous
+    // record image, so `only_on_change` can't suppress and result == passes_now.
+    passes_now: passes,
+    result: passes,
+  };
+}
+
+function describeMappingSource(m: FieldMapping): string {
+  switch (m.source_type) {
+    case 'static': return `static: ${String(m.static_value ?? '')}`;
+    case 'trigger_field': return `trigger.${m.trigger_field_id ?? ''}`;
+    case 'record_id': return 'trigger record id';
+    case 'current_date': return 'now()';
+    case 'date_expression': return `date_expr(${m.date_expression ?? ''})`;
+    default: return m.source_type;
+  }
+}
+
+function describeMapping(mapping: FieldMapping, triggerRecord: AppRecord): FieldMappingTrace {
+  return {
+    target_field_id: mapping.target_field_id,
+    source_type: mapping.source_type,
+    source_description: describeMappingSource(mapping),
+    resolved_value: resolveFieldMapping(mapping, triggerRecord),
+    ...(mapping.trigger_field_id ? { trigger_field_id: mapping.trigger_field_id } : {}),
+  };
+}
+
+function buildActionTrace(
+  action: WorkflowAction,
+  result: ActionResult,
+  index: number,
+  triggerRecord: AppRecord,
+): WorkflowActionTrace {
+  const base = {
+    id: action.id,
+    order: index,
+    status: result.status,
+    duration_ms: 0, // the sweeper doesn't time individual actions in v1
+    ...(result.reason ? { skip_reason: result.reason } : {}),
+    ...(result.detail && typeof result.detail.message === 'string' ? { error: result.detail.message } : {}),
+  };
+  const detail = result.detail ?? {};
+  switch (action.type) {
+    case 'create_record': {
+      const resolved: Record<string, unknown> = {};
+      for (const m of action.field_mappings) resolved[m.target_field_id] = resolveFieldMapping(m, triggerRecord);
+      return {
+        ...base,
+        type: 'create_record',
+        target_model_id: action.target_model_id,
+        resolved_data: resolved,
+        field_mappings: action.field_mappings.map((m) => describeMapping(m, triggerRecord)),
+        created_record_id: typeof detail.created_record_id === 'string' ? detail.created_record_id : undefined,
+        dedup_match_record_id: typeof detail.matched_record_id === 'string' ? detail.matched_record_id : undefined,
+      };
+    }
+    case 'update_record': {
+      const filterValueSource = action.filter_value_source ?? 'static';
+      const resolvedFilter = (filterValueSource === 'trigger_field' && action.filter_trigger_field_id)
+        ? triggerRecord.data[action.filter_trigger_field_id]
+        : action.filter_value;
+      return {
+        ...base,
+        type: 'update_record',
+        target_model_id: action.target_model_id,
+        filter_field_id: action.filter_field_id,
+        filter_value_source: filterValueSource,
+        filter_trigger_field_id: action.filter_trigger_field_id,
+        resolved_filter_value: resolvedFilter,
+        matched_record_id: typeof detail.matched_record_id === 'string' ? detail.matched_record_id : undefined,
+        field_mappings: action.field_mappings.map((m) => describeMapping(m, triggerRecord)),
+      };
+    }
+    case 'send_whatsapp_message': {
+      return {
+        ...base,
+        type: 'send_whatsapp_message',
+        resolved_to_number: typeof detail.phone === 'string' ? detail.phone : undefined,
+        message_wid: typeof detail.wid === 'string' ? detail.wid : undefined,
+        response_status: typeof detail.status === 'number' ? detail.status : undefined,
+      };
+    }
+    default:
+      // The trace union intentionally doesn't model the unsupported-in-sweeper
+      // action types (and has no variant for `paseet_query`). We still record
+      // the failed entry + reason so the run log is complete; the detail page
+      // renders the header + skip-reason note and skips the (absent) body. A
+      // single targeted cast at this boundary — the data is bound for JSONB.
+      return { ...base, type: (action as WorkflowAction).type } as WorkflowActionTrace;
+  }
 }
 
 async function executeAction(
