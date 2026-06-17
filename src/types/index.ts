@@ -181,6 +181,10 @@ export interface ModelField {
   section_mirror_sync_mode?: SectionMirrorControlMode; // 'all' | 'none' | 'custom'. Defaults to 'all' when editing is allowed.
   section_mirror_sync_field_names?: string[]; // Child field slugs that sync back when sync_mode is 'custom'.
   // Range config (type: 'range'). Stored value shape is { min?: number; max?: number }.
+  // When `options` (above) is set, the record form renders min & max as two
+  // <select> pickers instead of free number inputs. Option `value`s MUST be
+  // numeric strings so the stored {min,max} stays numeric (v_* views, analytics,
+  // PDF/Excel, sort/search all depend on it). Leave options empty for free entry.
   range_min?: number; // inclusive lower bound for min/max inputs
   range_max?: number; // inclusive upper bound for min/max inputs
   range_step?: number; // step between allowed values

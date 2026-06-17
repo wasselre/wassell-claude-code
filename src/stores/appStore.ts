@@ -12,6 +12,7 @@ import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchem
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
 import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient } from '@/lib/haberchat/normalize';
+import { normalizePhone } from '@/lib/phone';
 import { markRecentlyWritten } from '@/lib/realtime/dedup';
 import { startRealtimeOrchestrator } from '@/lib/realtime/RealtimeOrchestrator';
 import { markLoaded, startStaleWhileRevalidate } from '@/lib/realtime/staleWhileRevalidate';
@@ -4115,14 +4116,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const body = input.body.trim();
     if (!body) throw new Error(state.language === 'ar' ? 'الرسالة مطلوبة' : 'Message body is required');
 
-    // Normalize phone. Accept "+966...", "966...", "0555...". Strip
-    // everything but digits, then ensure we have a leading country
-    // code. For Saudi we default to 966 if the number starts with 05.
-    const digits = input.phone.replace(/\D/g, '');
-    if (digits.length < 7) throw new Error(state.language === 'ar' ? 'رقم هاتف غير صالح' : 'Invalid phone number');
-    const withCountry = digits.startsWith('0') ? `966${digits.slice(1)}` : digits;
-    const e164 = `+${withCountry}`;
-    const chatWid = `${withCountry}@c.us`;
+    // Canonicalize to KSA E.164 via the shared helper (the same one telUrl /
+    // whatsappUrl / the webhook phone-match use) so a bare 9-digit Saudi number
+    // ("554446109"), "966…", "+966…", and "05…" all collapse to the SAME wid.
+    // The previous open-coded version only prepended 966 when the number began
+    // with "0", so typing the bare form minted a DUPLICATE chat record (a
+    // spurious "+554446109" thread separate from the real "+966554446109" one).
+    const e164 = normalizePhone(input.phone);
+    if (!e164) throw new Error(state.language === 'ar' ? 'رقم هاتف غير صالح' : 'Invalid phone number');
+    const chatWid = `${e164.slice(1)}@c.us`;
 
     // Pick the send-from device — explicit, else default, else first active.
     const deviceId =

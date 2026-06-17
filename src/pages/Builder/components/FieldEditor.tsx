@@ -447,8 +447,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
         visibleWhenFieldId && visibleWhenValues.length > 0
           ? { field_id: visibleWhenFieldId, values: visibleWhenValues }
           : null,
-      options: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector') ? options : undefined,
-      option_groups: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector') && optionGroups.length > 0 ? optionGroups : undefined,
+      options: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector' || type === 'range') ? options : undefined,
+      option_groups: (type === 'dropdown' || type === 'multiselect' || type === 'section_selector' || type === 'range') && optionGroups.length > 0 ? optionGroups : undefined,
       lookup_model_id: type === 'lookup' ? lookupModelId : null,
       lookup_display_field: type === 'lookup' ? lookupDisplayField : null,
       is_multi: type === 'lookup' || type === 'unit_picker' ? isMulti : undefined,
@@ -1675,6 +1675,19 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
               <p className="text-[11px] text-charcoal/30">
                 {t('fields.range_unit_hint')}
               </p>
+              <div className="border-t border-sand/10 pt-1" />
+              <OptionsEditor
+                options={options}
+                groups={optionGroups}
+                onChange={setOptions}
+                onGroupsChange={setOptionGroups}
+                label={isAr ? 'خيارات القائمة المنسدلة (اختياري)' : 'Dropdown options (optional)'}
+                hint={
+                  isAr
+                    ? 'اتركها فارغة لإدخال الأرقام يدوياً. عند إضافة خيارات يختار المستخدم الحد الأدنى والأقصى من قائمة بدلاً من الكتابة. يجب أن تكون قيمة كل خيار رقماً (مثل 500000).'
+                    : 'Leave empty for free number entry. Add options and the user picks min & max from a list instead of typing. Each option value MUST be a number (e.g. 500000).'
+                }
+              />
             </div>
           </>
         )}

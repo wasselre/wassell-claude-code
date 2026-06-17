@@ -69,6 +69,51 @@ export default function RangeField({ field, value, onChange }: RangeFieldProps) 
   const minDisplay = minDraft !== null ? minDraft : formatNumberWithCommas(current.min, isAr);
   const maxDisplay = maxDraft !== null ? maxDraft : formatNumberWithCommas(current.max, isAr);
 
+  // When the field carries an option list, render min/max as two <select>
+  // pickers instead of free number inputs. Option values are numeric strings,
+  // so the stored value stays {min,max} numeric — every downstream reader
+  // (v_* views, sort/search, PDF/Excel, analytics) is unaffected.
+  const options = field.options ?? [];
+  if (options.length > 0) {
+    const renderSelect = (which: 'min' | 'max') => {
+      const cur = which === 'min' ? current.min : current.max;
+      const curStr = cur !== undefined ? String(cur) : '';
+      const known = options.some((o) => o.value === curStr);
+      const onSel = (raw: string) => {
+        const num = raw === '' ? undefined : parseFormattedNumber(raw);
+        update(which === 'min' ? { min: num } : { max: num });
+      };
+      return (
+        <select
+          value={curStr}
+          onChange={(e) => onSel(e.target.value)}
+          className="form-input flex-1"
+          dir={isAr ? 'rtl' : 'ltr'}
+        >
+          <option value="">{t(which === 'min' ? 'fields.range_min' : 'fields.range_max')}</option>
+          {/* Keep a legacy stored value that isn't on the current ladder selectable. */}
+          {curStr !== '' && !known && (
+            <option value={curStr}>
+              {formatNumberWithCommas(cur, isAr)}{unit ? ` ${unit}` : ''}
+            </option>
+          )}
+          {options.map((o) => (
+            <option key={o.id} value={o.value}>
+              {(isAr ? o.label_ar : o.label_en) || o.value}{unit ? ` ${unit}` : ''}
+            </option>
+          ))}
+        </select>
+      );
+    };
+    return (
+      <div className="flex items-stretch gap-2">
+        {renderSelect('min')}
+        <span className="self-center text-charcoal/30 text-sm">—</span>
+        {renderSelect('max')}
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-stretch gap-2">
       <div className="relative flex-1">
