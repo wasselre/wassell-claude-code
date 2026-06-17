@@ -1,6 +1,6 @@
 # PRD: Scheduled Reports
 
-**Status:** Live on `main` (code shipped); activation pending env — see Runbook
+**Status:** Live + verified in prod (2026-06-17) — run-now, automatic scheduler, and source-value match all confirmed. Email is **draft-only** today (`RESEND_API_KEY` not configured). See Verified.
 **Last updated:** 2026-06-17
 **Related PRDs:** [dashboards.md](dashboards.md), [workflow-automation.md](workflow-automation.md), [access-control.md](access-control.md), [logs.md](logs.md)
 
@@ -43,13 +43,18 @@ The feature ships dormant until these are set (the runner refuses to mint a toke
 | `SUPABASE_JWT_SECRET` | Vercel (prod) | **Yes** | Mint the owner-scoped JWT. The Supabase project's JWT secret (Supabase → Settings → API → JWT Secret). |
 | `REPORTS_RUNNER_SECRET` | Vercel **and** Fly worker | **Yes** | Shared secret gating `/api/internal/run-report` + the worker's scheduler loop ("feature on"). |
 | `APP_URL` | Fly worker | Yes | Base URL the worker POSTs (`https://app.wassel.re`). |
-| `RESEND_API_KEY` | Vercel (prod) | Optional | When set, reports email via Resend; otherwise results are stored as drafts. |
+| `RESEND_API_KEY` | Vercel (prod) | Optional | When set, reports email via Resend; otherwise results are stored as drafts. **Currently NOT set → v1 delivers stored drafts only** (verified live: a recipient-bearing scheduled run produced `delivery: draft` and sent no email). Set it (+ `REPORTS_FROM_EMAIL`) to enable live email. |
 | `REPORTS_FROM_EMAIL` | Vercel (prod) | Optional | From address (default `Wassel Reports <reports@wassel.re>`). |
 
 `CRON_SECRET` is unrelated (it gates the follow-ups sweeper). After setting these + redeploy, **smoke test**: create a report from a dashboard, **Run now**, confirm the result matches the dashboard, the run row + snapshot appear, and delivery is `sent` (with Resend) or `draft` (without).
 
-## Verified (against the live schema + runner)
-Riyadh next-run math (daily/weekly/monthly) ✓; `next_run_at` set on create by the trigger ✓; `claim_due` claims active-due and **excludes paused** ✓; the runner **fails safely without `SUPABASE_JWT_SECRET`** (failed run recorded, clear error, no data leaked, no crash) ✓. Pending live env: owner-scoped success run + value-matches-source + email/draft delivery (Runbook smoke test).
+## Verified (live in prod, 2026-06-17)
+- **Schema/scheduling primitives:** Riyadh next-run math (daily/weekly/monthly) ✓; `next_run_at` set on create by the trigger ✓; `claim_due` claims active-due and **excludes paused** ✓.
+- **Run-now (manual):** created a report from a dashboard via the live UI → owner-scoped run produced a real snapshot (no JWT error → `SUPABASE_JWT_SECRET` is set), stored as a draft for 0 recipients, run-history written ✓.
+- **Automatic scheduler:** a due report was **claimed and run by the Fly worker** (`triggered_by:'schedule'`, clean, snapshot written, `next_run_at` advanced) → `REPORTS_RUNNER_SECRET` matches on **both** Vercel + Fly and `APP_URL` is set on the worker (all 5 worker machines running) ✓.
+- **Source-value match:** the report snapshot total (**126**) equals the value shown on the source dashboard's widget ✓.
+- **Email/draft:** `RESEND_API_KEY` is **not configured**, so a recipient-bearing run produced `delivery: draft` and **sent no email** — v1 is draft/stored-output only until Resend is set ✓.
+- **Failure path:** the internal runner endpoint returns **401** on an invalid or missing `REPORTS_RUNNER_SECRET` (no run, no data); and the runner **fails safely without `SUPABASE_JWT_SECRET`** (failed run recorded, clear error, **no service-role data fallback**, no crash) ✓.
 
 ## Key files
 | Area | File |
