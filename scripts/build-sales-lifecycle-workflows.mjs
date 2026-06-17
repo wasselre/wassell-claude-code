@@ -34,6 +34,7 @@ const mDate = (target, expr, baseField) => ({ id: U(), source_type: 'date_expres
 const updateRecord = (modelId, filterTriggerField, maps) => ({ id: U(), type: 'update_record', filter_value: '', field_mappings: maps, filter_field_id: 'id', target_model_id: modelId, filter_value_source: 'trigger_field', filter_trigger_field_id: filterTriggerField });
 const createRecord = (modelId, maps) => ({ id: U(), type: 'create_record', field_mappings: maps, skip_if_exists: false, target_model_id: modelId });
 const whatsapp = (body) => ({ id: U(), to: { kind: 'lookup', lookup_field_name: 'client_id', target_phone_field_name: 'phone_number' }, type: 'send_whatsapp_message', body_template: body });
+const mRecordId = (target) => ({ id: U(), source_type: 'record_id', static_value: '', target_field_id: target, trigger_field_id: '' });
 
 const REMINDER = 'عزيزنا عميل وصل العقارية، نذكّركم بموعد زيارتكم المجدول. نتطلّع لحضوركم، ولأي استفسار يسعدنا تواصلكم معنا.';
 
@@ -117,7 +118,117 @@ export function buildW4(ids) {
   };
 }
 
-const BUILDERS = { w4: buildW4 };
+// ── W5 — No-Show → Recovery (on_update appointments) ─────────────────────────
+export function buildW5(ids) {
+  const { followups, appointments, clients, group } = ids;
+  const conditions = [
+    { id: U(), value: 'no_show', field_id: 'appointment_status', operator: 'equals', only_on_change: true },
+  ];
+  const branch = {
+    id: U(), label_en: 'No-Show Recovery', label_ar: 'استرجاع بعد عدم الحضور', condition_mode: 'all', conditions,
+    actions: [
+      updateRecord(clients, 'client_id', [mStatic('client_status', 'لم يحضر الموعد')]),
+      createRecord(followups, [
+        mTrigger('client_id', 'client_id'),
+        mStatic('followup_type', 'no_show_recovery_call'),
+        mRecordId('appointment_id'), // the appointment IS the trigger record
+        mDate('scheduled_datetime', '+0d', ''),
+        mStatic('followup_status', 'open'),
+        mTrigger('sales_rep', 'sales_rep'),
+      ]),
+    ],
+  };
+  return {
+    id: U(), label_ar: 'استرجاع بعد عدم الحضور', label_en: 'No-Show Recovery',
+    group_id: group, trigger_model_id: appointments, trigger_event: 'update', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'موعد زيارة', activity_type: 'no_show_recovery_call', compatibility: 'simple' },
+    branches: [branch], conditions: branch.conditions, actions: branch.actions,
+  };
+}
+
+// ── W6 — Visit → After-Visit (on_create visits) ──────────────────────────────
+export function buildW6(ids) {
+  const { followups, visits, clients, group } = ids;
+  const conditions = [
+    { id: U(), value: '', field_id: 'client_id', operator: 'is_not_empty' },
+  ];
+  const branch = {
+    id: U(), label_en: 'After Visit', label_ar: 'بعد الزيارة', condition_mode: 'all', conditions,
+    actions: [
+      updateRecord(clients, 'client_id', [mStatic('client_stage', 'زيارة')]),
+      createRecord(followups, [
+        mTrigger('client_id', 'client_id'),
+        mStatic('followup_type', 'follow_up_call_after_visit'),
+        mRecordId('visit'), // the visit IS the trigger record
+        mDate('scheduled_datetime', '+1d @10:00', ''),
+        mStatic('followup_status', 'open'),
+        mTrigger('sales_rep', 'sales_representative'),
+      ]),
+    ],
+  };
+  return {
+    id: U(), label_ar: 'متابعة بعد الزيارة', label_en: 'Visit → After-Visit',
+    group_id: group, trigger_model_id: visits, trigger_event: 'create', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'زيارة', activity_type: 'follow_up_call_after_visit', compatibility: 'simple' },
+    branches: [branch], conditions: branch.conditions, actions: branch.actions,
+  };
+}
+
+// ── W7 — After-Visit Completed (on_update followups) ─────────────────────────
+export function buildW7(ids) {
+  const { followups, clients, group } = ids;
+  const updateClient = (maps) => updateRecord(clients, 'client_id', maps);
+  const createFollowup = (maps) => createRecord(followups, maps);
+  const gcond = (cr) => ([
+    { id: U(), value: ['follow_up_call_after_visit'], field_id: 'followup_type', operator: 'equals' },
+    { id: U(), value: '', field_id: 'actual_datetime', operator: 'is_not_empty' },
+    { id: U(), value: cr, field_id: 'call_result', operator: 'equals', only_on_change: true },
+  ]);
+  const br = (en, ar, cr, actions) => ({ id: U(), label_en: en, label_ar: ar, conditions: gcond(cr), condition_mode: 'all', actions });
+  const nextAfterVisit = (delay, baseField) => createFollowup([
+    mTrigger('client_id', 'client_id'),
+    mStatic('followup_type', 'follow_up_call_after_visit'),
+    mDate('scheduled_datetime', delay, baseField || ''),
+    mStatic('followup_status', 'open'),
+  ]);
+  const branches = [
+    // CORRECTION: request_offer is STATUS-ONLY here. The offer_follow_up is created
+    // by Phase 7's "Offer Created → Offer Follow-up" (W8) once the Offer model exists.
+    br('Request Offer', 'طلب عرض سعر', 'request_offer', [
+      updateClient([mStatic('client_stage', 'عرض سعر'), mStatic('client_status', 'تم طلب عرض سعر')]),
+    ]),
+    br('Still Interested', 'لا يزال مهتمًا', 'still_interested', [
+      updateClient([mStatic('client_status', 'مهتم')]),
+      nextAfterVisit('+2d @10:00'),
+    ]),
+    br('Needs Financing Info', 'يحتاج معلومات تمويل', 'needs_financing_info', [
+      updateClient([mStatic('client_status', 'يحتاج معلومات تمويل')]),
+      nextAfterVisit('+2d @10:00'),
+    ]),
+    br('Family Discussion', 'نقاش عائلي', 'family_discussion', [
+      updateClient([mStatic('client_status', 'نقاش عائلي')]),
+      nextAfterVisit('+3d @10:00'),
+    ]),
+    br('Not Interested', 'غير مهتم', 'not_interested', [
+      updateClient([mStatic('client_stage', 'خاسر'), mStatic('client_status', 'غير مهتم'), mTrigger('lost_reason', 'lost_reason')]),
+    ]),
+    // no_answer / wrong_time: schedule a retry; do NOT overwrite client status with a
+    // generic value (same spirit as the W4 no_answer correction).
+    br('No Answer', 'لا يوجد رد', 'no_answer', [nextAfterVisit('+1d')]),
+    br('Wrong Time', 'الوقت غير مناسب', 'wrong_time', [
+      updateClient([mStatic('client_status', 'الوقت غير مناسب')]),
+      nextAfterVisit('+0d', 'reschedule_contact_date'),
+    ]),
+  ];
+  return {
+    id: U(), label_ar: 'إكمال متابعة بعد الزيارة', label_en: 'After-Visit Completed',
+    group_id: group, trigger_model_id: followups, trigger_event: 'update', is_active: false,
+    metadata: { managed_by: 'sales_process_studio', sales_stage: 'متابعة بعد الزيارة', activity_type: 'follow_up_call_after_visit', compatibility: 'simple' },
+    branches, conditions: branches[0].conditions, actions: branches[0].actions,
+  };
+}
+
+const BUILDERS = { w4: buildW4, w5: buildW5, w6: buildW6, w7: buildW7 };
 
 // ── CLI ───────────────────────────────────────────────────────────────────────
 const which = process.argv[2];
@@ -130,7 +241,7 @@ if (which && BUILDERS[which]) {
     `-- Sales OS — ${wf.label_en} (${which.toUpperCase()}). Created DISABLED; enable only after the dev-engine test passes.\n` +
     `INSERT INTO public.workflows (id, label_ar, label_en, group_id, trigger_model_id, trigger_event, is_active, metadata, branches, conditions, actions)\n` +
     `VALUES (\n` +
-    `  '${wf.id}', '${q(wf.label_ar)}', '${q(wf.label_en)}', '${wf.group_id}', '${wf.trigger_model_id}', 'update', false,\n` +
+    `  '${wf.id}', '${q(wf.label_ar)}', '${q(wf.label_en)}', '${wf.group_id}', '${wf.trigger_model_id}', '${wf.trigger_event}', false,\n` +
     `  '${q(JSON.stringify(wf.metadata))}'::jsonb,\n` +
     `  '${q(JSON.stringify(wf.branches))}'::jsonb,\n` +
     `  '${q(JSON.stringify(wf.conditions))}'::jsonb,\n` +
