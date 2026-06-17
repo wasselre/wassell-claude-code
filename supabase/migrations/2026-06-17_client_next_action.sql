@@ -88,7 +88,12 @@ BEGIN
   FROM public.records f
   WHERE f.model_id = v_followups
     AND public._followup_client_id_of(f.data) = v_cid
-    AND COALESCE(f.data->>'followup_status', '') IN ('open', 'in_progress')
+    -- "Open" mirrors the Sales Queue EXACTLY: NULL/'' coalesce to 'open'
+    -- (queueViews.ts does `(d.followup_status) || 'open'`). Legacy follow-ups
+    -- were never stamped a status, so without this coalesce the trio would
+    -- disagree with the queue (it would only ever see the rare explicitly-open
+    -- rows). Verified live: this took clients-with-a-next-action from 1 to 88.
+    AND COALESCE(NULLIF(f.data->>'followup_status', ''), 'open') IN ('open', 'in_progress')
   ORDER BY public.try_timestamptz(f.data->>'scheduled_datetime') ASC NULLS LAST,
            f.created_at ASC
   LIMIT 1;
