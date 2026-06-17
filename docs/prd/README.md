@@ -33,6 +33,8 @@ This folder contains the **living source of truth** for what every section of th
 | 23 | [image-chats.md](image-chats.md) | "Mini Higgsfield" image-design chat — fal.ai Nano Banana 2, per-turn aspect ratio / variations / brand preset, image + prompt libraries with auto-attach |
 | 24 | [data-migration.md](data-migration.md) | AI-assisted import wizard — any-format files → raw table → AI column mapping → approval-gated value standardization (match / create / route-to-field) → import into any model |
 | 25 | [copywriter-intelligence.md](copywriter-intelligence.md) | Competitor reel knowledge base — AI "Clean & Analyze" turns noisy Arabic auto-transcripts into clean text + structured marketing analysis (hook, angle, trigger, structure, tone, CTA); feeds a planned copywriter agent |
+| 26 | [sales-process.md](sales-process.md) | Sales Operating System — the guided sales lifecycle (New → … → Closed Won, side-exits Lost / Unqualified), the config layer, the 12 Sales Lifecycle workflows, the 4 downstream models, and the Sales Queue / Studio / Manager surfaces. Key files: `src/lib/salesProcess/**`, `src/pages/Sales/**`, `src/pages/SalesProcess/SalesProcessStudioPage.tsx`, `supabase/migrations/2026-06-1{6,7}_sales_os_*.sql` |
+| 27 | [followups-workspace.md](followups-workspace.md) | Follow-up Workspace — the guided per-task screen that replaces the generic follow-ups form: mission, outcome panel with dynamic field visibility + validators, evidence linking, appointment-booked-requires-creation, the `?generic=1` escape hatch. Key files: `src/pages/Followups/FollowUpWorkspacePage.tsx`, `src/pages/Followups/components/**`, `src/lib/salesProcess/{config,validators,outcomes}.ts` |
 
 Plus `_TEMPLATE.md` — the template every new PRD must follow.
 
