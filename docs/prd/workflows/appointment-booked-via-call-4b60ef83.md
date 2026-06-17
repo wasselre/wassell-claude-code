@@ -5,7 +5,7 @@
 # Workflow: Appointment booked via call / حجز موعد عبر مكالمة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-16
+**Last updated (from DB):** 2026-06-17
 **Workflow id:** `4b60ef83-5e16-4ff1-b522-b88e7ae2ab35`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is created

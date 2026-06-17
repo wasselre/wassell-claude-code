@@ -13,7 +13,7 @@
 | [Appointments](appointments.md) | `appointments` | JSONB | New Group | 1 | 10 | no | 2026-06-16 |
 | [Chat Templates](chat-templates.md) | `chat_templates` | JSONB | New Group | 1 | 11 | yes | 2026-06-08 |
 | [Chats](chats.md) | `chats` | JSONB | New Group | 1 | 12 | yes | 2026-06-10 |
-| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 28 | no | 2026-06-16 |
+| [Clients](clients.md) | `clients` | JSONB | New Group | 4 | 28 | no | 2026-06-17 |
 | [Competitors](competitors.md) | `competitors` | JSONB | Designs | 1 | 15 | no | 2026-06-09 |
 | [Contacts](contacts.md) | `contacts` | JSONB | New Group | 1 | 3 | no | 2026-06-08 |
 | [Copywriter](copywriter-chats.md) | `copywriter_chats` | JSONB | Designs | 1 | 6 | no | 2026-06-11 |
@@ -22,7 +22,7 @@
 | [Templates Library](design-templates.md) | `design_templates` | JSONB | Designs | 1 | 7 | yes | 2026-05-09 |
 | [Developers](developers.md) | `developers` | JSONB | Projects | 1 | 6 | no | 2026-06-08 |
 | [Financing](financing.md) | `financing` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |
-| [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 28 | no | 2026-06-16 |
+| [Follow-ups](followups.md) | `followups` | JSONB | New Group | 3 | 37 | no | 2026-06-17 |
 | [Image Chats](image-chats.md) | `image_chats` | JSONB | Designs | 1 | 4 | yes | 2026-06-08 |
 | [Brand Presets](image-presets.md) | `image_presets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
 | [Marketing Operations](marketing-operations.md) | `marketing_operations` | JSONB | Designs | 4 | 17 | yes | 2026-06-08 |
@@ -38,4 +38,4 @@
 | [Targeted Projects](targeted-projects.md) | `targeted_projects` | JSONB | Projects | 2 | 5 | no | 2026-06-11 |
 | [Tasks](tasks.md) | `tasks` | JSONB | — | 1 | 11 | no | 2026-06-08 |
 | [Units](units.md) | `units` | JSONB | Projects | 1 | 31 | no | 2026-06-08 |
-| [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 8 | no | 2026-06-08 |
+| [Visits](visits.md) | `visits` | JSONB | New Group | 1 | 9 | no | 2026-06-17 |

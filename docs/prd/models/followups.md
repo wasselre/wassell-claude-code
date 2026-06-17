@@ -5,7 +5,7 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-16
+**Last updated (from DB):** 2026-06-17
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **3** (3 base, 0 non-base)
-- Fields: **28**
+- Fields: **37**
 - Section-selector field: Follow-up Type (`followup_type`)
 - Duplicate-check field: none
 - Custom buttons: 3
@@ -43,6 +43,7 @@
 | `followup_number` | Follow-up Number / رقم المتابعة | Number | no | half | yes |  |
 | `followup_status` | Status / حالة المتابعة | Dropdown | no | half | yes | 5 options |
 | `priority` | Priority / الأولوية | Dropdown | no | half | yes | 4 options |
+| `whatsapp_state` | WhatsApp State / حالة الواتساب | Dropdown | no | half | no | 3 options |
 | `fired_at` | Auto-Reminder Fired At / وقت تشغيل التذكير الآلي | Date & time | no | half | no |  |
 
 **Field details:**
@@ -87,6 +88,10 @@
   - API value `normal` → "Normal" / "عادية" · color `#3B82F6`
   - API value `high` → "High" / "عالية" · color `#C09B5F`
   - API value `urgent` → "Urgent" / "عاجلة" · color `#8E4E3A`
+- **WhatsApp State / حالة الواتساب** (`whatsapp_state`, type `dropdown`) — options:
+  - API value `message_sent_waiting_response` → "Awaiting Reply" / "بانتظار رد العميل" · color `#C09B5F`
+  - API value `no_response_expired` → "No Response" / "انتهى دون رد" · color `#8E4E3A`
+  - API value `replied` → "Replied" / "تم الرد" · color `#10B981`
 
 ### 2. Client Preferences / تفضيلات العميل  _(base, color #B8734F)_
 
@@ -105,7 +110,7 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `call_result` | Outcome / النتيجة | Dropdown | no | full | yes | 25 options |
+| `call_result` | Outcome / النتيجة | Dropdown | no | full | yes | 26 options |
 | `next_followup_after_days` | Next Follow-up After (days) / المتابعة التالية بعد (أيام) | Number | no | half | no |  |
 | `reschedule_contact_date` | Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة | Date & time | no | half | yes |  |
 | `actual_datetime` | Actual Follow-up / موعد المتابعة الفعلي | Date & time | no | half | yes |  |
@@ -117,6 +122,14 @@
 | `new_appointment_datetime` | New Appointment Time / موعد الزيارة الجديد | Date & time | no | half | no |  |
 | `source_stage_snapshot` | Stage at Creation / مرحلة العميل عند الإنشاء | Text | no | half | no |  |
 | `source_status_snapshot` | Status at Creation / حالة العميل عند الإنشاء | Text | no | half | no |  |
+| `sent_at` | Message Sent At / وقت إرسال الرسالة | Date & time | no | half | no |  |
+| `first_whatsapp_sent_at` | First WhatsApp Sent / أول رسالة واتساب | Date & time | no | half | no |  |
+| `whatsapp_attempt_number` | WhatsApp Attempt # / رقم محاولة الواتساب | Number | no | half | no |  |
+| `escalation_reason` | Escalation Reason / سبب التصعيد | Dropdown | no | half | no | 3 options |
+| `previous_followup_id` | Previous Follow-up / المتابعة السابقة | Lookup | no | half | no | → Follow-ups |
+| `source_followup_id` | Source Follow-up / متابعة المصدر | Lookup | no | half | no | → Follow-ups |
+| `sent_by_user` | Sent By / أرسلها | Assignee | no | half | no | any user |
+| `whatsapp_template_id` | WhatsApp Template / معرّف قالب الواتساب | Text | no | half | no |  |
 
 **Field details:**
 
@@ -146,6 +159,7 @@
   - API value `documents_pending` → "Documents Pending" / "بانتظار المستندات"
   - API value `appointment_cancelled_rebook` → "Cancelled — Rebook" / "إلغاء الموعد - إعادة حجز"
   - API value `appointment_cancelled_lost` → "Cancelled — Lost" / "إلغاء الموعد - خسارة"
+  - API value `no_response` → "No Response" / "لا يوجد رد" · color `#8E4E3A`
 - **Next Follow-up After (days) / المتابعة التالية بعد (أيام)** (`next_followup_after_days`, type `number`):
   - shown only when Follow-up Type (`followup_type`) is one of: `whatsapp_follow_up`
 - **Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة** (`reschedule_contact_date`, type `datetime`):
@@ -170,6 +184,20 @@
   - shows field: `name`
   - multiple: no
 - **Completed By / أكملها** (`completed_by_user`, type `assignee`):
+  - eligible users: any active user
+- **Escalation Reason / سبب التصعيد** (`escalation_reason`, type `dropdown`) — options:
+  - API value `whatsapp_no_response_24h` → "No reply in 24h" / "لا رد خلال 24 ساعة" · color `#C09B5F`
+  - API value `whatsapp_no_response_5d` → "No reply in 5 days" / "لا رد خلال 5 أيام" · color `#8E4E3A`
+  - API value `call_no_answer_recontact` → "Call no-answer" / "لم يرد على المكالمة" · color `#C09B5F`
+- **Previous Follow-up / المتابعة السابقة** (`previous_followup_id`, type `lookup`):
+  - target model: Follow-ups
+  - shows field: `scheduled_datetime`
+  - multiple: no
+- **Source Follow-up / متابعة المصدر** (`source_followup_id`, type `lookup`):
+  - target model: Follow-ups
+  - shows field: `scheduled_datetime`
+  - multiple: no
+- **Sent By / أرسلها** (`sent_by_user`, type `assignee`):
   - eligible users: any active user
 
 ## Custom buttons

@@ -9,6 +9,7 @@ import type { AppRecord } from '@/types';
 import { resolveFollowupContext } from './lib/followupContext';
 import MissionHeader from './components/MissionHeader';
 import PrimaryAction from './components/PrimaryAction';
+import RegisterVisitAction from './components/RegisterVisitAction';
 import ScriptPanel from './components/ScriptPanel';
 import ContextPanel from './components/ContextPanel';
 import PreferenceSummary from './components/PreferenceSummary';
@@ -69,6 +70,30 @@ export default function FollowUpWorkspacePage() {
     ? (records[clientsModel.id] ?? []).find((r) => r.id === ctx.clientId) ?? null
     : null;
   const initialChatClient = clientRec ? recordToPickedClient(clientRec, resolveClientSlugs(clientsModel), isAr) : null;
+
+  // Best-effort our_projects id to prefill the visit's Project lookup. The
+  // follow-up's project context is keyed on all_projects, but a visit's Project
+  // lookup targets our_projects — so only prefill when a candidate id is a real
+  // our_projects record (otherwise leave it blank rather than show a broken ref).
+  const ourProjectsModel = models.find((m) => m.name === 'our_projects');
+  const visitProjectCandidate = useMemo<string | null>(() => {
+    if (!ourProjectsModel) return null;
+    const ourIds = new Set((records[ourProjectsModel.id] ?? []).map((r) => r.id));
+    const candidates: unknown[] = [
+      ctx.appointment?.project_id,
+      draft.appointment_project,
+      draft.visited_projects,
+      ctx.client?.preferred_projects,
+    ];
+    for (const c of candidates) {
+      if (typeof c === 'string' && ourIds.has(c)) return c;
+      if (Array.isArray(c)) {
+        const hit = c.find((v) => typeof v === 'string' && ourIds.has(v));
+        if (typeof hit === 'string') return hit;
+      }
+    }
+    return null;
+  }, [ourProjectsModel, records, ctx.appointment, ctx.client, draft.appointment_project, draft.visited_projects]);
 
   if (!model) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
   if (!record) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'المتابعة غير موجودة' : 'Follow-up not found'}</div>;
@@ -199,6 +224,17 @@ export default function FollowUpWorkspacePage() {
             appointmentId={(draft.appointment_id as string) ?? null}
             onWhatsApp={() => setShowChatModal(true)}
             onViewClient={() => setShowClientModal(true)}
+          />
+          {/* FOLLOWUP_4: register a client-reported visit as evidence — secondary,
+              available for every follow-up type, never changes the outcome. */}
+          <RegisterVisitAction
+            followupId={record.id}
+            clientId={ctx.clientId}
+            clientName={(ctx.client?.client_name as string | undefined) ?? null}
+            phone={ctx.phones[0] ?? null}
+            salesRep={draft.sales_rep}
+            projectCandidateId={visitProjectCandidate}
+            readOnly={readOnly}
           />
           <ScriptPanel typeConfig={typeConfig} />
           <OutcomePanel

@@ -196,6 +196,7 @@ const visitsProjectFieldId = uuid();
 const visitsUnitsFieldId = uuid();
 const visitsSalesRepFieldId = uuid();
 const visitsNotesFieldId = uuid();
+const visitsSourceFollowupFieldId = uuid();
 
 // ============================================================
 // DEVELOPERS MODEL (new 2026-04-18)
@@ -2556,6 +2557,26 @@ const visitsModel: AppModel = {
             section_id: visitsBasicSectionId,
             width: 'full',
             show_in_table: true,
+          },
+          {
+            // FOLLOWUP_4: links a visit back to the follow-up it was registered
+            // from (the Follow-up Workspace "Register Visit" action sets this).
+            // Mirrors appointments.source_followup_id — hidden from tables, not a
+            // field the rep edits. Drives the "Visit already registered" badge.
+            id: visitsSourceFollowupFieldId,
+            name: 'source_followup_id',
+            label_ar: 'المتابعة المصدر',
+            label_en: 'Source Follow-up',
+            type: 'lookup',
+            required: false,
+            order: 50,
+            section_id: visitsBasicSectionId,
+            width: 'half',
+            is_multi: false,
+            show_in_table: false,
+            lookup_model_id: followupsId,
+            lookup_display_field: 'scheduled_datetime',
+            lookup_max_records: 20,
           },
         ],
       },

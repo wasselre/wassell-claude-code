@@ -5,7 +5,7 @@
 # Workflow: Confirmation Completed / إكمال تأكيد الموعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-16
+**Last updated (from DB):** 2026-06-17
 **Workflow id:** `12da04dd-8119-4aeb-a573-ce85864ab657`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated

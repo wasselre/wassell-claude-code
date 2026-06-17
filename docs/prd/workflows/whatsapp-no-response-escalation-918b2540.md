@@ -6,7 +6,7 @@
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
 **Last updated (from DB):** 2026-06-17
-**Workflow id:** `918b2540-1e07-42b9-8988-ddcfa02b9e8a`   ·   **Active:** no
+**Workflow id:** `918b2540-1e07-42b9-8988-ddcfa02b9e8a`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a due date is reached
 **Trigger model:** Follow-ups / المتابعات `followups`

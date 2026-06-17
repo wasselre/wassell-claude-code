@@ -5,7 +5,7 @@
 # Workflow: Follow-ups - Booking Call / المتابعات - إتصال حجز موعد
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-16
+**Last updated (from DB):** 2026-06-17
 **Workflow id:** `d997425a-0c8d-48c4-afef-b5792792cfae`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -13,7 +13,29 @@
 
 ## Logic (branched)
 
-### Branch 1: IF — لم يتم الرد
+### Branch 1: IF — Escalation Call No-Answer -> WhatsApp
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Follow-up Type (`followup_type`) equals "Appointment Booking Call" (`appointment_booking_call`)
+- Escalation Reason (`escalation_reason`) equals "No reply in 5 days" (`whatsapp_no_response_5d`)
+- Actual Follow-up (`actual_datetime`) is not empty
+- Outcome (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
+
+**Actions (run in order):**
+
+**Action 1 — Create Record**
+Create a **Follow-ups / المتابعات** record with:
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
+- Follow-up Type (`followup_type`) ← static value whatsapp_follow_up
+- Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d`
+- Status (`followup_status`) ← static value open
+- WhatsApp Attempt # (`whatsapp_attempt_number`) ← static value 1
+- Escalation Reason (`escalation_reason`) ← static value call_no_answer_recontact
+- Sales Rep (`sales_rep`) ← the trigger record's Sales Rep (`sales_rep`)
+- Previous Follow-up (`previous_followup_id`) ← the trigger record's id
+
+### Branch 2: ELSE IF — لم يتم الرد
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -37,7 +59,7 @@ Update **Clients / العملاء** records where Client ID (`client_id`) = the 
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value لا يوجد رد
 
-### Branch 2: ELSE IF — مهتم
+### Branch 3: ELSE IF — مهتم
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -60,7 +82,7 @@ Update **Clients / العملاء** records where Client ID (`client_id`) = the 
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value مهتم
 
-### Branch 3: ELSE IF — الوقت غير مناسب
+### Branch 4: ELSE IF — الوقت غير مناسب
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -83,7 +105,7 @@ Update **Clients / العملاء** records where Client ID (`client_id`) = the 
 - Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
 - Client Status (`client_status`) ← static value الوقت غير مناسب
 
-### Branch 4: ELSE IF — غير مهتم
+### Branch 5: ELSE IF — غير مهتم
 
 **Conditions:**
 _Match: ALL must pass (AND)_

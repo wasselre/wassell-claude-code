@@ -4,18 +4,18 @@
 
 # Workflows — auto-generated index
 
-**16 workflows.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**18 workflows.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Workflow | Trigger | On model | Active | Branches | Actions | Updated |
 | --- | --- | --- | --- | --- | --- | --- |
 | [1](1-34af4560.md) | update | Clients | no | flat | 2 | 2026-04-26 |
 | [After-Visit Completed](after-visit-completed-e4e0680c.md) | update | Follow-ups | yes | 7 | 11 | 2026-06-17 |
 | [Apology WhatsApp on missed call](apology-whatsapp-on-missed-call-58392e9e.md) | create | Phone Calls | yes | 1 | 1 | 2026-04-27 |
-| [Appointment booked via call](appointment-booked-via-call-4b60ef83.md) | create | Appointments | yes | 1 | 4 | 2026-06-16 |
-| [Confirmation Completed](confirmation-completed-12da04dd.md) | update | Follow-ups | yes | 7 | 14 | 2026-06-16 |
+| [Appointment booked via call](appointment-booked-via-call-4b60ef83.md) | create | Appointments | yes | 1 | 4 | 2026-06-17 |
+| [Confirmation Completed](confirmation-completed-12da04dd.md) | update | Follow-ups | yes | 7 | 14 | 2026-06-17 |
 | [Financing Status Updated](financing-status-updated-fcff0ba0.md) | update | Financing | yes | 3 | 4 | 2026-06-17 |
 | [First Follow-up (Clients - Follow-ups)](first-follow-up-clients-follow-ups-a336e134.md) | create | Clients | yes | 1 | 1 | 2026-06-16 |
-| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 4 | 7 | 2026-06-16 |
+| [Follow-ups - Booking Call](follow-ups-booking-call-d997425a.md) | update | Follow-ups | yes | 5 | 8 | 2026-06-17 |
 | [No-Show Recovery](no-show-recovery-f7864a0d.md) | update | Appointments | yes | 1 | 2 | 2026-06-17 |
 | [Offer Created → Offer Follow-up](offer-created-offer-follow-up-278823ff.md) | create | Offer Prices | yes | 1 | 2 | 2026-06-17 |
 | [Offer Follow-up Completed](offer-follow-up-completed-9966776a.md) | update | Follow-ups | yes | 6 | 10 | 2026-06-17 |
@@ -24,3 +24,5 @@
 | [Targeted Projects](targeted-projects-f9a636dd.md) | update | All Projects | yes | 1 | 2 | 2026-06-11 |
 | [Visit → After-Visit](visit-after-visit-3f2b8499.md) | create | Visits | yes | 1 | 2 | 2026-06-17 |
 | [Welcome new contact via WhatsApp](welcome-new-contact-via-whatsapp-a10fd4c9.md) | create | Contacts | no | 1 | 1 | 2026-06-09 |
+| [WhatsApp No-Response Escalation](whatsapp-no-response-escalation-918b2540.md) | on_due | Follow-ups | yes | 2 | 4 | 2026-06-17 |
+| [WhatsApp Response Completed](whatsapp-response-completed-95bdbe0f.md) | update | Follow-ups | yes | 5 | 8 | 2026-06-17 |
