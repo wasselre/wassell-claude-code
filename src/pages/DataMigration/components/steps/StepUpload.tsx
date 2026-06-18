@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode, type RefObject } from 'react';
+import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { excelFileToCsvTexts, readExcelFile } from '@/lib/excelUtils';
 import {
@@ -7,12 +8,14 @@ import {
   FileText,
   Image as ImageIcon,
   Sparkles,
+  Table,
   X,
   Loader2,
   PlusSquare,
   Building2,
   AlertCircle,
   RotateCcw,
+  Lock,
 } from 'lucide-react';
 import {
   uploadMigrationFile,
@@ -42,14 +45,22 @@ interface StepUploadProps {
   onSourceFiles: (files: MigrationUpload[]) => void;
   status: MigrationStatus | undefined;
   errorMessage: string | null | undefined;
-  /** Excel/CSV + blank-table paths only — AI extraction completes through the
-   * jobRunner (this component may be unmounted by then). */
+  /** Excel/CSV "use as data source" + blank-table paths only — AI extraction
+   * completes through the jobRunner (this component may be unmounted by then). */
   onTable: (table: RawTable, sourceFiles?: MigrationUpload[], extras?: ProjectExtras) => void;
 }
 
 const EXCEL_EXT = /\.(xlsx|xls|csv)$/i;
 const isExcel = (f: File) => EXCEL_EXT.test(f.name) || f.type.includes('sheet') || f.type === 'text/csv';
 const isCsv = (f: File) => /\.csv$/i.test(f.name) || f.type === 'text/csv';
+
+/** A persisted upload that came from a spreadsheet — analyze-Excels are stored
+ * as per-sheet `.csv`, raw CSVs as themselves. Used to split `source_files`
+ * back into the two fields and to render post-reload leftovers under "Excel". */
+const isSpreadsheetUpload = (u: MigrationUpload) =>
+  u.mimeType.includes('csv') ||
+  u.mimeType.includes('sheet') ||
+  EXCEL_EXT.test(u.name);
 
 /** Convert one Excel/CSV File into the File(s) that join the AI extraction
  * set: a .csv passes through as-is; an .xlsx/.xls becomes one CSV file per
@@ -68,17 +79,91 @@ async function excelToAiFiles(f: File): Promise<File[]> {
   );
 }
 
+/** One Excel/CSV file the user added this session, with its original File kept
+ * in memory (needed for the "use as data source" client-side parse) and the
+ * `.csv` upload path(s) it produced in the AI set (so analyze can be undone if
+ * the user flips it to "use as source", and so removal cleans up storage). */
+interface ExcelItem {
+  id: string;
+  name: string;
+  original: File;
+  /** Paths of the CSV(s) this Excel produced in `source_files` (multi-sheet → many). */
+  paths: string[];
+  size: number;
+}
+
+/** A drop zone (documents or excel). Forgiving: the drop/pick handler routes
+ * files by type, so a file dropped in the "wrong" field still lands right. */
+function UploadDropZone({
+  inputRef,
+  accept,
+  icon,
+  title,
+  hint,
+  locked,
+  uploading,
+  onFiles,
+}: {
+  inputRef: RefObject<HTMLInputElement>;
+  accept: string;
+  icon: ReactNode;
+  title: string;
+  hint: string;
+  locked: boolean;
+  uploading: boolean;
+  onFiles: (files: File[]) => void;
+}) {
+  return (
+    <div
+      onDrop={(e) => {
+        e.preventDefault();
+        if (locked) return;
+        onFiles(Array.from(e.dataTransfer.files));
+      }}
+      onDragOver={(e) => e.preventDefault()}
+      onClick={() => !locked && inputRef.current?.click()}
+      className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all ${
+        locked
+          ? 'border-sand/30 bg-charcoal/[0.02] cursor-not-allowed opacity-60'
+          : 'border-sand/50 cursor-pointer hover:border-copper/40 hover:bg-copper/[0.02]'
+      }`}
+    >
+      <div className="w-12 h-12 rounded-2xl bg-copper/8 flex items-center justify-center mx-auto mb-2">
+        {uploading ? <Loader2 size={22} className="text-copper animate-spin" /> : icon}
+      </div>
+      <p className="text-sm font-bold text-charcoal mb-0.5">{title}</p>
+      <p className="text-xs text-charcoal/40">{hint}</p>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        accept={accept}
+        className="hidden"
+        onChange={(e) => {
+          onFiles(Array.from(e.target.files ?? []));
+          e.target.value = '';
+        }}
+      />
+    </div>
+  );
+}
+
 /**
- * Step "upload" — two entry modes from one drop zone:
- *  (a) clean Excel/CSV → parsed client-side (no AI) → straight to review
- *      (the "start at step 5" path the user asked for).
- *  (b) PDF / screenshots / images / messy Excel → uploaded to storage, then
- *      AI-extracted by the module jobRunner — the job keeps running if the
- *      user opens another migration, and any number of migrations can extract
- *      concurrently. Excel joins this path as per-sheet CSV text.
- * An Excel-only drop asks which mode you want (direct table vs AI); Excel
- * mixed with PDFs/images goes to AI extraction together with them.
- * Also "start with a blank table" for fully manual entry.
+ * Step "upload" — TWO explicit fields so Excel is never silently forced into
+ * one behavior (the old single drop zone hijacked any Excel mixed with other
+ * files into AI extraction, and an Excel-only drop into "use directly"):
+ *
+ *  1. Documents (PDF / screenshots / images) → always AI-extracted by the
+ *     module jobRunner. The job keeps running if the user opens another
+ *     migration, and any number of migrations can extract concurrently.
+ *  2. Excel / CSV → each file gets a per-file choice (default "Analyze with AI",
+ *     like every other file; or "Use as data source" — parsed client-side,
+ *     straight to review, no AI). The two choices are mutually exclusive at the
+ *     step level (block-mixing): "use as data source" is only available when the
+ *     Excel is the SOLE file, and selecting it locks the drop zones.
+ *
+ * Both drop zones are forgiving — a file dropped in the "wrong" one is routed by
+ * type. Also "start with a blank table" for fully manual entry.
  */
 export default function StepUpload({
   isAr,
@@ -92,49 +177,61 @@ export default function StepUpload({
 }: StepUploadProps) {
   const addToast = useAppStore((s) => s.addToast);
   const job = useMigrationJobs((s) => s.jobs[recordId]);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const docRef = useRef<HTMLInputElement>(null);
+  const excelRef = useRef<HTMLInputElement>(null);
   const uploads = sourceFiles ?? [];
-  const [busy, setBusy] = useState<'idle' | 'uploading'>('idle');
-  // An Excel-only drop with nothing uploaded yet → ask the user which mode
-  // they want (use the table directly vs AI extraction) before doing anything.
-  const [pendingExcel, setPendingExcel] = useState<File[] | null>(null);
+  const [busy, setBusy] = useState<'idle' | 'uploading' | 'opening'>('idle');
+  // Excel/CSV files added this session — originals held in memory for the
+  // "use as data source" path. (A reload drops these; their CSVs persist in
+  // source_files and render below as plain analyze rows — no data lost.)
+  const [excelItems, setExcelItems] = useState<ExcelItem[]>([]);
+  // The one Excel the user chose to "use as data source" (block-mixing → at
+  // most one, and only when it's the sole file). null = everything is analyzed.
+  const [sourceIntentId, setSourceIntentId] = useState<string | null>(null);
   // Projects target → extraction returns ONE project row (no unit table) plus
   // the Arabic marketing document for the content writers.
   const projectMode = isProjectProfileTarget(model);
 
-  /** Fast path: parse the first Excel client-side → straight to review (no AI). */
-  const useExcelDirectly = async (excels: File[]) => {
-    setPendingExcel(null);
-    try {
-      const result = await readExcelFile(excels[0]!);
-      if (excels.length > 1) {
-        addToast(
-          isAr
-            ? `تم استخدام "${excels[0]!.name}" فقط. للجداول المتعددة استخدم الاستخراج بالذكاء.`
-            : `Used only "${excels[0]!.name}". For multiple sheets, use AI extraction.`,
-          'info',
-        );
-      }
-      onTable({ headers: result.headers, rows: result.rows, source: 'excel_upload' });
-    } catch {
-      addToast(isAr ? 'تعذّرت قراءة الملف' : 'Could not read the file', 'error');
-    }
-  };
+  // Split the persisted AI set back into the two fields. In-session excels are
+  // tracked separately (with their toggle); leftover spreadsheet uploads not
+  // claimed by an ExcelItem are post-reload survivors shown as plain rows.
+  const docUploads = uploads.filter((u) => !isSpreadsheetUpload(u));
+  const coveredPaths = new Set(excelItems.flatMap((i) => i.paths));
+  const leftoverExcel = uploads.filter((u) => isSpreadsheetUpload(u) && !coveredPaths.has(u.path));
+  const locked = sourceIntentId !== null;
+  // "Use as data source" requires this Excel to be the only thing in the step.
+  const soleExcel = (item: ExcelItem) =>
+    docUploads.length === 0 &&
+    leftoverExcel.length === 0 &&
+    excelItems.length === 1 &&
+    excelItems[0]!.id === item.id;
 
-  /** Upload a mixed batch into the AI extraction set — Excel converted to
-   * per-sheet CSV text so the model can read it like a PDF. */
-  const addToAiSet = async (files: File[]) => {
-    setPendingExcel(null);
+  /** Upload a mixed batch into the right field by type. Documents go to the AI
+   * set as-is; Excel/CSV is converted to per-sheet CSV (so the model can read
+   * it like a PDF) and tracked as an ExcelItem with its analyze choice. */
+  const addFiles = async (files: File[]) => {
+    if (locked || busy !== 'idle' || files.length === 0) return;
+    const excels = files.filter(isExcel);
+    const docs = files.filter((f) => !isExcel(f));
     setBusy('uploading');
     try {
-      const added: MigrationUpload[] = [];
-      for (const f of files) {
-        const toUpload = isExcel(f) ? await excelToAiFiles(f) : [f];
-        for (const u of toUpload) {
-          added.push(await uploadMigrationFile(recordId, u));
-        }
+      const newUploads: MigrationUpload[] = [];
+      for (const f of docs) {
+        newUploads.push(await uploadMigrationFile(recordId, f));
       }
-      onSourceFiles([...uploads, ...added]);
+      const newItems: ExcelItem[] = [];
+      for (const f of excels) {
+        const csvs = await excelToAiFiles(f);
+        const paths: string[] = [];
+        for (const c of csvs) {
+          const up = await uploadMigrationFile(recordId, c);
+          newUploads.push(up);
+          paths.push(up.path);
+        }
+        newItems.push({ id: uuid(), name: f.name, original: f, paths, size: f.size });
+      }
+      if (newUploads.length) onSourceFiles([...uploads, ...newUploads]);
+      if (newItems.length) setExcelItems((prev) => [...prev, ...newItems]);
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     } finally {
@@ -142,18 +239,50 @@ export default function StepUpload({
     }
   };
 
-  const handleFiles = async (fileList: FileList | null) => {
-    if (!fileList || fileList.length === 0) return;
-    const files = Array.from(fileList);
-    const excels = files.filter(isExcel);
-
-    // Excel/CSV only, nothing uploaded yet → let the user pick the mode.
-    // (Already in AI mode — files uploaded — Excel just joins the AI set.)
-    if (excels.length === files.length && uploads.length === 0) {
-      setPendingExcel(excels);
-      return;
+  /** Terminal action for the chosen "use as data source" Excel: parse it
+   * client-side → straight to review (no AI). Removes its CSV(s) from the AI
+   * set first, since this sheet IS the table — it won't be analyzed. */
+  const useAsSource = async () => {
+    const item = excelItems.find((i) => i.id === sourceIntentId);
+    if (!item) return;
+    setBusy('opening');
+    try {
+      const result = await readExcelFile(item.original);
+      if (item.paths.length > 1) {
+        addToast(
+          isAr
+            ? 'يحتوي الملف على عدة أوراق — تم استخدام الورقة الأولى فقط. للبقية استخدم الاستخراج بالذكاء.'
+            : 'Multi-sheet file — used the first sheet only. For the rest, use AI extraction.',
+          'info',
+        );
+      }
+      // Delete this Excel's CSV(s) from the bucket — it's the source now, not
+      // analyzed. (No onSourceFiles call: onTable below passes no sourceFiles,
+      // which clears source_files in one patch — a second patch here would risk
+      // the version-mismatch double-save the wizard was bitten by.)
+      void Promise.all(
+        item.paths.map((p) =>
+          // Orphan left in the bucket on failure — not worth a toast; a GC
+          // sweep reclaims it. (Same posture as removeUpload below.)
+          deleteMigrationFile(p).catch(() => undefined),
+        ),
+      );
+      // Navigates to review_raw (clearing source_files) → this component
+      // unmounts, so no busy reset.
+      onTable({ headers: result.headers, rows: result.rows, source: 'excel_upload' });
+    } catch {
+      addToast(isAr ? 'تعذّرت قراءة الملف' : 'Could not read the file', 'error');
+      setBusy('idle');
     }
-    await addToAiSet(files);
+  };
+
+  const removeExcelItem = async (item: ExcelItem) => {
+    if (sourceIntentId === item.id) setSourceIntentId(null);
+    setExcelItems((prev) => prev.filter((i) => i.id !== item.id));
+    onSourceFiles(uploads.filter((u) => !item.paths.includes(u.path)));
+    await Promise.all(
+      item.paths.map((p) => deleteMigrationFile(p).catch(() => undefined)),
+    );
   };
 
   const removeUpload = async (u: MigrationUpload) => {
@@ -253,146 +382,213 @@ export default function StepUpload({
           </div>
         </div>
       )}
-      <div
-        onDrop={(e) => {
-          e.preventDefault();
-          void handleFiles(e.dataTransfer.files);
-        }}
-        onDragOver={(e) => e.preventDefault()}
-        onClick={() => fileRef.current?.click()}
-        className="border-2 border-dashed border-sand/50 rounded-2xl p-10 text-center cursor-pointer hover:border-copper/40 hover:bg-copper/[0.02] transition-all"
-      >
-        <div className="w-14 h-14 rounded-2xl bg-copper/8 flex items-center justify-center mx-auto mb-3">
-          {busy === 'uploading' ? (
-            <Loader2 size={26} className="text-copper animate-spin" />
-          ) : (
-            <Upload size={26} className="text-copper" />
-          )}
-        </div>
-        <p className="text-base font-bold text-charcoal mb-1">
-          {isAr ? 'اسحب الملفات هنا أو انقر للرفع' : 'Drag files here or click to upload'}
-        </p>
-        <p className="text-sm text-charcoal/40">
-          {isAr ? 'Excel، CSV، PDF، صور — بأي صيغة' : 'Excel, CSV, PDF, images — any format'}
-        </p>
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept=".xlsx,.xls,.csv,.pdf,image/*"
-          className="hidden"
-          onChange={(e) => void handleFiles(e.target.files)}
-        />
+
+      {/* FIELD 1 — Documents (everything except Excel) → always AI-extracted. */}
+      <div className="mb-1.5 flex items-center gap-1.5">
+        <span className="text-xs font-bold text-charcoal/70 uppercase tracking-wide">
+          {isAr ? '١. المستندات (غير Excel)' : '1. Documents (non-Excel)'}
+        </span>
+        <span className="text-[11px] text-charcoal/40">
+          {isAr ? '— تُحلَّل بالذكاء دائمًا' : '— always analyzed with AI'}
+        </span>
       </div>
-
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-charcoal/50">
-        <div className="flex items-center gap-1.5">
-          <FileSpreadsheet size={14} className="text-copper/70" />
-          {isAr ? 'Excel/CSV → مباشرة أو بالذكاء' : 'Excel/CSV → direct or AI'}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <ImageIcon size={14} className="text-copper/70" />
-          {isAr ? 'PDF/صور → استخراج ذكي' : 'PDF/images → AI extraction'}
-        </div>
-      </div>
-
-      {/* Excel-only drop → choose the mode before anything happens. */}
-      {pendingExcel && (
-        <div className="mt-5 p-4 rounded-xl border border-copper/30 bg-copper/[0.03]">
-          <div className="flex items-start gap-2">
-            <FileSpreadsheet size={18} className="text-copper shrink-0 mt-0.5" />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold text-charcoal">
-                {isAr ? 'كيف تريد قراءة هذا الملف؟' : 'How should this file be read?'}
-              </div>
-              <div className="text-xs text-charcoal/50 truncate">
-                {pendingExcel.map((f) => f.name).join('، ')}
-              </div>
-            </div>
-            <button
-              onClick={() => setPendingExcel(null)}
-              className="text-charcoal/30 hover:text-red-500 transition-colors shrink-0"
+      <UploadDropZone
+        inputRef={docRef}
+        accept=".pdf,image/*"
+        icon={<Upload size={22} className="text-copper" />}
+        title={isAr ? 'اسحب المستندات هنا أو انقر' : 'Drag documents here or click'}
+        hint={isAr ? 'PDF، صور، لقطات شاشة' : 'PDF, images, screenshots'}
+        locked={locked}
+        uploading={busy === 'uploading'}
+        onFiles={(files) => void addFiles(files)}
+      />
+      {docUploads.length > 0 && (
+        <div className="mt-2.5 space-y-1.5">
+          {docUploads.map((u) => (
+            <div
+              key={u.path}
+              className="flex items-center gap-2 p-2 rounded-lg border border-sand/30 bg-white"
             >
-              <X size={15} />
-            </button>
-          </div>
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button
-              onClick={() => void addToAiSet(pendingExcel)}
-              disabled={busy !== 'idle'}
-              className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors"
-            >
-              <span className="flex items-center gap-1.5 text-sm font-medium">
-                <Sparkles size={15} />
-                {isAr ? 'استخراج بالذكاء' : 'Extract with AI'}
-              </span>
-              <span className="text-[11px] opacity-80">
-                {isAr ? 'لملف فوضوي أو متعدد الأوراق — يُقرأ مثل PDF' : 'Messy or multi-sheet — read like a PDF'}
-              </span>
-            </button>
-            <button
-              onClick={() => void useExcelDirectly(pendingExcel)}
-              className="flex flex-col items-center gap-1 px-3 py-2.5 rounded-lg border border-sand/50 text-charcoal hover:bg-cream transition-colors"
-            >
-              <span className="flex items-center gap-1.5 text-sm font-medium">
-                <FileSpreadsheet size={15} />
-                {isAr ? 'استخدام الجدول مباشرة' : 'Use table directly'}
-              </span>
-              <span className="text-[11px] text-charcoal/50">
-                {isAr ? 'لجدول نظيف — بدون ذكاء، فورًا' : 'Clean sheet — no AI, instant'}
-              </span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Uploaded (AI) files awaiting extraction */}
-      {uploads.length > 0 && (
-        <div className="mt-5">
-          <div className="text-sm font-bold text-charcoal mb-2">
-            {isAr ? `${uploads.length} ملف للاستخراج` : `${uploads.length} file(s) to extract`}
-          </div>
-          <div className="space-y-1.5">
-            {uploads.map((u) => (
-              <div
-                key={u.path}
-                className="flex items-center gap-2 p-2 rounded-lg border border-sand/30 bg-white"
-              >
-                {u.mimeType.includes('pdf') ? (
-                  <FileText size={16} className="text-copper shrink-0" />
-                ) : u.mimeType.includes('csv') || /\.csv$/i.test(u.name) ? (
-                  <FileSpreadsheet size={16} className="text-copper shrink-0" />
-                ) : (
-                  <ImageIcon size={16} className="text-copper shrink-0" />
-                )}
-                <span className="text-sm text-charcoal truncate flex-1">{u.name}</span>
-                <span className="text-xs text-charcoal/40">{(u.size / 1024).toFixed(0)} KB</span>
+              {u.mimeType.includes('pdf') ? (
+                <FileText size={16} className="text-copper shrink-0" />
+              ) : (
+                <ImageIcon size={16} className="text-copper shrink-0" />
+              )}
+              <span className="text-sm text-charcoal truncate flex-1">{u.name}</span>
+              <span className="text-xs text-charcoal/40">{(u.size / 1024).toFixed(0)} KB</span>
+              {!locked && (
                 <button
                   onClick={() => void removeUpload(u)}
                   className="text-charcoal/30 hover:text-red-500 transition-colors"
                 >
                   <X size={14} />
                 </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* FIELD 2 — Excel / CSV → per-file choice: analyze vs use as data source. */}
+      <div className="mt-5 mb-1.5 flex items-center gap-1.5">
+        <span className="text-xs font-bold text-charcoal/70 uppercase tracking-wide">
+          {isAr ? '٢. ملفات Excel / CSV' : '2. Excel / CSV'}
+        </span>
+        <span className="text-[11px] text-charcoal/40">
+          {isAr ? '— اختر: تحليل أم مصدر للبيانات' : '— choose: analyze or data source'}
+        </span>
+      </div>
+      <UploadDropZone
+        inputRef={excelRef}
+        accept=".xlsx,.xls,.csv"
+        icon={<FileSpreadsheet size={22} className="text-copper" />}
+        title={isAr ? 'اسحب ملف Excel هنا أو انقر' : 'Drag an Excel file here or click'}
+        hint={isAr ? 'xlsx، xls، csv' : 'xlsx, xls, csv'}
+        locked={locked}
+        uploading={busy === 'uploading'}
+        onFiles={(files) => void addFiles(files)}
+      />
+
+      {/* In-session Excel files — each with its analyze / use-as-source choice. */}
+      {excelItems.length > 0 && (
+        <div className="mt-2.5 space-y-2">
+          {excelItems.map((item) => {
+            const isSource = sourceIntentId === item.id;
+            const canSource = isSource || soleExcel(item);
+            return (
+              <div
+                key={item.id}
+                className={`p-2.5 rounded-lg border bg-white ${
+                  isSource ? 'border-copper/50 ring-1 ring-copper/20' : 'border-sand/30'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <FileSpreadsheet size={16} className="text-copper shrink-0" />
+                  <span className="text-sm text-charcoal truncate flex-1">{item.name}</span>
+                  <span className="text-xs text-charcoal/40">{(item.size / 1024).toFixed(0)} KB</span>
+                  <button
+                    onClick={() => void removeExcelItem(item)}
+                    className="text-charcoal/30 hover:text-red-500 transition-colors"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                {/* The choice — default "Analyze with AI". "Use as data source"
+                    is disabled unless this Excel is the only file (block-mixing). */}
+                <div className="mt-2 inline-flex rounded-lg border border-sand/40 overflow-hidden text-xs">
+                  <button
+                    onClick={() => setSourceIntentId(null)}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 transition-colors ${
+                      isSource
+                        ? 'text-charcoal/60 hover:bg-cream'
+                        : 'bg-copper text-white'
+                    }`}
+                  >
+                    <Sparkles size={13} />
+                    {isAr ? 'تحليل بالذكاء' : 'Analyze with AI'}
+                  </button>
+                  <button
+                    onClick={() => canSource && setSourceIntentId(item.id)}
+                    disabled={!canSource}
+                    title={
+                      canSource
+                        ? undefined
+                        : isAr
+                          ? 'متاح فقط عندما يكون هذا الملف الوحيد — أزل بقية الملفات.'
+                          : 'Available only when this is the only file — remove the others.'
+                    }
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 border-s border-sand/40 transition-colors ${
+                      isSource
+                        ? 'bg-copper text-white'
+                        : canSource
+                          ? 'text-charcoal/60 hover:bg-cream'
+                          : 'text-charcoal/25 cursor-not-allowed'
+                    }`}
+                  >
+                    <Table size={13} />
+                    {isAr ? 'استخدامه كمصدر للبيانات' : 'Use as data source'}
+                  </button>
+                </div>
+                {isSource && (
+                  <p className="mt-1.5 text-[11px] text-charcoal/50">
+                    {isAr
+                      ? 'سيُستخدم هذا الجدول كما هو — بدون ذكاء، مباشرة إلى المراجعة.'
+                      : 'This sheet will be used as-is — no AI, straight to review.'}
+                  </p>
+                )}
               </div>
-            ))}
-          </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Post-reload survivors — spreadsheet uploads with no in-memory original.
+          They stay in the AI (analyze) set; "use as source" needs a re-drop. */}
+      {leftoverExcel.length > 0 && (
+        <div className="mt-2.5 space-y-1.5">
+          {leftoverExcel.map((u) => (
+            <div
+              key={u.path}
+              className="flex items-center gap-2 p-2 rounded-lg border border-sand/30 bg-white"
+            >
+              <FileSpreadsheet size={16} className="text-copper shrink-0" />
+              <span className="text-sm text-charcoal truncate flex-1">{u.name}</span>
+              <span className="text-[10px] text-charcoal/40 px-1.5 py-0.5 rounded bg-cream">
+                {isAr ? 'تحليل' : 'analyze'}
+              </span>
+              <span className="text-xs text-charcoal/40">{(u.size / 1024).toFixed(0)} KB</span>
+              {!locked && (
+                <button
+                  onClick={() => void removeUpload(u)}
+                  className="text-charcoal/30 hover:text-red-500 transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Block-mixing note — a chosen data source locks the rest of the step. */}
+      {locked && (
+        <div className="mt-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-copper/[0.04] border border-copper/20 text-xs text-charcoal/60">
+          <Lock size={13} className="text-copper shrink-0 mt-0.5" />
+          {isAr
+            ? 'هذا الملف هو مصدر بياناتك. أزل اختياره لإضافة ملفات أخرى أو تحليلها.'
+            : 'This file is your data source. Clear its choice to add or analyze other files.'}
+        </div>
+      )}
+
+      {/* Primary action — "use this sheet" (source) or "extract" (analyze set). */}
+      {locked ? (
+        <button
+          onClick={() => void useAsSource()}
+          disabled={busy !== 'idle'}
+          className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors font-medium"
+        >
+          {busy === 'opening' ? <Loader2 size={16} className="animate-spin" /> : <Table size={16} />}
+          {isAr ? 'استخدام هذا الجدول' : 'Use this sheet'}
+        </button>
+      ) : (
+        uploads.length > 0 && (
           <button
             onClick={() => void startExtractionJob(recordId)}
             disabled={busy !== 'idle'}
-            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors font-medium"
+            className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors font-medium"
           >
             <Sparkles size={16} />
             {status === 'failed'
               ? isAr ? 'إعادة الاستخراج' : 'Retry extraction'
               : isAr ? 'استخراج البيانات' : 'Extract data'}
           </button>
-        </div>
+        )
       )}
 
       {/* Start blank */}
       <button
         onClick={startBlank}
-        className="mt-5 w-full flex items-center justify-center gap-2 text-sm text-charcoal/60 hover:text-copper transition-colors"
+        className="mt-4 w-full flex items-center justify-center gap-2 text-sm text-charcoal/60 hover:text-copper transition-colors"
       >
         <PlusSquare size={15} />
         {isAr ? 'أو ابدأ بجدول فارغ' : 'Or start with a blank table'}
