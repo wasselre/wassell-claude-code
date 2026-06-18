@@ -21,6 +21,58 @@ interface Props {
   onChange: (next: ColumnStandardization) => void;
 }
 
+/**
+ * Editable label for a "create new" option/record. CRITICAL: it holds its own
+ * LOCAL text state and only commits (persists) on a short debounce + on blur —
+ * NOT on every keystroke. The wizard fire-and-forget-saves the whole record on
+ * each decision change, and a realtime echo of an earlier save would otherwise
+ * snap a controlled input back to a stale value mid-typing ("it deletes what I
+ * wrote"). While the field is focused we never overwrite the local text from the
+ * incoming prop, so an out-of-order echo can't clobber the user.
+ */
+function NewLabelInput({
+  initial,
+  isAr,
+  onCommit,
+}: {
+  initial: string;
+  isAr: boolean;
+  onCommit: (value: string) => void;
+}) {
+  const [text, setText] = useState(initial);
+  const focused = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onCommitRef = useRef(onCommit);
+  onCommitRef.current = onCommit;
+
+  // Adopt an externally-changed value ONLY when the user isn't actively typing.
+  useEffect(() => {
+    if (!focused.current) setText(initial);
+  }, [initial]);
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+
+  const schedule = (v: string) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => onCommitRef.current(v), 500);
+  };
+
+  return (
+    <input
+      type="text"
+      value={text}
+      onFocus={() => { focused.current = true; }}
+      onChange={(e) => { setText(e.target.value); schedule(e.target.value); }}
+      onBlur={() => {
+        focused.current = false;
+        if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+        onCommitRef.current(text);
+      }}
+      className="form-input text-sm py-1 w-full border-amber-300 bg-amber-50/40"
+      placeholder={isAr ? 'اسم الجديد' : 'New value label'}
+    />
+  );
+}
+
 /** Searchable option selector for dropdown / multi-select columns — mirrors the
  * LookupCombobox UX so options and records feel the same to standardize. */
 function OptionPicker({
@@ -212,18 +264,18 @@ export default function ValueStandardizationColumn({
                     />
                   )}
 
-                  {/* Editable label for the new option/record being created */}
+                  {/* Editable label for the new option/record being created.
+                      Locally controlled + commit-on-pause/blur so realtime echoes
+                      can't wipe the user's typing. */}
                   {isNew && (
-                    <input
-                      type="text"
-                      value={d.newLabel ?? v.raw}
-                      onChange={(e) =>
+                    <NewLabelInput
+                      initial={d.newLabel ?? v.raw}
+                      isAr={isAr}
+                      onCommit={(label) =>
                         setDecision(i, isLookup
-                          ? { kind: 'create_record', newLabel: e.target.value }
-                          : { kind: 'create_option', newLabel: e.target.value })
+                          ? { kind: 'create_record', newLabel: label }
+                          : { kind: 'create_option', newLabel: label })
                       }
-                      className="form-input text-sm py-1 w-full border-amber-300 bg-amber-50/40"
-                      placeholder={isAr ? 'اسم الجديد' : 'New value label'}
                     />
                   )}
 
