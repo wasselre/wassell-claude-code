@@ -340,6 +340,17 @@ export interface ModelField {
   is_rollup?: boolean;
   rollup_kind?: OurProjectsComputedKind;
   read_only?: boolean;
+  // Conditional units-derived field (distinct from the unconditional
+  // `is_rollup` aggregates above). When `auto_from_units` is true the field is
+  // derived from this project's linked units ONLY while at least one unit is
+  // linked — the DB trigger (`recalc_project_rollups_data`) fills the distinct
+  // set of the units' values and the form renders the field read-only. With NO
+  // linked units the trigger leaves the value untouched and the form keeps it
+  // manually editable, so the user-entered value stands in until units exist.
+  // Used by all_projects.unit_types (derived from units.unit_type). Unlike
+  // `is_rollup` this does NOT force read-only everywhere — read-only is decided
+  // per-record in SectionBlock based on whether the project has linked units.
+  auto_from_units?: boolean;
 }
 
 // ── Computed-field rollup kinds ────────────────────────────────────────

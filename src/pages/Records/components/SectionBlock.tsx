@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { Shield, Link2, ChevronDown } from 'lucide-react';
 import DynamicField from './DynamicField';
@@ -99,6 +99,41 @@ export default function SectionBlock({
   const { language, records, models } = useAppStore();
   const isAr = language === 'ar';
   const [collapsed, setCollapsed] = useState<boolean>(!!section.default_collapsed);
+
+  // Conditional units-derived fields (e.g. all_projects.unit_types) render
+  // read-only whenever this project has linked units — the DB trigger
+  // (`recalc_project_rollups_data`) derives their value from the units, so
+  // manual editing is disabled to avoid a value the next save would overwrite.
+  // With NO linked units the field stays manually editable. Only computed when
+  // a field on this section actually opts in via `auto_from_units`.
+  const projectHasLinkedUnits = useMemo(() => {
+    if (!section.fields.some((f) => f.auto_from_units)) return false;
+    // 1) Authoritative: the stored units-count rollup on this record. It is
+    //    present on every project row (the rollup trigger maintains it) and is
+    //    unaffected by the viewer's unit-level RLS.
+    const countField = currentModel.schema.sections
+      .flatMap((s) => s.fields)
+      .find((f) => f.rollup_kind === 'units_count');
+    if (countField) {
+      const n = Number(formData[countField.name]);
+      if (Number.isFinite(n) && n > 0) return true;
+    }
+    // 2) Fallback for units linked in this session but not yet rolled up:
+    //    count units whose project lookup points at this record.
+    if (!recordId) return false;
+    const unitsModel = models.find((m) => m.name === 'units');
+    if (!unitsModel) return false;
+    const lookupFields = unitsModel.schema.sections
+      .flatMap((s) => s.fields)
+      .filter((f) => f.type === 'lookup' && f.lookup_model_id === currentModel.id);
+    if (lookupFields.length === 0) return false;
+    return (records[unitsModel.id] ?? []).some((r) =>
+      lookupFields.some((f) => {
+        const v = (r.data as Record<string, unknown>)[f.name];
+        return Array.isArray(v) ? v.includes(recordId) : v === recordId;
+      }),
+    );
+  }, [section.fields, currentModel, formData, models, records, recordId]);
 
   const header = (
     <button
@@ -286,7 +321,10 @@ export default function SectionBlock({
             // the mirror system uses for non-editable mirror fields.
             const fieldPerm = getFieldPermission ? getFieldPermission(field) : 'editable';
             if (fieldPerm === 'hidden') return [];
-            const renderReadOnly = !!formReadOnly || fieldPerm === 'readonly';
+            const renderReadOnly =
+              !!formReadOnly ||
+              fieldPerm === 'readonly' ||
+              (!!field.auto_from_units && projectHasLinkedUnits);
             return [(
               <div key={field.id} className={widthClass(field.width)}>
                 {renderReadOnly ? (
