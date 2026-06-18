@@ -47,7 +47,18 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
       data: { ...base.data, ...partial },
       updated_at: new Date().toISOString(),
     };
-    void saveRecord(next);
+    // expectedVersion: null — opt OUT of optimistic concurrency for the wizard.
+    // A migration is ONE record edited by a SINGLE tab (the decks posture), and
+    // the wizard fire-and-forget-saves the whole record on EVERY step/value
+    // change. Going through the version check made the local `version` drift
+    // behind the server (realtime echo-dedup suppresses the tab's own bumps),
+    // so saves started returning version_mismatch — which DROPS the write (not
+    // queued), trips the circuit breaker, and makes the 2026-06-16
+    // reload-on-conflict overwrite the in-progress wizard data with the stale
+    // server copy. Net effect: work done after the first conflict never reached
+    // the DB, so a refresh "lost"/"deleted" the migration. With null the RPC
+    // skips the check, saves always land, and a refresh resumes exactly here.
+    void saveRecord(next, { expectedVersion: null });
   };
 
   if (!record) {

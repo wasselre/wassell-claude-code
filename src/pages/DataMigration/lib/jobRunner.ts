@@ -97,7 +97,12 @@ function patchMigrationRecord(recordId: string, partial: Partial<MigrationData>)
         data: { ...fresh.record.data, ...partial },
         updated_at: new Date().toISOString(),
       };
-      await useAppStore.getState().saveRecord(rec);
+      // expectedVersion: null — same single-record/single-writer posture as the
+      // wizard's `patch` (see MigrationWizard.tsx). The job-driven status flips
+      // race the wizard's own patches on the SAME record; routing them through
+      // the optimistic-version check is what wedged the local version behind the
+      // server and triggered the conflict→breaker→reload-overwrite data loss.
+      await useAppStore.getState().saveRecord(rec, { expectedVersion: null });
     })
     .catch((err: unknown) => {
       // saveRecord reports + queues its own failures and resolves with a
