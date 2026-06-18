@@ -710,9 +710,12 @@ export async function runDiscover(
   const call = (model: string) =>
     client.messages.create({
       model,
-      // Identifiers-only, but a few-hundred-unit index still needs room. Generous
-      // budget + the loud truncation guard below.
-      max_tokens: 32000,
+      // Identifiers-only, so this is plenty for a few-hundred-unit index. Capped
+      // at 16000 (not higher) because the SDK refuses a NON-streaming request
+      // whose max_tokens implies a >10-min worst case ("Streaming is required…")
+      // — 16000 is the proven non-streaming ceiling used by runExtract/fuse here.
+      // A larger index that overruns this hits the loud truncation guard below.
+      max_tokens: 16000,
       system: DISCOVER_SYSTEM + langNote,
       tools: [DISCOVER_TOOL],
       tool_choice: { type: 'tool', name: 'emit_unit_index' },
