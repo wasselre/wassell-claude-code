@@ -13,6 +13,13 @@ import PromptLibraryButton from './PromptLibraryButton';
 
 const MODEL_STORAGE_KEY = 'wassell_image_chat_model';
 
+/** Server-side cap on the prompt length (api/image-chat/generate.ts). We mirror
+ *  it here so an over-long prompt is caught BEFORE the optimistic textarea reset
+ *  in handleSend — otherwise the server's 400 lands after the box was already
+ *  cleared and the user loses everything they typed. Keep in sync with the
+ *  server's `userPrompt.length > 4000` guard. */
+const MAX_PROMPT_CHARS = 4000;
+
 function readPersistedModel(): ChatModelId {
   try {
     const raw = localStorage.getItem(MODEL_STORAGE_KEY);
@@ -313,6 +320,17 @@ export default function Composer({
     if (uploading || atCapacity) return;
     const trimmed = prompt.trim();
     if (!trimmed && attachments.length === 0) return;
+    if (trimmed.length > MAX_PROMPT_CHARS) {
+      // Notify and bail BEFORE the optimistic reset below — keep the user's
+      // text intact so they can trim it instead of re-typing it all.
+      addToast(
+        isAr
+          ? `النص طويل جدًا (${trimmed.length.toLocaleString('ar-SA')} حرف). الحد الأقصى ${MAX_PROMPT_CHARS.toLocaleString('ar-SA')} حرف — اختصره ثم أرسِل.`
+          : `Prompt is too long (${trimmed.length.toLocaleString()} chars). Max is ${MAX_PROMPT_CHARS.toLocaleString()} — shorten it and send.`,
+        'error',
+      );
+      return;
+    }
     onSend({
       prompt: trimmed,
       attachmentUrls: attachments.map((a) => a.value),
@@ -338,7 +356,13 @@ export default function Composer({
     }
   }
 
-  const canSend = !uploading && !atCapacity && (prompt.trim().length > 0 || attachments.length > 0);
+  const promptLen = prompt.trim().length;
+  const overLimit = promptLen > MAX_PROMPT_CHARS;
+  // Surface the counter only as the user approaches the cap, so it isn't noise
+  // for normal-length prompts.
+  const nearLimit = promptLen > MAX_PROMPT_CHARS - 200;
+  const canSend =
+    !uploading && !atCapacity && !overLimit && (promptLen > 0 || attachments.length > 0);
 
   return (
     <div className="border-t border-sand/20 bg-cream/30 p-3 space-y-2">
@@ -393,6 +417,17 @@ export default function Composer({
         />
         <PromptLibraryButton snippets={snippetRecords} onPick={handlePickSnippet} />
       </div>
+
+      {/* Character counter — appears only near/over the cap. Red when over,
+          which is when Send is disabled and a send attempt would be blocked. */}
+      {nearLimit && (
+        <div
+          className={`text-[11px] text-end ${overLimit ? 'text-red-500 font-medium' : 'text-charcoal/50'}`}
+          dir="ltr"
+        >
+          {promptLen.toLocaleString()} / {MAX_PROMPT_CHARS.toLocaleString()}
+        </div>
+      )}
 
       {/* Controls row */}
       <div className="flex flex-wrap items-center gap-2">

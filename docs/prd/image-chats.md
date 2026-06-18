@@ -1,7 +1,7 @@
 # PRD: Image Chats → Creative Studio
 
 **Status:** Live
-**Last updated:** 2026-06-09 (v3 — rebuilt as a Creative **Workspace** (Higgsfield-style), not a chat: Generations + a first-class media-asset library; v3.2 — full-screen viewer redesigned: covers the app sidebar, LEFT = collapsible Branding/Design prompt sections, RIGHT = actions; the Media Library opens the same viewer)
+**Last updated:** 2026-06-18 (composer prompt-length guard: 4,000-char cap enforced client-side BEFORE the optimistic textarea reset — over-long prompts now toast + keep the text instead of clearing it, plus a live character counter; v3 — rebuilt as a Creative **Workspace** (Higgsfield-style), not a chat: Generations + a first-class media-asset library; v3.2 — full-screen viewer redesigned: covers the app sidebar, LEFT = collapsible Branding/Design prompt sections, RIGHT = actions; the Media Library opens the same viewer)
 **Related PRDs:** [files.md](files.md), [record-management.md](record-management.md), [marketing-operations.md](marketing-operations.md), [templates-library.md](templates-library.md), [navigation-layout.md](navigation-layout.md)
 
 ## What it is (in plain English) — v3 (Creative Workspace)
@@ -103,7 +103,7 @@ Only `image`, `multi_image`, `file`, `multi_file`, `attachment` are valid target
 - The whole feature is wired through a single system model: `image_chats`. Each record = one conversation. Messages live inline in `record.data.messages` (JSONB array). The list / detail routes are overridden in `App.tsx` to render `ImageChatsPage` instead of the generic record table/form.
 - The right-pane composer is **bottom-pinned** and persistently visible. Its controls:
   1. **Attachment row** — every image about to be sent this turn, removable individually. Preset / snippet auto-attaches get a small ✦ badge.
-  2. **Textarea** + prompt-library button (📚).
+  2. **Textarea** + prompt-library button (📚). Prompts are capped at **4,000 characters** (mirrors the server guard). As the user nears the cap a live `current / 4,000` counter appears (red once over); Send disables and a Send attempt is **blocked with a non-destructive toast that preserves the typed text** — the textarea is never auto-cleared on a too-long prompt.
   3. **Aspect-ratio chips** — 1:1, 9:16, 16:9, 4:3, 3:4. Remembered on the record (`last_aspect_ratio`).
   4. **Brand preset dropdown** — `[Brand: <name> ▼]`. "None" = raw prompt. "Manage presets…" routes to `/model/image_presets`.
   5. **Model dropdown** — Nano Banana 2 (default) vs GPT Image 2. Per-user-global preference in `localStorage` (`wassell_image_chat_model`).
@@ -159,7 +159,7 @@ Only `image`, `multi_image`, `file`, `multi_file`, `attachment` are valid target
 |---|---|
 | `src/pages/ImageChats/ImageChatsPage.tsx` | Split-pane: conversation list (dot derives from per-message status) + right pane. First-visit seeding. |
 | `src/pages/ImageChats/components/ChatThread.tsx` | Right pane. Fire-and-forget enqueue (never awaits generation), in-flight soft cap, retry/cancel, the Create-Variation / Use-as-Reference seed channel. |
-| `src/pages/ImageChats/components/Composer.tsx` | Bottom composer. `atCapacity` gates only Send (never the textarea); consumes a one-shot reference/variation `seed`. |
+| `src/pages/ImageChats/components/Composer.tsx` | Bottom composer. `atCapacity` gates only Send (never the textarea); consumes a one-shot reference/variation `seed`. Enforces the 4,000-char prompt cap before the optimistic reset (toast + keep text), with a live counter. |
 | `src/pages/ImageChats/components/MessageBubble.tsx` | Per-message rendering driven by `status` (queued/generating/completed/failed/cancelled) + the per-image `AssetActionsMenu`. |
 | `src/pages/ImageChats/components/AssetActionsMenu.tsx` | The click-image actions menu (Open/Download/Copy URL/Add to Files/Add to Record/Create Variation/Use as Next Reference). Portaled dropdown. |
 | `src/pages/ImageChats/components/AddImageToFilesModal.tsx` | Drive folder picker → promote into folder. |
