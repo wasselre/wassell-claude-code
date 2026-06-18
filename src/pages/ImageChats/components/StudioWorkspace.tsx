@@ -296,6 +296,7 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
 
       {/* Composer */}
       <Composer
+        sessionId={recordId}
         atCapacity={inFlight >= MAX_INFLIGHT}
         initialAspectRatio={lastAspect}
         initialPresetId={lastPresetId}

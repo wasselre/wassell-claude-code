@@ -32,6 +32,23 @@ function readPersistedModel(): ChatModelId {
   return DEFAULT_CHAT_MODEL;
 }
 
+/** Per-session draft of the prompt textarea, persisted to localStorage so a
+ *  page refresh or an app update (which reloads the SPA) doesn't wipe what the
+ *  user was typing. Keyed by session id so each session keeps its own draft.
+ *  Cleared once the prompt is successfully sent. */
+function draftKey(sessionId: string): string {
+  return `wassell_image_chat_draft_${sessionId}`;
+}
+function readDraft(sessionId: string): string {
+  try {
+    return localStorage.getItem(draftKey(sessionId)) ?? '';
+  } catch {
+    // localStorage can throw in private mode / disabled cookies — just start
+    // with an empty draft.
+    return '';
+  }
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface ComposerAttachment {
@@ -79,6 +96,9 @@ export interface ComposerSeed {
 }
 
 interface Props {
+  /** The active session's record id — used to key the per-session prompt draft
+   *  in localStorage so a refresh / app update doesn't lose what's being typed. */
+  sessionId: string;
   /** True when the conversation is at its in-flight generation cap. Gates only
    *  the Send action (+ shows a hint); the textarea and attach controls stay
    *  live so the user can compose the next turn while others generate. */
@@ -127,6 +147,7 @@ const ASPECTS: ReadonlyArray<{ key: ChatAspectRatio; iconBox: string }> = [
  * still in effect for prompt-text purposes.
  */
 export default function Composer({
+  sessionId,
   atCapacity,
   initialAspectRatio,
   initialPresetId,
@@ -139,7 +160,9 @@ export default function Composer({
   const recordsByModel = useAppStore((s) => s.records);
   const addToast = useAppStore((s) => s.addToast);
 
-  const [prompt, setPrompt] = useState('');
+  // Restore any in-progress draft for this session so a refresh / app update
+  // doesn't lose what the user was typing.
+  const [prompt, setPrompt] = useState<string>(() => readDraft(sessionId));
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [aspectRatio, setAspectRatio] = useState<ChatAspectRatio>(initialAspectRatio);
   const [numVariations, setNumVariations] = useState<1 | 4>(1);
@@ -235,6 +258,18 @@ export default function Composer({
     const max = 6 * 24;
     ta.style.height = `${Math.min(ta.scrollHeight, max)}px`;
   }, [prompt]);
+
+  // Persist the prompt draft per-session on every change, so a refresh or an
+  // app update (full SPA reload) restores it instead of losing it. An empty
+  // prompt clears the key rather than storing a blank.
+  useEffect(() => {
+    try {
+      if (prompt) localStorage.setItem(draftKey(sessionId), prompt);
+      else localStorage.removeItem(draftKey(sessionId));
+    } catch {
+      // Best-effort draft persistence — localStorage may be unavailable/full.
+    }
+  }, [prompt, sessionId]);
 
   function handlePickSnippet(snippetId: string) {
     const snippet = snippetRecords.find((r) => r.id === snippetId);
