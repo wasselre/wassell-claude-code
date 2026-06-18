@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
+import { useIsAdmin } from '@/hooks/usePermission';
 import { ScrollText, ChevronRight, Trash2, RefreshCw, Search } from 'lucide-react';
 import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import type { WorkflowRun, WorkflowRunStatus } from '@/types';
@@ -27,6 +28,9 @@ export default function WorkflowLogsPage() {
   const navigate = useNavigate();
   const { workflowRuns, workflows, models, users, language, clearWorkflowRuns, addToast } = useAppStore();
   const isAr = language === 'ar';
+  // Run history is viewable read-only by workflow-view profiles; destructive
+  // log management stays admin-only.
+  const isAdmin = useIsAdmin();
 
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [workflowFilter, setWorkflowFilter] = useState<string>('all');
@@ -99,14 +103,16 @@ export default function WorkflowLogsPage() {
           >
             <RefreshCw size={16} />
           </button>
-          <button
-            onClick={onClearAll}
-            disabled={!workflowRuns.length}
-            className="pill border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <Trash2 size={14} />
-            {isAr ? 'مسح الكل' : 'Clear all'}
-          </button>
+          {isAdmin && (
+            <button
+              onClick={onClearAll}
+              disabled={!workflowRuns.length}
+              className="pill border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Trash2 size={14} />
+              {isAr ? 'مسح الكل' : 'Clear all'}
+            </button>
+          )}
         </div>
       </div>
 

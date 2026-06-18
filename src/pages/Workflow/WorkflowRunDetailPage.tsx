@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
+import { useIsAdmin } from '@/hooks/usePermission';
 import { ArrowLeft, CheckCircle2, XCircle, SkipForward, AlertCircle, Clock, User as UserIcon, Database, Hash, ChevronDown, ChevronRight, Trash2, Copy, GitBranch } from 'lucide-react';
 import type { WorkflowRunStatus, WorkflowActionTrace, WorkflowConditionTrace, WorkflowBranchTrace, FieldMappingTrace, AppModel } from '@/types';
 
@@ -9,6 +10,8 @@ export default function WorkflowRunDetailPage() {
   const navigate = useNavigate();
   const { workflowRuns, workflows, models, users, language, deleteWorkflowRun, addToast } = useAppStore();
   const isAr = language === 'ar';
+  // Read-only for workflow-view profiles; deleting a run stays admin-only.
+  const isAdmin = useIsAdmin();
 
   const run = workflowRuns.find((r) => r.id === runId);
 
@@ -66,10 +69,12 @@ export default function WorkflowRunDetailPage() {
           <Copy size={14} />
           {isAr ? 'نسخ JSON' : 'Copy JSON'}
         </button>
-        <button onClick={onDelete} className="pill border-red-200 text-red-600 hover:bg-red-50">
-          <Trash2 size={14} />
-          {isAr ? 'حذف' : 'Delete'}
-        </button>
+        {isAdmin && (
+          <button onClick={onDelete} className="pill border-red-200 text-red-600 hover:bg-red-50">
+            <Trash2 size={14} />
+            {isAr ? 'حذف' : 'Delete'}
+          </button>
+        )}
       </div>
 
       {/* Run summary strip */}

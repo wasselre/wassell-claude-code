@@ -4,6 +4,7 @@ import {
   applyViewScopeToRecords,
   applyVisibleViews,
   canAccessPage,
+  canViewWorkflows,
   canEditRecord,
   canViewRecord,
   getFieldPermission,
@@ -44,6 +45,15 @@ export function useIsAdmin(): boolean {
 export function useCanAccessPage(pageId: string): boolean {
   const { currentUserId, users, profiles } = useAppStore();
   return canAccessPage(currentUserId, users, profiles, pageId);
+}
+
+/**
+ * Whether the current user may READ workflows (Studio links + run history).
+ * Editing the Workflow Builder stays admin-only regardless.
+ */
+export function useCanViewWorkflows(): boolean {
+  const { currentUserId, users, profiles } = useAppStore();
+  return canViewWorkflows(currentUserId, users, profiles);
 }
 
 /**

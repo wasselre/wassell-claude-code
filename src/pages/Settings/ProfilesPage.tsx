@@ -130,6 +130,7 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
   const [hiddenViewIds, setHiddenViewIds] = useState<string[]>([...(profile.hidden_view_ids ?? [])]);
   const [hiddenButtonIds, setHiddenButtonIds] = useState<string[]>([...(profile.hidden_button_ids ?? [])]);
   const [pageAccess, setPageAccess] = useState<Record<string, boolean>>({ ...(profile.page_access ?? {}) });
+  const [canViewWorkflows, setCanViewWorkflows] = useState<boolean>(profile.can_view_workflows === true);
   const [showDelete, setShowDelete] = useState(false);
   // Bulk reassignment target profile id when deleting a profile that
   // still has users. Defaults to the first OTHER non-system profile.
@@ -154,6 +155,9 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
       // core flow, so an empty {} must persist to actually reset overrides
       // back to each page's default on update.
       page_access: pageAccess,
+      // Read-only workflow visibility (Sales Studio links + run history).
+      // Admin profiles always see workflows regardless of the stored flag.
+      can_view_workflows: canViewWorkflows,
       updated_at: new Date().toISOString(),
     });
     addToast(t('toast.saved'), 'success');
@@ -280,6 +284,38 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
           onChange={setPageAccess}
           profileIsAdmin={profile.is_admin}
         />
+
+        {/* Workflow visibility — powers the Sales Process Studio (it shows each
+            phase's linked workflow only when the profile can read workflows).
+            Read-only: editing the Workflow Builder stays admin-only. */}
+        <div className="mt-4 border-t border-sand/30 pt-4">
+          <label
+            className={`flex items-start gap-2.5 ${profile.is_admin ? 'cursor-default opacity-80' : 'cursor-pointer'}`}
+          >
+            <input
+              type="checkbox"
+              checked={profile.is_admin ? true : canViewWorkflows}
+              disabled={profile.is_admin}
+              onChange={(e) => setCanViewWorkflows(e.target.checked)}
+              className="mt-0.5 w-4 h-4 rounded border-sand text-copper focus:ring-copper/30"
+            />
+            <span className="text-sm">
+              <span className="font-bold text-charcoal">
+                {isAr ? 'يمكنه رؤية سير العمل' : 'Can see workflows'}
+              </span>
+              <span className="block text-[11px] text-charcoal/50">
+                {isAr
+                  ? 'يعرض سير العمل المرتبط بكل مرحلة في استوديو المبيعات (للقراءة فقط). تعديل سير العمل يبقى للمدير فقط.'
+                  : 'Shows each phase’s linked workflow in the Sales Process Studio (read-only). Editing workflows stays admin-only.'}
+                {profile.is_admin && (
+                  <span className="ms-1 italic">
+                    {isAr ? 'المدراء يرونها دائماً.' : 'Admins always can.'}
+                  </span>
+                )}
+              </span>
+            </span>
+          </label>
+        </div>
       </div>
 
       {/* Permission Matrix */}

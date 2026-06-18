@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Workflow as WorkflowIcon, AlertTriangle, ExternalLink, Activity, CheckCircle2, GitBranch } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { useIsAdmin, useCanViewWorkflows } from '@/hooks/usePermission';
 import {
   getSalesProcessConfig,
   getOutcome,
@@ -28,6 +29,10 @@ export default function SalesProcessStudioPage() {
   const isAr = language === 'ar';
   const navigate = useNavigate();
   const config = getSalesProcessConfig();
+  // Opening the Workflow Builder is admin-only; viewing run history follows
+  // the read-only workflow grant. Both gate the per-activity buttons below.
+  const isAdmin = useIsAdmin();
+  const canViewWorkflows = useCanViewWorkflows();
 
   const [selectedStage, setSelectedStage] = useState<string>(config.stages[0]?.value ?? '');
 
@@ -114,7 +119,7 @@ export default function SalesProcessStudioPage() {
               {stage.followup_types.map((typeKey) => {
                 const tc = config.followup_types.find((t) => t.type === typeKey);
                 if (!tc) return null;
-                return <ActivityBlock key={typeKey} typeConfig={tc} workflows={workflows} isAr={isAr} navigate={navigate} />;
+                return <ActivityBlock key={typeKey} typeConfig={tc} workflows={workflows} isAr={isAr} navigate={navigate} isAdmin={isAdmin} canViewWorkflows={canViewWorkflows} />;
               })}
             </div>
           )}
@@ -159,9 +164,10 @@ function StageCard({
 }
 
 function ActivityBlock({
-  typeConfig, workflows, isAr, navigate,
+  typeConfig, workflows, isAr, navigate, isAdmin, canViewWorkflows,
 }: {
   typeConfig: FollowUpTypeConfig; workflows: Workflow[]; isAr: boolean; navigate: (to: string) => void;
+  isAdmin: boolean; canViewWorkflows: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const bound = resolveBoundWorkflow(workflows, { activity_type: typeConfig.type });
@@ -213,12 +219,18 @@ function ActivityBlock({
           <div className="mt-4 flex flex-wrap gap-2">
             {bound ? (
               <>
-                <button type="button" onClick={() => navigate(`/workflow/${bound.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-copper bg-copper/5 px-4 py-2 text-sm font-bold text-copper transition-colors hover:bg-copper hover:text-white">
-                  <ExternalLink size={14} /> {isAr ? 'فتح في محرر سير العمل' : 'Open in Workflow Builder'}
-                </button>
-                <button type="button" onClick={() => navigate(`/workflow/logs?workflow=${bound.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-sand/50 bg-white px-4 py-2 text-sm font-bold text-charcoal transition-colors hover:bg-cream">
-                  <Activity size={14} /> {isAr ? 'عرض عمليات التشغيل' : 'View Workflow Runs'}
-                </button>
+                {/* Opening the editor is admin-only (no read-only Builder yet). */}
+                {isAdmin && (
+                  <button type="button" onClick={() => navigate(`/workflow/${bound.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-copper bg-copper/5 px-4 py-2 text-sm font-bold text-copper transition-colors hover:bg-copper hover:text-white">
+                    <ExternalLink size={14} /> {isAr ? 'فتح في محرر سير العمل' : 'Open in Workflow Builder'}
+                  </button>
+                )}
+                {/* Run history is read-only — visible to any workflow-view profile. */}
+                {canViewWorkflows && (
+                  <button type="button" onClick={() => navigate(`/workflow/logs?workflow=${bound.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-sand/50 bg-white px-4 py-2 text-sm font-bold text-charcoal transition-colors hover:bg-cream">
+                    <Activity size={14} /> {isAr ? 'عرض عمليات التشغيل' : 'View Workflow Runs'}
+                  </button>
+                )}
               </>
             ) : (
               <p className="text-sm text-terracotta">{isAr ? 'لا يوجد سير عمل يطبق هذا النشاط بعد — أنشئه في محرر سير العمل.' : 'No workflow implements this activity yet — create one in the Workflow Builder.'}</p>

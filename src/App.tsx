@@ -50,6 +50,7 @@ import DocumentEditorPage from '@/pages/Documents/DocumentEditorPage';
 import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import RequirePageAccess from '@/components/guards/RequirePageAccess';
+import RequireWorkflowView from '@/components/guards/RequireWorkflowView';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
 import MfaSetup from '@/pages/auth/MfaSetup';
@@ -271,8 +272,10 @@ export default function App() {
           <Route path="/builder/:modelId" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/workflow" element={<RequireAdmin><WorkflowListPage /></RequireAdmin>} />
           <Route path="/workflow/agent" element={<RequireAdmin><WorkflowAgentPage /></RequireAdmin>} />
-          <Route path="/workflow/logs" element={<RequireAdmin><WorkflowLogsPage /></RequireAdmin>} />
-          <Route path="/workflow/logs/:runId" element={<RequireAdmin><WorkflowRunDetailPage /></RequireAdmin>} />
+          {/* Run history is viewable by workflow-view profiles (read-only);
+              the Builder/list/agent routes below stay admin-only. */}
+          <Route path="/workflow/logs" element={<RequireWorkflowView><WorkflowLogsPage /></RequireWorkflowView>} />
+          <Route path="/workflow/logs/:runId" element={<RequireWorkflowView><WorkflowRunDetailPage /></RequireWorkflowView>} />
           <Route path="/workflow/:workflowId" element={<RequireAdmin><WorkflowEditorPage /></RequireAdmin>} />
           <Route path="/dashboards" element={<RequireAdmin><DashboardListPage /></RequireAdmin>} />
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />

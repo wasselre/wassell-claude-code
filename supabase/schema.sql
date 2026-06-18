@@ -288,6 +288,13 @@ CREATE TABLE IF NOT EXISTS profiles (
   -- default, so existing profiles keep prior behavior. Default '{}' = no
   -- overrides. See docs/prd/access-control.md.
   page_access JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Read-only access to the workflow subsystem (workflows / workflow_groups /
+  -- workflow_runs). Default false = non-admins load no workflow rows (the
+  -- hardened default). When true the profile can SEE workflows (Sales Process
+  -- Studio shows linked workflows; run-history pages viewable). Editing stays
+  -- admin-only. Enforced at the DB via wassell_can_view_workflows. See
+  -- docs/prd/access-control.md.
+  can_view_workflows BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -298,7 +305,8 @@ CREATE TABLE IF NOT EXISTS profiles (
 ALTER TABLE profiles
   ADD COLUMN IF NOT EXISTS hidden_view_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
   ADD COLUMN IF NOT EXISTS hidden_button_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS page_access JSONB NOT NULL DEFAULT '{}'::jsonb;
+  ADD COLUMN IF NOT EXISTS page_access JSONB NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS can_view_workflows BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS roles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -557,6 +565,20 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
   ), false);
 $$;
 
+-- True when the user may READ the workflow subsystem (workflows /
+-- workflow_groups / workflow_runs). Admins always can; non-admins only when
+-- their profile has `can_view_workflows = true`. Editing stays admin-only —
+-- this gates SELECT, not writes. Mirrors wassell_is_admin's shape.
+CREATE OR REPLACE FUNCTION wassell_can_view_workflows(auth_user_id UUID)
+RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+  SELECT COALESCE((
+    SELECT p.is_admin OR COALESCE(p.can_view_workflows, false) FROM profiles p
+      JOIN users u ON u.profile_id = p.id
+     WHERE u.auth_uid = auth_user_id AND u.is_active = true LIMIT 1
+  ), false);
+$$;
+
 CREATE OR REPLACE FUNCTION wassell_user_has_action(
   auth_user_id UUID, the_model_id UUID, action TEXT
 ) RETURNS boolean
@@ -733,7 +755,15 @@ DROP POLICY IF EXISTS "model_views_write"      ON model_views;
 DROP POLICY IF EXISTS "field_templates_read"   ON field_templates;
 DROP POLICY IF EXISTS "field_templates_write"  ON field_templates;
 DROP POLICY IF EXISTS "workflows_admin"        ON workflows;
+DROP POLICY IF EXISTS "workflows_select"       ON workflows;
+DROP POLICY IF EXISTS "workflows_insert"       ON workflows;
+DROP POLICY IF EXISTS "workflows_update"       ON workflows;
+DROP POLICY IF EXISTS "workflows_delete"       ON workflows;
 DROP POLICY IF EXISTS "workflow_groups_admin"  ON workflow_groups;
+DROP POLICY IF EXISTS "workflow_groups_select" ON workflow_groups;
+DROP POLICY IF EXISTS "workflow_groups_insert" ON workflow_groups;
+DROP POLICY IF EXISTS "workflow_groups_update" ON workflow_groups;
+DROP POLICY IF EXISTS "workflow_groups_delete" ON workflow_groups;
 DROP POLICY IF EXISTS "workflow_runs_read"     ON workflow_runs;
 DROP POLICY IF EXISTS "workflow_runs_insert"   ON workflow_runs;
 DROP POLICY IF EXISTS "workflow_runs_modify"   ON workflow_runs;
@@ -775,14 +805,25 @@ CREATE POLICY "model_views_write" ON model_views FOR ALL TO authenticated
 CREATE POLICY "field_templates_read"  ON field_templates FOR SELECT TO authenticated USING (true);
 CREATE POLICY "field_templates_write" ON field_templates FOR ALL    TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 
--- Builder area: admin only end-to-end.
-CREATE POLICY "workflows_admin"       ON workflows       FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
-CREATE POLICY "workflow_groups_admin" ON workflow_groups FOR ALL TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+-- Builder area: WRITES are admin-only end-to-end; SELECT additionally allows
+-- profiles flagged `can_view_workflows` (read-only) so the Sales Process
+-- Studio can show linked workflows + run history to granted non-admins. The
+-- FOR ALL admin policy was split into per-command policies so SELECT carries
+-- exactly one permissive policy (matches the 2026-05-07 B.4 posture).
+CREATE POLICY "workflows_select"       ON workflows       FOR SELECT TO authenticated USING (wassell_can_view_workflows((SELECT auth.uid())));
+CREATE POLICY "workflows_insert"       ON workflows       FOR INSERT TO authenticated WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "workflows_update"       ON workflows       FOR UPDATE TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "workflows_delete"       ON workflows       FOR DELETE TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "workflow_groups_select" ON workflow_groups FOR SELECT TO authenticated USING (wassell_can_view_workflows((SELECT auth.uid())));
+CREATE POLICY "workflow_groups_insert" ON workflow_groups FOR INSERT TO authenticated WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "workflow_groups_update" ON workflow_groups FOR UPDATE TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
+CREATE POLICY "workflow_groups_delete" ON workflow_groups FOR DELETE TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
 -- workflow_runs: any authenticated user can append (their record save
--- might trigger a workflow whose run is logged client-side); reads /
--- updates / deletes are admin-only. Without this split, non-admin
--- saves produce RLS denial toasts on every triggered workflow.
-CREATE POLICY "workflow_runs_read"   ON workflow_runs FOR SELECT TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
+-- might trigger a workflow whose run is logged client-side); reads are
+-- admin OR can_view_workflows (read-only run history); updates / deletes
+-- stay admin-only. Without the insert split, non-admin saves produce RLS
+-- denial toasts on every triggered workflow.
+CREATE POLICY "workflow_runs_read"   ON workflow_runs FOR SELECT TO authenticated USING (wassell_can_view_workflows((SELECT auth.uid())));
 CREATE POLICY "workflow_runs_insert" ON workflow_runs FOR INSERT TO authenticated WITH CHECK (true);
 CREATE POLICY "workflow_runs_modify" ON workflow_runs FOR UPDATE TO authenticated USING (wassell_is_admin((SELECT auth.uid()))) WITH CHECK (wassell_is_admin((SELECT auth.uid())));
 CREATE POLICY "workflow_runs_delete" ON workflow_runs FOR DELETE TO authenticated USING (wassell_is_admin((SELECT auth.uid())));
@@ -2529,6 +2570,7 @@ GRANT EXECUTE ON FUNCTION public.record_delete(uuid, uuid)              TO authe
 GRANT EXECUTE ON FUNCTION public.get_public_dashboard(text)             TO authenticated;
 GRANT EXECUTE ON FUNCTION public.wassell_app_user_id(uuid)              TO authenticated;
 GRANT EXECUTE ON FUNCTION public.wassell_is_admin(uuid)                 TO authenticated;
+GRANT EXECUTE ON FUNCTION public.wassell_can_view_workflows(uuid)       TO authenticated;
 GRANT EXECUTE ON FUNCTION public.wassell_user_has_action(uuid, uuid, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.wassell_record_passes_scope(records, uuid, text) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.wassell_can_view_record(uuid, records) TO authenticated;

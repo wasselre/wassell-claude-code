@@ -1971,6 +1971,19 @@ export interface Profile {
    * see every page regardless. See `canAccessPage` in `src/lib/permissions.ts`.
    */
   page_access?: Record<string, boolean>;
+  /**
+   * Read-only access to the workflow subsystem data (the `workflows`,
+   * `workflow_groups`, `workflow_runs` tables). Default/absent = no access —
+   * non-admins can't load any workflow rows (the hardened default). When
+   * true, the profile can SEE workflows: the Sales Process Studio shows each
+   * phase's linked workflow as "Linked", and the workflow run-history pages
+   * become viewable (read-only). EDITING workflows + opening the Workflow
+   * Builder editor stay admin-only regardless of this flag. Admin profiles
+   * can always see + manage workflows. Enforced in the app via
+   * `canViewWorkflows` AND at the DB via the `wassell_can_view_workflows`
+   * RLS helper. See docs/prd/access-control.md.
+   */
+  can_view_workflows?: boolean;
   created_at: string;
   updated_at: string;
 }

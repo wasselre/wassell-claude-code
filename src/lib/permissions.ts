@@ -148,6 +148,32 @@ export function canAccessPage(
 }
 
 /**
+ * Whether the current user may READ the workflow subsystem (workflows /
+ * workflow_groups / workflow_runs) — used by the Sales Process Studio to show
+ * linked workflows and by the run-history route guard. Read-only: editing the
+ * Workflow Builder stays admin-only regardless of this.
+ *
+ *   1. No user system active (pre-init) → true (backward compat).
+ *   2. No resolved (active) profile → false.
+ *   3. Admin profile → true (admins always see + manage workflows).
+ *   4. Otherwise → the profile's `can_view_workflows` flag.
+ *
+ * Mirrors the DB-side `wassell_can_view_workflows` RLS helper — keep them in
+ * sync.
+ */
+export function canViewWorkflows(
+  currentUserId: string | null,
+  users: User[],
+  profiles: Profile[],
+): boolean {
+  if (currentUserId === null) return true;
+  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  if (!resolved) return false;
+  if (resolved.profile.is_admin) return true;
+  return resolved.profile.can_view_workflows === true;
+}
+
+/**
  * Get all permissions a user has on a model. Admin profiles return the full
  * permission set regardless of what `model_permissions` actually contains —
  * this mirrors the bypass in `hasPermission`.
