@@ -1,7 +1,7 @@
 # PRD: Internationalization (Arabic / English, RTL/LTR)
 
 **Status:** Live
-**Last updated:** 2026-06-02
+**Last updated:** 2026-06-18 (table-field column labels now auto-translate AR→EN — see Live auto-translate below + model-builder.md)
 **Related PRDs:** navigation-layout.md, model-builder.md
 
 ## What it is (in plain English)
@@ -23,7 +23,7 @@ Wassell is a Saudi Arabian real-estate company. Arabic is the primary language, 
 - **Layout inversion:** Tailwind's `rtl:` prefix and CSS logical properties (margin-inline-start etc.) are used so the sidebar, icons, and forms flip correctly.
 - **Currency:** SAR (Saudi Riyal, ر.س) — currency inputs/display use this unit and an Arabic-friendly format.
 - **PDF generation** supports Arabic RTL text via jsPDF with a custom font setup (see import-export.md).
-- **Live auto-translate**: as the user types in the Builder, a debounced (~450ms) call to `/api/translate` fills the opposite-language label AND derives a snake_case Latin slug from the English version. No more `item_<timestamp>` slugs for Arabic input. Wired into model/section/field/option/group creation, plus workflow/dashboard/widget rename. Failures surface as a red toast and block save — never silently fall back to gibberish. `/api/translate` runs on the Vercel **edge** runtime (like the other Anthropic endpoints) so the bursty, open-modal-translate-a-few-close usage pattern doesn't pay a Node cold-start on the first call each session.
+- **Live auto-translate**: as the user types in the Builder, a debounced (~450ms) call to `/api/translate` fills the opposite-language label AND derives a snake_case Latin slug from the English version. No more `item_<timestamp>` slugs for Arabic input. Wired into model/section/field/option/group creation, the **table-field column editor** (each `table` column's Arabic label fills its English label + `col` slug; AR→EN only, added 2026-06-18), plus workflow/dashboard/widget rename. Failures surface as a red toast and block save — never silently fall back to gibberish. `/api/translate` runs on the Vercel **edge** runtime (like the other Anthropic endpoints) so the bursty, open-modal-translate-a-few-close usage pattern doesn't pay a Node cold-start on the first call each session.
 - **Bulk "Translate all" (dropdown options editor)**: the options modal shows a `Translate all (N)` button whenever N options still lack their other-language label or a real `api_name`. It translates every blank option **in parallel** (one round-trip's latency, not N staggered debounced calls), only ever filling blanks — never overwriting a label or slug the user typed. Reuses the same in-memory cache as the live translator, so options already filled live this session resolve instantly. Per-option failures are tallied into a single red toast.
 - **Translation Settings page** (`/settings/translations`) lets an admin edit any key in the i18n dictionary without redeploy.
 

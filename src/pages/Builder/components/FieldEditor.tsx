@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
@@ -2440,6 +2440,19 @@ const COLUMN_TYPE_LABELS: Record<TableColumnType, { ar: string; en: string }> = 
   image_icon: { ar: 'أيقونة',       en: 'Icon (image)' },
 };
 
+// Slug sanitizer shared by the manual slug input and the auto-translate fill —
+// snake_case, ASCII-only (matches the manual input's original inline rule).
+function sanitizeColumnSlug(raw: string): string {
+  return (raw ?? '').toLowerCase().replace(/[^a-z0-9_]/g, '_');
+}
+
+// A column added via "Add column" gets an auto slug of `col_<n>`. While the slug
+// still matches that shape we treat it as un-customized and free to overwrite
+// from the translated English label; once the user edits it, we leave it alone.
+function isDefaultColumnSlug(name: string): boolean {
+  return /^col_\d+$/.test((name ?? '').trim());
+}
+
 function TableColumnsEditor({
   columns,
   onChange,
@@ -2565,6 +2578,34 @@ function ColumnRow({
     ? validateFormula(col.formula_expression)
     : null;
 
+  // Auto-translate the column's Arabic label → English label (+ slug), mirroring
+  // the field-level label auto-fill. A column that opened with an English label
+  // already set is treated as manually curated and left alone (don't clobber it);
+  // a freshly added column (empty EN, default `col_N` slug) is auto-managed until
+  // the user types into the EN/slug inputs themselves.
+  const enTouchedRef = useRef(!!col.label_en.trim());
+  const slugTouchedRef = useRef(!isDefaultColumnSlug(col.name));
+  const columnTranslation = useDebouncedTranslation(col.label_ar, {
+    kind: 'field',
+    enabled: !enTouchedRef.current && !!col.label_ar.trim(),
+  });
+  const translationResult = columnTranslation.result;
+  useEffect(() => {
+    if (!translationResult) return;
+    const patch: Partial<TableColumn> = {};
+    if (!enTouchedRef.current && translationResult.label_en && translationResult.label_en !== col.label_en) {
+      patch.label_en = translationResult.label_en;
+    }
+    if (!slugTouchedRef.current && isDefaultColumnSlug(col.name)) {
+      const slug = sanitizeColumnSlug(translationResult.name);
+      if (slug && slug !== col.name) patch.name = slug;
+    }
+    if (Object.keys(patch).length > 0) onUpdate(patch);
+    // onUpdate is recreated each render; the patch guards above make re-runs a
+    // no-op, so we intentionally key the effect on the result + current values.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [translationResult, col.label_en, col.name]);
+
   return (
     <>
       <tr className="border-b border-sand/25 last:border-0 align-top">
@@ -2601,22 +2642,35 @@ function ColumnRow({
           />
         </td>
         <td className="px-2 py-1.5">
-          <input
-            type="text"
-            value={col.label_en}
-            onChange={(e) => onUpdate({ label_en: e.target.value })}
-            placeholder="English label"
-            className="form-input text-xs w-full"
-            dir="ltr"
-          />
+          <div className="relative">
+            <input
+              type="text"
+              value={col.label_en}
+              onChange={(e) => {
+                enTouchedRef.current = true;
+                onUpdate({ label_en: e.target.value });
+              }}
+              placeholder="English label"
+              className="form-input text-xs w-full"
+              dir="ltr"
+            />
+            {columnTranslation.status === 'pending' && !enTouchedRef.current && (
+              <Loader2
+                size={13}
+                className="animate-spin text-copper absolute end-1.5 top-1/2 -translate-y-1/2 pointer-events-none"
+                aria-label={isAr ? 'جارٍ الترجمة' : 'Translating'}
+              />
+            )}
+          </div>
         </td>
         <td className="px-2 py-1.5">
           <input
             type="text"
             value={col.name}
-            onChange={(e) =>
-              onUpdate({ name: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_') })
-            }
+            onChange={(e) => {
+              slugTouchedRef.current = true;
+              onUpdate({ name: sanitizeColumnSlug(e.target.value) });
+            }}
             placeholder="slug_name"
             className="form-input text-xs font-mono w-full"
             dir="ltr"
