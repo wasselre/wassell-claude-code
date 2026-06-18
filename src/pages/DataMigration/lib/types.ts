@@ -104,6 +104,9 @@ export interface RawTable {
  */
 export interface MigrationData {
   title?: string;
+  /** Optional sidebar group/folder label. Migrations with the same `group`
+   * render under one collapsible header; empty/undefined = "Ungrouped". */
+  group?: string;
   status?: MigrationStatus;
   step?: MigrationStep;
   target_model_id?: string;
