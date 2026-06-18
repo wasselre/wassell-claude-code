@@ -522,7 +522,9 @@ Rules:
 - A range field appears in the list as two entries, "slug.min" and "slug.max". Map a "from / أدنى / min / starting" column to .min and a "to / أعلى / max / up to" column to .max.
 - Do not map two different columns to the same field, UNLESS they are the two halves of a range.
 - Be conservative: if no field clearly fits a column, return "" for it. A skipped column is better than a wrong mapping — the user can fix mappings, but a wrong one silently corrupts data.
-- Match across languages (an Arabic header can map to an English-labelled field and vice-versa).`;
+- Match across languages (an Arabic header can map to an English-labelled field and vice-versa).
+- Keep each \`reason\` to a few words (the output must stay compact — wide tables have many columns).
+- Emit one entry for EVERY source column index, in order.`;
 
 export async function runSuggestMappings(
   apiKey: string,
@@ -546,7 +548,11 @@ export async function runSuggestMappings(
   const client = new Anthropic({ apiKey });
   const response = await client.messages.create({
     model: MAP_MODEL,
-    max_tokens: 2000,
+    // One mapping object per column, each with a reason → output grows with the
+    // column count. 2000 truncated wide tables (e.g. a 32-column projects
+    // export) mid-JSON, so the tool input came back unparseable and we returned
+    // ZERO mappings silently. Budget generously for many columns.
+    max_tokens: 16000,
     system: SUGGEST_SYSTEM + langLine(input.language ?? 'ar', 'reason'),
     tools: [SUGGEST_TOOL],
     tool_choice: { type: 'tool', name: 'emit_column_mappings' },
@@ -556,6 +562,14 @@ export async function runSuggestMappings(
   if (!tb || tb.type !== 'tool_use') throw new Error('Mapping model did not respond');
   const out = tb.input as { mappings?: unknown };
   const arr = Array.isArray(out.mappings) ? out.mappings : [];
+  // Fail LOUDLY on a truncated tool output (CLAUDE.md: never silently swallow).
+  // A cut-off tool JSON yields no usable mappings; returning [] would look to
+  // the user like "the AI matched nothing" instead of "it ran out of room".
+  if (arr.length === 0 && response.stop_reason === 'max_tokens') {
+    throw new Error(
+      'The column-mapping response was too long to finish (too many columns). Map the columns manually, or split the table into fewer columns and retry.',
+    );
+  }
   return arr
     .map((m): MappingSuggestion => {
       const o = m as Record<string, unknown>;
