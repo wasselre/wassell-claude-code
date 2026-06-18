@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { Plus, Sparkles, Loader2, Clock, RefreshCw, X, ImageIcon } from 'lucide-react';
+import { Plus, Sparkles, Loader2, Clock, RefreshCw, X, ImageIcon, ChevronDown, Layers } from 'lucide-react';
 import type { AppRecord } from '@/types';
 import {
   enqueueGeneration,
@@ -23,6 +23,7 @@ interface Props {
 }
 
 const MAX_INFLIGHT = 3;
+const TIMELINE_COLLAPSED_KEY = 'wassell_image_chat_timeline_collapsed';
 const ASPECT_CSS: Record<ChatAspectRatio, string> = {
   '1:1': '1 / 1',
   '9:16': '9 / 16',
@@ -81,6 +82,30 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
   const [lightboxOpen, setLightboxOpen] = useState(false);
   const [seed, setSeed] = useState<ComposerSeed | null>(null);
   const [basedOn, setBasedOn] = useState<string | null>(null);
+
+  // The "your work in this session" bar is a collapsible strip pinned at the
+  // TOP of the workspace (below the header) — NOT above the composer. The
+  // collapsed preference is a per-user-global pref persisted to localStorage so
+  // it survives reloads and applies across sessions.
+  const [timelineCollapsed, setTimelineCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(TIMELINE_COLLAPSED_KEY) === '1';
+    } catch {
+      // localStorage can throw in private mode — default to expanded.
+      return false;
+    }
+  });
+  function toggleTimeline() {
+    setTimelineCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem(TIMELINE_COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        // Best-effort persistence.
+      }
+      return next;
+    });
+  }
 
   const selectedGen = useMemo<Generation | null>(() => {
     if (generations.length === 0) return null;
@@ -213,7 +238,26 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
         </button>
       </div>
 
-      {/* Main: canvas (+ timeline) and the selected-asset panel */}
+      {/* "Your work in this session" — a collapsible bar pinned at the TOP
+          (below the header), so current/queued jobs are NOT crowding the
+          composer. */}
+      {generations.length > 0 && (
+        <Timeline
+          generations={generations}
+          assetsById={assetsById}
+          activeId={selectedGen?.id ?? null}
+          isAr={isAr}
+          inFlight={inFlight}
+          collapsed={timelineCollapsed}
+          onToggle={toggleTimeline}
+          onPick={(id) => {
+            setSelectedGenerationId(id);
+            setSelectedOutputIdx(null);
+          }}
+        />
+      )}
+
+      {/* Main: canvas and the selected-asset panel */}
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 flex flex-col min-h-0">
           {/* Canvas */}
@@ -235,20 +279,6 @@ export default function StudioWorkspace({ recordId, modelId, onNewChat }: Props)
               />
             )}
           </div>
-
-          {/* Timeline strip */}
-          {generations.length > 0 && (
-            <Timeline
-              generations={generations}
-              assetsById={assetsById}
-              activeId={selectedGen?.id ?? null}
-              isAr={isAr}
-              onPick={(id) => {
-                setSelectedGenerationId(id);
-                setSelectedOutputIdx(null);
-              }}
-            />
-          )}
         </div>
 
         {selectedOutput && selectedGen && (
@@ -423,57 +453,102 @@ function Canvas({
   );
 }
 
+/**
+ * "Your work in this session" — a collapsible bar pinned at the TOP of the
+ * workspace (below the header). Lists every generation in the session as a
+ * thumbnail strip; in-flight ones surface a spinner + a live count in the
+ * header even when collapsed. Clicking the header toggles the strip; clicking
+ * a thumbnail selects that generation on the canvas. Lives at the top so it
+ * never crowds the composer.
+ */
 function Timeline({
   generations,
   assetsById,
   activeId,
   isAr,
+  inFlight,
+  collapsed,
+  onToggle,
   onPick,
 }: {
   generations: Generation[];
   assetsById: Map<string, import('@/lib/imageChat/client').MediaAsset>;
   activeId: string | null;
   isAr: boolean;
+  inFlight: number;
+  collapsed: boolean;
+  onToggle: () => void;
   onPick: (id: string) => void;
 }) {
   return (
-    <div className="border-t border-sand/20 bg-cream/30 p-2">
-      <div className="flex items-center gap-2 overflow-x-auto">
-        {generations.map((g, idx) => {
-          const thumb = generationThumbUrl(g, assetsById);
-          const pending = g.status === 'queued' || g.status === 'generating';
-          const failed = g.status === 'failed' || g.status === 'cancelled';
-          return (
-            <button
-              key={g.id}
-              type="button"
-              onClick={() => onPick(g.id)}
-              title={g.prompt || `#${idx + 1}`}
-              className={`relative w-14 h-14 shrink-0 rounded-lg overflow-hidden border transition-all ${
-                activeId === g.id ? 'border-copper ring-2 ring-copper/30' : 'border-sand/40 hover:border-copper/50'
-              }`}
-            >
-              {thumb ? (
-                <img src={thumb} alt="" className="w-full h-full object-cover" loading="lazy" />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-cream/60">
-                  {pending ? (
-                    <Loader2 size={16} className="text-copper animate-spin" />
-                  ) : failed ? (
-                    <X size={16} className="text-red-400" />
+    <div className="border-b border-sand/20 bg-cream/30 shrink-0">
+      {/* Header / collapse toggle */}
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={!collapsed}
+        className="w-full flex items-center gap-2 px-3 py-2 text-charcoal/70 hover:bg-cream/60 transition-colors"
+      >
+        <Layers size={14} className="text-copper shrink-0" />
+        <span className="text-xs font-medium">
+          {isAr ? 'أعمالي في هذه الجلسة' : 'Your work in this session'}
+        </span>
+        <span className="text-[11px] text-charcoal/50">({generations.length})</span>
+        {inFlight > 0 && (
+          <span className="inline-flex items-center gap-1 text-[11px] text-copper font-medium">
+            <Loader2 size={11} className="animate-spin" />
+            {isAr ? `${inFlight} قيد الإنشاء` : `${inFlight} running`}
+          </span>
+        )}
+        <span className="flex-1" />
+        <ChevronDown
+          size={16}
+          className={`text-charcoal/50 transition-transform ${collapsed ? '' : 'rotate-180'}`}
+          aria-hidden
+        />
+      </button>
+
+      {/* Thumbnail strip */}
+      {!collapsed && (
+        <div className="px-3 pb-2">
+          <div className="flex items-center gap-2 overflow-x-auto">
+            {generations.map((g, idx) => {
+              const thumb = generationThumbUrl(g, assetsById);
+              const pending = g.status === 'queued' || g.status === 'generating';
+              const failed = g.status === 'failed' || g.status === 'cancelled';
+              return (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => onPick(g.id)}
+                  title={g.prompt || `#${idx + 1}`}
+                  className={`relative w-14 h-14 shrink-0 rounded-lg overflow-hidden border transition-all ${
+                    activeId === g.id ? 'border-copper ring-2 ring-copper/30' : 'border-sand/40 hover:border-copper/50'
+                  }`}
+                >
+                  {thumb ? (
+                    <img src={thumb} alt="" className="w-full h-full object-cover" loading="lazy" />
                   ) : (
-                    <ImageIcon size={16} className="text-charcoal/30" />
+                    <div className="w-full h-full flex items-center justify-center bg-cream/60">
+                      {pending ? (
+                        <Loader2 size={16} className="text-copper animate-spin" />
+                      ) : failed ? (
+                        <X size={16} className="text-red-400" />
+                      ) : (
+                        <ImageIcon size={16} className="text-charcoal/30" />
+                      )}
+                    </div>
                   )}
-                </div>
-              )}
-              <span className="absolute top-0.5 start-0.5 text-[8px] font-bold bg-charcoal/60 text-white rounded px-1">
-                {idx + 1}
-              </span>
-            </button>
-          );
-        })}
-        <span className="sr-only">{isAr ? 'مخطط الإنشاءات الزمني' : 'Generation timeline'}</span>
-      </div>
+                  <span className="absolute top-0.5 start-0.5 text-[8px] font-bold bg-charcoal/60 text-white rounded px-1">
+                    {idx + 1}
+                  </span>
+                </button>
+              );
+            })}
+            <span className="sr-only">{isAr ? 'مخطط الإنشاءات الزمني' : 'Generation timeline'}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
