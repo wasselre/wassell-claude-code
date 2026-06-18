@@ -17,13 +17,17 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import {
   runExtract,
+  runDiscover,
+  runFuseBatch,
   runSuggestMappings,
   runStandardize,
   runDiscuss,
+  ExtractionTruncatedError,
   type ExtractFileInput,
   type TargetFieldLite,
   type StandardizeCandidate,
   type DiscussTurn,
+  type DiscoveredUnit,
 } from './_lib/migrateAgent.js';
 
 export const config = {
@@ -58,7 +62,7 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
 }
 
 interface MigrateRequestBody {
-  action?: 'extract' | 'suggest_mappings' | 'standardize' | 'discuss';
+  action?: 'extract' | 'discover' | 'fuse_batch' | 'suggest_mappings' | 'standardize' | 'discuss';
   // UI language for the model's human-readable text (notes / reasons / reply).
   language?: 'ar' | 'en';
   // extract — `fields` is the destination model's field list (a hunt-list).
@@ -70,6 +74,8 @@ interface MigrateRequestBody {
   // suggest_mappings
   headers?: string[];
   sampleRows?: string[][];
+  // fuse_batch — the unit index batch to resolve (headers come from `headers`)
+  units?: DiscoveredUnit[];
   // standardize
   fieldType?: 'dropdown' | 'multiselect' | 'lookup';
   fieldLabel?: string;
@@ -78,6 +84,17 @@ interface MigrateRequestBody {
   // discuss — multi-turn chat about the extracted table
   messages?: DiscussTurn[];
   rows?: string[][];
+}
+
+/** Loud error → 502 JSON. A truncation gets `code:'max_tokens'` so the client
+ * can split the unit batch and retry instead of failing the whole run. */
+function migrateError(err: unknown, label: string): Response {
+  const msg = err instanceof Error ? err.message : String(err);
+  const code = err instanceof ExtractionTruncatedError ? 'max_tokens' : undefined;
+  return new Response(JSON.stringify({ error: `${label} failed: ${msg}`, code }), {
+    status: 502,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
@@ -113,8 +130,48 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           );
           return jsonOk({ ok: true, ...result });
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return jsonError(502, `Extraction failed: ${msg}`);
+          return migrateError(err, 'Extraction');
+        }
+      }
+      case 'discover': {
+        const files = Array.isArray(body.files) ? body.files : [];
+        if (files.length === 0) return jsonError(400, 'discover: files[] is required');
+        for (const f of files) {
+          if (!f || typeof f.url !== 'string' || typeof f.name !== 'string') {
+            return jsonError(400, 'discover: each file needs { name, mimeType, url }');
+          }
+        }
+        try {
+          const result = await runDiscover(
+            apiKey,
+            files,
+            body.language ?? 'ar',
+            Array.isArray(body.fields) ? body.fields : [],
+          );
+          return jsonOk({ ok: true, ...result });
+        } catch (err) {
+          return migrateError(err, 'Discovery');
+        }
+      }
+      case 'fuse_batch': {
+        const files = Array.isArray(body.files) ? body.files : [];
+        const headers = Array.isArray(body.headers) ? body.headers : [];
+        const units = Array.isArray(body.units) ? body.units : [];
+        if (files.length === 0) return jsonError(400, 'fuse_batch: files[] is required');
+        if (headers.length === 0) return jsonError(400, 'fuse_batch: headers[] is required');
+        if (units.length === 0) return jsonError(400, 'fuse_batch: units[] is required');
+        try {
+          const result = await runFuseBatch(
+            apiKey,
+            files,
+            body.language ?? 'ar',
+            Array.isArray(body.fields) ? body.fields : [],
+            headers,
+            units,
+          );
+          return jsonOk({ ok: true, ...result });
+        } catch (err) {
+          return migrateError(err, 'Fusion');
         }
       }
       case 'suggest_mappings': {

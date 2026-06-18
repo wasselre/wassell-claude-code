@@ -313,9 +313,17 @@ export default function StepUpload({
             ? isAr
               ? 'يقرأ Claude ملفات المشروع بالكامل، يستخرج معلوماته العامة، ويكتب الوثيقة التسويقية. قد يستغرق هذا بضع دقائق.'
               : 'Claude is reading the whole project, extracting its general information, and writing the marketing document. This can take a few minutes.'
-            : isAr
-              ? 'يقرأ Claude ملفاتك ويحوّلها إلى جدول واحد. قد يستغرق هذا دقيقة.'
-              : 'Claude is reading your files into one table. This can take a minute.'}
+            : job && job.phase === 'fuse'
+              ? isAr
+                ? `يدمج Claude حقائق كل وحدة من جميع المصادر (الجدول، البروشور، المخططات…)${
+                    job.total > 0 ? ` — ${job.done}/${job.total}` : ''
+                  }. قد يستغرق هذا عدة دقائق.`
+                : `Claude is fusing each unit's facts across all sources (table, brochure, floor plans…)${
+                    job.total > 0 ? ` — ${job.done}/${job.total}` : ''
+                  }. This can take a few minutes.`
+              : isAr
+                ? 'يفحص Claude الملفات، يصنّف المصادر، ويكتشف كل الوحدات…'
+                : 'Claude is scanning the files, classifying the sources, and discovering every unit…'}
         </p>
         <p className="text-xs text-charcoal/40 max-w-sm">
           {isAr

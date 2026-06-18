@@ -2,15 +2,34 @@ import { create } from 'zustand';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
-import { extractRawTable, type MigrationUpload } from './client';
+import {
+  extractRawTable,
+  discoverUnits,
+  fuseUnitBatch,
+  type MigrationUpload,
+  type DiscoverResult,
+} from './client';
 import { runMigration } from './runMigration';
-import { targetFieldLites } from './targetFields';
+import { targetFieldLites, type TargetFieldLite } from './targetFields';
 import {
   DATA_MIGRATION_MODEL_NAME,
   isProjectProfileTarget,
   readMigrationData,
   type MigrationData,
+  type DiscoveredUnit,
+  type RawCellConflict,
 } from './types';
+
+/** Units per fusion batch. Sized so a batch's tool output stays well under the
+ * model's max_tokens; a batch that still truncates is auto-split (see
+ * `fuseResolved`), so this is a throughput knob, not a correctness one. */
+const FUSE_BATCH_SIZE = 20;
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
 /**
  * Module-level runner for the wizard's two long jobs — AI extraction and the
@@ -34,9 +53,12 @@ export type MigrationJobKind = 'extract' | 'migrate';
 export interface MigrationJob {
   recordId: string;
   kind: MigrationJobKind;
-  /** migrate only — saved rows out of total planned writes. */
+  /** migrate: saved rows out of planned writes. extract (source-fusion):
+   * resolved units out of discovered units. */
   done: number;
   total: number;
+  /** extract (records-mode source-fusion) sub-phase, for the spinner copy. */
+  phase?: 'discover' | 'fuse';
 }
 
 interface MigrationJobsState {
@@ -115,15 +137,79 @@ function patchMigrationRecord(recordId: string, partial: Partial<MigrationData>)
 }
 
 /**
+ * Resolve ONE batch of units by fusing facts across every source. On a
+ * max_tokens truncation (the thrown Error carries `code:'max_tokens'`) the batch
+ * is split in half and each half retried recursively — so the pipeline's output
+ * can never overflow, no matter how dense a unit or how big a batch. A genuine
+ * non-truncation error still propagates (loud failure). Conflicts are re-keyed
+ * from the unit key to the row key for the raw table.
+ */
+async function fuseResolved(
+  uploads: MigrationUpload[],
+  language: 'ar' | 'en',
+  fields: TargetFieldLite[],
+  headers: string[],
+  units: DiscoveredUnit[],
+): Promise<{ rows: { key: string; values: string[] }[]; conflicts: RawCellConflict[] }> {
+  try {
+    const res = await fuseUnitBatch(uploads, language, fields, headers, units);
+    return {
+      rows: res.rows,
+      conflicts: res.conflicts.map((c) => ({
+        rowKey: c.unitKey,
+        header: c.header,
+        candidates: c.candidates,
+        chosen: c.chosen,
+        note: c.note,
+      })),
+    };
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code === 'max_tokens' && units.length > 1) {
+      const mid = Math.ceil(units.length / 2);
+      const a = await fuseResolved(uploads, language, fields, headers, units.slice(0, mid));
+      const b = await fuseResolved(uploads, language, fields, headers, units.slice(mid));
+      return { rows: [...a.rows, ...b.rows], conflicts: [...a.conflicts, ...b.conflicts] };
+    }
+    throw err;
+  }
+}
+
+/** The Arabic/English extraction summary that seeds the review-step discussion:
+ * how many sources were fused, how many units discovered/resolved, how many
+ * conflicts flagged — plus the discovery phase's own notes. */
+function buildFusionSummary(
+  isAr: boolean,
+  disc: DiscoverResult,
+  resolved: number,
+  conflictCount: number,
+): string {
+  const srcList = disc.sources.map((s) => s.name).filter(Boolean).join('، ');
+  const head = isAr
+    ? `حلّلت ${disc.files_processed} ملف${srcList ? ` (${srcList})` : ''} وربطت الحقائق لكل وحدة من جميع المصادر. اكتُشفت ${disc.units.length} وحدة، تم حلّ ${resolved} منها. ${conflictCount} تعارض/تنبيه بحاجة لمراجعة.`
+    : `Analyzed ${disc.files_processed} file(s)${srcList ? ` (${srcList})` : ''} and fused facts per unit across all sources. Discovered ${disc.units.length} units, resolved ${resolved}. ${conflictCount} conflict(s)/warning(s) flagged for review.`;
+  return disc.notes ? `${head}\n\n${disc.notes}` : head;
+}
+
+/**
  * Run AI extraction over the record's persisted `source_files`. Flips the
  * record to status='extracting', then writes the raw table + project extras
  * and advances to review_raw — or status='failed' + error_message. No-op if
  * this record already has a running job.
+ *
+ * Two extraction strategies, picked by target:
+ *   - PROJECT-PROFILE (all_projects): one aggregated row + the Arabic marketing
+ *     document, in a single model call (output is small — see extractRawTable).
+ *   - RECORDS (units / clients / …): SOURCE FUSION — discover every unit across
+ *     all files, then resolve units in batches (merging facts from sheet + PDFs
+ *     + brochure + floor plans + images per unit, flagging conflicts). Batched
+ *     so no single model response can overflow and silently bank zero rows.
  */
 export async function startExtractionJob(recordId: string): Promise<void> {
   if (useMigrationJobs.getState().jobs[recordId]) return;
   const state = useAppStore.getState();
   const isAr = state.language === 'ar';
+  const lang: 'ar' | 'en' = isAr ? 'ar' : 'en';
   const fresh = readFresh(recordId);
   if (!fresh) return;
   const targetModel = state.models.find((m) => m.id === fresh.data.target_model_id);
@@ -132,48 +218,124 @@ export async function startExtractionJob(recordId: string): Promise<void> {
     state.addToast(isAr ? 'لا توجد ملفات للاستخراج.' : 'No files to extract.', 'error');
     return;
   }
+  const fields = targetFieldLites(targetModel);
 
   registerJob({ recordId, kind: 'extract', done: 0, total: 0 });
   patchMigrationRecord(recordId, { status: 'extracting', error_message: null });
   try {
-    const result = await extractRawTable(
-      uploads,
-      isAr ? 'ar' : 'en',
-      targetFieldLites(targetModel),
-      isProjectProfileTarget(targetModel) ? 'project' : 'records',
-    );
+    if (isProjectProfileTarget(targetModel)) {
+      // ── PROJECT-PROFILE: one aggregated row + Arabic knowledge document ──
+      const result = await extractRawTable(uploads, lang, fields, 'project');
+      const addToast = useAppStore.getState().addToast;
+      if (result.files_skipped.length > 0) {
+        addToast(
+          (isAr ? 'تم تخطي: ' : 'Skipped: ') +
+            result.files_skipped.map((s) => `${s.name} (${s.reason})`).join('، '),
+          'info',
+        );
+      }
+      if (result.truncated) {
+        addToast(
+          isAr
+            ? 'البيانات كبيرة — تم استخراج جزء منها فقط. راجع وأكمل، أو قسّم الملف.'
+            : 'Large input — only part was extracted. Review, or split the file and retry.',
+          'info',
+        );
+      }
+      await patchMigrationRecord(recordId, {
+        raw_table: {
+          headers: result.headers,
+          rows: result.rows,
+          notes: result.notes,
+          summary: result.summary,
+          truncated: result.truncated,
+          source: 'ai_extract',
+        },
+        step: 'review_raw',
+        status: 'draft',
+        project_document: result.document,
+        project_intelligence: result.intelligence,
+      });
+      return; // finally unregisters the job
+    }
+
+    // ── RECORDS: SOURCE FUSION (discover → batched fuse → assemble) ──
+    updateJob(recordId, { phase: 'discover' });
+    const disc = await discoverUnits(uploads, lang, fields);
     const addToast = useAppStore.getState().addToast;
-    if (result.files_skipped.length > 0) {
+    if (disc.files_skipped.length > 0) {
       addToast(
         (isAr ? 'تم تخطي: ' : 'Skipped: ') +
-          result.files_skipped.map((s) => `${s.name} (${s.reason})`).join('، '),
+          disc.files_skipped.map((s) => `${s.name} (${s.reason})`).join('، '),
         'info',
       );
     }
-    if (result.truncated) {
+
+    const headers = disc.headers;
+    updateJob(recordId, { phase: 'fuse', done: 0, total: disc.units.length });
+    const rows: string[][] = [];
+    const rowKeys: string[] = [];
+    const conflicts: RawCellConflict[] = [];
+    const seen = new Set<string>();
+    let resolved = 0;
+
+    for (const batch of chunk(disc.units, FUSE_BATCH_SIZE)) {
+      const fused = await fuseResolved(uploads, lang, fields, headers, batch);
+      const byKey = new Map(fused.rows.map((r) => [r.key, r.values]));
+      for (const u of batch) {
+        if (seen.has(u.key)) continue; // de-dup defensively across batches
+        seen.add(u.key);
+        rowKeys.push(u.key);
+        const vals = byKey.get(u.key);
+        if (vals && vals.length > 0) {
+          rows.push(vals.length === headers.length ? vals : headers.map((_, i) => vals[i] ?? ''));
+          resolved += 1;
+        } else {
+          // Never silently drop a discovered unit — emit a blank row + loud note.
+          rows.push(headers.map(() => ''));
+          conflicts.push({
+            rowKey: u.key,
+            header: '',
+            candidates: [],
+            chosen: '',
+            note: isAr
+              ? `لم تُرجع المعالجة بيانات للوحدة ${u.key} — تحقّق يدويًا.`
+              : `Fusion returned no data for unit ${u.key} — verify manually.`,
+          });
+        }
+      }
+      conflicts.push(...fused.conflicts);
+      updateJob(recordId, { done: rows.length, total: disc.units.length });
+    }
+
+    // A header set with zero resolved rows means something went wrong upstream —
+    // surface it, never bank an empty table as a success.
+    if (rows.length === 0) {
+      throw new Error(isAr ? 'لم يتم العثور على وحدات في الملفات.' : 'No units were found in the files.');
+    }
+    if (disc.truncated) {
       addToast(
         isAr
-          ? 'البيانات كبيرة — تم استخراج جزء منها فقط. راجع وأكمل، أو قسّم الملف.'
-          : 'Large input — only part was extracted. Review, or split the file and retry.',
+          ? 'كان الإدخال كبيرًا — قد لا تظهر كل الوحدات. راجع، أو قسّم الملف وأعد المحاولة.'
+          : 'Large input — some units may be missing. Review, or split the file and retry.',
         'info',
       );
     }
-    // Await the final patch so the job stays registered until the record
-    // reflects the outcome — otherwise the steps see a no-job/stale-status
-    // frame and flash the "interrupted" view.
+
     await patchMigrationRecord(recordId, {
       raw_table: {
-        headers: result.headers,
-        rows: result.rows,
-        notes: result.notes,
-        summary: result.summary,
-        truncated: result.truncated,
+        headers,
+        rows,
+        row_keys: rowKeys,
+        conflicts,
+        sources: disc.sources,
+        notes: disc.notes,
+        summary: buildFusionSummary(isAr, disc, resolved, conflicts.length),
+        truncated: disc.truncated,
         source: 'ai_extract',
       },
       step: 'review_raw',
       status: 'draft',
-      project_document: result.document,
-      project_intelligence: result.intelligence,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

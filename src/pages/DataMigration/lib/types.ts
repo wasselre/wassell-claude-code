@@ -75,6 +75,33 @@ export const MIGRATION_STEP_ORDER: MigrationStep[] = [
 export type MigrationStatus = 'draft' | 'extracting' | 'migrating' | 'done' | 'failed';
 
 /**
+ * One unit entity discovered across all uploaded sources (records-mode
+ * source-fusion, phase 1). Identifiers only — the heavy per-unit facts are
+ * resolved later, per batch, in the fusion phase. `key` is stable across phases.
+ */
+export interface DiscoveredUnit {
+  key: string;
+  unit_number?: string;
+  model?: string;
+  block?: string;
+  floor?: string;
+  source_refs?: string[];
+}
+
+/**
+ * A cross-source disagreement about one resolved unit+column, preserved for
+ * human review in the review step. The chosen value already sits in the row —
+ * this is the audit trail (which sources said what, what was picked, why).
+ */
+export interface RawCellConflict {
+  rowKey: string;
+  header: string;
+  candidates: { source: string; value: string }[];
+  chosen: string;
+  note: string;
+}
+
+/**
  * A flat raw table — the exact shape `readExcelFile` returns and
  * `mapImportedRows` consumes (src/lib/excelUtils.ts). Multiselect cells stay
  * multi-value as comma / `،`-separated text; they are split into arrays at
@@ -94,6 +121,13 @@ export interface RawTable {
   /** True if extraction could not include every page/row of the input. */
   truncated?: boolean;
   pages_processed?: number;
+  /** Source-fusion (records mode): cross-source disagreements flagged for human
+   * review. The chosen value is already in `rows`; this is the audit trail. */
+  conflicts?: RawCellConflict[];
+  /** Source-fusion: per-file classification from the discovery phase. */
+  sources?: { name: string; kind: string; note?: string }[];
+  /** Source-fusion: the stable unit key per row, index-aligned to `rows`. */
+  row_keys?: string[];
 }
 
 /**

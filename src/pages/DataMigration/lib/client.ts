@@ -14,7 +14,12 @@
  */
 
 import { supabase } from '@/lib/supabase';
-import type { RawTable, ColumnMappingSuggestion, ProjectIntelligenceSection } from './types';
+import type {
+  RawTable,
+  ColumnMappingSuggestion,
+  ProjectIntelligenceSection,
+  DiscoveredUnit,
+} from './types';
 import type { TargetFieldLite } from './targetFields';
 
 const MIGRATIONS_BUCKET = 'wassel-migrations';
@@ -151,6 +156,129 @@ export async function extractRawTable(
     source: 'ai_extract',
     files_processed: body.files_processed ?? uploads.length,
     files_skipped: body.files_skipped ?? [],
+  };
+}
+
+// ─── Source-fusion extraction (records mode): discover → fuse_batch ──────────
+
+/** Mint a fresh 10-min signed URL per upload (RLS-scoped to the owner) for an
+ * AI call. Minted per-call, so a multi-batch fusion run never trips URL expiry
+ * even when the whole run takes longer than one URL's lifetime. */
+async function signUploads(
+  uploads: MigrationUpload[],
+): Promise<{ name: string; mimeType: string; url: string }[]> {
+  if (!supabase) throw new Error('Supabase is not configured.');
+  const files: { name: string; mimeType: string; url: string }[] = [];
+  for (const u of uploads) {
+    const { data, error } = await supabase.storage
+      .from(MIGRATIONS_BUCKET)
+      .createSignedUrl(u.path, 600);
+    if (error || !data?.signedUrl) {
+      throw new Error(`Could not read "${u.name}": ${error?.message ?? 'no signed URL'}`);
+    }
+    files.push({ name: u.name, mimeType: u.mimeType, url: data.signedUrl });
+  }
+  return files;
+}
+
+/** Throw a loud Error carrying any server `code` (e.g. 'max_tokens') so the
+ * orchestrator can react — split the batch and retry rather than fail the run. */
+function migrateFailed(body: { error?: string; code?: string }, status: number, fallback: string): never {
+  const err = new Error(body.error ?? `${fallback} (${status})`);
+  if (body.code) (err as { code?: string }).code = body.code;
+  throw err;
+}
+
+export interface DiscoverResult {
+  headers: string[];
+  units: DiscoveredUnit[];
+  sources: { name: string; kind: string; note?: string }[];
+  notes?: string;
+  truncated: boolean;
+  files_processed: number;
+  files_skipped: { name: string; reason: string }[];
+}
+
+export interface FuseBatchResult {
+  rows: { key: string; values: string[] }[];
+  conflicts: {
+    unitKey: string;
+    header: string;
+    candidates: { source: string; value: string }[];
+    chosen: string;
+    note: string;
+  }[];
+  notes?: string;
+  truncated: boolean;
+}
+
+/**
+ * Phase 1 — inventory the sources and discover every unit across ALL uploaded
+ * files. Returns the unit index (identifiers only) + the canonical header set.
+ * Throws on failure (no silent failure — see CLAUDE.md).
+ */
+export async function discoverUnits(
+  uploads: MigrationUpload[],
+  language: 'ar' | 'en' = 'ar',
+  fields: TargetFieldLite[] = [],
+): Promise<DiscoverResult> {
+  if (uploads.length === 0) throw new Error('No files to analyze.');
+  const files = await signUploads(uploads);
+  const res = await fetchWithTimeout('/api/migrate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ action: 'discover', files, language, fields }),
+  }, 300_000);
+  const body = (await res.json().catch(() => ({}))) as Partial<DiscoverResult> & {
+    ok?: boolean;
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok || !body.ok || !Array.isArray(body.headers) || !Array.isArray(body.units)) {
+    migrateFailed(body, res.status, 'Discovery failed');
+  }
+  return {
+    headers: body.headers,
+    units: body.units,
+    sources: Array.isArray(body.sources) ? body.sources : [],
+    notes: body.notes,
+    truncated: Boolean(body.truncated),
+    files_processed: body.files_processed ?? uploads.length,
+    files_skipped: body.files_skipped ?? [],
+  };
+}
+
+/**
+ * Phase 2 — resolve ONE batch of units by fusing facts across every source.
+ * On a truncation the thrown Error carries `code:'max_tokens'` so the caller
+ * can split the batch in half and retry. Throws on failure.
+ */
+export async function fuseUnitBatch(
+  uploads: MigrationUpload[],
+  language: 'ar' | 'en',
+  fields: TargetFieldLite[],
+  headers: string[],
+  units: DiscoveredUnit[],
+): Promise<FuseBatchResult> {
+  const files = await signUploads(uploads);
+  const res = await fetchWithTimeout('/api/migrate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ action: 'fuse_batch', files, language, fields, headers, units }),
+  }, 300_000);
+  const body = (await res.json().catch(() => ({}))) as Partial<FuseBatchResult> & {
+    ok?: boolean;
+    error?: string;
+    code?: string;
+  };
+  if (!res.ok || !body.ok || !Array.isArray(body.rows)) {
+    migrateFailed(body, res.status, 'Fusion failed');
+  }
+  return {
+    rows: body.rows,
+    conflicts: Array.isArray(body.conflicts) ? body.conflicts : [],
+    notes: body.notes,
+    truncated: Boolean(body.truncated),
   };
 }
 

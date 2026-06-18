@@ -49,6 +49,43 @@ function langLine(language: AgentLanguage, field: string): string {
 export const MAP_MODEL = 'claude-sonnet-4-6';
 export const STANDARDIZE_MODEL = 'claude-sonnet-4-6';
 
+/**
+ * A model call whose forced-tool output was cut off by the `max_tokens` ceiling.
+ * The structured result is incomplete and MUST NOT be persisted — thrown loudly
+ * so the wizard surfaces an error + retry instead of silently banking a partial
+ * or empty table (the exact silent-failure class CLAUDE.md forbids). The
+ * /api/migrate handler maps it to `code:'max_tokens'` so the client can re-batch
+ * (split the unit batch in half and retry) rather than fail the whole run.
+ */
+export class ExtractionTruncatedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ExtractionTruncatedError';
+  }
+}
+
+/**
+ * Pull the forced tool-call input, failing LOUDLY on truncation or a missing
+ * tool block. Shared by every extraction phase (extract / discover / fuse) so
+ * none of them can silently return an empty or partial table.
+ */
+function requireToolInput(
+  response: Anthropic.Message,
+  toolName: string,
+  context: string,
+): Record<string, unknown> {
+  if (response.stop_reason === 'max_tokens') {
+    throw new ExtractionTruncatedError(
+      `${context} hit the output token limit before finishing — the result is incomplete and was not saved.`,
+    );
+  }
+  const tb = response.content.find((b) => b.type === 'tool_use' && b.name === toolName);
+  if (!tb || tb.type !== 'tool_use') {
+    throw new Error(`${context}: the model did not return the expected result.`);
+  }
+  return tb.input as Record<string, unknown>;
+}
+
 /** One uploaded source file, addressed by a short-lived signed URL the client
  * minted from the wassel-migrations bucket (RLS-scoped to the owner). */
 export interface ExtractFileInput {
@@ -262,6 +299,7 @@ function fileExtensionMime(name: string): string | null {
  */
 async function buildFileBlocks(
   files: ExtractFileInput[],
+  opts: { cacheLast?: boolean } = {},
 ): Promise<{ blocks: Anthropic.ContentBlockParam[]; skipped: { name: string; reason: string }[]; truncated: boolean; used: number }> {
   const skipped: { name: string; reason: string }[] = [];
   const blocks: Anthropic.ContentBlockParam[] = [];
@@ -355,6 +393,17 @@ async function buildFileBlocks(
     used += 1;
   }
 
+  // Prompt caching: mark the last file block as a cache breakpoint so the whole
+  // system + tools + file prefix is cached. Across fusion batches (same files,
+  // only the trailing per-batch unit list differs) this turns N re-reads of the
+  // brochure/plans into one cache write + cheap cache reads. No-op when there is
+  // nothing to cache.
+  if (opts.cacheLast && blocks.length > 0) {
+    (blocks[blocks.length - 1] as { cache_control?: { type: 'ephemeral' } }).cache_control = {
+      type: 'ephemeral',
+    };
+  }
+
   return { blocks, skipped, truncated, used };
 }
 
@@ -419,11 +468,8 @@ export async function runExtract(
     response = await call(EXTRACT_FALLBACK_MODEL);
   }
 
-  const toolBlock = response.content.find((b) => b.type === 'tool_use');
-  if (!toolBlock || toolBlock.type !== 'tool_use') {
-    throw new Error('Extraction model did not return a table');
-  }
-  const out = toolBlock.input as {
+  // Fail LOUDLY on truncation / missing tool — never bank a silent empty table.
+  const out = requireToolInput(response, 'emit_raw_table', 'Extraction') as {
     headers?: unknown;
     rows?: unknown;
     notes?: unknown;
@@ -438,6 +484,14 @@ export async function runExtract(
   const rows: string[][] = rawRows.map((r) =>
     Array.isArray(r) ? r.map((c) => String(c ?? '')) : [],
   );
+  // A header row with zero data rows means extraction read nothing usable (or
+  // was cut off in a way that dropped the rows array) — surface it, don't save
+  // an empty table as if it succeeded.
+  if (rows.length === 0) {
+    throw new Error(
+      'Extraction returned no rows — the model could not read any records from the files.',
+    );
+  }
 
   const intelligence: ProjectIntelligenceSection[] | undefined =
     mode === 'project' && Array.isArray(out.intelligence)
@@ -465,6 +519,453 @@ export async function runExtract(
     truncated: Boolean(out.truncated) || truncatedInput,
     files_processed: used,
     files_skipped: skipped,
+  };
+}
+
+// ============================================================================
+// SOURCE-FUSION EXTRACTION (records mode) — discover → fuse_batch
+//
+// Replaces the single "re-type every cell in one tool call" extract for the
+// per-record (units / clients / …) targets, which overflowed the output-token
+// cap on any sizable list and silently banked zero rows. Two phases, both
+// model-aware and vision-deep, orchestrated by the client (jobRunner):
+//   1. discover  — inventory the sources, identify EVERY unit entity across all
+//                  files, return a compact unit INDEX (identifiers only) + the
+//                  canonical header set. Output stays small (keys only).
+//   2. fuse_batch — for a BATCH of units, merge facts about each unit from ALL
+//                  sources (sheet + price PDF + brochure + floor plans + images)
+//                  into one resolved row, flagging cross-source conflicts. The
+//                  client batches the index so no single response can overflow,
+//                  prompt-caches the files across batches, and auto-splits a
+//                  batch that still truncates.
+// ============================================================================
+
+/** One unit entity found during discovery — identifiers only (the heavy facts
+ * are resolved later, per batch, in fusion). `key` is stable across phases. */
+export interface DiscoveredUnit {
+  key: string;
+  unit_number?: string;
+  model?: string;
+  block?: string;
+  floor?: string;
+  /** Which uploaded files mention this unit (file names / page hints). */
+  source_refs?: string[];
+}
+
+/** One uploaded file, classified by the discovery phase. */
+export interface SourceClassification {
+  name: string;
+  kind: string;
+  note?: string;
+}
+
+export interface DiscoverResult {
+  /** The canonical header set the fusion phase fills per unit. */
+  headers: string[];
+  units: DiscoveredUnit[];
+  sources: SourceClassification[];
+  notes?: string;
+  truncated: boolean;
+  files_processed: number;
+  files_skipped: { name: string; reason: string }[];
+}
+
+/** A cross-source disagreement about one unit+field — preserved for human
+ * review (never silently resolved). */
+export interface UnitFactConflict {
+  unitKey: string;
+  header: string;
+  candidates: { source: string; value: string }[];
+  chosen: string;
+  note: string;
+}
+
+export interface FuseBatchResult {
+  /** One row per requested unit key; `values` aligns 1:1 to the given headers. */
+  rows: { key: string; values: string[] }[];
+  conflicts: UnitFactConflict[];
+  notes?: string;
+  truncated: boolean;
+}
+
+const DISCOVER_SYSTEM = `You are the SOURCE-INVENTORY + UNIT-DISCOVERY phase of a data-migration pipeline for a Saudi Arabian real-estate CRM (Wassel / وصل العقارية). The operator uploaded developer hand-off files for ONE project. They may include a unit price list, an availability sheet, a unit table, a brochure, architectural floor plans, component descriptions, project-level metadata, and images/screenshots — as PDFs, images, or spreadsheet text (CSV). Usually Arabic.
+
+Your job in THIS phase is NOT to output unit data. It is to:
+1. INVENTORY the sources — classify what each uploaded file contains.
+2. DISCOVER every UNIT ENTITY referenced across ALL files, and return a compact unit INDEX (identifiers only — no full details yet).
+3. Propose the CANONICAL HEADER SET — the unified columns the next phase will fill per unit.
+
+Always call the \`emit_unit_index\` tool. Never reply in prose.
+
+SOURCE INVENTORY:
+For each file give its kind (one of: unit_table, price_list, availability, brochure, floor_plans, component_descriptions, project_metadata, images, other) and a one-line note on what it holds.
+
+UNIT DISCOVERY:
+- A unit entity may be identified by unit number, unit code, model, building/block number, floor, area, price, or a source row/page reference.
+- CROSS-REFERENCE: the SAME unit usually appears in several files (e.g. number 104 in the Excel, in the price PDF, and on a floor plan). That is ONE unit, not three — merge them into a single index entry.
+- Return ONE entry per distinct unit with a STABLE \`key\`. Prefer the unit number; if numbers repeat across blocks/buildings, qualify the key (e.g. "B1-104"). Fill whatever identifiers you can (unit_number, model, block, floor) and list which sources mention it.
+- A spreadsheet is ONE source of units — include its rows, but do NOT assume it lists EVERY unit, nor that a unit missing from it doesn't exist. A unit seen only in the brochure or a floor plan still counts.
+- Be COMPLETE: enumerate every individual unit. Do NOT collapse ranges into a summary — the index is identifiers only, so it stays small even for hundreds of units.
+
+CANONICAL HEADERS:
+- Use the destination model's fields (given below) as a hunt-list, PLUS any extra useful columns the sources contain. Clear, human-readable labels (Arabic where the data is Arabic). This exact header list is what the next phase fills per unit, so make it the complete set you want resolved.
+
+If the input is too large to enumerate every unit in one response, include as many COMPLETE entries as you can and set "truncated": true. Never invent units.`;
+
+const DISCOVER_TOOL: Anthropic.Tool = {
+  name: 'emit_unit_index',
+  description:
+    'Return the source inventory, the canonical header set, and the index of every distinct unit entity discovered across all uploaded files.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      sources: {
+        type: 'array',
+        description: 'One entry per uploaded file: what it contains.',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'The file name.' },
+            kind: {
+              type: 'string',
+              description:
+                'unit_table | price_list | availability | brochure | floor_plans | component_descriptions | project_metadata | images | other',
+            },
+            note: { type: 'string', description: 'One line on what this file holds.' },
+          },
+          required: ['name', 'kind'],
+        },
+      },
+      headers: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'The canonical, unified column set the next phase fills per unit (destination-field hunt-list ∪ extra useful source columns). Clear human-readable labels.',
+      },
+      units: {
+        type: 'array',
+        description: 'The unit index — ONE entry per distinct unit, identifiers only.',
+        items: {
+          type: 'object',
+          properties: {
+            key: { type: 'string', description: 'Stable unique key (prefer unit number; qualify if it repeats, e.g. "B1-104").' },
+            unit_number: { type: 'string' },
+            model: { type: 'string' },
+            block: { type: 'string' },
+            floor: { type: 'string' },
+            source_refs: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'File names / page hints where this unit appears.',
+            },
+          },
+          required: ['key'],
+        },
+      },
+      notes: { type: 'string', description: 'Ambiguities — duplicate numbers, unreadable regions, units inferred from a plan, etc.' },
+      truncated: { type: 'boolean', description: 'True if you could not enumerate every unit in one response.' },
+    },
+    required: ['headers', 'units', 'truncated'],
+  } as Anthropic.Tool['input_schema'],
+};
+
+/**
+ * Phase 1 — read ALL files, classify them, and return the unit index + the
+ * canonical header set. Output is identifiers-only so it does not overflow even
+ * for hundreds of units. Fails loudly on truncation / no-units.
+ */
+export async function runDiscover(
+  apiKey: string,
+  files: ExtractFileInput[],
+  language: AgentLanguage = 'ar',
+  targetFields: TargetFieldLite[] = [],
+): Promise<DiscoverResult> {
+  const { blocks: fileBlocks, skipped, truncated: truncatedInput, used } = await buildFileBlocks(files);
+  if (used === 0) {
+    throw new Error(
+      `No extractable files. ${skipped.map((s) => `${s.name}: ${s.reason}`).join('; ') || 'No files provided.'}`,
+    );
+  }
+  const fieldList = targetFields.length
+    ? targetFields.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`).join('\n')
+    : '';
+  const blocks: Anthropic.ContentBlockParam[] = [
+    {
+      type: 'text',
+      text:
+        'Inventory the sources and discover every unit across the file(s) below, following the rules.\n\n' +
+        (fieldList
+          ? "The destination model's fields (use as the header hunt-list):\n" + fieldList + '\n\n'
+          : '') +
+        'Return the source inventory, the canonical headers, and the complete unit index (identifiers only).',
+    },
+    ...fileBlocks,
+  ];
+
+  const client = new Anthropic({ apiKey });
+  const langNote =
+    language === 'ar'
+      ? '\n\nIMPORTANT: Write your "notes" and any source "note" in Arabic (العربية). Keep unit identifiers verbatim.'
+      : '\n\nIMPORTANT: Write your "notes" and any source "note" in English. Keep unit identifiers verbatim.';
+  const call = (model: string) =>
+    client.messages.create({
+      model,
+      // Identifiers-only, but a few-hundred-unit index still needs room. Generous
+      // budget + the loud truncation guard below.
+      max_tokens: 32000,
+      system: DISCOVER_SYSTEM + langNote,
+      tools: [DISCOVER_TOOL],
+      tool_choice: { type: 'tool', name: 'emit_unit_index' },
+      messages: [{ role: 'user', content: blocks }],
+    });
+
+  let response;
+  try {
+    response = await call(EXTRACT_MODEL);
+  } catch {
+    response = await call(EXTRACT_FALLBACK_MODEL);
+  }
+
+  const out = requireToolInput(response, 'emit_unit_index', 'Unit discovery');
+  const headers = Array.isArray(out.headers) ? out.headers.map((h) => String(h ?? '')).filter(Boolean) : [];
+  const rawUnits = Array.isArray(out.units) ? out.units : [];
+  const seen = new Set<string>();
+  const units: DiscoveredUnit[] = [];
+  for (const u of rawUnits) {
+    const o = u as Record<string, unknown>;
+    const key = typeof o.key === 'string' && o.key.trim() ? o.key.trim() : '';
+    if (!key || seen.has(key)) continue; // de-dup defensively on the stable key
+    seen.add(key);
+    units.push({
+      key,
+      unit_number: typeof o.unit_number === 'string' ? o.unit_number : undefined,
+      model: typeof o.model === 'string' ? o.model : undefined,
+      block: typeof o.block === 'string' ? o.block : undefined,
+      floor: typeof o.floor === 'string' ? o.floor : undefined,
+      source_refs: Array.isArray(o.source_refs) ? o.source_refs.map((s) => String(s ?? '')) : undefined,
+    });
+  }
+  if (headers.length === 0 || units.length === 0) {
+    throw new Error(
+      'Unit discovery found no units in the uploaded files. Check that the files contain a unit list / table, or split a very large input.',
+    );
+  }
+  const sources: SourceClassification[] = (Array.isArray(out.sources) ? out.sources : [])
+    .map((s) => {
+      const o = s as Record<string, unknown>;
+      return {
+        name: typeof o.name === 'string' ? o.name : '',
+        kind: typeof o.kind === 'string' ? o.kind : 'other',
+        note: typeof o.note === 'string' ? o.note : undefined,
+      };
+    })
+    .filter((s) => s.name);
+
+  return {
+    headers,
+    units,
+    sources,
+    notes: typeof out.notes === 'string' ? out.notes : undefined,
+    truncated: Boolean(out.truncated) || truncatedInput,
+    files_processed: used,
+    files_skipped: skipped,
+  };
+}
+
+const FUSE_SYSTEM = `You are the SOURCE-FUSION phase of a data-migration pipeline for a Saudi Arabian real-estate CRM (Wassel / وصل العقارية). You are given the uploaded project files (unit tables, price lists, availability sheets, brochure, floor plans, images, CSV — usually Arabic), a CANONICAL HEADER SET, and a BATCH of specific unit entities to resolve.
+
+For EACH unit in the batch, produce ONE fully-resolved row by MERGING facts about THAT unit from ALL sources:
+- Pull each header's value from wherever the sources have it — e.g. unit number / status from the sheet, price from the price list, area from the brochure table, floor from the unit table, facade from the availability sheet.
+- FLOOR PLANS (critical): for bedrooms / bathrooms / components, ANALYZE the unit's floor plan. Find the plan for the unit's model (a plan titled "نموذج A1" is the A1 model; units of the same model share a plan) and COUNT from the DRAWING — bathrooms = distinct WC / toilet fixtures, bedrooms = bedroom rooms, plus kitchens, living rooms (صالة), maid's rooms, etc.
+- Output BARE NUMBERS for counts/quantities (3, not "3 دورات مياه"). Keep every other value RAW and verbatim ("471.99", "3,434,000", "تاون هاوس") — cleaning / standardization happen LATER with human approval. Use "" for any header a unit genuinely has no source for. NEVER invent or pad.
+
+CONFLICTS — when sources disagree about the SAME unit+field:
+- Choose a value, put it in the row, AND record the disagreement in \`conflicts\`: the unit key, the header, EVERY candidate value with its source, your chosen value, and a one-line note.
+- Precedence: for COMPONENT COUNTS (bathrooms / bedrooms / rooms) trust the FLOOR PLAN over text or sheets. For PRICE trust the most authoritative / latest price list. Otherwise choose the most likely value but say in the note that it needs human review.
+- NEVER silently pick — every disagreement must appear in \`conflicts\`.
+
+Always call the \`emit_fused_units\` tool. Emit EXACTLY one row per requested unit key, with \`values\` aligned 1:1 to the given headers (same length and order). If you cannot fit every requested unit in this response, set "truncated": true (the pipeline will re-batch and retry) — but never emit a half-written row.`;
+
+const FUSE_TOOL: Anthropic.Tool = {
+  name: 'emit_fused_units',
+  description: 'Return one fully-resolved row per requested unit key (merged across all sources), plus any cross-source conflicts.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      rows: {
+        type: 'array',
+        description: 'One entry per requested unit key.',
+        items: {
+          type: 'object',
+          properties: {
+            key: { type: 'string', description: 'The unit key from the batch, echoed exactly.' },
+            values: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Cell values aligned 1:1 to the canonical headers (same length and order). "" where no source has it.',
+            },
+          },
+          required: ['key', 'values'],
+        },
+      },
+      conflicts: {
+        type: 'array',
+        description: 'Every cross-source disagreement, one entry per conflicting unit+field. OMIT if none.',
+        items: {
+          type: 'object',
+          properties: {
+            unitKey: { type: 'string' },
+            header: { type: 'string', description: 'The canonical header in dispute.' },
+            candidates: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  source: { type: 'string', description: 'Which file/source gave this value.' },
+                  value: { type: 'string' },
+                },
+                required: ['source', 'value'],
+              },
+            },
+            chosen: { type: 'string', description: 'The value you put in the row.' },
+            note: { type: 'string', description: 'One line: why this was chosen / whether it needs review.' },
+          },
+          required: ['unitKey', 'header', 'candidates', 'chosen', 'note'],
+        },
+      },
+      notes: { type: 'string', description: 'Optional batch-level notes.' },
+      truncated: { type: 'boolean', description: 'True if you could not resolve every requested unit in one response.' },
+    },
+    required: ['rows', 'truncated'],
+  } as Anthropic.Tool['input_schema'],
+};
+
+/**
+ * Phase 2 — resolve ONE batch of units by fusing facts across every source.
+ * The files are prompt-cached (shared prefix across batches); only the trailing
+ * per-batch unit list varies. Fails loudly (ExtractionTruncatedError) on a
+ * max_tokens cut-off OR a self-reported truncation, so the client can split the
+ * batch and retry instead of banking a partial result.
+ */
+export async function runFuseBatch(
+  apiKey: string,
+  files: ExtractFileInput[],
+  language: AgentLanguage,
+  targetFields: TargetFieldLite[],
+  headers: string[],
+  units: DiscoveredUnit[],
+): Promise<FuseBatchResult> {
+  if (headers.length === 0) throw new Error('Fusion requires the canonical headers from discovery.');
+  if (units.length === 0) return { rows: [], conflicts: [], truncated: false };
+
+  const { blocks: fileBlocks, used } = await buildFileBlocks(files, { cacheLast: true });
+  if (used === 0) throw new Error('Fusion has no readable source files.');
+
+  const headerLine = headers.map((h, i) => `[${i}] ${h}`).join('\n');
+  const fieldHints = targetFields.length
+    ? '\n\nDestination fields (context only — do NOT coerce values to them):\n' +
+      targetFields.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`).join('\n')
+    : '';
+  const unitLine = units
+    .map((u) => {
+      const id = [
+        u.unit_number ? `no.${u.unit_number}` : '',
+        u.model ? `model ${u.model}` : '',
+        u.block ? `block ${u.block}` : '',
+        u.floor ? `floor ${u.floor}` : '',
+      ]
+        .filter(Boolean)
+        .join(', ');
+      return `- key="${u.key}"${id ? ` (${id})` : ''}`;
+    })
+    .join('\n');
+
+  // Cached prefix = system + tools + [instruction text + file blocks]. Only the
+  // trailing batch list changes between batches → cache hits on the heavy files.
+  const content: Anthropic.ContentBlockParam[] = [
+    {
+      type: 'text',
+      text:
+        'Resolve the units listed at the END of this message by fusing the file(s) below, following the rules.\n\n' +
+        'CANONICAL HEADERS — your `values` array MUST have EXACTLY this many entries, in THIS order:\n' +
+        headerLine +
+        fieldHints,
+    },
+    ...fileBlocks,
+    {
+      type: 'text',
+      text:
+        `UNITS TO RESOLVE IN THIS BATCH (emit one row per key, echoing the key exactly):\n${unitLine}`,
+    },
+  ];
+
+  const client = new Anthropic({ apiKey });
+  const langNote =
+    language === 'ar'
+      ? '\n\nIMPORTANT: Write "notes" and conflict "note" text in Arabic. Keep cell DATA verbatim.'
+      : '\n\nIMPORTANT: Write "notes" and conflict "note" text in English. Keep cell DATA verbatim.';
+  const call = (model: string) =>
+    client.messages.create({
+      model,
+      max_tokens: 16000,
+      system: FUSE_SYSTEM + langNote,
+      tools: [FUSE_TOOL],
+      tool_choice: { type: 'tool', name: 'emit_fused_units' },
+      messages: [{ role: 'user', content }],
+    });
+
+  let response;
+  try {
+    response = await call(EXTRACT_MODEL);
+  } catch {
+    response = await call(EXTRACT_FALLBACK_MODEL);
+  }
+
+  const out = requireToolInput(response, 'emit_fused_units', 'Unit fusion');
+  // A self-reported truncation is just as unsafe as a max_tokens cut-off — bounce
+  // it so the client splits the batch and retries (never bank a partial batch).
+  if (out.truncated === true) {
+    throw new ExtractionTruncatedError('Unit fusion could not fit the whole batch in one response.');
+  }
+
+  const rawRows = Array.isArray(out.rows) ? out.rows : [];
+  const rows = rawRows
+    .map((r) => {
+      const o = r as Record<string, unknown>;
+      const key = typeof o.key === 'string' ? o.key.trim() : '';
+      const vals = Array.isArray(o.values) ? o.values.map((v) => String(v ?? '')) : [];
+      // Normalize to the header count so a stray short/long row can't misalign.
+      const values =
+        vals.length === headers.length
+          ? vals
+          : headers.map((_, i) => vals[i] ?? '');
+      return { key, values };
+    })
+    .filter((r) => r.key);
+
+  const conflicts: UnitFactConflict[] = (Array.isArray(out.conflicts) ? out.conflicts : [])
+    .map((c) => {
+      const o = c as Record<string, unknown>;
+      return {
+        unitKey: typeof o.unitKey === 'string' ? o.unitKey : '',
+        header: typeof o.header === 'string' ? o.header : '',
+        candidates: Array.isArray(o.candidates)
+          ? o.candidates.map((x) => {
+              const xo = x as Record<string, unknown>;
+              return { source: String(xo.source ?? ''), value: String(xo.value ?? '') };
+            })
+          : [],
+        chosen: typeof o.chosen === 'string' ? o.chosen : '',
+        note: typeof o.note === 'string' ? o.note : '',
+      };
+    })
+    .filter((c) => c.unitKey && c.header);
+
+  return {
+    rows,
+    conflicts,
+    notes: typeof out.notes === 'string' ? out.notes : undefined,
+    truncated: false,
   };
 }
 

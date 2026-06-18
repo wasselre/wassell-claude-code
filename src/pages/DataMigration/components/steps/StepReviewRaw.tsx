@@ -14,6 +14,7 @@ import {
   ChevronRight,
   FileText,
   Lightbulb,
+  AlertTriangle,
 } from 'lucide-react';
 import EditableRawGrid from '../EditableRawGrid';
 import { discussExtraction, type MigrationUpload } from '../../lib/client';
@@ -100,6 +101,7 @@ export default function StepReviewRaw({
   const [aiInput, setAiInput] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [discussOpen, setDiscussOpen] = useState(true);
+  const [conflictsOpen, setConflictsOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
   const [docOpen, setDocOpen] = useState(false);
   const [docDraft, setDocDraft] = useState(projectDocument ?? '');
@@ -270,6 +272,59 @@ export default function StepReviewRaw({
         <div className="mb-3 shrink-0 max-h-40 overflow-y-auto flex items-start gap-2 px-3 py-2 rounded-lg bg-copper/[0.06] border border-copper/20 text-xs text-charcoal/70">
           <Info size={14} className="text-copper shrink-0 mt-0.5" />
           <span>{draft.notes}</span>
+        </div>
+      )}
+
+      {/* SOURCE-FUSION: cross-source disagreements the AI flagged. The chosen
+          value is already in the row; this is the audit trail (which source said
+          what, what was picked, why) so the operator can verify before import. */}
+      {draft.conflicts && draft.conflicts.length > 0 && (
+        <div className="mb-3 rounded-xl border border-gold/40 bg-gold/[0.06] overflow-hidden shrink-0">
+          <button
+            onClick={() => setConflictsOpen((v) => !v)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm font-bold text-charcoal hover:bg-gold/[0.1] transition-colors"
+          >
+            {conflictsOpen ? (
+              <ChevronDown size={15} />
+            ) : (
+              <ChevronRight size={15} className={isAr ? 'rotate-180' : ''} />
+            )}
+            <AlertTriangle size={15} className="text-gold" />
+            <span className="flex-1 text-start">
+              {isAr ? 'تعارضات بين المصادر' : 'Source conflicts'}
+            </span>
+            <span className="text-[11px] text-charcoal/40 font-normal">
+              {isAr ? `${draft.conflicts.length} للمراجعة` : `${draft.conflicts.length} to review`}
+            </span>
+          </button>
+          {conflictsOpen && (
+            <div className="px-3 pb-3 max-h-72 overflow-y-auto space-y-2">
+              {draft.conflicts.map((c, i) => (
+                <div key={i} className="bg-white/70 rounded-lg p-2.5 border border-sand/30 text-xs">
+                  <div className="font-bold text-charcoal mb-1">
+                    {isAr ? 'الوحدة' : 'Unit'} {c.rowKey}
+                    {c.header ? <span className="text-charcoal/50"> · {c.header}</span> : null}
+                  </div>
+                  {c.candidates.length > 0 && (
+                    <div className="text-charcoal/70 mb-1 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {c.candidates.map((x, j) => (
+                        <span key={j}>
+                          <span className="text-charcoal/40">{x.source}:</span> {x.value}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {c.chosen && (
+                    <div className="text-charcoal/80">
+                      {isAr ? 'المُختار' : 'Chosen'}:{' '}
+                      <span className="font-medium text-copper">{c.chosen}</span>
+                    </div>
+                  )}
+                  {c.note && <div className="text-charcoal/55 mt-0.5">{c.note}</div>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
