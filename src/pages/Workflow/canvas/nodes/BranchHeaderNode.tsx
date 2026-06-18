@@ -12,6 +12,7 @@ export interface BranchHeaderNodeData extends Record<string, unknown> {
   canDelete: boolean;
   canDuplicate: boolean;
   isAr: boolean;
+  readOnly?: boolean;
   // When this branch header is the LAST node in its branch (else branch
   // with no actions yet) we render an attached "+" pill at its bottom
   // edge for adding the first action.
@@ -28,7 +29,7 @@ interface BranchHeaderNodeProps extends NodeProps {
 // is unambiguous; here it's a standalone card so the OTHERWISE arm of the
 // tree still has an entry node connected to the trigger.
 export default function BranchHeaderNode({ data, selected }: BranchHeaderNodeProps) {
-  const { branch, positionLabel, branchName, isElse, canDelete, canDuplicate, isAr } = data;
+  const { branch, positionLabel, branchName, isElse, canDelete, canDuplicate, isAr, readOnly } = data;
 
   const onDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -73,7 +74,7 @@ export default function BranchHeaderNode({ data, selected }: BranchHeaderNodePro
           </>
         )}
         <div className="flex-1" />
-        {canDuplicate && (
+        {canDuplicate && !readOnly && (
           <button
             onClick={onDuplicate}
             className="p-1 rounded-md text-charcoal/40 hover:text-charcoal hover:bg-white/60 transition-colors"
@@ -83,15 +84,17 @@ export default function BranchHeaderNode({ data, selected }: BranchHeaderNodePro
             <Copy size={12} />
           </button>
         )}
-        <button
-          onClick={onDelete}
-          disabled={!canDelete}
-          className="p-1 rounded-md text-charcoal/40 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          aria-label={isAr ? 'حذف الفرع' : 'Delete branch'}
-          title={canDelete ? (isAr ? 'حذف الفرع' : 'Delete branch') : (isAr ? 'لا يمكن حذف الفرع الوحيد' : 'Cannot delete the only branch')}
-        >
-          <Trash2 size={12} />
-        </button>
+        {!readOnly && (
+          <button
+            onClick={onDelete}
+            disabled={!canDelete}
+            className="p-1 rounded-md text-charcoal/40 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label={isAr ? 'حذف الفرع' : 'Delete branch'}
+            title={canDelete ? (isAr ? 'حذف الفرع' : 'Delete branch') : (isAr ? 'لا يمكن حذف الفرع الوحيد' : 'Cannot delete the only branch')}
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
       </div>
       <div className="px-3 py-2 text-xs text-charcoal/45 italic" dir={isAr ? 'rtl' : 'ltr'}>
         {isAr

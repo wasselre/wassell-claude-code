@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { ArrowRight, Save, GitBranch, Plus, Maximize2, Minimize2 } from 'lucide-react';
+import { useIsAdmin } from '@/hooks/usePermission';
+import { ArrowRight, Save, GitBranch, Plus, Maximize2, Minimize2, Eye } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import { translateLabel } from '@/lib/translateLabel';
@@ -28,6 +29,12 @@ export default function WorkflowEditorPage() {
   const { t } = useTranslation();
   const { workflows, models, saveWorkflow, addToast, language } = useAppStore();
   const isAr = language === 'ar';
+  // Non-admins with can_view_workflows reach this page read-only: they can
+  // open + read the whole workflow but cannot edit or save. Editing stays
+  // admin-only. (RLS also blocks writes server-side.)
+  const isAdmin = useIsAdmin();
+  const readOnly = !isAdmin;
+  const backTo = readOnly ? '/sales/process' : '/workflow';
 
   const isNew = workflowId === 'new';
   const existing = !isNew ? workflows.find((w) => w.id === workflowId) : null;
@@ -152,7 +159,7 @@ export default function WorkflowEditorPage() {
     }>
       <div className="shrink-0 px-4 md:px-8 py-3 flex items-center gap-3 border-b border-sand/40 bg-white/70 backdrop-blur-sm">
         <button
-          onClick={() => navigate('/workflow')}
+          onClick={() => navigate(backTo)}
           className="p-2 rounded-lg hover:bg-sand/30 text-charcoal/40 hover:text-charcoal transition-colors shrink-0"
           aria-label={t('common.back') ?? 'Back'}
         >
@@ -164,6 +171,7 @@ export default function WorkflowEditorPage() {
         <div className="flex-1 max-w-md">
           <Input
             value={isAr ? workflow.label_ar : workflow.label_en}
+            disabled={readOnly}
             onChange={(e) => {
               // Update only the side the user is typing in. The opposite
               // side gets filled by the translate-on-blur handler below.
@@ -199,7 +207,7 @@ export default function WorkflowEditorPage() {
           />
         </div>
         <div className="flex-1" />
-        {isTriggerConfigured && (
+        {isTriggerConfigured && !readOnly && (
           <>
             <button
               onClick={() => toolbarRef.current?.addBranch()}
@@ -234,10 +242,17 @@ export default function WorkflowEditorPage() {
         >
           {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
         </button>
-        <Button onClick={handleSave}>
-          <Save size={16} />
-          {t('common.save')}
-        </Button>
+        {readOnly ? (
+          <span className="inline-flex items-center gap-1.5 rounded-lg border border-sand/50 bg-cream px-3 py-2 text-sm font-bold text-terracotta shrink-0">
+            <Eye size={14} />
+            {isAr ? 'للعرض فقط' : 'Read-only'}
+          </span>
+        ) : (
+          <Button onClick={handleSave}>
+            <Save size={16} />
+            {t('common.save')}
+          </Button>
+        )}
       </div>
 
       {isTriggerConfigured ? (
@@ -247,6 +262,7 @@ export default function WorkflowEditorPage() {
             setWorkflow={(updater) => setWorkflow(updater)}
             triggerFields={triggerFields}
             toolbarRef={toolbarRef}
+            readOnly={readOnly}
           />
         </div>
       ) : (
@@ -255,14 +271,16 @@ export default function WorkflowEditorPage() {
             <GitBranch size={36} className="mx-auto mb-3 opacity-50" />
             <p className="font-bold text-charcoal/70">{isAr ? 'اختر مشغّلًا للبدء' : 'Pick a trigger to get started'}</p>
             <p className="text-xs mt-1 mb-6">{isAr ? 'اختر النموذج والحدث لبدء بناء القاعدة.' : 'Choose a model and event to begin building this rule.'}</p>
-            <InlineTriggerPicker
-              workflow={workflow}
-              onChange={(patch) => setWorkflow((w) => ({
-                ...w,
-                ...patch,
-                branches: (w.branches ?? []).map((b) => ({ ...b, conditions: [] })),
-              }))}
-            />
+            {!readOnly && (
+              <InlineTriggerPicker
+                workflow={workflow}
+                onChange={(patch) => setWorkflow((w) => ({
+                  ...w,
+                  ...patch,
+                  branches: (w.branches ?? []).map((b) => ({ ...b, conditions: [] })),
+                }))}
+              />
+            )}
           </div>
         </div>
       )}

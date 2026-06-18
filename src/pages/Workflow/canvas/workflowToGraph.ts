@@ -23,6 +23,7 @@ export interface TriggerNodeData extends Record<string, unknown> {
   trigger_event: Workflow['trigger_event'];
   trigger_webhook_slug_id?: string | null;
   isAr: boolean;
+  readOnly?: boolean;
 }
 
 export interface ActionNodeData extends Record<string, unknown> {
@@ -32,6 +33,7 @@ export interface ActionNodeData extends Record<string, unknown> {
   triggerFields: ModelField[];
   models: AppModel[];
   isAr: boolean;
+  readOnly?: boolean;
   // When this action is the LAST node in its branch we render an attached
   // "+" pill at its bottom edge for appending another action.
   tailAdd?: TailAddPillSpec;
@@ -57,6 +59,10 @@ export interface WorkflowToGraphInput {
   triggerFields: ModelField[];
   models: AppModel[];
   isAr: boolean;
+  // When true the graph is built for a read-only viewer: no "+" add pills,
+  // no addable edges, and node data carries `readOnly` so each node hides its
+  // delete / duplicate / add-condition affordances.
+  readOnly?: boolean;
 }
 
 export interface WorkflowGraph {
@@ -82,7 +88,7 @@ function positionLabelFor(branch: WorkflowBranch, dataIdx: number, nonElseCount:
 // Build the graph from a workflow. The caller rebuilds the graph on every
 // workflow change; the function is cheap (no IO, linear in the number of
 // conditions + actions).
-export function workflowToGraph({ workflow, triggerFields, models, isAr }: WorkflowToGraphInput): WorkflowGraph {
+export function workflowToGraph({ workflow, triggerFields, models, isAr, readOnly = false }: WorkflowToGraphInput): WorkflowGraph {
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
@@ -105,6 +111,7 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
       trigger_event: workflow.trigger_event,
       trigger_webhook_slug_id: workflow.trigger_webhook_slug_id ?? null,
       isAr,
+      readOnly,
     },
     draggable: false,
     selectable: true,
@@ -172,7 +179,8 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
           canDelete: true,
           canDuplicate: false,
           isAr,
-          ...(entryIsLast ? { tailAdd: tailSpec } : {}),
+          readOnly,
+          ...(entryIsLast && !readOnly ? { tailAdd: tailSpec } : {}),
         } satisfies BranchHeaderNodeData,
         width: childWidth,
         height: headerHeight,
@@ -208,7 +216,8 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
           canDelete: nonElseCount > 1,
           canDuplicate: true,
           isAr,
-          ...(entryIsLast ? { tailAdd: tailSpec } : {}),
+          readOnly,
+          ...(entryIsLast && !readOnly ? { tailAdd: tailSpec } : {}),
         } satisfies ConditionGroupNodeData,
         width: childWidth,
         height: groupHeight,
@@ -249,7 +258,8 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
           triggerFields,
           models,
           isAr,
-          ...(isLastAction ? { tailAdd: tailSpec } : {}),
+          readOnly,
+          ...(isLastAction && !readOnly ? { tailAdd: tailSpec } : {}),
         } satisfies ActionNodeData,
         width: childWidth,
         height: NODE_HEIGHT,
@@ -264,7 +274,8 @@ export function workflowToGraph({ workflow, triggerFields, models, isAr }: Workf
         id: `e-${prevId}-${id}`,
         source: prevId,
         target: id,
-        type: 'addable',
+        // Read-only viewers get plain edges (no "+" insert affordance).
+        type: readOnly ? 'default' : 'addable',
         data: {
           branchId: branch.id,
           insertAfterId: isPrevAction ? prevId : null,

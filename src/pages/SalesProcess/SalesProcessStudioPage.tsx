@@ -219,10 +219,11 @@ function ActivityBlock({
           <div className="mt-4 flex flex-wrap gap-2">
             {bound ? (
               <>
-                {/* Opening the editor is admin-only (no read-only Builder yet). */}
-                {isAdmin && (
+                {/* Admins open the editor to edit; workflow-view profiles open
+                    it read-only to inspect the actual steps. */}
+                {canViewWorkflows && (
                   <button type="button" onClick={() => navigate(`/workflow/${bound.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-copper bg-copper/5 px-4 py-2 text-sm font-bold text-copper transition-colors hover:bg-copper hover:text-white">
-                    <ExternalLink size={14} /> {isAr ? 'فتح في محرر سير العمل' : 'Open in Workflow Builder'}
+                    <ExternalLink size={14} /> {isAdmin ? (isAr ? 'فتح في محرر سير العمل' : 'Open in Workflow Builder') : (isAr ? 'عرض سير العمل' : 'View workflow')}
                   </button>
                 )}
                 {/* Run history is read-only — visible to any workflow-view profile. */}

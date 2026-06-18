@@ -23,7 +23,7 @@ interface ActionNodeProps extends NodeProps {
 
 // Single-action node for the canvas. Full editing happens in the drawer.
 export default function ActionNode({ data, selected, id }: ActionNodeProps) {
-  const { action, models, isAr } = data;
+  const { action, models, isAr, readOnly } = data;
   const style = ACTION_STYLE[action.type];
   const Icon = ICON_BY_TYPE[action.type] ?? Play;
   const summary = summarizeAction(action, models, isAr);
@@ -58,14 +58,16 @@ export default function ActionNode({ data, selected, id }: ActionNodeProps) {
             {summary}
           </div>
         </div>
-        <button
-          onClick={onDelete}
-          className="p-1.5 rounded-md text-charcoal/25 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
-          aria-label={isAr ? 'حذف' : 'Delete'}
-          title={isAr ? 'حذف' : 'Delete'}
-        >
-          <Trash2 size={14} />
-        </button>
+        {!readOnly && (
+          <button
+            onClick={onDelete}
+            className="p-1.5 rounded-md text-charcoal/25 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
+            aria-label={isAr ? 'حذف' : 'Delete'}
+            title={isAr ? 'حذف' : 'Delete'}
+          >
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
       <Handle
         type="source"

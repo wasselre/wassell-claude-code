@@ -50,6 +50,10 @@ interface WorkflowCanvasProps {
   // a ref-shaped action object back to the canvas for the canvas's own
   // empty-state CTAs.
   toolbarRef?: React.MutableRefObject<{ addBranch: () => void; addElseBranch: () => void } | null>;
+  // Read-only viewer (non-admin with can_view_workflows): the graph renders
+  // without edit affordances, nodes aren't draggable, every mutation handler
+  // is a no-op, and the drawer is disabled. Reading is fully allowed.
+  readOnly?: boolean;
 }
 
 // Wrapper that provides the React Flow context. The actual canvas body needs
@@ -62,7 +66,7 @@ export default function WorkflowCanvas(props: WorkflowCanvasProps) {
   );
 }
 
-function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef }: WorkflowCanvasProps) {
+function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef, readOnly = false }: WorkflowCanvasProps) {
   const { models, language } = useAppStore();
   const isAr = language === 'ar';
   const rf = useReactFlow();
@@ -78,8 +82,8 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
   // so xyflow owns the node/edge stores internally and can preserve each
   // node's measurement + handle bounds across updates.
   const graph = useMemo(
-    () => workflowToGraph({ workflow, triggerFields, models, isAr }),
-    [workflow, triggerFields, models, isAr],
+    () => workflowToGraph({ workflow, triggerFields, models, isAr, readOnly }),
+    [workflow, triggerFields, models, isAr, readOnly],
   );
 
   // We use `useNodesState` so xyflow can manage node drag locally without us
@@ -270,6 +274,9 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
   // don't need to know about the canvas, keeping them independently
   // composable.
   useEffect(() => {
+    // Read-only: never wire up the mutation listeners. Even if a stray edit
+    // affordance slipped through, its event would be a no-op.
+    if (readOnly) return;
     const onDelete = (e: Event) => {
       const { id } = (e as CustomEvent).detail as { id: string };
       graphHelpers.deleteNode(id);
@@ -339,13 +346,14 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
       window.removeEventListener('workflow-canvas:add-condition', onAddCondition);
       window.removeEventListener('workflow-canvas:open-add-menu', onOpenAddMenu);
     };
-  }, [graphHelpers, rf, isAr]);
+  }, [graphHelpers, rf, isAr, readOnly]);
 
   // Keyboard delete — only acts on action nodes. Branch / conditionGroup
   // / header nodes are deleted via their explicit buttons so an accidental
   // Delete keystroke can't wipe out a whole branch.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (readOnly) return;
       if (e.key !== 'Delete' && e.key !== 'Backspace') return;
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
@@ -358,9 +366,10 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [selectedId, graphHelpers]);
+  }, [selectedId, graphHelpers, readOnly]);
 
   const onPickAddKind = useCallback((kind: AddableKind) => {
+    if (readOnly) return;
     if (!addMenu) return;
     const newId = graphHelpers.insertNode(kind, addMenu.branchId, addMenu.insertAfterId);
     setAddMenu(null);
@@ -380,7 +389,7 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
         if (action) setDrawer({ kind: 'action', branchId: addMenu.branchId, action });
       }, 0);
     }
-  }, [addMenu, graphHelpers]);
+  }, [addMenu, graphHelpers, readOnly]);
 
   // Editor callbacks passed into the drawer.
   const onUpdateTrigger = useCallback((patch: { trigger_model_id?: string; trigger_event?: WorkflowEvent; trigger_webhook_slug_id?: string | null }) => {
@@ -442,7 +451,7 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
         onNodeClick={onNodeClick}
         onPaneClick={() => setSelectedId(null)}
         nodesConnectable={false}
-        nodesDraggable
+        nodesDraggable={!readOnly}
         elementsSelectable
         selectionOnDrag
         panOnDrag={[1, 2]}
@@ -475,6 +484,7 @@ function WorkflowCanvasInner({ workflow, setWorkflow, triggerFields, toolbarRef 
         node={drawer}
         workflow={workflow}
         triggerFields={triggerFields}
+        readOnly={readOnly}
         onClose={() => { setDrawer(null); setSelectedId(null); }}
         onUpdateTrigger={onUpdateTrigger}
         onReplaceBranchConditions={graphHelpers.replaceBranchConditions}

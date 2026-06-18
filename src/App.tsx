@@ -276,7 +276,10 @@ export default function App() {
               the Builder/list/agent routes below stay admin-only. */}
           <Route path="/workflow/logs" element={<RequireWorkflowView><WorkflowLogsPage /></RequireWorkflowView>} />
           <Route path="/workflow/logs/:runId" element={<RequireWorkflowView><WorkflowRunDetailPage /></RequireWorkflowView>} />
-          <Route path="/workflow/:workflowId" element={<RequireAdmin><WorkflowEditorPage /></RequireAdmin>} />
+          {/* Editor opens read-only for workflow-view profiles (admins edit).
+              The page + canvas render disabled for non-admins; RLS also blocks
+              any write. The list / agent routes above stay admin-only. */}
+          <Route path="/workflow/:workflowId" element={<RequireWorkflowView><WorkflowEditorPage /></RequireWorkflowView>} />
           <Route path="/dashboards" element={<RequireAdmin><DashboardListPage /></RequireAdmin>} />
           <Route path="/dashboards/:dashboardId" element={<RequireAdmin><DashboardEditorPage /></RequireAdmin>} />
           <Route path="/scheduled-reports" element={<RequireAdmin><ScheduledReportsPage /></RequireAdmin>} />

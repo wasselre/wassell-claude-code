@@ -17,6 +17,10 @@ interface NodeDrawerProps {
   node: DrawerNode | null;
   workflow: Workflow;
   triggerFields: ModelField[];
+  // Read-only viewer: the body is wrapped in a disabled <fieldset> so every
+  // input / select / "+ Add" / delete control inside the embedded panels is
+  // non-interactive. The header Close button stays active (it's outside).
+  readOnly?: boolean;
   onClose: () => void;
   onUpdateTrigger: (patch: { trigger_model_id?: string; trigger_event?: WorkflowEvent; trigger_webhook_slug_id?: string | null }) => void;
   // Replace the entire conditions / actions array of a branch. The drawer
@@ -38,6 +42,7 @@ export default function NodeDrawer({
   node,
   workflow,
   triggerFields,
+  readOnly = false,
   onClose,
   onUpdateTrigger,
   onReplaceBranchConditions,
@@ -151,8 +156,13 @@ export default function NodeDrawer({
             {header.icon}
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="font-bold text-charcoal text-base leading-tight">{header.title}</h2>
-            <p className="text-xs text-charcoal/50 mt-0.5">{header.subtitle}</p>
+            <h2 className="font-bold text-charcoal text-base leading-tight">
+              {readOnly ? (isAr ? header.title.replace('تحرير', 'عرض') : header.title.replace('Edit', 'View')) : header.title}
+            </h2>
+            <p className="text-xs text-charcoal/50 mt-0.5">
+              {header.subtitle}
+              {readOnly && <span className="ms-1 italic">· {isAr ? 'للعرض فقط' : 'read-only'}</span>}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -163,7 +173,11 @@ export default function NodeDrawer({
           </button>
         </div>
         <div className="flex-1 overflow-auto p-5">
-          {body}
+          {/* Disabled fieldset makes every embedded input / select / button
+              non-interactive in read-only mode without touching the panels. */}
+          <fieldset disabled={readOnly} className="contents">
+            {body}
+          </fieldset>
         </div>
       </aside>
     </>,

@@ -23,6 +23,9 @@ export interface ConditionGroupNodeData extends Record<string, unknown> {
   canDelete: boolean;
   canDuplicate: boolean;
   isAr: boolean;
+  // Read-only viewer: hide every edit affordance (delete / duplicate /
+  // add-condition / per-condition delete).
+  readOnly?: boolean;
   // When this conditionGroup is the LAST node in its branch (no actions
   // yet) we render an attached "+" pill at its bottom edge for adding the
   // first action.
@@ -39,7 +42,7 @@ interface ConditionGroupNodeProps extends NodeProps {
 // look like one card. The branch's header (IF / ELSE IF + name + duplicate /
 // delete buttons) is the top of this card so the relationship is obvious.
 export default function ConditionGroupNode({ data, selected, id }: ConditionGroupNodeProps) {
-  const { branch, conditions, conditionMode, fields, isAr, positionLabel, branchName, isElse, canDelete, canDuplicate } = data;
+  const { branch, conditions, conditionMode, fields, isAr, positionLabel, branchName, isElse, canDelete, canDuplicate, readOnly } = data;
   const isOr = conditionMode === 'any';
   const connectorLabel = isOr ? (isAr ? 'أو' : 'OR') : (isAr ? 'و' : 'AND');
   const connectorChipClasses = isOr
@@ -108,7 +111,7 @@ export default function ConditionGroupNode({ data, selected, id }: ConditionGrou
           </>
         )}
         <div className="flex-1" />
-        {canDuplicate && (
+        {canDuplicate && !readOnly && (
           <button
             onClick={onDuplicateBranch}
             className="p-1 rounded-md text-charcoal/40 hover:text-charcoal hover:bg-white/60 transition-colors"
@@ -118,15 +121,17 @@ export default function ConditionGroupNode({ data, selected, id }: ConditionGrou
             <Copy size={12} />
           </button>
         )}
-        <button
-          onClick={onDeleteBranch}
-          disabled={!canDelete}
-          className="p-1 rounded-md text-charcoal/40 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          aria-label={isAr ? 'حذف الفرع' : 'Delete branch'}
-          title={canDelete ? (isAr ? 'حذف الفرع' : 'Delete branch') : (isAr ? 'لا يمكن حذف الفرع الوحيد' : 'Cannot delete the only branch')}
-        >
-          <Trash2 size={12} />
-        </button>
+        {!readOnly && (
+          <button
+            onClick={onDeleteBranch}
+            disabled={!canDelete}
+            className="p-1 rounded-md text-charcoal/40 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            aria-label={isAr ? 'حذف الفرع' : 'Delete branch'}
+            title={canDelete ? (isAr ? 'حذف الفرع' : 'Delete branch') : (isAr ? 'لا يمكن حذف الفرع الوحيد' : 'Cannot delete the only branch')}
+          >
+            <Trash2 size={12} />
+          </button>
+        )}
       </div>
 
       {/* Conditions list — every condition is rendered as a row inside the
@@ -168,19 +173,21 @@ export default function ConditionGroupNode({ data, selected, id }: ConditionGrou
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={onDeleteCondition(cond.id)}
-                  className="p-1 rounded-md text-charcoal/25 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0 opacity-0 group-hover/row:opacity-100"
-                  aria-label={isAr ? 'حذف الشرط' : 'Delete condition'}
-                  title={isAr ? 'حذف الشرط' : 'Delete condition'}
-                >
-                  <Trash2 size={12} />
-                </button>
+                {!readOnly && (
+                  <button
+                    onClick={onDeleteCondition(cond.id)}
+                    className="p-1 rounded-md text-charcoal/25 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0 opacity-0 group-hover/row:opacity-100"
+                    aria-label={isAr ? 'حذف الشرط' : 'Delete condition'}
+                    title={isAr ? 'حذف الشرط' : 'Delete condition'}
+                  >
+                    <Trash2 size={12} />
+                  </button>
+                )}
               </div>
             </div>
           );
         })}
-        {!isElse && (
+        {!isElse && !readOnly && (
           <button
             onClick={onAddCondition}
             className="w-full mt-1 py-1.5 rounded-lg border border-dashed border-sky-300 text-sky-600 hover:bg-sky-50 transition-colors text-xs font-bold flex items-center justify-center gap-1.5"
