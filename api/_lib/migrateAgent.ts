@@ -520,7 +520,8 @@ For each source column (identified by its 0-based index) pick the target field w
 
 Rules:
 - A range field appears in the list as two entries, "slug.min" and "slug.max". Map a "from / أدنى / min / starting" column to .min and a "to / أعلى / max / up to" column to .max.
-- Do not map two different columns to the same field, UNLESS they are the two halves of a range.
+- A table field appears as one entry per sub-column, "slug.colName" (e.g. "services.col_1"). Map a column to the matching sub-column; a single source cell holding a comma/newline-separated list is split into one table row per item.
+- Do not map two different columns to the same field, UNLESS they are the two halves of a range or distinct sub-columns of the same table.
 - Be conservative: if no field clearly fits a column, return "" for it. A skipped column is better than a wrong mapping — the user can fix mappings, but a wrong one silently corrupts data.
 - Match across languages (an Arabic header can map to an English-labelled field and vice-versa).
 - Keep each \`reason\` to a few words (the output must stay compact — wide tables have many columns).

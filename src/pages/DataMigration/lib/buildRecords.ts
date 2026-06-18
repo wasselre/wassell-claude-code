@@ -305,6 +305,8 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
     const issues: RowIssue[] = [];
     const mappedFieldNames = new Set<string>();
     const routed = new Map<string, string[]>(); // destFieldName → raw values
+    // table field name → (sub-column name → row tokens); assembled into rows below.
+    const tableInputs = new Map<string, Map<string, string[]>>();
 
     const addIssue = (field: ModelField, severity: RowIssue['severity'], code: RowIssue['code'], raw?: string, detail?: string) => {
       issues.push({ fieldName: field.name, fieldLabel: args.isAr ? field.label_ar : field.label_en, severity, code, raw, detail });
@@ -322,6 +324,17 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
 
       const cell = (rawRow[col] ?? '').trim();
       if (!cell) continue;
+
+      if (field.type === 'table') {
+        // A table sub-column (`slug.colName`). A multi-value cell becomes one
+        // row per item; sibling sub-columns of the same table zip by row index.
+        if (!subPath) continue; // whole-table mapping is unsupported
+        const tokens = splitMultiValue(cell);
+        let cols = tableInputs.get(fieldName);
+        if (!cols) { cols = new Map(); tableInputs.set(fieldName, cols); }
+        cols.set(subPath, tokens.length ? tokens : [cell]);
+        continue;
+      }
 
       if (isControlledField(field)) {
         const res = columnRes.get(col);
@@ -412,6 +425,24 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
           if (!audit[destName]) audit[destName] = { raw: raws.join('، '), action: 'route' };
         }
       }
+    }
+
+    // ── Assemble table fields from their collected sub-column tokens ──────────
+    for (const [tableName, cols] of tableInputs) {
+      let rowCount = 0;
+      for (const toks of cols.values()) rowCount = Math.max(rowCount, toks.length);
+      const rows: Record<string, string>[] = [];
+      for (let i = 0; i < rowCount; i++) {
+        const row: Record<string, string> = {};
+        let any = false;
+        for (const [colName, toks] of cols) {
+          const v = toks[i] ?? '';
+          row[colName] = v;
+          if (v !== '') any = true;
+        }
+        if (any) rows.push(row);
+      }
+      if (rows.length > 0) data[tableName] = rows;
     }
 
     // ── Required-field validation ────────────────────────────────────────────

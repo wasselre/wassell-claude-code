@@ -12,6 +12,10 @@ const IMPORTABLE_TYPES = new Set<string>([
   'text', 'textarea', 'email', 'phone', 'url',
   'number', 'currency', 'date', 'datetime', 'checkbox',
   'dropdown', 'multiselect', 'section_selector', 'lookup', 'range',
+  // `table` is importable via its sub-columns only: each maps as `slug.colName`
+  // (like a range's `.min`/`.max`), and a multi-value cell becomes one row per
+  // item. The whole-field `table` value is never a single mapping target.
+  'table',
 ]);
 
 const STANDARDIZABLE_TYPES = new Set<string>(['dropdown', 'multiselect', 'lookup']);
@@ -38,6 +42,14 @@ export function mappingTargets(model: AppModel, isAr: boolean): { value: string;
         { value: `${f.name}.max`, label: `${base} — ${isAr ? 'أعلى' : 'max'}` },
       ];
     }
+    if (f.type === 'table') {
+      // One target per sub-column. A flat cell mapped here becomes table rows
+      // (multi-value cell → one row per item; sibling sub-columns zip by row).
+      return (f.table_columns ?? []).map((c) => ({
+        value: `${f.name}.${c.name}`,
+        label: `${base} — ${isAr ? c.label_ar : c.label_en}`,
+      }));
+    }
     return [{ value: f.name, label: base }];
   });
 }
@@ -59,6 +71,15 @@ export function targetFieldLites(model: AppModel): TargetFieldLite[] {
         { name: `${f.name}.min`, label_ar: `${f.label_ar} (أدنى)`, label_en: `${f.label_en} (min)`, type: 'number', required: false },
         { name: `${f.name}.max`, label_ar: `${f.label_ar} (أعلى)`, label_en: `${f.label_en} (max)`, type: 'number', required: false },
       ];
+    }
+    if (f.type === 'table') {
+      return (f.table_columns ?? []).map((c) => ({
+        name: `${f.name}.${c.name}`,
+        label_ar: `${f.label_ar} (${c.label_ar})`,
+        label_en: `${f.label_en} (${c.label_en})`,
+        type: 'text',
+        required: false,
+      }));
     }
     return [{ name: f.name, label_ar: f.label_ar, label_en: f.label_en, type: f.type, required: f.required }];
   });

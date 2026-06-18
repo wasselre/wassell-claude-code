@@ -104,7 +104,9 @@ export default function StepStandardize({
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const otherScalarFields = importableFields(model).filter((f) => f.type !== 'range');
+  // Routing destinations: any importable field except range (needs .min/.max)
+  // and table (needs sub-column row assembly, not a single routed value).
+  const otherScalarFields = importableFields(model).filter((f) => f.type !== 'range' && f.type !== 'table');
 
   if (loading) {
     return (

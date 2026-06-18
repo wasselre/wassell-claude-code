@@ -53,10 +53,18 @@ export default function StepMapping({
     void (async () => {
       try {
         const sug = await suggestMappings(table.headers, table.rows.slice(0, 6), targetFieldLites(model), isAr ? 'ar' : 'en');
+        // Union the AI suggestions with deterministic exact header→label matching:
+        // the AI sometimes returns nothing (or skips obvious columns), but an
+        // exact label match (e.g. header "اسم المشروع" → that field) should still
+        // auto-map. AI wins when it returns a valid target; otherwise fall back
+        // to the seed. Ignore any AI slug that isn't a real mapping target.
+        const seeded = seedMappings(table, targets);
+        const validTargets = new Set(targets.map((t) => t.value));
         const next: Record<number, string | null> = {};
         table.headers.forEach((_, i) => {
           const s = sug.find((x) => x.columnIndex === i);
-          next[i] = s && s.fieldName ? s.fieldName : null;
+          const aiVal = s && s.fieldName && validTargets.has(s.fieldName) ? s.fieldName : null;
+          next[i] = aiVal ?? seeded[i] ?? null;
         });
         onMappings(next, sug);
       } catch (err) {

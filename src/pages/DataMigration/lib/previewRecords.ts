@@ -59,6 +59,16 @@ export function resolveDisplay(
     }
     case 'checkbox':
       return value ? (isAr ? 'نعم' : 'Yes') : (isAr ? 'لا' : 'No');
+    case 'table': {
+      if (!Array.isArray(value)) return String(value);
+      const cols = field.table_columns ?? [];
+      const first = cols[0]?.name;
+      const vals = first
+        ? value.map((r) => (r && typeof r === 'object' ? String((r as Record<string, unknown>)[first] ?? '') : '')).filter(Boolean)
+        : [];
+      if (vals.length > 0) return vals.join('، ');
+      return `${value.length} ${isAr ? 'صف' : 'rows'}`;
+    }
     default:
       return String(value);
   }
