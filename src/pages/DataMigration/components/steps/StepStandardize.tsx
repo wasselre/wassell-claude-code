@@ -40,6 +40,7 @@ export default function StepStandardize({
 }: StepStandardizeProps) {
   const addToast = useAppStore((s) => s.addToast);
   const allRecords = useAppStore((s) => s.records);
+  const allModels = useAppStore((s) => s.models);
   const [loading, setLoading] = useState(false);
   const fetched = useRef(false);
   const Back = isAr ? ArrowRight : ArrowLeft;
@@ -141,19 +142,16 @@ export default function StepStandardize({
           cols.map((c) => {
             const plan = standardization?.[c.colIndex];
             if (!plan) return null;
-            // Lookups use the searchable LookupCombobox (reads the store directly),
-            // so no need to build a big candidate array; dropdowns pass options.
-            const candidates = c.fieldType === 'lookup' ? [] : optionCandidates(c.field);
             return (
               <ValueStandardizationColumn
                 key={c.colIndex}
                 isAr={isAr}
                 header={table.headers[c.colIndex] ?? ''}
                 fieldLabel={isAr ? c.field.label_ar : c.field.label_en}
+                field={c.field}
+                model={model}
+                allModels={allModels}
                 plan={plan}
-                candidates={candidates}
-                lookupModelId={c.field.lookup_model_id ?? undefined}
-                lookupDisplayField={c.field.lookup_display_field ?? undefined}
                 otherFields={otherScalarFields
                   .filter((f) => f.name !== c.field.name)
                   .map((f) => ({ name: f.name, label: isAr ? f.label_ar : f.label_en }))}

@@ -1,5 +1,6 @@
 import type { AppModel, ModelField } from '@/types';
-import type { StandardizableType } from './types';
+import { splitMultiValue } from '@/lib/textMatch';
+import { NON_TARGET_MODEL_NAMES, type StandardizableType } from './types';
 
 /**
  * Field types the importer (`mapImportedRows`) can actually write from a flat
@@ -109,7 +110,7 @@ export function distinctColumnValues(
   for (const row of rows) {
     const cell = (row[colIndex] ?? '').trim();
     if (!cell) continue;
-    const tokens = multi ? cell.split(/[,،]/).map((t) => t.trim()).filter(Boolean) : [cell];
+    const tokens = multi ? splitMultiValue(cell) : [cell];
     for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
   }
   return [...counts.entries()].map(([raw, count]) => ({ raw, count })).sort((a, b) => b.count - a.count);
@@ -119,4 +120,40 @@ export function distinctColumnValues(
  * multi-value lookup). */
 export function isMultiValueColumn(field: ModelField): boolean {
   return field.type === 'multiselect' || (field.type === 'lookup' && !!field.is_multi);
+}
+
+/**
+ * Can the migrator create a NEW record in this lookup field's target model?
+ * Returns null when it's safe, or a human reason when blocked — the single
+ * source of truth shared by the record builder (to mark rows invalid) and the
+ * standardization UI (to warn before the user picks "create new"). Creation is
+ * blocked when the target is a custom-UI/system model that can't take generic
+ * records, or when it has REQUIRED fields beyond the display field that we
+ * can't fill safely from a single raw value (would mint an invalid record).
+ *
+ * Frozen targets are NOT blocked here — `record_save` dispatches frozen writes
+ * fine; only un-fillable required fields matter.
+ */
+export function lookupCreateBlockReason(
+  field: ModelField,
+  allModels: AppModel[],
+  isAr: boolean,
+): string | null {
+  const targetModel = allModels.find((m) => m.id === field.lookup_model_id);
+  if (!targetModel) return isAr ? 'النموذج المرتبط غير موجود' : 'Linked model not found';
+  if (NON_TARGET_MODEL_NAMES.has(targetModel.name)) {
+    return isAr
+      ? `لا يمكن إنشاء سجلات في ${targetModel.label_ar} تلقائيًا`
+      : `Records can't be auto-created in ${targetModel.label_en}`;
+  }
+  const disp = field.lookup_display_field;
+  if (!disp) return isAr ? 'لا يوجد حقل عرض للنموذج المرتبط' : 'Linked model has no display field';
+  const missing = importableFields(targetModel).filter((f) => f.required && f.name !== disp);
+  if (missing.length > 0) {
+    const names = missing.map((f) => (isAr ? f.label_ar : f.label_en)).join('، ');
+    return isAr
+      ? `يتطلب ${targetModel.label_ar} حقولًا إلزامية لا يمكن تعبئتها: ${names}`
+      : `${targetModel.label_en} requires fields we can't fill: ${names}`;
+  }
+  return null;
 }

@@ -1,21 +1,11 @@
 import type { AppRecord, ModelField } from '@/types';
 import type { ColumnStandardization, StandardizableType, ValueDecision } from './types';
 import type { StandardizeCandidate, StandardizeDecision } from './client';
+import { normalizeMatch } from '@/lib/textMatch';
 
-// Arabic diacritics + tatweel — stripped for matching so "ريا" matches "ريّا",
-// "شقه" matches "شقة", etc. Matching only; canonical keeps the real label.
-const AR_DIACRITICS = /[ً-ْٰـ]/g;
-export function normalizeMatch(s: string): string {
-  return (s ?? '')
-    .normalize('NFKC')
-    .replace(AR_DIACRITICS, '')
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/ى/g, 'ي')
-    .replace(/ة/g, 'ه')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
+// Re-export so existing importers keep working; the definition now lives in the
+// shared `@/lib/textMatch` so every matching path uses the SAME normalizer.
+export { normalizeMatch };
 
 /**
  * Deterministically match each distinct value to an existing option (dropdown/
@@ -89,12 +79,10 @@ export function lookupCandidates(
   return out;
 }
 
-const norm = (s: string): string => s.normalize('NFKC').trim().toLowerCase();
-
 function findOption(field: ModelField, canonical: string) {
-  const c = norm(canonical);
+  const c = normalizeMatch(canonical);
   return (field.options ?? []).find(
-    (o) => norm(o.label_en) === c || norm(o.label_ar) === c || norm(o.value) === c,
+    (o) => normalizeMatch(o.label_en) === c || normalizeMatch(o.label_ar) === c || normalizeMatch(o.value) === c,
   );
 }
 

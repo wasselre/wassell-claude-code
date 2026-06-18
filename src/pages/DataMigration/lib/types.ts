@@ -192,10 +192,81 @@ export interface ColumnStandardization {
   values: ValueDecision[];
 }
 
+// ─── Strict migration plan (preview + migrate share it) ─────────────────────
+
+/** A dropdown/multi-select option that will be added to the model schema at
+ * migration time (only if its rows actually migrate). `value` is the
+ * deterministic slug (`slugifyOptionLabel`); records already store it. */
+export interface PendingNewOption {
+  fieldId: string;
+  fieldName: string;
+  fieldLabel: string;
+  label: string; // the new option's display label (editable before migrating)
+  value: string; // deterministic machine value (slug)
+  /** Target model is frozen — options are JSONB-schema-only so this is still
+   * safe (no DDL); surfaced for transparency, not a blocker. */
+  frozen: boolean;
+}
+
+/** A lookup-target record that will be created at migration time. `tempId` is
+ * assigned at build time and reused as the real record id when created, so the
+ * main records' links resolve without a second mapping pass. */
+export interface PendingNewLookupRecord {
+  tempId: string;
+  targetModelId: string;
+  targetModelLabel: string;
+  displayField: string;
+  label: string; // raw value → written as the display field value
+}
+
+export type RowIssueSeverity = 'error' | 'warning';
+
+export type RowIssueCode =
+  | 'unresolved_option' // controlled value didn't match any option and wasn't blanked
+  | 'unresolved_lookup' // lookup value didn't match a record / pending create
+  | 'required_blank' // a required field has no value
+  | 'route_invalid' // a routed value can't be resolved for its destination field
+  | 'create_blocked' // create-new can't run (target requires fields we can't fill)
+  | 'invalid_number' // numeric/range cell couldn't be parsed
+  | 'invalid_value'; // catch-all for an otherwise-unstorable value
+
+/** One validation problem on a built record. `error` blocks the row from
+ * migrating; `warning` is shown but doesn't block. */
+export interface RowIssue {
+  fieldName: string;
+  fieldLabel: string;
+  severity: RowIssueSeverity;
+  code: RowIssueCode;
+  raw?: string; // the offending raw value, when relevant
+  detail?: string; // extra human context (e.g. the blocked-create reason)
+}
+
+/** What happened to a single controlled-field cell — drives the auditable
+ * preview (raw → resolved, with a marker for links/creates/routes/blanks). */
+export interface PreviewCellMeta {
+  raw: string;
+  action: 'option' | 'create_option' | 'link' | 'create_record' | 'route' | 'blank' | 'invalid';
+  /** Destination field slug when action='route'. */
+  routeFieldName?: string;
+}
+
+/** One record that WOULD be created, tagged with its source row + full audit. */
+export interface BuiltRecord {
+  rowIndex: number;
+  data: Record<string, unknown>;
+  issues: RowIssue[];
+  /** fieldName → audit meta for controlled fields (raw value + the action taken). */
+  audit: Record<string, PreviewCellMeta>;
+}
+
 export interface MigrationResult {
   imported: number;
   skipped: number;
   new_lookup_records: number;
+  /** New dropdown/multi-select options added to the model schema. */
+  new_options: number;
+  /** Rows that were not migrated because they had blocking validation errors. */
+  invalid_skipped: number;
   errors: { id?: string; error: string }[];
 }
 

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import { startMigrationJob } from '../lib/jobRunner';
-import { readMigrationData, type MigrationData, type MigrationStep } from '../lib/types';
+import { readMigrationData, type ColumnStandardization, type MigrationData, type MigrationStep } from '../lib/types';
 import StepPickModel from './steps/StepPickModel';
 import StepUpload from './steps/StepUpload';
 import StepReviewRaw from './steps/StepReviewRaw';
@@ -59,6 +59,15 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
     // the DB, so a refresh "lost"/"deleted" the migration. With null the RPC
     // skips the check, saves always land, and a refresh resumes exactly here.
     void saveRecord(next, { expectedVersion: null });
+  };
+
+  /** Merge a standardization update onto the FRESHEST decisions in the store —
+   * so editing one column never drops another column's just-saved decision
+   * (a closure-merge would clobber it). Keeps save/resume lossless. */
+  const patchStandardization = (update: Record<number, ColumnStandardization>) => {
+    const fresh = (useAppStore.getState().records[modelId] ?? []).find((r) => r.id === recordId);
+    const current = (fresh ? readMigrationData(fresh).standardization : data.standardization) ?? {};
+    patch({ standardization: { ...current, ...update } });
   };
 
   if (!record) {
@@ -202,12 +211,8 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               table={data.raw_table}
               mappings={data.mappings}
               standardization={data.standardization}
-              onChangeColumn={(ci, plan) =>
-                patch({ standardization: { ...(data.standardization ?? {}), [ci]: plan } })
-              }
-              onComputed={(std) =>
-                patch({ standardization: { ...(data.standardization ?? {}), ...std } })
-              }
+              onChangeColumn={(ci, plan) => patchStandardization({ [ci]: plan })}
+              onComputed={(std) => patchStandardization(std)}
               onProceed={() => patch({ step: 'preview' })}
               onBack={() => patch({ step: 'mapping' })}
             />

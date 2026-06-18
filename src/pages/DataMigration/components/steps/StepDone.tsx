@@ -12,7 +12,7 @@ interface StepDoneProps {
 
 export default function StepDone({ isAr, model, result, onNewMigration }: StepDoneProps) {
   const navigate = useNavigate();
-  const r = result ?? { imported: 0, skipped: 0, new_lookup_records: 0, errors: [] };
+  const r = result ?? { imported: 0, skipped: 0, new_lookup_records: 0, new_options: 0, invalid_skipped: 0, errors: [] };
   const modelLabel = isAr ? model.label_ar : model.label_en;
 
   return (
@@ -30,8 +30,16 @@ export default function StepDone({ isAr, model, result, onNewMigration }: StepDo
         {r.new_lookup_records > 0 && (
           <div>{isAr ? `+${r.new_lookup_records} سجل مرتبط جديد` : `+${r.new_lookup_records} new linked records`}</div>
         )}
+        {r.new_options > 0 && (
+          <div>{isAr ? `+${r.new_options} خيار جديد في النموذج` : `+${r.new_options} new options added`}</div>
+        )}
         {r.skipped > 0 && (
           <div>{isAr ? `تم تخطي ${r.skipped} مكرر` : `${r.skipped} duplicates skipped`}</div>
+        )}
+        {r.invalid_skipped > 0 && (
+          <div className="text-amber-600">
+            {isAr ? `تم تجاوز ${r.invalid_skipped} صف غير صالح` : `${r.invalid_skipped} invalid rows skipped`}
+          </div>
         )}
       </div>
       {r.errors.length > 0 && (

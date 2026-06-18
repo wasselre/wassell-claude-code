@@ -5,12 +5,16 @@ import type { AppRecord, ModelField } from '@/types';
  * preview table — dropdown → option label, lookup → target record's display,
  * multiselect → joined labels, range → lo–hi, checkbox → yes/no. So the user
  * reviews recognizable values, not slugs/UUIDs.
+ *
+ * `pendingLabels` maps a not-yet-created lookup record's temp id → its display
+ * label, so a "create new developer" decision shows the real name in preview
+ * even though the record doesn't exist yet.
  */
 export function resolveDisplay(
   field: ModelField,
   value: unknown,
   allRecords: Record<string, AppRecord[]>,
-  newLookupRecords: AppRecord[],
+  pendingLabels: Map<string, string>,
   isAr: boolean,
 ): string {
   if (value === null || value === undefined || value === '') return '';
@@ -33,14 +37,14 @@ export function resolveDisplay(
       const ids = Array.isArray(value) ? value : [value];
       const modelId = field.lookup_model_id;
       const disp = field.lookup_display_field;
-      const pool = modelId
-        ? [...(allRecords[modelId] ?? []), ...newLookupRecords.filter((r) => r.model_id === modelId)]
-        : newLookupRecords;
+      const pool = modelId ? allRecords[modelId] ?? [] : [];
       return ids
         .map((id) => {
           const rec = pool.find((r) => r.id === id);
           const d = rec && disp ? rec.data[disp] : undefined;
-          return d ? String(d) : String(id);
+          if (d) return String(d);
+          const pending = pendingLabels.get(String(id));
+          return pending ?? String(id);
         })
         .join('، ');
     }

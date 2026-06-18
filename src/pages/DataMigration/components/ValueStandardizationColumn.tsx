@@ -1,67 +1,134 @@
-import { useState } from 'react';
-import { ChevronDown, ChevronRight, Check, Plus, ArrowLeftRight, Sparkles, X } from 'lucide-react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { ChevronDown, ChevronRight, Check, Plus, ArrowLeftRight, Sparkles, X, Search, AlertTriangle } from 'lucide-react';
 import LookupCombobox from '@/pages/Records/components/LookupCombobox';
 import { proposalToDecision } from '../lib/buildStandardization';
-import type { StandardizeCandidate } from '../lib/client';
+import { lookupCreateBlockReason } from '../lib/targetFields';
+import type { AppModel, FieldOption, ModelField } from '@/types';
 import type { ColumnStandardization, ValueDecision } from '../lib/types';
 
 interface Props {
   isAr: boolean;
   header: string;
   fieldLabel: string;
+  /** The mapped field — gives type, options, and lookup config. */
+  field: ModelField;
+  /** Target model — for the frozen-option note. */
+  model: AppModel;
+  allModels: AppModel[];
   plan: ColumnStandardization;
-  /** dropdown/multiselect → option candidates; lookup → existing record candidates. */
-  candidates: StandardizeCandidate[];
   /** other importable fields a value can be routed to (slug → label). */
   otherFields: { name: string; label: string }[];
-  /** for lookup columns — powers the searchable record picker. */
-  lookupModelId?: string;
-  lookupDisplayField?: string;
   onChange: (next: ColumnStandardization) => void;
 }
 
-// select-value encoding so one <select> covers options/records/new/unmatched/route
-const decisionToValue = (d: ValueDecision['decision']): string => {
-  switch (d.kind) {
-    case 'option': return `opt:${d.optionValue ?? ''}`;
-    case 'lookup_record': return `rec:${d.recordId ?? ''}`;
-    case 'create_option':
-    case 'create_record': return 'new';
-    case 'route_to_field': return `route:${d.routeFieldName ?? ''}`;
-    default: return 'unmatched';
+/** Searchable option selector for dropdown / multi-select columns — mirrors the
+ * LookupCombobox UX so options and records feel the same to standardize. */
+function OptionPicker({
+  options,
+  isAr,
+  value,
+  onPick,
+}: {
+  options: FieldOption[];
+  isAr: boolean;
+  value: string | undefined;
+  onPick: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find((o) => o.value === value);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const base = q
+      ? options.filter(
+          (o) =>
+            (o.label_ar ?? '').toLowerCase().includes(q) ||
+            (o.label_en ?? '').toLowerCase().includes(q) ||
+            (o.value ?? '').toLowerCase().includes(q),
+        )
+      : options;
+    return base.slice(0, 50);
+  }, [query, options]);
+
+  if (selected) {
+    return (
+      <div className="form-input flex items-center justify-between py-1">
+        <span className="text-copper font-bold text-sm truncate">{isAr ? selected.label_ar : selected.label_en}</span>
+        <button type="button" onClick={() => onPick('')} className="text-charcoal/30 hover:text-red-500 shrink-0">
+          <X size={13} />
+        </button>
+      </div>
+    );
   }
-};
+
+  return (
+    <div ref={ref} className="relative">
+      <Search size={13} className="absolute start-2.5 top-1/2 -translate-y-1/2 text-charcoal/30" />
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        placeholder={isAr ? 'ابحث عن خيار…' : 'Search options…'}
+        className="form-input ps-7 text-sm py-1 w-full"
+      />
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white rounded-lg border border-sand shadow-lg max-h-44 overflow-y-auto">
+          {filtered.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-charcoal/30 text-center">{isAr ? 'لا توجد خيارات' : 'No options'}</div>
+          ) : (
+            filtered.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                onClick={() => { onPick(o.value); setOpen(false); setQuery(''); }}
+                className="w-full px-3 py-1.5 text-start hover:bg-cream transition-colors text-sm"
+              >
+                {isAr ? o.label_ar : o.label_en}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ValueStandardizationColumn({
   isAr,
   header,
   fieldLabel,
+  field,
+  model,
+  allModels,
   plan,
-  candidates,
   otherFields,
-  lookupModelId,
-  lookupDisplayField,
   onChange,
 }: Props) {
   const [open, setOpen] = useState(true);
-  const isLookup = plan.fieldType === 'lookup';
+  const isLookup = field.type === 'lookup';
+  const lookupModelId = field.lookup_model_id ?? undefined;
+  const lookupDisplayField = field.lookup_display_field ?? undefined;
+  const options = field.options ?? [];
+
+  // One shared rule for "can a new record be created here?" — null = allowed.
+  const createBlock = useMemo(
+    () => (isLookup ? lookupCreateBlockReason(field, allModels, isAr) : null),
+    [isLookup, field, allModels, isAr],
+  );
 
   const setDecision = (i: number, decision: ValueDecision['decision']) =>
     onChange({ ...plan, values: plan.values.map((v, vi) => (vi === i ? { ...v, decision } : v)) });
-
-  const onSelect = (i: number, raw: string, value: string) => {
-    if (value === 'unmatched') return setDecision(i, { kind: 'unmatched' });
-    if (value === 'new') {
-      return setDecision(i, isLookup
-        ? { kind: 'create_record', newLabel: raw }
-        : { kind: 'create_option', newLabel: raw });
-    }
-    if (value.startsWith('opt:')) return setDecision(i, { kind: 'option', optionValue: value.slice(4) });
-    if (value.startsWith('rec:')) return setDecision(i, { kind: 'lookup_record', recordId: value.slice(4) });
-    if (value.startsWith('route:')) {
-      return setDecision(i, { kind: 'route_to_field', routeFieldName: value.slice(6), routeValue: raw });
-    }
-  };
 
   const acceptAllHighConfidence = () =>
     onChange({
@@ -73,13 +140,9 @@ export default function ValueStandardizationColumn({
       ),
     });
 
-  // capped candidate list for the <select> (lookups can have thousands)
-  const candOptions = isLookup
-    ? candidates.slice(0, 100).map((c) => ({ key: `rec:${c.id ?? ''}`, label: c.display ?? '' }))
-    : candidates.map((c) => ({ key: `opt:${c.value ?? ''}`, label: (isAr ? c.label_ar : c.label_en) ?? c.value ?? '' }));
-
   // counts
-  const resolved = plan.values.filter((v) => v.decision.kind !== 'unmatched').length;
+  const isActionable = (d: ValueDecision['decision']) => d.kind !== 'unmatched';
+  const resolved = plan.values.filter((v) => isActionable(v.decision)).length;
   const willCreate = plan.values.filter((v) => v.decision.kind === 'create_option' || v.decision.kind === 'create_record').length;
   const willLink = plan.values.filter((v) => v.decision.kind === 'lookup_record').length;
   const routed = plan.values.filter((v) => v.decision.kind === 'route_to_field').length;
@@ -87,10 +150,7 @@ export default function ValueStandardizationColumn({
   return (
     <div className="rounded-xl border border-sand/30 bg-white">
       <div className="w-full flex items-center gap-2 p-3">
-        <button
-          onClick={() => setOpen((o) => !o)}
-          className="flex items-center gap-2 flex-1 min-w-0 text-start"
-        >
+        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-2 flex-1 min-w-0 text-start">
           {open ? <ChevronDown size={16} className="text-charcoal/40" /> : <ChevronRight size={16} className="text-charcoal/40" />}
           <span className="flex-1 min-w-0">
             <span className="block font-bold text-sm text-charcoal truncate">
@@ -115,96 +175,129 @@ export default function ValueStandardizationColumn({
       </div>
 
       {open && (
-        <div className="px-3 pb-3 space-y-1.5 max-h-[40vh] overflow-y-auto">
+        <div className="px-3 pb-3 space-y-1.5 max-h-[44vh] overflow-y-auto">
           {plan.values.map((v, i) => {
             const d = v.decision;
-            const selVal = decisionToValue(d);
             const isNew = d.kind === 'create_option' || d.kind === 'create_record';
             const isUnmatched = d.kind === 'unmatched';
             const isRoute = d.kind === 'route_to_field';
+            const isProposalAccepted = JSON.stringify(d) === JSON.stringify(proposalToDecision(v.proposal));
+            const blockedNow = isLookup && d.kind === 'create_record' && !!createBlock;
+
             return (
-              <div key={i} className="flex items-center gap-2 p-2 rounded-lg border border-sand/20">
-                <div className="w-1/3 min-w-0">
+              <div key={i} className="flex items-start gap-2 p-2 rounded-lg border border-sand/20">
+                <div className="w-1/3 min-w-0 pt-1">
                   <div className="text-sm text-charcoal truncate" title={v.raw}>{v.raw}</div>
                   {v.count > 1 && <div className="text-[10px] text-charcoal/40">×{v.count}</div>}
                 </div>
-                <ArrowLeftRight size={13} className="text-charcoal/30 shrink-0" />
-                <div className="flex-1 min-w-0">
+                <ArrowLeftRight size={13} className="text-charcoal/30 shrink-0 mt-2.5" />
+                <div className="flex-1 min-w-0 space-y-1">
+                  {/* Primary picker — search/select an existing option or record */}
                   {isLookup && lookupModelId && lookupDisplayField ? (
-                    <div className="flex items-center gap-1.5">
-                      <div className="flex-1 min-w-0">
-                        <LookupCombobox
-                          lookupModelId={lookupModelId}
-                          lookupDisplayField={lookupDisplayField}
-                          value={d.kind === 'lookup_record' ? d.recordId : undefined}
-                          onChange={(val) => {
-                            const id = Array.isArray(val) ? val[0] : val;
-                            setDecision(i, id ? { kind: 'lookup_record', recordId: id } : { kind: 'unmatched' });
-                          }}
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setDecision(i, { kind: 'create_record', newLabel: v.raw })}
-                        title={isAr ? `إنشاء سجل جديد "${v.raw}"` : `Create new "${v.raw}"`}
-                        className={`shrink-0 p-1.5 rounded-lg border ${isNew ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-sand/40 text-charcoal/50 hover:bg-cream'}`}
-                      >
-                        <Plus size={13} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDecision(i, { kind: 'unmatched' })}
-                        title={isAr ? 'اتركه فارغًا' : 'Leave blank'}
-                        className={`shrink-0 p-1.5 rounded-lg border ${isUnmatched ? 'border-charcoal/30 bg-charcoal/5 text-charcoal/60' : 'border-sand/40 text-charcoal/50 hover:bg-cream'}`}
-                      >
-                        <X size={13} />
-                      </button>
-                    </div>
+                    <LookupCombobox
+                      lookupModelId={lookupModelId}
+                      lookupDisplayField={lookupDisplayField}
+                      value={d.kind === 'lookup_record' ? d.recordId : undefined}
+                      onChange={(val) => {
+                        const id = Array.isArray(val) ? val[0] : val;
+                        setDecision(i, id ? { kind: 'lookup_record', recordId: id } : { kind: 'unmatched' });
+                      }}
+                    />
                   ) : (
-                    <select
-                      value={selVal}
-                      onChange={(e) => onSelect(i, v.raw, e.target.value)}
-                      className={`form-input text-sm py-1 w-full ${isUnmatched ? 'text-charcoal/40' : ''}`}
-                    >
-                      <optgroup label={isAr ? 'القيم المسموحة' : 'Allowed values'}>
-                        {candOptions.map((c) => (
-                          <option key={c.key} value={c.key}>{c.label}</option>
-                        ))}
-                      </optgroup>
-                      <optgroup label={isAr ? 'إجراءات' : 'Actions'}>
-                        <option value="new">
-                          {isAr ? `➕ إنشاء خيار جديد "${v.raw}"` : `➕ Create new option "${v.raw}"`}
-                        </option>
-                        <option value="unmatched">{isAr ? '— اتركه فارغًا —' : '— Leave blank —'}</option>
-                      </optgroup>
-                      {otherFields.length > 0 && (
-                        <optgroup label={isAr ? '↪ نقل إلى حقل آخر' : '↪ Move to another field'}>
-                          {otherFields.map((f) => (
-                            <option key={f.name} value={`route:${f.name}`}>{f.label}</option>
-                          ))}
-                        </optgroup>
-                      )}
-                    </select>
+                    <OptionPicker
+                      options={options}
+                      isAr={isAr}
+                      value={d.kind === 'option' ? d.optionValue : undefined}
+                      onPick={(val) => setDecision(i, val ? { kind: 'option', optionValue: val } : { kind: 'unmatched' })}
+                    />
                   )}
-                  <div className="flex items-center gap-2 mt-0.5">
-                    {v.proposal.confidence > 0 && selVal === decisionToValue(proposalToDecision(v.proposal)) && (
+
+                  {/* Editable label for the new option/record being created */}
+                  {isNew && (
+                    <input
+                      type="text"
+                      value={d.newLabel ?? v.raw}
+                      onChange={(e) =>
+                        setDecision(i, isLookup
+                          ? { kind: 'create_record', newLabel: e.target.value }
+                          : { kind: 'create_option', newLabel: e.target.value })
+                      }
+                      className="form-input text-sm py-1 w-full border-amber-300 bg-amber-50/40"
+                      placeholder={isAr ? 'اسم الجديد' : 'New value label'}
+                    />
+                  )}
+
+                  {/* Action buttons: create-new / leave-blank / route */}
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setDecision(i, isNew
+                        ? { kind: 'unmatched' }
+                        : isLookup
+                          ? { kind: 'create_record', newLabel: v.raw }
+                          : { kind: 'create_option', newLabel: v.raw })}
+                      className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border ${isNew ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-sand/40 text-charcoal/55 hover:bg-cream'}`}
+                    >
+                      <Plus size={11} />
+                      {isAr ? 'إنشاء جديد' : 'Create new'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDecision(i, { kind: 'unmatched' })}
+                      className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border ${isUnmatched ? 'border-charcoal/30 bg-charcoal/5 text-charcoal/70' : 'border-sand/40 text-charcoal/55 hover:bg-cream'}`}
+                    >
+                      <X size={11} />
+                      {isAr ? 'فارغ' : 'Blank'}
+                    </button>
+                    {otherFields.length > 0 && (
+                      <select
+                        value={isRoute ? d.routeFieldName ?? '' : ''}
+                        onChange={(e) =>
+                          e.target.value
+                            ? setDecision(i, { kind: 'route_to_field', routeFieldName: e.target.value, routeValue: v.raw })
+                            : setDecision(i, { kind: 'unmatched' })
+                        }
+                        className={`text-[11px] py-1 px-1.5 rounded-lg border bg-white ${isRoute ? 'border-blue-400 text-blue-700' : 'border-sand/40 text-charcoal/55'}`}
+                      >
+                        <option value="">{isAr ? '↪ نقل إلى…' : '↪ Route to…'}</option>
+                        {otherFields.map((f) => (
+                          <option key={f.name} value={f.name}>{f.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {/* Status line */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {v.proposal.confidence > 0 && isProposalAccepted && (
                       <span className="inline-flex items-center gap-0.5 text-[10px] text-copper/80">
                         <Sparkles size={10} />
                         {Math.round(v.proposal.confidence * 100)}%
                       </span>
                     )}
-                    {isNew && (
+                    {isNew && !blockedNow && (
                       <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600">
                         <Plus size={10} />
-                        {isAr ? 'سيُنشأ' : 'will create'}
+                        {isAr
+                          ? (d.kind === 'create_record' ? 'سيُنشأ سجل' : model.is_hardcoded ? 'خيار جديد (يُضاف للمخطط)' : 'سيُنشأ خيار')
+                          : (d.kind === 'create_record' ? 'will create record' : model.is_hardcoded ? 'new option (added to schema)' : 'will create option')}
                       </span>
+                    )}
+                    {blockedNow && (
+                      <span className="inline-flex items-center gap-0.5 text-[10px] text-red-600" title={createBlock ?? ''}>
+                        <AlertTriangle size={10} />
+                        {isAr ? 'لا يمكن الإنشاء' : "can't create"} — {createBlock}
+                      </span>
+                    )}
+                    {d.kind === 'lookup_record' && (
+                      <span className="text-[10px] text-copper/80">{isAr ? 'مرتبط بسجل موجود' : 'linked to existing'}</span>
                     )}
                     {isRoute && (
                       <span className="text-[10px] text-blue-600">
-                        {isAr ? `→ ${otherFields.find((f) => f.name === d.routeFieldName)?.label ?? ''}` : `→ ${otherFields.find((f) => f.name === d.routeFieldName)?.label ?? ''}`}
+                        → {otherFields.find((f) => f.name === d.routeFieldName)?.label ?? ''}
                       </span>
                     )}
-                    {v.proposal.reason && !isRoute && (
+                    {v.proposal.reason && !isRoute && !blockedNow && (
                       <span className="text-[10px] text-charcoal/40 truncate" title={v.proposal.reason}>{v.proposal.reason}</span>
                     )}
                   </div>

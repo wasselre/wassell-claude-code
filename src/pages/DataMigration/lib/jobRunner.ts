@@ -216,6 +216,7 @@ export async function startMigrationJob(recordId: string): Promise<void> {
       excludedRows: data.excluded_rows,
       allModels: state.models,
       allRecords: state.records,
+      isAr,
       createdBy: state.currentUserId,
       saveModel: state.saveModel,
       saveRecord: state.saveRecord,
