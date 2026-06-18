@@ -8,6 +8,7 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import PermissionMatrix from './components/PermissionMatrix';
+import PageAccessMatrix from './components/PageAccessMatrix';
 import BackToSettings from './components/BackToSettings';
 import type { Profile, ProfileModelPermissions, StoreMutationReason } from '@/types';
 
@@ -128,6 +129,7 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
   const [perms, setPerms] = useState<ProfileModelPermissions[]>([...profile.model_permissions]);
   const [hiddenViewIds, setHiddenViewIds] = useState<string[]>([...(profile.hidden_view_ids ?? [])]);
   const [hiddenButtonIds, setHiddenButtonIds] = useState<string[]>([...(profile.hidden_button_ids ?? [])]);
+  const [pageAccess, setPageAccess] = useState<Record<string, boolean>>({ ...(profile.page_access ?? {}) });
   const [showDelete, setShowDelete] = useState(false);
   // Bulk reassignment target profile id when deleting a profile that
   // still has users. Defaults to the first OTHER non-system profile.
@@ -147,6 +149,11 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
       // a clean shape (matches the field_permissions / scope conventions).
       hidden_view_ids: hiddenViewIds.length > 0 ? hiddenViewIds : undefined,
       hidden_button_ids: hiddenButtonIds.length > 0 ? hiddenButtonIds : undefined,
+      // Always send the page_access object (even when empty) — unlike the
+      // deny-lists above, this is a toggle map where revoke→re-grant is the
+      // core flow, so an empty {} must persist to actually reset overrides
+      // back to each page's default on update.
+      page_access: pageAccess,
       updated_at: new Date().toISOString(),
     });
     addToast(t('toast.saved'), 'success');
@@ -252,6 +259,27 @@ function ProfileEditor({ profile, onBack }: { profile: Profile; onBack: () => vo
             {t('common.save')}
           </Button>
         </div>
+      </div>
+
+      {/* Sales Operations pages — per-profile access to the custom (non-model)
+          surfaces (Sales Tasks / Sales Process / Sales Manager). */}
+      <div className="card p-6 mb-6">
+        <h2 className="font-bold text-chocolate mb-1">{isAr ? 'صفحات المبيعات' : 'Sales Operations'}</h2>
+        <p className="text-xs text-charcoal/50 mb-4">
+          {isAr
+            ? 'تحكّم في الصفحات التي يمكن لهذا الملف فتحها من نظام عمليات المبيعات.'
+            : 'Control which Sales Operations pages this profile can open.'}
+          {profile.is_admin && (
+            <span className="ms-1 italic">
+              {isAr ? 'المدراء يرون كل الصفحات دائماً.' : 'Admins always see every page.'}
+            </span>
+          )}
+        </p>
+        <PageAccessMatrix
+          value={pageAccess}
+          onChange={setPageAccess}
+          profileIsAdmin={profile.is_admin}
+        />
       </div>
 
       {/* Permission Matrix */}

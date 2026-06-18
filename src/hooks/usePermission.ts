@@ -3,6 +3,7 @@ import { useAppStore } from '@/stores/appStore';
 import {
   applyViewScopeToRecords,
   applyVisibleViews,
+  canAccessPage,
   canEditRecord,
   canViewRecord,
   getFieldPermission,
@@ -33,6 +34,16 @@ export function useModelPermissions(modelId: string): Set<ModelPermission> {
 export function useIsAdmin(): boolean {
   const { currentUserId, users, profiles } = useAppStore();
   return isAdmin(currentUserId, users, profiles);
+}
+
+/**
+ * Whether the current user can access a custom (non-model) page — the Sales
+ * Operations surfaces registered in `customPages.ts`. Used by the sidebar
+ * links and the `RequirePageAccess` route guard.
+ */
+export function useCanAccessPage(pageId: string): boolean {
+  const { currentUserId, users, profiles } = useAppStore();
+  return canAccessPage(currentUserId, users, profiles, pageId);
 }
 
 /**

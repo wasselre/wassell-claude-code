@@ -1961,6 +1961,16 @@ export interface Profile {
    * the id matches the `CustomButton.id` field.
    */
   hidden_button_ids?: string[];
+  /**
+   * Per-profile access to custom (non-model) app pages — the Sales Operations
+   * surfaces registered in `src/lib/customPages.ts` (Sales Tasks / Sales
+   * Process / Sales Manager). Keyed by `CustomPageId`; an explicit `true` /
+   * `false` overrides the page's `default_access`. A page id absent from the
+   * map falls back to its `default_access`, so existing profiles keep the
+   * pre-2026-06-18 behavior without anyone touching this field. Admin profiles
+   * see every page regardless. See `canAccessPage` in `src/lib/permissions.ts`.
+   */
+  page_access?: Record<string, boolean>;
   created_at: string;
   updated_at: string;
 }

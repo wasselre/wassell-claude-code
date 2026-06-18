@@ -281,16 +281,24 @@ CREATE TABLE IF NOT EXISTS profiles (
   -- an admin explicitly hides entries. See docs/prd/access-control.md.
   hidden_view_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
   hidden_button_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  -- Per-profile access to the custom (non-model) Sales Operations pages
+  -- (Sales Tasks / Sales Process / Sales Manager — see src/lib/customPages.ts).
+  -- Map of { "<page_id>": true|false } where an explicit value overrides the
+  -- page's default_access; a page id absent from the map falls back to that
+  -- default, so existing profiles keep prior behavior. Default '{}' = no
+  -- overrides. See docs/prd/access-control.md.
+  page_access JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Existing installs: idempotent backfill so the saveProfile path doesn't fail
 -- with "Could not find the column in schema cache" on workspaces that
--- predate the view/button-permission rollout.
+-- predate the view/button/page-permission rollout.
 ALTER TABLE profiles
   ADD COLUMN IF NOT EXISTS hidden_view_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
-  ADD COLUMN IF NOT EXISTS hidden_button_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+  ADD COLUMN IF NOT EXISTS hidden_button_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS page_access JSONB NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS roles (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

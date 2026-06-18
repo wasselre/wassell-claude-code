@@ -19,8 +19,6 @@ import {
   Globe,
   Folder,
   FolderOpen,
-  ClipboardList,
-  BarChart3,
   Briefcase,
   Calendar,
   Mail,
@@ -49,7 +47,8 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { hasPermission } from '@/lib/permissions';
+import { hasPermission, canAccessPage } from '@/lib/permissions';
+import { CUSTOM_PAGES } from '@/lib/customPages';
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
 
@@ -133,6 +132,8 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   // Filter nav by `view` permission. hasPermission returns true when
   // currentUserId is null (pre-init fallback) so nothing flickers.
   const canView = (modelId: string) => hasPermission(currentUserId, users, profiles, modelId, 'view');
+  // Per-profile gate for the custom Sales Operations pages (not models).
+  const canPage = (pageId: string) => canAccessPage(currentUserId, users, profiles, pageId);
 
   // Helpers to sort by the optional `order` field, with a stable fallback
   // to the array position for records that haven't been assigned an order yet.
@@ -266,39 +267,26 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
             {!railCollapsed && <span>{t('nav.files')}</span>}
           </NavLink>
 
-          {/* Sales Queue — the daily follow-up work surface (Sales OS) */}
-          <NavLink
-            to="/sales/tasks"
-            className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-            title={railCollapsed ? (isAr ? 'مهام المبيعات' : 'Sales Tasks') : undefined}
-          >
-            <ClipboardList size={20} />
-            {!railCollapsed && <span>{isAr ? 'مهام المبيعات' : 'Sales Tasks'}</span>}
-          </NavLink>
-
-          {/* Sales Process Studio — admin-only read-only lifecycle map */}
-          {isAdmin && (
-            <NavLink
-              to="/sales/process"
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-              title={railCollapsed ? (isAr ? 'استوديو المبيعات' : 'Sales Process') : undefined}
-            >
-              <Activity size={20} />
-              {!railCollapsed && <span>{isAr ? 'استوديو المبيعات' : 'Sales Process'}</span>}
-            </NavLink>
-          )}
-
-          {/* Sales Manager — admin-only operational metrics */}
-          {isAdmin && (
-            <NavLink
-              to="/sales/manager"
-              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
-              title={railCollapsed ? (isAr ? 'مدير المبيعات' : 'Sales Manager') : undefined}
-            >
-              <BarChart3 size={20} />
-              {!railCollapsed && <span>{isAr ? 'مدير المبيعات' : 'Sales Manager'}</span>}
-            </NavLink>
-          )}
+          {/* Sales Operations pages (Sales OS) — visibility is per-profile via
+              profile.page_access (see src/lib/customPages.ts). Defaults match
+              prior behavior: Sales Tasks open to all, Sales Process + Sales
+              Manager admin-only — but each is now grantable/revocable per
+              profile in Settings → Profiles. */}
+          {CUSTOM_PAGES.filter((pg) => canPage(pg.id)).map((pg) => {
+            const Icon = pg.icon;
+            const label = isAr ? pg.label_ar : pg.label_en;
+            return (
+              <NavLink
+                key={pg.id}
+                to={pg.route}
+                className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                title={railCollapsed ? label : undefined}
+              >
+                <Icon size={20} />
+                {!railCollapsed && <span>{label}</span>}
+              </NavLink>
+            );
+          })}
 
           {/* Divider label */}
           {!railCollapsed && (

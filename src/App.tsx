@@ -49,6 +49,7 @@ import FilesPage from '@/pages/Files/FilesPage';
 import DocumentEditorPage from '@/pages/Documents/DocumentEditorPage';
 import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
+import RequirePageAccess from '@/components/guards/RequirePageAccess';
 import Login from '@/pages/Login';
 import ResetPassword from '@/pages/auth/ResetPassword';
 import MfaSetup from '@/pages/auth/MfaSetup';
@@ -255,9 +256,13 @@ export default function App() {
               doesn't get matched as a folder id. */}
           <Route path="/files/doc/:fileId" element={<DocumentEditorPage />} />
           <Route path="/files/:folderId" element={<FilesPage />} />
-          <Route path="/sales/tasks" element={<SalesTasksPage />} />
-          <Route path="/sales/process" element={<RequireAdmin><SalesProcessStudioPage /></RequireAdmin>} />
-          <Route path="/sales/manager" element={<RequireAdmin><SalesManagerPage /></RequireAdmin>} />
+          {/* Sales Operations pages — per-profile access via profile.page_access
+              (see src/lib/customPages.ts). Defaults preserve prior behavior:
+              tasks = open to all, process + manager = admin-only by default,
+              but each is now grantable/revocable per profile in Settings. */}
+          <Route path="/sales/tasks" element={<RequirePageAccess pageId="sales_tasks"><SalesTasksPage /></RequirePageAccess>} />
+          <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
+          <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />

@@ -11,6 +11,7 @@ import type {
   User,
 } from '@/types';
 import { applyScope, buildScopeContext, recordPassesScope } from './scopeFilters';
+import { getCustomPage } from './customPages';
 
 const ALL_PERMISSIONS: ModelPermission[] = ['view', 'create', 'edit', 'delete', 'import', 'export'];
 
@@ -113,6 +114,37 @@ export function isAdmin(
   if (currentUserId === null) return true;
   const resolved = resolveActiveProfile(currentUserId, users, profiles);
   return resolved?.profile.is_admin === true;
+}
+
+/**
+ * Whether the current user can access a custom (non-model) page — the Sales
+ * Operations surfaces registered in `customPages.ts`. These pages aren't
+ * models, so they bypass `model_permissions` and resolve against the
+ * profile's `page_access` map instead.
+ *
+ * Resolution order:
+ *   1. No user system active (pre-init) → true (backward compat, mirrors
+ *      hasPermission so nothing flickers before bootstrap).
+ *   2. No resolved (active) profile → false.
+ *   3. Admin profile → true (admins see every page).
+ *   4. Explicit `profile.page_access[pageId]` boolean → use it.
+ *   5. Otherwise → the page's `default_access` ('all' → true, 'admin' → false).
+ *
+ * Unknown page ids fail closed (false) for non-admins.
+ */
+export function canAccessPage(
+  currentUserId: string | null,
+  users: User[],
+  profiles: Profile[],
+  pageId: string,
+): boolean {
+  if (currentUserId === null) return true;
+  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  if (!resolved) return false;
+  if (resolved.profile.is_admin) return true;
+  const explicit = resolved.profile.page_access?.[pageId];
+  if (typeof explicit === 'boolean') return explicit;
+  return getCustomPage(pageId)?.default_access === 'all';
 }
 
 /**
