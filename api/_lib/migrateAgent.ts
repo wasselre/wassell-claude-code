@@ -86,6 +86,57 @@ function requireToolInput(
   return tb.input as Record<string, unknown>;
 }
 
+/**
+ * Appended to the extraction system prompt when the destination has any `table`
+ * field, so the model knows to SEGMENT a combined entry into the table's
+ * sub-columns and ALIGN multiple entries as parallel lists — instead of dumping
+ * a whole phrase ("AC guarantee from ABC for 5 years") into one column. The
+ * parallel-list shape is exactly what the importer assembles into table rows
+ * (sub-columns zip by index).
+ */
+const TABLE_FIELDS_RULE = `
+
+TABLE (MULTI-COLUMN) DESTINATION FIELDS:
+Some destination fields are TABLES — ONE field that holds MULTIPLE ROWS, each split into named SUB-COLUMNS (shown grouped under "TABLE «…»" in the field list). Do NOT dump a whole entry into a single column. Instead:
+- SEGMENT each entry into the table's sub-columns. Example — a Guarantees table with sub-columns (type / company / years) and source text "ضمان تكييف من شركة ABC لمدة 5 سنوات" → type="تكييف", company="ABC", years="5".
+- Output ONE COLUMN PER SUB-COLUMN, headed by that sub-column's label.
+- For MULTIPLE entries, list them as PARALLEL comma/'،'-separated lists in the SAME ORDER across ALL of that table's sub-columns, so position N lines up into one row — e.g. type="تكييف، سباكة" · company="ABC، XYZ" · years="5، 10" → two rows. Keep the lists the same length; use "" to hold a slot when an entry lacks that sub-column.`;
+
+/**
+ * Render the destination-field hunt-list, GROUPING a table field's sub-columns
+ * under a "TABLE «…»" header (with the segment-and-align instruction) so the
+ * model treats them as one structured field rather than unrelated columns.
+ * Scalar fields render flat as before.
+ */
+function renderHuntList(fields: TargetFieldLite[]): string {
+  if (!fields.length) return '';
+  const scalars: TargetFieldLite[] = [];
+  const tables = new Map<string, { label: string; cols: TargetFieldLite[] }>();
+  for (const f of fields) {
+    if (f.table) {
+      const g = tables.get(f.table.name) ?? { label: `${f.table.label_en} / ${f.table.label_ar}`, cols: [] };
+      g.cols.push(f);
+      tables.set(f.table.name, g);
+    } else {
+      scalars.push(f);
+    }
+  }
+  const lines = scalars.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`);
+  for (const [, g] of tables) {
+    lines.push(
+      `- TABLE «${g.label}» — a multi-row field; SEGMENT each entry across these sub-columns and emit one column per sub-column (multiple entries → parallel same-order lists):`,
+    );
+    for (const c of g.cols) lines.push(`    · ${c.label_en} / ${c.label_ar}`);
+  }
+  return lines.join('\n');
+}
+
+/** True when any destination field is a table sub-column (drives whether the
+ * TABLE_FIELDS_RULE is appended to the system prompt). */
+function hasTableField(fields: TargetFieldLite[]): boolean {
+  return fields.some((f) => !!f.table);
+}
+
 /** One uploaded source file, addressed by a short-lived signed URL the client
  * minted from the wassel-migrations bucket (RLS-scoped to the owner). */
 export interface ExtractFileInput {
@@ -425,9 +476,7 @@ export async function runExtract(
       `No extractable files. ${skipped.map((s) => `${s.name}: ${s.reason}`).join('; ') || 'No files provided.'}`,
     );
   }
-  const fieldList = targetFields.length
-    ? targetFields.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`).join('\n')
-    : '';
+  const fieldList = renderHuntList(targetFields);
   const blocks: Anthropic.ContentBlockParam[] = [
     {
       type: 'text',
@@ -455,7 +504,11 @@ export async function runExtract(
     client.messages.create({
       model,
       max_tokens: 16000,
-      system: EXTRACT_SYSTEM + (mode === 'project' ? EXTRACT_PROJECT_MODE : '') + langNote,
+      system:
+        EXTRACT_SYSTEM +
+        (mode === 'project' ? EXTRACT_PROJECT_MODE : '') +
+        (hasTableField(targetFields) ? TABLE_FIELDS_RULE : '') +
+        langNote,
       tools: [extractTool],
       tool_choice: { type: 'tool', name: 'emit_raw_table' },
       messages: [{ role: 'user', content: blocks }],
@@ -686,9 +739,7 @@ export async function runDiscover(
       `No extractable files. ${skipped.map((s) => `${s.name}: ${s.reason}`).join('; ') || 'No files provided.'}`,
     );
   }
-  const fieldList = targetFields.length
-    ? targetFields.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`).join('\n')
-    : '';
+  const fieldList = renderHuntList(targetFields);
   const blocks: Anthropic.ContentBlockParam[] = [
     {
       type: 'text',
@@ -716,7 +767,7 @@ export async function runDiscover(
       // — 16000 is the proven non-streaming ceiling used by runExtract/fuse here.
       // A larger index that overruns this hits the loud truncation guard below.
       max_tokens: 16000,
-      system: DISCOVER_SYSTEM + langNote,
+      system: DISCOVER_SYSTEM + (hasTableField(targetFields) ? TABLE_FIELDS_RULE : '') + langNote,
       tools: [DISCOVER_TOOL],
       tool_choice: { type: 'tool', name: 'emit_unit_index' },
       messages: [{ role: 'user', content: blocks }],
@@ -866,8 +917,7 @@ export async function runFuseBatch(
 
   const headerLine = headers.map((h, i) => `[${i}] ${h}`).join('\n');
   const fieldHints = targetFields.length
-    ? '\n\nDestination fields (context only — do NOT coerce values to them):\n' +
-      targetFields.map((f) => `- ${f.label_en} / ${f.label_ar} (${f.type})`).join('\n')
+    ? '\n\nDestination fields (context only — do NOT coerce values to them):\n' + renderHuntList(targetFields)
     : '';
   const unitLine = units
     .map((u) => {
@@ -911,7 +961,7 @@ export async function runFuseBatch(
     client.messages.create({
       model,
       max_tokens: 16000,
-      system: FUSE_SYSTEM + langNote,
+      system: FUSE_SYSTEM + (hasTableField(targetFields) ? TABLE_FIELDS_RULE : '') + langNote,
       tools: [FUSE_TOOL],
       tool_choice: { type: 'tool', name: 'emit_fused_units' },
       messages: [{ role: 'user', content }],
@@ -977,11 +1027,15 @@ export async function runFuseBatch(
 // ============================================================================
 
 export interface TargetFieldLite {
-  name: string; // slug, or a range half "slug.min" / "slug.max"
+  name: string; // slug, or a range half "slug.min" / "slug.max", or a table sub-column "slug.colName"
   label_ar: string;
   label_en: string;
   type: string;
   required: boolean;
+  /** Set when this entry is a SUB-COLUMN of a `table` field — the parent table's
+   * name + labels. Lets extraction group the sub-columns and segment + align a
+   * table's data into them, instead of treating them as unrelated fields. */
+  table?: { name: string; label_ar: string; label_en: string };
 }
 
 export interface MappingSuggestion {

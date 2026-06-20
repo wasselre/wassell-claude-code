@@ -62,6 +62,10 @@ export interface TargetFieldLite {
   label_en: string;
   type: string;
   required: boolean;
+  /** Set when this entry is a SUB-COLUMN of a `table` field — the parent table's
+   * name + labels, so extraction can group the sub-columns and segment + align a
+   * table's data into them rather than treating them as unrelated fields. */
+  table?: { name: string; label_ar: string; label_en: string };
 }
 
 export function targetFieldLites(model: AppModel): TargetFieldLite[] {
@@ -79,6 +83,7 @@ export function targetFieldLites(model: AppModel): TargetFieldLite[] {
         label_en: `${f.label_en} (${c.label_en})`,
         type: 'text',
         required: false,
+        table: { name: f.name, label_ar: f.label_ar, label_en: f.label_en },
       }));
     }
     return [{ name: f.name, label_ar: f.label_ar, label_en: f.label_en, type: f.type, required: f.required }];
