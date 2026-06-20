@@ -3,7 +3,6 @@ import { ChevronRight, Folder, Loader2, FileText, Check, FolderOpen } from 'luci
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { listFiles, listFolders } from '@/lib/files/client';
-import { isDeckAttachableName } from '@/lib/decks/client';
 import type { FileRow, FolderRow } from '@/types';
 
 interface Crumb {
@@ -16,35 +15,63 @@ interface Props {
   open: boolean;
   isAr: boolean;
   onClose: () => void;
-  /** Called with the chosen file. The parent does the copy into the deck. */
-  onPick: (file: FileRow) => void;
+  /** Called with the chosen file(s) when the user confirms. Always an array
+   * (one entry in single-select mode). The parent does whatever copy/attach. */
+  onConfirm: (files: FileRow[]) => void;
+  /** Allow selecting more than one file (selection persists across folders).
+   * Default: single-select. */
+  multiple?: boolean;
+  /** Which files are selectable. Others are shown but disabled (so a user isn't
+   * left wondering why their file "disappeared"). Default: everything. */
+  isSelectable?: (file: FileRow) => boolean;
+  /** Modal title. */
+  title?: string;
+  /** Footer confirm-button label. */
+  confirmLabel?: string;
+  /** Small hint line under the list (e.g. supported types). */
+  hint?: string;
 }
 
 /**
- * Lightweight browser over the internal Files library, scoped to picking ONE
- * file to attach to a deck. Navigates folders like the Files page (root →
- * subfolders), lists files at each level, and lets the user select a single
- * deck-readable file. Files whose type the sandbox can't read are shown but
- * disabled, so a user isn't left wondering why their file "disappeared".
+ * Lightweight browser over the internal Files library for picking one or more
+ * existing files. Navigates folders like the Files page (root → subfolders),
+ * lists files at each level, and lets the caller restrict which files are
+ * selectable via `isSelectable`. Reads go through the same RLS-gated
+ * `listFolders` / `listFiles` helpers the Files page uses, so the user only
+ * ever sees what they're allowed to.
  *
- * Reads go through the same RLS-gated `listFolders` / `listFiles` helpers the
- * Files page uses, so the user only ever sees what they're allowed to.
+ * Generalized from the original Decks-only picker so Decks, Data Migration, and
+ * any future caller share one browser instead of duplicating it.
  */
-export default function PickFromFilesModal({ open, isAr, onClose, onPick }: Props) {
+export default function PickFromFilesModal({
+  open,
+  isAr,
+  onClose,
+  onConfirm,
+  multiple = false,
+  isSelectable,
+  title,
+  confirmLabel,
+  hint,
+}: Props) {
   const [stack, setStack] = useState<Crumb[]>([{ id: null, name: '' }]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
   const [files, setFiles] = useState<FileRow[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Selected files kept as full rows (not ids) so a multi-select survives folder
+  // navigation — the chosen rows may live in folders we've since left.
+  const [selected, setSelected] = useState<FileRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const cursor = stack[stack.length - 1] ?? { id: null, name: '' };
+  const canSelect = (f: FileRow) => (isSelectable ? isSelectable(f) : true);
+  const isPicked = (id: string) => selected.some((f) => f.id === id);
 
   // Reset to root every time the modal opens.
   useEffect(() => {
     if (!open) return;
     setStack([{ id: null, name: '' }]);
-    setSelectedId(null);
+    setSelected([]);
     setError(null);
   }, [open]);
 
@@ -74,16 +101,27 @@ export default function PickFromFilesModal({ open, isAr, onClose, onPick }: Prop
     };
   }, [open, cursor.id]);
 
-  const selectedFile = files.find((f) => f.id === selectedId) ?? null;
-
   function enterFolder(f: FolderRow) {
-    setSelectedId(null);
+    // Single-select clears on navigation (a pick in the new folder replaces it);
+    // multi-select keeps the running selection so files from several folders can
+    // be picked together.
+    if (!multiple) setSelected([]);
     setStack((s) => [...s, { id: f.id, name: f.name }]);
   }
 
   function jumpTo(idx: number) {
-    setSelectedId(null);
+    if (!multiple) setSelected([]);
     setStack((s) => s.slice(0, idx + 1));
+  }
+
+  function toggleFile(file: FileRow) {
+    if (!multiple) {
+      setSelected([file]);
+      return;
+    }
+    setSelected((sel) =>
+      sel.some((f) => f.id === file.id) ? sel.filter((f) => f.id !== file.id) : [...sel, file],
+    );
   }
 
   return (
@@ -91,14 +129,15 @@ export default function PickFromFilesModal({ open, isAr, onClose, onPick }: Prop
       open={open}
       onClose={onClose}
       maxWidth="max-w-2xl"
-      title={isAr ? 'اختر ملفًا من الملفات' : 'Choose a file from Files'}
+      title={title ?? (isAr ? 'اختر ملفًا من الملفات' : 'Choose a file from Files')}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
             {isAr ? 'إلغاء' : 'Cancel'}
           </Button>
-          <Button onClick={() => selectedFile && onPick(selectedFile)} disabled={!selectedFile}>
-            {isAr ? 'إرفاق' : 'Attach'}
+          <Button onClick={() => selected.length > 0 && onConfirm(selected)} disabled={selected.length === 0}>
+            {(confirmLabel ?? (isAr ? 'إرفاق' : 'Attach')) +
+              (multiple && selected.length > 0 ? ` (${selected.length})` : '')}
           </Button>
         </>
       }
@@ -156,33 +195,33 @@ export default function PickFromFilesModal({ open, isAr, onClose, onPick }: Prop
             ))}
 
             {files.map((f) => {
-              const supported = isDeckAttachableName(f.original_name);
-              const selected = f.id === selectedId;
+              const supported = canSelect(f);
+              const selectedNow = isPicked(f.id);
               const sizeMb = (f.size_bytes / 1024 / 1024).toFixed(f.size_bytes < 1024 * 1024 ? 2 : 1);
               return (
                 <li key={`file-${f.id}`}>
                   <button
                     type="button"
                     disabled={!supported}
-                    onClick={() => setSelectedId(f.id)}
+                    onClick={() => toggleFile(f)}
                     title={
                       !supported
                         ? isAr
-                          ? 'نوع غير مدعوم للإرفاق'
-                          : 'Unsupported type for attachments'
+                          ? 'نوع غير مدعوم'
+                          : 'Unsupported type'
                         : undefined
                     }
                     className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-start border transition-colors ${
-                      selected ? 'border-copper bg-copper/10' : 'border-transparent hover:bg-cream'
+                      selectedNow ? 'border-copper bg-copper/10' : 'border-transparent hover:bg-cream'
                     } ${!supported ? 'opacity-40 cursor-not-allowed' : ''}`}
                   >
                     <FileText
                       size={16}
-                      className={`shrink-0 ${selected ? 'text-copper' : 'text-charcoal/50'}`}
+                      className={`shrink-0 ${selectedNow ? 'text-copper' : 'text-charcoal/50'}`}
                     />
                     <span className="flex-1 truncate text-charcoal">{f.original_name}</span>
                     <span className="text-[11px] text-charcoal/40 shrink-0">{sizeMb} MB</span>
-                    {selected && <Check size={14} className="text-copper shrink-0" />}
+                    {selectedNow && <Check size={14} className="text-copper shrink-0" />}
                   </button>
                 </li>
               );
@@ -191,11 +230,7 @@ export default function PickFromFilesModal({ open, isAr, onClose, onPick }: Prop
         )}
       </div>
 
-      <p className="text-[11px] text-charcoal/50 mt-3">
-        {isAr
-          ? 'يمكن إرفاق ملفات Excel وPDF وPowerPoint وWord والصور والنصوص (حد أقصى ٣٢ ميجابايت).'
-          : 'Excel, PDF, PowerPoint, Word, images, and text files can be attached (32 MB max).'}
-      </p>
+      {hint && <p className="text-[11px] text-charcoal/50 mt-3">{hint}</p>}
     </Modal>
   );
 }

@@ -87,6 +87,62 @@ export async function uploadMigrationFile(recordId: string, file: File): Promise
   return { path, name: file.name, mimeType: file.type || '', size: file.size };
 }
 
+/** File extensions the migration extractor can actually read (PDF / images via
+ * vision, CSV-text directly, Excel converted to CSV client-side). Word / PPT /
+ * archives are NOT extractable, so they're shown disabled in the Files picker. */
+const MIGRATION_ATTACHABLE_EXTS = new Set([
+  'pdf',
+  'png', 'jpg', 'jpeg', 'gif', 'webp',
+  'csv', 'tsv', 'txt',
+  'xlsx', 'xls',
+]);
+
+/** True when a filename's extension is one the migration extractor can read. */
+export function isMigrationAttachableName(name: string): boolean {
+  const ix = name.lastIndexOf('.');
+  if (ix < 0 || ix === name.length - 1) return false;
+  return MIGRATION_ATTACHABLE_EXTS.has(name.slice(ix + 1).toLowerCase());
+}
+
+/**
+ * Turn a file that already lives in the app's Files library (`wassel-files`)
+ * into a `File` object, by fetching its bytes through a permission-checked
+ * signed URL (`/api/files/sign-download-url`, which works for owned AND
+ * shared-with-me files). The caller then feeds it through the same upload path
+ * as a locally-picked file, so a library pick is indistinguishable from a
+ * drag-drop. Throws (no silent failure — see CLAUDE.md) on oversize, a
+ * permission/sign error, or a download failure.
+ */
+export async function downloadLibraryFileAsFile(file: {
+  id: string;
+  original_name: string;
+  mime_type: string;
+  size_bytes: number;
+}): Promise<File> {
+  if (file.size_bytes > MAX_UPLOAD_BYTES) {
+    throw new Error(
+      `"${file.original_name}" too large (${(file.size_bytes / 1024 / 1024).toFixed(1)} MB). Max is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+    );
+  }
+  const signRes = await fetch('/api/files/sign-download-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ fileId: file.id }),
+  });
+  const body = (await signRes.json().catch(() => ({}))) as { url?: string; error?: string };
+  if (!signRes.ok || !body.url) {
+    throw new Error(body.error ?? `Could not access "${file.original_name}" in your library (${signRes.status}).`);
+  }
+  const dl = await fetch(body.url);
+  if (!dl.ok) {
+    throw new Error(`Could not download "${file.original_name}" from your library (${dl.status}).`);
+  }
+  const blob = await dl.blob();
+  return new File([blob], file.original_name, {
+    type: file.mime_type || blob.type || 'application/octet-stream',
+  });
+}
+
 /** Best-effort removal of an uploaded file (when the user de-selects it). */
 export async function deleteMigrationFile(path: string): Promise<void> {
   if (!supabase) throw new Error('Supabase is not configured — cannot remove file.');

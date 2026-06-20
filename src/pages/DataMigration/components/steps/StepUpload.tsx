@@ -16,16 +16,20 @@ import {
   AlertCircle,
   RotateCcw,
   Lock,
+  FolderOpen,
 } from 'lucide-react';
 import {
   uploadMigrationFile,
   deleteMigrationFile,
+  downloadLibraryFileAsFile,
+  isMigrationAttachableName,
   type MigrationUpload,
 } from '../../lib/client';
 import { startExtractionJob, useMigrationJobs } from '../../lib/jobRunner';
 import { isProjectProfileTarget } from '../../lib/types';
 import type { RawTable, ProjectIntelligenceSection, MigrationStatus } from '../../lib/types';
-import type { AppModel } from '@/types';
+import type { AppModel, FileRow } from '@/types';
+import PickFromFilesModal from '@/components/files/PickFromFilesModal';
 
 /** PROJECT-PROFILE mode extras returned alongside the table. */
 export interface ProjectExtras {
@@ -188,6 +192,9 @@ export default function StepUpload({
   // The one Excel the user chose to "use as data source" (block-mixing → at
   // most one, and only when it's the sole file). null = everything is analyzed.
   const [sourceIntentId, setSourceIntentId] = useState<string | null>(null);
+  // "Choose from the app's Files" picker + the download-from-library phase.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [picking, setPicking] = useState(false);
   // Projects target → extraction returns ONE project row (no unit table) plus
   // the Arabic marketing document for the content writers.
   const projectMode = isProjectProfileTarget(model);
@@ -236,6 +243,27 @@ export default function StepUpload({
       addToast(err instanceof Error ? err.message : String(err), 'error');
     } finally {
       setBusy('idle');
+    }
+  };
+
+  /** Files picked from the app's Files library: fetch each one's bytes (via a
+   * permission-checked signed URL) into a File, then route them through the same
+   * `addFiles` path as a drag-drop — so a library pick behaves identically (docs
+   * → AI set, Excel/CSV → its per-file analyze/source choice). */
+  const handlePickFromFiles = async (picked: FileRow[]) => {
+    setPickerOpen(false);
+    if (picked.length === 0 || picking || locked) return;
+    setPicking(true);
+    try {
+      const downloaded: File[] = [];
+      for (const f of picked) {
+        downloaded.push(await downloadLibraryFileAsFile(f));
+      }
+      await addFiles(downloaded);
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+    } finally {
+      setPicking(false);
     }
   };
 
@@ -558,6 +586,22 @@ export default function StepUpload({
         </div>
       )}
 
+      {/* Pick from the app's Files library — fetched + routed by type exactly
+          like a drag-drop (docs → AI set, Excel/CSV → analyze/source choice). */}
+      <button
+        type="button"
+        onClick={() => setPickerOpen(true)}
+        disabled={locked || busy !== 'idle' || picking}
+        className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg border border-sand/50 text-sm text-charcoal hover:border-copper/40 hover:bg-copper/[0.03] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+      >
+        {picking ? (
+          <Loader2 size={16} className="animate-spin" />
+        ) : (
+          <FolderOpen size={16} className="text-copper" />
+        )}
+        {isAr ? 'أو اختر من ملفات التطبيق' : 'Or choose from app Files'}
+      </button>
+
       {/* Block-mixing note — a chosen data source locks the rest of the step. */}
       {locked && (
         <div className="mt-3 flex items-start gap-2 px-3 py-2 rounded-lg bg-copper/[0.04] border border-copper/20 text-xs text-charcoal/60">
@@ -601,6 +645,23 @@ export default function StepUpload({
         <PlusSquare size={15} />
         {isAr ? 'أو ابدأ بجدول فارغ' : 'Or start with a blank table'}
       </button>
+
+      {/* Browse + pick existing files from the app's Files library. */}
+      <PickFromFilesModal
+        open={pickerOpen}
+        isAr={isAr}
+        multiple
+        onClose={() => setPickerOpen(false)}
+        isSelectable={(f) => isMigrationAttachableName(f.original_name)}
+        title={isAr ? 'اختر ملفات من التطبيق' : 'Choose files from the app'}
+        confirmLabel={isAr ? 'إضافة' : 'Add'}
+        hint={
+          isAr
+            ? 'PDF، صور، Excel، CSV — تُعامَل مثل الملفات المرفوعة (حد أقصى ٣٢ ميجابايت).'
+            : 'PDF, images, Excel, CSV — treated like uploaded files (32 MB max).'
+        }
+        onConfirm={(picked) => void handlePickFromFiles(picked)}
+      />
     </div>
   );
 }

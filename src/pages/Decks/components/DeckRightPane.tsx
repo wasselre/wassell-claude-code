@@ -25,11 +25,12 @@ import {
   uploadDeckAttachment,
   attachDeckAttachmentFromLibrary,
   deleteDeckAttachment,
+  isDeckAttachableName,
   DECK_ATTACHABLE_EXTS,
   type DeckAttachment,
   type DeckSize,
 } from '@/lib/decks/client';
-import PickFromFilesModal from './PickFromFilesModal';
+import PickFromFilesModal from '@/components/files/PickFromFilesModal';
 
 type Phase = 'calling-claude' | 'downloading' | 'uploading' | 'finalizing';
 type ModelChoice = 'claude-opus-4-7' | 'claude-sonnet-4-6';
@@ -662,8 +663,15 @@ function BriefForm({
           open={pickerOpen}
           isAr={isAr}
           onClose={() => setPickerOpen(false)}
-          onPick={(file) => {
-            addFromLibrary(file);
+          isSelectable={(f) => isDeckAttachableName(f.original_name)}
+          hint={
+            isAr
+              ? 'يمكن إرفاق ملفات Excel وPDF وPowerPoint وWord والصور والنصوص (حد أقصى ٣٢ ميجابايت).'
+              : 'Excel, PDF, PowerPoint, Word, images, and text files can be attached (32 MB max).'
+          }
+          onConfirm={(filesPicked) => {
+            const file = filesPicked[0];
+            if (file) addFromLibrary(file);
             setPickerOpen(false);
           }}
         />
