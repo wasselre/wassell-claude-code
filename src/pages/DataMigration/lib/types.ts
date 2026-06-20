@@ -199,6 +199,20 @@ export type ValueDecisionKind =
   | 'unmatched' // leave blank
   | 'route_to_field'; // send this value's rows to a DIFFERENT target field
 
+/**
+ * How a ROUTED value resolves against its DESTINATION field — the exact same set
+ * of choices a non-routed value has (match an existing option / record, create a
+ * new one, or leave blank), just applied to the field it was moved to. Only the
+ * resolution kinds make sense here (a routed value can't itself be re-routed).
+ * Absent on a `route_to_field` decision = legacy deterministic match-or-fail.
+ */
+export interface RouteResolution {
+  kind: 'option' | 'create_option' | 'lookup_record' | 'create_record' | 'unmatched';
+  optionValue?: string; // kind=option — the destination option's value
+  recordId?: string; // kind=lookup_record — the destination lookup record id
+  newLabel?: string; // kind=create_option | create_record — label of the value to create
+}
+
 /** One distinct raw value in a standardizable column + the AI proposal and the
  * user's resolved decision (defaults to the proposal until they change it). */
 export interface ValueDecision {
@@ -219,6 +233,9 @@ export interface ValueDecision {
     newLabel?: string; // kind=create_option | create_record
     routeFieldName?: string; // kind=route_to_field — a different target field's slug
     routeValue?: string; // the value to write into that other field
+    /** kind=route_to_field — how the routed value resolves in the destination
+     * field (controlled destinations only). Absent = legacy match-or-fail. */
+    routeDecision?: RouteResolution;
   };
 }
 

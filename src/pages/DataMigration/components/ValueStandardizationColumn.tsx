@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Check, Plus, ArrowLeftRight, Sparkles, X, Search, AlertTriangle } from 'lucide-react';
 import LookupCombobox from '@/pages/Records/components/LookupCombobox';
-import { proposalToDecision } from '../lib/buildStandardization';
+import { proposalToDecision, normalizeMatch } from '../lib/buildStandardization';
 import { lookupCreateBlockReason } from '../lib/targetFields';
 import type { AppModel, FieldOption, ModelField } from '@/types';
-import type { ColumnStandardization, ValueDecision } from '../lib/types';
+import type { ColumnStandardization, ValueDecision, RouteResolution } from '../lib/types';
 
 interface Props {
   isAr: boolean;
@@ -20,6 +20,18 @@ interface Props {
   otherFields: { name: string; label: string }[];
   onChange: (next: ColumnStandardization) => void;
 }
+
+/** The resolution subset shared by a value's own decision AND a routed value's
+ * destination decision: match an option/record, create a new one, or blank. */
+type ResValue = {
+  kind: 'option' | 'create_option' | 'lookup_record' | 'create_record' | 'unmatched';
+  optionValue?: string;
+  recordId?: string;
+  newLabel?: string;
+};
+
+const CONTROLLED = new Set(['dropdown', 'multiselect', 'lookup']);
+const isControlledField = (f: ModelField | undefined): f is ModelField => !!f && CONTROLLED.has(f.type);
 
 /**
  * Editable label for a "create new" option/record. CRITICAL: it holds its own
@@ -156,6 +168,143 @@ function OptionPicker({
   );
 }
 
+/**
+ * "Decide what to do with this value against THIS field" — the searchable
+ * option/record picker + create-new (with editable label) + leave-blank. Shared
+ * by a value's OWN field and (when routed) by its DESTINATION field, so a routed
+ * value gets the exact same choices as one that wasn't moved.
+ */
+function ResolutionControls({
+  isAr,
+  field,
+  model,
+  allModels,
+  value,
+  rawDefault,
+  onChange,
+}: {
+  isAr: boolean;
+  field: ModelField;
+  model: AppModel;
+  allModels: AppModel[];
+  value: ResValue;
+  rawDefault: string;
+  onChange: (v: ResValue) => void;
+}) {
+  const isLookup = field.type === 'lookup';
+  const lookupModelId = field.lookup_model_id ?? undefined;
+  const lookupDisplayField = field.lookup_display_field ?? undefined;
+  const options = field.options ?? [];
+  const createBlock = useMemo(
+    () => (isLookup ? lookupCreateBlockReason(field, allModels, isAr) : null),
+    [isLookup, field, allModels, isAr],
+  );
+  const isNew = value.kind === 'create_option' || value.kind === 'create_record';
+  const isUnmatched = value.kind === 'unmatched';
+  const blockedNow = isLookup && value.kind === 'create_record' && !!createBlock;
+
+  return (
+    <div className="space-y-1">
+      {/* Primary picker — search/select an existing option or record. */}
+      {isLookup && lookupModelId && lookupDisplayField ? (
+        <LookupCombobox
+          lookupModelId={lookupModelId}
+          lookupDisplayField={lookupDisplayField}
+          value={value.kind === 'lookup_record' ? value.recordId : undefined}
+          onChange={(val) => {
+            const id = Array.isArray(val) ? val[0] : val;
+            onChange(id ? { kind: 'lookup_record', recordId: id } : { kind: 'unmatched' });
+          }}
+        />
+      ) : (
+        <OptionPicker
+          options={options}
+          isAr={isAr}
+          value={value.kind === 'option' ? value.optionValue : undefined}
+          onPick={(val) => onChange(val ? { kind: 'option', optionValue: val } : { kind: 'unmatched' })}
+        />
+      )}
+
+      {/* Editable label for the new option/record being created. */}
+      {isNew && (
+        <NewLabelInput
+          initial={value.newLabel ?? rawDefault}
+          isAr={isAr}
+          onCommit={(label) =>
+            onChange(isLookup ? { kind: 'create_record', newLabel: label } : { kind: 'create_option', newLabel: label })}
+        />
+      )}
+
+      {/* Create-new / leave-blank. */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <button
+          type="button"
+          onClick={() => onChange(isNew
+            ? { kind: 'unmatched' }
+            : isLookup ? { kind: 'create_record', newLabel: rawDefault } : { kind: 'create_option', newLabel: rawDefault })}
+          className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border ${isNew ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-sand/40 text-charcoal/55 hover:bg-cream'}`}
+        >
+          <Plus size={11} />
+          {isAr ? 'إنشاء جديد' : 'Create new'}
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange({ kind: 'unmatched' })}
+          className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border ${isUnmatched ? 'border-charcoal/30 bg-charcoal/5 text-charcoal/70' : 'border-sand/40 text-charcoal/55 hover:bg-cream'}`}
+        >
+          <X size={11} />
+          {isAr ? 'فارغ' : 'Blank'}
+        </button>
+      </div>
+
+      {/* Create status / blocked-create warning. */}
+      {(isNew || blockedNow) && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {isNew && !blockedNow && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600">
+              <Plus size={10} />
+              {isAr
+                ? (value.kind === 'create_record' ? 'سيُنشأ سجل' : model.is_hardcoded ? 'خيار جديد (يُضاف للمخطط)' : 'سيُنشأ خيار')
+                : (value.kind === 'create_record' ? 'will create record' : model.is_hardcoded ? 'new option (added to schema)' : 'will create option')}
+            </span>
+          )}
+          {blockedNow && (
+            <span className="inline-flex items-center gap-0.5 text-[10px] text-red-600" title={createBlock ?? ''}>
+              <AlertTriangle size={10} />
+              {isAr ? 'لا يمكن الإنشاء' : "can't create"} — {createBlock}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A sensible default for how a routed value resolves in its new field: match an
+ * existing dropdown/multiselect option deterministically (Arabic-normalized);
+ * otherwise leave it for the user to decide. Scalar destinations get none (the
+ * value is written as-is). */
+function defaultRouteResolution(destField: ModelField | undefined, raw: string): RouteResolution | undefined {
+  if (!destField) return undefined;
+  if (destField.type === 'dropdown' || destField.type === 'multiselect') {
+    const n = normalizeMatch(raw);
+    const opt = (destField.options ?? []).find(
+      (o) => normalizeMatch(o.value) === n || normalizeMatch(o.label_ar) === n || normalizeMatch(o.label_en) === n,
+    );
+    return opt ? { kind: 'option', optionValue: opt.value } : { kind: 'unmatched' };
+  }
+  if (destField.type === 'lookup') return { kind: 'unmatched' };
+  return undefined; // scalar — written as-is, no controlled resolution
+}
+
+const asResValue = (d: ValueDecision['decision']): ResValue =>
+  d.kind === 'route_to_field'
+    ? { kind: 'unmatched' }
+    : { kind: d.kind, optionValue: d.optionValue, recordId: d.recordId, newLabel: d.newLabel };
+
+const routeResAsValue = (rd: RouteResolution | undefined): ResValue =>
+  rd ? { kind: rd.kind, optionValue: rd.optionValue, recordId: rd.recordId, newLabel: rd.newLabel } : { kind: 'unmatched' };
+
 export default function ValueStandardizationColumn({
   isAr,
   header,
@@ -169,15 +318,15 @@ export default function ValueStandardizationColumn({
 }: Props) {
   const [open, setOpen] = useState(true);
   const isLookup = field.type === 'lookup';
-  const lookupModelId = field.lookup_model_id ?? undefined;
-  const lookupDisplayField = field.lookup_display_field ?? undefined;
-  const options = field.options ?? [];
 
-  // One shared rule for "can a new record be created here?" — null = allowed.
-  const createBlock = useMemo(
-    () => (isLookup ? lookupCreateBlockReason(field, allModels, isAr) : null),
-    [isLookup, field, allModels, isAr],
+  // Lookup other fields in the target model by slug (a route destination is a
+  // plain slug for controlled fields; range/table destinations carry a ".part").
+  const fieldByName = useMemo(
+    () => new Map(model.schema.sections.flatMap((s) => s.fields).map((f) => [f.name, f])),
+    [model],
   );
+  const destFieldOf = (routeFieldName: string | undefined): ModelField | undefined =>
+    routeFieldName ? fieldByName.get(routeFieldName.split('.')[0]!) : undefined;
 
   const setDecision = (i: number, decision: ValueDecision['decision']) =>
     onChange({ ...plan, values: plan.values.map((v, vi) => (vi === i ? { ...v, decision } : v)) });
@@ -195,7 +344,13 @@ export default function ValueStandardizationColumn({
   // counts
   const isActionable = (d: ValueDecision['decision']) => d.kind !== 'unmatched';
   const resolved = plan.values.filter((v) => isActionable(v.decision)).length;
-  const willCreate = plan.values.filter((v) => v.decision.kind === 'create_option' || v.decision.kind === 'create_record').length;
+  const willCreate = plan.values.filter(
+    (v) =>
+      v.decision.kind === 'create_option' ||
+      v.decision.kind === 'create_record' ||
+      v.decision.routeDecision?.kind === 'create_option' ||
+      v.decision.routeDecision?.kind === 'create_record',
+  ).length;
   const willLink = plan.values.filter((v) => v.decision.kind === 'lookup_record').length;
   const routed = plan.values.filter((v) => v.decision.kind === 'route_to_field').length;
 
@@ -230,11 +385,10 @@ export default function ValueStandardizationColumn({
         <div className="px-3 pb-3 space-y-1.5 max-h-[44vh] overflow-y-auto">
           {plan.values.map((v, i) => {
             const d = v.decision;
-            const isNew = d.kind === 'create_option' || d.kind === 'create_record';
-            const isUnmatched = d.kind === 'unmatched';
             const isRoute = d.kind === 'route_to_field';
-            const isProposalAccepted = JSON.stringify(d) === JSON.stringify(proposalToDecision(v.proposal));
-            const blockedNow = isLookup && d.kind === 'create_record' && !!createBlock;
+            const destField = isRoute ? destFieldOf(d.routeFieldName) : undefined;
+            const destControlled = isControlledField(destField);
+            const isProposalAccepted = !isRoute && JSON.stringify(d) === JSON.stringify(proposalToDecision(v.proposal));
 
             return (
               <div key={i} className="flex items-start gap-2 p-2 rounded-lg border border-sand/20">
@@ -244,71 +398,35 @@ export default function ValueStandardizationColumn({
                 </div>
                 <ArrowLeftRight size={13} className="text-charcoal/30 shrink-0 mt-2.5" />
                 <div className="flex-1 min-w-0 space-y-1">
-                  {/* Primary picker — search/select an existing option or record */}
-                  {isLookup && lookupModelId && lookupDisplayField ? (
-                    <LookupCombobox
-                      lookupModelId={lookupModelId}
-                      lookupDisplayField={lookupDisplayField}
-                      value={d.kind === 'lookup_record' ? d.recordId : undefined}
-                      onChange={(val) => {
-                        const id = Array.isArray(val) ? val[0] : val;
-                        setDecision(i, id ? { kind: 'lookup_record', recordId: id } : { kind: 'unmatched' });
-                      }}
-                    />
-                  ) : (
-                    <OptionPicker
-                      options={options}
+                  {/* Resolve against the value's OWN field — hidden once routed. */}
+                  {!isRoute && (
+                    <ResolutionControls
                       isAr={isAr}
-                      value={d.kind === 'option' ? d.optionValue : undefined}
-                      onPick={(val) => setDecision(i, val ? { kind: 'option', optionValue: val } : { kind: 'unmatched' })}
+                      field={field}
+                      model={model}
+                      allModels={allModels}
+                      value={asResValue(d)}
+                      rawDefault={v.raw}
+                      onChange={(rv) =>
+                        setDecision(i, { kind: rv.kind, optionValue: rv.optionValue, recordId: rv.recordId, newLabel: rv.newLabel })}
                     />
                   )}
 
-                  {/* Editable label for the new option/record being created.
-                      Locally controlled + commit-on-pause/blur so realtime echoes
-                      can't wipe the user's typing. */}
-                  {isNew && (
-                    <NewLabelInput
-                      initial={d.newLabel ?? v.raw}
-                      isAr={isAr}
-                      onCommit={(label) =>
-                        setDecision(i, isLookup
-                          ? { kind: 'create_record', newLabel: label }
-                          : { kind: 'create_option', newLabel: label })
-                      }
-                    />
-                  )}
-
-                  {/* Action buttons: create-new / leave-blank / route */}
-                  <div className="flex items-center gap-1.5 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => setDecision(i, isNew
-                        ? { kind: 'unmatched' }
-                        : isLookup
-                          ? { kind: 'create_record', newLabel: v.raw }
-                          : { kind: 'create_option', newLabel: v.raw })}
-                      className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border ${isNew ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-sand/40 text-charcoal/55 hover:bg-cream'}`}
-                    >
-                      <Plus size={11} />
-                      {isAr ? 'إنشاء جديد' : 'Create new'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setDecision(i, { kind: 'unmatched' })}
-                      className={`inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border ${isUnmatched ? 'border-charcoal/30 bg-charcoal/5 text-charcoal/70' : 'border-sand/40 text-charcoal/55 hover:bg-cream'}`}
-                    >
-                      <X size={11} />
-                      {isAr ? 'فارغ' : 'Blank'}
-                    </button>
-                    {otherFields.length > 0 && (
+                  {/* Route-to-another-field selector — always available. */}
+                  {otherFields.length > 0 && (
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <select
                         value={isRoute ? d.routeFieldName ?? '' : ''}
-                        onChange={(e) =>
-                          e.target.value
-                            ? setDecision(i, { kind: 'route_to_field', routeFieldName: e.target.value, routeValue: v.raw })
-                            : setDecision(i, { kind: 'unmatched' })
-                        }
+                        onChange={(e) => {
+                          const name = e.target.value;
+                          if (!name) { setDecision(i, { kind: 'unmatched' }); return; }
+                          setDecision(i, {
+                            kind: 'route_to_field',
+                            routeFieldName: name,
+                            routeValue: v.raw,
+                            routeDecision: defaultRouteResolution(destFieldOf(name), v.raw),
+                          });
+                        }}
                         className={`text-[11px] py-1 px-1.5 rounded-lg border bg-white ${isRoute ? 'border-blue-400 text-blue-700' : 'border-sand/40 text-charcoal/55'}`}
                       >
                         <option value="">{isAr ? '↪ نقل إلى…' : '↪ Route to…'}</option>
@@ -316,43 +434,61 @@ export default function ValueStandardizationColumn({
                           <option key={f.name} value={f.name}>{f.label}</option>
                         ))}
                       </select>
-                    )}
-                  </div>
+                      {isRoute && (
+                        <span className="text-[10px] text-blue-600">
+                          → {otherFields.find((f) => f.name === d.routeFieldName)?.label ?? ''}
+                        </span>
+                      )}
+                    </div>
+                  )}
 
-                  {/* Status line */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {v.proposal.confidence > 0 && isProposalAccepted && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-copper/80">
-                        <Sparkles size={10} />
-                        {Math.round(v.proposal.confidence * 100)}%
-                      </span>
-                    )}
-                    {isNew && !blockedNow && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-amber-600">
-                        <Plus size={10} />
-                        {isAr
-                          ? (d.kind === 'create_record' ? 'سيُنشأ سجل' : model.is_hardcoded ? 'خيار جديد (يُضاف للمخطط)' : 'سيُنشأ خيار')
-                          : (d.kind === 'create_record' ? 'will create record' : model.is_hardcoded ? 'new option (added to schema)' : 'will create option')}
-                      </span>
-                    )}
-                    {blockedNow && (
-                      <span className="inline-flex items-center gap-0.5 text-[10px] text-red-600" title={createBlock ?? ''}>
-                        <AlertTriangle size={10} />
-                        {isAr ? 'لا يمكن الإنشاء' : "can't create"} — {createBlock}
-                      </span>
-                    )}
-                    {d.kind === 'lookup_record' && (
-                      <span className="text-[10px] text-copper/80">{isAr ? 'مرتبط بسجل موجود' : 'linked to existing'}</span>
-                    )}
-                    {isRoute && (
-                      <span className="text-[10px] text-blue-600">
-                        → {otherFields.find((f) => f.name === d.routeFieldName)?.label ?? ''}
-                      </span>
-                    )}
-                    {v.proposal.reason && !isRoute && !blockedNow && (
-                      <span className="text-[10px] text-charcoal/40 truncate" title={v.proposal.reason}>{v.proposal.reason}</span>
-                    )}
-                  </div>
+                  {/* When routed to a CONTROLLED field, decide what to do there —
+                      same choices as a non-routed value (match / create / blank). */}
+                  {isRoute && destControlled && destField && (
+                    <div className="ps-2 border-s-2 border-blue-200 space-y-1">
+                      <div className="text-[10px] text-blue-700/70">
+                        {isAr ? 'ماذا نفعل بهذه القيمة في حقل الوجهة؟' : 'What to do with this value in the destination field?'}
+                      </div>
+                      <ResolutionControls
+                        isAr={isAr}
+                        field={destField}
+                        model={model}
+                        allModels={allModels}
+                        value={routeResAsValue(d.routeDecision)}
+                        rawDefault={d.routeValue ?? v.raw}
+                        onChange={(rv) =>
+                          setDecision(i, {
+                            kind: 'route_to_field',
+                            routeFieldName: d.routeFieldName,
+                            routeValue: d.routeValue ?? v.raw,
+                            routeDecision: rv,
+                          })}
+                      />
+                    </div>
+                  )}
+                  {isRoute && !destControlled && d.routeFieldName && (
+                    <div className="text-[10px] text-charcoal/40">
+                      {isAr ? 'تُكتب القيمة كما هي في حقل الوجهة.' : 'The value is written as-is into the destination field.'}
+                    </div>
+                  )}
+
+                  {/* AI confidence / reason — only for the value's own resolution. */}
+                  {!isRoute && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {v.proposal.confidence > 0 && isProposalAccepted && (
+                        <span className="inline-flex items-center gap-0.5 text-[10px] text-copper/80">
+                          <Sparkles size={10} />
+                          {Math.round(v.proposal.confidence * 100)}%
+                        </span>
+                      )}
+                      {d.kind === 'lookup_record' && (
+                        <span className="text-[10px] text-copper/80">{isAr ? 'مرتبط بسجل موجود' : 'linked to existing'}</span>
+                      )}
+                      {v.proposal.reason && (
+                        <span className="text-[10px] text-charcoal/40 truncate" title={v.proposal.reason}>{v.proposal.reason}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             );

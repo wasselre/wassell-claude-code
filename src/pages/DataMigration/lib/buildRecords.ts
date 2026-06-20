@@ -11,6 +11,7 @@ import {
   type PendingNewOption,
   type PreviewCellMeta,
   type RawTable,
+  type RouteResolution,
   type RowIssue,
 } from './types';
 
@@ -92,7 +93,7 @@ function isEmptyValue(v: unknown): boolean {
 type TokenResolution =
   | { kind: 'value'; storeValue: string; action: 'option' | 'create_option' }
   | { kind: 'lookup'; recordId: string; action: 'link' | 'create_record' }
-  | { kind: 'route'; routeFieldName: string; routeRaw: string }
+  | { kind: 'route'; routeFieldName: string; routeRaw: string; routeDecision?: RouteResolution }
   | { kind: 'blank' }
   | { kind: 'invalid'; code: RowIssue['code']; detail?: string };
 
@@ -258,7 +259,12 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
       }
       case 'route_to_field': {
         if (!decision.routeFieldName) return { kind: 'blank' };
-        return { kind: 'route', routeFieldName: decision.routeFieldName, routeRaw: (decision.routeValue ?? raw) };
+        return {
+          kind: 'route',
+          routeFieldName: decision.routeFieldName,
+          routeRaw: decision.routeValue ?? raw,
+          routeDecision: decision.routeDecision,
+        };
       }
       case 'unmatched':
       default:
@@ -304,7 +310,9 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
     const audit: Record<string, PreviewCellMeta> = {};
     const issues: RowIssue[] = [];
     const mappedFieldNames = new Set<string>();
-    const routed = new Map<string, string[]>(); // destFieldName → raw values
+    // destFieldName → routed values, each with its (optional) destination
+    // resolution (match / create / link / create-record / blank).
+    const routed = new Map<string, { raw: string; routeDecision?: RouteResolution }[]>();
     // table field name → (sub-column name → row tokens); assembled into rows below.
     const tableInputs = new Map<string, Map<string, string[]>>();
 
@@ -363,7 +371,7 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
               break;
             case 'route': {
               const list = routed.get(tr.routeFieldName) ?? [];
-              list.push(tr.routeRaw);
+              list.push({ raw: tr.routeRaw, routeDecision: tr.routeDecision });
               routed.set(tr.routeFieldName, list);
               bump('route', tr.routeFieldName);
               break;
@@ -388,8 +396,15 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
       }
     }
 
-    // ── Routed values: re-standardize against the destination field ──────────
-    for (const [destName, raws] of routed) {
+    // ── Routed values: re-standardize against the DESTINATION field ──────────
+    // A routed value carries the SAME decision a non-routed value has, just aimed
+    // at the field it was moved to (match / create option / link / create record
+    // / blank). We replay it through `resolveDecision` against the destination, so
+    // a routed "create new" registers a pending option/record on the DESTINATION
+    // exactly like a normal create. With no explicit decision (legacy routes) we
+    // fall back to deterministic match-or-fail.
+    for (const [destName, items] of routed) {
+      const raws = items.map((it) => it.raw);
       const destField = fieldByName.get(destName);
       if (!destField || destField.type === 'mirror' || destField.type === 'notes' || destField.is_rollup) {
         // Routed to an unimportable field — surface, don't store.
@@ -406,13 +421,23 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
         const existing = Array.isArray(data[destName]) ? (data[destName] as string[]) : [];
         const collected: string[] = [...existing];
         let any = false;
-        for (const raw of raws) {
-          const tokens = multi ? splitMultiValue(raw) : [raw];
-          for (const token of tokens) {
-            const tr = resolveRoutedControlledToken(destField, token);
-            if (tr.kind === 'value') { if (!collected.includes(tr.storeValue)) collected.push(tr.storeValue); any = true; }
-            else if (tr.kind === 'lookup') { if (!collected.includes(tr.recordId)) collected.push(tr.recordId); any = true; }
-            else addIssue(destField, 'error', 'route_invalid', token);
+        const take = (tr: TokenResolution, raw: string) => {
+          if (tr.kind === 'value') { if (!collected.includes(tr.storeValue)) collected.push(tr.storeValue); any = true; }
+          else if (tr.kind === 'lookup') { if (!collected.includes(tr.recordId)) collected.push(tr.recordId); any = true; }
+          else if (tr.kind === 'invalid') addIssue(destField, 'error', tr.code, raw, tr.detail);
+          // 'blank' → contributes nothing
+        };
+        for (const item of items) {
+          if (item.routeDecision) {
+            // Replay the chosen destination decision (single resolved token).
+            take(resolveDecision(destField, { ...item.routeDecision }, item.raw), item.raw);
+          } else {
+            // Legacy: deterministic match-or-fail, splitting a multi-value cell.
+            for (const token of multi ? splitMultiValue(item.raw) : [item.raw]) {
+              const tr = resolveRoutedControlledToken(destField, token);
+              if (tr.kind === 'value' || tr.kind === 'lookup') take(tr, token);
+              else addIssue(destField, 'error', 'route_invalid', token);
+            }
           }
         }
         if (collected.length > 0) data[destName] = multi ? collected : collected[0];
