@@ -31,11 +31,15 @@ export default function MatchingPage() {
   const chats = useMemo<AppRecord[]>(() => {
     if (!model) return [];
     const all = recordsByModel[model.id] ?? [];
-    return [...all].sort((a, b) => {
-      const aT = (a.data.last_message_at as string | undefined) ?? a.updated_at;
-      const bT = (b.data.last_message_at as string | undefined) ?? b.updated_at;
-      return (bT ?? '').localeCompare(aT ?? '');
-    });
+    // Archived sessions (cleaned-up test chats) drop out of the default list but
+    // are never deleted — recoverable by flipping data.status back from 'archived'.
+    return [...all]
+      .filter((r) => (r.data.status as string | undefined) !== 'archived')
+      .sort((a, b) => {
+        const aT = (a.data.last_message_at as string | undefined) ?? a.updated_at;
+        const bT = (b.data.last_message_at as string | undefined) ?? b.updated_at;
+        return (bT ?? '').localeCompare(aT ?? '');
+      });
   }, [model, recordsByModel]);
 
   function startNewChat() {
