@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-// The deterministic Phase 1 matching scorer lives in the API agent (no DB / SDK
-// runtime deps — only `import type`), exported as `__test.scoreProject`.
+// The deterministic Phase 1 matching scorer + metadata enforcement live in the
+// API agent (no DB / SDK runtime deps — only `import type`).
 import { __test } from '../../../api/_lib/matchAgent';
 
-const { scoreProject } = __test;
+const { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload } = __test;
 
 // A realistic project from the live all_projects shape (Riyadh apartment).
 const PROJECT = {
@@ -109,5 +109,87 @@ describe('scoreProject (Phase 1 text matching)', () => {
     expect(r.facts).not.toHaveProperty('district'); // empty string omitted
     expect(r.facts).not.toHaveProperty('unit_types'); // empty array omitted
     expect(r.facts).not.toHaveProperty('price_range'); // absent omitted
+  });
+});
+
+describe('deterministic metadata enforcement (Phase 1.1)', () => {
+  // A match_projects result where the project is authoritatively 44 / partial.
+  const MATCH_RESULT = JSON.stringify({
+    used_fallback: false,
+    our_projects: {
+      source: 'our_projects',
+      results: [
+        {
+          project_id: 'proj-rifan',
+          project_name: 'فلل رِفان',
+          data_source: 'our_projects',
+          score: 44,
+          match_band: 'partial',
+          match_type: 'partial',
+        },
+      ],
+    },
+    all_projects: null,
+  });
+
+  it('forces the card back to the tool score/band even when the LLM upgraded it', () => {
+    const auth = collectAuthoritativeMeta(MATCH_RESULT);
+    expect(auth.get('proj-rifan')).toMatchObject({ score: 44, match_band: 'partial' });
+
+    // The model tried to present it as a strong 70/good match.
+    const llmPayload = {
+      summary: '…',
+      recommendations: [
+        {
+          project_id: 'proj-rifan',
+          project_name: 'فلل رِفان',
+          data_source: 'our_projects',
+          score: 70, // re-derived by the LLM — must be overwritten
+          match_band: 'good', // re-banded by the LLM — must be overwritten
+          match_type: 'exact',
+          why: 'villas in Riyadh',
+          pitch: '…',
+        },
+      ],
+    };
+
+    const { payload, corrections } = reconcileRecommendationPayload(llmPayload, auth);
+    const rec = (payload as typeof llmPayload).recommendations[0];
+    expect(rec.score).toBe(44); // preserved from the tool
+    expect(rec.match_band).toBe('partial'); // preserved from the tool
+    expect(rec.match_type).toBe('partial'); // also corrected
+    expect(corrections.some((c) => c.field === 'score' && c.from === 70 && c.to === 44)).toBe(true);
+    expect(corrections.some((c) => c.field === 'match_band' && c.from === 'good' && c.to === 'partial')).toBe(true);
+  });
+
+  it('forces requires_verification + data_source from the tool (no fake "verified")', () => {
+    const matchWithFallback = JSON.stringify({
+      used_fallback: true,
+      our_projects: { results: [] },
+      all_projects: {
+        results: [
+          { project_id: 'p1', project_name: 'X', data_source: 'all_projects', score: 50, match_band: 'partial', match_type: 'partial', requires_verification: true },
+        ],
+      },
+    });
+    const auth = collectAuthoritativeMeta(matchWithFallback);
+    // LLM tried to drop the verification flag and call it our_projects.
+    const payloadIn = {
+      recommendations: [
+        { project_id: 'p1', project_name: 'X', data_source: 'our_projects', requires_verification: false, score: 50, match_band: 'partial', why: '', pitch: '' },
+      ],
+    };
+    const { payload } = reconcileRecommendationPayload(payloadIn, auth) as { payload: typeof payloadIn };
+    expect(payload.recommendations[0].requires_verification).toBe(true);
+    expect(payload.recommendations[0].data_source).toBe('all_projects');
+    expect((payload as Record<string, unknown>).requires_verification).toBe(true); // top-level rollup
+  });
+
+  it('leaves a recommendation untouched when its project_id has no authoritative entry', () => {
+    const auth = collectAuthoritativeMeta(MATCH_RESULT);
+    const payloadIn = { recommendations: [{ project_id: 'unknown-id', project_name: 'Y', score: 88, match_band: 'strong', why: '', pitch: '' }] };
+    const { payload, corrections } = reconcileRecommendationPayload(payloadIn, auth) as { payload: typeof payloadIn; corrections: unknown[] };
+    expect(payload.recommendations[0].score).toBe(88); // no source to enforce → left as-is
+    expect(corrections.length).toBe(0);
   });
 });

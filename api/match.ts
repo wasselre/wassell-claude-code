@@ -24,6 +24,9 @@ import {
   MATCH_SYSTEM_PROMPT,
   MATCH_TOOLS,
   executeMatchTool,
+  collectAuthoritativeMeta,
+  reconcileRecommendationPayload,
+  type AuthoritativeMeta,
 } from './_lib/matchAgent.js';
 import { logAiAgentTurn } from './_lib/activityLogger.js';
 
@@ -80,6 +83,11 @@ export default async function handler(req: Request): Promise<Response> {
 
         try {
           const conversation: Anthropic.MessageParam[] = [...body.messages];
+          // Authoritative ranking metadata (score/band/type/source/verify) keyed
+          // by project_id, accumulated from every match_projects result this
+          // request. emit_recommendation's payload is reconciled against this so
+          // the model can never alter the deterministic score/band (Phase 1.1).
+          const authMeta = new Map<string, AuthoritativeMeta>();
 
           for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
             const turnStartedAt = Date.now();
@@ -129,11 +137,20 @@ export default async function handler(req: Request): Promise<Response> {
                 send({ type: 'tool_use', name: toolUse.name, input: toolUse.input });
                 if (toolUse.name === 'emit_recommendation') {
                   // Surface the structured recommendation to the browser as a
-                  // dedicated event the thread renders as a card. Pass the raw
-                  // tool input through (untrusted — normalized client-side).
-                  // Still runs through the normal tool loop below so the model
-                  // gets an ack and writes a closing line.
-                  send({ type: 'recommendation', data: toolUse.input ?? {} });
+                  // dedicated event the thread renders as a card. FORCE the
+                  // deterministic ranking metadata (score/band/type/source/verify)
+                  // from the authoritative match_projects results — the model
+                  // cannot upgrade/downgrade/rename a match. Narrative fields pass
+                  // through (normalized client-side). Still runs through the loop
+                  // below so the model gets an ack and writes a closing line.
+                  const { payload, corrections } = reconcileRecommendationPayload(
+                    toolUse.input ?? {},
+                    authMeta,
+                  );
+                  if (corrections.length > 0) {
+                    console.log('[match] forced deterministic metadata', JSON.stringify(corrections));
+                  }
+                  send({ type: 'recommendation', data: payload });
                 }
                 const toolStartedAt = Date.now();
                 let toolResult = '';
@@ -150,6 +167,11 @@ export default async function handler(req: Request): Promise<Response> {
                   toolResult = `Error: ${toolError}`;
                 }
                 const toolDuration = Date.now() - toolStartedAt;
+                // Capture the authoritative ranking metadata so a later
+                // emit_recommendation in this request can be reconciled against it.
+                if (toolUse.name === 'match_projects' && !toolError) {
+                  collectAuthoritativeMeta(toolResult, authMeta);
+                }
                 send({ type: 'tool_result', name: toolUse.name, result: toolResult });
                 toolResults.push({
                   type: 'tool_result',

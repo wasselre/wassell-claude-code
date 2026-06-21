@@ -80,9 +80,12 @@ If used_fallback is true but our_projects.results still has entries, those are W
 - If the salesperson gives too little to match well (e.g. only a city, or nothing concrete), ask ONE or TWO sharp questions FIRST (budget? district? villa or apartment? bedrooms?) before calling the tool. Don't guess.
 - If the budget looks unrealistic for the requested area/type, say it plainly and show the closest real options + the gap.
 
+# The match score & band are DETERMINISTIC — never change them
+match_projects already computed each result's score, match_band, match_type, data_source, and requires_verification. These are the system's ranking metadata. You MUST use them EXACTLY as returned. You may NOT re-score, re-band, upgrade, downgrade, round, reinterpret, or rename a match's quality — not in your chat text, and not in emit_recommendation. If the tool says a project is "44 / partial", you say "44 / partial"; you never call it "good" because the location or price looks strong to you. Add narrative explanation freely, but the number and the band are fixed by the tool. The order you present picks in must follow the tool's order (best first).
+
 # Output (in the chat, before emit_recommendation)
 Lead with the single best match, then any runners-up. For each pick give:
-- The project name + match band (strong / good / partial) + the score.
+- The project name + the EXACT match band (strong / good / partial) and score from match_projects — quoted verbatim, never your own assessment.
 - Why it fits (tie it to the customer's stated requirements).
 - Key specs — ONLY from facts (price range, area range, bedrooms/bathrooms, available units, city/district, type).
 - 2–3 key selling points (factual).
@@ -91,7 +94,7 @@ Lead with the single best match, then any runners-up. For each pick give:
 - The questions to ask the customer to refine the match (from missing_info / data_gaps).
 
 # Then call emit_recommendation
-After writing the recommendation in the chat, call emit_recommendation with the structured picks (project_id from match_projects, score, band, why, specs, selling_points, pitch, warning, missing_info) so the app shows the card. Add ONE short closing line. Pass facts through unchanged — never enrich them with invented detail.
+After writing the recommendation in the chat, call emit_recommendation with the structured picks so the app shows the card. For each pick, copy these fields VERBATIM from the matching match_projects result by project_id: score, match_band, match_type, data_source, requires_verification. Do not alter them. The narrative fields (why, specs, selling_points, pitch, warning, missing_info) describe the project from its facts — never invent detail. Add ONE short closing line.
 
 # Voice & brand
 - Reply in Arabic by default (mirror the salesperson's language if they write in English). We are "وصل العقارية" / "Wassel" — never name any internal system or tool, never say "Wassel CRM". SAR currency. Keep it call-ready and tight; this is a co-pilot whispering in the rep's ear, not an essay.
@@ -151,7 +154,7 @@ export const MATCH_TOOLS: ToolUnion[] = [
   {
     name: 'emit_recommendation',
     description:
-      'Deliver the FINAL ranked recommendation as STRUCTURED data so the app renders it as a recommendation card for the salesperson. Call this AFTER you have written the recommendation in the chat, passing the same content. Pass facts EXACTLY as match_projects/get_project returned them — never invent or enrich. Mark requires_verification + warning on any all_projects pick.',
+      'Deliver the FINAL ranked recommendation as STRUCTURED data so the app renders it as a recommendation card for the salesperson. Call this AFTER you have written the recommendation in the chat. The ranking metadata — score, match_band, match_type, data_source, requires_verification — MUST be copied VERBATIM from the matching match_projects result (by project_id); do not re-score, re-band, upgrade, downgrade, or rename. (The server also enforces this server-side, but pass the correct values.) The narrative fields come from the project facts — never invent or enrich.',
     input_schema: {
       type: 'object',
       properties: {
@@ -580,6 +583,99 @@ interface MatchResultItem {
 const VERIFY_WARNING =
   'From the All Projects database (unverified, often competitor/scraped data). Verify price, availability, and details before offering to the customer.';
 
+// ─── Deterministic-metadata enforcement (Phase 1.1) ──────────────────────────
+// The match score / band / type / source / verification flag are computed by
+// scoreProject and MUST NOT be re-derived by the LLM. The prompt forbids it, but
+// the server ALSO enforces it: collect the authoritative metadata from each
+// match_projects result, then overwrite whatever the model passes to
+// emit_recommendation (matched by project_id) before it reaches the card.
+
+export interface AuthoritativeMeta {
+  score: number;
+  match_band: 'strong' | 'good' | 'partial';
+  match_type: ScoredProject['match_type'];
+  data_source: 'our_projects' | 'all_projects';
+  requires_verification: boolean;
+}
+
+/** Parse a match_projects tool-result JSON string and merge each result's
+ *  authoritative ranking metadata into `into`, keyed by project_id. */
+export function collectAuthoritativeMeta(
+  matchResultJson: string,
+  into?: Map<string, AuthoritativeMeta>,
+): Map<string, AuthoritativeMeta> {
+  const map = into ?? new Map<string, AuthoritativeMeta>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(matchResultJson);
+  } catch {
+    return map; // ack-only or non-JSON results (e.g. get_project) are ignored
+  }
+  const root = parsed as { our_projects?: unknown; all_projects?: unknown } | null;
+  for (const group of [root?.our_projects, root?.all_projects]) {
+    const results = (group as { results?: unknown } | null)?.results;
+    if (!Array.isArray(results)) continue;
+    for (const r of results as Array<Record<string, unknown>>) {
+      const pid = r?.project_id;
+      if (typeof pid !== 'string' || !pid) continue;
+      map.set(pid, {
+        score: Number(r.score) || 0,
+        match_band: (r.match_band as AuthoritativeMeta['match_band']) ?? 'partial',
+        match_type: (r.match_type as AuthoritativeMeta['match_type']) ?? 'partial',
+        data_source: (r.data_source as AuthoritativeMeta['data_source']) ?? 'our_projects',
+        requires_verification: r.requires_verification === true,
+      });
+    }
+  }
+  return map;
+}
+
+/**
+ * Overwrite the deterministic ranking metadata on an emit_recommendation payload
+ * with the authoritative match_projects values (by project_id), so the model can
+ * never upgrade/downgrade/rename a match. Mutates + returns the payload, plus the
+ * list of corrections made (for logging). Recommendations whose project_id has no
+ * authoritative entry are left as-is (no source to enforce against). Also
+ * recomputes the top-level data_source / requires_verification from the corrected
+ * picks so the banner can't disagree with the per-pick flags.
+ */
+export function reconcileRecommendationPayload(
+  input: unknown,
+  auth: Map<string, AuthoritativeMeta>,
+): { payload: unknown; corrections: Array<{ project_id: string; field: string; from: unknown; to: unknown }> } {
+  const corrections: Array<{ project_id: string; field: string; from: unknown; to: unknown }> = [];
+  if (!input || typeof input !== 'object') return { payload: input, corrections };
+  const p = input as Record<string, unknown>;
+  const recs = Array.isArray(p.recommendations) ? (p.recommendations as Array<Record<string, unknown>>) : [];
+
+  const FIELDS: (keyof AuthoritativeMeta)[] = ['score', 'match_band', 'match_type', 'data_source', 'requires_verification'];
+  for (const rec of recs) {
+    if (!rec || typeof rec !== 'object') continue;
+    const pid = typeof rec.project_id === 'string' ? rec.project_id : '';
+    const a = pid ? auth.get(pid) : undefined;
+    if (!a) continue;
+    for (const f of FIELDS) {
+      if (rec[f] !== a[f]) {
+        corrections.push({ project_id: pid, field: f, from: rec[f], to: a[f] });
+        rec[f] = a[f];
+      }
+    }
+  }
+
+  // Recompute the top-level rollup flags from the corrected picks.
+  if (recs.length > 0) {
+    const anyVerify = recs.some((r) => r.requires_verification === true);
+    const sources = new Set(recs.map((r) => r.data_source));
+    p.requires_verification = anyVerify;
+    p.data_source = sources.has('all_projects')
+      ? sources.has('our_projects')
+        ? 'mixed'
+        : 'all_projects'
+      : 'our_projects';
+  }
+  return { payload: p, corrections };
+}
+
 export async function matchProjects(supabase: SupabaseClient, req: MatchRequirements): Promise<string> {
   const model = await getModelByName(supabase, 'all_projects');
   if (!model) return JSON.stringify({ error: 'all_projects model not found', our_projects: { count: 0, results: [] }, all_projects: null });
@@ -788,5 +884,5 @@ export async function executeMatchTool(
   }
 }
 
-// Exported for unit testing the deterministic scorer without a DB.
-export const __test = { scoreProject };
+// Exported for unit testing the deterministic scorer + metadata enforcement.
+export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload };
