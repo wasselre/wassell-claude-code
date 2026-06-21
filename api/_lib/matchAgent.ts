@@ -1305,21 +1305,62 @@ async function getCustomerContext(supabase: SupabaseClient, input: CustomerLooku
 
 const CLIENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export interface ResolvedClient {
+  id: string;
+  name: string;
+  phone: string;
+}
+
 /**
- * Resolve the authoritative clients record id for a proposed task. The model
- * sometimes echoes a bogus/invented client_id in propose_task, so never trust it
- * blindly: accept the echoed id ONLY if it is a REAL clients record; otherwise
- * resolve by client_name; otherwise return null (the task card is shown
- * unresolved and cannot be confirmed). Mirrors resolveReelScriptProjectId.
+ * The result of resolving a client for a proposed task:
+ *  - resolved   → exactly one real client; the task may be confirmed.
+ *  - not_found  → no real client; the card is shown disabled.
+ *  - ambiguous  → multiple real clients match the name; the card is shown
+ *                 disabled and lists the candidates — the salesperson must
+ *                 disambiguate (re-ask with the full name / phone). NEVER guessed.
  */
-export async function resolveClientId(
+export type ClientResolution =
+  | { status: 'resolved'; client: ResolvedClient }
+  | { status: 'not_found' }
+  | { status: 'ambiguous'; candidates: ResolvedClient[] };
+
+/**
+ * PURE decision over a candidate list — exported for unit testing the
+ * never-guess-on-ambiguity rule. Prefers an EXACT (normalized) name match; only
+ * falls to a fuzzy substring match when there's no exact one, and in BOTH cases
+ * requires a UNIQUE hit — two clients with the same name resolve to `ambiguous`,
+ * never to "the first one".
+ */
+export function resolveClientFromCandidates(
+  candidates: ResolvedClient[],
+  wantNameNorm: string,
+): ClientResolution {
+  if (!wantNameNorm) return { status: 'not_found' };
+  const exact = candidates.filter((c) => normalizeForSearch(c.name) === wantNameNorm);
+  if (exact.length === 1) return { status: 'resolved', client: exact[0]! };
+  if (exact.length > 1) return { status: 'ambiguous', candidates: exact.slice(0, 6) };
+  const contains = candidates.filter((c) => fuzzyContains(c.name, wantNameNorm));
+  if (contains.length === 1) return { status: 'resolved', client: contains[0]! };
+  if (contains.length > 1) return { status: 'ambiguous', candidates: contains.slice(0, 6) };
+  return { status: 'not_found' };
+}
+
+/**
+ * Resolve the authoritative client for a proposed task. The model sometimes
+ * echoes a bogus/invented client_id, so never trust it blindly:
+ *  1. Accept the echoed id ONLY if it is a REAL clients record (exact id match).
+ *  2. Otherwise resolve by client_name — but NEVER guess: a unique match resolves,
+ *     duplicates are reported as `ambiguous`, none as `not_found`.
+ */
+export async function resolveClient(
   supabase: SupabaseClient,
   rawId: unknown,
   name: unknown,
-): Promise<{ id: string; name: string } | null> {
+): Promise<ClientResolution> {
   const model = await getModelByName(supabase, 'clients');
-  if (!model) return null;
+  if (!model) return { status: 'not_found' };
 
+  // 1. Echoed id — only if it is genuinely a clients record (unambiguous).
   if (typeof rawId === 'string' && CLIENT_UUID_RE.test(rawId)) {
     const { data } = await supabase
       .from('unified_records')
@@ -1328,17 +1369,20 @@ export async function resolveClientId(
       .maybeSingle();
     if (data && (data as { model_id?: string }).model_id === model.id) {
       const row = data as RecordRow;
-      return { id: row.id, name: asStr(row.data.client_name) };
+      return { status: 'resolved', client: { id: row.id, name: asStr(row.data.client_name), phone: asStr(row.data.phone_number) } };
     }
   }
 
+  // 2. By name — RLS-scoped to the rep's clients; never guess on duplicates.
   const wantName = typeof name === 'string' ? normalizeForSearch(name) : '';
-  if (wantName) {
-    const rows = await pageRecords(supabase, model.id, 5);
-    const hit = rows.find((r) => fuzzyContains(asStr(r.data.client_name), wantName));
-    if (hit) return { id: hit.id, name: asStr(hit.data.client_name) };
-  }
-  return null;
+  if (!wantName) return { status: 'not_found' };
+  const rows = await pageRecords(supabase, model.id, 5);
+  const candidates: ResolvedClient[] = rows.map((r) => ({
+    id: r.id,
+    name: asStr(r.data.client_name),
+    phone: asStr(r.data.phone_number),
+  }));
+  return resolveClientFromCandidates(candidates, wantName);
 }
 
 // ─── Dispatch ────────────────────────────────────────────────────────────────
@@ -1391,4 +1435,4 @@ export async function executeMatchTool(
 }
 
 // Exported for unit testing the deterministic scorer + metadata enforcement.
-export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature };
+export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates };

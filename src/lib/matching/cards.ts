@@ -167,17 +167,37 @@ const FOLLOWUP_TYPES: FollowupType[] = [
   'rating_request',
 ];
 
+export interface TaskCandidate {
+  name: string;
+  phone: string;
+}
+
 export interface TaskProposalPayload {
   client_id: string;
   client_name: string;
+  /** The validated client's phone (server-resolved) — shown so the salesperson
+   *  knows exactly which lead the task attaches to. */
+  client_phone?: string;
   followup_type: FollowupType;
   due_at: string;
   notes: string;
   suggested_message: string;
   project_id?: string;
-  /** Set by the server when the client_id couldn't be validated — the card then
-   *  shows "client not found" and the Confirm button is disabled. */
+  /** Server set when the client_id couldn't be uniquely validated — the card
+   *  shows the reason and the Confirm button is disabled (no write possible). */
   unresolved?: boolean;
+  /** Server set when the NAME matched more than one real client — the card lists
+   *  the candidates and the salesperson must disambiguate. Never guessed. */
+  ambiguous?: boolean;
+  candidates?: TaskCandidate[];
+}
+
+function asCandidates(v: unknown): TaskCandidate[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    .map((x) => ({ name: asString(x.name), phone: asString(x.phone) }))
+    .filter((c) => c.name || c.phone);
 }
 
 export function normalizeTaskProposal(data: unknown): TaskProposalPayload | null {
@@ -186,18 +206,21 @@ export function normalizeTaskProposal(data: unknown): TaskProposalPayload | null
   const clientId = asString(d.client_id);
   const unresolved = d.unresolved === true;
   // A resolved task needs a real client_id; an unresolved one is still shown
-  // (disabled) so the salesperson knows the lead wasn't found.
+  // (disabled) so the salesperson knows the lead wasn't found / is ambiguous.
   if (!clientId && !unresolved) return null;
   const ft = asString(d.followup_type) as FollowupType;
   return {
     client_id: clientId,
     client_name: asString(d.client_name),
+    client_phone: asString(d.client_phone) || undefined,
     followup_type: FOLLOWUP_TYPES.includes(ft) ? ft : 'whatsapp_follow_up',
     due_at: asString(d.due_at),
     notes: asString(d.notes),
     suggested_message: asString(d.suggested_message),
     project_id: asString(d.project_id) || undefined,
     unresolved,
+    ambiguous: d.ambiguous === true,
+    candidates: asCandidates(d.candidates),
   };
 }
 

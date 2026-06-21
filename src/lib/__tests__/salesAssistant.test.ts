@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 // temperature) lives in the API agent — no DB / SDK runtime deps.
 import { __test } from '../../../api/_lib/matchAgent';
 
-const { scoreProject, haversineKm, computeLeadTemperature } = __test;
+const { scoreProject, haversineKm, computeLeadTemperature, resolveClientFromCandidates } = __test;
 
 describe('haversineKm', () => {
   it('measures a realistic Riyadh inter-district distance', () => {
@@ -80,5 +80,41 @@ describe('computeLeadTemperature (deterministic)', () => {
   it('is WARM for an active stage that has gone a little quiet', () => {
     const r = computeLeadTemperature({ client_stage: 'زيارة', last_activity_at: iso(6) });
     expect(r.temperature).toBe('warm');
+  });
+});
+
+describe('resolveClientFromCandidates — never guess on ambiguity (task write safety)', () => {
+  const c = (id: string, name: string, phone = '') => ({ id, name, phone });
+
+  it('resolves a unique exact name match', () => {
+    const r = resolveClientFromCandidates([c('1', 'الهنوف'), c('2', 'محمد')], 'الهنوف');
+    expect(r.status).toBe('resolved');
+    if (r.status === 'resolved') expect(r.client.id).toBe('1');
+  });
+
+  it('BLOCKS (ambiguous) when two clients share the same name — never picks the first', () => {
+    const r = resolveClientFromCandidates([c('1', 'الهنوف', '0551'), c('2', 'الهنوف', '0552')], 'الهنوف');
+    expect(r.status).toBe('ambiguous');
+    if (r.status === 'ambiguous') expect(r.candidates.length).toBe(2);
+  });
+
+  it('returns not_found when nothing matches', () => {
+    expect(resolveClientFromCandidates([c('1', 'محمد')], 'سارة').status).toBe('not_found');
+  });
+
+  it('prefers a UNIQUE exact match over multiple substring matches', () => {
+    // "الهنوف" is an exact match for #1 and a substring of #2 — exact wins uniquely.
+    const r = resolveClientFromCandidates([c('1', 'الهنوف'), c('2', 'الهنوف العتيبي')], 'الهنوف');
+    expect(r.status).toBe('resolved');
+    if (r.status === 'resolved') expect(r.client.id).toBe('1');
+  });
+
+  it('is ambiguous when only substring matches exist and there are several', () => {
+    const r = resolveClientFromCandidates([c('1', 'أبو الهنوف'), c('2', 'الهنوف العتيبي')], 'الهنوف');
+    expect(r.status).toBe('ambiguous');
+  });
+
+  it('returns not_found for an empty requested name', () => {
+    expect(resolveClientFromCandidates([c('1', 'الهنوف')], '').status).toBe('not_found');
   });
 });

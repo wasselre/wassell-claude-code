@@ -33,7 +33,7 @@ import {
   executeMatchTool,
   collectAuthoritativeMeta,
   reconcileRecommendationPayload,
-  resolveClientId,
+  resolveClient,
   type AuthoritativeMeta,
 } from './_lib/matchAgent.js';
 import { logAiAgentTurn } from './_lib/activityLogger.js';
@@ -174,15 +174,23 @@ export default async function handler(req: Request): Promise<Response> {
                 if (toolUse.name === 'propose_task') {
                   // Confirmation-gated: the browser renders a Confirm/Cancel card;
                   // the record is created CLIENT-SIDE only after the user confirms.
-                  // FIRST validate the client_id server-side — the model sometimes
-                  // invents a client_id, which would orphan the task. Override with
-                  // the real id (or mark unresolved so the card can't be confirmed).
+                  // FIRST resolve the client SERVER-SIDE — the model sometimes
+                  // invents a client_id (would orphan the task) or names a client
+                  // that has duplicates. We attach the validated id ONLY when there
+                  // is exactly one real match; ambiguous/not-found carry NO id so the
+                  // card is blocked and the salesperson must disambiguate.
                   const tinput = (toolUse.input ?? {}) as Record<string, unknown>;
-                  const resolvedClient = await resolveClientId(supabase, tinput.client_id, tinput.client_name);
+                  const resolution = await resolveClient(supabase, tinput.client_id, tinput.client_name);
                   const taskPayload: Record<string, unknown> = { ...tinput };
-                  if (resolvedClient) {
-                    taskPayload.client_id = resolvedClient.id;
-                    if (resolvedClient.name) taskPayload.client_name = resolvedClient.name;
+                  delete taskPayload.client_id; // never carry the model's echoed id
+                  if (resolution.status === 'resolved') {
+                    taskPayload.client_id = resolution.client.id;
+                    taskPayload.client_name = resolution.client.name || taskPayload.client_name;
+                    taskPayload.client_phone = resolution.client.phone;
+                  } else if (resolution.status === 'ambiguous') {
+                    taskPayload.unresolved = true;
+                    taskPayload.ambiguous = true;
+                    taskPayload.candidates = resolution.candidates.map((c) => ({ name: c.name, phone: c.phone }));
                   } else {
                     taskPayload.unresolved = true;
                   }

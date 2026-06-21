@@ -205,17 +205,18 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
     saveRecord({ ...record, data: { ...record.data, messages: msgs }, updated_at: new Date().toISOString() });
   }
 
-  /** Confirmation-gated write: create the follow-up record only on explicit confirm. */
-  async function confirmTask(msgIdx: number, cardIdx: number, payload: TaskProposalPayload, dueAtIso: string) {
-    // Never write a task that isn't tied to a real, server-validated client.
-    if (payload.unresolved || !payload.client_id) {
-      addToast(isAr ? 'العميل غير موجود في النظام — لا يمكن إنشاء المهمة' : 'Client not found — cannot create the task', 'error');
-      return;
+  /** Confirmation-gated write: create the follow-up record only on explicit
+   *  confirm. Returns true ONLY when record_save actually persisted. */
+  async function confirmTask(msgIdx: number, cardIdx: number, payload: TaskProposalPayload, dueAtIso: string): Promise<boolean> {
+    // Never write a task that isn't tied to exactly one server-validated client.
+    if (payload.unresolved || payload.ambiguous || !payload.client_id) {
+      addToast(isAr ? 'العميل غير محدد بدقة — لا يمكن إنشاء المهمة' : 'Client not uniquely identified — cannot create the task', 'error');
+      return false;
     }
     const followups = models.find((m) => m.name === 'followups');
     if (!followups) {
       addToast(isAr ? 'نموذج المتابعات غير متوفر' : 'Follow-ups model unavailable', 'error');
-      return;
+      return false;
     }
     const now = new Date().toISOString();
     const rec: AppRecord = {
@@ -235,16 +236,14 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
     };
     const res = await saveRecord(rec);
     // Only claim success on a real save — 'queued' (RPC failed) / 'conflict' must
-    // surface, never a silent "created" the DB doesn't have.
+    // surface as a failure, never a silent "created" the DB doesn't have.
     if (res?.status === 'saved') {
       setCardStatus(msgIdx, cardIdx, 'created', rec.id);
       addToast(isAr ? 'تم إنشاء مهمة المتابعة' : 'Follow-up task created', 'success');
-    } else {
-      addToast(
-        isAr ? 'تعذّر إنشاء المهمة — حاول مرة أخرى' : 'Could not create the task — please try again',
-        'error',
-      );
+      return true;
     }
+    addToast(isAr ? 'تعذّر إنشاء المهمة — حاول مرة أخرى' : 'Could not create the task — please try again', 'error');
+    return false;
   }
 
   function renderCard(card: StoredCard, msgIdx: number, cardIdx: number) {
@@ -263,7 +262,7 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
             payload={card.payload as TaskProposalPayload}
             isAr={isAr}
             status={card.task_status ?? 'proposed'}
-            onConfirm={(dueIso) => void confirmTask(msgIdx, cardIdx, card.payload as TaskProposalPayload, dueIso)}
+            onConfirm={(dueIso) => confirmTask(msgIdx, cardIdx, card.payload as TaskProposalPayload, dueIso)}
             onCancel={() => setCardStatus(msgIdx, cardIdx, 'cancelled')}
           />
         );
