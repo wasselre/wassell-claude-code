@@ -12,8 +12,10 @@ import {
   resolveExperimentAssignments,
   computeSalesFunnel,
   compareExperiment,
+  buildWorkflowCard,
   type SalesFunnelResult,
 } from '@/lib/salesStudio';
+import { DEFAULT_SALES_PROCESS } from '@/lib/salesProcess';
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 function wf(over: Partial<Workflow> = {}): Workflow {
@@ -190,6 +192,47 @@ describe('computeSalesFunnel', () => {
       now: Date.now(),
     });
     expect(f.offer_request_rate.value).toBe(1); // linked offer → reached
+  });
+});
+
+describe('buildWorkflowCard — editor pre-fill', () => {
+  // A "kickoff" workflow like First Follow-up: one condition-only branch on
+  // client_stage, a create_record that assigns a fixed user via a static mapping.
+  const kickoff = wf({
+    trigger_event: 'create',
+    branches: [{
+      id: 'b1',
+      conditions: [{ id: 'c', field_id: 'client_stage', operator: 'equals', value: 'جديد' }],
+      actions: [{
+        id: 'a_create', type: 'create_record', target_model_id: 'followups',
+        field_mappings: [
+          { id: 'm_type', target_field_id: 'followup_type', source_type: 'static', static_value: 'appointment_booking_call' },
+          { id: 'm_rep', target_field_id: 'sales_rep', source_type: 'static', static_value: 'user-42' },
+          { id: 'm_date', target_field_id: 'scheduled_datetime', source_type: 'date_expression', date_base: 'current_date', date_expression: '' },
+        ],
+      }],
+    }],
+  });
+
+  it('surfaces the workflow\'s fixed assignee (not a blank dropdown)', () => {
+    const card = buildWorkflowCard('appointment_booking_call', 'جديد', kickoff, undefined, DEFAULT_SALES_PROCESS);
+    const a = card.assignments.find((x) => x.action_id === 'a_create');
+    expect(a?.current_strategy).toBe('fixed_user');
+    expect(a?.current_fixed_user_id).toBe('user-42');
+  });
+
+  it('describes a condition-only branch instead of a blank label', () => {
+    const card = buildWorkflowCard('appointment_booking_call', 'جديد', kickoff, undefined, DEFAULT_SALES_PROCESS);
+    const b = card.branches.find((x) => x.branch_id === 'b1');
+    expect(b?.summary.en).toContain('When:');
+    expect(b?.summary.en).toContain('Stage');
+    expect(b?.summary.ar).toContain('المرحلة');
+  });
+
+  it('fills the objective from the sales config', () => {
+    const card = buildWorkflowCard('appointment_booking_call', 'جديد', kickoff, undefined, DEFAULT_SALES_PROCESS);
+    expect(card.objective_en).toBeTruthy();
+    expect(card.objective_ar).toBeTruthy();
   });
 });
 

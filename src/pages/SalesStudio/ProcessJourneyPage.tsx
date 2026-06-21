@@ -16,7 +16,7 @@ import WorkflowSimpleEditor from './components/WorkflowSimpleEditor';
 import VersionManager from './components/VersionManager';
 import AssignClientModal from './components/AssignClientModal';
 
-interface EditorState { card: WorkflowCard; overlay: SalesWorkflowOverlay; draftVersionId: string; editingActive: boolean }
+interface EditorState { card: WorkflowCard; draftVersionId: string; editingActive: boolean }
 
 export default function ProcessJourneyPage() {
   const { processId } = useParams<{ processId: string }>();
@@ -96,7 +96,6 @@ export default function ProcessJourneyPage() {
     );
     setEditor({
       card: draftCard,
-      overlay: draft.config_json.workflows[card.workflow_id] ?? {},
       draftVersionId: draft.id,
       editingActive,
     });
@@ -217,7 +216,6 @@ export default function ProcessJourneyPage() {
       {editor && (
         <WorkflowSimpleEditor
           card={editor.card}
-          overlay={editor.overlay}
           editingActive={editor.editingActive}
           onClose={() => setEditor(null)}
           onSave={saveOverlay}

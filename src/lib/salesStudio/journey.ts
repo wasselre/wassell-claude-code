@@ -52,6 +52,9 @@ export interface JourneyMessageHandle {
 export interface JourneyAssignmentHandle {
   action_id: string;
   current_strategy: string;       // inferred from the mapping source
+  /** The currently-assigned fixed user id (from the overlay, else the workflow's
+   *  own static mapping) so the editor can pre-select it instead of showing blank. */
+  current_fixed_user_id: string | null;
 }
 
 export interface JourneyMaxAttemptsHandle {
@@ -152,6 +155,49 @@ function branchOutcome(conditions: { field_id: string; value: unknown }[]): stri
   return typeof c.value === 'string' ? c.value : null;
 }
 
+const COND_FIELD_LABELS: Record<string, Bilingual> = {
+  client_stage: { ar: 'المرحلة', en: 'Stage' },
+  client_status: { ar: 'الحالة', en: 'Status' },
+  call_result: { ar: 'النتيجة', en: 'Outcome' },
+  followup_type: { ar: 'نوع المتابعة', en: 'Follow-up type' },
+  followup_number: { ar: 'رقم المحاولة', en: 'Attempt #' },
+  whatsapp_state: { ar: 'حالة الواتساب', en: 'WhatsApp state' },
+  priority: { ar: 'الأولوية', en: 'Priority' },
+};
+
+const COND_OP_LABELS: Record<string, Bilingual> = {
+  equals: { ar: '=', en: '=' },
+  not_equals: { ar: '≠', en: '≠' },
+  contains: { ar: 'يحتوي', en: 'has' },
+  intersects: { ar: 'يحتوي', en: 'has' },
+  greater_than: { ar: '>', en: '>' },
+  less_than: { ar: '<', en: '<' },
+  is_empty: { ar: 'فارغ', en: 'empty' },
+  is_not_empty: { ar: 'غير فارغ', en: 'not empty' },
+};
+
+function condValue(value: unknown): string {
+  if (value == null) return '';
+  const s = Array.isArray(value) ? value.map(String).join('، ') : String(value);
+  return s.length > 28 ? `${s.slice(0, 28)}…` : s;
+}
+
+/** Build a readable summary of a branch's conditions ("When: Stage = New"). */
+function describeConditions(conditions: { field_id: string; operator: string; value: unknown }[]): Bilingual | null {
+  if (!conditions.length) return null;
+  const noVal = (op: string) => op === 'is_empty' || op === 'is_not_empty';
+  const parts = conditions.slice(0, 3).map((c) => {
+    const f = COND_FIELD_LABELS[c.field_id] ?? { ar: c.field_id, en: c.field_id };
+    const op = COND_OP_LABELS[c.operator] ?? { ar: c.operator, en: c.operator };
+    const v = noVal(c.operator) ? { ar: '', en: '' } : { ar: condValue(c.value), en: condValue(c.value) };
+    return { ar: `${f.ar} ${op.ar} ${v.ar}`.trim(), en: `${f.en} ${op.en} ${v.en}`.trim() };
+  });
+  return {
+    ar: `عند: ${parts.map((p) => p.ar).join(' و ')}`,
+    en: `When: ${parts.map((p) => p.en).join(' and ')}`,
+  };
+}
+
 function describeNextAction(actions: WorkflowAction[]): Bilingual | null {
   const create = actions.find((a) => a.type === 'create_record');
   const updateClient = actions.find(
@@ -228,9 +274,14 @@ function extractHandles(workflow: Workflow, overlay: SalesWorkflowOverlay | unde
       const repMap = action.field_mappings.find((m) => m.target_field_id === 'sales_rep');
       if (repMap) {
         const ov = overlay?.assignments?.[action.id];
+        // The fixed user comes from the overlay if set, else from the workflow's
+        // own static mapping value — so the editor shows who it's actually
+        // assigned to rather than a blank dropdown.
+        const fromWorkflow = repMap.source_type === 'static' && typeof repMap.static_value === 'string' ? repMap.static_value : null;
         assignments.push({
           action_id: action.id,
           current_strategy: ov?.strategy ?? inferAssignmentStrategy(repMap),
+          current_fixed_user_id: ov?.fixed_user_id ?? fromWorkflow,
         });
       }
     } else if (action.type === 'send_whatsapp_message') {
@@ -252,11 +303,16 @@ function buildBranchCards(workflow: Workflow, overlay: SalesWorkflowOverlay | un
     const outcome = branchOutcome(b.conditions);
     const oc = outcome ? getOutcome(outcome) : undefined;
     const bo = overlay?.branches?.[b.id];
+    const condDesc = describeConditions(b.conditions);
     const summary: Bilingual = oc
       ? { ar: `النتيجة: ${oc.label_ar}`, en: `Outcome: ${oc.label_en}` }
       : b.is_else
         ? { ar: 'وإلا (الحالة الافتراضية)', en: 'Otherwise (default case)' }
-        : { ar: b.label_ar || 'مسار', en: b.label_en || 'Branch' };
+        : (bo?.label_ar || bo?.label_en || b.label_ar || b.label_en)
+          ? { ar: bo?.label_ar || b.label_ar || bo?.label_en || b.label_en || 'مسار', en: bo?.label_en || b.label_en || bo?.label_ar || b.label_ar || 'Branch' }
+          // No named outcome, no label → describe the branch by its conditions
+          // so the card/editor never shows a blank "مسار".
+          : condDesc ?? { ar: 'مسار غير مشروط', en: 'Unconditional path' };
     return {
       branch_id: b.id,
       label_ar: bo?.label_ar ?? b.label_ar,

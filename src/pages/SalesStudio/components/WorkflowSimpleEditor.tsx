@@ -15,13 +15,11 @@ const STRATEGIES: SalesAssignmentStrategy[] = ['same_sales_rep', 'current_user',
  */
 export default function WorkflowSimpleEditor({
   card,
-  overlay,
   editingActive,
   onClose,
   onSave,
 }: {
   card: WorkflowCard;
-  overlay: SalesWorkflowOverlay;
   /** True when the manager opened this from an ACTIVE version (we'll fork a draft). */
   editingActive: boolean;
   onClose: () => void;
@@ -52,7 +50,9 @@ export default function WorkflowSimpleEditor({
   const [assignments, setAssignments] = useState(() =>
     Object.fromEntries(card.assignments.map((a) => [a.action_id, {
       strategy: (STRATEGIES.includes(a.current_strategy as SalesAssignmentStrategy) ? a.current_strategy : 'same_sales_rep') as SalesAssignmentStrategy,
-      fixed_user_id: overlay.assignments?.[a.action_id]?.fixed_user_id ?? null,
+      // current_fixed_user_id already folds in the overlay value (else the
+      // workflow's own static assignee) so the dropdown shows who it's set to.
+      fixed_user_id: a.current_fixed_user_id ?? null,
     }])),
   );
 
@@ -142,7 +142,7 @@ export default function WorkflowSimpleEditor({
                 {card.timings.map((t) => (
                   <div key={t.action_id} className="flex items-center gap-2">
                     <span className="w-28 shrink-0 truncate text-xs text-charcoal/65">{pick(t.label, isAr)}</span>
-                    <input value={timings[t.action_id] ?? ''} onChange={(e) => setTimings((s) => ({ ...s, [t.action_id]: e.target.value }))} dir="ltr" className="form-input flex-1 !py-1.5 text-xs" placeholder={t.default_value ?? '+1d'} />
+                    <input value={timings[t.action_id] ?? ''} onChange={(e) => setTimings((s) => ({ ...s, [t.action_id]: e.target.value }))} dir="ltr" className="form-input flex-1 !py-1.5 text-xs" placeholder={isAr ? 'مثال: +1d (فوري إن تُرك فارغًا)' : 'e.g. +1d (immediate if blank)'} />
                   </div>
                 ))}
               </div>
