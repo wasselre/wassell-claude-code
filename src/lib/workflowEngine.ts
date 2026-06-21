@@ -231,6 +231,13 @@ export async function executeWorkflows(
   // When omitted (or returns undefined for "record was deleted"), the
   // engine falls back to the snapshot passed in `triggerRecord`.
   getLiveTriggerRecord?: () => AppRecord | undefined,
+  // Sales Studio 2.0: optional process-overlay resolver. Given a workflow + the
+  // trigger record, it may return a CONFIG-OVERLAID COPY of the workflow (safe
+  // values only — timing / message / assignment / branch-enabled / max-attempts)
+  // based on the trigger client's assigned process version. The SAME engine runs
+  // that copy — this is NOT a second execution path. Omitted / returns the same
+  // ref → the workflow runs its built-in (legacy/default) behavior unchanged.
+  resolveProcessOverlay?: (workflow: Workflow, triggerRecord: AppRecord) => Workflow,
 ): Promise<void> {
   if (depth >= MAX_DEPTH) return;
 
@@ -243,7 +250,11 @@ export async function executeWorkflows(
 
   const triggerModel = allModels.find((m) => m.id === triggerRecord.model_id);
 
-  for (const workflow of matching) {
+  for (const baseWorkflow of matching) {
+    // Apply the process overlay (if any). The overlaid copy drives branch
+    // selection + action execution; the original identity (id/labels) is kept
+    // for logging so run logs still point at the real workflow.
+    const workflow = resolveProcessOverlay ? resolveProcessOverlay(baseWorkflow, triggerRecord) : baseWorkflow;
     const startedAt = new Date();
     const branches = getWorkflowBranches(workflow);
 

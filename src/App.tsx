@@ -43,6 +43,10 @@ import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
 import SalesTasksPage from '@/pages/Sales/SalesTasksPage';
 import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
+import SalesStudioHomePage from '@/pages/SalesStudio/SalesStudioHomePage';
+import ProcessJourneyPage from '@/pages/SalesStudio/ProcessJourneyPage';
+import ExperimentsPage from '@/pages/SalesStudio/ExperimentsPage';
+import ExperimentDetailPage from '@/pages/SalesStudio/ExperimentDetailPage';
 import ImageChatsPage from '@/pages/ImageChats/ImageChatsPage';
 import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import FilesPage from '@/pages/Files/FilesPage';
@@ -262,6 +266,12 @@ export default function App() {
               tasks = open to all, process + manager = admin-only by default,
               but each is now grantable/revocable per profile in Settings. */}
           <Route path="/sales/tasks" element={<RequirePageAccess pageId="sales_tasks"><SalesTasksPage /></RequirePageAccess>} />
+          {/* Sales Studio 2.0 — strategy layer (process library → journey, experiments).
+              Sub-routes share the sales_studio page-access gate. */}
+          <Route path="/sales/studio" element={<RequirePageAccess pageId="sales_studio"><SalesStudioHomePage /></RequirePageAccess>} />
+          <Route path="/sales/studio/experiments" element={<RequirePageAccess pageId="sales_studio"><ExperimentsPage /></RequirePageAccess>} />
+          <Route path="/sales/studio/experiments/:experimentId" element={<RequirePageAccess pageId="sales_studio"><ExperimentDetailPage /></RequirePageAccess>} />
+          <Route path="/sales/studio/processes/:processId" element={<RequirePageAccess pageId="sales_studio"><ProcessJourneyPage /></RequirePageAccess>} />
           <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />

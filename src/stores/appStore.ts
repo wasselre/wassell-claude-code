@@ -39,6 +39,11 @@ import type {
   MetricDefinition,
   ScheduledReport,
   SalesProcessOverride,
+  SalesProcess,
+  SalesProcessVersion,
+  SalesProcessVersionConfig,
+  SalesExperiment,
+  ClientSalesProcessAssignment,
   ModelView,
   User,
   Profile,
@@ -61,6 +66,14 @@ import type {
   SaveResult,
 } from '@/types';
 import { activityLogger } from '@/lib/activityLogger';
+import {
+  buildProcessOverlayResolver,
+  activeAssignmentsByClient,
+  buildDefaultVersionConfig,
+  resolveExperimentAssignments,
+  DEFAULT_PROCESS_NAME,
+  DEFAULT_PROCESS_DESCRIPTION,
+} from '@/lib/salesStudio';
 
 /** Returns a human-readable reason a widget/metric AnalyticsQuery must not be
  *  persisted — non-serializable (the HARD RULE) or structurally invalid — else
@@ -73,6 +86,12 @@ function analyticsQueryProblem(query: AnalyticsQuery | undefined): string | null
     return e instanceof Error ? e.message : String(e);
   }
   return validateAnalyticsQuery(query);
+}
+
+/** Map a process-version id → its parent sales_process_id (for assignment). */
+function versionProcessId(versions: SalesProcessVersion[], versionId: string | null | undefined): string | null {
+  if (!versionId) return null;
+  return versions.find((v) => v.id === versionId)?.sales_process_id ?? null;
 }
 
 // --- localStorage helpers ---
@@ -1305,6 +1324,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   metricDefinitions: [],
   scheduledReports: [],
   salesProcessOverrides: [],
+  salesProcesses: [],
+  salesProcessVersions: [],
+  salesExperiments: [],
+  clientSalesProcessAssignments: [],
   chatComposerTarget: null,
   views: [],
   users: [],
@@ -1411,6 +1434,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const metricDefinitionsP = supabaseLoad<MetricDefinition>('metric_definitions');
     const scheduledReportsP  = supabaseLoad<ScheduledReport>('scheduled_reports');
     const salesProcessOverridesP = supabaseLoad<SalesProcessOverride>('sales_process_overrides');
+    const salesProcessesP = supabaseLoad<SalesProcess>('sales_processes');
+    const salesProcessVersionsP = supabaseLoad<SalesProcessVersion>('sales_process_versions');
+    const salesExperimentsP = supabaseLoad<SalesExperiment>('sales_experiments');
+    const clientSalesProcessAssignmentsP = supabaseLoad<ClientSalesProcessAssignment>('client_sales_process_assignments');
     const whiteboardFoldersP = supabaseLoad<WhiteboardFolder>('whiteboard_folders');
     const whiteboardsP       = supabaseLoad<Whiteboard>('whiteboards');
     const viewsP             = supabaseLoad<ModelView>('model_views');
@@ -1537,6 +1564,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     let salesProcessOverrides = await salesProcessOverridesP;
     if (!salesProcessOverrides) salesProcessOverrides = loadLocal<SalesProcessOverride[]>('wassell_sales_process_overrides') ?? [];
     saveLocal('wassell_sales_process_overrides', salesProcessOverrides);
+
+    let salesProcesses = await salesProcessesP;
+    if (!salesProcesses) salesProcesses = loadLocal<SalesProcess[]>('wassell_sales_processes') ?? [];
+    saveLocal('wassell_sales_processes', salesProcesses);
+    let salesProcessVersions = await salesProcessVersionsP;
+    if (!salesProcessVersions) salesProcessVersions = loadLocal<SalesProcessVersion[]>('wassell_sales_process_versions') ?? [];
+    saveLocal('wassell_sales_process_versions', salesProcessVersions);
+    let salesExperiments = await salesExperimentsP;
+    if (!salesExperiments) salesExperiments = loadLocal<SalesExperiment[]>('wassell_sales_experiments') ?? [];
+    saveLocal('wassell_sales_experiments', salesExperiments);
+    let clientSalesProcessAssignments = await clientSalesProcessAssignmentsP;
+    if (!clientSalesProcessAssignments) clientSalesProcessAssignments = loadLocal<ClientSalesProcessAssignment[]>('wassell_client_sales_process_assignments') ?? [];
+    saveLocal('wassell_client_sales_process_assignments', clientSalesProcessAssignments);
 
     // Saved table views (chrome — view selector on each model page).
     let views = await viewsP;
@@ -1922,6 +1962,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       models, groups, profiles, roles, users, views, dashboards, metricDefinitions, scheduledReports,
       salesProcessOverrides,
+      salesProcesses, salesProcessVersions, salesExperiments, clientSalesProcessAssignments,
       fieldTemplates, webhookSlugs, workflowGroups, workflows,
       currentUserId, criticalDataReady: true,
     });
@@ -2837,6 +2878,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         // workflow is still selecting a branch, we pick based on fresh
         // data rather than the snapshot at execute-time.
         () => (get().records[finalRecord.model_id] ?? []).find((r) => r.id === finalRecord.id),
+        // Sales Studio 2.0: process overlay. If the trigger record's client has
+        // an active assignment to a process version, the resolver returns a
+        // config-overlaid copy of each matching workflow (safe values only). No
+        // assignment → the workflow runs its built-in (legacy/default) behavior.
+        buildProcessOverlayResolver({
+          assignmentsByClient: activeAssignmentsByClient(s.clientSalesProcessAssignments),
+          versionsById: new Map(s.salesProcessVersions.map((v) => [v.id, v])),
+        }),
       );
     });
 
@@ -3324,6 +3373,284 @@ export const useAppStore = create<AppState>((set, get) => ({
       supabaseUpsert('sales_process_overrides', override);
       return { salesProcessOverrides };
     });
+  },
+
+  // --- Sales Studio 2.0 — processes / versions / experiments / assignments ---
+  saveSalesProcess: (process: SalesProcess) => {
+    set((s) => {
+      const idx = s.salesProcesses.findIndex((p) => p.id === process.id);
+      const salesProcesses = idx >= 0
+        ? s.salesProcesses.map((p) => (p.id === process.id ? process : p))
+        : [...s.salesProcesses, process];
+      saveLocal('wassell_sales_processes', salesProcesses);
+      supabaseUpsert('sales_processes', process);
+      return { salesProcesses };
+    });
+  },
+  deleteSalesProcess: (processId: string) => {
+    set((s) => {
+      const salesProcesses = s.salesProcesses.filter((p) => p.id !== processId);
+      // DB cascades versions; mirror that locally so the UI stays consistent.
+      const salesProcessVersions = s.salesProcessVersions.filter((v) => v.sales_process_id !== processId);
+      saveLocal('wassell_sales_processes', salesProcesses);
+      saveLocal('wassell_sales_process_versions', salesProcessVersions);
+      supabaseDelete('sales_processes', processId);
+      return { salesProcesses, salesProcessVersions };
+    });
+  },
+  setDefaultSalesProcess: async (processId: string) => {
+    set((s) => {
+      const salesProcesses = s.salesProcesses.map((p) => ({
+        ...p,
+        is_default: p.id === processId,
+        status: (p.id === processId && p.status !== 'archived' ? 'active' : p.status) as SalesProcess['status'],
+      }));
+      saveLocal('wassell_sales_processes', salesProcesses);
+      return { salesProcesses };
+    });
+    if (supabase) {
+      const { error } = await supabase.rpc('sales_process_set_default', { p_process_id: processId });
+      if (error) reportSupabaseError('sales_processes', 'rpc', error.message ?? String(error));
+    } else {
+      get().salesProcesses.forEach((p) => supabaseUpsert('sales_processes', p));
+    }
+  },
+  saveSalesProcessVersion: (version: SalesProcessVersion) => {
+    set((s) => {
+      const idx = s.salesProcessVersions.findIndex((v) => v.id === version.id);
+      const salesProcessVersions = idx >= 0
+        ? s.salesProcessVersions.map((v) => (v.id === version.id ? version : v))
+        : [...s.salesProcessVersions, version];
+      saveLocal('wassell_sales_process_versions', salesProcessVersions);
+      supabaseUpsert('sales_process_versions', version, { table: 'sales_processes', id: version.sales_process_id });
+      return { salesProcessVersions };
+    });
+  },
+  ensureDraftVersion: (processId: string) => {
+    const s = get();
+    const existing = s.salesProcessVersions.find((v) => v.sales_process_id === processId && v.status === 'draft');
+    if (existing) return existing;
+    const active = s.salesProcessVersions.find((v) => v.sales_process_id === processId && v.status === 'active');
+    const maxNum = s.salesProcessVersions
+      .filter((v) => v.sales_process_id === processId)
+      .reduce((m, v) => Math.max(m, v.version_number), 0);
+    const now = new Date().toISOString();
+    const emptyConfig: SalesProcessVersionConfig = { steps: [], workflows: {}, schema_version: 1 };
+    const draft: SalesProcessVersion = {
+      id: uuid(),
+      sales_process_id: processId,
+      version_number: maxNum + 1,
+      status: 'draft',
+      config_json: active ? (JSON.parse(JSON.stringify(active.config_json)) as SalesProcessVersionConfig) : emptyConfig,
+      published_at: null,
+      published_by: null,
+      created_at: now,
+      updated_at: now,
+    };
+    set((st) => {
+      const salesProcessVersions = [...st.salesProcessVersions, draft];
+      saveLocal('wassell_sales_process_versions', salesProcessVersions);
+      return { salesProcessVersions };
+    });
+    supabaseUpsert('sales_process_versions', draft, { table: 'sales_processes', id: processId });
+    return draft;
+  },
+  publishSalesProcessVersion: async (versionId: string) => {
+    const s = get();
+    const target = s.salesProcessVersions.find((v) => v.id === versionId);
+    if (!target) return;
+    const processId = target.sales_process_id;
+    const now = new Date().toISOString();
+    set((st) => {
+      const salesProcessVersions = st.salesProcessVersions.map((v) => {
+        if (v.id === versionId) return { ...v, status: 'active' as const, published_at: now, updated_at: now };
+        if (v.sales_process_id === processId && v.status === 'active') return { ...v, status: 'archived' as const, updated_at: now };
+        return v;
+      });
+      const salesProcesses = st.salesProcesses.map((p) =>
+        p.id === processId
+          ? { ...p, active_version_id: versionId, status: (p.status === 'archived' ? p.status : 'active') as SalesProcess['status'], updated_at: now }
+          : p);
+      saveLocal('wassell_sales_process_versions', salesProcessVersions);
+      saveLocal('wassell_sales_processes', salesProcesses);
+      return { salesProcessVersions, salesProcesses };
+    });
+    if (supabase) {
+      const { error } = await supabase.rpc('sales_process_publish_version', { p_version_id: versionId });
+      if (error) reportSupabaseError('sales_process_versions', 'rpc', error.message ?? String(error));
+    } else {
+      const fresh = get();
+      fresh.salesProcessVersions
+        .filter((v) => v.sales_process_id === processId)
+        .forEach((v) => supabaseUpsert('sales_process_versions', v, { table: 'sales_processes', id: processId }));
+      const p = fresh.salesProcesses.find((x) => x.id === processId);
+      if (p) supabaseUpsert('sales_processes', p);
+    }
+  },
+  discardDraftVersion: (versionId: string) => {
+    set((st) => {
+      const target = st.salesProcessVersions.find((v) => v.id === versionId);
+      if (!target || target.status !== 'draft') return {};
+      const salesProcessVersions = st.salesProcessVersions.filter((v) => v.id !== versionId);
+      saveLocal('wassell_sales_process_versions', salesProcessVersions);
+      supabaseDelete('sales_process_versions', versionId);
+      return { salesProcessVersions };
+    });
+  },
+  saveSalesExperiment: (experiment: SalesExperiment) => {
+    set((s) => {
+      const idx = s.salesExperiments.findIndex((e) => e.id === experiment.id);
+      const salesExperiments = idx >= 0
+        ? s.salesExperiments.map((e) => (e.id === experiment.id ? experiment : e))
+        : [...s.salesExperiments, experiment];
+      saveLocal('wassell_sales_experiments', salesExperiments);
+      supabaseUpsert('sales_experiments', experiment);
+      return { salesExperiments };
+    });
+  },
+  deleteSalesExperiment: (experimentId: string) => {
+    set((s) => {
+      const salesExperiments = s.salesExperiments.filter((e) => e.id !== experimentId);
+      saveLocal('wassell_sales_experiments', salesExperiments);
+      supabaseDelete('sales_experiments', experimentId);
+      return { salesExperiments };
+    });
+  },
+  assignClientToProcess: ({ clientId, processId, versionId, experimentId = null, group = null, reason = null }) => {
+    const now = new Date().toISOString();
+    const assignedBy = get().currentUserId;
+    const priorActive = get().clientSalesProcessAssignments.filter((a) => a.client_id === clientId && a.is_active);
+    const newRow: ClientSalesProcessAssignment = {
+      id: uuid(),
+      client_id: clientId,
+      sales_process_id: processId,
+      sales_process_version_id: versionId,
+      sales_experiment_id: experimentId,
+      experiment_group: group,
+      assigned_at: now,
+      assigned_by: assignedBy,
+      assignment_reason: reason,
+      is_active: true,
+      created_at: now,
+    };
+    set((st) => {
+      const clientSalesProcessAssignments = [
+        ...st.clientSalesProcessAssignments.map((a) =>
+          a.client_id === clientId && a.is_active ? { ...a, is_active: false } : a),
+        newRow,
+      ];
+      saveLocal('wassell_client_sales_process_assignments', clientSalesProcessAssignments);
+      return { clientSalesProcessAssignments };
+    });
+    // Persist sequentially so the deactivations land BEFORE the new active row —
+    // the partial unique index allows only one is_active=true row per client.
+    void (async () => {
+      for (const a of priorActive) {
+        await supabaseUpsert('client_sales_process_assignments', { ...a, is_active: false });
+      }
+      await supabaseUpsert('client_sales_process_assignments', newRow);
+    })();
+    // Mirror the assignment onto the client record's visible JSONB keys.
+    const st = get();
+    const clientsModel = st.models.find((m) => m.name === 'clients');
+    if (clientsModel) {
+      const client = (st.records[clientsModel.id] ?? []).find((r) => r.id === clientId);
+      if (client) {
+        get().saveRecord({
+          ...client,
+          data: {
+            ...client.data,
+            current_sales_process_id: processId,
+            current_sales_process_version_id: versionId,
+            current_sales_experiment_id: experimentId,
+            experiment_group: group,
+          },
+        });
+      }
+    }
+  },
+  removeClientFromExperiment: (clientId: string) => {
+    set((st) => {
+      const clientSalesProcessAssignments = st.clientSalesProcessAssignments.map((a) =>
+        a.client_id === clientId && a.is_active
+          ? { ...a, sales_experiment_id: null, experiment_group: null }
+          : a);
+      saveLocal('wassell_client_sales_process_assignments', clientSalesProcessAssignments);
+      const changed = clientSalesProcessAssignments.find((a) => a.client_id === clientId && a.is_active);
+      if (changed) supabaseUpsert('client_sales_process_assignments', changed);
+      return { clientSalesProcessAssignments };
+    });
+    const st = get();
+    const clientsModel = st.models.find((m) => m.name === 'clients');
+    const client = clientsModel ? (st.records[clientsModel.id] ?? []).find((r) => r.id === clientId) : undefined;
+    if (client) {
+      get().saveRecord({
+        ...client,
+        data: { ...client.data, current_sales_experiment_id: null, experiment_group: null },
+      });
+    }
+  },
+  applyExperimentAssignments: (experimentId: string) => {
+    const s = get();
+    const experiment = s.salesExperiments.find((e) => e.id === experimentId);
+    if (!experiment) return 0;
+    const clientsModel = s.models.find((m) => m.name === 'clients');
+    const clients = clientsModel ? s.records[clientsModel.id] ?? [] : [];
+    const resolved = resolveExperimentAssignments(experiment, clients);
+    for (const r of resolved) {
+      get().assignClientToProcess({
+        clientId: r.clientId,
+        processId: r.group === 'variant'
+          ? versionProcessId(get().salesProcessVersions, experiment.variant_process_version_id)
+          : versionProcessId(get().salesProcessVersions, experiment.control_process_version_id),
+        versionId: r.versionId,
+        experimentId: experiment.id,
+        group: r.group,
+        reason: r.reason,
+      });
+    }
+    return resolved.length;
+  },
+  seedDefaultSalesProcess: () => {
+    const s = get();
+    if (s.salesProcesses.length > 0) return; // already seeded
+    const now = new Date().toISOString();
+    const processId = uuid();
+    const versionId = uuid();
+    const config = buildDefaultVersionConfig(s.workflows);
+    const process: SalesProcess = {
+      id: processId,
+      name_ar: DEFAULT_PROCESS_NAME.ar,
+      name_en: DEFAULT_PROCESS_NAME.en,
+      description_ar: DEFAULT_PROCESS_DESCRIPTION.ar,
+      description_en: DEFAULT_PROCESS_DESCRIPTION.en,
+      status: 'active',
+      is_default: true,
+      active_version_id: versionId,
+      created_by: s.currentUserId,
+      created_at: now,
+      updated_at: now,
+    };
+    const version: SalesProcessVersion = {
+      id: versionId,
+      sales_process_id: processId,
+      version_number: 1,
+      status: 'active',
+      config_json: config,
+      published_at: now,
+      published_by: s.currentUserId,
+      created_at: now,
+      updated_at: now,
+    };
+    set((st) => {
+      const salesProcesses = [...st.salesProcesses, process];
+      const salesProcessVersions = [...st.salesProcessVersions, version];
+      saveLocal('wassell_sales_processes', salesProcesses);
+      saveLocal('wassell_sales_process_versions', salesProcessVersions);
+      return { salesProcesses, salesProcessVersions };
+    });
+    supabaseUpsert('sales_processes', process);
+    supabaseUpsert('sales_process_versions', version, { table: 'sales_processes', id: processId });
   },
 
   // --- App-level WhatsApp composer ---

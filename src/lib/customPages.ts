@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3 } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -25,7 +25,7 @@ import { ClipboardList, Activity, BarChart3 } from 'lucide-react';
  * custom surface per-profile gateable (Sidebar + PermissionMatrix + the
  * route guard all read this list).
  */
-export type CustomPageId = 'sales_tasks' | 'sales_process' | 'sales_manager';
+export type CustomPageId = 'sales_tasks' | 'sales_process' | 'sales_manager' | 'sales_studio';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -47,10 +47,18 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     default_access: 'all',
   },
   {
+    id: 'sales_studio',
+    route: '/sales/studio',
+    label_ar: 'استوديو المبيعات 2.0',
+    label_en: 'Sales Studio',
+    icon: Layers,
+    default_access: 'admin',
+  },
+  {
     id: 'sales_process',
     route: '/sales/process',
-    label_ar: 'استوديو المبيعات',
-    label_en: 'Sales Process',
+    label_ar: 'خريطة سير العمل',
+    label_en: 'Workflow Map',
     icon: Activity,
     default_access: 'admin',
   },

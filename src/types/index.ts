@@ -1714,6 +1714,183 @@ export interface SalesProcessOverride {
   updated_at?: string;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// Sales Studio 2.0 — the Sales Strategy operating layer.
+//
+// Sales Studio CONFIGURES strategy; the Workflow engine EXECUTES it. A process
+// version's `config_json` is an OVERLAY the engine reads at run time (timing /
+// message / assignment / branch-enabled) keyed by the LIVE workflow's branch.id
+// / action.id — never a second transition path. A client with no active
+// assignment runs the legacy hardcoded workflow behavior unchanged.
+// ════════════════════════════════════════════════════════════════════════════
+
+export type SalesProcessStatus = 'draft' | 'active' | 'archived';
+
+export interface SalesProcess {
+  id: string;
+  name_ar: string;
+  name_en: string;
+  description_ar?: string | null;
+  description_en?: string | null;
+  status: SalesProcessStatus;
+  is_default: boolean;
+  /** Denormalized pointer to the live version (nullable until first publish). */
+  active_version_id?: string | null;
+  created_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SalesProcessVersionStatus = 'draft' | 'active' | 'archived';
+
+/** The safe assignment strategy a step's next-action uses. */
+export type SalesAssignmentStrategy =
+  | 'same_sales_rep'
+  | 'current_user'
+  | 'fixed_user'
+  | 'role_least_workload';
+
+/**
+ * Per-branch override inside a workflow overlay. Keyed by the LIVE workflow's
+ * branch.id, so keys always match what the simple editor read off the workflow.
+ */
+export interface SalesBranchOverride {
+  /** Disabled branches are removed from the executable copy the engine runs. */
+  enabled?: boolean;
+  label_ar?: string | null;
+  label_en?: string | null;
+  /** Primary success outcome flag (display + analytics; no execution effect). */
+  primary_success?: boolean;
+}
+
+/**
+ * Overrides for ONE workflow, applied by applyProcessOverlayToWorkflow. Timing /
+ * message / assignment are keyed by the create_record / send_whatsapp_message /
+ * assignee action.id inside the workflow.
+ */
+export interface SalesWorkflowOverlay {
+  /** Manager objective text (display: Workspace mission + Journey card). */
+  objective_ar?: string | null;
+  objective_en?: string | null;
+  /** Branch enable/disable + labels, keyed by branch.id. */
+  branches?: Record<string, SalesBranchOverride>;
+  /** Date-expression override (e.g. "+2d @10:00") keyed by create_record action.id. */
+  timings?: Record<string, string>;
+  /** Max attempts cap, keyed by create_record action.id (best-effort overlay). */
+  max_attempts?: Record<string, number>;
+  /** WhatsApp message template override keyed by send_whatsapp_message action.id. */
+  messages?: Record<string, { ar?: string | null; en?: string | null }>;
+  /** Assignment strategy override keyed by the action.id that sets the rep field. */
+  assignments?: Record<string, { strategy: SalesAssignmentStrategy; fixed_user_id?: string | null }>;
+}
+
+/** A journey step: an activity bound to a workflow at a stage, plus simple config. */
+export interface SalesProcessStep {
+  stage_key: string;            // Arabic stage value (ClientStageValue)
+  activity_type: string;        // FollowUpTypeKey
+  workflow_id?: string | null;  // the bound workflow id
+  display_order: number;
+  simple_config: SalesWorkflowOverlay;
+}
+
+/** The full overlay stored in sales_process_versions.config_json. */
+export interface SalesProcessVersionConfig {
+  /** Normalized journey steps (also drives the Journey Map ordering). */
+  steps: SalesProcessStep[];
+  /** Workflow overlays keyed by workflow id (the execution-time lookup). */
+  workflows: Record<string, SalesWorkflowOverlay>;
+  /** Schema/version stamp so we can evolve the shape safely. */
+  schema_version?: number;
+}
+
+export interface SalesProcessVersion {
+  id: string;
+  sales_process_id: string;
+  version_number: number;
+  status: SalesProcessVersionStatus;
+  config_json: SalesProcessVersionConfig;
+  published_at?: string | null;
+  published_by?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type SalesExperimentStatus = 'draft' | 'active' | 'paused' | 'completed' | 'archived';
+export type SalesExperimentAssignmentMode = 'manual' | 'rules' | 'random_split';
+export type SalesExperimentGroup = 'control' | 'variant';
+
+/** Primary metric a funnel experiment optimizes for. */
+export type SalesPrimaryMetric =
+  | 'appointment_booking_rate'
+  | 'appointment_attendance_rate'
+  | 'visit_rate'
+  | 'offer_request_rate'
+  | 'reservation_rate'
+  | 'closed_won_rate'
+  | 'time_to_appointment'
+  | 'time_to_offer'
+  | 'time_to_close'
+  | 'whatsapp_response_rate';
+
+export type SalesGuardrailMetric =
+  | 'lost_rate'
+  | 'unqualified_rate'
+  | 'no_answer_rate'
+  | 'no_next_action_count'
+  | 'rep_workload'
+  | 'touches_per_client';
+
+/** Targeting rules for rules / random_split assignment of eligible clients. */
+export interface SalesExperimentTargetRules {
+  source?: string[];
+  project?: string[];
+  city?: string[];
+  district?: string[];
+  budget_min?: number | null;
+  budget_max?: number | null;
+  client_stage?: string[];
+  client_status?: string[];
+  sales_rep?: string[];
+  lead_created_from?: string | null;  // ISO
+  lead_created_to?: string | null;    // ISO
+}
+
+export interface SalesExperiment {
+  id: string;
+  name_ar: string;
+  name_en: string;
+  hypothesis_ar?: string | null;
+  hypothesis_en?: string | null;
+  status: SalesExperimentStatus;
+  start_date?: string | null;
+  end_date?: string | null;
+  target_rules_json: SalesExperimentTargetRules;
+  control_process_version_id?: string | null;
+  variant_process_version_id?: string | null;
+  primary_metric?: SalesPrimaryMetric | null;
+  guardrail_metrics_json: SalesGuardrailMetric[];
+  assignment_mode: SalesExperimentAssignmentMode;
+  split_percentage: number;
+  owner_id?: string | null;
+  result_summary_json?: unknown;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ClientSalesProcessAssignment {
+  id: string;
+  client_id: string;
+  sales_process_id?: string | null;
+  sales_process_version_id?: string | null;
+  sales_experiment_id?: string | null;
+  experiment_group?: SalesExperimentGroup | null;
+  assigned_at: string;
+  assigned_by?: string | null;
+  assignment_reason?: string | null;
+  is_active: boolean;
+  created_at: string;
+}
+
 /**
  * Target for the app-level WhatsApp composer (GlobalChatComposer). Any phone
  * WhatsApp action sets this via openChatComposer; the host pre-connects to the
@@ -2257,6 +2434,11 @@ export interface AppState {
   metricDefinitions: MetricDefinition[];
   scheduledReports: ScheduledReport[];
   salesProcessOverrides: SalesProcessOverride[];
+  // Sales Studio 2.0 strategy layer (top-level tables, not JSONB records).
+  salesProcesses: SalesProcess[];
+  salesProcessVersions: SalesProcessVersion[];
+  salesExperiments: SalesExperiment[];
+  clientSalesProcessAssignments: ClientSalesProcessAssignment[];
   /** Non-null while the app-level WhatsApp composer popup is open. */
   chatComposerTarget: ChatComposerTarget | null;
   views: ModelView[];
@@ -2437,6 +2619,31 @@ export interface AppState {
   deleteScheduledReport: (reportId: string) => void;
   // Sales-process instruction overrides (manager-editable follow-up objectives)
   saveSalesProcessOverride: (override: SalesProcessOverride) => void;
+  // Sales Studio 2.0 — process/version/experiment/assignment management
+  saveSalesProcess: (process: SalesProcess) => void;
+  deleteSalesProcess: (processId: string) => void;
+  setDefaultSalesProcess: (processId: string) => Promise<void>;
+  saveSalesProcessVersion: (version: SalesProcessVersion) => void;
+  /** Create-or-reuse the draft version for a process (never mutates active). */
+  ensureDraftVersion: (processId: string) => SalesProcessVersion;
+  publishSalesProcessVersion: (versionId: string) => Promise<void>;
+  discardDraftVersion: (versionId: string) => void;
+  saveSalesExperiment: (experiment: SalesExperiment) => void;
+  deleteSalesExperiment: (experimentId: string) => void;
+  /** Assign a client to a process/version (+ optional experiment group). Deactivates prior. */
+  assignClientToProcess: (input: {
+    clientId: string;
+    processId: string | null;
+    versionId: string | null;
+    experimentId?: string | null;
+    group?: SalesExperimentGroup | null;
+    reason?: string | null;
+  }) => void;
+  removeClientFromExperiment: (clientId: string) => void;
+  /** Apply an experiment's rules/random-split assignment to all eligible clients. */
+  applyExperimentAssignments: (experimentId: string) => number;
+  /** Seed the Default Sales Process + its v1 active version from live workflows (admin, idempotent). */
+  seedDefaultSalesProcess: () => void;
   // App-level WhatsApp composer (phone icons + Workspace button → one popup)
   openChatComposer: (target: ChatComposerTarget) => void;
   closeChatComposer: () => void;
