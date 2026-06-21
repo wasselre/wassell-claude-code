@@ -2881,7 +2881,24 @@ export const useAppStore = create<AppState>((set, get) => ({
         // so we tag every chained write here as 'workflow' without an
         // id. Future work: pass the current workflow_id in via the
         // engine's tool-call boundary.
-        (r) => get().saveRecord(r, { actor: { kind: 'workflow', workflow_id: 'unknown' } }),
+        //
+        // expectedVersion: null — workflow-engine writes opt OUT of optimistic
+        // concurrency, matching the server-side sweeper (api/_lib/workflowSweeper.ts
+        // calls record_save without p_expected_version). RATIONALE / ROOT-CAUSE FIX
+        // (2026-06-21): completing a follow-up fires the records_touch_client_on_activity
+        // AFTER trigger → _touch_client() → `UPDATE clients SET data=data` → the
+        // records_bump_version trigger advances the client's version. The very next
+        // step — the bound workflow's update_record on that same client — then sent
+        // the store's PRE-bump version as expected_version, so record_save raised
+        // version_mismatch (40001) and the client stage/status move was silently
+        // rejected (the next-task create_record survived because INSERTs aren't
+        // version-checked). Optimistic concurrency exists to stop a stale USER FORM
+        // from clobbering concurrent edits; a workflow transition is a deterministic
+        // system write that must apply, and the BEFORE triggers re-derive computed
+        // fields (next-action, rollups) on every write, so last-write-wins is correct
+        // here. Do NOT re-introduce a version here without solving the _touch_client
+        // self-bump race first.
+        (r) => get().saveRecord(r, { actor: { kind: 'workflow', workflow_id: 'unknown' }, expectedVersion: null }),
         (msg) => get().addToast(msg, 'info'),
         s.currentUserId,
         0,
