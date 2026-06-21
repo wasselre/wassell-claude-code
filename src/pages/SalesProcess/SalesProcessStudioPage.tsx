@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Workflow as WorkflowIcon, AlertTriangle, ExternalLink, Activity, CheckCircle2, GitBranch } from 'lucide-react';
+import { Workflow as WorkflowIcon, AlertTriangle, ExternalLink, Activity, CheckCircle2, GitBranch, Clock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin, useCanViewWorkflows } from '@/hooks/usePermission';
 import {
@@ -67,6 +67,21 @@ export default function SalesProcessStudioPage() {
 
   const stage = config.stages.find((s) => s.value === selectedStage);
 
+  // Workflows bound to this stage that aren't tied to one of its activities
+  // (follow-up types). The per-activity blocks below only render
+  // activity-bound workflows, so a stage-level automation — e.g. the
+  // time-based "Auto-close appointment as No-Show after 24h" on_due workflow —
+  // would otherwise be invisible here (it only bumps the stage card's "linked"
+  // count). Surface them in their own "Stage automations" block.
+  const stageAutomations = useMemo(() => {
+    if (!stage) return [];
+    const activitySet = new Set<string>(stage.followup_types);
+    return resolveBoundWorkflows(workflows, { sales_stage: stage.value }).filter((w) => {
+      const at = w.metadata?.activity_type;
+      return !at || !activitySet.has(at);
+    });
+  }, [stage, workflows]);
+
   return (
     <div className="mx-auto max-w-6xl p-6">
       <header className="mb-6 flex items-start justify-between gap-4">
@@ -123,7 +138,75 @@ export default function SalesProcessStudioPage() {
               })}
             </div>
           )}
+
+          {stageAutomations.length > 0 && (
+            <div className="mt-6 border-t border-sand/30 pt-5">
+              <h3 className="mb-3 flex flex-wrap items-center gap-2 text-sm font-bold text-chocolate">
+                <WorkflowIcon size={15} className="text-copper" />
+                {isAr ? 'أتمتة المرحلة' : 'Stage automations'}
+                <span className="text-xs font-normal text-terracotta">{isAr ? '(لا ترتبط بنشاط معيّن)' : '(not tied to a specific activity)'}</span>
+              </h3>
+              <div className="space-y-2">
+                {stageAutomations.map((w) => (
+                  <StageAutomationRow key={w.id} workflow={w} isAr={isAr} navigate={navigate} isAdmin={isAdmin} canViewWorkflows={canViewWorkflows} />
+                ))}
+              </div>
+            </div>
+          )}
         </section>
+      )}
+    </div>
+  );
+}
+
+function triggerLabel(ev: Workflow['trigger_event'], isAr: boolean): string {
+  switch (ev) {
+    case 'on_due': return isAr ? 'تلقائي · عند الاستحقاق' : 'Automatic · when due';
+    case 'create': return isAr ? 'عند الإنشاء' : 'On create';
+    case 'update': return isAr ? 'عند التحديث' : 'On update';
+    case 'delete': return isAr ? 'عند الحذف' : 'On delete';
+    case 'button_click': return isAr ? 'عند الضغط على زر' : 'On button click';
+    case 'webhook': return 'Webhook';
+    default: return ev;
+  }
+}
+
+/**
+ * A stage-bound workflow that doesn't implement a specific follow-up activity
+ * (e.g. the time-based auto-close-as-No-Show). Rendered in the stage's
+ * "Stage automations" block so it's visible in the Studio, not just counted.
+ */
+function StageAutomationRow({
+  workflow, isAr, navigate, isAdmin, canViewWorkflows,
+}: {
+  workflow: Workflow; isAr: boolean; navigate: (to: string) => void; isAdmin: boolean; canViewWorkflows: boolean;
+}) {
+  const drifted = isWorkflowDrifted(workflow);
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-sand/40 bg-white p-4">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-bold text-chocolate">{isAr ? workflow.label_ar : workflow.label_en}</span>
+          <span className="inline-flex items-center gap-1 rounded-full border border-sand/40 bg-cream px-2 py-0.5 text-[11px] font-medium text-charcoal">
+            <Clock size={11} /> {triggerLabel(workflow.trigger_event, isAr)}
+          </span>
+          {!workflow.is_active && (
+            <span className="inline-flex items-center rounded-full bg-terracotta/10 px-2 py-0.5 text-[11px] font-semibold text-terracotta">{isAr ? 'معطّل' : 'Inactive'}</span>
+          )}
+          {drifted && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-gold/20 px-2 py-0.5 text-[11px] font-semibold text-terracotta"><GitBranch size={11} /> {isAr ? 'محرر يدويًا' : 'Advanced'}</span>
+          )}
+        </div>
+      </div>
+      {canViewWorkflows && (
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button type="button" onClick={() => navigate(`/workflow/${workflow.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-copper bg-copper/5 px-3 py-1.5 text-xs font-bold text-copper transition-colors hover:bg-copper hover:text-white">
+            <ExternalLink size={13} /> {isAdmin ? (isAr ? 'فتح في المحرر' : 'Open in Builder') : (isAr ? 'عرض' : 'View')}
+          </button>
+          <button type="button" onClick={() => navigate(`/workflow/logs?workflow=${workflow.id}`)} className="inline-flex items-center gap-2 rounded-xl border border-sand/50 bg-white px-3 py-1.5 text-xs font-bold text-charcoal transition-colors hover:bg-cream">
+            <Activity size={13} /> {isAr ? 'عمليات التشغيل' : 'Runs'}
+          </button>
+        </div>
       )}
     </div>
   );
