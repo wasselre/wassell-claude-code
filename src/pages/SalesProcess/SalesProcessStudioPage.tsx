@@ -8,7 +8,6 @@ import {
   getOutcome,
   requiredFieldSlugs,
   resolveBoundWorkflow,
-  resolveBoundWorkflows,
   isWorkflowDrifted,
   channelLabel,
   type SalesStageConfig,
@@ -76,9 +75,14 @@ export default function SalesProcessStudioPage() {
   const stageAutomations = useMemo(() => {
     if (!stage) return [];
     const activitySet = new Set<string>(stage.followup_types);
-    return resolveBoundWorkflows(workflows, { sales_stage: stage.value }).filter((w) => {
+    // STRICT on sales_stage: only workflows EXPLICITLY tagged to this stage.
+    // (resolveBoundWorkflows is lenient — a workflow with no `metadata.sales_stage`
+    // matches every stage, which would surface a stage-less workflow under every
+    // phase, e.g. "Send Visit Rating" appearing outside the Visit stage.)
+    return workflows.filter((w) => {
+      if (w.metadata?.sales_stage !== stage.value) return false;
       const at = w.metadata?.activity_type;
-      return !at || !activitySet.has(at);
+      return !at || !activitySet.has(at); // exclude this stage's activities (shown above)
     });
   }, [stage, workflows]);
 
@@ -218,7 +222,9 @@ function StageCard({
   stage: SalesStageConfig; isAr: boolean; active: number; overdue: number;
   workflows: Workflow[]; selected: boolean; onSelect: () => void;
 }) {
-  const linked = resolveBoundWorkflows(workflows, { sales_stage: stage.value }).length;
+  // Strict on sales_stage (same as the stage-automations block) so a workflow
+  // with no metadata.sales_stage doesn't inflate every stage's linked count.
+  const linked = workflows.filter((w) => w.metadata?.sales_stage === stage.value).length;
   const missing = stage.followup_types.filter((t) => !resolveBoundWorkflow(workflows, { activity_type: t })).length;
   return (
     <button
