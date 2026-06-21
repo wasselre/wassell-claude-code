@@ -254,6 +254,16 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
       { value: 'still_interested', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'مهتم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 2 } },
       { value: 'needs_financing_info', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'يحتاج معلومات تمويل' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 2, note_en: 'Send financing info on WhatsApp', note_ar: 'إرسال معلومات التمويل عبر واتساب' } },
       { value: 'family_discussion', requires: { ...REQ_ACTUAL }, client_update_preview: { status: 'نقاش عائلي' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 3 } },
+      // Wants to come again → re-enter the booking cycle (a fresh booking call).
+      { value: 'requested_another_visit', requires: { ...REQ_ACTUAL }, client_update_preview: { stage: 'الاتصال لحجز موعد', status: 'مهتم' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'appointment_booking_call', delay_days: 0, note_en: 'Re-enter the booking cycle', note_ar: 'إعادة الدخول لدورة حجز الموعد' } },
+      // Visited a different project → at-risk; NOT auto-lost. A Sales-Manager
+      // review task gives the at-risk lead an explicit owner (assignment is set
+      // in the workflow + editable via the Studio assignments overlay).
+      { value: 'visited_other_project', requires: { ...REQ_ACTUAL, outcome_notes: true }, client_update_preview: { status: 'زار مشروعًا آخر — للمراجعة' }, next_action_preview: { kind: 'create_followup', create_followup_type: 'follow_up_call_after_visit', delay_days: 1, note_en: 'Manager review task (keep nurturing)', note_ar: 'مهمة مراجعة للمدير (الاستمرار في المتابعة)' } },
+      // Call later → reschedule the after-visit call to the chosen date.
+      { value: 'recontact_later', requires: { ...REQ_ACTUAL, reschedule_contact_date: true }, client_update_preview: { status: 'إعادة تواصل لاحقًا' }, next_action_preview: { kind: 'schedule_recontact', create_followup_type: 'follow_up_call_after_visit', use_field: 'reschedule_contact_date' } },
+      // Wrong number / unreachable → terminal (unqualified).
+      { value: 'invalid_number', requires: { ...REQ_ACTUAL, lost_reason: true }, client_update_preview: { stage: 'غير مؤهل', status: 'رقم خاطئ' }, is_terminal: true },
       notInterested('خاسر'),
       noAnswer('follow_up_call_after_visit', 1),
       wrongTime('follow_up_call_after_visit'),

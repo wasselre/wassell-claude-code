@@ -77,6 +77,13 @@ export function useFieldDefaults({ model, isNew, formData, setFormData }: UseFie
         case 'today':
           v = localDateString();
           break;
+        case 'token':
+          // Opaque write-once key (e.g. visits.rating_token). Generated client-
+          // side so a create-triggered workflow can embed it in a public link
+          // before the record is persisted. A DB BEFORE-INSERT trigger backstops
+          // any server-created record that arrives without one.
+          v = crypto.randomUUID();
+          break;
       }
       if (v !== undefined) fills[f.name] = v;
     }

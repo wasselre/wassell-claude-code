@@ -325,8 +325,10 @@ export interface ModelField {
   // (datetime); 'today' stamps the current ISO date (date). The user can edit
   // the value afterwards — this only seeds the initial blank, it does not lock
   // the field. Visits uses 'current_user' on sales_representative and 'now' on
-  // scheduled_datetime.
-  default_dynamic?: 'current_user' | 'now' | 'today';
+  // scheduled_datetime. 'token' stamps a random opaque key (crypto.randomUUID)
+  // — used for the hidden, write-once visits.rating_token the public rating link
+  // references; a DB BEFORE-INSERT trigger backstops server-created records.
+  default_dynamic?: 'current_user' | 'now' | 'today' | 'token';
   // Cross-record rollup. When `is_rollup` is true the field is never
   // user-edited; it's a STORED aggregate maintained by a DB trigger
   // (units → project rollups on all_projects — see

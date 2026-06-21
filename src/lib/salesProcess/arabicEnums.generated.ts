@@ -63,6 +63,8 @@ export const CLIENT_STATUS_VALUES = [
   'إعادة تواصل لاحقًا',    // Recontact Later         (added — sales OS)
   'بارد',                  // Cold                    (added — sales OS)
   'بانتظار دفعة الحجز',    // Waiting Reservation Payment (added — sales OS)
+  'زار مشروعًا آخر — للمراجعة', // Visited another project — review (added — visits phase)
+  'تعذّر التواصل بعد الزيارة',  // Unreachable after visit (added — visits phase)
 ] as const;
 
 export type ClientStatusValue = (typeof CLIENT_STATUS_VALUES)[number];

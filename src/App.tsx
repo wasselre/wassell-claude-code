@@ -54,6 +54,7 @@ import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import FilesPage from '@/pages/Files/FilesPage';
 import DocumentEditorPage from '@/pages/Documents/DocumentEditorPage';
 import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
+import RateVisitPage from '@/pages/PublicRate/RateVisitPage';
 import RequireAdmin from '@/components/guards/RequireAdmin';
 import RequirePageAccess from '@/components/guards/RequirePageAccess';
 import RequireWorkflowView from '@/components/guards/RequireWorkflowView';
@@ -253,6 +254,7 @@ export default function App() {
         <Route path="/auth/mfa-setup" element={<MfaSetup />} />
         <Route path="/public/dashboard/:token" element={<PublicDashboardPage />} />
         <Route path="/share/:token" element={<PublicShareFilePage />} />
+        <Route path="/rate/:token" element={<RateVisitPage />} />
 
         {/* ── Protected app routes (auth required, inside layout) ────── */}
         <Route

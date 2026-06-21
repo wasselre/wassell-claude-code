@@ -52,9 +52,15 @@ export default function TimelinePanel({ clientId, currentFollowupId, phones }: T
       });
     }
     for (const r of recordsForClient(vModel, records, clientId, 'client_id')) {
+      const ratingRaw = r.data.visit_rating;
+      const ratingNum = ratingRaw == null || ratingRaw === '' ? null : Number(ratingRaw);
+      const hasRating = ratingNum != null && Number.isFinite(ratingNum);
       out.push({
         id: r.id, kind: 'visit', at: pickEntryDate(r.data, r.created_at) ?? r.created_at,
         title_ar: 'زيارة', title_en: 'Visit', model_name: 'visits', record_id: r.id,
+        subtitle_ar: hasRating ? `تقييم الزيارة: ${ratingNum}/5` : undefined,
+        subtitle_en: hasRating ? `Visit rating: ${ratingNum}/5` : undefined,
+        tone: hasRating ? (ratingNum <= 2 ? 'negative' : ratingNum >= 4 ? 'positive' : 'neutral') : undefined,
       });
     }
     return sortTimeline(out, 'desc');

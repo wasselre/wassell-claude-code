@@ -33,6 +33,17 @@ describe('DEFAULT_SALES_PROCESS integrity', () => {
     expect(bad).toEqual([]);
   });
 
+  it('after-visit type covers the expanded outcome set', () => {
+    const t = DEFAULT_SALES_PROCESS.followup_types.find((x) => x.type === 'follow_up_call_after_visit');
+    const vals = new Set((t?.allowed_outcomes ?? []).map((o) => o.value));
+    for (const v of ['requested_another_visit', 'visited_other_project', 'recontact_later', 'invalid_number']) {
+      expect(vals.has(v)).toBe(true);
+    }
+    // "Visited another project" must never be terminal/auto-lost.
+    const vop = t?.allowed_outcomes.find((o) => o.value === 'visited_other_project');
+    expect(vop?.is_terminal).toBeFalsy();
+  });
+
   it('passes the runtime enum guard against live-shaped models', () => {
     const clients = {
       name: 'clients',

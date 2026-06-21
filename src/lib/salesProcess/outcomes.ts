@@ -52,6 +52,9 @@ export const OUTCOME_CATALOG: readonly OutcomeCatalogEntry[] = [
   { value: 'documents_pending', label_ar: 'بانتظار المستندات', label_en: 'Documents Pending', tone: 'neutral' },
   { value: 'appointment_cancelled_rebook', label_ar: 'إلغاء الموعد - إعادة حجز', label_en: 'Cancelled — Rebook', tone: 'neutral' },
   { value: 'appointment_cancelled_lost', label_ar: 'إلغاء الموعد - خسارة', label_en: 'Cancelled — Lost', tone: 'negative' },
+  // --- after-visit cycle outcomes (appended by the 2026-06-21 migration) ---
+  { value: 'requested_another_visit', label_ar: 'طلب زيارة أخرى', label_en: 'Requested Another Visit', tone: 'positive' },
+  { value: 'visited_other_project', label_ar: 'زار مشروعًا آخر', label_en: 'Visited Another Project', tone: 'negative' },
 ] as const;
 
 export type OutcomeValue = (typeof OUTCOME_CATALOG)[number]['value'];
