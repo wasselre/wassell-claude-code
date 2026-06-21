@@ -37,6 +37,7 @@ import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import CopywriterPage from '@/pages/Copywriter/CopywriterPage';
+import MatchingPage from '@/pages/Matching/MatchingPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
@@ -120,6 +121,11 @@ function RecordDetailDispatcher() {
     // real-estate copywriter agent (api/copywriter). Reads :recordId itself.
     return <CopywriterPage />;
   }
+  if (modelName === 'matching_chats') {
+    // MatchingPage is the same split-pane chat UI — the live-call Project
+    // Matching Assistant (api/match). Reads :recordId itself.
+    return <MatchingPage />;
+  }
   if (modelName === 'decks') {
     // DecksPage is a split-pane deck-builder UI — reads :recordId itself,
     // handles brief form / progress / ready / failed states internally.
@@ -170,6 +176,9 @@ function RecordListDispatcher() {
   }
   if (modelName === 'copywriter_chats') {
     return <CopywriterPage />;
+  }
+  if (modelName === 'matching_chats') {
+    return <MatchingPage />;
   }
   if (modelName === 'decks') {
     return <DecksPage />;

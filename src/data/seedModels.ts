@@ -2985,6 +2985,68 @@ const copywriterChatsModel: AppModel = {
 };
 
 // ============================================================
+// MATCHING ASSISTANT CHATS (matching_chats) — live-call Project Matching Assistant
+// ============================================================
+// Custom split-pane chat UI (src/pages/Matching) backed by api/match — the
+// Phase 1 Project Matching Assistant. Each record is one matching session;
+// messages live inline in record.data.messages (a JSON array). The agent's
+// structured recommendation (emit_recommendation → ProjectMatchCard) is
+// display-only, so this model carries NO lookup field (avoids the seed-backfill
+// stale-lookup-id drift) and needs no extra columns.
+//
+// Stable id so the prod migration (supabase/migrations/2026-06-18_matching_chats_model.sql)
+// and this seed share one model id. Found by NAME in the UI, so the id only
+// matters for deterministic creation. The slug `matching_chats` is NOT in
+// RETIRED_SYSTEM_MODEL_NAMES.
+export const MATCHING_CHATS_MODEL_ID = '7c0ffee2-5cab-4b0a-9d3e-12ab34cd56ef';
+const matchingChatsBaseSectionId = uuid();
+const matchingChatsTitleFieldId = uuid();
+const matchingChatsStatusFieldId = uuid();
+const matchingChatsLastMessageFieldId = uuid();
+
+const matchingChatsModel: AppModel = {
+  id: MATCHING_CHATS_MODEL_ID,
+  name: 'matching_chats',
+  label_ar: 'مساعد المطابقة',
+  label_en: 'Matching Assistant',
+  icon: 'compass',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: matchingChatsTitleFieldId,
+    subtitle_field_id: matchingChatsLastMessageFieldId,
+    badge_field_id: matchingChatsStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: matchingChatsBaseSectionId,
+        label_ar: 'معلومات المحادثة',
+        label_en: 'Conversation',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          { id: matchingChatsTitleFieldId, name: 'title', label_ar: 'العنوان', label_en: 'Title', type: 'text', required: false, order: 0, section_id: matchingChatsBaseSectionId, width: 'full', show_in_table: true },
+          { id: matchingChatsStatusFieldId, name: 'status', label_ar: 'الحالة', label_en: 'Status', type: 'dropdown', required: false, order: 1, section_id: matchingChatsBaseSectionId, width: 'third', show_in_table: true, options: [
+            { id: uuid(), label_ar: 'نشط', label_en: 'Active', value: 'active', color: '#22c55e' },
+            { id: uuid(), label_ar: 'مؤرشف', label_en: 'Archived', value: 'archived', color: '#9ca3af' },
+          ] },
+          { id: uuid(), name: 'message_count', label_ar: 'عدد الرسائل', label_en: 'Messages', type: 'number', required: false, order: 2, section_id: matchingChatsBaseSectionId, width: 'third', show_in_table: true },
+          { id: matchingChatsLastMessageFieldId, name: 'last_message_at', label_ar: 'آخر رسالة', label_en: 'Last Message', type: 'datetime', required: false, order: 3, section_id: matchingChatsBaseSectionId, width: 'third', show_in_table: true },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // REELS MODEL (reel_scripts) — production records for marketing reels
 // ============================================================
 // Manages reel production + content. The copywriter agent (above) emits a
@@ -4596,6 +4658,7 @@ export const SEED_MODELS: AppModel[] = [
   chatTemplatesModel,
   aiChatsModel,
   copywriterChatsModel,
+  matchingChatsModel,
   reelScriptsModel,
   decksModel,
   dataMigrationModel,

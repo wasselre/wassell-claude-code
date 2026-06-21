@@ -16,7 +16,7 @@ import type { AppModel } from '@/types';
 // the generic record/form pattern (chats: dual-pane WhatsApp UI; ai_chats:
 // inline message JSONB). Keep in sync with `is_freezable_model` in
 // supabase/schema.sql.
-const NON_FREEZABLE_MODELS = new Set(['chats', 'ai_chats']);
+const NON_FREEZABLE_MODELS = new Set(['chats', 'ai_chats', 'matching_chats']);
 
 interface ModelEditorProps {
   model: AppModel;

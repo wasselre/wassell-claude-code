@@ -126,6 +126,7 @@ const NON_LINKABLE = new Set([
   'chats',
   'ai_chats',
   'copywriter_chats',
+  'matching_chats',
   'image_chats',
   'data_migration',
 ]);
