@@ -5,11 +5,13 @@ import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { importableFields, lookupCreateBlockReason } from './targetFields';
 import {
   MARKETING_DOC_FIELD,
+  ANALYSIS_DOC_FIELD,
   type BuiltRecord,
   type ColumnStandardization,
   type PendingNewLookupRecord,
   type PendingNewOption,
   type PreviewCellMeta,
+  type ProjectIntelligenceSection,
   type RawTable,
   type RouteResolution,
   type RowIssue,
@@ -44,6 +46,9 @@ export interface BuildPlanArgs {
   standardization: Record<number, ColumnStandardization>;
   /** PROJECT-PROFILE mode: written into each record's `marketing_document`. */
   projectDocument?: string;
+  /** PROJECT-PROFILE mode: the intelligence sections — rendered to Markdown and
+   * written into each record's `project_analysis`. */
+  projectIntelligence?: ProjectIntelligenceSection[];
   allModels: AppModel[];
   allRecords: Record<string, AppRecord[]>;
   isAr: boolean;
@@ -74,6 +79,18 @@ function isControlledField(field: ModelField): boolean {
 /** True when a controlled field stores an array (multi-select, multi-lookup). */
 function isMultiField(field: ModelField): boolean {
   return field.type === 'multiselect' || (field.type === 'lookup' && !!field.is_multi);
+}
+
+/** Render the extraction's project-intelligence sections into ONE Markdown
+ * document for the `project_analysis` field — a "## title" heading per section.
+ * Returns "" when there's nothing to write. */
+function renderProjectAnalysis(sections: ProjectIntelligenceSection[]): string {
+  return sections
+    .map((s) => ({ title: (s.title ?? '').trim(), content: (s.content ?? '').trim() }))
+    .filter((s) => s.title || s.content)
+    .map((s) => (s.title ? `## ${s.title}\n\n${s.content}` : s.content))
+    .join('\n\n')
+    .trim();
 }
 
 /** A value is "empty" for required-field validation. */
@@ -519,6 +536,17 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
   if (doc && fields.some((f) => f.name === MARKETING_DOC_FIELD)) {
     for (const rec of records) {
       if (!(MARKETING_DOC_FIELD in rec.data)) rec.data[MARKETING_DOC_FIELD] = doc;
+    }
+  }
+
+  // ── PROJECT-PROFILE: attach the project analysis (intelligence sections) ──
+  // The amazing per-dimension analysis (location / pricing / audience / …) was
+  // shown read-only and then dropped at import — now it's flattened to Markdown
+  // and written into `project_analysis`, the same way the marketing doc is.
+  const analysis = renderProjectAnalysis(args.projectIntelligence ?? []);
+  if (analysis && fields.some((f) => f.name === ANALYSIS_DOC_FIELD)) {
+    for (const rec of records) {
+      if (!(ANALYSIS_DOC_FIELD in rec.data)) rec.data[ANALYSIS_DOC_FIELD] = analysis;
     }
   }
 

@@ -228,6 +228,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               mappings={data.mappings}
               standardization={data.standardization}
               projectDocument={data.project_document}
+              projectIntelligence={data.project_intelligence}
               excludedRows={data.excluded_rows}
               onChangeExcluded={(next) => patch({ excluded_rows: next })}
               onConfirm={() => void startMigrationJob(recordId)}

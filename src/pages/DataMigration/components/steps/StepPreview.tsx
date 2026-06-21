@@ -5,7 +5,7 @@ import { ArrowRight, ArrowLeft, PlayCircle, AlertTriangle, Plus, Link2, CornerDo
 import { buildMigrationPlan, isRecordValid } from '../../lib/runMigration';
 import { resolveDisplay } from '../../lib/previewRecords';
 import type { AppModel, ModelField } from '@/types';
-import type { RawTable, ColumnStandardization, BuiltRecord, RowIssue } from '../../lib/types';
+import type { RawTable, ColumnStandardization, BuiltRecord, RowIssue, ProjectIntelligenceSection } from '../../lib/types';
 
 interface StepPreviewProps {
   isAr: boolean;
@@ -15,6 +15,8 @@ interface StepPreviewProps {
   standardization: Record<number, ColumnStandardization> | undefined;
   /** PROJECT-PROFILE mode: injected into each record's marketing_document. */
   projectDocument?: string;
+  /** PROJECT-PROFILE mode: injected (rendered) into each record's project_analysis. */
+  projectIntelligence?: ProjectIntelligenceSection[];
   excludedRows: number[] | undefined;
   onChangeExcluded: (next: number[]) => void;
   onConfirm: () => void;
@@ -59,6 +61,7 @@ export default function StepPreview({
   mappings,
   standardization,
   projectDocument,
+  projectIntelligence,
   excludedRows,
   onChangeExcluded,
   onConfirm,
@@ -77,12 +80,13 @@ export default function StepPreview({
         mappings,
         standardization: standardization ?? {},
         projectDocument,
+        projectIntelligence,
         allModels,
         allRecords,
         isAr,
         makeId: uuid,
       }),
-    [model, table, mappings, standardization, projectDocument, allModels, allRecords, isAr],
+    [model, table, mappings, standardization, projectDocument, projectIntelligence, allModels, allRecords, isAr],
   );
 
   // temp-id → label, so "create new" lookup decisions show the real name.

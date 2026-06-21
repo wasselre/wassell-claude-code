@@ -41,6 +41,11 @@ export function isProjectProfileTarget(model: AppModel): boolean {
 /** Target-model field slug that receives the generated marketing document. */
 export const MARKETING_DOC_FIELD = 'marketing_document';
 
+/** Target-model field slug (all_projects) that receives the rendered project
+ * analysis — the extraction's intelligence sections (overview, location, pricing,
+ * audience…) flattened into one Markdown document. */
+export const ANALYSIS_DOC_FIELD = 'project_analysis';
+
 /** One titled section of the project-level intelligence layer (PROJECT-PROFILE
  * mode): overview, concept & positioning, target audience, design philosophy,
  * pricing/area insights… Wizard-facing understanding of the whole project. */
