@@ -15,8 +15,11 @@
 //
 // Auth: the caller's Supabase JWT is forwarded; we verify the caller is an
 // admin (`wassell_is_admin`) before touching the admin API. Non-admins get a
-// 403. The gateway also requires a valid JWT (no --no-verify-jwt flag), same
-// as invite-user.
+// 403. Gateway JWT verification is OFF (verify_jwt = false in
+// supabase/config.toml), same as invite-user — the function does its own
+// Bearer + getUser + admin check, and turning the gateway off means auth
+// failures return a CORS-bearing JSON error the browser can read instead of an
+// opaque "Failed to send a request to the Edge Function".
 //
 // Body: `{ "auth_uid"?: "<uuid>", "email": "<addr>" }`
 //   - auth_uid: the auth.users.id to delete (the frontend reads it from

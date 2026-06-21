@@ -16,9 +16,17 @@
 // Body: `{ "email": "<invitee@example>", "redirect_to": "<optional url>" }`
 // Returns: `{ "ok": true }` on success or `{ "ok": false, "error": "..." }`.
 //
-// Deploy: `supabase functions deploy invite-user`. The function is
-// auto-protected by the gateway requiring a Supabase JWT (no
-// --no-verify-jwt flag) so unauthenticated callers can't reach it.
+// Deploy: `supabase functions deploy invite-user`. Gateway JWT verification
+// is OFF for this function (verify_jwt = false in supabase/config.toml). This
+// is deliberate: the function does its OWN auth — it requires a Bearer token,
+// validates it with auth.getUser(), and checks wassell_is_admin — so the
+// gateway check was redundant. Worse, when the gateway rejected a bad/expired
+// JWT it returned a 401 WITHOUT CORS headers; the browser then surfaced that
+// as an opaque "Failed to send a request to the Edge Function" (a
+// FunctionsFetchError) instead of the real reason. With the gateway out of the
+// way, every auth failure now comes back as a proper JSON body + CORS headers
+// the client can read. Do NOT flip verify_jwt back on without restoring a
+// CORS-bearing gateway error — you'd reintroduce the masked-error bug.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 

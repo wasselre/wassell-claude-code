@@ -1,0 +1,27 @@
+# Supabase CLI configuration.
+#
+# This file is intentionally minimal. The project is managed mostly through the
+# Supabase dashboard / MCP; the blocks that matter here pin verify_jwt = false
+# for the two admin Edge Functions that do their OWN authentication
+# (Bearer token -> auth.getUser() -> wassell_is_admin).
+#
+# Why verify_jwt = false (read before changing):
+# When the gateway verified the JWT and rejected a bad/expired one, it returned
+# a 401 WITHOUT CORS headers. The browser then masked that as the opaque
+# "Failed to send a request to the Edge Function" (a supabase-js
+# FunctionsFetchError) instead of the real reason. Turning the gateway check
+# off lets the function's own auth run and return a CORS-bearing JSON error the
+# client can actually read. The function is still fully gated — it is the real
+# security boundary. Do NOT set these back to true without first restoring a
+# CORS-bearing gateway error, or you reintroduce the masked-error bug.
+#
+# Without these blocks, `supabase functions deploy <name>` defaults verify_jwt
+# back to true and regresses the fix.
+
+project_id = "zhqqsxwealdwqzrbpwyv"
+
+[functions.invite-user]
+verify_jwt = false
+
+[functions.delete-user]
+verify_jwt = false
