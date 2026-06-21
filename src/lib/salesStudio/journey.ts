@@ -3,7 +3,7 @@
 // stages → activities → workflow cards (plain-language, compatibility, the safe
 // editable surfaces). Pure + in-memory; no execution.
 
-import type { Workflow, WorkflowAction, FieldMapping, SalesWorkflowOverlay, SalesProcessVersionConfig } from '@/types';
+import type { AppModel, Workflow, WorkflowAction, FieldMapping, SalesWorkflowOverlay, SalesProcessVersionConfig } from '@/types';
 import {
   DEFAULT_SALES_PROCESS,
   getFollowUpTypeConfig,
@@ -198,20 +198,75 @@ const COND_OP_LABELS: Record<string, Bilingual> = {
   is_not_empty: { ar: 'غير فارغ', en: 'not empty' },
 };
 
-function condValue(value: unknown): string {
-  if (value == null) return '';
-  const s = Array.isArray(value) ? value.map(String).join('، ') : String(value);
-  return s.length > 28 ? `${s.slice(0, 28)}…` : s;
+// ── slug → label resolution (NEVER render a raw API slug in the card) ─────────
+// Cards must read like a business process, not database config. Every field
+// slug, dropdown value, follow-up type, and action key is resolved to its
+// Arabic / display label; an unresolved slug shows a clean fallback, never raw.
+
+const UNKNOWN_FIELD: Bilingual = { ar: 'حقل غير معروف', en: 'Unknown field' };
+const UNKNOWN_VALUE: Bilingual = { ar: 'غير معروف', en: 'Unknown' };
+
+/** True for an internal lowercase snake_case API slug (Arabic / numbers fail this). */
+function looksLikeSlug(v: string): boolean {
+  return /^[a-z][a-z0-9_]*$/.test(v);
+}
+
+export interface CondLabelMaps {
+  fields: Map<string, Bilingual>;            // field slug → label
+  options: Map<string, Bilingual>;           // `${fieldSlug}::${value}` → option label
+}
+
+/** Build field-label + option-label maps from a model's schema (the trigger model). */
+function buildCondLabelMaps(model: AppModel | undefined): CondLabelMaps {
+  const fields = new Map<string, Bilingual>();
+  const options = new Map<string, Bilingual>();
+  for (const sec of model?.schema?.sections ?? []) {
+    for (const f of sec.fields ?? []) {
+      if (!f.name) continue;
+      fields.set(f.name, { ar: f.label_ar || f.name, en: f.label_en || f.name });
+      for (const o of f.options ?? []) {
+        if (o.value == null) continue;
+        options.set(`${f.name}::${o.value}`, { ar: o.label_ar || String(o.value), en: o.label_en || String(o.value) });
+      }
+    }
+  }
+  return { fields, options };
+}
+
+/** field slug → label (model schema → built-in map → clean fallback, never raw). */
+function fieldLabelFor(slug: string, maps: CondLabelMaps): Bilingual {
+  return maps.fields.get(slug) ?? COND_FIELD_LABELS[slug] ?? (looksLikeSlug(slug) ? UNKNOWN_FIELD : { ar: slug, en: slug });
+}
+
+/** condition value → label (option label → follow-up/outcome config → clean fallback). */
+function valueLabelFor(fieldSlug: string, value: unknown, maps: CondLabelMaps): Bilingual {
+  if (value == null) return { ar: '', en: '' };
+  if (typeof value === 'boolean') return value ? { ar: 'نعم', en: 'Yes' } : { ar: 'لا', en: 'No' };
+  if (Array.isArray(value)) {
+    const parts = value.slice(0, 4).map((x) => valueLabelFor(fieldSlug, x, maps));
+    return { ar: parts.map((p) => p.ar).join('، '), en: parts.map((p) => p.en).join(', ') };
+  }
+  const s = String(value);
+  const opt = maps.options.get(`${fieldSlug}::${s}`);
+  if (opt) return opt;
+  if (fieldSlug === 'followup_type') { const cfg = getFollowUpTypeConfig(s); if (cfg) return { ar: cfg.label_ar, en: cfg.label_en }; }
+  if (fieldSlug === 'call_result' || fieldSlug === 'outcome') { const oc = getOutcome(s); if (oc) return { ar: oc.label_ar, en: oc.label_en }; }
+  if (looksLikeSlug(s)) return UNKNOWN_VALUE;                 // a slug with no label → clean fallback
+  const t = s.length > 28 ? `${s.slice(0, 28)}…` : s;        // already human-readable (Arabic / number)
+  return { ar: t, en: t };
 }
 
 /** Build a readable summary of a branch's conditions ("When: Stage = New"). */
-function describeConditions(conditions: { field_id: string; operator: string; value: unknown }[]): Bilingual | null {
+function describeConditions(
+  conditions: { field_id: string; operator: string; value: unknown }[],
+  maps: CondLabelMaps,
+): Bilingual | null {
   if (!conditions.length) return null;
   const noVal = (op: string) => op === 'is_empty' || op === 'is_not_empty';
   const parts = conditions.slice(0, 3).map((c) => {
-    const f = COND_FIELD_LABELS[c.field_id] ?? { ar: c.field_id, en: c.field_id };
-    const op = COND_OP_LABELS[c.operator] ?? { ar: c.operator, en: c.operator };
-    const v = noVal(c.operator) ? { ar: '', en: '' } : { ar: condValue(c.value), en: condValue(c.value) };
+    const f = fieldLabelFor(c.field_id, maps);
+    const op = COND_OP_LABELS[c.operator] ?? { ar: 'حسب', en: 'matches' };
+    const v = noVal(c.operator) ? { ar: '', en: '' } : valueLabelFor(c.field_id, c.value, maps);
     return { ar: `${f.ar} ${op.ar} ${v.ar}`.trim(), en: `${f.en} ${op.en} ${v.en}`.trim() };
   });
   return {
@@ -305,9 +360,16 @@ function buildActionLines(actions: WorkflowAction[], config: SalesProcessConfig)
     if (action.type === 'assign_user') {
       return { action_id: action.id, kind: 'assign' as const, label: { ar: 'إسناد مستخدم', en: 'Assign user' } };
     }
-    return { action_id: action.id, kind: 'other' as const, label: { ar: action.type, en: action.type } };
+    return { action_id: action.id, kind: 'other' as const, label: ACTION_TYPE_LABELS[action.type] ?? { ar: 'إجراء آخر', en: 'Other action' } };
   });
 }
+
+/** Display labels for action types that aren't already a first-class kind. */
+const ACTION_TYPE_LABELS: Record<string, Bilingual> = {
+  http_request: { ar: 'طلب ويب', en: 'Web request' },
+  outbound_ivr: { ar: 'مكالمة آلية', en: 'Automated call' },
+  paseet_query: { ar: 'استعلام بيانات', en: 'Data query' },
+};
 
 function extractHandlesForActions(actions: WorkflowAction[], overlay: SalesWorkflowOverlay | undefined) {
   const timings: JourneyTimingHandle[] = [];
@@ -366,13 +428,13 @@ function extractHandlesForActions(actions: WorkflowAction[], overlay: SalesWorkf
   return { timings, messages, assignments, maxAttempts };
 }
 
-function buildBranchCards(workflow: Workflow, overlay: SalesWorkflowOverlay | undefined, config: SalesProcessConfig): JourneyBranchCard[] {
+function buildBranchCards(workflow: Workflow, overlay: SalesWorkflowOverlay | undefined, config: SalesProcessConfig, maps: CondLabelMaps): JourneyBranchCard[] {
   const branches = getWorkflowBranches(workflow);
   return branches.map((b) => {
     const outcome = branchOutcome(b.conditions);
     const oc = outcome ? getOutcome(outcome) : undefined;
     const bo = overlay?.branches?.[b.id];
-    const condDesc = describeConditions(b.conditions);
+    const condDesc = describeConditions(b.conditions, maps);
     const summary: Bilingual = oc
       ? { ar: `النتيجة: ${oc.label_ar}`, en: `Outcome: ${oc.label_en}` }
       : b.is_else
@@ -411,6 +473,8 @@ export interface BuildJourneyOptions {
   config?: SalesProcessConfig;
   /** The active/draft version overlay being viewed (drives current values). */
   overlayByWorkflow?: Record<string, SalesWorkflowOverlay>;
+  /** All models — resolves condition field/value slugs to their display labels. */
+  models?: AppModel[];
 }
 
 /** Build a single workflow card for an activity + bound workflow (or a missing card). */
@@ -420,6 +484,8 @@ export function buildWorkflowCard(
   workflow: Workflow | undefined,
   overlayByWorkflow: Record<string, SalesWorkflowOverlay> | undefined,
   config: SalesProcessConfig,
+  /** All models — used to resolve condition field/value slugs to their labels. */
+  models?: AppModel[],
 ): WorkflowCard {
   const cfg = getFollowUpTypeConfig(activityType, config);
   const activityLabel: Bilingual = { ar: cfg?.label_ar ?? activityType, en: cfg?.label_en ?? activityType };
@@ -444,6 +510,10 @@ export function buildWorkflowCard(
     };
   }
   const overlay = overlayByWorkflow?.[workflow.id];
+  // Resolve condition slugs against the workflow's trigger model so the card
+  // shows field/value LABELS, never raw API slugs.
+  const triggerModel = models?.find((m) => m.id === workflow.trigger_model_id);
+  const labelMaps = buildCondLabelMaps(triggerModel);
   // Flat aggregates kept for back-compat (e.g. overlay-resolver / tests); the
   // card + editor now render the per-OUTCOME handles on each branch instead.
   const handles = extractHandlesForActions(allActions(workflow), overlay);
@@ -459,7 +529,7 @@ export function buildWorkflowCard(
     compatibility: computeCompatibility(workflow),
     objective_ar: overlay?.objective_ar?.trim() || cfg?.objective_ar || '',
     objective_en: overlay?.objective_en?.trim() || cfg?.objective_en || '',
-    branches: buildBranchCards(workflow, overlay, config),
+    branches: buildBranchCards(workflow, overlay, config, labelMaps),
     timings: handles.timings,
     messages: handles.messages,
     assignments: handles.assignments,
@@ -483,9 +553,9 @@ export function buildJourney(workflows: Workflow[], opts: BuildJourneyOptions = 
       seen.add(activityType);
       const bound = resolveBoundWorkflows(workflows, { activity_type: activityType, sales_stage: stage.value });
       if (bound.length === 0) {
-        cards.push(buildWorkflowCard(activityType, stage.value, undefined, opts.overlayByWorkflow, config));
+        cards.push(buildWorkflowCard(activityType, stage.value, undefined, opts.overlayByWorkflow, config, opts.models));
       } else {
-        for (const w of bound) cards.push(buildWorkflowCard(activityType, stage.value, w, opts.overlayByWorkflow, config));
+        for (const w of bound) cards.push(buildWorkflowCard(activityType, stage.value, w, opts.overlayByWorkflow, config, opts.models));
       }
     }
     return {

@@ -24,7 +24,7 @@ export default function ProcessJourneyPage() {
   const navigate = useNavigate();
   const isAdmin = useIsAdmin();
   const {
-    language, workflows, salesProcesses, salesProcessVersions,
+    language, workflows, models, salesProcesses, salesProcessVersions,
     ensureDraftVersion, saveSalesProcessVersion, assignClientToProcess, addToast,
   } = useAppStore();
   const isAr = language === 'ar';
@@ -53,8 +53,8 @@ export default function ProcessJourneyPage() {
   const rollup = useProcessRollup(process ?? ({ id: '', is_default: false } as never));
 
   const journey = useMemo(
-    () => buildJourney(workflows, { config: DEFAULT_SALES_PROCESS, overlayByWorkflow: overlayMapFromConfig(selectedVersion?.config_json) }),
-    [workflows, selectedVersion],
+    () => buildJourney(workflows, { config: DEFAULT_SALES_PROCESS, overlayByWorkflow: overlayMapFromConfig(selectedVersion?.config_json), models }),
+    [workflows, selectedVersion, models],
   );
 
   // Clients assigned to this process whose active assignment is on an OLD version
@@ -92,7 +92,7 @@ export default function ProcessJourneyPage() {
     // Build the card from the DRAFT overlay so current values reflect the draft.
     const wf = workflows.find((w) => w.id === card.workflow_id);
     const draftCard = buildWorkflowCard(
-      card.activity_type, card.stage_key, wf, draft.config_json.workflows, DEFAULT_SALES_PROCESS,
+      card.activity_type, card.stage_key, wf, draft.config_json.workflows, DEFAULT_SALES_PROCESS, models,
     );
     setEditor({
       card: draftCard,

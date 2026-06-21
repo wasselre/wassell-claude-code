@@ -3,7 +3,7 @@
 // the highest-risk pieces — they decide what the workflow engine runs and what
 // numbers the manager sees. Run: npx vitest run src/lib/salesStudio
 import { describe, it, expect } from 'vitest';
-import type { Workflow, AppRecord, SalesProcessVersion, ClientSalesProcessAssignment, SalesExperiment } from '@/types';
+import type { Workflow, AppModel, AppRecord, SalesProcessVersion, ClientSalesProcessAssignment, SalesExperiment } from '@/types';
 import {
   applyProcessOverlayToWorkflow,
   buildProcessOverlayResolver,
@@ -244,6 +244,49 @@ describe('buildWorkflowCard — editor pre-fill', () => {
     // ...and the timing + assignee handles are scoped to THIS outcome's action.
     expect(b.timings.find((t) => t.action_id === 'a_create')).toBeTruthy();
     expect(b.assignments.find((a) => a.action_id === 'a_create')?.current_fixed_user_id).toBe('user-42');
+  });
+});
+
+describe('no raw slugs in card text', () => {
+  const followupsModel = {
+    id: 'followups',
+    schema: { sections: [{ fields: [
+      { name: 'followup_type', label_ar: 'نوع المتابعة', label_en: 'Follow-up type', options: [{ value: 'appointment_confirmation_call', label_ar: 'مكالمة تأكيد الموعد', label_en: 'Confirmation call' }] },
+      { name: 'appointment_id', label_ar: 'الموعد', label_en: 'Appointment' },
+    ] }] },
+  } as unknown as AppModel;
+
+  it('resolves condition field + value slugs to labels (model schema)', () => {
+    const w = wf({
+      trigger_model_id: 'followups',
+      branches: [{
+        id: 'bx',
+        conditions: [
+          { id: 'c1', field_id: 'followup_type', operator: 'equals', value: 'appointment_confirmation_call' },
+          { id: 'c2', field_id: 'appointment_id', operator: 'is_not_empty', value: '' },
+        ],
+        actions: [],
+      }],
+    });
+    const card = buildWorkflowCard('appointment_confirmation_call', 'موعد زيارة', w, undefined, DEFAULT_SALES_PROCESS, [followupsModel]);
+    const text = `${card.branches[0]!.summary.en} ${card.branches[0]!.summary.ar}`;
+    expect(text).toContain('Confirmation call');
+    expect(text).toContain('Appointment');
+    expect(text).not.toContain('appointment_confirmation_call');
+    expect(text).not.toContain('appointment_id');
+  });
+
+  it('shows a clean fallback (not the raw slug) when no label exists', () => {
+    const w = wf({
+      trigger_model_id: 'nope',
+      branches: [{ id: 'bz', conditions: [{ id: 'c', field_id: 'escalation_reason', operator: 'equals', value: 'whatsapp_no_response_5d' }], actions: [] }],
+    });
+    const card = buildWorkflowCard('appointment_booking_call', 'جديد', w, undefined, DEFAULT_SALES_PROCESS, []);
+    const text = `${card.branches[0]!.summary.en} ${card.branches[0]!.summary.ar}`;
+    expect(text).not.toContain('escalation_reason');
+    expect(text).not.toContain('whatsapp_no_response_5d');
+    expect(text).toContain('Unknown');
+    expect(text).toContain('غير معروف');
   });
 });
 

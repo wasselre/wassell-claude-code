@@ -14,6 +14,13 @@ const COMPAT_COLOR: Record<CompatibilityStatus, string> = {
   simple: '#10B981', partial: '#C09B5F', advanced: '#6B7280', drift: '#8E4E3A',
 };
 
+// Assignment strategies the inference can produce beyond the 4 editable ones —
+// labeled so the card never shows a raw 'role' / 'trigger_field' slug.
+const STRATEGY_EXTRA: Record<string, { ar: string; en: string }> = {
+  role: { ar: 'حسب الدور', en: 'By role' },
+  trigger_field: { ar: 'من السجل', en: 'From record' },
+};
+
 function actionIcon(kind: BranchActionLine['kind']) {
   switch (kind) {
     case 'create_followup': return <PhoneCall size={12} />;
@@ -58,8 +65,8 @@ export default function WorkflowCardView({
     return u ? ((isAr ? u.name_ar : u.name_en) || u.email || '') : '';
   };
   const strategyLabel = (s: string) => {
-    const k = ASSIGNMENT_STRATEGY_LABELS[s as SalesAssignmentStrategy];
-    return k ? pick(k, isAr) : s;
+    const k = ASSIGNMENT_STRATEGY_LABELS[s as SalesAssignmentStrategy] ?? STRATEGY_EXTRA[s];
+    return k ? pick(k, isAr) : (isAr ? 'إسناد آخر' : 'Other');
   };
 
   const missing = !card.workflow_id;
