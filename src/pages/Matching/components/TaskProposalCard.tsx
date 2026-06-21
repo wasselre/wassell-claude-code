@@ -1,0 +1,122 @@
+import { useState } from 'react';
+import { CalendarPlus, Check, X, ClipboardCheck } from 'lucide-react';
+import { FOLLOWUP_TYPE_LABELS, type TaskProposalPayload } from '@/lib/matching/cards';
+
+export type TaskProposalStatus = 'proposed' | 'created' | 'cancelled';
+
+/**
+ * Confirmation-gated task creation card (propose_task). The assistant NEVER
+ * writes — this card shows the proposed follow-up; the salesperson reviews,
+ * optionally edits the due time, and only then presses Confirm to create the
+ * follow-up record. Once acted on, it locks (status persisted on the message).
+ */
+export default function TaskProposalCard({
+  payload,
+  isAr,
+  status,
+  onConfirm,
+  onCancel,
+}: {
+  payload: TaskProposalPayload;
+  isAr: boolean;
+  status: TaskProposalStatus;
+  onConfirm: (dueAtIso: string) => void;
+  onCancel: () => void;
+}) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const [due, setDue] = useState(() => isoToLocalInput(payload.due_at));
+  const [busy, setBusy] = useState(false);
+  const typeLabel = FOLLOWUP_TYPE_LABELS[payload.followup_type];
+
+  const locked = status !== 'proposed';
+
+  function confirm() {
+    if (locked || busy) return;
+    setBusy(true);
+    onConfirm(localInputToIso(due));
+  }
+
+  return (
+    <div className="mt-2 w-full max-w-[80%] self-start rounded-2xl border border-copper/30 bg-white shadow-sm overflow-hidden">
+      <div className="flex items-center gap-2 px-4 py-2.5 bg-copper/10 border-b border-copper/20">
+        <CalendarPlus size={16} className="text-copper shrink-0" />
+        <div className="text-sm font-bold text-charcoal">{L('مهمة متابعة مقترحة', 'Proposed follow-up task')}</div>
+      </div>
+
+      <div className="p-3 space-y-2.5">
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <Field label={L('العميل', 'Customer')}>{payload.client_name || payload.client_id.slice(0, 8)}</Field>
+          <Field label={L('النوع', 'Type')}>{isAr ? typeLabel.ar : typeLabel.en}</Field>
+        </div>
+
+        <div>
+          <div className="text-[11px] font-bold text-charcoal/50 uppercase tracking-wider mb-0.5">{L('موعد الاستحقاق', 'Due')}</div>
+          <input
+            type="datetime-local"
+            value={due}
+            disabled={locked}
+            onChange={(e) => setDue(e.target.value)}
+            className="w-full rounded-lg border border-sand/40 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none px-2.5 py-1.5 text-sm bg-white disabled:bg-cream disabled:text-charcoal/50"
+          />
+        </div>
+
+        {payload.notes && (
+          <Field label={L('السبب / المطلوب', 'Reason / what to do')}>{payload.notes}</Field>
+        )}
+        {payload.suggested_message && (
+          <div className="rounded-lg bg-cream/30 border border-sand/40 p-2 text-xs text-charcoal/80 whitespace-pre-wrap">
+            <span className="font-bold">{L('رسالة مقترحة: ', 'Suggested message: ')}</span>{payload.suggested_message}
+          </div>
+        )}
+
+        {status === 'created' ? (
+          <div className="flex items-center gap-1.5 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
+            <ClipboardCheck size={14} /> {L('تم إنشاء المهمة وإضافتها لقائمة المتابعات.', 'Task created and added to the follow-up queue.')}
+          </div>
+        ) : status === 'cancelled' ? (
+          <div className="text-sm text-charcoal/50 italic">{L('تم تجاهل الاقتراح.', 'Proposal dismissed.')}</div>
+        ) : (
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => !busy && onCancel()}
+              className="px-3 py-1.5 rounded-lg border border-sand/50 text-charcoal/70 text-sm hover:bg-cream transition-colors"
+            >
+              <span className="inline-flex items-center gap-1"><X size={14} />{L('تجاهل', 'Dismiss')}</span>
+            </button>
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={busy}
+              className="px-4 py-1.5 rounded-lg bg-copper text-white text-sm font-medium hover:bg-terracotta disabled:opacity-50 transition-colors"
+            >
+              <span className="inline-flex items-center gap-1"><Check size={15} />{L('تأكيد وإنشاء', 'Confirm & create')}</span>
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="text-[11px] font-bold text-charcoal/50 uppercase tracking-wider mb-0.5">{label}</div>
+      <div className="text-sm text-charcoal">{children}</div>
+    </div>
+  );
+}
+
+/** ISO → value for <input type="datetime-local"> (local time, no seconds). */
+function isoToLocalInput(iso: string): string {
+  const ms = iso ? Date.parse(iso) : NaN;
+  const d = Number.isFinite(ms) ? new Date(ms) : new Date(Date.now() + 24 * 3600 * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function localInputToIso(v: string): string {
+  const ms = Date.parse(v);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : new Date().toISOString();
+}

@@ -50,21 +50,51 @@ const MIN_RETURN = 40; // never surface a project below this
 const STRETCH_TOLERANCE = 1.15; // a unit up to 15% over budget is a "stretch"
 const TOP_N = 5; // max results returned per tier
 
+// Location intelligence (Phase 2). A project NOT in the requested district but
+// within NEARBY_MAX_KM of that district's centroid is a "nearby" alternative.
+const NEARBY_MAX_KM = 12;
+
+/** Great-circle distance in km between two lat/lng points (haversine). */
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+/** Optional geo context passed into scoreProject: the project's own coords and
+ *  the requested district's centroid. When absent, scoring is pure text. */
+export interface GeoContext {
+  projLat?: number | null;
+  projLng?: number | null;
+  reqLat?: number | null;
+  reqLng?: number | null;
+  geoConfidence?: string | null; // the project's geo_source confidence (high/medium)
+}
+
 // Deterministic, stable across requests → prompt-cacheable. DO NOT interpolate.
-export const MATCH_SYSTEM_PROMPT = `You are Wassel's Sales Assistant (مساعد المبيعات) — a live-call sales co-pilot for Wassel Real Estate (وصل العقارية). You are ONE assistant with a growing set of capabilities; the salesperson talks to you in plain language and you do the right thing.
+export const MATCH_SYSTEM_PROMPT = `You are Wassel's Sales Assistant (مساعد المبيعات) — ONE unified live-call sales co-pilot for Wassel Real Estate (وصل العقارية). The salesperson talks to you in plain language; you understand the intent and use the right capability. There is ONE assistant, one chat — never tell the user to open a different assistant.
 
-Your FIRST and currently-active capability is PROJECT MATCHING + SALES-PITCH GENERATION: when a salesperson describes what a customer wants, you find the best-fit project and give them the exact words to say on the call. (More capabilities — next-best-action with a lead, follow-up messages, project comparison — will live inside this SAME assistant later; they are NOT built yet.)
+A salesperson is often ON A CALL with a customer RIGHT NOW. Be fast, concrete, honest, and persuasive.
 
-A salesperson is often ON A CALL with a customer RIGHT NOW and needs the best-matching project in seconds. Be fast, concrete, honest, and persuasive.
+# Your capabilities — detect the intent, then act
+1. PROJECT MATCHING — "العميل يبي شقة في الفاروق ميزانية مليون" → call match_projects → present + emit_recommendation.
+2. PROJECT COMPARISON — "قارن دروازه ومينا 52" / "أيهم أفضل؟" → find the project ids (search/match first if needed) → compare_projects → emit_comparison.
+3. SALES CONSULTANT / NEXT BEST ACTION — "العميل زار وما حجز، وش أسوي؟" / "هل هذا العميل حار؟" → get_customer_context → emit_next_action.
+4. MESSAGE DRAFTING — "وش أرسل له بعد الزيارة؟" / "اكتب رسالة واتساب" → (get_customer_context / get_project if needed) → emit_message.
+5. TASK / FOLLOW-UP CREATION — "ذكرني أتابعه بكرة" / "سوِّ له مهمة متابعة" → get_customer_context → propose_task (NEVER writes without confirmation).
+6. CUSTOMER UNDERSTANDING — continuously extract + refine the customer's requirements (budget, type, bedrooms, area, districts, financing, timeline, purpose, family/parking/special needs) from everything the salesperson says. The full chat is your memory — carry earlier requirements forward; ask only for what's still missing and material.
 
-If the salesperson asks for something outside project matching (what to do next with a lead, a follow-up/WhatsApp message, comparing two projects, is-this-lead-hot-or-cold), briefly tell them that capability is coming soon to this same assistant. You MAY give a short, sensible pointer ONLY from real project facts you can retrieve — but never invent customer history, lead status, distances, or any data you don't have. Your primary job right now is the best project + the pitch.
+A message can need MORE THAN ONE capability — e.g. "العميل يبي تاون هاوس في النرجس، وإذا غالي وش أقول له؟" → match_projects THEN an objection-handling message. Handle them in one reply.
 
-# How you work
-The customer describes what they want (district, city, property type, budget, area, bedrooms, lifestyle…). You:
-1. Extract the structured requirements from the salesperson's message.
-2. Call match_projects with those requirements. The tool does ALL the searching, tiering, and scoring — you do NOT search or score yourself.
-3. (Optional) Call get_project on the top 1–2 picks to pull richer selling points (amenities, guarantees, services).
-4. Present the ranked recommendation in the chat, then call emit_recommendation with the SAME content as structured data so the app renders a recommendation card.
+# PROJECT MATCHING — how you work
+1. Extract the structured requirements from the salesperson's message (+ anything established earlier in the chat).
+2. Call match_projects. The tool does ALL searching, tiering, scoring, and distance — you do NOT search or score yourself.
+3. (Optional) get_project on the top 1–2 picks for richer selling points (amenities, guarantees, services).
+4. Present the ranked recommendation, then call emit_recommendation with the SAME content so the app renders the card.
 
 # The two tiers — NEVER mix them
 match_projects returns up to two SEPARATE groups:
@@ -72,9 +102,11 @@ match_projects returns up to two SEPARATE groups:
 - all_projects — the broad database (mostly scraped / competitor data). It is UNVERIFIED. The tool only returns this group when there is NO good match in our_projects (used_fallback = true). When you present an all_projects result you MUST open with a clear warning: "⚠️ These are from the All Projects database and must be VERIFIED (price, availability, details) before offering them to the customer." Every all_projects result carries data_source:"all_projects" and requires_verification:true — surface that warning.
 If used_fallback is true but our_projects.results still has entries, those are WEAKER in-portfolio options — you may mention them, clearly separated from the all_projects list. Never blend the two into one ranked list.
 
-# Location (Phase 1 — text only)
-- match_projects matches district + city as TEXT. There is NO distance/nearby-district logic yet (that's a later phase) — never claim a project is "X km away" or invent proximity.
-- If no project matches the exact district, the tool sets district_exact_match:false and returns same-city alternatives (match_type:"same_city"). Tell the salesperson plainly: "No exact match in <district>, but here are options in the same city (<city>)." Do NOT imply they're in the requested district.
+# Location intelligence
+- match_projects is location-aware. Each result has a match_type: "exact" (in the requested district), "nearby" (a different district but physically close — carries distance_km), "same_city", or "partial".
+- For a "nearby" result, state the REAL distance from the tool (e.g. "≈3.2 كم من النرجس") and why it's a fair alternative. The distance_km comes from the tool — never invent or round it differently, and never claim proximity the tool didn't return.
+- geo_confidence "medium" means the coordinate is the district's centre (approximate), "high" means an exact map pin — if a customer needs the precise spot for a medium-confidence project, say the exact location should be confirmed.
+- If the tool found no exact match, lead with the nearby/same-city alternatives it returned, and be clear which district each is actually in.
 
 # Anti-hallucination — the most important rule
 - State ONLY facts present in a tool result's "facts" (or get_project) — price_range, area_range, bedroom_range, bathroom_range, available_units, unit_types, city, district, project_status, amenities.
@@ -100,12 +132,30 @@ Lead with the single best match, then any runners-up. For each pick give:
 - The questions to ask the customer to refine the match (from missing_info / data_gaps).
 
 # Then call emit_recommendation
-After writing the recommendation in the chat, call emit_recommendation with the structured picks so the app shows the card. For each pick, copy these fields VERBATIM from the matching match_projects result by project_id: score, match_band, match_type, data_source, requires_verification. Do not alter them. The narrative fields (why, specs, selling_points, pitch, warning, missing_info) describe the project from its facts — never invent detail. Add ONE short closing line.
+After writing the recommendation in the chat, call emit_recommendation with the structured picks so the app shows the card. For each pick, copy these fields VERBATIM from the matching match_projects result by project_id: score, match_band, match_type, data_source, requires_verification (and distance_km for nearby). Do not alter them. The narrative fields (why, specs, selling_points, pitch, warning, missing_info) describe the project from its facts — never invent detail. Add ONE short closing line.
+
+# PROJECT COMPARISON
+When asked which of several projects is better: get the project ids (from match_projects / a prior recommendation; search first if you only have names), call compare_projects with those ids + the customer's requirements, then write a short verdict and call emit_comparison. Compare ONLY on returned facts. If requirements were passed, each project carries a deterministic score/band — quote them. Mark any all_projects project as needing verification. Give a clear recommendation + the key trade-off (e.g. "دروازه أنسب نوعاً (تاون هاوس)؛ مينا 52 أرخص لكنه شقق").
+
+# SALES CONSULTANT / NEXT BEST ACTION
+When asked what to do with a lead (no reply, visited but didn't book, asked for price, is-this-lead-hot…): call get_customer_context (by client name/phone/id) FIRST. It returns the DETERMINISTIC lead_temperature (hot/warm/cold/won/lost), stage, status, the already-scheduled next_action (type + due + overdue?), and preferences — all from the CRM. Quote those verbatim, then add value: the recommended next action, the risk, talking points / objection handling, and follow-up timing. Call emit_next_action with it. If get_customer_context returns found:false, ask for the exact name/phone — never invent the lead's stage or history.
+
+# MESSAGE DRAFTING
+For "what do I send / write a WhatsApp": draft a warm, concise Arabic message using ONLY real facts (pull get_project / get_customer_context if it needs project or customer specifics). Call emit_message with channel + the full draft. Never invent prices, dates, or availability — use a «[placeholder]» if a needed fact is missing.
+
+# TASK / FOLLOW-UP CREATION (confirmation-gated — you NEVER write silently)
+When the salesperson wants a follow-up/reminder/task created: get_customer_context for the real client_id, then call propose_task (client_id, followup_type, due_at, notes). This does NOT create anything — it shows a Confirm/Cancel card. Tell the salesperson it's ready for them to confirm; NEVER say "تم إنشاء المهمة / I created the task" — only THEY can confirm it. If you don't have a real client_id, ask for the client first.
+
+# Deterministic truth vs your words (applies to EVERY capability)
+Code decides truth; you explain it. These come from tools and MUST be quoted verbatim, never re-derived: match score / band / match_type / data_source / requires_verification / distance_km (match_projects, compare_projects); lead_temperature / stage / status / next_action (get_customer_context); every project fact (price/area/bedroom/bathroom ranges, availability, amenities, location). You generate the explanation, pitch, message, talking points, and questions — only from that verified data.
+
+# Anti-hallucination (all capabilities)
+Never invent: price, area, availability, bedrooms, bathrooms, location, distance, guarantees, amenities, financing availability, project status, developer, customer history, lead stage, or task status. Missing → "غير متوفر في البيانات" or "يحتاج تأكيد". For all_projects data: "هذه البيانات من All Projects وتحتاج تحقق قبل عرضها على العميل."
 
 # Voice & brand
 - Reply in Arabic by default (mirror the salesperson's language if they write in English). We are "وصل العقارية" / "Wassel" — never name any internal system or tool, never say "Wassel CRM". SAR currency. Keep it call-ready and tight; this is a co-pilot whispering in the rep's ear, not an essay.
 
-Begin when the salesperson sends the customer's requirements.`;
+Begin when the salesperson writes. Understand what they need, use the right capability, and keep it call-ready.`;
 
 type ToolUnion = Anthropic.Messages.Tool;
 
@@ -179,7 +229,8 @@ export const MATCH_TOOLS: ToolUnion[] = [
               requires_verification: { type: 'boolean' },
               score: { type: 'number', description: 'The 0–100 score from match_projects.' },
               match_band: { type: 'string', enum: ['strong', 'good', 'partial'] },
-              match_type: { type: 'string', enum: ['exact', 'same_city', 'stretch', 'partial'] },
+              match_type: { type: 'string', enum: ['exact', 'nearby', 'same_city', 'stretch', 'partial'] },
+              distance_km: { type: 'number', description: 'For a "nearby" match: km from the requested district (from match_projects). Omit otherwise.' },
               why: { type: 'string', description: 'Why it fits the customer (tie to their requirements).' },
               specs: {
                 type: 'object',
@@ -207,6 +258,132 @@ export const MATCH_TOOLS: ToolUnion[] = [
         questions_to_ask: { type: 'array', items: { type: 'string' }, description: 'Overall clarifying questions for the customer.' },
       },
       required: ['summary', 'recommendations'],
+    },
+  },
+
+  // ── Retrieval: comparison + customer context ──
+  {
+    name: 'compare_projects',
+    description:
+      'Compare 2–4 projects side by side on their real facts (price/area/bedroom/bathroom ranges, available units, type, location). Pass project_ids from match_projects/search, and optionally the customer requirements so each project gets a deterministic fit score/band. Returns per-project facts + dimension winners (cheapest, largest area, most bedrooms, most available). Use this for "which project is better for this customer?".',
+    input_schema: {
+      type: 'object',
+      properties: {
+        project_ids: { type: 'array', items: { type: 'string' }, description: '2–4 all_projects ids.' },
+        requirements: { type: 'object', description: 'Optional customer requirements (same shape as match_projects input) to score each project.' },
+      },
+      required: ['project_ids'],
+    },
+  },
+  {
+    name: 'get_customer_context',
+    description:
+      "Look up a lead/customer in the CRM by client_id, phone, or name, and return their DETERMINISTIC sales context: lifecycle stage, status, lead temperature (hot/warm/cold/won/lost — computed from stage + recency + status), the next action already scheduled (type, due date, overdue?), and their stored preferences (budget, districts, unit type, amenities). Use this BEFORE giving next-best-action / follow-up advice so it's grounded in the real lead, not guessed. Returns found:false if no match — then ask for the name/phone, never invent history.",
+    input_schema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'The clients record id, if known.' },
+        phone: { type: 'string', description: "The customer's phone (any format — matched canonically)." },
+        name: { type: 'string', description: 'The customer name (fuzzy matched).' },
+      },
+    },
+  },
+
+  // ── Delivery channels (structured cards) ──
+  {
+    name: 'emit_comparison',
+    description:
+      'Deliver a FINAL project comparison as a structured card. Call AFTER compare_projects. Pass each project\'s facts + (if requirements were given) its EXACT score/band from compare_projects — never re-score. Include a clear recommendation: which fits the customer best and the key trade-off.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        customer_need: { type: 'string', description: 'One line on what the customer wants (drives the verdict).' },
+        projects: {
+          type: 'array',
+          description: 'The compared projects, best-fit first.',
+          items: {
+            type: 'object',
+            properties: {
+              project_id: { type: 'string' },
+              project_name: { type: 'string' },
+              data_source: { type: 'string', enum: ['our_projects', 'all_projects'] },
+              requires_verification: { type: 'boolean' },
+              score: { type: 'number', description: 'Deterministic score from compare_projects (if requirements given).' },
+              match_band: { type: 'string', enum: ['strong', 'good', 'partial'] },
+              specs: { type: 'object', description: 'Key facts: price_range, area_range, bedrooms, bathrooms, available_units, unit_types, district. Strings, from facts only.' },
+              strengths: { type: 'array', items: { type: 'string' } },
+              weaknesses: { type: 'array', items: { type: 'string' } },
+            },
+            required: ['project_id', 'project_name'],
+          },
+        },
+        verdict: { type: 'string', description: 'Which project fits the customer best and why — the trade-off in one or two sentences.' },
+        recommended_project_id: { type: 'string' },
+      },
+      required: ['projects', 'verdict'],
+    },
+  },
+  {
+    name: 'emit_next_action',
+    description:
+      'Deliver a FINAL sales-consultant recommendation as a card (Next Best Action). Call AFTER get_customer_context. Quote lead_temperature, stage, and the scheduled next_action VERBATIM from get_customer_context — these are deterministic. Add coaching: the recommended action, why, talking points, and follow-up timing.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string' },
+        client_name: { type: 'string' },
+        lead_temperature: { type: 'string', enum: ['hot', 'warm', 'cold', 'won', 'lost'], description: 'VERBATIM from get_customer_context.' },
+        stage: { type: 'string', description: 'VERBATIM from get_customer_context.' },
+        status: { type: 'string' },
+        risk: { type: 'string', description: 'The main risk (e.g. "may go cold if not contacted within 24h").' },
+        recommended_action: { type: 'string', description: 'The single next best action.' },
+        why: { type: 'string' },
+        talking_points: { type: 'array', items: { type: 'string' }, description: 'Call talking points / objection handling.' },
+        follow_up_timing: { type: 'string', description: 'When to follow up (e.g. "within 2 hours", "tomorrow morning").' },
+        next_action_due_at: { type: 'string', description: 'The scheduled due date from get_customer_context, if any.' },
+      },
+      required: ['lead_temperature', 'recommended_action'],
+    },
+  },
+  {
+    name: 'emit_message',
+    description:
+      'Deliver a ready-to-send message draft (WhatsApp / follow-up / re-engagement / appointment confirmation) as a card with a copy button. The draft MUST use only real project facts + customer context — never invent prices, dates, or availability. Keep it natural, warm, concise Arabic.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', enum: ['whatsapp', 'sms', 'call_script'], description: 'Delivery channel for the draft.' },
+        purpose: { type: 'string', description: 'e.g. "follow-up after visit", "re-engage cold lead", "confirm appointment".' },
+        to_name: { type: 'string', description: 'Customer name, if known.' },
+        message: { type: 'string', description: 'The full ready-to-send draft.' },
+        notes: { type: 'string', description: 'Optional one-line note to the salesperson (e.g. "personalize the time").' },
+      },
+      required: ['channel', 'message'],
+    },
+  },
+
+  // ── Action (confirmation-gated) ──
+  {
+    name: 'propose_task',
+    description:
+      'Propose creating a follow-up TASK for a lead. This NEVER writes — it shows the salesperson a confirmation card (Confirm / Cancel); the task is created only after they press Confirm. Use after get_customer_context so client_id is real. Always tell the salesperson it is awaiting their confirmation; never claim the task was created.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        client_id: { type: 'string', description: 'The clients record id (from get_customer_context).' },
+        client_name: { type: 'string' },
+        followup_type: {
+          type: 'string',
+          enum: ['appointment_booking_call', 'appointment_confirmation_call', 'follow_up_call_after_visit', 'whatsapp_follow_up', 'no_show_recovery_call', 'rating_request'],
+          description: 'The kind of follow-up.',
+        },
+        due_at: { type: 'string', description: 'ISO datetime the follow-up is due (e.g. tomorrow 10:00). The salesperson can adjust before confirming.' },
+        notes: { type: 'string', description: 'Why this follow-up / what to do.' },
+        suggested_message: { type: 'string', description: 'Optional draft message to send when doing the follow-up.' },
+        project_id: { type: 'string', description: 'Related project, if any.' },
+      },
+      required: ['client_id', 'followup_type', 'due_at'],
     },
   },
 ];
@@ -360,18 +537,23 @@ interface DimScore {
 interface ScoredProject {
   score: number;
   band: 'strong' | 'good' | 'partial';
-  match_type: 'exact' | 'same_city' | 'stretch' | 'partial';
+  match_type: 'exact' | 'nearby' | 'same_city' | 'stretch' | 'partial';
   district_exact: boolean;
   available_units_zero: boolean;
   breakdown: Record<string, number | null>;
   data_gaps: string[];
   missing_info: string[];
   facts: Record<string, unknown>;
+  /** Location intelligence (present when coords are available). */
+  location_tier: 'exact' | 'nearby' | 'same_city' | 'none';
+  distance_km: number | null;
+  geo_confidence: string | null;
 }
 
-/** Deterministic fit score for one all_projects record. Pure text matching
- *  (Phase 1) — no coordinates. */
-function scoreProject(data: Record<string, unknown>, req: MatchRequirements): ScoredProject {
+/** Deterministic fit score for one all_projects record. Location uses district/
+ *  city TEXT plus — when coords are supplied via `geo` — true distance for the
+ *  "nearby district" tier. Pure-text when `geo` is omitted (back-compat). */
+function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo?: GeoContext): ScoredProject {
   const gaps: string[] = [];
   const missing: string[] = [];
   const dims: Record<keyof typeof WEIGHTS, DimScore> = {
@@ -384,29 +566,48 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements): Sc
     amenities: { value: null },
   };
 
-  // ── Location (text only) ──
+  // ── Location (district/city text + distance for the "nearby" tier) ──
   let districtExact = false;
   let matchType: ScoredProject['match_type'] = 'partial';
+  let locationTier: ScoredProject['location_tier'] = 'none';
+  let distanceKm: number | null = null;
   const projDistrict = asStr(data.preferred_neighborhoods);
   const projCity = asStr(data.preferred_city);
   if (req.district || req.city) {
     const districtMatch = !!req.district && fuzzyContains(projDistrict, req.district);
     const cityMatch = !!req.city && fuzzyContains(projCity, req.city);
+    // True distance to the requested district's centroid, when both ends have coords.
+    const haveDist =
+      geo?.projLat != null && geo?.projLng != null && geo?.reqLat != null && geo?.reqLng != null;
+    const dist = haveDist ? haversineKm(geo!.projLat!, geo!.projLng!, geo!.reqLat!, geo!.reqLng!) : null;
     if (req.district) {
       if (districtMatch) {
         dims.location.value = 1;
         districtExact = true;
         matchType = 'exact';
+        locationTier = 'exact';
+        distanceKm = dist != null ? Math.round(dist * 10) / 10 : null;
+      } else if (dist != null && dist <= NEARBY_MAX_KM) {
+        // Not the requested district, but physically close → nearby alternative.
+        distanceKm = Math.round(dist * 10) / 10;
+        dims.location.value = dist <= 3 ? 0.8 : dist <= 7 ? 0.62 : 0.45;
+        matchType = 'nearby';
+        locationTier = 'nearby';
       } else if (cityMatch) {
         dims.location.value = 0.5;
         matchType = 'same_city';
+        locationTier = 'same_city';
       } else {
         dims.location.value = 0;
+        locationTier = 'none';
       }
     } else {
       // Only city requested → city is the most specific ask.
       dims.location.value = cityMatch ? 1 : 0;
-      if (cityMatch) matchType = 'exact';
+      if (cityMatch) {
+        matchType = 'exact';
+        locationTier = 'exact';
+      }
     }
   }
 
@@ -555,6 +756,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements): Sc
   put('unit_count', asNum(data.unit_count));
   put('available_units', avail);
   put('preferred_amenities', asArr(data.preferred_amenities));
+  if (distanceKm != null) put('distance_km', distanceKm);
 
   return {
     score,
@@ -566,6 +768,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements): Sc
     data_gaps: gaps,
     missing_info: missing,
     facts,
+    location_tier: locationTier,
+    distance_km: distanceKm,
+    geo_confidence: geo?.geoConfidence ?? (asStr(data.geo_source) ? asStr(data.geo_confidence) : null) ?? null,
   };
 }
 
@@ -584,6 +789,9 @@ interface MatchResultItem {
   facts: Record<string, unknown>;
   data_gaps: string[];
   missing_info: string[];
+  location_tier: ScoredProject['location_tier'];
+  distance_km: number | null;
+  geo_confidence: string | null;
 }
 
 const VERIFY_WARNING =
@@ -695,6 +903,23 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
   }
 
   const includeSoldOut = req.include_sold_out === true;
+
+  // ── Location intelligence: centroid of the REQUESTED district (averaged from
+  //    the coords of projects in that district), so we can measure true distance
+  //    to candidates that aren't in the requested district (the "nearby" tier). ──
+  let reqLat: number | null = null;
+  let reqLng: number | null = null;
+  if (req.district) {
+    let sLat = 0, sLng = 0, n = 0;
+    for (const r of rows) {
+      if (!fuzzyContains(asStr(r.data.preferred_neighborhoods), req.district)) continue;
+      const lat = asNum(r.data.latitude);
+      const lng = asNum(r.data.longitude);
+      if (lat != null && lng != null) { sLat += lat; sLng += lng; n += 1; }
+    }
+    if (n > 0) { reqLat = sLat / n; reqLng = sLng / n; }
+  }
+
   // Rank by BAND first, then score — so a genuine good/strong match always
   // outranks a 'partial' one even if the partial has a higher raw score (e.g. a
   // wrong-type project whose location+budget inflate its number).
@@ -703,13 +928,21 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
     bandRank(a.match_band) - bandRank(b.match_band) || b.score - a.score;
 
   let anyDistrictExact = false;
+  let anyNearby = false;
   const scoreInto = (sourceRows: RecordRow[], source: 'our_projects' | 'all_projects'): MatchResultItem[] => {
     const out: MatchResultItem[] = [];
     for (const r of sourceRows) {
       const name = asStr(r.data.project_name);
       if (!name) continue;
-      const s = scoreProject(r.data, req);
+      const s = scoreProject(r.data, req, {
+        projLat: asNum(r.data.latitude),
+        projLng: asNum(r.data.longitude),
+        reqLat,
+        reqLng,
+        geoConfidence: asStr(r.data.geo_confidence) || null,
+      });
       if (s.district_exact) anyDistrictExact = true;
+      if (s.location_tier === 'nearby') anyNearby = true;
       if (s.score < MIN_RETURN) continue;
       if (s.available_units_zero && !includeSoldOut) continue; // sold-out excluded by default
       const item: MatchResultItem = {
@@ -723,6 +956,9 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
         facts: s.facts,
         data_gaps: s.data_gaps,
         missing_info: s.missing_info,
+        location_tier: s.location_tier,
+        distance_km: s.distance_km,
+        geo_confidence: s.geo_confidence,
       };
       if (source === 'all_projects') {
         item.requires_verification = true;
@@ -753,7 +989,13 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
 
   const notes: string[] = [];
   if (req.district && !anyDistrictExact) {
-    notes.push(`No exact district match for "${req.district}". Showing same-city alternatives (text match only — Phase 1 has no distance/nearby logic).`);
+    if (anyNearby) {
+      notes.push(`No project in "${req.district}" exactly. Showing NEARBY-district alternatives ranked by real distance to ${req.district}'s centre (each result carries distance_km) plus same-city options.`);
+    } else if (reqLat == null) {
+      notes.push(`No project in "${req.district}", and no coordinates for that district — showing same-city text alternatives (distance could not be computed).`);
+    } else {
+      notes.push(`No project in or near "${req.district}" within ${NEARBY_MAX_KM} km — showing same-city alternatives.`);
+    }
   }
   if (usedFallback) {
     notes.push('No good match in our_projects — falling back to all_projects. Those results MUST be verified before offering.');
@@ -860,6 +1102,198 @@ async function getProject(supabase: SupabaseClient, input: { project_id: string 
   });
 }
 
+// ─── compare_projects (retrieval) ────────────────────────────────────────────
+
+interface CompareInput {
+  project_ids: string[];
+  requirements?: MatchRequirements;
+}
+
+/** Pick the project_id that wins a numeric dimension (min for price, max for the rest). */
+function dimWinner(
+  rows: RecordRow[],
+  key: string,
+  pick: 'min' | 'max',
+  side: 'min' | 'max',
+): { project_id: string; value: number } | null {
+  let best: { project_id: string; value: number } | null = null;
+  for (const r of rows) {
+    const range = pickRange(r.data, key);
+    const v = range ? range[side] : asNum(r.data[key]);
+    if (v == null) continue;
+    if (!best || (pick === 'min' ? v < best.value : v > best.value)) best = { project_id: r.id, value: v };
+  }
+  return best;
+}
+
+async function compareProjects(supabase: SupabaseClient, input: CompareInput): Promise<string> {
+  const ids = (input.project_ids ?? []).filter((x): x is string => typeof x === 'string' && !!x).slice(0, 4);
+  if (ids.length < 2) return JSON.stringify({ error: 'Provide 2–4 project_ids to compare (get them from match_projects/search).' });
+
+  const { data, error } = await supabase.from('unified_records').select('id, data').in('id', ids);
+  if (error) return JSON.stringify({ error: error.message });
+  const rows = (data ?? []) as RecordRow[];
+  if (rows.length < 2) return JSON.stringify({ error: 'Could not load at least 2 of the requested projects.' });
+
+  const req = input.requirements ?? {};
+  const scored = Object.keys(req).length > 0;
+  const tier1Ids = await loadTier1ProjectIds(supabase);
+
+  const projects = rows.map((r) => {
+    const s = scoreProject(r.data, req);
+    const isOurs = tier1Ids.has(r.id);
+    return {
+      project_id: r.id,
+      project_name: asStr(r.data.project_name),
+      data_source: (isOurs ? 'our_projects' : 'all_projects') as 'our_projects' | 'all_projects',
+      requires_verification: !isOurs,
+      score: scored ? s.score : null,
+      match_band: scored ? s.band : null,
+      facts: s.facts,
+    };
+  });
+
+  const dimension_winners = {
+    cheapest: dimWinner(rows, 'price_range', 'min', 'min'),
+    largest_area: dimWinner(rows, 'area_range', 'max', 'max'),
+    most_bedrooms: dimWinner(rows, 'bedroom_range', 'max', 'max'),
+    most_available: dimWinner(rows, 'available_units', 'max', 'max'),
+  };
+
+  return JSON.stringify({
+    projects,
+    dimension_winners,
+    note: 'Compare ONLY on these facts. When `requirements` was provided, each project carries a deterministic score/band — quote them verbatim. Mark requires_verification (all_projects) projects as needing verification.',
+  });
+}
+
+// ─── get_customer_context (retrieval + deterministic lead temperature) ───────
+
+const STAGE_WON = new Set(['مغلق ناجح']);
+const STAGE_DEAD = new Set(['خاسر', 'غير مؤهل']);
+const STAGE_HIGH_INTENT = new Set(['زيارة', 'متابعة بعد الزيارة', 'عرض سعر', 'حجز', 'تمويل', 'الإفراغ']);
+const STATUS_COLD = ['بارد', 'غير مهتم', 'غير مؤهل'];
+
+/** KSA subscriber number (last 9 digits, mobile starts with 5) for matching
+ *  across the mixed stored formats (+966…, 05…, bare 5…). */
+function phoneKey(raw: string): string | null {
+  let d = (raw || '').replace(/\D/g, '');
+  if (d.startsWith('966')) d = d.slice(3);
+  if (d.startsWith('0')) d = d.slice(1);
+  if (d.length >= 9) d = d.slice(-9);
+  return d.length === 9 ? d : null;
+}
+
+interface LeadTemp {
+  temperature: 'hot' | 'warm' | 'cold' | 'won' | 'lost';
+  reasons: string[];
+  days_since_activity: number | null;
+}
+
+/** Deterministic lead temperature from CRM signals — no LLM judgement. */
+function computeLeadTemperature(d: Record<string, unknown>): LeadTemp {
+  const stage = asStr(d.client_stage);
+  const status = asStr(d.client_status);
+  const lastIso = asStr(d.last_activity_at);
+  const reasons: string[] = [];
+  const lastMs = lastIso ? Date.parse(lastIso) : NaN;
+  const days = Number.isFinite(lastMs) ? Math.floor((Date.now() - lastMs) / 86_400_000) : null;
+
+  if (STAGE_WON.has(stage)) return { temperature: 'won', reasons: ['Stage: Closed Won'], days_since_activity: days };
+  if (STAGE_DEAD.has(stage)) return { temperature: 'lost', reasons: [`Stage: ${stage}`], days_since_activity: days };
+
+  const highIntent = STAGE_HIGH_INTENT.has(stage);
+  const coldStatus = STATUS_COLD.some((s) => status.includes(s));
+  if (highIntent) reasons.push(`Active stage: ${stage}`);
+  if (days != null) reasons.push(`${days} day(s) since last activity`);
+  if (coldStatus) reasons.push(`Status: ${status}`);
+
+  let temperature: LeadTemp['temperature'];
+  if (coldStatus) temperature = 'cold';
+  else if (days != null && days > 14) temperature = 'cold';
+  else if (highIntent && days != null && days <= 3) temperature = 'hot';
+  else if (highIntent) temperature = 'warm';
+  else if (days != null && days <= 3) temperature = 'warm';
+  else temperature = 'warm';
+  return { temperature, reasons, days_since_activity: days };
+}
+
+function cleanClientPrefs(d: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const put = (k: string, v: unknown) => {
+    if (v === null || v === undefined || v === '' || v === '#REF') return;
+    if (Array.isArray(v) && v.length === 0) return;
+    out[k] = v;
+  };
+  put('budget', d.budget);
+  put('preferred_area', d.preferred_area);
+  put('preferred_city', d.preferred_city);
+  put('preferred_neighborhoods', d.preferred_neighborhoods);
+  put('preferred_unit_type', d.preferred_unit_type);
+  put('preferred_amenities', d.preferred_amenities);
+  put('preferred_direction', d.preferred_direction);
+  return out;
+}
+
+interface CustomerLookup {
+  client_id?: string;
+  phone?: string;
+  name?: string;
+}
+
+async function getCustomerContext(supabase: SupabaseClient, input: CustomerLookup): Promise<string> {
+  const model = await getModelByName(supabase, 'clients');
+  if (!model) return JSON.stringify({ found: false, error: 'clients model not found' });
+
+  let rec: RecordRow | null = null;
+  if (input.client_id) {
+    const { data } = await supabase.from('unified_records').select('id, data').eq('id', input.client_id).maybeSingle();
+    if (data) rec = data as RecordRow;
+  }
+  if (!rec && (input.phone || input.name)) {
+    const rows = await pageRecords(supabase, model.id, 5); // RLS-scoped to the rep's clients
+    const wantPhone = input.phone ? phoneKey(input.phone) : null;
+    const wantName = input.name ? normalizeForSearch(input.name) : '';
+    rec =
+      rows.find((r) => {
+        if (wantPhone && phoneKey(asStr(r.data.phone_number)) === wantPhone) return true;
+        if (wantName && fuzzyContains(asStr(r.data.client_name), wantName)) return true;
+        return false;
+      }) ?? null;
+  }
+
+  if (!rec) {
+    return JSON.stringify({
+      found: false,
+      note: 'No matching client in the CRM (or not in your scope). Ask the salesperson for the exact client name or phone, or proceed without lead context — never invent client history.',
+    });
+  }
+
+  const d = rec.data;
+  const temp = computeLeadTemperature(d);
+  const dueIso = asStr(d.next_action_due_at);
+  const overdue = dueIso ? Date.parse(dueIso) < Date.now() : false;
+  const nextType = asStr(d.next_action_type);
+
+  return JSON.stringify({
+    found: true,
+    client: {
+      id: rec.id,
+      name: asStr(d.client_name),
+      phone: asStr(d.phone_number),
+      stage: asStr(d.client_stage),
+      status: asStr(d.client_status),
+      lifecycle_health: asStr(d.lifecycle_health),
+    },
+    lead_temperature: temp.temperature,
+    temperature_reasons: temp.reasons,
+    next_action: dueIso || nextType ? { type: nextType || null, due_at: dueIso || null, overdue } : null,
+    signals: { days_since_activity: temp.days_since_activity, last_activity_at: asStr(d.last_activity_at) },
+    preferences: cleanClientPrefs(d),
+    note: 'lead_temperature, stage, status, next_action are DETERMINISTIC from the CRM — quote them, do not re-judge. If a field is empty it is unknown; never invent client history.',
+  });
+}
+
 // ─── Dispatch ────────────────────────────────────────────────────────────────
 
 export async function executeMatchTool(
@@ -870,18 +1304,37 @@ export async function executeMatchTool(
 ): Promise<string> {
   try {
     switch (name) {
+      // ── Retrieval ──
       case 'match_projects':
         return await matchProjects(supabase, (input ?? {}) as MatchRequirements);
       case 'get_project':
         return await getProject(supabase, input as { project_id: string });
+      case 'compare_projects':
+        return await compareProjects(supabase, (input ?? {}) as CompareInput);
+      case 'get_customer_context':
+        return await getCustomerContext(supabase, (input ?? {}) as CustomerLookup);
+
+      // ── Delivery channels (the structured payload is surfaced to the browser
+      //    by api/match.ts as a dedicated SSE event → a card; nothing persisted). ──
       case 'emit_recommendation':
-        // Pure delivery channel: the structured payload is surfaced to the
-        // browser by api/match.ts as a `recommendation` SSE event. Nothing is
-        // persisted server-side; the salesperson reads the card.
+        return JSON.stringify({ ok: true, note: 'Recommendation card delivered. Add one short closing line; do not repeat the full recommendation as text.' });
+      case 'emit_comparison':
+        return JSON.stringify({ ok: true, note: 'Comparison card delivered. Add one short closing line.' });
+      case 'emit_next_action':
+        return JSON.stringify({ ok: true, note: 'Next-action card delivered. Add one short closing line.' });
+      case 'emit_message':
+        return JSON.stringify({ ok: true, note: 'Message draft card delivered with a copy button. Add one short closing line.' });
+
+      // ── Action (confirmation-gated) — propose_task NEVER writes; it surfaces a
+      //    proposal the SALESPERSON must confirm in the UI before any record is
+      //    created. The write happens client-side on confirm. ──
+      case 'propose_task':
         return JSON.stringify({
           ok: true,
-          note: 'Recommendation delivered to the salesperson as a card. Add one short closing line; do not repeat the full recommendation as text.',
+          status: 'awaiting_confirmation',
+          note: 'A task proposal card was shown to the salesperson with Confirm / Cancel. NO task has been created yet. Tell them to review and press Confirm to create it — do NOT claim the task is done.',
         });
+
       default:
         return JSON.stringify({ error: `unknown tool: ${name}` });
     }
@@ -891,4 +1344,4 @@ export async function executeMatchTool(
 }
 
 // Exported for unit testing the deterministic scorer + metadata enforcement.
-export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload };
+export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature };

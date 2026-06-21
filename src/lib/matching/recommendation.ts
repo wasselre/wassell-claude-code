@@ -10,7 +10,7 @@
  */
 
 export type MatchBand = 'strong' | 'good' | 'partial';
-export type MatchType = 'exact' | 'same_city' | 'stretch' | 'partial';
+export type MatchType = 'exact' | 'nearby' | 'same_city' | 'stretch' | 'partial';
 export type DataSource = 'our_projects' | 'all_projects';
 
 export interface RecommendationSpecs {
@@ -33,6 +33,8 @@ export interface ProjectRecommendation {
   score: number;
   match_band: MatchBand;
   match_type: MatchType;
+  /** For a "nearby" match: km from the requested district. */
+  distance_km?: number;
   why: string;
   specs: RecommendationSpecs;
   selling_points: string[];
@@ -65,7 +67,7 @@ function asBand(v: unknown): MatchBand {
   return v === 'strong' || v === 'good' || v === 'partial' ? v : 'partial';
 }
 function asMatchType(v: unknown): MatchType {
-  return v === 'exact' || v === 'same_city' || v === 'stretch' || v === 'partial' ? v : 'partial';
+  return v === 'exact' || v === 'nearby' || v === 'same_city' || v === 'stretch' || v === 'partial' ? v : 'partial';
 }
 function asSource(v: unknown): DataSource {
   return v === 'all_projects' ? 'all_projects' : 'our_projects';
@@ -100,6 +102,7 @@ function normalizeOne(v: unknown): ProjectRecommendation | null {
     score: asNumber(d.score),
     match_band: asBand(d.match_band),
     match_type: asMatchType(d.match_type),
+    distance_km: typeof d.distance_km === 'number' ? d.distance_km : undefined,
     why: asString(d.why),
     specs: normalizeSpecs(d.specs),
     selling_points: asStringArray(d.selling_points),

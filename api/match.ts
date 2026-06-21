@@ -152,6 +152,22 @@ export default async function handler(req: Request): Promise<Response> {
                   }
                   send({ type: 'recommendation', data: payload });
                 }
+                // Other structured cards — same chat, different card types. The
+                // payload is the raw tool input (untrusted; normalized client-side).
+                if (toolUse.name === 'emit_comparison') {
+                  send({ type: 'comparison', data: toolUse.input ?? {} });
+                }
+                if (toolUse.name === 'emit_next_action') {
+                  send({ type: 'next_action', data: toolUse.input ?? {} });
+                }
+                if (toolUse.name === 'emit_message') {
+                  send({ type: 'message_draft', data: toolUse.input ?? {} });
+                }
+                if (toolUse.name === 'propose_task') {
+                  // Confirmation-gated: the browser renders a Confirm/Cancel card.
+                  // The record is created CLIENT-SIDE only after the user confirms.
+                  send({ type: 'task_proposal', data: toolUse.input ?? {} });
+                }
                 const toolStartedAt = Date.now();
                 let toolResult = '';
                 let toolError: string | undefined;

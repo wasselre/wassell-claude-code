@@ -12,9 +12,13 @@ export type MatchEvent =
   | { type: 'text'; delta: string }
   | { type: 'tool_use'; name: string; input: unknown }
   | { type: 'tool_result'; name: string; result: string }
-  // Structured final recommendation emitted via emit_recommendation. `data` is
-  // the raw tool input (untrusted) — normalize with normalizeRecommendation.
+  // Structured cards (all rendered inside the SAME chat). `data` is the raw tool
+  // input (untrusted) — normalize with the matching lib normalizer.
   | { type: 'recommendation'; data: unknown }
+  | { type: 'comparison'; data: unknown }
+  | { type: 'next_action'; data: unknown }
+  | { type: 'message_draft'; data: unknown }
+  | { type: 'task_proposal'; data: unknown }
   | { type: 'done'; stop_reason: string }
   | { type: 'error'; message: string };
 
