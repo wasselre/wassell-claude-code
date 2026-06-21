@@ -80,7 +80,6 @@ const reservation: RecordDocStarter = {
       ? doc(
           hCenter(1, 'سند حجز وحدة'),
           pCenter(b('وصل العقارية')),
-          pCenter(t('وثيقة حجز رسمية')),
           p(t('التاريخ: {{today}}')),
           hr(),
           h(2, t('بيانات الحجز')),
@@ -108,7 +107,6 @@ const reservation: RecordDocStarter = {
       : doc(
           hCenter(1, 'Unit Reservation'),
           pCenter(b('Wassel Real Estate')),
-          pCenter(t('Official reservation document')),
           p(t('Date: {{today}}')),
           hr(),
           h(2, t('Reservation Details')),
@@ -146,7 +144,6 @@ const offer: RecordDocStarter = {
       ? doc(
           hCenter(1, 'عرض سعر'),
           pCenter(b('وصل العقارية')),
-          pCenter(t('عرض سعر رسمي')),
           p(t('التاريخ: {{today}}')),
           hr(),
           h(2, t('بيانات العرض')),
@@ -173,7 +170,6 @@ const offer: RecordDocStarter = {
       : doc(
           hCenter(1, 'Price Offer'),
           pCenter(b('Wassel Real Estate')),
-          pCenter(t('Official price offer')),
           p(t('Date: {{today}}')),
           hr(),
           h(2, t('Offer Details')),

@@ -104,7 +104,7 @@ export default function NewTemplateModal({ open, onClose, onCreated }: Props) {
       if (starter) {
         const logo = await fetchLogoDataUri();
         if (logo) {
-          const logoNode = { type: 'image', attrs: { src: logo, width: 28, align: 'center' } };
+          const logoNode = { type: 'image', attrs: { src: logo, width: 18, align: 'center' } };
           const existing = Array.isArray(contentJson.content) ? (contentJson.content as unknown[]) : [];
           contentJson = { ...contentJson, content: [logoNode, ...existing] };
         }

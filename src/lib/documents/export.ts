@@ -416,7 +416,7 @@ function blockToDocx(node: JSONContent, isAr: boolean, listCtx?: { kind: 'bullet
           heading,
           bidirectional: bidi,
           ...(align ? { alignment: align } : {}),
-          spacing: { before: 200, after: 100 },
+          spacing: { before: 100, after: 50 },
         }),
       ];
     }
@@ -490,7 +490,7 @@ function tableToDocx(node: JSONContent, isAr: boolean): Table {
             return new TableCell({
               children: paras.length > 0 ? (paras as Paragraph[]) : [new Paragraph('')],
               shading: cell.type === 'tableHeader' ? { fill: BRAND.cream } : undefined,
-              margins: { top: 60, bottom: 60, left: 120, right: 120 },
+              margins: { top: 30, bottom: 30, left: 120, right: 120 },
             });
           }),
         }),

@@ -213,7 +213,7 @@ function blockToDocx(
           heading,
           bidirectional: bidi,
           ...(align ? { alignment: align } : {}),
-          spacing: { before: 200, after: 100 },
+          spacing: { before: 100, after: 50 },
         }),
       ];
     }
@@ -367,8 +367,9 @@ function tableToDocx(node: JSONContent, ctx: DocxCtx): Table {
             return new TableCell({
               children: paras.length > 0 ? (paras as Paragraph[]) : [new Paragraph('')],
               shading: cell.type === 'tableHeader' ? { fill: BRAND.cream } : undefined,
-              // Comfortable padding so the info table reads like a real form.
-              margins: { top: 60, bottom: 60, left: 120, right: 120 },
+              // Padding so the info table reads like a form, but compact enough
+              // that an 11-row table still fits one A4 page.
+              margins: { top: 30, bottom: 30, left: 120, right: 120 },
             });
           }),
         }),
