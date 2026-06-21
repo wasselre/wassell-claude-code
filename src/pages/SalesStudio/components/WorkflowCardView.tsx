@@ -1,16 +1,31 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Pencil, ExternalLink, ScrollText, GitCompare, Clock, MessageCircle, UserCog, AlertTriangle, CheckCircle2, ChevronRight } from 'lucide-react';
+import {
+  Pencil, ExternalLink, ScrollText, GitCompare, Clock, MessageCircle, UserCog, RefreshCw,
+  AlertTriangle, CheckCircle2, PhoneCall, UserCheck, Bell, ArrowRight, Sparkles,
+} from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { WorkflowCard, CompatibilityStatus } from '@/lib/salesStudio';
+import type { WorkflowCard, CompatibilityStatus, JourneyBranchCard, BranchActionLine } from '@/lib/salesStudio';
 import { COMPATIBILITY_LABEL } from '@/lib/salesStudio';
-import { pick } from '../lib/labels';
+import type { SalesAssignmentStrategy } from '@/types';
+import { ASSIGNMENT_STRATEGY_LABELS, pick } from '../lib/labels';
 
 const COMPAT_COLOR: Record<CompatibilityStatus, string> = {
   simple: '#10B981', partial: '#C09B5F', advanced: '#6B7280', drift: '#8E4E3A',
 };
 
-/** A workflow rendered as a plain-language business card under a journey stage. */
+function actionIcon(kind: BranchActionLine['kind']) {
+  switch (kind) {
+    case 'create_followup': return <PhoneCall size={12} />;
+    case 'update_client': return <UserCheck size={12} />;
+    case 'send_whatsapp': return <MessageCircle size={12} />;
+    case 'notify': return <Bell size={12} />;
+    case 'assign': return <UserCog size={12} />;
+    default: return <ArrowRight size={12} />;
+  }
+}
+
+/** A workflow rendered as plain-language OUTCOME → ACTIONS blocks. */
 export default function WorkflowCardView({
   card,
   onEditSimple,
@@ -20,7 +35,7 @@ export default function WorkflowCardView({
   onEditSimple: (card: WorkflowCard) => void;
   onCompare?: (card: WorkflowCard) => void;
 }) {
-  const { language, workflowRuns } = useAppStore();
+  const { language, workflowRuns, users } = useAppStore();
   const isAr = language === 'ar';
   const navigate = useNavigate();
 
@@ -37,9 +52,22 @@ export default function WorkflowCardView({
     return { runs, success, skipped, failed };
   }, [workflowRuns, card.workflow_id]);
 
+  const userName = (id: string | null) => {
+    if (!id) return '';
+    const u = users.find((x) => x.id === id);
+    return u ? ((isAr ? u.name_ar : u.name_en) || u.email || '') : '';
+  };
+  const strategyLabel = (s: string) => {
+    const k = ASSIGNMENT_STRATEGY_LABELS[s as SalesAssignmentStrategy];
+    return k ? pick(k, isAr) : s;
+  };
+
   const missing = !card.workflow_id;
   const compatColor = COMPAT_COLOR[card.compatibility];
   const canSimpleEdit = card.compatibility === 'simple' || card.compatibility === 'partial';
+  // The "Otherwise" / unconditional pass-through branches with no real actions
+  // add noise; show outcome blocks that actually do something, else keep them.
+  const outcomeBlocks = card.branches.filter((b) => b.action_lines.length > 0 || !b.is_else);
 
   return (
     <div className="rounded-xl border border-sand/40 bg-white p-3.5 shadow-sm">
@@ -65,9 +93,6 @@ export default function WorkflowCardView({
         </p>
       ) : (
         <>
-          {/* plain-language explanation */}
-          <p className="mt-2 text-xs leading-relaxed text-charcoal/70">{pick(card.explanation, isAr)}</p>
-
           {/* objective */}
           {(card.objective_ar || card.objective_en) && (
             <div className="mt-2 rounded-lg bg-cream/70 px-2.5 py-1.5 text-xs">
@@ -76,36 +101,10 @@ export default function WorkflowCardView({
             </div>
           )}
 
-          {/* branch / outcome summary */}
-          {card.branches.length > 0 && (
-            <div className="mt-2 space-y-1">
-              {card.branches.slice(0, 5).map((b) => (
-                <div key={b.branch_id} className={`flex items-center gap-1.5 text-xs ${b.enabled ? '' : 'opacity-40 line-through'}`}>
-                  <ChevronRight size={11} className="shrink-0 text-copper" />
-                  <span className="truncate text-charcoal/75">{pick(b.summary, isAr)}</span>
-                  {b.primary_success && <span title={isAr ? 'النتيجة الرئيسية' : 'Primary success'}><CheckCircle2 size={12} className="shrink-0 text-[#10B981]" /></span>}
-                  {b.next_action && <span className="truncate text-charcoal/45">→ {pick(b.next_action, isAr)}</span>}
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* current safe-edit surfaces */}
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {card.timings.map((t) => (
-              <span key={t.action_id} className="inline-flex items-center gap-1 rounded-md bg-copper/10 px-2 py-0.5 text-[11px] text-copper" dir="ltr">
-                <Clock size={11} /> {t.current_value || '—'}
-              </span>
-            ))}
-            {card.messages.length > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-md bg-[#25D366]/10 px-2 py-0.5 text-[11px] text-[#128C7E]">
-                <MessageCircle size={11} /> {card.messages.length} {isAr ? 'رسالة' : 'msg'}
-              </span>
-            )}
-            {card.assignments.map((a) => (
-              <span key={a.action_id} className="inline-flex items-center gap-1 rounded-md bg-charcoal/5 px-2 py-0.5 text-[11px] text-charcoal/70">
-                <UserCog size={11} /> {a.current_strategy}
-              </span>
+          {/* OUTCOME → ACTIONS blocks */}
+          <div className="mt-2.5 space-y-2">
+            {outcomeBlocks.map((b) => (
+              <OutcomeBlock key={b.branch_id} b={b} isAr={isAr} strategyLabel={strategyLabel} userName={userName} />
             ))}
           </div>
 
@@ -126,14 +125,9 @@ export default function WorkflowCardView({
             <Pencil size={12} /> {isAr ? 'تحرير مبسّط' : 'Edit simple'}
           </button>
         )}
-        {!missing && (card.compatibility === 'advanced' || card.compatibility === 'drift') && (
+        {!missing && (
           <button type="button" onClick={() => navigate(`/workflow/${card.workflow_id}`)} className="inline-flex items-center gap-1 rounded-lg border border-sand px-2.5 py-1 text-[11px] font-semibold text-charcoal hover:bg-cream">
-            <ExternalLink size={12} /> {isAr ? 'فتح في محرر سير العمل' : 'Open in Workflow Builder'}
-          </button>
-        )}
-        {!missing && card.compatibility !== 'advanced' && card.compatibility !== 'drift' && (
-          <button type="button" onClick={() => navigate(`/workflow/${card.workflow_id}`)} className="inline-flex items-center gap-1 rounded-lg border border-sand px-2.5 py-1 text-[11px] font-semibold text-charcoal hover:bg-cream">
-            <ExternalLink size={12} /> {isAr ? 'متقدم' : 'Advanced'}
+            <ExternalLink size={12} /> {(card.compatibility === 'advanced' || card.compatibility === 'drift') ? (isAr ? 'فتح في محرر سير العمل' : 'Open in Workflow Builder') : (isAr ? 'متقدم' : 'Advanced')}
           </button>
         )}
         {!missing && (
@@ -148,5 +142,87 @@ export default function WorkflowCardView({
         )}
       </div>
     </div>
+  );
+}
+
+/** One outcome rendered as a self-contained automation block. */
+function OutcomeBlock({
+  b, isAr, strategyLabel, userName,
+}: {
+  b: JourneyBranchCard;
+  isAr: boolean;
+  strategyLabel: (s: string) => string;
+  userName: (id: string | null) => string;
+}) {
+  return (
+    <div className={`rounded-lg border p-2.5 ${b.enabled ? 'border-sand/50 bg-cream/30' : 'border-sand/40 bg-cream/20 opacity-50'}`}>
+      {/* outcome header */}
+      <div className="flex items-center gap-1.5">
+        <span className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${b.enabled ? 'bg-copper' : 'bg-charcoal/30'}`} />
+        <span className={`flex-1 truncate text-xs font-bold text-chocolate ${b.enabled ? '' : 'line-through'}`}>{pick(b.summary, isAr)}</span>
+        {b.primary_success && <span title={isAr ? 'النتيجة الرئيسية' : 'Primary success'}><CheckCircle2 size={12} className="shrink-0 text-[#10B981]" /></span>}
+        {!b.enabled && <span className="badge shrink-0" style={{ backgroundColor: '#6B72801A', color: '#6B7280' }}>{isAr ? 'معطّل' : 'off'}</span>}
+      </div>
+      {b.condition_summary && (
+        <p className="mt-0.5 ps-3 text-[10px] text-charcoal/45">{pick(b.condition_summary, isAr)}</p>
+      )}
+
+      {/* the actions this outcome runs */}
+      {b.action_lines.length === 0 ? (
+        <p className="mt-1 ps-3 text-[11px] text-charcoal/40">{isAr ? 'لا إجراء — إنهاء' : 'No action — ends here'}</p>
+      ) : (
+        <ul className="mt-1.5 space-y-1.5">
+          {b.action_lines.map((line) => {
+            const timing = b.timings.find((t) => t.action_id === line.action_id);
+            const assign = b.assignments.find((a) => a.action_id === line.action_id);
+            const maxA = b.max_attempts.find((m) => m.action_id === line.action_id);
+            const hasMsg = b.messages.some((m) => m.action_id === line.action_id);
+            return (
+              <li key={line.action_id} className="ps-3 text-[11px]">
+                <div className="flex items-center gap-1.5 font-semibold text-charcoal/80">
+                  <span className="text-copper">{actionIcon(line.kind)}</span>
+                  <span className="truncate">{pick(line.label, isAr)}{line.sets ? ` → ${pick(line.sets, isAr)}` : ''}</span>
+                </div>
+                <div className="mt-0.5 flex flex-wrap gap-1 ps-4">
+                  {timing && (
+                    <Chip color="#B8734F" icon={<Clock size={10} />}>
+                      {isAr ? 'الموعد: ' : 'Schedule: '}{timing.current_value?.trim() || (isAr ? 'فوري' : 'immediate')}
+                    </Chip>
+                  )}
+                  {assign && (
+                    <Chip color="#4A4E54" icon={<UserCog size={10} />}>
+                      {isAr ? 'الإسناد: ' : 'Assign: '}{assign.current_strategy === 'fixed_user' && userName(assign.current_fixed_user_id) ? userName(assign.current_fixed_user_id) : strategyLabel(assign.current_strategy)}
+                    </Chip>
+                  )}
+                  {maxA && maxA.current_value != null && (
+                    <Chip color="#8E4E3A" icon={<RefreshCw size={10} />}>
+                      {isAr ? 'حد المحاولات: ' : 'Max: '}{maxA.current_value}
+                    </Chip>
+                  )}
+                  {hasMsg && (
+                    <Chip color="#128C7E" icon={<MessageCircle size={10} />}>{isAr ? 'رسالة واتساب' : 'WhatsApp'}</Chip>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {/* next workflow / next task */}
+      {b.next_action && (
+        <p className="mt-1.5 inline-flex items-center gap-1 ps-3 text-[10px] text-charcoal/45">
+          <Sparkles size={10} className="text-copper" /> {isAr ? 'التالي: ' : 'Next: '}{pick(b.next_action, isAr)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Chip({ color, icon, children }: { color: string; icon: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5" style={{ backgroundColor: `${color}14`, color }}>
+      {icon}<span dir="auto">{children}</span>
+    </span>
   );
 }

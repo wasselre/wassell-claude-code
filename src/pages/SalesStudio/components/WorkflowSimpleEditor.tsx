@@ -1,17 +1,29 @@
 import { useMemo, useState } from 'react';
-import { X, Clock, MessageCircle, UserCog, GitBranch, Target, ShieldAlert, Info } from 'lucide-react';
+import { X, MessageCircle, UserCog, Target, ShieldAlert, Info, PhoneCall, UserCheck, Bell, ArrowRight, CheckCircle2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import type { WorkflowCard } from '@/lib/salesStudio';
+import type { WorkflowCard, BranchActionLine } from '@/lib/salesStudio';
 import type { SalesWorkflowOverlay, SalesAssignmentStrategy } from '@/types';
 import { ASSIGNMENT_STRATEGY_LABELS, pick } from '../lib/labels';
 
 const STRATEGIES: SalesAssignmentStrategy[] = ['same_sales_rep', 'current_user', 'fixed_user', 'role_least_workload'];
 
+function actionIcon(kind: BranchActionLine['kind']) {
+  switch (kind) {
+    case 'create_followup': return <PhoneCall size={13} />;
+    case 'update_client': return <UserCheck size={13} />;
+    case 'send_whatsapp': return <MessageCircle size={13} />;
+    case 'notify': return <Bell size={13} />;
+    case 'assign': return <UserCog size={13} />;
+    default: return <ArrowRight size={13} />;
+  }
+}
+
 /**
- * Safe, business-level editor for ONE workflow's overlay. Edits objective text,
- * branch enable/labels, timing expressions, WhatsApp templates, max attempts, and
- * assignment strategy — NEVER triggers, target models, raw mappings, or JSON.
- * Saves into the draft version (the parent guarantees we're editing a draft).
+ * Safe, business-level editor organized as OUTCOME → ACTIONS. Each outcome is a
+ * self-contained block: its actions, and each action's timing / assignment /
+ * max-attempts / message inline — so a manager reads "if this outcome happens,
+ * here's exactly what runs" instead of matching scattered fields. Edits the
+ * draft version; NEVER triggers, target models, raw mappings, or JSON.
  */
 export default function WorkflowSimpleEditor({
   card,
@@ -20,13 +32,17 @@ export default function WorkflowSimpleEditor({
   onSave,
 }: {
   card: WorkflowCard;
-  /** True when the manager opened this from an ACTIVE version (we'll fork a draft). */
   editingActive: boolean;
   onClose: () => void;
   onSave: (next: SalesWorkflowOverlay) => void;
 }) {
   const { language, users } = useAppStore();
   const isAr = language === 'ar';
+
+  const allTimings = useMemo(() => card.branches.flatMap((b) => b.timings), [card.branches]);
+  const allMax = useMemo(() => card.branches.flatMap((b) => b.max_attempts), [card.branches]);
+  const allMsgs = useMemo(() => card.branches.flatMap((b) => b.messages), [card.branches]);
+  const allAssign = useMemo(() => card.branches.flatMap((b) => b.assignments), [card.branches]);
 
   const [objAr, setObjAr] = useState(card.objective_ar);
   const [objEn, setObjEn] = useState(card.objective_en);
@@ -38,20 +54,12 @@ export default function WorkflowSimpleEditor({
       primary_success: b.primary_success,
     }])),
   );
-  const [timings, setTimings] = useState(() =>
-    Object.fromEntries(card.timings.map((t) => [t.action_id, t.current_value])),
-  );
-  const [maxAttempts, setMaxAttempts] = useState(() =>
-    Object.fromEntries(card.max_attempts.map((m) => [m.action_id, m.current_value])),
-  );
-  const [messages, setMessages] = useState(() =>
-    Object.fromEntries(card.messages.map((m) => [m.action_id, { ar: m.current_ar, en: m.current_en }])),
-  );
+  const [timings, setTimings] = useState(() => Object.fromEntries(allTimings.map((t) => [t.action_id, t.current_value])));
+  const [maxAttempts, setMaxAttempts] = useState(() => Object.fromEntries(allMax.map((m) => [m.action_id, m.current_value])));
+  const [messages, setMessages] = useState(() => Object.fromEntries(allMsgs.map((m) => [m.action_id, { ar: m.current_ar, en: m.current_en }])));
   const [assignments, setAssignments] = useState(() =>
-    Object.fromEntries(card.assignments.map((a) => [a.action_id, {
+    Object.fromEntries(allAssign.map((a) => [a.action_id, {
       strategy: (STRATEGIES.includes(a.current_strategy as SalesAssignmentStrategy) ? a.current_strategy : 'same_sales_rep') as SalesAssignmentStrategy,
-      // current_fixed_user_id already folds in the overlay value (else the
-      // workflow's own static assignee) so the dropdown shows who it's set to.
       fixed_user_id: a.current_fixed_user_id ?? null,
     }])),
   );
@@ -83,12 +91,12 @@ export default function WorkflowSimpleEditor({
         <header className="flex items-start justify-between gap-2 border-b border-sand/50 p-4">
           <div className="min-w-0">
             <h3 className="truncate text-base font-bold text-chocolate">{isAr ? card.label_ar : card.label_en}</h3>
-            <p className="text-xs text-charcoal/55">{isAr ? 'تحرير الإعدادات الأساسية الآمنة' : 'Edit safe business-level settings'}</p>
+            <p className="text-xs text-charcoal/55">{isAr ? 'لكل نتيجة: ما الذي سينفّذه النظام' : 'Per outcome: what the system will run'}</p>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-1.5 text-charcoal/50 hover:bg-cream"><X size={18} /></button>
         </header>
 
-        <div className="flex-1 space-y-5 overflow-y-auto p-4">
+        <div className="flex-1 space-y-4 overflow-y-auto p-4">
           {editingActive && (
             <div className="flex items-start gap-2 rounded-xl bg-copper/10 p-3 text-xs text-charcoal/80">
               <Info size={15} className="mt-0.5 shrink-0 text-copper" />
@@ -96,116 +104,104 @@ export default function WorkflowSimpleEditor({
             </div>
           )}
 
-          {/* Objective */}
-          <Section icon={<Target size={14} />} title={isAr ? 'الهدف' : 'Objective'}>
+          {/* Objective (per-workflow) */}
+          <section>
+            <h4 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-charcoal/50">
+              <Target size={14} className="text-copper" /> {isAr ? 'الهدف' : 'Objective'}
+            </h4>
             <textarea value={objAr} onChange={(e) => setObjAr(e.target.value)} rows={2} dir="rtl" className="form-input w-full text-sm" placeholder={isAr ? 'الهدف بالعربية' : 'Goal (Arabic)'} />
             <textarea value={objEn} onChange={(e) => setObjEn(e.target.value)} rows={2} dir="ltr" className="form-input mt-2 w-full text-sm" placeholder="Goal (English)" />
-          </Section>
+          </section>
 
-          {/* Branches */}
-          {card.branches.length > 0 && (
-            <Section icon={<GitBranch size={14} />} title={isAr ? 'المسارات والنتائج' : 'Branches & outcomes'}>
-              <div className="space-y-2">
-                {card.branches.map((b) => {
-                  const st = branches[b.branch_id]!;
-                  return (
-                    <div key={b.branch_id} className="rounded-lg border border-sand/40 p-2.5">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-xs font-semibold text-charcoal">{pick(b.summary, isAr)}</span>
-                        <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-charcoal/60">
-                          <input type="checkbox" checked={st.enabled} onChange={(e) => setBranches((s) => ({ ...s, [b.branch_id]: { ...st, enabled: e.target.checked } }))} />
-                          {isAr ? 'مفعّل' : 'Enabled'}
-                        </label>
+          {/* OUTCOME → ACTIONS blocks */}
+          <section>
+            <h4 className="mb-2 text-xs font-bold uppercase tracking-wide text-charcoal/50">{isAr ? 'النتائج والإجراءات' : 'Outcomes & actions'}</h4>
+            <div className="space-y-3">
+              {card.branches.map((b) => {
+                const st = branches[b.branch_id]!;
+                return (
+                  <div key={b.branch_id} className={`rounded-xl border p-3 ${st.enabled ? 'border-sand/50' : 'border-sand/40 bg-cream/30'}`}>
+                    {/* outcome header */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className={`min-w-0 flex-1 truncate text-xs font-bold text-chocolate ${st.enabled ? '' : 'line-through opacity-60'}`}>{pick(b.summary, isAr)}</span>
+                      <label className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-[11px] text-charcoal/60">
+                        <input type="checkbox" checked={st.enabled} onChange={(e) => setBranches((s) => ({ ...s, [b.branch_id]: { ...st, enabled: e.target.checked } }))} />
+                        {isAr ? 'مفعّل' : 'On'}
+                      </label>
+                    </div>
+                    {b.condition_summary && <p className="mt-0.5 text-[10px] text-charcoal/45">{pick(b.condition_summary, isAr)}</p>}
+
+                    {/* per-action inline settings */}
+                    {b.action_lines.length === 0 ? (
+                      <p className="mt-2 text-[11px] text-charcoal/40">{isAr ? 'لا إجراء — تنتهي المتابعة هنا.' : 'No action — the follow-up ends here.'}</p>
+                    ) : (
+                      <div className="mt-2 space-y-2.5">
+                        {b.action_lines.map((line) => {
+                          const timing = b.timings.find((t) => t.action_id === line.action_id);
+                          const maxA = b.max_attempts.find((m) => m.action_id === line.action_id);
+                          const assign = b.assignments.find((a) => a.action_id === line.action_id);
+                          const msg = b.messages.find((m) => m.action_id === line.action_id);
+                          return (
+                            <div key={line.action_id} className="rounded-lg bg-cream/40 p-2">
+                              <div className="flex items-center gap-1.5 text-xs font-semibold text-charcoal/80">
+                                <span className="text-copper">{actionIcon(line.kind)}</span>
+                                <span className="truncate">{pick(line.label, isAr)}{line.sets ? ` → ${pick(line.sets, isAr)}` : ''}</span>
+                              </div>
+                              <div className="mt-1.5 space-y-1.5 ps-5">
+                                {timing && (
+                                  <Field label={isAr ? 'الموعد' : 'Schedule'}>
+                                    <input value={timings[line.action_id] ?? ''} onChange={(e) => setTimings((s) => ({ ...s, [line.action_id]: e.target.value }))} dir="ltr" className="form-input w-full !py-1.5 text-xs" placeholder={isAr ? 'مثال: +1d (فوري إن تُرك فارغًا)' : 'e.g. +1d (immediate if blank)'} />
+                                  </Field>
+                                )}
+                                {assign && (
+                                  <Field label={isAr ? 'الإسناد' : 'Assign to'}>
+                                    <select value={assignments[line.action_id]?.strategy ?? 'same_sales_rep'} onChange={(e) => setAssignments((s) => ({ ...s, [line.action_id]: { ...s[line.action_id]!, strategy: e.target.value as SalesAssignmentStrategy } }))} className="form-input w-full !py-1.5 text-xs">
+                                      {STRATEGIES.map((str) => <option key={str} value={str}>{pick(ASSIGNMENT_STRATEGY_LABELS[str], isAr)}</option>)}
+                                    </select>
+                                    {assignments[line.action_id]?.strategy === 'fixed_user' && (
+                                      <select value={assignments[line.action_id]?.fixed_user_id ?? ''} onChange={(e) => setAssignments((s) => ({ ...s, [line.action_id]: { ...s[line.action_id]!, fixed_user_id: e.target.value || null } }))} className="form-input mt-1 w-full !py-1.5 text-xs">
+                                        <option value="">{isAr ? 'اختر مستخدمًا' : 'Select user'}</option>
+                                        {activeUsers.map((u) => <option key={u.id} value={u.id}>{(isAr ? u.name_ar : u.name_en) || u.email}</option>)}
+                                      </select>
+                                    )}
+                                  </Field>
+                                )}
+                                {maxA && (
+                                  <Field label={<><ShieldAlert size={10} className="me-1 inline" />{isAr ? 'حد المحاولات' : 'Max attempts'}</>}>
+                                    <input type="number" min={0} value={maxAttempts[line.action_id] ?? ''} onChange={(e) => setMaxAttempts((s) => ({ ...s, [line.action_id]: e.target.value === '' ? null : Number(e.target.value) }))} dir="ltr" className="form-input w-28 !py-1.5 text-xs" placeholder={isAr ? 'بلا حد' : 'no cap'} />
+                                  </Field>
+                                )}
+                                {msg && (
+                                  <Field label={isAr ? 'الرسالة' : 'Message'}>
+                                    <textarea value={messages[line.action_id]?.ar ?? ''} onChange={(e) => setMessages((s) => ({ ...s, [line.action_id]: { ...s[line.action_id]!, ar: e.target.value } }))} rows={2} dir="rtl" className="form-input w-full text-xs" placeholder={isAr ? 'الرسالة بالعربية' : 'Message (Arabic)'} />
+                                    <textarea value={messages[line.action_id]?.en ?? ''} onChange={(e) => setMessages((s) => ({ ...s, [line.action_id]: { ...s[line.action_id]!, en: e.target.value } }))} rows={2} dir="ltr" className="form-input mt-1 w-full text-xs" placeholder="Message (English)" />
+                                  </Field>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
-                      <div className="mt-1.5 flex items-center gap-2">
-                        <input value={st.label_en} onChange={(e) => setBranches((s) => ({ ...s, [b.branch_id]: { ...st, label_en: e.target.value } }))} dir="ltr" className="form-input flex-1 !py-1.5 text-xs" placeholder={b.label_en || 'Label (EN)'} />
-                        <input value={st.label_ar} onChange={(e) => setBranches((s) => ({ ...s, [b.branch_id]: { ...st, label_ar: e.target.value } }))} dir="rtl" className="form-input flex-1 !py-1.5 text-xs" placeholder={b.label_ar || 'التسمية'} />
-                      </div>
+                    )}
+
+                    {/* outcome-level toggles */}
+                    <div className="mt-2 flex flex-wrap items-center gap-3 border-t border-sand/30 pt-2">
                       {!b.is_else && (
-                        <label className="mt-1.5 inline-flex cursor-pointer items-center gap-1 text-[11px] text-charcoal/60">
+                        <label className="inline-flex cursor-pointer items-center gap-1 text-[11px] text-charcoal/60">
                           <input type="checkbox" checked={st.primary_success} onChange={(e) => setBranches((s) => ({ ...s, [b.branch_id]: { ...st, primary_success: e.target.checked } }))} />
-                          {isAr ? 'النتيجة الرئيسية الناجحة' : 'Primary success outcome'}
+                          <CheckCircle2 size={11} className="text-[#10B981]" /> {isAr ? 'النتيجة الرئيسية' : 'Primary success'}
                         </label>
                       )}
+                      <div className="flex items-center gap-1.5">
+                        <input value={st.label_en} onChange={(e) => setBranches((s) => ({ ...s, [b.branch_id]: { ...st, label_en: e.target.value } }))} dir="ltr" className="form-input !w-28 !py-1 text-[11px]" placeholder={isAr ? 'تسمية (EN)' : 'Rename (EN)'} />
+                        <input value={st.label_ar} onChange={(e) => setBranches((s) => ({ ...s, [b.branch_id]: { ...st, label_ar: e.target.value } }))} dir="rtl" className="form-input !w-28 !py-1 text-[11px]" placeholder={isAr ? 'تسمية' : 'Rename'} />
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
-
-          {/* Timings + max attempts */}
-          {card.timings.length > 0 && (
-            <Section icon={<Clock size={14} />} title={isAr ? 'توقيتات المتابعة' : 'Follow-up timing'}>
-              <p className="mb-2 text-[11px] text-charcoal/50">{isAr ? 'صيغ مثل: +0d ، +1d ، +2d @10:00 ، +5d' : 'Expressions like: +0d, +1d, +2d @10:00, +5d'}</p>
-              <div className="space-y-2">
-                {card.timings.map((t) => (
-                  <div key={t.action_id} className="flex items-center gap-2">
-                    <span className="w-28 shrink-0 truncate text-xs text-charcoal/65">{pick(t.label, isAr)}</span>
-                    <input value={timings[t.action_id] ?? ''} onChange={(e) => setTimings((s) => ({ ...s, [t.action_id]: e.target.value }))} dir="ltr" className="form-input flex-1 !py-1.5 text-xs" placeholder={isAr ? 'مثال: +1d (فوري إن تُرك فارغًا)' : 'e.g. +1d (immediate if blank)'} />
                   </div>
-                ))}
-              </div>
-              {card.max_attempts.length > 0 && (
-                <div className="mt-3 space-y-2">
-                  <p className="text-[11px] font-semibold text-charcoal/55"><ShieldAlert size={11} className="me-1 inline" />{isAr ? 'حد المحاولات (إيقاف إعادة المحاولة)' : 'Max attempts (stops the retry)'}</p>
-                  {card.max_attempts.map((m) => (
-                    <div key={m.action_id} className="flex items-center gap-2">
-                      <span className="w-28 shrink-0 truncate text-xs text-charcoal/65">{pick(m.label, isAr)}</span>
-                      <input
-                        type="number" min={0}
-                        value={maxAttempts[m.action_id] ?? ''}
-                        onChange={(e) => setMaxAttempts((s) => ({ ...s, [m.action_id]: e.target.value === '' ? null : Number(e.target.value) }))}
-                        dir="ltr" className="form-input w-24 !py-1.5 text-xs" placeholder={isAr ? 'بلا حد' : 'no cap'}
-                      />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </Section>
-          )}
-
-          {/* Messages */}
-          {card.messages.length > 0 && (
-            <Section icon={<MessageCircle size={14} />} title={isAr ? 'قوالب رسائل واتساب' : 'WhatsApp templates'}>
-              <div className="space-y-3">
-                {card.messages.map((m) => {
-                  const st = messages[m.action_id]!;
-                  return (
-                    <div key={m.action_id}>
-                      <textarea value={st.ar} onChange={(e) => setMessages((s) => ({ ...s, [m.action_id]: { ...st, ar: e.target.value } }))} rows={2} dir="rtl" className="form-input w-full text-xs" placeholder={isAr ? 'الرسالة بالعربية' : 'Message (Arabic)'} />
-                      <textarea value={st.en} onChange={(e) => setMessages((s) => ({ ...s, [m.action_id]: { ...st, en: e.target.value } }))} rows={2} dir="ltr" className="form-input mt-1.5 w-full text-xs" placeholder="Message (English)" />
-                    </div>
-                  );
-                })}
-                <p className="text-[11px] text-charcoal/45">{isAr ? 'يمكنك استخدام رموز مثل {client_name} وتُستبدل تلقائيًا.' : 'You can use tokens like {client_name} — resolved automatically.'}</p>
-              </div>
-            </Section>
-          )}
-
-          {/* Assignment */}
-          {card.assignments.length > 0 && (
-            <Section icon={<UserCog size={14} />} title={isAr ? 'استراتيجية الإسناد' : 'Assignment strategy'}>
-              <div className="space-y-2">
-                {card.assignments.map((a) => {
-                  const st = assignments[a.action_id]!;
-                  return (
-                    <div key={a.action_id} className="space-y-1.5">
-                      <select value={st.strategy} onChange={(e) => setAssignments((s) => ({ ...s, [a.action_id]: { ...st, strategy: e.target.value as SalesAssignmentStrategy } }))} className="form-input w-full !py-1.5 text-xs">
-                        {STRATEGIES.map((str) => <option key={str} value={str}>{pick(ASSIGNMENT_STRATEGY_LABELS[str], isAr)}</option>)}
-                      </select>
-                      {st.strategy === 'fixed_user' && (
-                        <select value={st.fixed_user_id ?? ''} onChange={(e) => setAssignments((s) => ({ ...s, [a.action_id]: { ...st, fixed_user_id: e.target.value || null } }))} className="form-input w-full !py-1.5 text-xs">
-                          <option value="">{isAr ? 'اختر مستخدمًا' : 'Select user'}</option>
-                          {activeUsers.map((u) => <option key={u.id} value={u.id}>{(isAr ? u.name_ar : u.name_en) || u.email}</option>)}
-                        </select>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </Section>
-          )}
+                );
+              })}
+            </div>
+          </section>
 
           <div className="rounded-xl bg-cream/70 p-3 text-[11px] leading-relaxed text-charcoal/55">
             {isAr
@@ -223,13 +219,11 @@ export default function WorkflowSimpleEditor({
   );
 }
 
-function Section({ icon, title, children }: { icon: React.ReactNode; title: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section>
-      <h4 className="mb-2 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-charcoal/50">
-        <span className="text-copper">{icon}</span> {title}
-      </h4>
+    <div>
+      <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/50">{label}</label>
       {children}
-    </section>
+    </div>
   );
 }

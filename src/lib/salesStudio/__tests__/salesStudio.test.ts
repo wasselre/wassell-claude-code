@@ -234,6 +234,17 @@ describe('buildWorkflowCard — editor pre-fill', () => {
     expect(card.objective_en).toBeTruthy();
     expect(card.objective_ar).toBeTruthy();
   });
+
+  it('groups each action + its handles UNDER its outcome (Outcome → Actions)', () => {
+    const card = buildWorkflowCard('appointment_booking_call', 'جديد', kickoff, undefined, DEFAULT_SALES_PROCESS);
+    const b = card.branches.find((x) => x.branch_id === 'b1')!;
+    // the outcome block carries its own ordered action line(s)...
+    expect(b.action_lines.length).toBeGreaterThan(0);
+    expect(b.action_lines[0]!.kind).toBe('create_followup');
+    // ...and the timing + assignee handles are scoped to THIS outcome's action.
+    expect(b.timings.find((t) => t.action_id === 'a_create')).toBeTruthy();
+    expect(b.assignments.find((a) => a.action_id === 'a_create')?.current_fixed_user_id).toBe('user-42');
+  });
 });
 
 describe('compareExperiment', () => {

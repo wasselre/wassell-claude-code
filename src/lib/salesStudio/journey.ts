@@ -19,6 +19,17 @@ export type Bilingual = { ar: string; en: string };
 /** How safely the Studio can edit a workflow. */
 export type CompatibilityStatus = 'simple' | 'partial' | 'advanced' | 'drift';
 
+/** One concrete action inside an outcome block ("Create Booking Call follow-up"). */
+export interface BranchActionLine {
+  action_id: string;
+  kind: 'create_followup' | 'update_client' | 'send_whatsapp' | 'notify' | 'assign' | 'other';
+  label: Bilingual;
+  /** For create_followup — the created follow-up type label. */
+  created_type?: Bilingual;
+  /** For update_client — the stage/status it sets (if a static value). */
+  sets?: Bilingual;
+}
+
 export interface JourneyBranchCard {
   branch_id: string;
   label_ar?: string;
@@ -29,9 +40,20 @@ export interface JourneyBranchCard {
   /** From the overlay — disabled branches are dropped at execution. */
   enabled: boolean;
   primary_success: boolean;
+  /** The outcome headline ("Outcome: No answer"). */
   summary: Bilingual;
+  /** The "When: …" condition line (shown under the headline when present). */
+  condition_summary: Bilingual | null;
   /** Plain-language description of the next task this branch creates. */
   next_action: Bilingual | null;
+  // ── This outcome's COMPLETE automation (Outcome → Actions) ──
+  /** The ordered actions this outcome runs. */
+  action_lines: BranchActionLine[];
+  /** Editable handles scoped to THIS outcome's actions (keyed by action_id). */
+  timings: JourneyTimingHandle[];
+  messages: JourneyMessageHandle[];
+  assignments: JourneyAssignmentHandle[];
+  max_attempts: JourneyMaxAttemptsHandle[];
 }
 
 /** One editable timing (a create_record date-expression). */
@@ -240,14 +262,61 @@ function inferAssignmentStrategy(mapping: FieldMapping): string {
   }
 }
 
-function extractHandles(workflow: Workflow, overlay: SalesWorkflowOverlay | undefined) {
+function actionFollowupType(action: WorkflowAction): string {
+  if (action.type !== 'create_record') return '';
+  const m = action.field_mappings.find((x) => x.target_field_id === 'followup_type');
+  return typeof m?.static_value === 'string' ? m.static_value
+    : Array.isArray(m?.static_value) ? String((m!.static_value as unknown[])[0] ?? '') : '';
+}
+
+/** Build the ordered, human-readable action steps for a set of actions. */
+function buildActionLines(actions: WorkflowAction[], config: SalesProcessConfig): BranchActionLine[] {
+  return actions.map((action) => {
+    if (action.type === 'create_record') {
+      const cfg = getFollowUpTypeConfig(actionFollowupType(action), config);
+      const created = cfg ? { ar: cfg.label_ar, en: cfg.label_en } : undefined;
+      return {
+        action_id: action.id,
+        kind: 'create_followup' as const,
+        label: created ? { ar: `إنشاء متابعة «${created.ar}»`, en: `Create "${created.en}" follow-up` } : { ar: 'إنشاء المهمة التالية', en: 'Create the next task' },
+        created_type: created,
+      };
+    }
+    if (action.type === 'update_record') {
+      const setVal = (id: string) => {
+        const m = action.field_mappings.find((x) => x.target_field_id === id);
+        return typeof m?.static_value === 'string' ? m.static_value
+          : Array.isArray(m?.static_value) ? String((m!.static_value as unknown[])[0] ?? '') : '';
+      };
+      const sv = setVal('client_status') || setVal('client_stage');
+      return {
+        action_id: action.id,
+        kind: 'update_client' as const,
+        label: { ar: 'تحديث حالة العميل', en: 'Update client status' },
+        sets: sv ? { ar: sv, en: sv } : undefined,
+      };
+    }
+    if (action.type === 'send_whatsapp_message') {
+      return { action_id: action.id, kind: 'send_whatsapp' as const, label: { ar: 'إرسال رسالة واتساب', en: 'Send WhatsApp message' } };
+    }
+    if (action.type === 'send_notification') {
+      return { action_id: action.id, kind: 'notify' as const, label: { ar: 'إرسال تنبيه', en: 'Send notification' } };
+    }
+    if (action.type === 'assign_user') {
+      return { action_id: action.id, kind: 'assign' as const, label: { ar: 'إسناد مستخدم', en: 'Assign user' } };
+    }
+    return { action_id: action.id, kind: 'other' as const, label: { ar: action.type, en: action.type } };
+  });
+}
+
+function extractHandlesForActions(actions: WorkflowAction[], overlay: SalesWorkflowOverlay | undefined) {
   const timings: JourneyTimingHandle[] = [];
   const messages: JourneyMessageHandle[] = [];
   const assignments: JourneyAssignmentHandle[] = [];
   const maxAttempts: JourneyMaxAttemptsHandle[] = [];
   const seenTiming = new Set<string>();
 
-  for (const action of allActions(workflow)) {
+  for (const action of actions) {
     if (action.type === 'create_record') {
       const dateMap = action.field_mappings.find((m) => m.source_type === 'date_expression');
       if (dateMap && !seenTiming.has(action.id)) {
@@ -297,7 +366,7 @@ function extractHandles(workflow: Workflow, overlay: SalesWorkflowOverlay | unde
   return { timings, messages, assignments, maxAttempts };
 }
 
-function buildBranchCards(workflow: Workflow, overlay: SalesWorkflowOverlay | undefined): JourneyBranchCard[] {
+function buildBranchCards(workflow: Workflow, overlay: SalesWorkflowOverlay | undefined, config: SalesProcessConfig): JourneyBranchCard[] {
   const branches = getWorkflowBranches(workflow);
   return branches.map((b) => {
     const outcome = branchOutcome(b.conditions);
@@ -313,6 +382,8 @@ function buildBranchCards(workflow: Workflow, overlay: SalesWorkflowOverlay | un
           // No named outcome, no label → describe the branch by its conditions
           // so the card/editor never shows a blank "مسار".
           : condDesc ?? { ar: 'مسار غير مشروط', en: 'Unconditional path' };
+    // Per-outcome automation: this branch's own actions + their editable handles.
+    const handles = extractHandlesForActions(b.actions, overlay);
     return {
       branch_id: b.id,
       label_ar: bo?.label_ar ?? b.label_ar,
@@ -322,7 +393,14 @@ function buildBranchCards(workflow: Workflow, overlay: SalesWorkflowOverlay | un
       enabled: bo?.enabled !== false,
       primary_success: !!bo?.primary_success,
       summary,
+      // Only show the condition line separately when the headline isn't already it.
+      condition_summary: oc ? condDesc : null,
       next_action: describeNextAction(b.actions),
+      action_lines: buildActionLines(b.actions, config),
+      timings: handles.timings,
+      messages: handles.messages,
+      assignments: handles.assignments,
+      max_attempts: handles.maxAttempts,
     };
   });
 }
@@ -366,7 +444,9 @@ export function buildWorkflowCard(
     };
   }
   const overlay = overlayByWorkflow?.[workflow.id];
-  const handles = extractHandles(workflow, overlay);
+  // Flat aggregates kept for back-compat (e.g. overlay-resolver / tests); the
+  // card + editor now render the per-OUTCOME handles on each branch instead.
+  const handles = extractHandlesForActions(allActions(workflow), overlay);
   return {
     workflow_id: workflow.id,
     activity_type: activityType,
@@ -379,7 +459,7 @@ export function buildWorkflowCard(
     compatibility: computeCompatibility(workflow),
     objective_ar: overlay?.objective_ar?.trim() || cfg?.objective_ar || '',
     objective_en: overlay?.objective_en?.trim() || cfg?.objective_en || '',
-    branches: buildBranchCards(workflow, overlay),
+    branches: buildBranchCards(workflow, overlay, config),
     timings: handles.timings,
     messages: handles.messages,
     assignments: handles.assignments,
