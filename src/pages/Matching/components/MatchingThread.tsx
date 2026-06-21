@@ -404,6 +404,7 @@ function Bubble({ role, content, typing }: { role: 'user' | 'assistant'; content
 function ToolBadge({ name, isAr }: { name: string; isAr: boolean }) {
   const map: Record<string, { Icon: typeof Search; ar: string; en: string }> = {
     match_projects: { Icon: Search, ar: 'يطابق المشاريع...', en: 'Matching projects...' },
+    search_projects: { Icon: Search, ar: 'يبحث عن المشروع...', en: 'Finding the project…' },
     get_project: { Icon: FileSearch, ar: 'يجلب تفاصيل المشروع...', en: 'Fetching project details...' },
     compare_projects: { Icon: GitCompareArrows, ar: 'يقارن المشاريع...', en: 'Comparing projects...' },
     get_customer_context: { Icon: UserSearch, ar: 'يطّلع على بيانات العميل...', en: 'Reading the lead…' },

@@ -94,6 +94,7 @@ A salesperson is often ON A CALL with a customer RIGHT NOW. Be fast, concrete, h
 4. MESSAGE DRAFTING — "وش أرسل له بعد الزيارة؟" / "اكتب رسالة واتساب" → (get_customer_context / get_project if needed) → emit_message.
 5. TASK / FOLLOW-UP CREATION — "ذكرني أتابعه بكرة" / "سوِّ له مهمة متابعة" → get_customer_context → propose_task (NEVER writes without confirmation).
 6. CUSTOMER UNDERSTANDING — continuously extract + refine the customer's requirements (budget, type, bedrooms, area, districts, financing, timeline, purpose, family/parking/special needs) from everything the salesperson says. The full chat is your memory — carry earlier requirements forward; ask only for what's still missing and material.
+7. PROJECT INFO BY NAME — "أعطني معلومات عن دروازه" / "وش تفاصيل مشروع كذا؟" → call search_projects(name) to find the project_id → get_project → summarize ONLY the real facts (location, unit types, price/area ranges, availability, status). If more than one project matches the name, ask which one. Never invent a missing fact.
 
 A message can need MORE THAN ONE capability — e.g. "العميل يبي تاون هاوس في النرجس، وإذا غالي وش أقول له؟" → match_projects THEN an objection-handling message. Handle them in one reply.
 
@@ -102,6 +103,9 @@ A message can need MORE THAN ONE capability — e.g. "العميل يبي تاو
 2. Call match_projects. The tool does ALL searching, tiering, scoring, and distance — you do NOT search or score yourself.
 3. (Optional) get_project on the top 1–2 picks for richer selling points (amenities, guarantees, services).
 4. Present the ranked recommendation, then call emit_recommendation with the SAME content so the app renders the card.
+
+# FINDING A PROJECT BY NAME
+When the salesperson names a SPECIFIC project — to get its info, or to compare named projects — call search_projects with the name. It returns candidate projects (project_id, name, city, district, and whether it's ours or from all_projects). Use the returned project_id with get_project (for facts) or compare_projects (for a comparison). NEVER guess a project_id. If search_projects returns more than one plausible match for the name, ask the salesperson which one before continuing. all_projects candidates still require verification before offering.
 
 # The two tiers — NEVER mix them
 match_projects returns up to two SEPARATE groups:
@@ -212,6 +216,18 @@ export const MATCH_TOOLS: ToolUnion[] = [
         project_id: { type: 'string', description: 'The `project_id` returned by match_projects.' },
       },
       required: ['project_id'],
+    },
+  },
+  {
+    name: 'search_projects',
+    description:
+      "Find projects by NAME (not by requirements). Use this when the salesperson names a specific project — to fetch its info, or to get the project_id(s) needed for get_project / compare_projects. Returns candidate projects (project_id, project_name, city, district, data_source = our_projects | all_projects, requires_verification) ranked by name closeness, best first. If more than one plausible match comes back, ask the salesperson which one. Never guess a project_id; always resolve it through this tool (or a prior match_projects/recommendation).",
+    input_schema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'The project name as the salesperson said it (Arabic or English; partial is fine).' },
+      },
+      required: ['query'],
     },
   },
   {
@@ -1109,6 +1125,67 @@ async function getProject(supabase: SupabaseClient, input: { project_id: string 
   });
 }
 
+// ─── search_projects (find by name → ids) ────────────────────────────────────
+
+interface SearchProjectsInput {
+  query?: string;
+}
+
+/** Resolve projects by NAME so the agent can fetch info / get ids for
+ *  get_project & compare_projects. Pure text match over project_name; ranks
+ *  exact-normalized first, then prefix, then substring. Tags each hit with its
+ *  tier (our_projects vs all_projects) + requires_verification. */
+async function searchProjects(supabase: SupabaseClient, input: SearchProjectsInput): Promise<string> {
+  const q = typeof input.query === 'string' ? input.query.trim() : '';
+  if (!q) return JSON.stringify({ error: 'Provide a project name to search.', count: 0, results: [] });
+
+  const model = await getModelByName(supabase, 'all_projects');
+  if (!model) return JSON.stringify({ error: 'all_projects model not found', count: 0, results: [] });
+
+  let rows: RecordRow[];
+  let tier1Ids: Set<string>;
+  try {
+    [rows, tier1Ids] = await Promise.all([pageRecords(supabase, model.id), loadTier1ProjectIds(supabase)]);
+  } catch (err) {
+    return JSON.stringify({ error: err instanceof Error ? err.message : String(err), count: 0, results: [] });
+  }
+
+  const qn = normalizeForSearch(q);
+  const rank = (name: string): number => {
+    const n = normalizeForSearch(name);
+    if (n === qn) return 0;
+    if (n.startsWith(qn)) return 1;
+    return 2;
+  };
+  const hits = rows
+    .map((r) => ({ r, name: asStr(r.data.project_name) }))
+    .filter((x) => x.name && fuzzyContains(x.name, q))
+    .sort((a, b) => rank(a.name) - rank(b.name) || a.name.length - b.name.length)
+    .slice(0, 10);
+
+  const results = hits.map(({ r }) => {
+    const isOurs = tier1Ids.has(r.id);
+    return {
+      project_id: r.id,
+      project_name: asStr(r.data.project_name),
+      city: asStr(r.data.preferred_city),
+      district: asStr(r.data.preferred_neighborhoods),
+      data_source: (isOurs ? 'our_projects' : 'all_projects') as 'our_projects' | 'all_projects',
+      requires_verification: !isOurs,
+    };
+  });
+
+  return JSON.stringify({
+    query: q,
+    count: results.length,
+    results,
+    note:
+      results.length === 0
+        ? `No project matched "${q}". Ask the salesperson to re-check the name, or gather requirements and use match_projects instead.`
+        : 'Pick the right project_id; for facts call get_project, for a comparison call compare_projects. all_projects results require verification before offering.',
+  });
+}
+
 // ─── compare_projects (retrieval) ────────────────────────────────────────────
 
 interface CompareInput {
@@ -1417,6 +1494,8 @@ export async function executeMatchTool(
         return await matchProjects(supabase, (input ?? {}) as MatchRequirements);
       case 'get_project':
         return await getProject(supabase, input as { project_id: string });
+      case 'search_projects':
+        return await searchProjects(supabase, (input ?? {}) as SearchProjectsInput);
       case 'compare_projects':
         return await compareProjects(supabase, (input ?? {}) as CompareInput);
       case 'get_customer_context':

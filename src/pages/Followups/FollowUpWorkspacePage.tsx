@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { SlidersHorizontal, ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
@@ -15,6 +15,7 @@ import ContextPanel from './components/ContextPanel';
 import PreferenceSummary from './components/PreferenceSummary';
 import TimelinePanel from './components/TimelinePanel';
 import OutcomePanel from './components/OutcomePanel';
+import SalesAssistantSidePanel from './components/SalesAssistantSidePanel';
 import StartChatModal from '@/pages/Chats/components/StartChatModal';
 import ChatThreadModal from '@/pages/Chats/components/ChatThreadModal';
 import { resolveClientSlugs, recordToPickedClient } from '@/pages/Chats/components/ClientPicker';
@@ -110,6 +111,22 @@ export default function FollowUpWorkspacePage() {
     }
     return null;
   }, [ourProjectsModel, records, ctx.appointment, ctx.client, draft.appointment_project, draft.visited_projects]);
+
+  // Lifted client-preference draft buffer. Seeded from the saved client (once
+  // per client; survives realtime echoes — same rule PreferenceSummary used
+  // internally), shared with BOTH PreferenceSummary (the editor) AND the Sales
+  // Assistant side panel (the reader), so a quick action uses the rep's UNSAVED
+  // edits. prefSeededRef is nulled after a full-modal save so the freshly-saved
+  // prefs re-seed the buffer.
+  const [prefDraft, setPrefDraft] = useState<Record<string, unknown>>({});
+  const prefSeededRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (clientRec && prefSeededRef.current !== ctx.clientId) {
+      prefSeededRef.current = ctx.clientId;
+      setPrefDraft({ ...clientRec.data });
+    }
+  }, [ctx.clientId, clientRec]);
+  const setPrefField = (slug: string, value: unknown) => setPrefDraft((d) => ({ ...d, [slug]: value }));
 
   if (!model) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
   if (!record) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'المتابعة غير موجودة' : 'Follow-up not found'}</div>;
@@ -229,7 +246,9 @@ export default function FollowUpWorkspacePage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-5 p-4 sm:p-6">
+    <div className="mx-auto max-w-[1500px] p-4 sm:p-6">
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-start">
+      <div className="min-w-0 flex-1 space-y-5">
       <button type="button" onClick={() => navigate(-1)} className="inline-flex items-center gap-1 text-sm font-semibold text-terracotta hover:underline">
         <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} /> {isAr ? 'رجوع' : 'Back'}
       </button>
@@ -277,7 +296,12 @@ export default function FollowUpWorkspacePage() {
             typeConfig={typeConfig}
             ctx={{ client: ctx.client, appointment: ctx.appointment, project: ctx.project, followup: draft, attemptNumber: ctx.attemptNumber, resolveUser, isAr }}
           />
-          <PreferenceSummary clientId={ctx.clientId} onEditFull={() => setShowClientModal(true)} />
+          <PreferenceSummary
+            clientId={ctx.clientId}
+            onEditFull={() => setShowClientModal(true)}
+            draft={prefDraft}
+            onFieldChange={setPrefField}
+          />
           <TimelinePanel clientId={ctx.clientId} currentFollowupId={record.id} phones={ctx.phones} />
         </div>
       </div>
@@ -286,6 +310,19 @@ export default function FollowUpWorkspacePage() {
         <button type="button" onClick={goAdvanced} className="inline-flex items-center gap-1 text-sm font-semibold text-copper hover:underline">
           <SlidersHorizontal size={15} /> {isAr ? 'الحقول المتقدمة' : 'Advanced Fields'}
         </button>
+      </div>
+      </div>
+
+      {/* Contextual Sales Assistant — the SAME assistant as the main page, scoped
+          to this follow-up. Reads the rep's UNSAVED preference draft (prefDraft). */}
+      <SalesAssistantSidePanel
+        isAr={isAr}
+        clientsModel={clientsModel ?? null}
+        clientRec={clientRec}
+        prefDraft={prefDraft}
+        followupDraft={draft}
+        projectName={(ctx.project?.project_name as string | undefined) ?? null}
+      />
       </div>
 
       {showApptModal && appointmentsModelId && (
@@ -331,7 +368,12 @@ export default function FollowUpWorkspacePage() {
           recordId={ctx.clientId}
           openInPageHref={`/model/clients/${ctx.clientId}`}
           onClose={() => setShowClientModal(false)}
-          onSaved={() => setShowClientModal(false)}
+          onSaved={() => {
+            // The full editor just persisted the client — re-seed the lifted
+            // preference draft from the fresh record so the panel reflects it.
+            prefSeededRef.current = null;
+            setShowClientModal(false);
+          }}
         />
       )}
     </div>

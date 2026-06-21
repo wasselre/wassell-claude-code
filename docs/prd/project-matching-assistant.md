@@ -2,7 +2,7 @@
 
 **Status:** Live — all planned capabilities shipped
 **Last updated:** 2026-06-21
-**Related PRDs:** [ai-agent.md](ai-agent.md), [copywriter-intelligence.md](copywriter-intelligence.md), [data-storage.md](data-storage.md)
+**Related PRDs:** [ai-agent.md](ai-agent.md), [copywriter-intelligence.md](copywriter-intelligence.md), [followups-workspace.md](followups-workspace.md), [data-storage.md](data-storage.md)
 
 ## Build status — all capabilities Complete
 Every capability on the original roadmap is **built, deployed, and live-verified** on `app.wassel.re`:
@@ -25,6 +25,11 @@ Every capability on the original roadmap is **built, deployed, and live-verified
 ## Product direction — ONE unified Sales Assistant (read first)
 This is intentionally designed as **one unified sales assistant face** — **"مساعد المبيعات" / "Sales Assistant"** — with multiple internal capabilities, NOT a collection of separate assistants/pages. The salesperson opens one assistant, one chat, one conversation history, and types naturally; the assistant routes to the right internal capability. **Project matching + sales-pitch generation is the FIRST active capability.** Future capabilities — next-best-action / sales consulting, follow-up & task support, project comparison, customer understanding — will be added **inside this same assistant** (same chat, new tool + new structured card type), never as a second face or a new page.
 
+### One assistant, multiple SURFACES (2026-06-21)
+The same assistant brain is exposed through more than one **surface** — never a second assistant product:
+1. **Main Sales Assistant page** — the standalone split-pane chat at `/model/matching_chats` (persisted sessions).
+2. **Follow-up record side panel** — a contextual `SalesAssistantSidePanel` embedded on the right of the **Follow-up Workspace** ([followups-workspace.md](followups-workspace.md)). It streams the **same `/api/match` brain** and renders the **same cards**; the only difference is it injects the current follow-up's client-preference **draft** (unsaved edits included) as context, so "Suggested Projects" matches against what the rep is editing live on the call — **before Save**. Panel state is ephemeral (not persisted). There is deliberately **no** "Follow-up Assistant" — it is the Sales Assistant, scoped to a follow-up.
+
 **Naming (Phase 1.2, 2026-06-21):** the user-facing label is **مساعد المبيعات / Sales Assistant**. The technical name stays `matching_chats` and the endpoint stays `/api/match` (Option B — relabel only, no destabilizing rename of the deployed system). When future capabilities land, a backend rename to `sales_assistant` / `/api/sales-assistant` can be considered, but is not required.
 
 ## What it is (in plain English)
@@ -44,6 +49,7 @@ The Sales Assistant is ONE chat that routes the salesperson's plain-language mes
 6. **Task / follow-up creation (confirmation-gated)** — `propose_task` NEVER writes; it surfaces a `TaskProposalCard` with an editable due date and **Confirm / Dismiss**. Only on Confirm does the client create a `followups` record (via `saveRecord`). The agent is forbidden from claiming the task was created.
 7. **Customer understanding** — the agent continuously extracts/refines the customer's structured requirements from the whole conversation (the chat history is its memory); cards re-serialize into history so context carries across turns.
 8. **Feedback + telemetry + admin insights** — every assistant answer carries a 👍/👎 control. 👍 saves instantly; 👎 asks "what were you trying to do?" (find project / compare / understand customer / write message / create task / other) with an optional one-line note, so a miss is tagged by the rep's actual intent. Each answer also stores **inline per-turn telemetry** (which capabilities fired, response time, whether the turn errored) on the message — no schema change, no extra write path. An admin-only **Sales Assistant insights** dashboard (`/sales/assistant-insights`, gated by `useIsAdmin`, opened from a chart icon in the session list) aggregates the conversations the admin can see: capability/card usage, helpful rate (👍/👎), requests that didn't land (by intent), written rep comments, errored turns, and average response time. The aggregation (`aggregateInsights`) is pure and unit-tested; it tolerates any malformed message shape.
+9. **Find a project by name** — `search_projects(query)` resolves a named project to candidate `project_id`s (name, city, district, our_projects vs all_projects, requires_verification) so the agent can fetch its facts (`get_project`) or get the ids it needs for `compare_projects`. Powers the **"معلومات مشروع / Project Info"** quick action (info about a named project) and comparison-by-name; if more than one project matches, the agent asks which one. Added 2026-06-21 to close the long-standing gap where the prompt told the agent to "search first if you only have names" but no search tool existed.
 
 **Deterministic-truth contract (all capabilities):** score / band / match_type / data_source / requires_verification / distance_km (matching, comparison) and lead_temperature / stage / next_action (consultant) are computed in code and quoted verbatim; the server reconciles `emit_recommendation` metadata so the model cannot re-score. The LLM only generates explanation, pitch, message, talking points, and questions — always from verified data.
 
@@ -72,17 +78,19 @@ The Sales Assistant is ONE chat that routes the salesperson's plain-language mes
 ## Key files
 | File | What it does |
 |---|---|
-| `api/match.ts` | SSE endpoint — one turn of the agent's tool-use loop; emits `recommendation` / `comparison` / `next_action` / `message_draft` / `task_proposal` events; runs identity-safe `resolveClient` before any task proposal |
-| `api/_lib/matchAgent.ts` | The agent brain — system prompt, all tools (`match_projects`, `get_project`, `emit_recommendation`, `compare_projects`, `emit_comparison`, `get_customer_context`, `emit_next_action`, `emit_message`, `propose_task`), the deterministic geo-aware two-tier search + weighted scorer, lead-temperature, and `resolveClientFromCandidates` (never guesses on duplicate names) |
-| `src/pages/Matching/MatchingPage.tsx` | Split-pane page (session list + active thread); admin-only Insights link |
+| `api/match.ts` | SSE endpoint — one turn of the agent's tool-use loop; emits `recommendation` / `comparison` / `next_action` / `message_draft` / `task_proposal` events; runs identity-safe `resolveClient` before any task proposal. Shared by EVERY surface |
+| `api/_lib/matchAgent.ts` | The agent brain — system prompt, all tools (`match_projects`, `get_project`, `search_projects`, `emit_recommendation`, `compare_projects`, `emit_comparison`, `get_customer_context`, `emit_next_action`, `emit_message`, `propose_task`), the deterministic geo-aware two-tier search + weighted scorer, lead-temperature, and `resolveClientFromCandidates` (never guesses on duplicate names) |
+| `src/pages/Matching/MatchingPage.tsx` | Main split-pane page surface (session list + active thread); admin-only Insights link |
 | `src/pages/Matching/components/MatchingThread.tsx` | Active thread — sends turns, consumes SSE, renders all card types, captures per-turn telemetry, persists 👍/👎 feedback, and runs the confirmation-gated task write |
-| `src/pages/Matching/components/ProjectMatchCard.tsx` | Structured recommendation card (specs, pitch, warnings, questions) |
+| `src/pages/Matching/components/ProjectMatchCard.tsx` | Structured recommendation card (specs, pitch, warnings, questions) — reused by both surfaces |
 | `src/pages/Matching/components/TaskProposalCard.tsx` | Confirmation-gated task card — shows resolved client name+phone, blocks Confirm when identity is ambiguous/not-found, shows save failure + retry inline |
 | `src/pages/Matching/components/MessageFeedback.tsx` | Per-answer 👍/👎; 👎 expands to intent chips + optional note |
 | `src/pages/Matching/AssistantInsightsPage.tsx` | Admin-only usage/feedback dashboard (`/sales/assistant-insights`) |
+| `src/pages/Followups/components/SalesAssistantSidePanel.tsx` | **Follow-up surface** — contextual side panel: draft-first preference summary, "Suggested Projects" / "Project Info" quick actions, ephemeral chat, same `/api/match` brain + same cards |
+| `src/lib/followups/assistantContext.ts` | Pure helper that resolves the follow-up's preferences **draft-first** (draft > saved > missing) into the UI summary + the Arabic context preface fed to `/api/match` |
 | `src/lib/matching/telemetry.ts` | Telemetry + feedback types, `FEEDBACK_INTENTS`, and the pure `aggregateInsights` aggregator |
 | `src/lib/matching/cards.ts` | Comparison / next-action / message / task-proposal payload types + normalizers + `serializeCardForModel` |
-| `src/lib/matching/client.ts` | Browser SSE stream consumer (`streamMatchTurn`); `MatchEvent` union over all card types |
+| `src/lib/matching/client.ts` | Browser SSE stream consumer (`streamMatchTurn`); `MatchEvent` union over all card types — used by both surfaces |
 | `src/lib/matching/recommendation.ts` | Recommendation payload type + lenient normalizer (`nearby` match type + `distance_km`) |
 | `src/data/seedModels.ts` | `matching_chats` system model (`MATCHING_CHATS_MODEL_ID`) |
 | `supabase/migrations/2026-06-18_matching_chats_model.sql` | Creates the `matching_chats` model row in prod (stable id, idempotent) |
@@ -90,6 +98,7 @@ The Sales Assistant is ONE chat that routes the salesperson's plain-language mes
 | `src/lib/__tests__/projectMatchScoring.test.ts` | Unit tests for the deterministic scorer |
 | `src/lib/__tests__/salesAssistant.test.ts` | Unit tests — geo distance, nearby tier, lead temperature, identity resolution |
 | `src/lib/__tests__/assistantInsights.test.ts` | Unit tests for `aggregateInsights` (usage, helpful rate, failed intents, malformed-input tolerance) |
+| `src/lib/followups/__tests__/assistantContext.test.ts` | Unit tests for the follow-up surface's draft-first preference resolution |
 
 ## Production Learnings (write these down so we don't relearn them)
 These are the hard-won lessons from building a **write-capable** sales AI. They drove real fixes in `matchAgent.ts` / `api/match.ts` and they govern any future capability that can act on the user's behalf.

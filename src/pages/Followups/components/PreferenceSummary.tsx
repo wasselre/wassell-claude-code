@@ -8,6 +8,14 @@ interface PreferenceSummaryProps {
   clientId: string | null;
   /** Opens the full client record in a modal (which has an "open full page" button). */
   onEditFull: () => void;
+  /**
+   * Controlled mode: when BOTH `draft` and `onFieldChange` are supplied, the
+   * preference edit buffer is owned by the parent (the Follow-up Workspace lifts
+   * it so the Sales Assistant side panel can read the same unsaved draft). When
+   * omitted, the component keeps its own internal buffer (standalone behavior).
+   */
+  draft?: Record<string, unknown>;
+  onFieldChange?: (slug: string, value: unknown) => void;
 }
 
 // The five preference fields the rep edits inline, in display order. Always
@@ -16,7 +24,7 @@ interface PreferenceSummaryProps {
 const PREF_SLUGS = ['preferred_unit_type', 'budget', 'preferred_city', 'preferred_direction', 'preferred_neighborhoods'] as const;
 
 /** Inline-editable client preferences — unit type, budget, city, direction, district. */
-export default function PreferenceSummary({ clientId, onEditFull }: PreferenceSummaryProps) {
+export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange }: PreferenceSummaryProps) {
   const { models, records, language, saveRecord, addToast } = useAppStore();
   const isAr = language === 'ar';
 
@@ -30,18 +38,26 @@ export default function PreferenceSummary({ clientId, onEditFull }: PreferenceSu
     .map((slug) => allFields.find((f) => f.name === slug))
     .filter((f): f is ModelField => !!f);
 
-  // Local edit buffer. Seeded from the client record on mount, when the viewed
-  // client changes, and when the record first loads (null → present). NOT
-  // re-seeded on later same-client updates, so in-progress edits survive a
-  // realtime echo; a stale base is caught at save time via expectedVersion.
-  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...(clientRec?.data ?? {}) }));
+  // Controlled when the parent owns the draft (Workspace lifts it so the
+  // assistant panel reads the same unsaved edits). Otherwise keep an internal
+  // buffer with the original seed-once-per-client behavior.
+  const controlled = draftProp !== undefined && onFieldChange !== undefined;
+
+  // Internal edit buffer (uncontrolled mode). Seeded from the client record on
+  // mount, when the viewed client changes, and when the record first loads (null
+  // → present). NOT re-seeded on later same-client updates, so in-progress edits
+  // survive a realtime echo; a stale base is caught at save time via expectedVersion.
+  const [internalDraft, setInternalDraft] = useState<Record<string, unknown>>(() => ({ ...(clientRec?.data ?? {}) }));
   const seeded = useRef<string | null>(null);
   useEffect(() => {
+    if (controlled) return; // parent owns seeding
     if (clientRec && seeded.current !== clientId) {
       seeded.current = clientId;
-      setDraft({ ...clientRec.data });
+      setInternalDraft({ ...clientRec.data });
     }
-  }, [clientId, clientRec]);
+  }, [clientId, clientRec, controlled]);
+
+  const draft = controlled ? draftProp! : internalDraft;
 
   const [saving, setSaving] = useState(false);
 
@@ -50,7 +66,8 @@ export default function PreferenceSummary({ clientId, onEditFull }: PreferenceSu
   const eq = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   const dirty = PREF_SLUGS.some((slug) => !eq(draft[slug], clientRec.data[slug]));
 
-  const setField = (slug: string, value: unknown) => setDraft((d) => ({ ...d, [slug]: value }));
+  const setField = (slug: string, value: unknown) =>
+    controlled ? onFieldChange!(slug, value) : setInternalDraft((d) => ({ ...d, [slug]: value }));
 
   const save = async () => {
     const base = clientRec; // freshest copy from the store
