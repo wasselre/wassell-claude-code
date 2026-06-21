@@ -1,18 +1,25 @@
 /**
  * POST /api/match
  *
- * Runs one turn of the Wassel Project Matching Assistant (the live-call sales
- * co-pilot). The browser posts the full conversation history; this endpoint
- * drives Claude through a tool-use loop (match_projects / get_project over the
- * project portfolio, emit_recommendation for the structured card) and streams
- * the reply back as Server-Sent Events.
+ * Runs one turn of the Wassel Sales Assistant (مساعد المبيعات) — the unified
+ * live-call sales co-pilot. ONE assistant with multiple capabilities, routed by
+ * the model from the salesperson's plain-language message. The browser posts the
+ * full conversation history; this endpoint drives Claude through a tool-use loop
+ * and streams the reply back as Server-Sent Events.
  *
- * Mirrors api/copywriter.ts exactly — same SSE wire format, same tool loop —
- * only the prompt / tools / executor differ (see api/_lib/matchAgent.ts). The
- * one extra event type is `recommendation` (the structured final card).
+ * Tools (see api/_lib/matchAgent.ts):
+ *  - Retrieval: match_projects (geo-aware), get_project, compare_projects,
+ *    get_customer_context (deterministic lead temperature + next action).
+ *  - Delivery cards: emit_recommendation / emit_comparison / emit_next_action /
+ *    emit_message — surfaced here as SSE events: `recommendation` (score/band
+ *    reconciled to the authoritative match_projects values), `comparison`,
+ *    `next_action`, `message_draft`.
+ *  - Action (confirmation-gated): propose_task — surfaced as `task_proposal`
+ *    AFTER server-side resolveClientId validates the client_id; the follow-up
+ *    record is created CLIENT-SIDE only when the salesperson presses Confirm.
  *
  * Conversation history lives on the client (in the `matching_chats` record).
- * Nothing is persisted server-side.
+ * Nothing is persisted server-side except via the user-confirmed task write.
  */
 
 import Anthropic from '@anthropic-ai/sdk';

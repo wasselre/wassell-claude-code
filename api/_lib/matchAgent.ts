@@ -1,23 +1,30 @@
 /**
- * Wassel Project Matching Assistant — shared server-side logic (Phase 1, MVP).
+ * Wassel Sales Assistant (مساعد المبيعات) — shared server-side logic.
  *
- * The "brain" of the live-call sales co-pilot: a system prompt, the tools Claude
- * can call, and the executor that turns tool calls into Supabase reads. Consumed
- * by `api/match.ts`. Forked from `api/_lib/copywriterAgent.ts` — same SSE wire
- * format and tool-loop shape; only the prompt / tools / executor differ.
+ * The "brain" of the unified live-call sales co-pilot: ONE system prompt, ALL the
+ * tools Claude can call, and the executor that turns tool calls into Supabase
+ * reads. Consumed by `api/match.ts`. Capabilities (tools defined in MATCH_TOOLS):
+ *  - match_projects (geo-aware: distance/nearby tier) + get_project — project
+ *    matching & pitch.
+ *  - compare_projects — side-by-side project comparison (deterministic fit).
+ *  - get_customer_context — deterministic lead temperature (hot/warm/cold/won/
+ *    lost) + scheduled next action + preferences, from the CRM.
+ *  - emit_recommendation / emit_comparison / emit_next_action / emit_message —
+ *    structured card delivery channels.
+ *  - propose_task — confirmation-gated follow-up creation (NEVER writes here;
+ *    resolveClientId validates the client id so a hallucinated id can't orphan a
+ *    task; the record is written client-side only on the salesperson's Confirm).
  *
- * Design notes (Phase 1 — TEXT MATCHING ONLY, no geo)
- *  - DETERMINISTIC scoring lives HERE, in `match_projects`. The LLM only narrates
- *    over the verified, scored, fact-checked output. It never sees a project it
- *    can invent and never computes a score it can fudge. This is the
- *    anti-hallucination guarantee.
- *  - TWO TIERS, NEVER MIXED. Tier 1 = projects in the `our_projects` model
- *    (the curated portfolio with real units). Tier 2 = the rest of `all_projects`
- *    (scraped/competitor data that must be VERIFIED before being offered). The
- *    tool returns them in SEPARATE arrays and only falls back to Tier 2 when
- *    Tier 1 has no GOOD match.
- *  - Coordinates / distance / nearby-district logic is PHASE 2. Phase 1 uses
- *    district + city TEXT only: exact district → full credit, same city → half.
+ * Design guarantees
+ *  - DETERMINISTIC scoring/metadata live HERE (match_projects, compare_projects,
+ *    computeLeadTemperature). The LLM only narrates over the verified output; it
+ *    can't invent a project, fudge a score, or re-derive a lead temperature.
+ *  - TWO TIERS, NEVER MIXED. Tier 1 = `our_projects` (curated, real units); Tier 2
+ *    = the rest of `all_projects` (scraped/competitor, VERIFY before offering).
+ *    The tool only falls back to Tier 2 when Tier 1 has no GOOD match.
+ *  - Location: district/city TEXT plus true haversine distance to the requested
+ *    district's centroid for the "nearby" tier (coords backfilled in
+ *    2026-06-21_project_geo.sql).
  *  - Reads go through the `unified_records` view (frozen-safe) and paginate to
  *    dodge the PostgREST 1000-row truncation (same posture as the other agents).
  */
