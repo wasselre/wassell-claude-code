@@ -5,8 +5,9 @@ import { Loader2 } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
-import { createDocument } from '@/lib/documents/client';
+import { createDocument, saveDocumentSettings } from '@/lib/documents/client';
 import { renderDocumentHtml } from '@/lib/documents/render';
+import { DEFAULT_PAGE_SETTINGS } from '@/lib/documents/pageSettings';
 import { linkableModels } from '@/lib/documents/links';
 import { createTemplateBinding } from '@/lib/documents/templateRegistry';
 import { startersForModel, buildStarterContent, type RecordDocStarter } from '@/lib/documents/recordDocTemplates';
@@ -18,6 +19,30 @@ interface Props {
 }
 
 const EMPTY_DOC = { type: 'doc', content: [{ type: 'paragraph' }] };
+
+/** Fetch the Wassel logo and downscale it to a compact PNG data URI so it can
+ *  be embedded directly in the template content (the DOCX builder only embeds
+ *  data-URI images). Best-effort — returns null on any failure. */
+async function fetchLogoDataUri(maxWidth = 600): Promise<string | null> {
+  try {
+    const res = await fetch('/assets/logo-full.png');
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const bmp = await createImageBitmap(blob);
+    const scale = Math.min(1, maxWidth / bmp.width);
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(bmp, 0, 0, w, h);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
+  }
+}
 
 function slugify(s: string): string {
   return s
@@ -71,10 +96,30 @@ export default function NewTemplateModal({ open, onClose, onCreated }: Props) {
     setBusy(true);
     try {
       const starter = starters.find((s) => s.id === starterId);
-      const contentJson = starter ? (buildStarterContent(starter, isAr) as Record<string, unknown>) : EMPTY_DOC;
+      let contentJson: Record<string, unknown> = starter
+        ? (buildStarterContent(starter, isAr) as Record<string, unknown>)
+        : EMPTY_DOC;
+      // Brand the starter with the Wassel logo (centered, top) so the generated
+      // PDF looks official out of the box. Best-effort — skip if fetch fails.
+      if (starter) {
+        const logo = await fetchLogoDataUri();
+        if (logo) {
+          const logoNode = { type: 'image', attrs: { src: logo, width: 28, align: 'center' } };
+          const existing = Array.isArray(contentJson.content) ? (contentJson.content as unknown[]) : [];
+          contentJson = { ...contentJson, content: [logoNode, ...existing] };
+        }
+      }
       const contentHtml = renderDocumentHtml(contentJson as never);
       const title = (isAr ? labelAr : labelEn) || labelEn || labelAr;
       const file = await createDocument({ title, contentJson, contentHtml });
+      // Branded page setup so generated PDFs carry a footer + page numbers.
+      if (starter) {
+        await saveDocumentSettings(file.id, {
+          ...DEFAULT_PAGE_SETTINGS,
+          footer_text: isAr ? 'وصل العقارية' : 'Wassel Real Estate',
+          show_page_numbers: true,
+        });
+      }
       await createTemplateBinding({
         fileId: file.id,
         modelId: selectedModel.id,

@@ -51,9 +51,33 @@ import {
 
 const AR_RE = /[؀-ۿ]/;
 
+// Wassel brand palette (hex without '#'). KEEP IN SYNC with worker/src/documents/docx.ts.
+const BRAND = {
+  chocolate: '4A2C2A',
+  copper: 'B8734F',
+  sand: 'D4B896',
+  cream: 'F5EDE0',
+};
+
 function nodeText(node: JSONContent): string {
   if (node.type === 'text') return node.text ?? '';
   return (node.content ?? []).map(nodeText).join('');
+}
+
+/** Map a TipTap textAlign attr to a docx AlignmentType (undefined = default). */
+function alignFromAttrs(attrs: Record<string, unknown> | undefined): (typeof AlignmentType)[keyof typeof AlignmentType] | undefined {
+  switch (attrs?.textAlign) {
+    case 'center':
+      return AlignmentType.CENTER;
+    case 'right':
+      return AlignmentType.RIGHT;
+    case 'left':
+      return AlignmentType.LEFT;
+    case 'justify':
+      return AlignmentType.JUSTIFIED;
+    default:
+      return undefined;
+  }
 }
 
 export function safeFilename(title: string): string {
@@ -367,20 +391,34 @@ export async function buildDocxBlob(
 function blockToDocx(node: JSONContent, isAr: boolean, listCtx?: { kind: 'bullet' | 'num'; level: number }): Array<Paragraph | Table> {
   const bidi = AR_RE.test(nodeText(node)) || isAr;
   switch (node.type) {
-    case 'paragraph':
+    case 'paragraph': {
+      const align = alignFromAttrs(node.attrs);
       return [
         new Paragraph({
           children: inlineToDocx(node.content ?? [], bidi),
           bidirectional: bidi,
+          ...(align ? { alignment: align } : {}),
           ...(listCtx?.kind === 'bullet' ? { bullet: { level: listCtx.level } } : {}),
           ...(listCtx?.kind === 'num' ? { numbering: { reference: 'wassel-num', level: listCtx.level } } : {}),
         }),
       ];
+    }
     case 'heading': {
       const level = Number(node.attrs?.level ?? 1);
       const heading =
         level === 1 ? HeadingLevel.HEADING_1 : level === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
-      return [new Paragraph({ children: inlineToDocx(node.content ?? [], bidi), heading, bidirectional: bidi })];
+      // Brand the headings (H2 copper, else chocolate) — overrides Word's blue default.
+      const color = level === 2 ? BRAND.copper : BRAND.chocolate;
+      const align = alignFromAttrs(node.attrs);
+      return [
+        new Paragraph({
+          children: inlineToDocx(node.content ?? [], bidi, color),
+          heading,
+          bidirectional: bidi,
+          ...(align ? { alignment: align } : {}),
+          spacing: { before: 200, after: 100 },
+        }),
+      ];
     }
     case 'bulletList':
     case 'orderedList': {
@@ -451,19 +489,29 @@ function tableToDocx(node: JSONContent, isAr: boolean): Table {
             const paras = (cell.content ?? []).flatMap((c) => blockToDocx(c, isAr));
             return new TableCell({
               children: paras.length > 0 ? (paras as Paragraph[]) : [new Paragraph('')],
-              shading: cell.type === 'tableHeader' ? { fill: 'F5EDE0' } : undefined,
+              shading: cell.type === 'tableHeader' ? { fill: BRAND.cream } : undefined,
+              margins: { top: 60, bottom: 60, left: 120, right: 120 },
             });
           }),
         }),
     );
+  const border = { style: BorderStyle.SINGLE, size: 4, color: BRAND.sand };
   return new Table({
     rows,
     width: { size: 100, type: WidthType.PERCENTAGE },
     visuallyRightToLeft: isAr,
+    borders: {
+      top: border,
+      bottom: border,
+      left: border,
+      right: border,
+      insideHorizontal: border,
+      insideVertical: border,
+    },
   });
 }
 
-function inlineToDocx(nodes: JSONContent[], bidi: boolean): Array<TextRun | ExternalHyperlink> {
+function inlineToDocx(nodes: JSONContent[], bidi: boolean, forceColor?: string): Array<TextRun | ExternalHyperlink> {
   const out: Array<TextRun | ExternalHyperlink> = [];
   for (const n of nodes) {
     if (n.type === 'hardBreak') {
@@ -476,7 +524,7 @@ function inlineToDocx(nodes: JSONContent[], bidi: boolean): Array<TextRun | Exte
     }
     if (n.type !== 'text') {
       const text = nodeText(n);
-      if (text) out.push(new TextRun({ text, rightToLeft: bidi }));
+      if (text) out.push(new TextRun({ text, rightToLeft: bidi, ...(forceColor ? { color: forceColor } : {}) }));
       continue;
     }
     const marks = n.marks ?? [];
@@ -491,7 +539,7 @@ function inlineToDocx(nodes: JSONContent[], bidi: boolean): Array<TextRun | Exte
       italics: has('italic'),
       strike: has('strike') || sDel,
       underline: has('underline') || sIns ? {} : undefined,
-      color: sDel ? 'B91C1C' : sIns ? '8E4E3A' : undefined,
+      color: sDel ? 'B91C1C' : sIns ? '8E4E3A' : forceColor ?? undefined,
       rightToLeft: bidi,
     });
     const link = marks.find((x) => x.type === 'link');

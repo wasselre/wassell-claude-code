@@ -30,6 +30,12 @@ const bullets = (items: string[]): JSONContent => ({
 });
 const hr = (): JSONContent => ({ type: 'horizontalRule' });
 const doc = (...content: JSONContent[]): JSONContent => ({ type: 'doc', content });
+const hCenter = (level: 1 | 2 | 3, text: string): JSONContent => ({
+  type: 'heading',
+  attrs: { level, textAlign: 'center' },
+  content: [t(text)],
+});
+const pCenter = (...content: Inline[]): JSONContent => ({ type: 'paragraph', attrs: { textAlign: 'center' }, content });
 
 /** A label→value row in a 2-column table; the label cell is a shaded header. */
 function kvRow(label: string, valueToken: string): JSONContent {
@@ -72,10 +78,12 @@ const reservation: RecordDocStarter = {
   build: (isAr) =>
     isAr
       ? doc(
-          h(1, t('سند حجز وحدة')),
-          p(b('وصل العقارية')),
+          hCenter(1, 'سند حجز وحدة'),
+          pCenter(b('وصل العقارية')),
+          pCenter(t('وثيقة حجز رسمية')),
           p(t('التاريخ: {{today}}')),
           hr(),
+          h(2, t('بيانات الحجز')),
           kvTable([
             ['العميل', '{{client_name}}'],
             ['رقم الجوال', '{{client_phone}}'],
@@ -98,10 +106,12 @@ const reservation: RecordDocStarter = {
           ...signatureBlock(true),
         )
       : doc(
-          h(1, t('Unit Reservation')),
-          p(b('Wassel Real Estate')),
+          hCenter(1, 'Unit Reservation'),
+          pCenter(b('Wassel Real Estate')),
+          pCenter(t('Official reservation document')),
           p(t('Date: {{today}}')),
           hr(),
+          h(2, t('Reservation Details')),
           kvTable([
             ['Client', '{{client_name}}'],
             ['Phone', '{{client_phone}}'],
@@ -134,10 +144,12 @@ const offer: RecordDocStarter = {
   build: (isAr) =>
     isAr
       ? doc(
-          h(1, t('عرض سعر')),
-          p(b('وصل العقارية')),
+          hCenter(1, 'عرض سعر'),
+          pCenter(b('وصل العقارية')),
+          pCenter(t('عرض سعر رسمي')),
           p(t('التاريخ: {{today}}')),
           hr(),
+          h(2, t('بيانات العرض')),
           kvTable([
             ['العميل', '{{client_name}}'],
             ['رقم الجوال', '{{client_phone}}'],
@@ -159,10 +171,12 @@ const offer: RecordDocStarter = {
           ...signatureBlock(true),
         )
       : doc(
-          h(1, t('Price Offer')),
-          p(b('Wassel Real Estate')),
+          hCenter(1, 'Price Offer'),
+          pCenter(b('Wassel Real Estate')),
+          pCenter(t('Official price offer')),
           p(t('Date: {{today}}')),
           hr(),
+          h(2, t('Offer Details')),
           kvTable([
             ['Client', '{{client_name}}'],
             ['Phone', '{{client_phone}}'],
