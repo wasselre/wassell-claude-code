@@ -1253,20 +1253,37 @@ async function getCustomerContext(supabase: SupabaseClient, input: CustomerLooku
   if (!model) return JSON.stringify({ found: false, error: 'clients model not found' });
 
   let rec: RecordRow | null = null;
+  // Validate an echoed client_id is really a clients record before trusting it.
   if (input.client_id) {
-    const { data } = await supabase.from('unified_records').select('id, data').eq('id', input.client_id).maybeSingle();
-    if (data) rec = data as RecordRow;
+    const { data } = await supabase.from('unified_records').select('id, data, model_id').eq('id', input.client_id).maybeSingle();
+    if (data && (data as { model_id?: string }).model_id === model.id) rec = data as RecordRow;
   }
   if (!rec && (input.phone || input.name)) {
     const rows = await pageRecords(supabase, model.id, 5); // RLS-scoped to the rep's clients
-    const wantPhone = input.phone ? phoneKey(input.phone) : null;
-    const wantName = input.name ? normalizeForSearch(input.name) : '';
-    rec =
-      rows.find((r) => {
-        if (wantPhone && phoneKey(asStr(r.data.phone_number)) === wantPhone) return true;
-        if (wantName && fuzzyContains(asStr(r.data.client_name), wantName)) return true;
-        return false;
-      }) ?? null;
+    // Phone is effectively unique — match on it first.
+    if (input.phone) {
+      const wantPhone = phoneKey(input.phone);
+      if (wantPhone) rec = rows.find((r) => phoneKey(asStr(r.data.phone_number)) === wantPhone) ?? null;
+    }
+    // Name — NEVER guess the first on duplicates; surface them so the agent asks.
+    if (!rec && input.name) {
+      const candidates: ResolvedClient[] = rows.map((r) => ({
+        id: r.id,
+        name: asStr(r.data.client_name),
+        phone: asStr(r.data.phone_number),
+      }));
+      const resolution = resolveClientFromCandidates(candidates, normalizeForSearch(input.name));
+      if (resolution.status === 'resolved') {
+        rec = rows.find((r) => r.id === resolution.client.id) ?? null;
+      } else if (resolution.status === 'ambiguous') {
+        return JSON.stringify({
+          found: false,
+          ambiguous: true,
+          candidates: resolution.candidates.map((c) => ({ name: c.name, phone: c.phone })),
+          note: 'MORE THAN ONE client matches this name. Do NOT pick one — ask the salesperson which client (by phone or full name). For a task this would otherwise attach to the WRONG client.',
+        });
+      }
+    }
   }
 
   if (!rec) {
