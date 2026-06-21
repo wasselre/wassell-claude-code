@@ -28,6 +28,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
+import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 
@@ -60,6 +61,11 @@ let compressWakeRequested = false;
 // the app. Self-disables when REPORTS_RUNNER_SECRET is unset.
 let reportsBusy = false;
 let reportsWakeRequested = false;
+// Document generation (document_jobs, 2026-06-21) gets a SIXTH independent loop:
+// render an authored template + a record's data into a branded A4 PDF via the
+// same LibreOffice path the office-preview queue uses.
+let documentBusy = false;
+let documentWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -465,6 +471,113 @@ async function runCompressWatchdog(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Document generation — document_jobs queue (template → DOCX → LibreOffice PDF).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued document job (if any) and run it to completion. Mirrors the
+ * deck/image/preview/compress claim-run-complete shape against document_jobs.
+ * Returns true if a job was claimed.
+ */
+async function claimAndRunOneDocument(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('document_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] document claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    source_record_id: string;
+    source_model_id: string;
+    template_id: string;
+    template_file_id: string;
+    target_folder_id: string | null;
+    owner_user_id: string;
+    owner_auth_uid: string;
+    client_record_id: string | null;
+    unit_record_id: string | null;
+    project_record_id: string | null;
+    attempts: number;
+    template_label_ar: string;
+    template_label_en: string;
+    content_json: unknown;
+    settings: unknown;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: DocumentJob = {
+    id: row.job_id,
+    sourceRecordId: row.source_record_id,
+    sourceModelId: row.source_model_id,
+    templateId: row.template_id,
+    templateFileId: row.template_file_id,
+    targetFolderId: row.target_folder_id,
+    ownerUserId: row.owner_user_id,
+    ownerAuthUid: row.owner_auth_uid,
+    clientRecordId: row.client_record_id,
+    unitRecordId: row.unit_record_id,
+    projectRecordId: row.project_record_id,
+    attempts: row.attempts,
+    templateLabelAr: row.template_label_ar,
+    templateLabelEn: row.template_label_en,
+    contentJson: (row.content_json ?? { type: 'doc', content: [] }) as DocumentJob['contentJson'],
+    settings: row.settings,
+  };
+  console.log(
+    `[worker] claimed document job=${job.id} record=${job.sourceRecordId} template=${job.templateId} attempts=${job.attempts}`,
+  );
+
+  try {
+    const resultFileId = await runDocumentJob({ supabase, env, job });
+    // document_job_complete only touches status='running' rows — a late finish
+    // after the watchdog already failed the job is a harmless no-op.
+    const { error: doneErr } = await supabase.rpc('document_job_complete', {
+      p_job_id: job.id,
+      p_result_file_id: resultFileId,
+    });
+    if (doneErr) {
+      console.error(`[worker] document_job_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed document job=${job.id} → ${resultFileId}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] document job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('document_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] document_job_fail RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(`[worker] could not mark document job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function runDocumentWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('document_jobs_watchdog');
+    if (error) {
+      console.error(`[worker] document watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) {
+      console.warn(`[worker] document watchdog swept ${swept} stale job(s)`);
+    }
+  } catch (err) {
+    console.error(`[worker] document watchdog threw:`, err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Conflict-storm watchdog (2026-06-16) — the safety net for the record_save
 // version-conflict retry storm. Runs on its OWN short interval (independent of
 // the per-queue watchdogs) so detection is fast. conflict_storm_sweep() is
@@ -659,6 +772,38 @@ async function compressPollLoop(): Promise<void> {
   }
 }
 
+/**
+ * Document-queue twin of the other poll loops. Runs concurrently with its own
+ * busy/wake flags. Ticks document_jobs_watchdog() on the same interval.
+ */
+async function documentPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    documentBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneDocument();
+    } catch (err) {
+      console.error('[worker] document poll iteration error:', err);
+    }
+    documentBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runDocumentWatchdog();
+    }
+
+    if (didClaim || documentWakeRequested) {
+      documentWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !documentWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Scheduled Reports — time-gated. scheduled_report_claim_due returns only
 // reports whose next_run_at has passed (SKIP LOCKED), so no separate scheduler
@@ -756,6 +901,7 @@ const server = http.createServer((req, res) => {
         image_busy: imageBusy,
         preview_busy: previewBusy,
         compress_busy: compressBusy,
+        document_busy: documentBusy,
         reports_busy: reportsBusy,
         reports_enabled: !!env.REPORTS_RUNNER_SECRET,
         worker_id: env.WORKER_ID,
@@ -771,6 +917,7 @@ const server = http.createServer((req, res) => {
     imageWakeRequested = true;
     previewWakeRequested = true;
     compressWakeRequested = true;
+    documentWakeRequested = true;
     reportsWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
@@ -792,7 +939,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || previewBusy || compressBusy || reportsBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || previewBusy || compressBusy || documentBusy || reportsBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -803,7 +950,14 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 
 // Drain all four queues concurrently for the lifetime of the process, plus the
 // conflict-storm watchdog (its own short-interval loop).
-const loops = [pollLoop(), imagePollLoop(), previewPollLoop(), compressPollLoop(), conflictWatchdogLoop()];
+const loops = [
+  pollLoop(),
+  imagePollLoop(),
+  previewPollLoop(),
+  compressPollLoop(),
+  documentPollLoop(),
+  conflictWatchdogLoop(),
+];
 // Scheduled-reports loop only runs when the shared secret is set (feature on).
 if (env.REPORTS_RUNNER_SECRET) {
   console.log('[worker] scheduled-reports loop enabled');

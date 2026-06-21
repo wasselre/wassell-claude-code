@@ -195,3 +195,73 @@ function formatFieldValue(
     }
   }
 }
+
+/**
+ * Token palette for a TEMPLATE author. A template isn't linked to any record,
+ * so resolveDocVariables would show the empty state. Instead, derive the
+ * available `{{slug}}` tokens from the bound model's schema + its lookup /
+ * unit_picker targets (depth 1) + the engine-resolved extras ({{today}},
+ * {{client_phone}}). Values are the token text itself (no live record yet), so
+ * authors can see and insert the exact slugs that auto-fill at generation time.
+ */
+export function buildTemplateTokenGroups(
+  model: AppModel,
+  models: AppModel[],
+  isAr: boolean,
+): DocVariableGroup[] {
+  const groups: DocVariableGroup[] = [];
+
+  const groupFor = (m: AppModel, linkId: string) => {
+    const variables: DocVariable[] = [];
+    for (const section of m.schema.sections) {
+      for (const field of section.fields) {
+        if (SKIP_TYPES.has(field.type)) continue;
+        variables.push({
+          slug: field.name,
+          label: isAr ? field.label_ar : field.label_en,
+          value: `{{${field.name}}}`,
+        });
+      }
+    }
+    if (variables.length > 0) {
+      groups.push({
+        linkId,
+        recordTitle: isAr ? m.label_ar : m.label_en,
+        modelLabel: '',
+        variables,
+      });
+    }
+  };
+
+  groupFor(model, 'tmpl-self');
+
+  // Depth-1 expansion: lookup targets + the units model behind a unit_picker.
+  const seen = new Set<string>([model.id]);
+  for (const section of model.schema.sections) {
+    for (const field of section.fields) {
+      let targetId: string | null | undefined = null;
+      if (field.type === 'lookup') targetId = field.lookup_model_id;
+      else if (field.type === 'unit_picker') targetId = models.find((m) => m.name === 'units')?.id ?? null;
+      if (!targetId || seen.has(targetId)) continue;
+      const target = models.find((m) => m.id === targetId);
+      if (target) {
+        seen.add(target.id);
+        groupFor(target, `tmpl-lk-${field.id}`);
+      }
+    }
+  }
+
+  // Engine-resolved tokens (no schema field backs these).
+  groups.push({
+    linkId: 'tmpl-engine',
+    recordTitle: isAr ? 'متغيرات تلقائية' : 'Auto variables',
+    modelLabel: '',
+    variables: [
+      { slug: 'today', label: isAr ? 'تاريخ اليوم' : 'Today', value: '{{today}}' },
+      { slug: 'client_phone', label: isAr ? 'جوال العميل' : 'Client phone', value: '{{client_phone}}' },
+      { slug: 'sales_rep', label: isAr ? 'ممثل المبيعات' : 'Sales rep', value: '{{sales_rep}}' },
+    ],
+  });
+
+  return groups;
+}

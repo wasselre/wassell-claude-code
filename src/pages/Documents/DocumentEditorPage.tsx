@@ -59,7 +59,8 @@ import DocAssistModal from './components/DocAssistModal';
 import DocumentOutline from './components/DocumentOutline';
 import ExportModal from './components/ExportModal';
 import { listLinksForFile, type DocumentLink } from '@/lib/documents/links';
-import { resolveDocVariables } from '@/lib/documents/variables';
+import { resolveDocVariables, buildTemplateTokenGroups } from '@/lib/documents/variables';
+import { getTemplateBinding, type DocumentTemplateBinding } from '@/lib/documents/templateRegistry';
 import { buildAssistContext } from '@/lib/documents/assist';
 import {
   addComment,
@@ -164,6 +165,10 @@ export default function DocumentEditorPage() {
   /** Record relationships — drive CRM variable resolution. Refreshed after
    *  the Linked-records modal closes (links may have changed). */
   const [docLinks, setDocLinks] = useState<DocumentLink[]>([]);
+  // If this doc is a registered document-generation template, the CRM-variable
+  // popover shows the BOUND MODEL's token palette (no record is linked yet)
+  // instead of the empty state.
+  const [templateBinding, setTemplateBinding] = useState<DocumentTemplateBinding | null>(null);
   const models = useAppStore((s) => s.models);
   const recordsMap = useAppStore((s) => s.records);
 
@@ -200,6 +205,35 @@ export default function DocumentEditorPage() {
     () => resolveDocVariables(docLinks, models, recordsMap, isAr),
     [docLinks, models, recordsMap, isAr],
   );
+
+  // Detect whether the open doc is a template binding (drives the var palette).
+  useEffect(() => {
+    if (!fileId) {
+      setTemplateBinding(null);
+      return;
+    }
+    let cancelled = false;
+    getTemplateBinding(fileId)
+      .then((b) => {
+        if (!cancelled) setTemplateBinding(b);
+      })
+      .catch(() => {
+        /* surfaced by the service */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fileId]);
+
+  /** Variable groups for the insert popover — the bound model's token palette
+   *  when editing a template, otherwise the resolved values from linked records. */
+  const varGroups = useMemo(() => {
+    if (templateBinding) {
+      const boundModel = models.find((m) => m.id === templateBinding.model_id);
+      if (boundModel) return buildTemplateTokenGroups(boundModel, models, isAr);
+    }
+    return resolvedVars.groups;
+  }, [templateBinding, models, isAr, resolvedVars]);
 
   // ─── Comments ───────────────────────────────────────────────────────────
 
@@ -1034,7 +1068,7 @@ export default function DocumentEditorPage() {
       />
       <CrmVariablesPopover
         open={varsOpen}
-        groups={resolvedVars.groups}
+        groups={varGroups}
         onClose={() => setVarsOpen(false)}
         onManageLinks={() => setLinksOpen(true)}
         onInsert={(slug) => {

@@ -133,6 +133,8 @@ dashboards        — dashboard configurations (widgets as JSONB)
 chat_messages     — WhatsApp messages per conversation (Realtime-enabled)
 whatsapp_numbers  — local overlay on Haberchat devices: friendly name + default flag
 deck_jobs         — queue for the Fly.io deck generation worker (see "Decks generation pipeline")
+document_templates— binds a wassel_doc to a record model = the doc-generation template registry
+document_jobs     — queue for the templated-PDF generation worker (see "Document generation pipeline")
 ```
 
 ## Frozen models (added 2026-05-05)
@@ -392,6 +394,22 @@ FOURTH queue on the same Fly worker: `pdf_compress_jobs` compresses PDFs with Gh
 3. **complete/fail RPCs only touch `status='running'` jobs**; `pdf_compress_watchdog()` sweeps running >15 min (must stay above the 540 s job ceiling).
 4. **Never compress in place.** The result is always a NEW files row + NEW storage object (file bytes are immutable — the office-preview cache depends on it, and a bad compression must never destroy a source document). A failed `files` INSERT must remove the just-uploaded object.
 5. **Timeouts requeue, they don't fail (attempts < 3).** Fly shared-cpu machines throttle to 1/16 vCPU once burst credits drain — measured live 2026-06-11: the SAME 19 MB brochure took 2m50s on a credit-fresh machine and >9 min (timeout) on a drained one. On a gs timeout the worker calls `pdf_compress_requeue` so a different machine claims the job, and sits out 2 poll intervals so the throttled machine doesn't re-claim its own requeue. Don't "fix" a timeout by only raising the ceiling — check which MACHINE ran it first.
+
+## Document generation pipeline (records → templated PDFs) (added 2026-06-21)
+
+SIXTH queue on the same Fly worker: `document_jobs` turns a CRM record into an official **A4 branded PDF** generated from a template. **A template is just an ordinary Wassel document** (`kind='wassel_doc'`, authored/branded/versioned in the normal Documents editor) bound to a record model via `document_templates`. ONE engine for the whole platform (Reservations + Offer Prices now; Financing/Deed/Contracts/Brochures later = add a template, no engine change). User decision: NOT hardcoded per-type generators; templates are business-editable in-app. Full PRD: `docs/prd/document-generation.md`.
+
+- Flow: `POST /api/generate-document` (validate + `document_job_enqueue` via service-role after RLS-gating the SOURCE RECORD; templates are shared assets validated by existence/active/binding, NOT file-access) → worker `runDocumentJob.ts` claims via `document_job_claim_next` (JOINs `wassel_documents` for the template content+settings), resolves `{{tokens}}` from source→client→unit→unit's project→project (first-wins, same formatting as the editor preview), builds a branded **DOCX** (logo embedded), converts **DOCX→PDF via the SAME LibreOffice path as office-preview**, uploads to `wassel-files`, INSERTs a first-class `files` row (`kind='pdf'`), and `document_links` it to client/unit/project → `document_job_complete`. SPA polls `POST /api/document-status` (`{jobId}` → ready/pending/failed; `{recordId}` → list generated PDFs). **Send to customer** = `POST /api/send-document` (resolve client phone via `ksa_phone_canon` → download PDF → Haberchat `uploadFile`+`sendMessage` → log `activity_log document_sent`); the SPA shows a confirm modal (recipient + device + caption) first.
+- UI: generic `RecordDocumentsPanel` on the record form (self-hides when the model has no templates) + `SendDocumentModal`; admin authoring at `/settings/document-templates` (`DocumentTemplatesPage` + `NewTemplateModal`, starters in `src/lib/documents/recordDocTemplates.ts`).
+- Migrations: `supabase/migrations/2026-06-21_document_templates.sql` + `2026-06-21_document_generation_pipeline.sql`.
+
+**Hard rules — never violate:**
+1. **Never hold an HTTP request open for the render** (same rule as the other five queues — enqueue + poll, no SSE).
+2. **`worker/src/documents/{variables,docx,pageSettings}.ts` are COPIES of `src/lib/documents/{variables,export,pageSettings}.ts`** (the worker is a standalone package — same posture as `worker/src/imageGen.ts`). Change BOTH together. **Deliberate divergence:** the src `buildDocxBlob` SKIPS images; the worker `docx.ts` EMBEDS base64 data-URI images as `ImageRun` (that's how the template logo reaches the PDF) — don't "fix" the worker copy to match src.
+3. **complete/fail RPCs only touch `status='running'` jobs**; `document_jobs_watchdog()` sweeps running >10 min (above the 240 s soffice ceiling). soffice killed as a process GROUP (copied from `runPreviewJob.ts`).
+4. **The generated PDF's `files.uploaded_by_user_id` is the public.users id; the storage-path prefix is `auth.uid()`** — the job carries BOTH (`owner_user_id` + `owner_auth_uid`). Confusing them makes the file invisible to its owner.
+5. **Templates are shared, non-sensitive forms:** `document_templates` SELECT is open to all authenticated users (the Generate panel must list them for every role); writes are admin-only. The generate endpoint gates on SOURCE-RECORD visibility, not template file-access.
+6. **Starters (`recordDocTemplates.ts`) are editable SEEDS, never the engine** — the engine always reads the live `wassel_doc`. The official Reservation/Offer templates must be created once via Settings → Document Templates before the panel appears on those records.
 
 ## Documents real-time collaboration (Yjs CRDT) (added 2026-06-11)
 

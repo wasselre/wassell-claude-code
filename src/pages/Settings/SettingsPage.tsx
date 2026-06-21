@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate,
+  Globe, LayoutTemplate, FileText,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -163,6 +163,17 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/website',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'قوالب المستندات',
+    titleEn: 'Document Templates',
+    descAr: 'قوالب وصل الرسمية لإنشاء مستندات العملاء (الحجوزات، العروض…) كـ PDF مُوحّد',
+    descEn: 'Official templates for generating branded customer PDFs (reservations, offers…)',
+    icon: FileText,
+    color: '#8E4E3A',
+    bg: '#8E4E3A14',
+    route: '/settings/document-templates',
     adminOnly: true,
   },
   {

@@ -32,6 +32,7 @@ import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import SectionBlock from './components/SectionBlock';
 import RecordFormModal from './components/RecordFormModal';
 import LinkedDocumentsPanel from './components/LinkedDocumentsPanel';
+import RecordDocumentsPanel from './components/RecordDocumentsPanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
 import UnitsTabPane from './components/UnitsTabPane';
@@ -1355,6 +1356,12 @@ export default function RecordFormPage() {
         * records without documents. */}
       {model && existingRecord?.id && (
         <LinkedDocumentsPanel modelId={model.id} recordId={existingRecord.id} />
+      )}
+
+      {/* Generate branded PDFs from bound document templates (reservations,
+        * offers, …). Renders nothing when the model has no templates. */}
+      {model && existingRecord?.id && (
+        <RecordDocumentsPanel modelId={model.id} recordId={existingRecord.id} />
       )}
 
       {/* Call history is no longer a bottom-of-form fallback on every model
