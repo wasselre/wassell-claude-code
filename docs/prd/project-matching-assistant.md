@@ -1,11 +1,16 @@
-# PRD: Project Matching Assistant (Phase 1)
+# PRD: Sales Assistant — Project Matching (Phase 1 / 1.1 / 1.2)
 
 **Status:** Live
-**Last updated:** 2026-06-18
+**Last updated:** 2026-06-21
 **Related PRDs:** [ai-agent.md](ai-agent.md), [copywriter-intelligence.md](copywriter-intelligence.md), [data-storage.md](data-storage.md)
 
+## Product direction — ONE unified Sales Assistant (read first)
+This is intentionally designed as **one unified sales assistant face** — **"مساعد المبيعات" / "Sales Assistant"** — with multiple internal capabilities, NOT a collection of separate assistants/pages. The salesperson opens one assistant, one chat, one conversation history, and types naturally; the assistant routes to the right internal capability. **Project matching + sales-pitch generation is the FIRST active capability.** Future capabilities — next-best-action / sales consulting, follow-up & task support, project comparison, customer understanding — will be added **inside this same assistant** (same chat, new tool + new structured card type), never as a second face or a new page.
+
+**Naming (Phase 1.2, 2026-06-21):** the user-facing label is **مساعد المبيعات / Sales Assistant**. The technical name stays `matching_chats` and the endpoint stays `/api/match` (Option B — relabel only, no destabilizing rename of the deployed system). When future capabilities land, a backend rename to `sales_assistant` / `/api/sales-assistant` can be considered, but is not required.
+
 ## What it is (in plain English)
-A live-call sales co-pilot. A salesperson on a call types what the customer wants — city, district, property type, budget, area, bedrooms, lifestyle — and the assistant instantly returns the best-matching projects, ranked, with a ready-to-say sales pitch for each. It searches **our curated projects first**; only if there's no good match there does it fall back to the broad **All Projects** database, clearly flagging those results as needing verification before being offered to the customer. It renders as a split-pane chat (past sessions on the left, the active conversation on the right) under the sidebar item "Matching Assistant".
+A live-call sales co-pilot. A salesperson on a call types what the customer wants — city, district, property type, budget, area, bedrooms, lifestyle — and the assistant instantly returns the best-matching projects, ranked, with a ready-to-say sales pitch for each. It searches **our curated projects first**; only if there's no good match there does it fall back to the broad **All Projects** database, clearly flagging those results as needing verification before being offered to the customer. It renders as a split-pane chat (past sessions on the left, the active conversation on the right) under the sidebar item **"مساعد المبيعات" (Sales Assistant)**.
 
 ## Why it exists
 During a live call the salesperson needs a confident recommendation in seconds, grounded in real inventory — not a hand search through 1,372 projects, and not an AI that invents prices or availability. The assistant turns the customer's words into a ranked, fact-checked shortlist plus the exact sentence to say next.

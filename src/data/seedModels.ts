@@ -3006,9 +3006,13 @@ const matchingChatsLastMessageFieldId = uuid();
 
 const matchingChatsModel: AppModel = {
   id: MATCHING_CHATS_MODEL_ID,
+  // User-facing name is the UNIFIED "Sales Assistant" (مساعد المبيعات). Project
+  // matching is its FIRST active capability; future capabilities (next-best-
+  // action, follow-ups, comparison) expand this SAME assistant — no second face.
+  // Technical name stays `matching_chats` (Option B — no destabilizing rename).
   name: 'matching_chats',
-  label_ar: 'مساعد المطابقة',
-  label_en: 'Matching Assistant',
+  label_ar: 'مساعد المبيعات',
+  label_en: 'Sales Assistant',
   icon: 'compass',
   color: '#B8734F',
   group_id: null,

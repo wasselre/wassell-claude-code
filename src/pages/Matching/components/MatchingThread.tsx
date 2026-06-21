@@ -199,7 +199,7 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
             {(record.data.title as string | undefined) ?? (isAr ? 'محادثة' : 'Conversation')}
           </div>
           <div className="text-xs text-charcoal/60">
-            {isAr ? 'مساعد مطابقة المشاريع' : 'Project Matching Assistant'}
+            {isAr ? 'مساعد المبيعات' : 'Sales Assistant'}
           </div>
         </div>
         <button
@@ -299,8 +299,8 @@ function WelcomeHint({ isAr }: { isAr: boolean }) {
       <Compass size={24} className="mx-auto mb-2 text-copper" />
       <div>
         {isAr
-          ? 'مثال: العميل يبي شقة في حي النرجس بالرياض، ميزانية مليون ونص، 3 غرف.'
-          : 'Try: Customer wants an apartment in حي النرجس, Riyadh — budget 1.5M, 3 bedrooms.'}
+          ? 'اكتب طلب العميل بلغتك، مثلاً: «العميل يبي شقة في حي النرجس بالرياض، ميزانية مليون ونص، ٣ غرف».'
+          : "Type the customer's request in your own words, e.g. “Customer wants an apartment in حي النرجس, Riyadh — budget 1.5M, 3 bedrooms.”"}
       </div>
     </div>
   );

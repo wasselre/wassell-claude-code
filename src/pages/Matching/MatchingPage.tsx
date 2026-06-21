@@ -44,7 +44,7 @@ export default function MatchingPage() {
       id: newId,
       model_id: model.id,
       data: {
-        title: isAr ? 'مطابقة جديدة' : 'New match',
+        title: isAr ? 'محادثة جديدة' : 'New chat',
         status: 'active',
         message_count: 0,
         messages: [],
@@ -61,8 +61,8 @@ export default function MatchingPage() {
     return (
       <div className="p-8 text-center text-charcoal/70">
         {isAr
-          ? 'نموذج مساعد المطابقة غير مهيأ بعد. أعد تحميل الصفحة.'
-          : 'Matching assistant model not initialized. Please reload.'}
+          ? 'مساعد المبيعات غير مهيأ بعد. أعد تحميل الصفحة.'
+          : 'Sales Assistant model not initialized. Please reload.'}
       </div>
     );
   }
@@ -81,7 +81,7 @@ export default function MatchingPage() {
             className="flex-1 flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors text-sm font-medium"
           >
             <Plus size={16} />
-            {isAr ? 'مطابقة جديدة' : 'New match'}
+            {isAr ? 'محادثة جديدة' : 'New chat'}
           </button>
         </div>
         <div className="flex-1 overflow-y-auto">
@@ -143,19 +143,19 @@ function EmptyPane({ isAr, onStart }: { isAr: boolean; onStart: () => void }) {
         <Compass size={32} className="text-copper" />
       </div>
       <h2 className="text-xl font-semibold text-charcoal mb-2">
-        {isAr ? 'مساعد مطابقة المشاريع' : 'Project Matching Assistant'}
+        {isAr ? 'مساعد المبيعات' : 'Sales Assistant'}
       </h2>
       <p className="text-sm text-charcoal/70 max-w-md mb-6">
         {isAr
-          ? 'مساعد للمكالمات المباشرة: اكتب متطلبات العميل (المدينة، الحي، نوع العقار، الميزانية، المساحة، الغرف) ويرشّح لك أفضل المشاريع المطابقة مع نبذة بيعية جاهزة. يبحث في مشاريعنا أولاً، ثم في "كل المشاريع" (مع التنبيه للتحقق).'
-          : "A live-call co-pilot: type the customer's requirements (city, district, property type, budget, area, bedrooms) and get the best-matching projects ranked, with a ready-to-say pitch. Searches our projects first, then All Projects (flagged for verification)."}
+          ? 'مساعد المبيعات يساعدك أثناء المكالمة: يرشّح لك أفضل المشاريع للعميل ويجهّز لك كلاماً بيعياً جاهزاً تقوله مباشرة. اكتب طلب العميل بلغة طبيعية (المدينة، الحي، نوع العقار، الميزانية، الغرف). يبحث في مشاريعنا أولاً ثم في «كل المشاريع» مع التنبيه للتحقق. (قريباً داخل نفس المساعد: اقتراح الخطوة التالية والمتابعة وصياغة الرسائل.)'
+          : "Your live-call sales co-pilot: it finds the best-fit projects for the customer and gives you ready-to-say sales language. Type the customer's request in plain words (city, district, property type, budget, bedrooms). It searches our projects first, then All Projects (flagged for verification). Coming soon inside this same assistant: next-best-action, follow-ups, and message drafting."}
       </p>
       <button
         onClick={onStart}
         className="flex items-center gap-2 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors"
       >
         <Plus size={16} />
-        {isAr ? 'مطابقة جديدة' : 'New match'}
+        {isAr ? 'محادثة جديدة' : 'New chat'}
       </button>
     </div>
   );
