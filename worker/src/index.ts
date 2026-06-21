@@ -596,14 +596,16 @@ async function runConflictStormSweep(): Promise<void> {
     }
     const res = (data ?? {}) as {
       storm?: boolean;
+      rollback_rate?: number; // 2026-06-21: primary signal (xact_rollback/sec)
       aborted?: number;
       active?: number;
       alert_id?: number | null;
     };
     if (res.storm) {
       console.error(
-        `[worker] 🚨 CONFLICT STORM DETECTED — ${res.aborted} record_save backend(s) wedged in version conflicts (alert #${res.alert_id ?? '-'}). ` +
-          `A client is hammering record_save with a stale version. Find the record in the Postgres logs (version_mismatch lines) and run SELECT kill_conflict_storm_record('<id>').`,
+        `[worker] 🚨 CONFLICT STORM DETECTED — ${res.rollback_rate ?? '?'} rollbacks/sec (alert #${res.alert_id ?? '-'}). ` +
+          `A client is hammering record_save with a stale version. The enriched version_mismatch ERROR in the Postgres logs now carries [record=<uuid> model=<uuid> user=<uuid>] (or grep record_save_conflict); ` +
+          `then SELECT block_conflict_storm_record('<id>') and/or kill_conflict_storm_record('<id>').`,
       );
       const hook = process.env.CONFLICT_ALERT_WEBHOOK_URL;
       if (hook) {
@@ -612,7 +614,7 @@ async function runConflictStormSweep(): Promise<void> {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              text: `🚨 Wassell: record_save conflict storm detected (${res.aborted} wedged backends). Check Postgres logs + run kill_conflict_storm_record(<id>).`,
+              text: `🚨 Wassell: record_save conflict storm (${res.rollback_rate ?? '?'} rollbacks/sec). Postgres logs carry the record/model/user; run block_/kill_conflict_storm_record(<id>).`,
             }),
           });
         } catch (hookErr) {

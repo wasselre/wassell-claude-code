@@ -962,10 +962,23 @@ async function supabaseRecordUpsert(
           // serialization_failure is the version_mismatch the RPC raises.
           // PostgreSQL SQLSTATE 40001 — surface a clear "reload" toast and
           // do NOT enqueue for retry; replaying would hit the same conflict.
+          // 40001/serialization_failure covers BOTH the version_mismatch AND the
+          // server-side `conflict_storm_blocked` terminal reject — treat them
+          // identically: terminal, no blind retry, tell the user to reload.
           const isVersionConflict =
-            error.code === '40001' || (error.message ?? '').includes('version_mismatch');
+            error.code === '40001' || (error.message ?? '').includes('version_mismatch') ||
+            (error.message ?? '').includes('conflict_storm_blocked');
           if (isVersionConflict) {
             const tripped = noteRecordConflict(id);
+            // Report this conflict to the backend auto-throttle (fire-and-forget).
+            // Once one (record, session) crosses the server threshold the record
+            // is auto-blocked, so even a re-render retry loop becomes a cheap
+            // terminal reject server-side without an operator in the loop. Never
+            // throws into the save path. (2026-06-21 conflict-storm hardening.)
+            void supabase!.rpc('record_conflict_report', { p_record_id: id })
+              .then(({ error: reportErr }) => {
+                if (reportErr) console.warn('[conflict] record_conflict_report failed:', reportErr.message);
+              });
             const msg = 'Another user just edited this record. Reload to see their changes before re-saving.';
             if (tripped) {
               // Repeated conflicts in a short window = a stuck client (stale
