@@ -11,6 +11,7 @@ import { resolveSectionMirrorFieldMulti } from '@/lib/sectionMirrorExpand';
 import { isFieldVisible } from '@/lib/fieldVisibility';
 import { activityLogger } from '@/lib/activityLogger';
 import { supabase } from '@/lib/supabase';
+import { setFormUnsaved } from '@/lib/staleBuild';
 import type { CustomButton } from '@/types';
 
 /**
@@ -159,6 +160,17 @@ export default function RecordFormPage() {
   // Tracks whether the form has unsaved user edits. Used to guard prev/next
   // navigation and the back button with a Save / Discard / Cancel prompt.
   const [isDirty, setIsDirty] = useState(false);
+  // Register this form's dirty state into the global unsaved-changes registry so
+  // the forced stale-build reload (conflict-storm layer 2) protects real work via
+  // the native beforeunload prompt. Keyed per form instance; cleared on unmount.
+  const unsavedKeyRef = useRef<string>(`record-form:${Math.random().toString(36).slice(2)}`);
+  useEffect(() => {
+    setFormUnsaved(unsavedKeyRef.current, isDirty);
+  }, [isDirty]);
+  useEffect(() => {
+    const key = unsavedKeyRef.current;
+    return () => setFormUnsaved(key, false);
+  }, []);
   // When the user attempts to leave a dirty form, we stash the navigation
   // action here and open the unsaved-changes modal. Null when no exit is
   // pending. Wrapped in `{ run }` so React's setState doesn't invoke the

@@ -1,6 +1,11 @@
 import { create } from 'zustand';
 import { v4 as uuid } from 'uuid';
 import { supabase } from '@/lib/supabase';
+import {
+  isStaleBuildWriteLocked,
+  lockStaleBuildWrites,
+  getStaleBuildState,
+} from '@/lib/staleBuild';
 import { getSession, getSessionEmail, getSessionUid, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
@@ -880,6 +885,17 @@ async function supabaseRecordUpsert(
   opts: { expectedVersion?: number | null } = {},
 ): Promise<SaveResult> {
   if (!supabase) return { status: 'saved' };
+  // Stale-build lockout (conflict-storm layer 2): once this tab is confirmed
+  // outdated AND it tripped the storm breaker, every save short-circuits here —
+  // terminal + NON-silent (returns 'conflict' so the caller surfaces it; the
+  // form keeps the user's edits until the forced reload) — so a stale tab can't
+  // keep hammering the DB while it waits out the forced-reload grace.
+  if (isStaleBuildWriteLocked()) {
+    return {
+      status: 'conflict',
+      message: 'A required update is loading — reload to continue. Your changes are kept in the form.',
+    };
+  }
   if (!canWriteToSupabase()) {
     enqueuePendingWrite({
       op: 'record_upsert',
@@ -981,6 +997,11 @@ async function supabaseRecordUpsert(
               });
             const msg = 'Another user just edited this record. Reload to see their changes before re-saving.';
             if (tripped) {
+              // If this tab is ALSO running a stale build, a tripped breaker
+              // means a STALE tab is storming — lock all writes now and pull the
+              // forced reload in (layer 2), instead of letting it idle out the
+              // full grace while the breaker holds the line for this one record.
+              if (getStaleBuildState().outdated) lockStaleBuildWrites();
               // Repeated conflicts in a short window = a stuck client (stale
               // local version), not a one-off race. Fire ONE strong toast and
               // let the breaker short-circuit future saves above so we stop

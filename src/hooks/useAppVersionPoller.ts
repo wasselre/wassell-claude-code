@@ -1,5 +1,5 @@
 /**
- * Detects when a new build is live on Vercel and surfaces it to the user.
+ * Detects when a new build is live on Vercel and FORCES a stale tab onto it.
  *
  * The flow:
  *   1. Vite injects `__BUILD_VERSION__` (the short commit SHA) into the
@@ -8,21 +8,40 @@
  *   2. /api/version returns the version of the CURRENT live deploy.
  *   3. This hook polls /api/version every 60 seconds (only while the tab
  *      is visible — Page Visibility API). When the response differs from
- *      the baked-in version, it sets `updateAvailable: true`.
- *   4. The UI surfaces a persistent "New version available — reload" banner
- *      with a one-click reload button. Two minutes after detection, if the
- *      user hasn't clicked, we auto-reload — but only when the tab is
- *      hidden (so we don't yank the page out from under someone mid-task).
+ *      the baked-in version, the tab is OUTDATED.
+ *   4. On outdated: mark the build stale (`markStaleBuildOutdated`) with a
+ *      short forced-reload deadline, show the UpdateBanner countdown, and at
+ *      the deadline FORCE a reload — regardless of tab visibility. This is the
+ *      conflict-storm layer-2 fix: a stale tab is the source of the record_save
+ *      version-conflict storms, so a stale tab must not be allowed to linger.
  *
- * Without this, every user has to clear their browser cache after a deploy,
- * which we are NOT doing — see the explicit feedback in our memory:
- * shipping a release should never require user-side cache surgery.
+ * Protecting the user (so "force" never means "lose work"):
+ *   - The banner counts down visibly with a "save your changes" warning.
+ *   - A `beforeunload` guard fires the browser's native unsaved-changes prompt
+ *     when any form is dirty (forms register via staleBuild.setFormUnsaved).
+ *   - If a stale tab is ALSO storming (the save breaker trips while outdated),
+ *     writes lock immediately (stop hitting the DB) and the reload is pulled in.
+ *
+ * Without this, a stale VISIBLE tab never reloaded (the old behavior only
+ * auto-reloaded HIDDEN tabs), so a pre-fix bundle could run — and storm — for
+ * days. See src/lib/staleBuild.ts and the 2026-06-21 conflict-storm hardening.
  */
 
 import { useEffect, useRef, useState } from 'react';
+import {
+  markStaleBuildOutdated,
+  lockStaleBuildWrites,
+  hasUnsavedChanges,
+  subscribeStaleBuild,
+  getStaleBuildState,
+} from '@/lib/staleBuild';
 
 const POLL_INTERVAL_MS = 60_000; // 1 minute
-const AUTO_RELOAD_HIDDEN_TAB_MS = 2 * 60_000; // 2 minutes
+// Short grace after detection before we force the reload — enough time for the
+// banner countdown to let the user save, short enough that a stale (possibly
+// storming) tab can't linger. A storming tab pulls this in further (see
+// lockStaleBuildWrites).
+const FORCE_RELOAD_GRACE_MS = 90_000;
 
 interface VersionResponse {
   sha?: string;
@@ -36,6 +55,12 @@ export interface AppVersionState {
   liveVersion: string | null;
   /** The version baked into THIS tab's bundle. */
   loadedVersion: string;
+  /** Whole seconds until the forced reload (0 once due). null when not stale. */
+  secondsUntilForcedReload: number | null;
+  /** Whether saves are currently locked (stale + storming). */
+  writeLocked: boolean;
+  /** Whether any open form has unsaved edits (drives the banner warning). */
+  hasUnsaved: boolean;
   /** Force a reload now. Exposed so the banner button can call it. */
   reload: () => void;
 }
@@ -45,7 +70,12 @@ export function useAppVersionPoller(): AppVersionState {
     typeof __BUILD_VERSION__ !== 'undefined' ? __BUILD_VERSION__ : 'unknown';
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [liveVersion, setLiveVersion] = useState<string | null>(null);
+  // Re-render tick so the countdown updates and staleBuild changes propagate.
+  const [, setTick] = useState(0);
   const detectedAtRef = useRef<number | null>(null);
+
+  // Mirror staleBuild module changes into React.
+  useEffect(() => subscribeStaleBuild(() => setTick((n) => n + 1)), []);
 
   useEffect(() => {
     // Skip the poller in dev — /api/version isn't served by `vite dev`,
@@ -82,8 +112,8 @@ export function useAppVersionPoller(): AppVersionState {
         const live = body.sha;
         if (cancelled) return;
         // Ignore sentinel values — those mean Vercel didn't have a real SHA
-        // to stamp this deploy with. Treating them as a mismatch would show
-        // the banner forever on otherwise-fine deploys.
+        // to stamp this deploy with. Treating them as a mismatch would force a
+        // reload loop on otherwise-fine deploys.
         const liveIsValid = live && typeof live === 'string'
           && live !== 'unknown' && !live.startsWith('dev-');
         if (liveIsValid) {
@@ -92,6 +122,8 @@ export function useAppVersionPoller(): AppVersionState {
             setUpdateAvailable(true);
             if (detectedAtRef.current === null) {
               detectedAtRef.current = Date.now();
+              // Arm the stale-build lockout + forced-reload deadline ONCE.
+              markStaleBuildOutdated(Date.now() + FORCE_RELOAD_GRACE_MS);
             }
           }
         }
@@ -130,26 +162,55 @@ export function useAppVersionPoller(): AppVersionState {
     };
   }, [loadedVersion]);
 
-  // Auto-reload (background tab only) after the grace window. We never
-  // yank an active tab — the banner stays up and the user reloads when
-  // it's safe for them.
+  // Forced reload at the deadline — REGARDLESS of tab visibility (the key
+  // difference from the old "hidden tabs only" behavior). The beforeunload
+  // guard below protects unsaved work; a storming tab already had its writes
+  // locked so it isn't hammering the DB while it waits out the grace.
   useEffect(() => {
     if (!updateAvailable) return;
     const interval = setInterval(() => {
-      if (
-        detectedAtRef.current !== null
-        && Date.now() - detectedAtRef.current >= AUTO_RELOAD_HIDDEN_TAB_MS
-        && document.hidden
-      ) {
+      const { forcedReloadAt } = getStaleBuildState();
+      if (forcedReloadAt > 0 && Date.now() >= forcedReloadAt) {
+        lockStaleBuildWrites(); // belt-and-suspenders: no save can race the reload
         window.location.reload();
+      } else {
+        setTick((n) => n + 1); // keep the countdown ticking
       }
-    }, 5_000);
+    }, 1_000);
     return () => clearInterval(interval);
   }, [updateAvailable]);
+
+  // Unsaved-changes guard: the browser's native prompt is our safety net so a
+  // forced reload can never silently discard real work. Only engages when a
+  // form is actually dirty (clean tabs reload without a prompt).
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent): void => {
+      if (hasUnsavedChanges()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, []);
 
   const reload = (): void => {
     window.location.reload();
   };
 
-  return { updateAvailable, liveVersion, loadedVersion, reload };
+  const { forcedReloadAt, writeLocked, hasUnsaved } = getStaleBuildState();
+  const secondsUntilForcedReload =
+    updateAvailable && forcedReloadAt > 0
+      ? Math.max(0, Math.ceil((forcedReloadAt - Date.now()) / 1000))
+      : null;
+
+  return {
+    updateAvailable,
+    liveVersion,
+    loadedVersion,
+    secondsUntilForcedReload,
+    writeLocked,
+    hasUnsaved,
+    reload,
+  };
 }
