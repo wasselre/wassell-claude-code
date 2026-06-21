@@ -758,20 +758,25 @@ export async function runDiscover(
     language === 'ar'
       ? '\n\nIMPORTANT: Write your "notes" and any source "note" in Arabic (العربية). Keep unit identifiers verbatim.'
       : '\n\nIMPORTANT: Write your "notes" and any source "note" in English. Keep unit identifiers verbatim.';
+  // Discovery emits the WHOLE unit index in one response, which is large for a
+  // several-hundred-unit project (الماجدية 163 overflowed 16k). Use STREAMING
+  // (`messages.stream().finalMessage()`) so we can raise max_tokens past the
+  // SDK's non-streaming ceiling — it refuses a plain `create` whose max_tokens
+  // implies a >10-min worst case ("Streaming is required…"), but streaming is
+  // exempt. This is internal (server↔Anthropic); the /api/migrate request still
+  // returns one JSON blob, so it is NOT client-facing SSE. 32000 covers far
+  // bigger indexes; a still-larger one trips the loud truncation guard below.
   const call = (model: string) =>
-    client.messages.create({
-      model,
-      // Identifiers-only, so this is plenty for a few-hundred-unit index. Capped
-      // at 16000 (not higher) because the SDK refuses a NON-streaming request
-      // whose max_tokens implies a >10-min worst case ("Streaming is required…")
-      // — 16000 is the proven non-streaming ceiling used by runExtract/fuse here.
-      // A larger index that overruns this hits the loud truncation guard below.
-      max_tokens: 16000,
-      system: DISCOVER_SYSTEM + (hasTableField(targetFields) ? TABLE_FIELDS_RULE : '') + langNote,
-      tools: [DISCOVER_TOOL],
-      tool_choice: { type: 'tool', name: 'emit_unit_index' },
-      messages: [{ role: 'user', content: blocks }],
-    });
+    client.messages
+      .stream({
+        model,
+        max_tokens: 32000,
+        system: DISCOVER_SYSTEM + (hasTableField(targetFields) ? TABLE_FIELDS_RULE : '') + langNote,
+        tools: [DISCOVER_TOOL],
+        tool_choice: { type: 'tool', name: 'emit_unit_index' },
+        messages: [{ role: 'user', content: blocks }],
+      })
+      .finalMessage();
 
   let response;
   try {
