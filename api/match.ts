@@ -26,6 +26,7 @@ import {
   executeMatchTool,
   collectAuthoritativeMeta,
   reconcileRecommendationPayload,
+  resolveClientId,
   type AuthoritativeMeta,
 } from './_lib/matchAgent.js';
 import { logAiAgentTurn } from './_lib/activityLogger.js';
@@ -164,9 +165,21 @@ export default async function handler(req: Request): Promise<Response> {
                   send({ type: 'message_draft', data: toolUse.input ?? {} });
                 }
                 if (toolUse.name === 'propose_task') {
-                  // Confirmation-gated: the browser renders a Confirm/Cancel card.
-                  // The record is created CLIENT-SIDE only after the user confirms.
-                  send({ type: 'task_proposal', data: toolUse.input ?? {} });
+                  // Confirmation-gated: the browser renders a Confirm/Cancel card;
+                  // the record is created CLIENT-SIDE only after the user confirms.
+                  // FIRST validate the client_id server-side — the model sometimes
+                  // invents a client_id, which would orphan the task. Override with
+                  // the real id (or mark unresolved so the card can't be confirmed).
+                  const tinput = (toolUse.input ?? {}) as Record<string, unknown>;
+                  const resolvedClient = await resolveClientId(supabase, tinput.client_id, tinput.client_name);
+                  const taskPayload: Record<string, unknown> = { ...tinput };
+                  if (resolvedClient) {
+                    taskPayload.client_id = resolvedClient.id;
+                    if (resolvedClient.name) taskPayload.client_name = resolvedClient.name;
+                  } else {
+                    taskPayload.unresolved = true;
+                  }
+                  send({ type: 'task_proposal', data: taskPayload });
                 }
                 const toolStartedAt = Date.now();
                 let toolResult = '';

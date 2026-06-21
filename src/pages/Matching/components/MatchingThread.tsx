@@ -207,6 +207,11 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
 
   /** Confirmation-gated write: create the follow-up record only on explicit confirm. */
   async function confirmTask(msgIdx: number, cardIdx: number, payload: TaskProposalPayload, dueAtIso: string) {
+    // Never write a task that isn't tied to a real, server-validated client.
+    if (payload.unresolved || !payload.client_id) {
+      addToast(isAr ? 'العميل غير موجود في النظام — لا يمكن إنشاء المهمة' : 'Client not found — cannot create the task', 'error');
+      return;
+    }
     const followups = models.find((m) => m.name === 'followups');
     if (!followups) {
       addToast(isAr ? 'نموذج المتابعات غير متوفر' : 'Follow-ups model unavailable', 'error');
@@ -218,7 +223,8 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
       model_id: followups.id,
       data: {
         client_id: payload.client_id,
-        followup_type: payload.followup_type,
+        // section_selector stores an array of selected section values.
+        followup_type: [payload.followup_type],
         scheduled_datetime: dueAtIso,
         followup_status: 'open',
         sales_rep: currentUserId,
@@ -228,12 +234,17 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
       updated_at: now,
     };
     const res = await saveRecord(rec);
-    if (res && res.status === 'conflict') {
-      addToast(isAr ? 'تعذّر إنشاء المهمة' : 'Could not create the task', 'error');
-      return;
+    // Only claim success on a real save — 'queued' (RPC failed) / 'conflict' must
+    // surface, never a silent "created" the DB doesn't have.
+    if (res?.status === 'saved') {
+      setCardStatus(msgIdx, cardIdx, 'created', rec.id);
+      addToast(isAr ? 'تم إنشاء مهمة المتابعة' : 'Follow-up task created', 'success');
+    } else {
+      addToast(
+        isAr ? 'تعذّر إنشاء المهمة — حاول مرة أخرى' : 'Could not create the task — please try again',
+        'error',
+      );
     }
-    setCardStatus(msgIdx, cardIdx, 'created', rec.id);
-    addToast(isAr ? 'تم إنشاء مهمة المتابعة' : 'Follow-up task created', 'success');
   }
 
   function renderCard(card: StoredCard, msgIdx: number, cardIdx: number) {

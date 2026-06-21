@@ -144,7 +144,7 @@ When asked what to do with a lead (no reply, visited but didn't book, asked for 
 For "what do I send / write a WhatsApp": draft a warm, concise Arabic message using ONLY real facts (pull get_project / get_customer_context if it needs project or customer specifics). Call emit_message with channel + the full draft. Never invent prices, dates, or availability — use a «[placeholder]» if a needed fact is missing.
 
 # TASK / FOLLOW-UP CREATION (confirmation-gated — you NEVER write silently)
-When the salesperson wants a follow-up/reminder/task created: get_customer_context for the real client_id, then call propose_task (client_id, followup_type, due_at, notes). This does NOT create anything — it shows a Confirm/Cancel card. Tell the salesperson it's ready for them to confirm; NEVER say "تم إنشاء المهمة / I created the task" — only THEY can confirm it. If you don't have a real client_id, ask for the client first.
+When the salesperson wants a follow-up/reminder/task created: call get_customer_context for the lead, then call propose_task passing the EXACT client_id it returned (and the client_name) — never invent or guess a client_id. This does NOT create anything — it shows a Confirm/Cancel card. Tell the salesperson it's ready for them to confirm; NEVER say "تم إنشاء المهمة / I created the task" — only THEY can confirm it. (The server validates the client_id and blocks the card if the lead can't be found.) If get_customer_context didn't find the lead, ask for the exact name/phone first.
 
 # Deterministic truth vs your words (applies to EVERY capability)
 Code decides truth; you explain it. These come from tools and MUST be quoted verbatim, never re-derived: match score / band / match_type / data_source / requires_verification / distance_km (match_projects, compare_projects); lead_temperature / stage / status / next_action (get_customer_context); every project fact (price/area/bedroom/bathroom ranges, availability, amenities, location). You generate the explanation, pitch, message, talking points, and questions — only from that verified data.
@@ -1292,6 +1292,46 @@ async function getCustomerContext(supabase: SupabaseClient, input: CustomerLooku
     preferences: cleanClientPrefs(d),
     note: 'lead_temperature, stage, status, next_action are DETERMINISTIC from the CRM — quote them, do not re-judge. If a field is empty it is unknown; never invent client history.',
   });
+}
+
+// ─── propose_task client resolution (anti-hallucinated-id) ───────────────────
+
+const CLIENT_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Resolve the authoritative clients record id for a proposed task. The model
+ * sometimes echoes a bogus/invented client_id in propose_task, so never trust it
+ * blindly: accept the echoed id ONLY if it is a REAL clients record; otherwise
+ * resolve by client_name; otherwise return null (the task card is shown
+ * unresolved and cannot be confirmed). Mirrors resolveReelScriptProjectId.
+ */
+export async function resolveClientId(
+  supabase: SupabaseClient,
+  rawId: unknown,
+  name: unknown,
+): Promise<{ id: string; name: string } | null> {
+  const model = await getModelByName(supabase, 'clients');
+  if (!model) return null;
+
+  if (typeof rawId === 'string' && CLIENT_UUID_RE.test(rawId)) {
+    const { data } = await supabase
+      .from('unified_records')
+      .select('id, data, model_id')
+      .eq('id', rawId)
+      .maybeSingle();
+    if (data && (data as { model_id?: string }).model_id === model.id) {
+      const row = data as RecordRow;
+      return { id: row.id, name: asStr(row.data.client_name) };
+    }
+  }
+
+  const wantName = typeof name === 'string' ? normalizeForSearch(name) : '';
+  if (wantName) {
+    const rows = await pageRecords(supabase, model.id, 5);
+    const hit = rows.find((r) => fuzzyContains(asStr(r.data.client_name), wantName));
+    if (hit) return { id: hit.id, name: asStr(hit.data.client_name) };
+  }
+  return null;
 }
 
 // ─── Dispatch ────────────────────────────────────────────────────────────────

@@ -28,10 +28,12 @@ export default function TaskProposalCard({
   const [busy, setBusy] = useState(false);
   const typeLabel = FOLLOWUP_TYPE_LABELS[payload.followup_type];
 
+  // The server couldn't tie this to a real client — never let it be created.
+  const unresolved = payload.unresolved === true || !payload.client_id;
   const locked = status !== 'proposed';
 
   function confirm() {
-    if (locked || busy) return;
+    if (locked || busy || unresolved) return;
     setBusy(true);
     onConfirm(localInputToIso(due));
   }
@@ -69,7 +71,11 @@ export default function TaskProposalCard({
           </div>
         )}
 
-        {status === 'created' ? (
+        {unresolved && status === 'proposed' ? (
+          <div className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-2">
+            {L('لم يتم العثور على هذا العميل في النظام — لا يمكن إنشاء المهمة. تأكّد من اسم/رقم العميل.', "This client wasn't found in the CRM — the task can't be created. Confirm the client's name/phone.")}
+          </div>
+        ) : status === 'created' ? (
           <div className="flex items-center gap-1.5 text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg p-2">
             <ClipboardCheck size={14} /> {L('تم إنشاء المهمة وإضافتها لقائمة المتابعات.', 'Task created and added to the follow-up queue.')}
           </div>

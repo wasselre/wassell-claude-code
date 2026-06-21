@@ -175,13 +175,19 @@ export interface TaskProposalPayload {
   notes: string;
   suggested_message: string;
   project_id?: string;
+  /** Set by the server when the client_id couldn't be validated — the card then
+   *  shows "client not found" and the Confirm button is disabled. */
+  unresolved?: boolean;
 }
 
 export function normalizeTaskProposal(data: unknown): TaskProposalPayload | null {
   if (!data || typeof data !== 'object') return null;
   const d = data as Record<string, unknown>;
   const clientId = asString(d.client_id);
-  if (!clientId) return null; // a task with no real client is not actionable
+  const unresolved = d.unresolved === true;
+  // A resolved task needs a real client_id; an unresolved one is still shown
+  // (disabled) so the salesperson knows the lead wasn't found.
+  if (!clientId && !unresolved) return null;
   const ft = asString(d.followup_type) as FollowupType;
   return {
     client_id: clientId,
@@ -191,6 +197,7 @@ export function normalizeTaskProposal(data: unknown): TaskProposalPayload | null
     notes: asString(d.notes),
     suggested_message: asString(d.suggested_message),
     project_id: asString(d.project_id) || undefined,
+    unresolved,
   };
 }
 
