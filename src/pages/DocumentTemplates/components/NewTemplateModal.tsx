@@ -116,6 +116,8 @@ export default function NewTemplateModal({ open, onClose, onCreated }: Props) {
       if (starter) {
         await saveDocumentSettings(file.id, {
           ...DEFAULT_PAGE_SETTINGS,
+          // Narrow margins keep a full info-table + terms + signatures on one A4 page.
+          margin: 'narrow',
           footer_text: isAr ? 'وصل العقارية' : 'Wassel Real Estate',
           show_page_numbers: true,
         });
