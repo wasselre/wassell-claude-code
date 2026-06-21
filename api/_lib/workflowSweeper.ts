@@ -225,6 +225,17 @@ async function runWorkflow(
     actionTraces.push(buildActionTrace(action, result, idx, triggerRecord));
     if (result.status === 'executed') anyExecuted = true;
     if (result.status === 'failed') anyFailed = true;
+    // A self-update that lost an optimistic-concurrency race (`version_conflict`)
+    // means a human — or a concurrent tick — changed the trigger record since it
+    // was selected. The rest of this branch assumes that update landed (e.g. the
+    // appointment no-show flow's client move + recovery follow-up assume the
+    // appointment is now no_show), so we ABORT the remaining actions rather than
+    // act on a record we didn't actually change. This keeps "never override a
+    // human update" true for the WHOLE sequence, not just the flip. Only
+    // `version_conflict` aborts — it is produced solely by version-guarded
+    // self-updates (the appointment no-show sweeper passes a trigger `version`),
+    // so no other on_due workflow's behavior changes.
+    if (result.status === 'skipped' && result.reason === 'version_conflict') break;
   }
 
   const status: WorkflowRunSummary['status'] = anyFailed
@@ -508,18 +519,37 @@ async function executeUpdateRecord(
     updatedData[mapping.target_field_id] = value;
   }
 
+  // Optimistic-concurrency guard for self-updates — the trigger record updating
+  // ITSELF (e.g. the appointment no-show auto-close flips its own status). When
+  // the engine is handed a trigger record carrying its loaded `version` (the
+  // appointment sweeper does this), pass it as p_expected_version so a write
+  // that bumped the version since selection — a human editing the record, or a
+  // concurrent cron tick — is rejected. A rejected flip is SKIPPED, never an
+  // override. Other on_due paths (e.g. followups) don't set `version`, so
+  // expectedVersion stays null and behavior is unchanged (null == skip check).
+  const isSelfUpdate = target.id === triggerRecord.id;
+  const expectedVersion = isSelfUpdate && typeof triggerRecord.version === 'number'
+    ? triggerRecord.version
+    : null;
+
   const { error } = await ctx.supabase.rpc('record_save', {
     p_model_id: action.target_model_id,
     p_id: target.id,
     p_data: updatedData,
     p_created_by: target.created_by_user_id ?? null,
+    p_expected_version: expectedVersion,
   });
   if (error) {
+    // SQLSTATE 40001 / version_mismatch = a concurrent (human or sweep) write
+    // won the race. Record it as skipped (surfaced loudly in the run log), not
+    // failed, and never retry-overwrite — this is what honors "a manual update
+    // is never overridden".
+    const isVersionConflict = error.code === '40001' || /version_mismatch/i.test(error.message ?? '');
     return {
       action_id: action.id,
       type: 'update_record',
-      status: 'failed',
-      reason: 'rpc_error',
+      status: isVersionConflict ? 'skipped' : 'failed',
+      reason: isVersionConflict ? 'version_conflict' : 'rpc_error',
       detail: { message: error.message },
     };
   }

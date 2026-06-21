@@ -19,6 +19,7 @@
     }
   ],
   "crons": [
-    { "path": "/api/sweep-due-followups", "schedule": "*/5 * * * *" }
+    { "path": "/api/sweep-due-followups", "schedule": "*/5 * * * *" },
+    { "path": "/api/sweep-appointment-noshows", "schedule": "*/30 * * * *" }
   ]
 }

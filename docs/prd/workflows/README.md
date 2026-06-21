@@ -4,7 +4,7 @@
 
 # Workflows — auto-generated index
 
-**18 workflows.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**19 workflows.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Workflow | Trigger | On model | Active | Branches | Actions | Updated |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -12,6 +12,7 @@
 | [After-Visit Completed](after-visit-completed-e4e0680c.md) | update | Follow-ups | yes | 7 | 11 | 2026-06-17 |
 | [Apology WhatsApp on missed call](apology-whatsapp-on-missed-call-58392e9e.md) | create | Phone Calls | yes | 1 | 1 | 2026-04-27 |
 | [Appointment booked via call](appointment-booked-via-call-4b60ef83.md) | create | Appointments | yes | 1 | 4 | 2026-06-17 |
+| [Auto-close appointment as No-Show after 24h](auto-close-appointment-as-no-show-after-24h-b9f3a1c2.md) | on_due | Appointments | yes | 1 | 3 | 2026-06-21 |
 | [Confirmation Completed](confirmation-completed-12da04dd.md) | update | Follow-ups | yes | 7 | 14 | 2026-06-17 |
 | [Financing Status Updated](financing-status-updated-fcff0ba0.md) | update | Financing | yes | 3 | 4 | 2026-06-17 |
 | [First Follow-up (Clients - Follow-ups)](first-follow-up-clients-follow-ups-a336e134.md) | create | Clients | yes | 1 | 1 | 2026-06-16 |
