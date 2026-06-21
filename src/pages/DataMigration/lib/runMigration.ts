@@ -14,7 +14,10 @@ export interface RunMigrationArgs extends BuildPlanArgs {
   /** Source row indices the user un-approved in the preview step — not saved. */
   excludedRows?: number[];
   saveModel: (m: AppModel) => unknown;
-  saveRecord: (r: AppRecord) => Promise<SaveResultLike> | SaveResultLike;
+  saveRecord: (
+    r: AppRecord,
+    opts?: { expectedVersion?: number | null },
+  ) => Promise<SaveResultLike> | SaveResultLike;
   onProgress?: (done: number, total: number) => void;
 }
 
@@ -111,12 +114,17 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
 
   const result: MigrationResult = {
     imported: 0,
+    updated: 0,
     skipped: plan.skipped,
     new_lookup_records: lookupsToCreate.length,
     new_options: optionsToCreate.length,
     invalid_skipped: invalidSkipped,
     errors: [],
   };
+
+  // Existing records by id — the merge target when a project-profile row updates
+  // an existing project instead of creating a duplicate.
+  const existingById = new Map((args.allRecords[args.model.id] ?? []).map((r) => [r.id, r]));
 
   const total = lookupsToCreate.length + toSave.length;
   let done = 0;
@@ -154,20 +162,28 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
     await breathe();
   }
 
-  // 3 — the approved + valid records.
+  // 3 — the approved + valid records: UPDATE a matched existing project (merge,
+  // migrated fields win, units/rollups preserved) or CREATE a fresh record.
   for (const built of toSave) {
-    const rec: AppRecord = {
-      id: args.makeId(),
-      model_id: args.model.id,
-      data: built.data,
-      created_by_user_id: args.createdBy,
-      created_at: now,
-      updated_at: now,
-    };
+    const existing = built.matchedExistingId ? existingById.get(built.matchedExistingId) : undefined;
+    const rec: AppRecord = existing
+      ? { ...existing, data: { ...existing.data, ...built.data }, updated_at: now }
+      : {
+          id: args.makeId(),
+          model_id: args.model.id,
+          data: built.data,
+          created_by_user_id: args.createdBy,
+          created_at: now,
+          updated_at: now,
+        };
     try {
-      const res = await args.saveRecord(rec);
+      // Updating an existing project is a deliberate overwrite — skip the
+      // optimistic-version check (its version churns as rollup triggers fire).
+      const res = await args.saveRecord(rec, existing ? { expectedVersion: null } : undefined);
       if (res && res.status && res.status !== 'saved' && res.status !== 'queued') {
         result.errors.push({ id: rec.id, error: res.status });
+      } else if (existing) {
+        result.updated++;
       } else {
         result.imported++;
       }

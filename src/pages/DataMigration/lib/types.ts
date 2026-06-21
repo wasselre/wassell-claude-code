@@ -176,6 +176,10 @@ export interface MigrationData {
   chat?: ChatMessage[];
   /** Source row indices the user un-approved in the preview step (not migrated). */
   excluded_rows?: number[];
+  /** PROJECT-PROFILE mode: the existing project record to UPDATE instead of
+   * creating a new one. `undefined` = auto-match by name (the default); `null` =
+   * explicitly create a new project; a record id = update that project. */
+  project_update_target?: string | null;
   /** Final import summary, set when status='done'. */
   result?: MigrationResult;
 }
@@ -316,10 +320,16 @@ export interface BuiltRecord {
   issues: RowIssue[];
   /** fieldName → audit meta for controlled fields (raw value + the action taken). */
   audit: Record<string, PreviewCellMeta>;
+  /** PROJECT-PROFILE mode: the id of an EXISTING record this row should UPDATE
+   * (merge into) instead of creating a new one — set when the migration targets
+   * an existing project by name. Absent = create a fresh record. */
+  matchedExistingId?: string;
 }
 
 export interface MigrationResult {
   imported: number;
+  /** PROJECT-PROFILE mode: records that UPDATED an existing one (vs created). */
+  updated: number;
   skipped: number;
   new_lookup_records: number;
   /** New dropdown/multi-select options added to the model schema. */

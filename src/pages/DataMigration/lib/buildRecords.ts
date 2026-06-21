@@ -6,6 +6,7 @@ import { importableFields, lookupCreateBlockReason } from './targetFields';
 import {
   MARKETING_DOC_FIELD,
   ANALYSIS_DOC_FIELD,
+  isProjectProfileTarget,
   type BuiltRecord,
   type ColumnStandardization,
   type PendingNewLookupRecord,
@@ -49,6 +50,10 @@ export interface BuildPlanArgs {
   /** PROJECT-PROFILE mode: the intelligence sections — rendered to Markdown and
    * written into each record's `project_analysis`. */
   projectIntelligence?: ProjectIntelligenceSection[];
+  /** PROJECT-PROFILE mode: which existing project to UPDATE instead of creating
+   * a new one. `undefined` = auto-match by name; `null` = create new; an id =
+   * update that record. */
+  projectUpdateTargetId?: string | null;
   allModels: AppModel[];
   allRecords: Record<string, AppRecord[]>;
   isAr: boolean;
@@ -91,6 +96,42 @@ function renderProjectAnalysis(sections: ProjectIntelligenceSection[]): string {
     .map((s) => (s.title ? `## ${s.title}\n\n${s.content}` : s.content))
     .join('\n\n')
     .trim();
+}
+
+/** The field that holds a project's name — used to match a project-profile
+ * migration against an existing project. Prefers `project_name` / `name` /
+ * `title`, else the first text field. */
+export function projectNameField(model: AppModel): ModelField | undefined {
+  const all = model.schema.sections.flatMap((s) => s.fields);
+  return (
+    all.find((f) => f.name === 'project_name' || f.name === 'name' || f.name === 'title') ??
+    all.find((f) => f.type === 'text')
+  );
+}
+
+/** Find an existing project whose name matches the migrated project's name.
+ * Token-aware so a verbose extracted name ("جزيل / كمباوند جزيل / JAZEEL COMPOUND")
+ * still matches a plain "جزيل": exact normalized match, OR one name is a whole
+ * separator-delimited part of the other. Returns the existing record id or undefined. */
+export function suggestProjectMatch(
+  existing: AppRecord[],
+  nameSlug: string,
+  builtName: string,
+): string | undefined {
+  const SEP = /[/|،,\-–—]+/;
+  const target = normalizeMatch(builtName);
+  if (!target) return undefined;
+  const targetParts = builtName.split(SEP).map((p) => normalizeMatch(p)).filter(Boolean);
+  for (const rec of existing) {
+    const raw = String(rec.data[nameSlug] ?? '');
+    const existName = normalizeMatch(raw);
+    if (!existName) continue;
+    if (existName === target) return rec.id;
+    if (targetParts.includes(existName)) return rec.id;
+    const existParts = raw.split(SEP).map((p) => normalizeMatch(p)).filter(Boolean);
+    if (existParts.includes(target)) return rec.id;
+  }
+  return undefined;
 }
 
 /** A value is "empty" for required-field validation. */
@@ -547,6 +588,25 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
   if (analysis && fields.some((f) => f.name === ANALYSIS_DOC_FIELD)) {
     for (const rec of records) {
       if (!(ANALYSIS_DOC_FIELD in rec.data)) rec.data[ANALYSIS_DOC_FIELD] = analysis;
+    }
+  }
+
+  // ── PROJECT-PROFILE: update an existing project instead of duplicating it ──
+  // `projectUpdateTargetId`: undefined → auto-match by name; null → create new;
+  // an id → update that record. Marks the built row with `matchedExistingId` so
+  // runMigration merges into the existing record (keeping its units/rollups).
+  if (isProjectProfileTarget(model)) {
+    const nameField = projectNameField(model);
+    const existing = allRecords[model.id] ?? [];
+    const explicit = args.projectUpdateTargetId;
+    for (const rec of records) {
+      let targetId: string | undefined;
+      if (explicit === null) targetId = undefined; // explicit "create new"
+      else if (typeof explicit === 'string') targetId = explicit; // explicit pick
+      else if (nameField) {
+        targetId = suggestProjectMatch(existing, nameField.name, String(rec.data[nameField.name] ?? ''));
+      }
+      if (targetId && existing.some((r) => r.id === targetId)) rec.matchedExistingId = targetId;
     }
   }
 

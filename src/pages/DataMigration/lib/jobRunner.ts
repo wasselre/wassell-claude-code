@@ -376,6 +376,7 @@ export async function startMigrationJob(recordId: string): Promise<void> {
       standardization: data.standardization ?? {},
       projectDocument: data.project_document,
       projectIntelligence: data.project_intelligence,
+      projectUpdateTargetId: data.project_update_target,
       excludedRows: data.excluded_rows,
       allModels: state.models,
       allRecords: state.records,

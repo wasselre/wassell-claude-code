@@ -12,7 +12,7 @@ interface StepDoneProps {
 
 export default function StepDone({ isAr, model, result, onNewMigration }: StepDoneProps) {
   const navigate = useNavigate();
-  const r = result ?? { imported: 0, skipped: 0, new_lookup_records: 0, new_options: 0, invalid_skipped: 0, errors: [] };
+  const r = result ?? { imported: 0, updated: 0, skipped: 0, new_lookup_records: 0, new_options: 0, invalid_skipped: 0, errors: [] };
   const modelLabel = isAr ? model.label_ar : model.label_en;
 
   return (
@@ -23,8 +23,12 @@ export default function StepDone({ isAr, model, result, onNewMigration }: StepDo
       <h3 className="text-xl font-bold text-charcoal">{isAr ? 'تم الترحيل بنجاح' : 'Migration complete'}</h3>
       <p className="text-charcoal/60">
         {isAr
-          ? `تم ترحيل ${r.imported} سجل إلى ${modelLabel}`
-          : `Imported ${r.imported} records into ${modelLabel}`}
+          ? r.updated > 0
+            ? `تم تحديث ${r.updated}${r.imported > 0 ? ` وإضافة ${r.imported}` : ''} في ${modelLabel}`
+            : `تم ترحيل ${r.imported} سجل إلى ${modelLabel}`
+          : r.updated > 0
+            ? `Updated ${r.updated}${r.imported > 0 ? ` and added ${r.imported}` : ''} in ${modelLabel}`
+            : `Imported ${r.imported} records into ${modelLabel}`}
       </p>
       <div className="text-xs text-charcoal/45 space-y-0.5">
         {r.new_lookup_records > 0 && (

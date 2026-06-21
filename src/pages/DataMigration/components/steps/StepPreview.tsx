@@ -3,7 +3,9 @@ import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
 import { ArrowRight, ArrowLeft, PlayCircle, AlertTriangle, Plus, Link2, CornerDownRight, Ban } from 'lucide-react';
 import { buildMigrationPlan, isRecordValid } from '../../lib/runMigration';
+import { projectNameField } from '../../lib/buildRecords';
 import { resolveDisplay } from '../../lib/previewRecords';
+import { isProjectProfileTarget } from '../../lib/types';
 import type { AppModel, ModelField } from '@/types';
 import type { RawTable, ColumnStandardization, BuiltRecord, RowIssue, ProjectIntelligenceSection } from '../../lib/types';
 
@@ -17,6 +19,10 @@ interface StepPreviewProps {
   projectDocument?: string;
   /** PROJECT-PROFILE mode: injected (rendered) into each record's project_analysis. */
   projectIntelligence?: ProjectIntelligenceSection[];
+  /** PROJECT-PROFILE mode: which existing project to UPDATE (undefined = auto by
+   * name, null = create new, id = that record). */
+  projectUpdateTargetId?: string | null;
+  onProjectUpdateTarget?: (target: string | null) => void;
   excludedRows: number[] | undefined;
   onChangeExcluded: (next: number[]) => void;
   onConfirm: () => void;
@@ -62,6 +68,8 @@ export default function StepPreview({
   standardization,
   projectDocument,
   projectIntelligence,
+  projectUpdateTargetId,
+  onProjectUpdateTarget,
   excludedRows,
   onChangeExcluded,
   onConfirm,
@@ -81,13 +89,28 @@ export default function StepPreview({
         standardization: standardization ?? {},
         projectDocument,
         projectIntelligence,
+        projectUpdateTargetId,
         allModels,
         allRecords,
         isAr,
         makeId: uuid,
       }),
-    [model, table, mappings, standardization, projectDocument, projectIntelligence, allModels, allRecords, isAr],
+    [model, table, mappings, standardization, projectDocument, projectIntelligence, projectUpdateTargetId, allModels, allRecords, isAr],
   );
+
+  // PROJECT-PROFILE: pick whether this migration UPDATES an existing project (so
+  // its units/rollups are kept) or creates a new one. Default = the name-matched
+  // project the plan resolved.
+  const projectMode = isProjectProfileTarget(model);
+  const nameField = useMemo(() => projectNameField(model), [model]);
+  const existingProjects = useMemo(() => {
+    if (!projectMode || !nameField) return [] as { id: string; name: string }[];
+    return (allRecords[model.id] ?? [])
+      .map((r) => ({ id: r.id, name: String(r.data[nameField.name] ?? '').trim() || (isAr ? '(بدون اسم)' : '(no name)') }))
+      .sort((a, b) => a.name.localeCompare(b.name, isAr ? 'ar' : 'en'));
+  }, [projectMode, nameField, allRecords, model.id, isAr]);
+  // Effective target the plan resolved (auto-match or explicit pick); '' = new.
+  const effectiveTargetId = plan.records[0]?.matchedExistingId ?? '';
 
   // temp-id → label, so "create new" lookup decisions show the real name.
   const pendingLabels = useMemo(() => {
@@ -163,6 +186,36 @@ export default function StepPreview({
           </button>
         </div>
       </div>
+
+      {/* PROJECT-PROFILE: create-new vs update-an-existing-project target. */}
+      {projectMode && existingProjects.length > 0 && (
+        <div className="mb-3 rounded-xl border border-copper/30 bg-copper/[0.04] p-3">
+          <div className="text-xs font-bold text-charcoal mb-1.5">
+            {isAr ? 'وجهة الترحيل' : 'Migration target'}
+          </div>
+          <select
+            value={effectiveTargetId}
+            onChange={(e) => onProjectUpdateTarget?.(e.target.value || null)}
+            className="form-input text-sm py-1.5 w-full max-w-md"
+          >
+            <option value="">{isAr ? '✦ إنشاء مشروع جديد' : '✦ Create a new project'}</option>
+            {existingProjects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {(isAr ? 'تحديث: ' : 'Update: ') + p.name}
+              </option>
+            ))}
+          </select>
+          <p className="text-[11px] text-charcoal/55 mt-1.5">
+            {effectiveTargetId
+              ? isAr
+                ? 'سيُحدَّث المشروع الموجود (مع الإبقاء على وحداته وأرقامه المحسوبة)؛ تُكتب عليه البيانات والوثيقة التسويقية والتحليل.'
+                : 'The existing project is updated (its units + computed rollups are kept); the data, marketing document, and analysis are written onto it.'
+              : isAr
+                ? 'سيُنشأ مشروع جديد. اختر مشروعًا موجودًا أعلاه لتحديثه بدلًا من إنشاء نسخة مكررة.'
+                : 'A new project will be created. Pick an existing project above to update it instead of making a duplicate.'}
+          </p>
+        </div>
+      )}
 
       {/* Pending creates + validation summary */}
       {(plan.newOptions.length > 0 || plan.newLookupRecords.length > 0 || invalidCount > 0 || warnCount > 0) && (
