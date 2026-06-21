@@ -354,11 +354,23 @@ export function getSalesProcessConfig(): SalesProcessConfig {
 }
 
 /**
- * Merge manager-edited instruction overrides (objective text per follow-up
- * type) over the hardcoded config. A null/blank override field falls back to
- * the default, so a partially-filled override never blanks the instruction.
- * Keyed by override.id === FollowUpTypeConfig.type. Returns the base unchanged
- * when there are no overrides (cheap common case).
+ * Parse a newline-separated call-guidance override into trimmed bullet lines.
+ * Returns undefined for a null/blank override so the caller falls back to the
+ * hardcoded default script (a partial override never blanks the guidance).
+ */
+function parseScriptOverride(raw: string | null | undefined): string[] | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const lines = raw.split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.length ? lines : undefined;
+}
+
+/**
+ * Merge manager-edited instruction overrides over the hardcoded config — the
+ * objective text (mission Goal) AND the call-guidance script (Call Guidance
+ * panel) per follow-up type. A null/blank override field falls back to the
+ * default, so a partially-filled override never blanks the instruction. Keyed
+ * by override.id === FollowUpTypeConfig.type. Returns the base unchanged when
+ * there are no overrides (cheap common case).
  */
 export function applyOverridesToConfig(
   overrides: SalesProcessOverride[] | undefined,
@@ -371,10 +383,17 @@ export function applyOverridesToConfig(
     followup_types: base.followup_types.map((t) => {
       const o = byType.get(t.type);
       if (!o) return t;
+      const scriptAr = parseScriptOverride(o.script_ar);
+      const scriptEn = parseScriptOverride(o.script_en);
+      const script =
+        scriptAr || scriptEn
+          ? { ar: scriptAr ?? t.script?.ar ?? [], en: scriptEn ?? t.script?.en ?? [] }
+          : t.script;
       return {
         ...t,
         objective_ar: o.objective_ar?.trim() ? o.objective_ar : t.objective_ar,
         objective_en: o.objective_en?.trim() ? o.objective_en : t.objective_en,
+        script,
       };
     }),
   };

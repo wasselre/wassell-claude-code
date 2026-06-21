@@ -1704,15 +1704,19 @@ export interface ScheduledReportRun {
 }
 
 /**
- * Manager-editable override of a follow-up type's instruction (objective) text.
+ * Manager-editable override of a follow-up type's instruction text.
  * `id` IS the follow-up type key (e.g. 'appointment_booking_call'). Merged over
  * DEFAULT_SALES_PROCESS by applyOverridesToConfig so the Follow-up Workspace
- * mission shows the edited text. Admin-write, all-authenticated-read (reps see it).
+ * mission (objective) and Call Guidance panel (script) show the edited text.
+ * `script_ar` / `script_en` are newline-separated — one call-guidance bullet per
+ * line. Admin-write, all-authenticated-read (reps see it).
  */
 export interface SalesProcessOverride {
   id: string;
   objective_ar: string | null;
   objective_en: string | null;
+  script_ar?: string | null;
+  script_en?: string | null;
   updated_at?: string;
 }
 

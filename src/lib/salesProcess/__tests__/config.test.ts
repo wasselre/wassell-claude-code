@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { AppModel } from '@/types';
-import { DEFAULT_SALES_PROCESS, collectConfigEnumRefs } from '../config';
+import type { AppModel, SalesProcessOverride } from '@/types';
+import { DEFAULT_SALES_PROCESS, applyOverridesToConfig, collectConfigEnumRefs, getFollowUpTypeConfig } from '../config';
 import { OUTCOME_VALUES } from '../outcomes';
 import { CLIENT_STAGE_VALUES, CLIENT_STATUS_VALUES } from '../arabicEnums.generated';
 import { checkSalesProcessEnums } from '../assertEnums';
@@ -57,6 +57,51 @@ describe('DEFAULT_SALES_PROCESS integrity', () => {
       schema: { sections: [{ fields: [{ name: 'call_result', options: OUTCOME_VALUES.map((v) => ({ value: v })) }] }] },
     } as unknown as AppModel;
     expect(checkSalesProcessEnums([clients, followups], refs)).toEqual([]);
+  });
+});
+
+describe('applyOverridesToConfig', () => {
+  const T = 'appointment_booking_call';
+  const base = getFollowUpTypeConfig(T, DEFAULT_SALES_PROCESS)!;
+
+  it('returns the base unchanged when there are no overrides', () => {
+    expect(applyOverridesToConfig([])).toBe(DEFAULT_SALES_PROCESS);
+    expect(applyOverridesToConfig(undefined)).toBe(DEFAULT_SALES_PROCESS);
+  });
+
+  it('overrides the objective and parses script newlines into bullet lines', () => {
+    const overrides: SalesProcessOverride[] = [{
+      id: T,
+      objective_ar: 'هدف معدّل',
+      objective_en: 'Edited goal',
+      script_ar: 'سطر ١\n سطر ٢ \n\n',
+      script_en: 'line 1\nline 2',
+    }];
+    const t = getFollowUpTypeConfig(T, applyOverridesToConfig(overrides))!;
+    expect(t.objective_ar).toBe('هدف معدّل');
+    expect(t.objective_en).toBe('Edited goal');
+    expect(t.script?.ar).toEqual(['سطر ١', 'سطر ٢']); // trimmed, blank lines dropped
+    expect(t.script?.en).toEqual(['line 1', 'line 2']);
+  });
+
+  it('falls back to the default for blank override fields (never blanks)', () => {
+    const overrides: SalesProcessOverride[] = [{
+      id: T, objective_ar: '   ', objective_en: null, script_ar: '', script_en: null,
+    }];
+    const t = getFollowUpTypeConfig(T, applyOverridesToConfig(overrides))!;
+    expect(t.objective_ar).toBe(base.objective_ar);
+    expect(t.objective_en).toBe(base.objective_en);
+    expect(t.script?.ar).toEqual(base.script?.ar);
+    expect(t.script?.en).toEqual(base.script?.en);
+  });
+
+  it('overriding only the Arabic script keeps the English default', () => {
+    const overrides: SalesProcessOverride[] = [{
+      id: T, objective_ar: null, objective_en: null, script_ar: 'إرشاد جديد', script_en: null,
+    }];
+    const t = getFollowUpTypeConfig(T, applyOverridesToConfig(overrides))!;
+    expect(t.script?.ar).toEqual(['إرشاد جديد']);
+    expect(t.script?.en).toEqual(base.script?.en);
   });
 });
 

@@ -179,8 +179,8 @@ function InstructionsEditor() {
       </div>
       <p className="mb-4 text-xs leading-relaxed text-charcoal/55">
         {isAr
-          ? 'حرّر الهدف الذي يراه المندوب لكل نوع متابعة. يُحفظ لجميع المستخدمين ويظهر مباشرةً في شاشة المتابعة.'
-          : 'Edit the goal each rep sees per follow-up type. Saved for all users and shown in the Workspace mission.'}
+          ? 'حرّر الهدف وإرشادات المكالمة التي يراها المندوب لكل نوع متابعة. تُحفظ لجميع المستخدمين وتظهر مباشرةً في شاشة المتابعة.'
+          : 'Edit the goal and call guidance each rep sees per follow-up type. Saved for all users and shown in the Workspace mission and Call Guidance panel.'}
       </p>
       <div className="divide-y divide-sand/40">
         {types.map((t) => (
@@ -194,20 +194,29 @@ function InstructionsEditor() {
 function InstructionRow({ type, override }: { type: FollowUpTypeConfig; override?: SalesProcessOverride }) {
   const { language, saveSalesProcessOverride, addToast } = useAppStore();
   const isAr = language === 'ar';
+  const defaultScriptAr = (type.script?.ar ?? []).join('\n');
+  const defaultScriptEn = (type.script?.en ?? []).join('\n');
   const baseAr = override?.objective_ar ?? type.objective_ar;
   const baseEn = override?.objective_en ?? type.objective_en;
+  const baseScriptAr = override?.script_ar ?? defaultScriptAr;
+  const baseScriptEn = override?.script_en ?? defaultScriptEn;
   const [open, setOpen] = useState(false);
   const [ar, setAr] = useState(baseAr);
   const [en, setEn] = useState(baseEn);
+  const [scriptAr, setScriptAr] = useState(baseScriptAr);
+  const [scriptEn, setScriptEn] = useState(baseScriptEn);
 
-  const dirty = ar !== baseAr || en !== baseEn;
-  const overridden = !!override && (!!override.objective_ar || !!override.objective_en);
+  const dirty = ar !== baseAr || en !== baseEn || scriptAr !== baseScriptAr || scriptEn !== baseScriptEn;
+  const overridden =
+    !!override && (!!override.objective_ar || !!override.objective_en || !!override.script_ar || !!override.script_en);
 
   const save = () => {
     saveSalesProcessOverride({
       id: type.type,
       objective_ar: ar.trim() || null,
       objective_en: en.trim() || null,
+      script_ar: scriptAr.trim() || null,
+      script_en: scriptEn.trim() || null,
       updated_at: new Date().toISOString(),
     });
     addToast(isAr ? 'تم حفظ التعليمات' : 'Instruction saved', 'success');
@@ -216,7 +225,16 @@ function InstructionRow({ type, override }: { type: FollowUpTypeConfig; override
   const reset = () => {
     setAr(type.objective_ar);
     setEn(type.objective_en);
-    saveSalesProcessOverride({ id: type.type, objective_ar: null, objective_en: null, updated_at: new Date().toISOString() });
+    setScriptAr(defaultScriptAr);
+    setScriptEn(defaultScriptEn);
+    saveSalesProcessOverride({
+      id: type.type,
+      objective_ar: null,
+      objective_en: null,
+      script_ar: null,
+      script_en: null,
+      updated_at: new Date().toISOString(),
+    });
     addToast(isAr ? 'تمت الاستعادة للافتراضي' : 'Reset to default', 'info');
   };
 
@@ -241,6 +259,32 @@ function InstructionRow({ type, override }: { type: FollowUpTypeConfig; override
           <div>
             <label className="mb-1 block text-xs font-semibold text-charcoal/60">{isAr ? 'الهدف (إنجليزي)' : 'Goal (English)'}</label>
             <textarea value={en} onChange={(e) => setEn(e.target.value)} rows={2} dir="ltr" className="form-input w-full text-sm" />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">
+              {isAr ? 'إرشادات المكالمة (سطر لكل نقطة)' : 'Call guidance (one bullet per line)'}
+            </label>
+            <textarea
+              value={scriptAr}
+              onChange={(e) => setScriptAr(e.target.value)}
+              rows={4}
+              dir="rtl"
+              placeholder={isAr ? 'اكتب كل إرشاد في سطر مستقل' : 'One guidance point per line'}
+              className="form-input w-full text-sm"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">
+              {isAr ? 'إرشادات المكالمة — إنجليزي (سطر لكل نقطة)' : 'Call guidance — English (one bullet per line)'}
+            </label>
+            <textarea
+              value={scriptEn}
+              onChange={(e) => setScriptEn(e.target.value)}
+              rows={4}
+              dir="ltr"
+              placeholder={isAr ? 'اكتب كل إرشاد في سطر مستقل' : 'One guidance point per line'}
+              className="form-input w-full text-sm"
+            />
           </div>
           <div className="flex items-center gap-2">
             <button
