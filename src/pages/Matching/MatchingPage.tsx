@@ -2,8 +2,9 @@ import { useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { Compass, Plus, MessageSquare } from 'lucide-react';
+import { Compass, Plus, MessageSquare, BarChart3 } from 'lucide-react';
 import type { AppRecord } from '@/types';
+import { useIsAdmin } from '@/hooks/usePermission';
 import MatchingThread from './components/MatchingThread';
 
 /**
@@ -24,6 +25,7 @@ export default function MatchingPage() {
   const recordsByModel = useAppStore((s) => s.records);
   const saveRecord = useAppStore((s) => s.saveRecord);
   const currentUserId = useAppStore((s) => s.currentUserId);
+  const isAdmin = useIsAdmin();
 
   const model = useMemo(() => models.find((m) => m.name === 'matching_chats'), [models]);
   const chats = useMemo<AppRecord[]>(() => {
@@ -83,6 +85,15 @@ export default function MatchingPage() {
             <Plus size={16} />
             {isAr ? 'محادثة جديدة' : 'New chat'}
           </button>
+          {isAdmin && (
+            <button
+              onClick={() => navigate('/sales/assistant-insights')}
+              title={isAr ? 'رؤى المساعد' : 'Assistant insights'}
+              className="shrink-0 flex items-center justify-center p-2 rounded-lg border border-sand/40 text-charcoal/60 hover:bg-cream hover:text-copper transition-colors"
+            >
+              <BarChart3 size={16} />
+            </button>
+          )}
         </div>
         <div className="flex-1 overflow-y-auto">
           {chats.length === 0 ? (

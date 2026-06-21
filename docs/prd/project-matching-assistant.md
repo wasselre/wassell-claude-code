@@ -1,8 +1,26 @@
-# PRD: Sales Assistant — Project Matching (Phase 1 / 1.1 / 1.2)
+# PRD: Sales Assistant (Project Matching + full sales co-pilot)
 
-**Status:** Live
+**Status:** Live — all planned capabilities shipped
 **Last updated:** 2026-06-21
 **Related PRDs:** [ai-agent.md](ai-agent.md), [copywriter-intelligence.md](copywriter-intelligence.md), [data-storage.md](data-storage.md)
+
+## Build status — all capabilities Complete
+Every capability on the original roadmap is **built, deployed, and live-verified** on `app.wassel.re`:
+
+| Capability | Status |
+|---|---|
+| Project matching (two-tier, weighted scoring) | ✅ Complete |
+| Deterministic score/band pass-through (1.1) | ✅ Complete |
+| Unified "Sales Assistant" face (1.2) | ✅ Complete |
+| Location intelligence (lat/lng, distance, nearby tier, confidence) | ✅ Complete |
+| Project comparison | ✅ Complete |
+| Customer understanding / context | ✅ Complete |
+| Sales consultant / next-best-action (lead temperature) | ✅ Complete |
+| Message drafting | ✅ Complete |
+| Task / follow-up creation (confirmation-gated, identity-safe) | ✅ Complete |
+| Feedback + telemetry + admin insights | ✅ Complete |
+
+**Current focus (post-build):** the product is feature-complete; effort now shifts to **operating it well** — driving rep adoption, collecting 👍/👎 feedback, watching usage analytics (the admin insights dashboard), reliability hardening, and validating real sales-performance impact. No new capability is planned until that signal says one is needed.
 
 ## Product direction — ONE unified Sales Assistant (read first)
 This is intentionally designed as **one unified sales assistant face** — **"مساعد المبيعات" / "Sales Assistant"** — with multiple internal capabilities, NOT a collection of separate assistants/pages. The salesperson opens one assistant, one chat, one conversation history, and types naturally; the assistant routes to the right internal capability. **Project matching + sales-pitch generation is the FIRST active capability.** Future capabilities — next-best-action / sales consulting, follow-up & task support, project comparison, customer understanding — will be added **inside this same assistant** (same chat, new tool + new structured card type), never as a second face or a new page.
@@ -25,6 +43,7 @@ The Sales Assistant is ONE chat that routes the salesperson's plain-language mes
 5. **Message drafting** — `emit_message` → `MessageCard`: WhatsApp / SMS / call-script drafts built only from real facts, with a copy button.
 6. **Task / follow-up creation (confirmation-gated)** — `propose_task` NEVER writes; it surfaces a `TaskProposalCard` with an editable due date and **Confirm / Dismiss**. Only on Confirm does the client create a `followups` record (via `saveRecord`). The agent is forbidden from claiming the task was created.
 7. **Customer understanding** — the agent continuously extracts/refines the customer's structured requirements from the whole conversation (the chat history is its memory); cards re-serialize into history so context carries across turns.
+8. **Feedback + telemetry + admin insights** — every assistant answer carries a 👍/👎 control. 👍 saves instantly; 👎 asks "what were you trying to do?" (find project / compare / understand customer / write message / create task / other) with an optional one-line note, so a miss is tagged by the rep's actual intent. Each answer also stores **inline per-turn telemetry** (which capabilities fired, response time, whether the turn errored) on the message — no schema change, no extra write path. An admin-only **Sales Assistant insights** dashboard (`/sales/assistant-insights`, gated by `useIsAdmin`, opened from a chart icon in the session list) aggregates the conversations the admin can see: capability/card usage, helpful rate (👍/👎), requests that didn't land (by intent), written rep comments, errored turns, and average response time. The aggregation (`aggregateInsights`) is pure and unit-tested; it tolerates any malformed message shape.
 
 **Deterministic-truth contract (all capabilities):** score / band / match_type / data_source / requires_verification / distance_km (matching, comparison) and lead_temperature / stage / next_action (consultant) are computed in code and quoted verbatim; the server reconciles `emit_recommendation` metadata so the model cannot re-score. The LLM only generates explanation, pitch, message, talking points, and questions — always from verified data.
 
@@ -53,19 +72,38 @@ The Sales Assistant is ONE chat that routes the salesperson's plain-language mes
 ## Key files
 | File | What it does |
 |---|---|
-| `api/match.ts` | SSE endpoint — one turn of the agent's tool-use loop; emits a `recommendation` event for the card |
-| `api/_lib/matchAgent.ts` | The agent brain — system prompt, tools (`match_projects`, `get_project`, `emit_recommendation`), the deterministic two-tier search + weighted scorer |
-| `src/pages/Matching/MatchingPage.tsx` | Split-pane page (session list + active thread) |
-| `src/pages/Matching/components/MatchingThread.tsx` | Active thread — sends turns, consumes SSE, renders the card |
+| `api/match.ts` | SSE endpoint — one turn of the agent's tool-use loop; emits `recommendation` / `comparison` / `next_action` / `message_draft` / `task_proposal` events; runs identity-safe `resolveClient` before any task proposal |
+| `api/_lib/matchAgent.ts` | The agent brain — system prompt, all tools (`match_projects`, `get_project`, `emit_recommendation`, `compare_projects`, `emit_comparison`, `get_customer_context`, `emit_next_action`, `emit_message`, `propose_task`), the deterministic geo-aware two-tier search + weighted scorer, lead-temperature, and `resolveClientFromCandidates` (never guesses on duplicate names) |
+| `src/pages/Matching/MatchingPage.tsx` | Split-pane page (session list + active thread); admin-only Insights link |
+| `src/pages/Matching/components/MatchingThread.tsx` | Active thread — sends turns, consumes SSE, renders all card types, captures per-turn telemetry, persists 👍/👎 feedback, and runs the confirmation-gated task write |
 | `src/pages/Matching/components/ProjectMatchCard.tsx` | Structured recommendation card (specs, pitch, warnings, questions) |
-| `src/lib/matching/client.ts` | Browser SSE stream consumer (`streamMatchTurn`) |
-| `src/lib/matching/recommendation.ts` | Recommendation payload type + lenient normalizer |
+| `src/pages/Matching/components/TaskProposalCard.tsx` | Confirmation-gated task card — shows resolved client name+phone, blocks Confirm when identity is ambiguous/not-found, shows save failure + retry inline |
+| `src/pages/Matching/components/MessageFeedback.tsx` | Per-answer 👍/👎; 👎 expands to intent chips + optional note |
+| `src/pages/Matching/AssistantInsightsPage.tsx` | Admin-only usage/feedback dashboard (`/sales/assistant-insights`) |
+| `src/lib/matching/telemetry.ts` | Telemetry + feedback types, `FEEDBACK_INTENTS`, and the pure `aggregateInsights` aggregator |
+| `src/lib/matching/cards.ts` | Comparison / next-action / message / task-proposal payload types + normalizers + `serializeCardForModel` |
+| `src/lib/matching/client.ts` | Browser SSE stream consumer (`streamMatchTurn`); `MatchEvent` union over all card types |
+| `src/lib/matching/recommendation.ts` | Recommendation payload type + lenient normalizer (`nearby` match type + `distance_km`) |
 | `src/data/seedModels.ts` | `matching_chats` system model (`MATCHING_CHATS_MODEL_ID`) |
 | `supabase/migrations/2026-06-18_matching_chats_model.sql` | Creates the `matching_chats` model row in prod (stable id, idempotent) |
+| `supabase/migrations/2026-06-21_project_geo.sql` | Backfills `all_projects` lat/lng + geo confidence (inline coords + district centroids) |
 | `src/lib/__tests__/projectMatchScoring.test.ts` | Unit tests for the deterministic scorer |
+| `src/lib/__tests__/salesAssistant.test.ts` | Unit tests — geo distance, nearby tier, lead temperature, identity resolution |
+| `src/lib/__tests__/assistantInsights.test.ts` | Unit tests for `aggregateInsights` (usage, helpful rate, failed intents, malformed-input tolerance) |
+
+## Production Learnings (write these down so we don't relearn them)
+These are the hard-won lessons from building a **write-capable** sales AI. They drove real fixes in `matchAgent.ts` / `api/match.ts` and they govern any future capability that can act on the user's behalf.
+
+1. **Identity resolution is safety-critical — the wrong customer is the unacceptable failure.** The safety hierarchy is explicit: *attaching a task to the wrong client* is unacceptable; *missing a task* is acceptable; *asking one more question* is acceptable. So the assistant must always prefer "I need one more piece of information" over "this is probably the right customer." Concretely: `resolveClient` NEVER accepts a client id echoed by the model unless it resolves to a real record, and `resolveClientFromCandidates` is exact-match-first and requires a **unique** match — it never first-match-guesses on duplicate Arabic names.
+
+2. **A write-capable AI is a different risk class than a read-only one.** Read-only matching that's slightly wrong wastes a few seconds; a wrong write creates a real orphaned record in `followups`. Every action capability therefore (a) resolves identity deterministically in code, (b) is confirmation-gated, and (c) is forbidden from claiming success it can't prove.
+
+3. **Ambiguity must BLOCK execution, not get resolved by a guess.** When a name matches multiple clients, the assistant must surface the candidates and refuse to proceed — at **both** resolution points (`resolveClient` for the proposal *and* `get_customer_context`, which a live test of "عبدالله" proved could otherwise feed a valid-looking id straight into `propose_task`). The `TaskProposalCard` disables **Confirm** until the rep picks a specific client.
+
+4. **User confirmation alone is insufficient if the identity underneath it is wrong.** A rep clicking "Confirm" trusts that the name/phone on the card is who the assistant resolved — so the card must show the resolved name + phone, and `confirmTask` must write only the validated id and report success **only** when `saveRecord` actually returns `'saved'`. Confirmation gates the *action*; deterministic resolution guarantees the *subject*.
 
 ## Open questions / known limitations
-- **Phase 1 = no geo.** No coordinates, distance, nearby-district, or radius logic. "Nearby" recommendations and a true distance score arrive in Phase 2 (lat/lng backfill + earthdistance). Until then, location is district/city text only.
 - **Lifestyle matching is best-effort** (low weight): lifestyle keywords like "family/luxury" are fuzzy-matched against Arabic amenity values; many won't literally match. Treat as a tiebreaker, not a filter.
-- **Whole-portfolio scan per call** — the tool pages all `all_projects` rows and scores in TypeScript (fine at ~1,372 rows). A `project_search_index` + SQL RPC is the Phase 2 performance path.
-- **Card is display-only** — no "Create follow-up / lead" action yet (candidate for a later phase, alongside the Sales Consultant capability).
+- **437 text-only projects have no coordinates.** They match on district/city text only; "nearby" distance applies just to the 936 geocoded projects (300 high-confidence inline coords + 636 medium-confidence district centroids). Medium-confidence distances are approximate and flagged as such.
+- **Whole-portfolio scan per call** — the tool pages all `all_projects` rows and scores in TypeScript (fine at ~1,372 rows). A `project_search_index` + SQL RPC is the performance path if the portfolio grows materially.
+- **Insights are client-aggregated over visible conversations.** The admin dashboard computes from the `matching_chats` records the current admin can see (RLS-scoped), not a server-side rollup — accurate for a single admin's view; a cross-tenant rollup would need a server aggregate.

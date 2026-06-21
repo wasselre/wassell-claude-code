@@ -39,6 +39,7 @@ import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import CopywriterPage from '@/pages/Copywriter/CopywriterPage';
 import MatchingPage from '@/pages/Matching/MatchingPage';
+import AssistantInsightsPage from '@/pages/Matching/AssistantInsightsPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
@@ -286,6 +287,7 @@ export default function App() {
           <Route path="/sales/studio/processes/:processId" element={<RequirePageAccess pageId="sales_studio"><ProcessJourneyPage /></RequirePageAccess>} />
           <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
+          <Route path="/sales/assistant-insights" element={<RequireAdmin><AssistantInsightsPage /></RequireAdmin>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />

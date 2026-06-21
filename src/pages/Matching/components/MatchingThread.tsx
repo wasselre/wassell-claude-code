@@ -19,6 +19,8 @@ import ComparisonCard from './ComparisonCard';
 import NextActionCard from './NextActionCard';
 import MessageCard from './MessageCard';
 import TaskProposalCard, { type TaskProposalStatus } from './TaskProposalCard';
+import MessageFeedback from './MessageFeedback';
+import type { MessageTelemetry, MessageFeedbackData } from '@/lib/matching/telemetry';
 
 /** One structured card delivered by the assistant inside the chat. */
 interface StoredCard {
@@ -37,6 +39,10 @@ interface StoredMessage {
   cards?: StoredCard[];
   /** Legacy single-recommendation field (older messages). Still rendered. */
   recommendation?: RecommendationPayload;
+  /** Per-turn telemetry (which capabilities fired, response time, errored). */
+  telemetry?: MessageTelemetry;
+  /** The rep's 👍/👎 (+ intent) on this answer. */
+  feedback?: MessageFeedbackData;
 }
 
 interface Props {
@@ -128,6 +134,9 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
 
     let assistantText = '';
     const captured: StoredCard[] = [];
+    const toolsUsed = new Set<string>();
+    let turnErrored = false;
+    const turnStart = Date.now();
     const pushCard = (card: StoredCard | null) => {
       if (!card) return;
       captured.push(card);
@@ -143,6 +152,7 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
             setStreamingText(assistantText);
           } else if (event.type === 'tool_use') {
             setActiveTool(event.name);
+            toolsUsed.add(event.name);
           } else if (event.type === 'tool_result') {
             setActiveTool(null);
           } else if (event.type === 'recommendation') {
@@ -161,6 +171,7 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
             const p = normalizeTaskProposal(event.data);
             if (p) pushCard({ kind: 'task_proposal', payload: p, task_status: 'proposed' });
           } else if (event.type === 'error') {
+            turnErrored = true;
             setError(event.message);
           }
         },
@@ -174,6 +185,7 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
           content: assistantText,
           timestamp: done,
           ...(captured.length ? { cards: captured } : {}),
+          telemetry: { tools_used: [...toolsUsed], response_ms: Date.now() - turnStart, errored: turnErrored },
         };
         const finalMessages = [...withUser, assistantMessage];
         saveRecord({
@@ -192,6 +204,13 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
       setSending(false);
       abortRef.current = null;
     }
+  }
+
+  /** Persist the rep's 👍/👎 feedback onto a stored assistant message. */
+  function setMessageFeedback(msgIdx: number, fb: MessageFeedbackData) {
+    if (!record) return;
+    const msgs = storedMessages.map((m, mi) => (mi === msgIdx ? { ...m, feedback: fb } : m));
+    saveRecord({ ...record, data: { ...record.data, messages: msgs }, updated_at: new Date().toISOString() });
   }
 
   /** Update a task_proposal card's confirmation status on its stored message. */
@@ -321,6 +340,9 @@ export default function MatchingThread({ recordId, modelId, onNewChat }: Props) 
               {(m.cards ?? []).map((c, ci) => (
                 <div key={ci}>{renderCard(c, i, ci)}</div>
               ))}
+              {m.role === 'assistant' && (
+                <MessageFeedback isAr={isAr} value={m.feedback} onSubmit={(fb) => setMessageFeedback(i, fb)} />
+              )}
             </div>
           );
         })}
