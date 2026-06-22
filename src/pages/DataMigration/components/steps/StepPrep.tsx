@@ -16,12 +16,14 @@ import {
   ListChecks,
   CheckCircle2,
   HelpCircle,
+  AlertTriangle,
+  Lock,
 } from 'lucide-react';
 import { planExtraction, type MigrationUpload } from '../../lib/client';
 import { targetFieldLites } from '../../lib/targetFields';
 import { useMigrationJobs } from '../../lib/jobRunner';
 import { isProjectProfileTarget } from '../../lib/types';
-import type { ChatMessage, ProposedColumn, MigrationStatus } from '../../lib/types';
+import type { ChatMessage, ProposedColumn, PrepQuestion, MigrationStatus } from '../../lib/types';
 import type { AppModel } from '@/types';
 
 interface StepPrepProps {
@@ -39,12 +41,19 @@ interface StepPrepProps {
   /** The latest proposed table structure + its "ready" signal. */
   prepStructure?: ProposedColumn[];
   prepReady?: boolean;
-  /** Persist a completed planning turn in ONE write (chat + structure + ready).
-   * A SINGLE patch is deliberate: saving the chat and the structure as two
-   * rapid back-to-back writes to the same record could briefly desync the
-   * store/realtime copy from the saved one (the user would see the turn vanish
-   * back to the empty state even though the server still had it). */
-  onPlanResult: (chat: ChatMessage[], structure: ProposedColumn[], ready: boolean) => void;
+  /** The AI's current open questions / contradictions, shown as answer cards. */
+  prepQuestions?: PrepQuestion[];
+  /** Persist a completed planning turn in ONE write (chat + structure + questions
+   * + ready). A SINGLE patch is deliberate: saving these as separate rapid
+   * back-to-back writes to the same record could briefly desync the store/realtime
+   * copy from the saved one (the user would see the turn vanish back to the empty
+   * state even though the server still had it). */
+  onPlanResult: (
+    chat: ChatMessage[],
+    structure: ProposedColumn[],
+    questions: PrepQuestion[],
+    ready: boolean,
+  ) => void;
   status: MigrationStatus | undefined;
   errorMessage: string | null | undefined;
   /** Trigger the real extraction (discover/fuse or project extract). */
@@ -75,6 +84,7 @@ export default function StepPrep({
   prepChat,
   prepStructure,
   prepReady,
+  prepQuestions,
   onPlanResult,
   status,
   errorMessage,
@@ -108,6 +118,12 @@ export default function StepPrep({
   const [thread, setThread] = useState<ChatMessage[]>(prepChat ?? []);
   const [structure, setStructure] = useState<ProposedColumn[]>(prepStructure ?? []);
   const [ready, setReady] = useState<boolean>(prepReady ?? false);
+  // The AI's CURRENT open questions (cards) + the operator's in-progress answers
+  // (keyed by the question's index in the current list — reset every turn since
+  // the AI returns a fresh open set each time). Extraction is blocked while any
+  // question card remains.
+  const [questions, setQuestions] = useState<PrepQuestion[]>(prepQuestions ?? []);
+  const [answers, setAnswers] = useState<Record<number, string>>({});
 
   const flushInstructions = () => {
     if (instrTimer.current) {
@@ -141,7 +157,7 @@ export default function StepPrep({
         ...thread.map((m) => ({ role: m.role, content: m.content })),
         { role: 'user' as const, content: text },
       ];
-      const { reply, questions, proposedColumns, ready: nextReady } = await planExtraction({
+      const { reply, questions: questionsOut, proposedColumns, ready: nextReady } = await planExtraction({
         messages: apiMessages,
         instructions: instrLatest.current,
         uploads: sourceFiles,
@@ -149,27 +165,21 @@ export default function StepPrep({
         language: isAr ? 'ar' : 'en',
       });
       const now = new Date().toISOString();
-      // Fold the structured questions into the assistant bubble as a bullet list
-      // (kept as plain chat text so the thread persists as ChatMessage[]).
-      const assistantContent =
-        (reply || (isAr ? 'تم.' : 'Done.')) +
-        (questions.length > 0
-          ? '\n\n' +
-            (isAr ? 'أسئلة بحاجة لإجابتك:' : 'Questions for you:') +
-            '\n' +
-            questions.map((q) => `• ${q}`).join('\n')
-          : '');
+      // The chat bubble is the AI's conversational reply ONLY — the questions now
+      // live in their own answer cards below the chat (not folded into the prose).
       const nextThread: ChatMessage[] = [
         ...thread,
         { role: 'user', content: text, ts: now },
-        { role: 'assistant', content: assistantContent, ts: now },
+        { role: 'assistant', content: reply || (isAr ? 'تم.' : 'Done.'), ts: now },
       ];
       // Update the LOCAL view first (immune to a stale store echo), then persist
-      // the whole turn in ONE write (chat + structure + ready) — see onPlanResult.
+      // the whole turn in ONE write (chat + structure + questions + ready).
       setThread(nextThread);
       setStructure(proposedColumns);
+      setQuestions(questionsOut);
+      setAnswers({}); // the open set just changed — clear in-progress answers
       setReady(nextReady);
-      onPlanResult(nextThread, proposedColumns, nextReady);
+      onPlanResult(nextThread, proposedColumns, questionsOut, nextReady);
       setAiInput('');
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -185,6 +195,22 @@ export default function StepPrep({
         ? 'راجع الملفات وتعليماتي، واسألني عن أي تعارض بين المصادر أو أي شيء غير واضح، واقترح هيكل الجدول وكيف ستملأ كل عمود.'
         : 'Review the files and my instructions; ask me about any contradiction between the sources or anything unclear, and propose the table structure and how you will fill each column.',
     );
+
+  /** Bundle the operator's card answers into ONE message and send it as a turn.
+   * Sends only the cards that have an answer; the AI resolves those and returns
+   * the remaining open questions (the card list shrinks until empty). The chat
+   * input is the alternative free-text path — both feed the same turn. */
+  const submitAnswers = () => {
+    const answered = questions
+      .map((q, i) => ({ q, a: (answers[i] ?? '').trim() }))
+      .filter((x) => x.a);
+    if (answered.length === 0 || aiBusy) return;
+    const header = isAr ? 'هذه إجاباتي عن أسئلتك:' : 'Here are my answers to your questions:';
+    const body = answered
+      .map((x) => `- ${x.q.question}\n  ${isAr ? 'إجابتي' : 'My answer'}: ${x.a}`)
+      .join('\n');
+    void runPlanTurn(`${header}\n${body}`);
+  };
 
   const fileIcon = (mime: string) =>
     mime.includes('pdf') ? (
@@ -255,7 +281,10 @@ export default function StepPrep({
     );
   }
 
-  const openQuestions = thread.length > 0 && !ready;
+  // Extraction is BLOCKED until every question card is resolved (the AI returns
+  // an empty question set once the operator's answers satisfy it).
+  const blocked = questions.length > 0;
+  const answeredCount = questions.filter((_, i) => (answers[i] ?? '').trim() !== '').length;
 
   return (
     <div className="p-5 flex flex-col h-full">
@@ -457,9 +486,84 @@ export default function StepPrep({
             </div>
           )}
         </div>
+
+        {/* Questions & contradictions — answerable CARDS (the quiz), shown BELOW
+            the chat. Each must be resolved before extraction is allowed. The
+            operator answers here OR in the chat — both feed the same turn. */}
+        {questions.length > 0 && (
+          <div className="rounded-xl border border-gold/40 bg-gold/[0.06] overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-charcoal border-b border-gold/30">
+              <HelpCircle size={15} className="text-gold" />
+              <span className="flex-1 text-start">
+                {isAr ? 'أسئلة بحاجة لإجابتك' : 'Questions to answer'}
+              </span>
+              <span className="text-[11px] text-charcoal/50 font-normal">
+                {isAr
+                  ? `${answeredCount}/${questions.length} مُجابة`
+                  : `${answeredCount}/${questions.length} answered`}
+              </span>
+            </div>
+            <div className="px-3 py-2.5 space-y-2.5 max-h-[22rem] overflow-y-auto">
+              {questions.map((q, i) => {
+                const isContradiction = (q.kind ?? '').toLowerCase().includes('contradict');
+                const filled = (answers[i] ?? '').trim() !== '';
+                return (
+                  <div
+                    key={i}
+                    className={`rounded-lg border bg-white p-2.5 ${
+                      filled ? 'border-green-300' : isContradiction ? 'border-gold/50' : 'border-sand/40'
+                    }`}
+                  >
+                    <div className="flex items-start gap-2 mb-1.5">
+                      {isContradiction ? (
+                        <AlertTriangle size={14} className="text-gold shrink-0 mt-0.5" />
+                      ) : (
+                        <HelpCircle size={14} className="text-copper shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-charcoal" dir="auto">
+                          {q.question}
+                        </div>
+                        {q.detail && (
+                          <div className="text-[11px] text-charcoal/55 mt-0.5 leading-relaxed" dir="auto">
+                            {q.detail}
+                          </div>
+                        )}
+                      </div>
+                      {filled && <CheckCircle2 size={14} className="text-green-500 shrink-0 mt-0.5" />}
+                    </div>
+                    <textarea
+                      dir="auto"
+                      value={answers[i] ?? ''}
+                      onChange={(e) => setAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
+                      disabled={aiBusy}
+                      placeholder={isAr ? 'اكتب إجابتك…' : 'Type your answer…'}
+                      className="form-input w-full text-xs leading-relaxed min-h-[44px] max-h-[140px] resize-y"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-gold/30">
+              <span className="text-[11px] text-charcoal/50">
+                {isAr
+                  ? 'أجب في البطاقات أو في المحادثة. لا يمكن بدء الاستخراج قبل حلّ كل الأسئلة.'
+                  : 'Answer in the cards or the chat. Extraction is blocked until all are resolved.'}
+              </span>
+              <button
+                onClick={submitAnswers}
+                disabled={aiBusy || answeredCount === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors text-sm font-medium shrink-0"
+              >
+                {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                {isAr ? 'إرسال الإجابات' : 'Submit answers'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Footer — Back + Start extraction (always available = the "skip"). */}
+      {/* Footer — Back + Start extraction (gated until every question is answered). */}
       <div className="flex items-center justify-between mt-4 pt-3 border-t border-sand/20 shrink-0">
         <button
           onClick={onBack}
@@ -469,15 +573,25 @@ export default function StepPrep({
           {isAr ? 'رجوع' : 'Back'}
         </button>
         <div className="flex items-center gap-2">
-          {openQuestions && (
+          {blocked && (
             <span className="text-[11px] text-gold inline-flex items-center gap-1">
-              <HelpCircle size={13} />
-              {isAr ? 'هناك أسئلة مفتوحة' : 'open questions'}
+              <Lock size={13} />
+              {isAr
+                ? `أجب عن ${questions.length} ${questions.length === 1 ? 'سؤال' : 'أسئلة'} أولاً`
+                : `Answer ${questions.length} question${questions.length === 1 ? '' : 's'} first`}
             </span>
           )}
           <button
             onClick={onStartExtraction}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors font-medium"
+            disabled={blocked}
+            title={
+              blocked
+                ? isAr
+                  ? 'أجب عن كل الأسئلة قبل بدء الاستخراج'
+                  : 'Answer all questions before starting extraction'
+                : undefined
+            }
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
           >
             <Sparkles size={15} />
             {isAr ? 'ابدأ الاستخراج' : 'Start extraction'}

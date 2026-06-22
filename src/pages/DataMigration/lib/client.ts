@@ -475,6 +475,13 @@ export interface PlanColumnResult {
   description: string;
 }
 
+/** One open question / contradiction the planning phase surfaces (card). */
+export interface PlanQuestionResult {
+  question: string;
+  kind?: string;
+  detail?: string;
+}
+
 /**
  * Pre-extraction PLANNING turn — runs BEFORE any table is extracted. The AI
  * reads the uploaded files, follows the operator's instructions, and returns a
@@ -493,7 +500,7 @@ export async function planExtraction(input: {
   /** The target model's fields (hunt-list — never used to coerce values). */
   fields?: TargetFieldLite[];
   language?: 'ar' | 'en';
-}): Promise<{ reply: string; questions: string[]; proposedColumns: PlanColumnResult[]; ready: boolean }> {
+}): Promise<{ reply: string; questions: PlanQuestionResult[]; proposedColumns: PlanColumnResult[]; ready: boolean }> {
   const files: { name: string; mimeType: string; url: string }[] = [];
   if (input.uploads && input.uploads.length > 0 && supabase) {
     for (const u of input.uploads) {
@@ -516,7 +523,7 @@ export async function planExtraction(input: {
   const body = (await res.json().catch(() => ({}))) as {
     ok?: boolean;
     reply?: string;
-    questions?: string[];
+    questions?: (PlanQuestionResult | string)[];
     proposedColumns?: PlanColumnResult[];
     ready?: boolean;
     error?: string;
@@ -524,9 +531,15 @@ export async function planExtraction(input: {
   if (!res.ok || !body.ok || typeof body.reply !== 'string') {
     throw new Error(body.error ?? `Plan failed (${res.status})`);
   }
+  // Normalize questions (accept a bare string defensively → {question}).
+  const questions: PlanQuestionResult[] = Array.isArray(body.questions)
+    ? body.questions
+        .map((q) => (typeof q === 'string' ? { question: q } : q))
+        .filter((q): q is PlanQuestionResult => !!q && typeof q.question === 'string' && q.question.trim() !== '')
+    : [];
   return {
     reply: body.reply,
-    questions: Array.isArray(body.questions) ? body.questions : [],
+    questions,
     proposedColumns: Array.isArray(body.proposedColumns) ? body.proposedColumns : [],
     ready: Boolean(body.ready),
   };

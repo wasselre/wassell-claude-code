@@ -178,6 +178,9 @@ export interface MigrationData {
    * (column header + how its values are derived). Shown for confirmation and
    * folded into the extraction guidance. */
   prep_structure?: ProposedColumn[];
+  /** PRE-extraction PREP step: the AI's CURRENT open questions / contradictions,
+   * rendered as answerable cards. Extraction is blocked until this is empty. */
+  prep_questions?: PrepQuestion[];
   /** PRE-extraction PREP step: the AI's latest "no blocking questions, structure
    * is stable" signal — drives the "ready to extract" affordance (non-blocking). */
   prep_ready?: boolean;
@@ -214,6 +217,17 @@ export interface ChatMessage {
 export interface ProposedColumn {
   header: string;
   description: string;
+}
+
+/** One open question / contradiction the prep step surfaces as an answerable
+ * CARD (a quiz). The operator must resolve every one (answer in the card or the
+ * chat) before extraction is allowed. */
+export interface PrepQuestion {
+  question: string;
+  /** 'contradiction' (sources disagree) | 'clarification' (unclear/ambiguous). */
+  kind?: string;
+  /** Optional specifics — the conflicting values / units, or why it's unclear. */
+  detail?: string;
 }
 
 export interface ColumnMappingSuggestion {

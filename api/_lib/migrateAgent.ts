@@ -1468,6 +1468,14 @@ export interface PlanColumn {
   description: string;
 }
 
+/** One open question / contradiction the planning phase surfaces — rendered as
+ * an answerable card the operator must resolve before extraction. */
+export interface PlanQuestion {
+  question: string;
+  kind?: string;
+  detail?: string;
+}
+
 const PLAN_SYSTEM = `You are the PRE-EXTRACTION PLANNING phase of a data-migration pipeline for a Saudi Arabian real-estate CRM (Wassel / وصل العقارية). The operator uploaded developer hand-off files (unit lists, price tables, project specs, brochures with floor plans — PDFs, images, or spreadsheet text, usually Arabic) and may have written INSTRUCTIONS for how they want the data extracted.
 
 Your job in THIS phase is NOT to extract the full table. It is to PLAN the extraction WITH the operator BEFORE any table is produced:
@@ -1478,11 +1486,17 @@ Your job in THIS phase is NOT to extract the full table. It is to PLAN the extra
 
 Always call the \`emit_plan\` tool — never reply in prose.
 
+HOW YOUR QUESTIONS ARE SHOWN (important):
+The operator answers your questions as CARDS — a short quiz — and is BLOCKED from starting the extraction until every question is resolved. So:
+- Ask ONLY what genuinely needs the operator's decision (a real contradiction, or a real ambiguity you can't resolve from the files + instructions). Don't pad the quiz.
+- Phrase each as ONE directly answerable question, as its own entry in "questions". A contradiction between sources → kind:"contradiction" with the competing values in "detail". Something unclear/ambiguous → kind:"clarification".
+- Each turn, return the CURRENT open questions ONLY: DROP every question the operator has just answered (never repeat an answered one); add a follow-up only if their answer truly needs one.
+- "reply" stays a short conversational message (what you see + your plan) — do NOT also list the questions in prose; they live in the cards.
+
 Rules:
-- "reply" is your conversational message to the operator: summarize what the files contain, your extraction plan, and your open questions. Write it in the operator's language.
-- Put EACH open question as its OWN entry in "questions". When nothing is unclear and no sources contradict, return "questions": [] and set "ready": true.
+- Write "reply" in the operator's language.
 - "proposed_columns" reflects the structure you WILL produce — refine it as the operator answers. Counts / quantities will be BARE NUMBERS; everything else stays RAW and verbatim (no cleaning / translation — that happens later with human approval).
-- Set "ready": true ONLY when you have no blocking questions and the structure is stable; otherwise false.
+- Set "ready": true and "questions": [] ONLY when no questions remain and the structure is stable; otherwise "ready": false.
 - Do NOT output the actual row data here. Planning only.`;
 
 const PLAN_TOOL: Anthropic.Tool = {
@@ -1499,9 +1513,17 @@ const PLAN_TOOL: Anthropic.Tool = {
       },
       questions: {
         type: 'array',
-        items: { type: 'string' },
         description:
-          'One entry per clarifying question — every contradiction between sources and everything unclear. Empty array when nothing needs clarifying.',
+          'The CURRENT open questions for the operator, each shown as an answerable card. Include EVERY unresolved contradiction and everything unclear; DROP a question once the operator has answered it. Empty array when nothing remains.',
+        items: {
+          type: 'object',
+          properties: {
+            question: { type: 'string', description: 'The question, phrased so the operator can answer it directly.' },
+            kind: { type: 'string', description: '"contradiction" (sources disagree) or "clarification" (unclear / ambiguous).' },
+            detail: { type: 'string', description: 'Optional specifics — the conflicting values / units, or why it is unclear.' },
+          },
+          required: ['question'],
+        },
       },
       proposed_columns: {
         type: 'array',
@@ -1545,7 +1567,7 @@ export async function runPlan(
     files?: ExtractFileInput[];
     language?: AgentLanguage;
   },
-): Promise<{ reply: string; questions: string[]; proposedColumns: PlanColumn[]; ready: boolean }> {
+): Promise<{ reply: string; questions: PlanQuestion[]; proposedColumns: PlanColumn[]; ready: boolean }> {
   const instructions = (input.instructions ?? '').trim();
 
   const fieldList = input.fields?.length
@@ -1610,9 +1632,18 @@ export async function runPlan(
     proposed_columns?: unknown;
     ready?: unknown;
   };
-  const questions = Array.isArray(out.questions)
-    ? out.questions.map((q) => String(q ?? '').trim()).filter(Boolean)
-    : [];
+  const questions: PlanQuestion[] = (Array.isArray(out.questions) ? out.questions : [])
+    .map((q) => {
+      // Defensive: accept a bare string too (older shape) and wrap it.
+      if (typeof q === 'string') return { question: q.trim() };
+      const o = q as Record<string, unknown>;
+      return {
+        question: typeof o.question === 'string' ? o.question.trim() : '',
+        kind: typeof o.kind === 'string' ? o.kind.trim() : undefined,
+        detail: typeof o.detail === 'string' ? o.detail.trim() : undefined,
+      };
+    })
+    .filter((q) => q.question);
   const proposedColumns: PlanColumn[] = (Array.isArray(out.proposed_columns) ? out.proposed_columns : [])
     .map((c) => {
       const o = c as Record<string, unknown>;

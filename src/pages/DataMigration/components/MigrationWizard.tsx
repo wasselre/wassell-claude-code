@@ -152,8 +152,14 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               prepChat={data.prep_chat}
               prepStructure={data.prep_structure}
               prepReady={data.prep_ready}
-              onPlanResult={(chat, structure, ready) =>
-                patch({ prep_chat: chat, prep_structure: structure, prep_ready: ready })
+              prepQuestions={data.prep_questions}
+              onPlanResult={(chat, structure, questions, ready) =>
+                patch({
+                  prep_chat: chat,
+                  prep_structure: structure,
+                  prep_questions: questions,
+                  prep_ready: ready,
+                })
               }
               status={data.status}
               errorMessage={data.error_message}
@@ -205,8 +211,14 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 prepChat={data.prep_chat}
                 prepStructure={data.prep_structure}
                 prepReady={data.prep_ready}
-                onPlanResult={(chat, structure, ready) =>
-                  patch({ prep_chat: chat, prep_structure: structure, prep_ready: ready })
+                prepQuestions={data.prep_questions}
+                onPlanResult={(chat, structure, questions, ready) =>
+                  patch({
+                    prep_chat: chat,
+                    prep_structure: structure,
+                    prep_questions: questions,
+                    prep_ready: ready,
+                  })
                 }
                 status={data.status}
                 errorMessage={data.error_message}
