@@ -150,9 +150,10 @@ async function fuseResolved(
   fields: TargetFieldLite[],
   headers: string[],
   units: DiscoveredUnit[],
+  guidance: string,
 ): Promise<{ rows: { key: string; values: string[] }[]; conflicts: RawCellConflict[] }> {
   try {
-    const res = await fuseUnitBatch(uploads, language, fields, headers, units);
+    const res = await fuseUnitBatch(uploads, language, fields, headers, units, guidance);
     return {
       rows: res.rows,
       conflicts: res.conflicts.map((c) => ({
@@ -167,12 +168,43 @@ async function fuseResolved(
     const code = (err as { code?: string }).code;
     if (code === 'max_tokens' && units.length > 1) {
       const mid = Math.ceil(units.length / 2);
-      const a = await fuseResolved(uploads, language, fields, headers, units.slice(0, mid));
-      const b = await fuseResolved(uploads, language, fields, headers, units.slice(mid));
+      const a = await fuseResolved(uploads, language, fields, headers, units.slice(0, mid), guidance);
+      const b = await fuseResolved(uploads, language, fields, headers, units.slice(mid), guidance);
       return { rows: [...a.rows, ...b.rows], conflicts: [...a.conflicts, ...b.conflicts] };
     }
     throw err;
   }
+}
+
+/**
+ * Compose the operator-guidance string threaded into every extraction phase from
+ * the prep step's free-text instructions, the clarification chat (Q&A), and the
+ * confirmed table structure. Empty string when the operator skipped the prep
+ * step. Framing labels are in English (guidance is for the model, not the user);
+ * the instruction/answer content is naturally in the operator's own language.
+ */
+function buildGuidance(data: MigrationData): string {
+  const parts: string[] = [];
+  const instructions = (data.extraction_instructions ?? '').trim();
+  if (instructions) parts.push(`Instructions:\n${instructions}`);
+
+  const chat = data.prep_chat ?? [];
+  if (chat.length > 0) {
+    const transcript = chat
+      .map((m) => `${m.role === 'user' ? 'Operator' : 'You'}: ${m.content}`)
+      .join('\n');
+    parts.push(`Clarifications resolved with the operator (apply what was agreed):\n${transcript}`);
+  }
+
+  const structure = data.prep_structure ?? [];
+  if (structure.length > 0) {
+    parts.push(
+      'Confirmed table structure (produce these columns unless the data clearly demands otherwise):\n' +
+        structure.map((c) => `- ${c.header}: ${c.description}`).join('\n'),
+    );
+  }
+
+  return parts.join('\n\n');
 }
 
 /** The Arabic/English extraction summary that seeds the review-step discussion:
@@ -219,13 +251,16 @@ export async function startExtractionJob(recordId: string): Promise<void> {
     return;
   }
   const fields = targetFieldLites(targetModel);
+  // Operator guidance from the prep step (instructions + resolved clarifications
+  // + confirmed structure). Empty when the operator skipped prep.
+  const guidance = buildGuidance(fresh.data);
 
   registerJob({ recordId, kind: 'extract', done: 0, total: 0 });
   patchMigrationRecord(recordId, { status: 'extracting', error_message: null });
   try {
     if (isProjectProfileTarget(targetModel)) {
       // ── PROJECT-PROFILE: one aggregated row + Arabic knowledge document ──
-      const result = await extractRawTable(uploads, lang, fields, 'project');
+      const result = await extractRawTable(uploads, lang, fields, 'project', guidance);
       const addToast = useAppStore.getState().addToast;
       if (result.files_skipped.length > 0) {
         addToast(
@@ -261,7 +296,7 @@ export async function startExtractionJob(recordId: string): Promise<void> {
 
     // ── RECORDS: SOURCE FUSION (discover → batched fuse → assemble) ──
     updateJob(recordId, { phase: 'discover' });
-    const disc = await discoverUnits(uploads, lang, fields);
+    const disc = await discoverUnits(uploads, lang, fields, guidance);
     const addToast = useAppStore.getState().addToast;
     if (disc.files_skipped.length > 0) {
       addToast(
@@ -280,7 +315,7 @@ export async function startExtractionJob(recordId: string): Promise<void> {
     let resolved = 0;
 
     for (const batch of chunk(disc.units, FUSE_BATCH_SIZE)) {
-      const fused = await fuseResolved(uploads, lang, fields, headers, batch);
+      const fused = await fuseResolved(uploads, lang, fields, headers, batch, guidance);
       const byKey = new Map(fused.rows.map((r) => [r.key, r.values]));
       for (const u of batch) {
         if (seen.has(u.key)) continue; // de-dup defensively across batches

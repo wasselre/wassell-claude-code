@@ -22,6 +22,7 @@ import {
   runSuggestMappings,
   runStandardize,
   runDiscuss,
+  runPlan,
   ExtractionTruncatedError,
   type ExtractFileInput,
   type TargetFieldLite,
@@ -62,7 +63,7 @@ async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse
 }
 
 interface MigrateRequestBody {
-  action?: 'extract' | 'discover' | 'fuse_batch' | 'suggest_mappings' | 'standardize' | 'discuss';
+  action?: 'extract' | 'discover' | 'fuse_batch' | 'suggest_mappings' | 'standardize' | 'discuss' | 'plan';
   // UI language for the model's human-readable text (notes / reasons / reply).
   language?: 'ar' | 'en';
   // extract — `fields` is the destination model's field list (a hunt-list).
@@ -71,6 +72,11 @@ interface MigrateRequestBody {
   files?: ExtractFileInput[];
   fields?: TargetFieldLite[];
   mode?: 'records' | 'project';
+  // plan — free-text operator instructions written in the pre-extraction prep step.
+  instructions?: string;
+  // extract / discover / fuse_batch — operator guidance (instructions + resolved
+  // prep-step clarifications + confirmed structure) that steers the extraction.
+  guidance?: string;
   // suggest_mappings
   headers?: string[];
   sampleRows?: string[][];
@@ -127,6 +133,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             body.language ?? 'ar',
             Array.isArray(body.fields) ? body.fields : [],
             body.mode === 'project' ? 'project' : 'records',
+            typeof body.guidance === 'string' ? body.guidance : undefined,
           );
           return jsonOk({ ok: true, ...result });
         } catch (err) {
@@ -147,6 +154,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             files,
             body.language ?? 'ar',
             Array.isArray(body.fields) ? body.fields : [],
+            typeof body.guidance === 'string' ? body.guidance : undefined,
           );
           return jsonOk({ ok: true, ...result });
         } catch (err) {
@@ -168,6 +176,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
             Array.isArray(body.fields) ? body.fields : [],
             headers,
             units,
+            typeof body.guidance === 'string' ? body.guidance : undefined,
           );
           return jsonOk({ ok: true, ...result });
         } catch (err) {
@@ -209,6 +218,24 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
           return jsonOk({ ok: true, decisions });
         } catch (err) {
           return jsonError(502, `Standardization failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      case 'plan': {
+        const messages = Array.isArray(body.messages) ? body.messages : [];
+        if (messages.length === 0) {
+          return jsonError(400, 'plan: messages[] is required');
+        }
+        try {
+          const result = await runPlan(apiKey, {
+            messages,
+            instructions: typeof body.instructions === 'string' ? body.instructions : undefined,
+            fields: Array.isArray(body.fields) ? body.fields : undefined,
+            files: Array.isArray(body.files) ? body.files : undefined,
+            language: body.language ?? 'ar',
+          });
+          return jsonOk({ ok: true, ...result });
+        } catch (err) {
+          return jsonError(502, `Plan failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
       case 'discuss': {

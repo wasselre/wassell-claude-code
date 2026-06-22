@@ -260,6 +260,24 @@ function buildExtractTool(mode: ExtractMode): Anthropic.Tool {
   };
 }
 
+/**
+ * Operator guidance block — the free-text instructions the user wrote in the
+ * pre-extraction PREP step, plus the clarifications resolved there and the
+ * confirmed table structure. Threaded into every extraction phase (discover /
+ * fuse / project extract) so the user's intent steers the run. ADDITIVE
+ * instruction only — it never licenses cleaning / translating / coercing raw
+ * cell values (the verbatim-capture rules still hold).
+ */
+function renderGuidance(guidance?: string): string {
+  const g = (guidance ?? '').trim();
+  if (!g) return '';
+  return (
+    '\n\nOPERATOR GUIDANCE (the user gave this before extraction — FOLLOW it; it overrides the defaults above where they conflict, but never clean / translate / coerce raw cell values):\n' +
+    g +
+    '\n'
+  );
+}
+
 const EXTRACT_SYSTEM = `You extract structured data from messy real-estate documents for a Saudi Arabian CRM (Wassel / وصل العقارية). Files are developer hand-offs — unit lists, price tables, project specs, brochures with floor plans — as PDFs, screenshots, photos, or spreadsheet text (CSV converted from Excel, one file per sheet), usually in Arabic.
 
 SPREADSHEET (CSV) FILES:
@@ -469,6 +487,7 @@ export async function runExtract(
   language: AgentLanguage = 'ar',
   targetFields: TargetFieldLite[] = [],
   mode: ExtractMode = 'records',
+  guidance?: string,
 ): Promise<RawTableResult> {
   const { blocks: fileBlocks, skipped, truncated: truncatedInput, used } = await buildFileBlocks(files);
   if (used === 0) {
@@ -489,7 +508,8 @@ export async function runExtract(
             fieldList +
             '\n\n'
           : '') +
-        "Preserve non-numeric values verbatim; output bare numbers for counts/quantities; deeply analyze the floor plans and combine them with the text to count each unit's components.",
+        "Preserve non-numeric values verbatim; output bare numbers for counts/quantities; deeply analyze the floor plans and combine them with the text to count each unit's components." +
+        renderGuidance(guidance),
     },
     ...fileBlocks,
   ];
@@ -732,6 +752,7 @@ export async function runDiscover(
   files: ExtractFileInput[],
   language: AgentLanguage = 'ar',
   targetFields: TargetFieldLite[] = [],
+  guidance?: string,
 ): Promise<DiscoverResult> {
   const { blocks: fileBlocks, skipped, truncated: truncatedInput, used } = await buildFileBlocks(files);
   if (used === 0) {
@@ -748,7 +769,8 @@ export async function runDiscover(
         (fieldList
           ? "The destination model's fields (use as the header hunt-list):\n" + fieldList + '\n\n'
           : '') +
-        'Return the source inventory, the canonical headers, and the complete unit index (identifiers only).',
+        'Return the source inventory, the canonical headers, and the complete unit index (identifiers only).' +
+        renderGuidance(guidance),
     },
     ...fileBlocks,
   ];
@@ -913,6 +935,7 @@ export async function runFuseBatch(
   targetFields: TargetFieldLite[],
   headers: string[],
   units: DiscoveredUnit[],
+  guidance?: string,
 ): Promise<FuseBatchResult> {
   if (headers.length === 0) throw new Error('Fusion requires the canonical headers from discovery.');
   if (units.length === 0) return { rows: [], conflicts: [], truncated: false };
@@ -947,7 +970,8 @@ export async function runFuseBatch(
         'Resolve the units listed at the END of this message by fusing the file(s) below, following the rules.\n\n' +
         'CANONICAL HEADERS — your `values` array MUST have EXACTLY this many entries, in THIS order:\n' +
         headerLine +
-        fieldHints,
+        fieldHints +
+        renderGuidance(guidance),
     },
     ...fileBlocks,
     {
@@ -1423,5 +1447,186 @@ export async function runDiscuss(
     reply: typeof out.reply === 'string' ? out.reply : '',
     columns,
     truncated,
+  };
+}
+
+// ============================================================================
+// PRE-EXTRACTION PLANNING (prep step) — plan
+//
+// Runs BEFORE any table is extracted. The operator uploads files and (optionally)
+// writes instructions; this phase reads the files, follows the instructions,
+// surfaces contradictions + unclear items as QUESTIONS, and proposes the table
+// STRUCTURE (columns + how each is derived) — a back-and-forth the operator
+// drives until satisfied, then triggers the real extraction (discover/fuse/
+// extract), which receives the resolved guidance via `renderGuidance`.
+// ============================================================================
+
+/** One column the planning phase proposes to produce, with how its values are
+ * derived. Mirrors the structure the operator confirms before extraction. */
+export interface PlanColumn {
+  header: string;
+  description: string;
+}
+
+const PLAN_SYSTEM = `You are the PRE-EXTRACTION PLANNING phase of a data-migration pipeline for a Saudi Arabian real-estate CRM (Wassel / وصل العقارية). The operator uploaded developer hand-off files (unit lists, price tables, project specs, brochures with floor plans — PDFs, images, or spreadsheet text, usually Arabic) and may have written INSTRUCTIONS for how they want the data extracted.
+
+Your job in THIS phase is NOT to extract the full table. It is to PLAN the extraction WITH the operator BEFORE any table is produced:
+1. READ the files and FOLLOW the operator's instructions.
+2. Surface every CONTRADICTION between sources (e.g. the sheet says 3 bedrooms but the floor plan shows 2; two files give different prices for the same unit) as its own QUESTION in "questions".
+3. Surface anything UNCLEAR or ambiguous (illegible regions, an instruction you can't apply, a column you're unsure how to fill, an unexpected data shape) as its own QUESTION in "questions".
+4. PROPOSE the table STRUCTURE in "proposed_columns": one entry per column you intend to produce, each with the column header AND a short description of HOW you will derive its values (which source, text / floor-plan / both, bare-number vs verbatim).
+
+Always call the \`emit_plan\` tool — never reply in prose.
+
+Rules:
+- "reply" is your conversational message to the operator: summarize what the files contain, your extraction plan, and your open questions. Write it in the operator's language.
+- Put EACH open question as its OWN entry in "questions". When nothing is unclear and no sources contradict, return "questions": [] and set "ready": true.
+- "proposed_columns" reflects the structure you WILL produce — refine it as the operator answers. Counts / quantities will be BARE NUMBERS; everything else stays RAW and verbatim (no cleaning / translation — that happens later with human approval).
+- Set "ready": true ONLY when you have no blocking questions and the structure is stable; otherwise false.
+- Do NOT output the actual row data here. Planning only.`;
+
+const PLAN_TOOL: Anthropic.Tool = {
+  name: 'emit_plan',
+  description:
+    'Return your pre-extraction plan: a conversational reply, any clarifying questions (contradictions / unclear items), and the proposed table structure (columns + how each is derived).',
+  input_schema: {
+    type: 'object',
+    properties: {
+      reply: {
+        type: 'string',
+        description:
+          'Your conversational message to the operator — what the files contain, your extraction plan, and your open questions.',
+      },
+      questions: {
+        type: 'array',
+        items: { type: 'string' },
+        description:
+          'One entry per clarifying question — every contradiction between sources and everything unclear. Empty array when nothing needs clarifying.',
+      },
+      proposed_columns: {
+        type: 'array',
+        description: 'The table structure you intend to produce — one entry per column.',
+        items: {
+          type: 'object',
+          properties: {
+            header: { type: 'string', description: 'The column header (Arabic where the data is Arabic).' },
+            description: {
+              type: 'string',
+              description:
+                "How you will derive this column's values — which source, text / floor-plan / both, bare-number vs verbatim.",
+            },
+          },
+          required: ['header', 'description'],
+        },
+      },
+      ready: {
+        type: 'boolean',
+        description: 'True when you have no blocking questions and the proposed structure is stable; false while questions remain.',
+      },
+    },
+    required: ['reply'],
+  } as Anthropic.Tool['input_schema'],
+};
+
+/**
+ * The pre-extraction planning turn. Reads the files (vision), follows the
+ * operator's instructions, and returns its reply + clarifying questions +
+ * proposed table structure. Forced-tool so it always returns structured JSON.
+ * Files + instructions + field hunt-list are attached to the LATEST user turn
+ * only (re-sending the brochure every turn would balloon cost — same pattern as
+ * runDiscuss).
+ */
+export async function runPlan(
+  apiKey: string,
+  input: {
+    messages: DiscussTurn[];
+    instructions?: string;
+    fields?: TargetFieldLite[];
+    files?: ExtractFileInput[];
+    language?: AgentLanguage;
+  },
+): Promise<{ reply: string; questions: string[]; proposedColumns: PlanColumn[]; ready: boolean }> {
+  const instructions = (input.instructions ?? '').trim();
+
+  const fieldList = input.fields?.length
+    ? '\n\nDESTINATION FIELDS (your hunt-list — find a value for each where the source has one; add extra useful columns; do NOT coerce values to them):\n' +
+      renderHuntList(input.fields)
+    : '';
+
+  const fileResult = input.files && input.files.length > 0 ? await buildFileBlocks(input.files) : null;
+  const fileBlocks = fileResult?.blocks ?? [];
+
+  const history = input.messages.length ? input.messages : [{ role: 'user' as const, content: '(no message)' }];
+  const lastIdx = history.length - 1;
+  const convo: Anthropic.MessageParam[] = history.map((m, i): Anthropic.MessageParam => {
+    if (i === lastIdx && m.role === 'user') {
+      return {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text:
+              `${m.content}` +
+              (instructions
+                ? `\n\nOPERATOR INSTRUCTIONS (how they want the extraction done):\n${instructions}`
+                : '') +
+              fieldList +
+              (fileBlocks.length > 0
+                ? '\n\nThe source file(s) are attached below — read them (including floor plans) to plan the extraction and find any contradictions.'
+                : ''),
+          },
+          ...fileBlocks,
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+
+  const client = new Anthropic({ apiKey });
+  // Vision model when files are attached (reading the brochure); else Sonnet.
+  const model = fileBlocks.length > 0 ? EXTRACT_MODEL : MAP_MODEL;
+  const call = (m: string) =>
+    client.messages.create({
+      model: m,
+      max_tokens: 4000,
+      system: PLAN_SYSTEM + langLine(input.language ?? 'ar', 'reply'),
+      tools: [PLAN_TOOL],
+      tool_choice: { type: 'tool', name: 'emit_plan' },
+      messages: convo,
+    });
+
+  let response;
+  try {
+    response = await call(model);
+  } catch {
+    response = await call(EXTRACT_FALLBACK_MODEL);
+  }
+
+  const tb = response.content.find((b) => b.type === 'tool_use');
+  if (!tb || tb.type !== 'tool_use') throw new Error('Planning model did not respond');
+  const out = tb.input as {
+    reply?: unknown;
+    questions?: unknown;
+    proposed_columns?: unknown;
+    ready?: unknown;
+  };
+  const questions = Array.isArray(out.questions)
+    ? out.questions.map((q) => String(q ?? '').trim()).filter(Boolean)
+    : [];
+  const proposedColumns: PlanColumn[] = (Array.isArray(out.proposed_columns) ? out.proposed_columns : [])
+    .map((c) => {
+      const o = c as Record<string, unknown>;
+      return {
+        header: typeof o.header === 'string' ? o.header.trim() : '',
+        description: typeof o.description === 'string' ? o.description.trim() : '',
+      };
+    })
+    .filter((c) => c.header);
+
+  return {
+    reply: typeof out.reply === 'string' ? out.reply : '',
+    questions,
+    proposedColumns,
+    ready: out.ready === true,
   };
 }

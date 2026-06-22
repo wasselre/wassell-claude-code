@@ -171,6 +171,9 @@ export async function extractRawTable(
   language: 'ar' | 'en' = 'ar',
   fields: TargetFieldLite[] = [],
   mode: 'records' | 'project' = 'records',
+  /** Operator guidance (prep-step instructions + resolved clarifications +
+   * confirmed structure) — steers the extraction; never coerces raw values. */
+  guidance?: string,
 ): Promise<ExtractResult> {
   if (!supabase) throw new Error('Supabase is not configured.');
   if (uploads.length === 0) throw new Error('No files to extract.');
@@ -189,7 +192,7 @@ export async function extractRawTable(
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'extract', files, language, fields, mode }),
+    body: JSON.stringify({ action: 'extract', files, language, fields, mode, guidance }),
   }, 300_000);
   const body = (await res.json().catch(() => ({}))) as Partial<ExtractResult> & {
     ok?: boolean;
@@ -277,13 +280,14 @@ export async function discoverUnits(
   uploads: MigrationUpload[],
   language: 'ar' | 'en' = 'ar',
   fields: TargetFieldLite[] = [],
+  guidance?: string,
 ): Promise<DiscoverResult> {
   if (uploads.length === 0) throw new Error('No files to analyze.');
   const files = await signUploads(uploads);
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'discover', files, language, fields }),
+    body: JSON.stringify({ action: 'discover', files, language, fields, guidance }),
   }, 300_000);
   const body = (await res.json().catch(() => ({}))) as Partial<DiscoverResult> & {
     ok?: boolean;
@@ -315,12 +319,13 @@ export async function fuseUnitBatch(
   fields: TargetFieldLite[],
   headers: string[],
   units: DiscoveredUnit[],
+  guidance?: string,
 ): Promise<FuseBatchResult> {
   const files = await signUploads(uploads);
   const res = await fetchWithTimeout('/api/migrate', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'fuse_batch', files, language, fields, headers, units }),
+    body: JSON.stringify({ action: 'fuse_batch', files, language, fields, headers, units, guidance }),
   }, 300_000);
   const body = (await res.json().catch(() => ({}))) as Partial<FuseBatchResult> & {
     ok?: boolean;
@@ -461,5 +466,68 @@ export async function discussExtraction(input: {
     reply: body.reply,
     columns: Array.isArray(body.columns) ? body.columns : [],
     truncated: Boolean(body.truncated),
+  };
+}
+
+/** One column the planning phase proposes to produce, with how it's derived. */
+export interface PlanColumnResult {
+  header: string;
+  description: string;
+}
+
+/**
+ * Pre-extraction PLANNING turn — runs BEFORE any table is extracted. The AI
+ * reads the uploaded files, follows the operator's instructions, and returns a
+ * conversational reply, any clarifying questions (contradictions / unclear
+ * items), and the proposed table structure (columns + how each is derived). The
+ * operator converses until satisfied, then triggers the real extraction. Throws
+ * on failure.
+ */
+export async function planExtraction(input: {
+  messages: { role: 'user' | 'assistant'; content: string }[];
+  /** Free-text operator instructions written in the prep step. */
+  instructions?: string;
+  /** The migration's uploaded source files — minted into signed URLs so the AI
+   * can read the brochure + floor plans while planning. */
+  uploads?: MigrationUpload[];
+  /** The target model's fields (hunt-list — never used to coerce values). */
+  fields?: TargetFieldLite[];
+  language?: 'ar' | 'en';
+}): Promise<{ reply: string; questions: string[]; proposedColumns: PlanColumnResult[]; ready: boolean }> {
+  const files: { name: string; mimeType: string; url: string }[] = [];
+  if (input.uploads && input.uploads.length > 0 && supabase) {
+    for (const u of input.uploads) {
+      const { data } = await supabase.storage.from(MIGRATIONS_BUCKET).createSignedUrl(u.path, 600);
+      if (data?.signedUrl) files.push({ name: u.name, mimeType: u.mimeType, url: data.signedUrl });
+    }
+  }
+  const res = await fetchWithTimeout('/api/migrate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({
+      action: 'plan',
+      messages: input.messages,
+      instructions: input.instructions,
+      files,
+      fields: input.fields,
+      language: input.language ?? 'ar',
+    }),
+  }, 300_000);
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    reply?: string;
+    questions?: string[];
+    proposedColumns?: PlanColumnResult[];
+    ready?: boolean;
+    error?: string;
+  };
+  if (!res.ok || !body.ok || typeof body.reply !== 'string') {
+    throw new Error(body.error ?? `Plan failed (${res.status})`);
+  }
+  return {
+    reply: body.reply,
+    questions: Array.isArray(body.questions) ? body.questions : [],
+    proposedColumns: Array.isArray(body.proposedColumns) ? body.proposedColumns : [],
+    ready: Boolean(body.ready),
   };
 }

@@ -58,6 +58,7 @@ export interface ProjectIntelligenceSection {
 export type MigrationStep =
   | 'pick_model'
   | 'upload'
+  | 'prep'
   | 'extracting'
   | 'review_raw'
   | 'mapping'
@@ -69,6 +70,7 @@ export type MigrationStep =
 export const MIGRATION_STEP_ORDER: MigrationStep[] = [
   'pick_model',
   'upload',
+  'prep',
   'review_raw',
   'mapping',
   'standardize',
@@ -165,6 +167,20 @@ export interface MigrationData {
   /** Uploaded source files (storage paths) — kept so the post-extraction
    * discussion can re-read the brochure (incl. floor plans). */
   source_files?: { path: string; name: string; mimeType: string; size: number }[];
+  /** PRE-extraction PREP step: the free-text instructions the operator wrote for
+   * how they want the data extracted. Threaded into the extraction prompts. */
+  extraction_instructions?: string;
+  /** PRE-extraction PREP step: the planning conversation — the AI reads the
+   * files, asks about contradictions / unclear items, and proposes the table
+   * structure; the operator answers until satisfied, then extracts. */
+  prep_chat?: ChatMessage[];
+  /** PRE-extraction PREP step: the latest table structure the AI proposed
+   * (column header + how its values are derived). Shown for confirmation and
+   * folded into the extraction guidance. */
+  prep_structure?: ProposedColumn[];
+  /** PRE-extraction PREP step: the AI's latest "no blocking questions, structure
+   * is stable" signal — drives the "ready to extract" affordance (non-blocking). */
+  prep_ready?: boolean;
   /** Column index → target field slug (`slug` or range `slug.min`/`slug.max`), or null to skip. */
   mappings?: Record<number, string | null>;
   /** Raw AI suggestions (confidence/reason) shown next to each column in the mapping step. */
@@ -184,11 +200,20 @@ export interface MigrationData {
   result?: MigrationResult;
 }
 
-/** One turn in the post-extraction discussion (summary + operator chat). */
+/** One turn in the post-extraction discussion (summary + operator chat) — also
+ * reused for the pre-extraction prep conversation (`prep_chat`). */
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   ts?: string;
+}
+
+/** One column the pre-extraction prep step proposes to produce, with a short
+ * description of how its values are derived (which source, text / floor-plan /
+ * both, bare-number vs verbatim). */
+export interface ProposedColumn {
+  header: string;
+  description: string;
 }
 
 export interface ColumnMappingSuggestion {

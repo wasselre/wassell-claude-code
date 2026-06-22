@@ -14,7 +14,6 @@ import {
   PlusSquare,
   Building2,
   AlertCircle,
-  RotateCcw,
   Lock,
   FolderOpen,
 } from 'lucide-react';
@@ -25,7 +24,6 @@ import {
   isMigrationAttachableName,
   type MigrationUpload,
 } from '../../lib/client';
-import { startExtractionJob, useMigrationJobs } from '../../lib/jobRunner';
 import { isProjectProfileTarget } from '../../lib/types';
 import type { RawTable, ProjectIntelligenceSection, MigrationStatus } from '../../lib/types';
 import type { AppModel, FileRow } from '@/types';
@@ -49,8 +47,12 @@ interface StepUploadProps {
   onSourceFiles: (files: MigrationUpload[]) => void;
   status: MigrationStatus | undefined;
   errorMessage: string | null | undefined;
-  /** Excel/CSV "use as data source" + blank-table paths only — AI extraction
-   * completes through the jobRunner (this component may be unmounted by then). */
+  /** AI-extraction path: advance to the prep step (write instructions + clarify
+   * with the AI before the table is produced). The actual extraction is
+   * triggered from there. */
+  onProceed: () => void;
+  /** Excel/CSV "use as data source" + blank-table paths only — these bypass prep
+   * (no AI extraction) and jump straight to review. */
   onTable: (table: RawTable, sourceFiles?: MigrationUpload[], extras?: ProjectExtras) => void;
 }
 
@@ -177,10 +179,10 @@ export default function StepUpload({
   onSourceFiles,
   status,
   errorMessage,
+  onProceed,
   onTable,
 }: StepUploadProps) {
   const addToast = useAppStore((s) => s.addToast);
-  const job = useMigrationJobs((s) => s.jobs[recordId]);
   const docRef = useRef<HTMLInputElement>(null);
   const excelRef = useRef<HTMLInputElement>(null);
   const uploads = sourceFiles ?? [];
@@ -329,70 +331,11 @@ export default function StepUpload({
       source: 'manual',
     });
 
-  if (job?.kind === 'extract') {
-    return (
-      <div className="flex flex-col items-center justify-center text-center p-12 gap-3">
-        <Loader2 size={32} className="text-copper animate-spin" />
-        <div className="font-semibold text-charcoal">
-          {isAr ? 'جارٍ استخراج البيانات…' : 'Extracting data…'}
-        </div>
-        <p className="text-sm text-charcoal/50 max-w-sm">
-          {projectMode
-            ? isAr
-              ? 'يقرأ Claude ملفات المشروع بالكامل، يستخرج معلوماته العامة، ويكتب الوثيقة التسويقية. قد يستغرق هذا بضع دقائق.'
-              : 'Claude is reading the whole project, extracting its general information, and writing the marketing document. This can take a few minutes.'
-            : job && job.phase === 'fuse'
-              ? isAr
-                ? `يدمج Claude حقائق كل وحدة من جميع المصادر (الجدول، البروشور، المخططات…)${
-                    job.total > 0 ? ` — ${job.done}/${job.total}` : ''
-                  }. قد يستغرق هذا عدة دقائق.`
-                : `Claude is fusing each unit's facts across all sources (table, brochure, floor plans…)${
-                    job.total > 0 ? ` — ${job.done}/${job.total}` : ''
-                  }. This can take a few minutes.`
-              : isAr
-                ? 'يفحص Claude الملفات، يصنّف المصادر، ويكتشف كل الوحدات…'
-                : 'Claude is scanning the files, classifying the sources, and discovering every unit…'}
-        </p>
-        <p className="text-xs text-charcoal/40 max-w-sm">
-          {isAr
-            ? 'يستمر الاستخراج في الخلفية — يمكنك فتح ترحيل آخر أو بدء واحد جديد الآن.'
-            : 'Extraction keeps running in the background — you can open or start another migration now.'}
-        </p>
-      </div>
-    );
-  }
-
-  if (status === 'extracting') {
-    // Record says extracting but no job runs in this tab — a reload (or
-    // another tab) interrupted the run. Files are persisted, so retry is safe.
-    return (
-      <div className="flex flex-col items-center justify-center text-center p-12 gap-3">
-        <div className="w-14 h-14 rounded-full bg-gold/15 flex items-center justify-center">
-          <AlertCircle size={28} className="text-gold" />
-        </div>
-        <div className="font-semibold text-charcoal">
-          {isAr ? 'توقّف الاستخراج' : 'Extraction was interrupted'}
-        </div>
-        <p className="text-sm text-charcoal/60 max-w-md">
-          {isAr
-            ? 'انقطع الاستخراج (غالبًا بسبب إعادة تحميل الصفحة). ملفاتك محفوظة — أعد تشغيله.'
-            : 'The run was interrupted (usually a page reload). Your files are saved — run it again.'}
-        </p>
-        <button
-          onClick={() => void startExtractionJob(recordId)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-copper text-white hover:bg-terracotta transition-colors"
-        >
-          <RotateCcw size={15} />
-          {isAr ? 'إعادة الاستخراج' : 'Retry extraction'}
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="p-5">
-      {/* Extraction failed → loud banner; the persisted files below + the
-          extract button double as the retry path. */}
+      {/* A prior extraction failed → loud banner. Extraction is triggered from
+          the prep step now, so retry happens there; this is a defensive surface
+          if the wizard was left on the upload step after a failure. */}
       {status === 'failed' && errorMessage && (
         <div className="mb-3 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-charcoal/80">
           <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
@@ -612,7 +555,9 @@ export default function StepUpload({
         </div>
       )}
 
-      {/* Primary action — "use this sheet" (source) or "extract" (analyze set). */}
+      {/* Primary action — "use this sheet" (source, bypasses prep) or "next:
+          instructions" (analyze set → the prep step, where the operator writes
+          instructions and clarifies with the AI before the table is produced). */}
       {locked ? (
         <button
           onClick={() => void useAsSource()}
@@ -625,14 +570,12 @@ export default function StepUpload({
       ) : (
         uploads.length > 0 && (
           <button
-            onClick={() => void startExtractionJob(recordId)}
+            onClick={onProceed}
             disabled={busy !== 'idle'}
             className="mt-4 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors font-medium"
           >
             <Sparkles size={16} />
-            {status === 'failed'
-              ? isAr ? 'إعادة الاستخراج' : 'Retry extraction'
-              : isAr ? 'استخراج البيانات' : 'Extract data'}
+            {isAr ? 'التالي: التعليمات والمراجعة' : 'Next: instructions & review'}
           </button>
         )
       )}

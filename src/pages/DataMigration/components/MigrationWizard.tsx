@@ -2,10 +2,11 @@ import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
-import { startMigrationJob } from '../lib/jobRunner';
+import { startExtractionJob, startMigrationJob } from '../lib/jobRunner';
 import { readMigrationData, type ColumnStandardization, type MigrationData, type MigrationStep } from '../lib/types';
 import StepPickModel from './steps/StepPickModel';
 import StepUpload from './steps/StepUpload';
+import StepPrep from './steps/StepPrep';
 import StepReviewRaw from './steps/StepReviewRaw';
 import StepMapping from './steps/StepMapping';
 import StepStandardize from './steps/StepStandardize';
@@ -125,6 +126,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               onSourceFiles={(files) => patch({ source_files: files })}
               status={data.status}
               errorMessage={data.error_message}
+              onProceed={() => patch({ step: 'prep' })}
               onTable={(table, sourceFiles, extras) =>
                 patch({
                   raw_table: table,
@@ -134,6 +136,28 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                   project_intelligence: extras?.projectIntelligence,
                 })
               }
+            />
+          </div>
+        )}
+
+        {step === 'prep' && targetModel && (
+          <div className="flex-1 min-h-0">
+            <StepPrep
+              isAr={isAr}
+              recordId={recordId}
+              model={targetModel}
+              sourceFiles={data.source_files}
+              instructions={data.extraction_instructions}
+              onInstructions={(v) => patch({ extraction_instructions: v })}
+              prepChat={data.prep_chat}
+              onPrepChat={(next) => patch({ prep_chat: next })}
+              prepStructure={data.prep_structure}
+              prepReady={data.prep_ready}
+              onPrepStructure={(cols, ready) => patch({ prep_structure: cols, prep_ready: ready })}
+              status={data.status}
+              errorMessage={data.error_message}
+              onStartExtraction={() => void startExtractionJob(recordId)}
+              onBack={() => patch({ step: 'upload' })}
             />
           </div>
         )}
@@ -166,24 +190,26 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               />
             </div>
           ) : (
-            <div className="flex-1 overflow-y-auto">
-              <StepUpload
+            // Defensive: step says review_raw but no table yet (e.g. an
+            // interrupted extraction). The prep step is the extraction "home" —
+            // it shows the resume/retry affordance.
+            <div className="flex-1 min-h-0">
+              <StepPrep
                 isAr={isAr}
                 recordId={recordId}
                 model={targetModel}
                 sourceFiles={data.source_files}
-                onSourceFiles={(files) => patch({ source_files: files })}
+                instructions={data.extraction_instructions}
+                onInstructions={(v) => patch({ extraction_instructions: v })}
+                prepChat={data.prep_chat}
+                onPrepChat={(next) => patch({ prep_chat: next })}
+                prepStructure={data.prep_structure}
+                prepReady={data.prep_ready}
+                onPrepStructure={(cols, ready) => patch({ prep_structure: cols, prep_ready: ready })}
                 status={data.status}
                 errorMessage={data.error_message}
-                onTable={(table, sourceFiles, extras) =>
-                  patch({
-                    raw_table: table,
-                    step: 'review_raw',
-                    source_files: sourceFiles,
-                    project_document: extras?.projectDocument,
-                    project_intelligence: extras?.projectIntelligence,
-                  })
-                }
+                onStartExtraction={() => void startExtractionJob(recordId)}
+                onBack={() => patch({ step: 'upload' })}
               />
             </div>
           ))}
