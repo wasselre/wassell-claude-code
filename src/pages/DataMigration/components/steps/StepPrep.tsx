@@ -36,11 +36,15 @@ interface StepPrepProps {
   onInstructions: (v: string) => void;
   /** The planning conversation (persisted on the record). */
   prepChat?: ChatMessage[];
-  onPrepChat: (next: ChatMessage[]) => void;
   /** The latest proposed table structure + its "ready" signal. */
   prepStructure?: ProposedColumn[];
   prepReady?: boolean;
-  onPrepStructure: (cols: ProposedColumn[], ready: boolean) => void;
+  /** Persist a completed planning turn in ONE write (chat + structure + ready).
+   * A SINGLE patch is deliberate: saving the chat and the structure as two
+   * rapid back-to-back writes to the same record could briefly desync the
+   * store/realtime copy from the saved one (the user would see the turn vanish
+   * back to the empty state even though the server still had it). */
+  onPlanResult: (chat: ChatMessage[], structure: ProposedColumn[], ready: boolean) => void;
   status: MigrationStatus | undefined;
   errorMessage: string | null | undefined;
   /** Trigger the real extraction (discover/fuse or project extract). */
@@ -69,10 +73,9 @@ export default function StepPrep({
   instructions,
   onInstructions,
   prepChat,
-  onPrepChat,
   prepStructure,
   prepReady,
-  onPrepStructure,
+  onPlanResult,
   status,
   errorMessage,
   onStartExtraction,
@@ -92,8 +95,19 @@ export default function StepPrep({
   const [chatOpen, setChatOpen] = useState(true);
   const [structureOpen, setStructureOpen] = useState(true);
 
-  const thread: ChatMessage[] = prepChat ?? [];
-  const structure: ProposedColumn[] = prepStructure ?? [];
+  // Hold the conversation + proposed structure in LOCAL state (seeded once from
+  // the persisted record) and RENDER from it — not directly from the props. The
+  // wizard remounts per record (key={recordId}), so this seeds correctly on open
+  // and after a reload. Rendering from local state makes the on-screen turn
+  // immune to a transient stale realtime echo briefly reverting the store's
+  // record.data: the records channel only soft-TTL-dedups its own echoes (Audit
+  // H1 — markRecentlyWritten('records', id, null)), so a late echo of an EARLIER
+  // same-record write (e.g. the debounced instructions save) could otherwise wipe
+  // the visible conversation. Every turn still persists via onPlanResult, so a
+  // reload restores it; this only protects the live view from a stale flash.
+  const [thread, setThread] = useState<ChatMessage[]>(prepChat ?? []);
+  const [structure, setStructure] = useState<ProposedColumn[]>(prepStructure ?? []);
+  const [ready, setReady] = useState<boolean>(prepReady ?? false);
 
   const flushInstructions = () => {
     if (instrTimer.current) {
@@ -127,7 +141,7 @@ export default function StepPrep({
         ...thread.map((m) => ({ role: m.role, content: m.content })),
         { role: 'user' as const, content: text },
       ];
-      const { reply, questions, proposedColumns, ready } = await planExtraction({
+      const { reply, questions, proposedColumns, ready: nextReady } = await planExtraction({
         messages: apiMessages,
         instructions: instrLatest.current,
         uploads: sourceFiles,
@@ -145,12 +159,17 @@ export default function StepPrep({
             '\n' +
             questions.map((q) => `• ${q}`).join('\n')
           : '');
-      onPrepChat([
+      const nextThread: ChatMessage[] = [
         ...thread,
         { role: 'user', content: text, ts: now },
         { role: 'assistant', content: assistantContent, ts: now },
-      ]);
-      onPrepStructure(proposedColumns, ready);
+      ];
+      // Update the LOCAL view first (immune to a stale store echo), then persist
+      // the whole turn in ONE write (chat + structure + ready) — see onPlanResult.
+      setThread(nextThread);
+      setStructure(proposedColumns);
+      setReady(nextReady);
+      onPlanResult(nextThread, proposedColumns, nextReady);
       setAiInput('');
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -236,7 +255,7 @@ export default function StepPrep({
     );
   }
 
-  const openQuestions = thread.length > 0 && prepReady === false;
+  const openQuestions = thread.length > 0 && !ready;
 
   return (
     <div className="p-5 flex flex-col h-full">
@@ -321,11 +340,11 @@ export default function StepPrep({
               </span>
               <span
                 className={`inline-flex items-center gap-1 text-[11px] font-normal ${
-                  prepReady ? 'text-green-600' : 'text-gold'
+                  ready ? 'text-green-600' : 'text-gold'
                 }`}
               >
-                {prepReady ? <CheckCircle2 size={13} /> : <HelpCircle size={13} />}
-                {prepReady
+                {ready ? <CheckCircle2 size={13} /> : <HelpCircle size={13} />}
+                {ready
                   ? isAr ? 'جاهز' : 'ready'
                   : isAr ? 'أسئلة مفتوحة' : 'open questions'}
               </span>

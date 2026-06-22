@@ -150,10 +150,11 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               instructions={data.extraction_instructions}
               onInstructions={(v) => patch({ extraction_instructions: v })}
               prepChat={data.prep_chat}
-              onPrepChat={(next) => patch({ prep_chat: next })}
               prepStructure={data.prep_structure}
               prepReady={data.prep_ready}
-              onPrepStructure={(cols, ready) => patch({ prep_structure: cols, prep_ready: ready })}
+              onPlanResult={(chat, structure, ready) =>
+                patch({ prep_chat: chat, prep_structure: structure, prep_ready: ready })
+              }
               status={data.status}
               errorMessage={data.error_message}
               onStartExtraction={() => void startExtractionJob(recordId)}
@@ -202,10 +203,11 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 instructions={data.extraction_instructions}
                 onInstructions={(v) => patch({ extraction_instructions: v })}
                 prepChat={data.prep_chat}
-                onPrepChat={(next) => patch({ prep_chat: next })}
                 prepStructure={data.prep_structure}
                 prepReady={data.prep_ready}
-                onPrepStructure={(cols, ready) => patch({ prep_structure: cols, prep_ready: ready })}
+                onPlanResult={(chat, structure, ready) =>
+                  patch({ prep_chat: chat, prep_structure: structure, prep_ready: ready })
+                }
                 status={data.status}
                 errorMessage={data.error_message}
                 onStartExtraction={() => void startExtractionJob(recordId)}
