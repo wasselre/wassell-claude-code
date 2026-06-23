@@ -6,6 +6,7 @@ import {
   extractRawTable,
   discoverUnits,
   fuseUnitBatch,
+  planExtraction,
   type MigrationUpload,
   type DiscoverResult,
 } from './client';
@@ -18,6 +19,7 @@ import {
   type MigrationData,
   type DiscoveredUnit,
   type RawCellConflict,
+  type ChatMessage,
 } from './types';
 
 /** Units per fusion batch. Sized so a batch's tool output stays well under the
@@ -32,11 +34,14 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 /**
- * Module-level runner for the wizard's two long jobs — AI extraction and the
- * row-by-row import. Jobs MUST NOT live inside step components: the wizard is
- * `key={recordId}`, so opening another migration unmounts the running step and
- * (before this runner existed) the job's state died with it — and remounting
- * `StepMigrating` restarted the import loop a second time, duplicating rows.
+ * Module-level runner for the wizard's long jobs — the pre-extraction planning
+ * turn, AI extraction, and the row-by-row import. Jobs MUST NOT live inside step
+ * components: the wizard is `key={recordId}`, so opening another migration
+ * unmounts the running step and (before this runner existed) the job's state
+ * died with it — and remounting `StepMigrating` restarted the import loop a
+ * second time, duplicating rows. (The planning turn lived in `StepPrep` until it
+ * hit the same trap: navigating away mid-clarify dropped the in-flight turn and
+ * left the operator on an empty step they had to re-trigger.)
  *
  * Here a job is keyed by its `data_migration` record id, runs detached from
  * React, and writes every outcome (status flips, errors, results) onto the
@@ -48,7 +53,7 @@ function chunk<T>(arr: T[], size: number): T[][] {
  * (status says running but no job exists) and offer an explicit retry/resume.
  */
 
-export type MigrationJobKind = 'extract' | 'migrate';
+export type MigrationJobKind = 'plan' | 'extract' | 'migrate';
 
 export interface MigrationJob {
   recordId: string;
@@ -427,6 +432,91 @@ export async function startMigrationJob(recordId: string): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await patchMigrationRecord(recordId, { status: 'failed', error_message: msg });
+    useAppStore.getState().addToast(msg, 'error');
+  } finally {
+    unregisterJob(recordId);
+  }
+}
+
+/**
+ * Run ONE pre-extraction PLANNING turn (the prep / "review files & clarify"
+ * step) as a DETACHED job: the AI reads the uploaded files + the operator's
+ * instructions and returns a conversational reply, any open questions
+ * (contradictions / unclear items), and the proposed table structure.
+ *
+ * Lives here — not inside `StepPrep` — for the SAME reason as the extraction
+ * and import jobs: the wizard is `key={recordId}`, so navigating to another
+ * migration (or off the page) mid-turn unmounted the step and the in-flight
+ * turn died with it, leaving the operator on an empty step they had to
+ * re-trigger. Detached, the turn finishes and persists even after the step
+ * unmounts; `StepPrep` re-subscribes to `job.kind==='plan'` for the spinner and
+ * adopts the persisted result on its next render. No-op if this record already
+ * has a running job.
+ *
+ * `priorChat` (the live conversation), `userText` (this turn's operator
+ * message), and `instructions` (the freshest instruction draft) are captured
+ * from the still-mounted step at click time — the everything-from-the-store
+ * posture of the other jobs doesn't apply here, because a plan turn is always
+ * started by the operator with the step in front of them, and the local view is
+ * the authoritative base. The result IS still persisted (via the freshest-read
+ * `patchMigrationRecord`), so it survives the step unmounting.
+ */
+export async function startPlanJob(
+  recordId: string,
+  priorChat: ChatMessage[],
+  userText: string,
+  instructions: string,
+): Promise<void> {
+  const text = userText.trim();
+  if (!text) return;
+  if (useMigrationJobs.getState().jobs[recordId]) return;
+  const state = useAppStore.getState();
+  const isAr = state.language === 'ar';
+  const lang: 'ar' | 'en' = isAr ? 'ar' : 'en';
+  const fresh = readFresh(recordId);
+  if (!fresh) return;
+  const targetModel = state.models.find((m) => m.id === fresh.data.target_model_id);
+  if (!targetModel) {
+    state.addToast(isAr ? 'لم يتم اختيار النموذج الهدف.' : 'No target model selected.', 'error');
+    return;
+  }
+
+  registerJob({ recordId, kind: 'plan', done: 0, total: 0 });
+  try {
+    const apiMessages = [
+      ...priorChat.map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user' as const, content: text },
+    ];
+    const { reply, questions, proposedColumns, ready } = await planExtraction({
+      messages: apiMessages,
+      instructions,
+      uploads: fresh.data.source_files,
+      fields: targetFieldLites(targetModel),
+      language: lang,
+    });
+    const now = new Date().toISOString();
+    // The chat bubble is the AI's conversational reply ONLY — the open questions
+    // live in their own answer cards (persisted in prep_questions below).
+    const nextChat: ChatMessage[] = [
+      ...priorChat,
+      { role: 'user', content: text, ts: now },
+      { role: 'assistant', content: reply || (isAr ? 'تم.' : 'Done.'), ts: now },
+    ];
+    // Persist the whole turn in ONE write (chat + structure + questions + ready):
+    // saving them as separate back-to-back writes to the same record could
+    // briefly desync the store/realtime copy (the operator would see the turn
+    // flash back to the empty state). patchMigrationRecord reads the freshest
+    // record and merges, so a concurrent debounced-instructions save survives.
+    await patchMigrationRecord(recordId, {
+      prep_chat: nextChat,
+      prep_structure: proposedColumns,
+      prep_questions: questions,
+      prep_ready: ready,
+    });
+  } catch (err) {
+    // A failed plan turn just surfaces — no status flip (planning is optional,
+    // pre-extraction, and re-runnable). The conversation is left untouched.
+    const msg = err instanceof Error ? err.message : String(err);
     useAppStore.getState().addToast(msg, 'error');
   } finally {
     unregisterJob(recordId);
