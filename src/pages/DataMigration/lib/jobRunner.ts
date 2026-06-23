@@ -400,6 +400,14 @@ export async function startMigrationJob(recordId: string): Promise<void> {
   const fresh = readFresh(recordId);
   if (!fresh) return;
   const { data } = fresh;
+  // Backstop: a completed migration is browsable (read-only) but must never be
+  // re-run — re-importing would duplicate options/lookup records (and re-apply a
+  // project update). The UI already replaces the Migrate button with "View
+  // result" when done; this guards any other call path.
+  if (data.status === 'done') {
+    state.addToast(isAr ? 'تم ترحيل هذه العملية بالفعل.' : 'This migration already ran.', 'info');
+    return;
+  }
   const targetModel = state.models.find((m) => m.id === data.target_model_id);
   if (!targetModel || !data.raw_table || !data.mappings) {
     state.addToast(isAr ? 'بيانات الترحيل غير مكتملة.' : 'Migration data is incomplete.', 'error');

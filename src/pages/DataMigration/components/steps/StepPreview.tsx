@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { v4 as uuid } from 'uuid';
 import { useAppStore } from '@/stores/appStore';
-import { ArrowRight, ArrowLeft, PlayCircle, AlertTriangle, Plus, Link2, CornerDownRight, Ban } from 'lucide-react';
+import { ArrowRight, ArrowLeft, PlayCircle, AlertTriangle, Plus, Link2, CornerDownRight, Ban, CheckCircle2 } from 'lucide-react';
 import { buildMigrationPlan, isRecordValid } from '../../lib/runMigration';
 import { projectNameField } from '../../lib/buildRecords';
 import { resolveDisplay } from '../../lib/previewRecords';
@@ -27,6 +27,11 @@ interface StepPreviewProps {
   onChangeExcluded: (next: number[]) => void;
   onConfirm: () => void;
   onBack: () => void;
+  /** The migration already ran (status='done'): this is now a READ-ONLY review
+   * of what was migrated — the Migrate action is replaced by "View result" so
+   * the import can never be re-run from here. */
+  alreadyMigrated?: boolean;
+  onViewResult?: () => void;
 }
 
 const RENDER_CAP = 500;
@@ -74,6 +79,8 @@ export default function StepPreview({
   onChangeExcluded,
   onConfirm,
   onBack,
+  alreadyMigrated,
+  onViewResult,
 }: StepPreviewProps) {
   const allModels = useAppStore((s) => s.models);
   const allRecords = useAppStore((s) => s.records);
@@ -163,6 +170,14 @@ export default function StepPreview({
 
   return (
     <div className="p-5 flex flex-col h-full">
+      {alreadyMigrated && (
+        <div className="mb-3 shrink-0 flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-green-50 border border-green-200 text-sm text-charcoal/80">
+          <CheckCircle2 size={16} className="text-green-500 shrink-0" />
+          {isAr
+            ? 'تم ترحيل هذه العملية بالفعل — هذه معاينة للقراءة فقط، لا يمكن إعادة الترحيل.'
+            : "This migration already ran — this is a read-only review; it can't be re-run."}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 mb-3">
         <div className="flex-1 min-w-0">
           <h3 className="font-bold text-charcoal">
@@ -378,15 +393,26 @@ export default function StepPreview({
           <Back size={15} />
           {isAr ? 'رجوع' : 'Back'}
         </button>
-        <button
-          onClick={onConfirm}
-          disabled={approvedCount === 0}
-          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors font-medium"
-        >
-          <PlayCircle size={16} />
-          {isAr ? `ترحيل ${approvedCount} سجل` : `Migrate ${approvedCount} records`}
-          <Next size={15} />
-        </button>
+        {alreadyMigrated ? (
+          <button
+            onClick={onViewResult}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta transition-colors font-medium"
+          >
+            <CheckCircle2 size={16} />
+            {isAr ? 'عرض النتيجة' : 'View result'}
+            <Next size={15} />
+          </button>
+        ) : (
+          <button
+            onClick={onConfirm}
+            disabled={approvedCount === 0}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors font-medium"
+          >
+            <PlayCircle size={16} />
+            {isAr ? `ترحيل ${approvedCount} سجل` : `Migrate ${approvedCount} records`}
+            <Next size={15} />
+          </button>
+        )}
       </div>
     </div>
   );

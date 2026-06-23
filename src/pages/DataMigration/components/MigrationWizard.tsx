@@ -19,6 +19,18 @@ interface MigrationWizardProps {
   modelId: string;
 }
 
+/** The pages a COMPLETED migration can be browsed through (read-only review of
+ * what was migrated + the result). Shown as a navigator only when status='done'
+ * so the operator can revisit the extracted table, mapping, standardization,
+ * preview, and result after the import — without being able to re-run it. */
+const DONE_NAV: { step: MigrationStep; ar: string; en: string }[] = [
+  { step: 'review_raw', ar: 'الجدول', en: 'Table' },
+  { step: 'mapping', ar: 'الربط', en: 'Mapping' },
+  { step: 'standardize', ar: 'التوحيد', en: 'Standardize' },
+  { step: 'preview', ar: 'المعاينة', en: 'Preview' },
+  { step: 'done', ar: 'النتيجة', en: 'Result' },
+];
+
 /**
  * The migration step machine. Reads the `data_migration` record from the store
  * and switches on `record.data.step`. Every step persists its slice back to
@@ -83,6 +95,16 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
   const targetModel = data.target_model_id
     ? models.find((m) => m.id === data.target_model_id)
     : undefined;
+  // A completed migration is browsable: the operator can revisit every page +
+  // the result (read-only — re-running is blocked, see StepPreview + the
+  // startMigrationJob backstop). Older flows could only see the result.
+  const isDone = data.status === 'done';
+  // Which DONE_NAV chips are reachable (their step's data exists on the record).
+  const canView = (s: MigrationStep): boolean => {
+    if (s === 'done') return true;
+    if (s === 'review_raw') return !!data.raw_table;
+    return !!data.raw_table && !!data.mappings; // mapping / standardize / preview
+  };
 
   return (
     <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -97,6 +119,32 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
           </div>
         )}
       </div>
+
+      {/* View navigator — only for a COMPLETED migration: jump to any page +
+          the result to review what was migrated (read-only; can't re-run). */}
+      {isDone && (
+        <div className="px-5 py-2 border-b border-sand/20 bg-cream-light/40 flex items-center gap-1.5 overflow-x-auto shrink-0">
+          <span className="text-[11px] text-charcoal/45 font-bold shrink-0 me-1">
+            {isAr ? 'عرض:' : 'View:'}
+          </span>
+          {DONE_NAV.map((s) => {
+            const active = step === s.step;
+            const enabled = canView(s.step);
+            return (
+              <button
+                key={s.step}
+                onClick={() => enabled && patch({ step: s.step })}
+                disabled={!enabled}
+                className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                  active ? 'bg-copper text-white' : 'text-charcoal/65 hover:bg-copper/10'
+                }`}
+              >
+                {isAr ? s.ar : s.en}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Body — step machine */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -259,6 +307,8 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               onChangeExcluded={(next) => patch({ excluded_rows: next })}
               onConfirm={() => void startMigrationJob(recordId)}
               onBack={() => patch({ step: 'standardize' })}
+              alreadyMigrated={isDone}
+              onViewResult={() => patch({ step: 'done' })}
             />
           </div>
         )}
