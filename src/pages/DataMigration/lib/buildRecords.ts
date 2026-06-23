@@ -1,5 +1,5 @@
 import type { AppModel, AppRecord, ModelField } from '@/types';
-import { normalizeMatch, splitMultiValue } from '@/lib/textMatch';
+import { normalizeMatch, splitMultiValue, splitTableValue } from '@/lib/textMatch';
 import { slugifyOptionLabel, findExistingOption, uniqueOptionValue } from '@/lib/optionSlug';
 import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { importableFields, lookupCreateBlockReason } from './targetFields';
@@ -392,10 +392,12 @@ export function buildMigrationPlan(args: BuildPlanArgs): MigrationPlan {
       if (!cell) continue;
 
       if (field.type === 'table') {
-        // A table sub-column (`slug.colName`). A multi-value cell becomes one
-        // row per item; sibling sub-columns of the same table zip by row index.
+        // A table sub-column (`slug.colName`). Parallel entries are `|`-separated
+        // (splitTableValue — NOT comma, which collides with values + numeric
+        // thousands separators); sibling sub-columns zip by row index, with empty
+        // slots preserved so they stay aligned.
         if (!subPath) continue; // whole-table mapping is unsupported
-        const tokens = splitMultiValue(cell);
+        const tokens = splitTableValue(cell);
         let cols = tableInputs.get(fieldName);
         if (!cols) { cols = new Map(); tableInputs.set(fieldName, cols); }
         cols.set(subPath, tokens.length ? tokens : [cell]);

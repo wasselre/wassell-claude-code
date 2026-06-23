@@ -110,7 +110,7 @@ TABLE (MULTI-COLUMN) DESTINATION FIELDS:
 Some destination fields are TABLES — ONE field that holds MULTIPLE ROWS, each split into named SUB-COLUMNS (shown grouped under "TABLE «…»" in the field list). Do NOT dump a whole entry into a single column. Instead:
 - SEGMENT each entry into the table's sub-columns. Example — a Guarantees table with sub-columns (type / company / years) and source text "ضمان تكييف من شركة ABC لمدة 5 سنوات" → type="تكييف", company="ABC", years="5".
 - Output ONE COLUMN PER SUB-COLUMN, headed by that sub-column's label.
-- For MULTIPLE entries, list them as PARALLEL comma/'،'-separated lists in the SAME ORDER across ALL of that table's sub-columns, so position N lines up into one row — e.g. type="تكييف، سباكة" · company="ABC، XYZ" · years="5، 10" → two rows. Keep the lists the same length; use "" to hold a slot when an entry lacks that sub-column.`;
+- For MULTIPLE entries, list them as PARALLEL lists separated by a VERTICAL BAR "|" (NOT commas — commas occur inside values and inside numbers like "70,000", and a comma split would corrupt the rows), in the SAME ORDER across ALL of that table's sub-columns, so position N lines up into one row — e.g. type="تكييف | سباكة" · company="ABC | XYZ" · years="5 | 10" → two rows. Keep the SAME NUMBER of bar-separated slots in EVERY sub-column of the table; when an entry lacks a value for a sub-column, leave that slot EMPTY between the bars (e.g. company="ABC |  | XYZ" = three entries, the middle with no company). NEVER separate the parallel entries with commas, slashes, or any character other than "|".`;
 
 /**
  * Render the destination-field hunt-list, GROUPING a table field's sub-columns

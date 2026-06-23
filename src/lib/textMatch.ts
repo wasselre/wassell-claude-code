@@ -47,3 +47,22 @@ export function splitMultiValue(cell: string): string[] {
     .map((t) => t.trim())
     .filter(Boolean);
 }
+
+/**
+ * Split a TABLE sub-column cell into its parallel entries. A table encodes N
+ * rows across sibling sub-columns as `|`-separated lists that must stay
+ * INDEX-ALIGNED (slot N of every sub-column = row N), so this DIFFERS from
+ * splitMultiValue on purpose:
+ *  - splits on the VERTICAL BAR `|` (and newlines), NOT commas — commas appear
+ *    inside legitimate values AND inside numbers ("70,000"), which corrupted the
+ *    split and shredded numbers into fragments (the table-field import bug).
+ *  - KEEPS empty slots (single-char split, no `+`), so "A||C" → ["A","","C"]
+ *    and siblings stay aligned when an entry lacks a sub-column value.
+ * Returns [] for a wholly-empty cell. The extraction prompt (TABLE_FIELDS_RULE)
+ * mandates `|` so the model emits exactly this shape.
+ */
+export function splitTableValue(cell: string): string[] {
+  const s = (cell ?? '').replace(/\r\n?/g, '\n');
+  if (s.trim() === '') return [];
+  return s.split(/[|\n]/).map((t) => t.trim());
+}
