@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, SlidersHorizontal, User, Phone, MessageCircle, X,
@@ -52,6 +52,17 @@ export default function ReviewDetailPage() {
 
   const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...(review?.data ?? {}) }));
   const patch = (p: Record<string, unknown>) => setDraft((d) => ({ ...d, ...p }));
+  // Seed the draft from the review ONCE it loads (cold direct loads finish
+  // loading the store after mount; the useState initializer ran while review
+  // was still null). Seeded once per review id so live edits + realtime echoes
+  // never clobber the manager's in-progress decision.
+  const seededRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (review && seededRef.current !== review.id) {
+      seededRef.current = review.id;
+      setDraft({ ...review.data });
+    }
+  }, [review]);
   const [saving, setSaving] = useState(false);
   const [modal, setModal] = useState<null | 'client' | 'call' | 'whatsapp'>(null);
   const scoreTouched = useRef(false);
