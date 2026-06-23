@@ -43,6 +43,7 @@ import AssistantInsightsPage from '@/pages/Matching/AssistantInsightsPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
+import SalesValuationReviewPage from '@/pages/SalesValuation/ReviewDetailPage';
 import SalesTasksPage from '@/pages/Sales/SalesTasksPage';
 import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
@@ -104,6 +105,12 @@ function RecordDetailDispatcher() {
     // generic form stays reachable for advanced editing via ?generic=1 (the
     // workspace's "Advanced Fields" / "Edit Full Preferences" escape hatch).
     return <FollowUpWorkspacePage key={recordId ?? 'new'} />;
+  }
+  if (modelName === 'sales_valuation_reviews' && searchParams.get('generic') !== '1') {
+    // Custom manager review screen replaces the generic form — a clean
+    // decision interface (summary + evidence modals + progressive decision
+    // panel). The generic form stays reachable via ?generic=1 for admin edits.
+    return <SalesValuationReviewPage key={recordId ?? 'new'} />;
   }
   if (modelName === 'chats') {
     // ChatsSplitPage reads :recordId itself from useParams — no need to
