@@ -19,6 +19,7 @@ import SalesAssistantSidePanel from './components/SalesAssistantSidePanel';
 import StartChatModal from '@/pages/Chats/components/StartChatModal';
 import ChatThreadModal from '@/pages/Chats/components/ChatThreadModal';
 import { resolveClientSlugs, recordToPickedClient } from '@/pages/Chats/components/ClientPicker';
+import { normalizePhoneDigits } from '@/lib/haberchat/normalize';
 
 /**
  * The guided Follow-up Workspace — replaces the generic form for `followups`.
@@ -87,6 +88,39 @@ export default function FollowUpWorkspacePage() {
     ? (records[clientsModel.id] ?? []).find((r) => r.id === ctx.clientId) ?? null
     : null;
   const initialChatClient = clientRec ? recordToPickedClient(clientRec, resolveClientSlugs(clientsModel), isAr) : null;
+
+  // An already-existing WhatsApp conversation for this client, if any. Preferred
+  // by explicit client_link; else matched by phone digits (suffix-tolerant, the
+  // same rule the webhook auto-link uses). When present, the WhatsApp button
+  // opens that conversation thread in a popup instead of the "new chat"
+  // composer. Chat records are persisted in `records`, so they're available
+  // here even if the rep never opened the Chats page this session.
+  const chatsModel = models.find((m) => m.name === 'chats');
+  const existingChat = useMemo<AppRecord | null>(() => {
+    if (!chatsModel) return null;
+    const chatRecs = records[chatsModel.id] ?? [];
+    if (ctx.clientId) {
+      const linked = chatRecs.find((r) => (r.data as Record<string, unknown>).client_link === ctx.clientId);
+      if (linked) return linked;
+    }
+    const targets = ctx.phones.map(normalizePhoneDigits).filter((d) => d.length >= 6);
+    if (targets.length === 0) return null;
+    return (
+      chatRecs.find((r) => {
+        const p = normalizePhoneDigits((r.data as Record<string, unknown>).phone as string | null | undefined);
+        if (p.length < 6) return false;
+        return targets.some((t) => p === t || p.endsWith(t) || t.endsWith(p));
+      }) ?? null
+    );
+  }, [chatsModel, records, ctx.clientId, ctx.phones]);
+
+  // WhatsApp button: jump straight into the existing conversation popup when one
+  // exists; otherwise open the in-app composer to start a new chat (which, on
+  // send, opens the same popup and stamps the follow-up).
+  const openWhatsApp = () => {
+    if (existingChat) setChatThreadId(existingChat.id);
+    else setShowChatModal(true);
+  };
 
   // Best-effort our_projects id to prefill the visit's Project lookup. The
   // follow-up's project context is keyed on all_projects, but a visit's Project
@@ -262,7 +296,7 @@ export default function FollowUpWorkspacePage() {
             phones={ctx.phones}
             clientId={ctx.clientId}
             appointmentId={(draft.appointment_id as string) ?? null}
-            onWhatsApp={() => setShowChatModal(true)}
+            onWhatsApp={openWhatsApp}
             onViewClient={() => setShowClientModal(true)}
           />
           {/* FOLLOWUP_4: register a client-reported visit as evidence — secondary,

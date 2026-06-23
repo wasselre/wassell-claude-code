@@ -9,7 +9,8 @@ interface PrimaryActionProps {
   phones: string[];
   clientId: string | null;
   appointmentId: string | null;
-  /** Open the in-app "Start new chat" popup, pre-connected to this client. */
+  /** Open WhatsApp for this client: the existing conversation thread in a popup
+   *  if one exists, otherwise the in-app "Start new chat" composer. */
   onWhatsApp: () => void;
   /** Open the client preview modal (which carries an "open full page" button). */
   onViewClient: () => void;
