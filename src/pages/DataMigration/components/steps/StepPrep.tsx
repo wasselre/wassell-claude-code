@@ -57,9 +57,11 @@ interface StepPrepProps {
  * clarifications + confirmed structure into the extraction (jobRunner builds the
  * guidance). The extraction trigger + its spinner live here (moved from upload).
  *
- * Default-for-all but skippable: "Start extraction" is always available, so a
- * simple import is one click away. Excel "use as source" / blank tables bypass
- * this step entirely (no AI extraction).
+ * Review is MANDATORY for AI extraction: "Start extraction" is GATED until the
+ * operator has run the "Review files & clarify" pass at least once AND resolved
+ * every open question — you can't extract files the AI hasn't read and you
+ * haven't confirmed. (Excel "use as source" / blank tables bypass this step
+ * entirely — they don't run AI extraction, so the gate doesn't apply to them.)
  */
 export default function StepPrep({
   isAr,
@@ -267,9 +269,13 @@ export default function StepPrep({
     );
   }
 
-  // Extraction is BLOCKED until every question card is resolved (the AI returns
-  // an empty question set once the operator's answers satisfy it).
-  const blocked = questions.length > 0;
+  // Extraction is BLOCKED until the operator has (1) run the review/clarify pass
+  // at least once AND (2) resolved every open question card. Prep is MANDATORY:
+  // you can't extract files the AI hasn't read and you haven't confirmed. A
+  // non-empty conversation means the "Review files & clarify" turn ran; the AI
+  // returns an empty question set once your answers satisfy it.
+  const reviewed = thread.length > 0;
+  const blocked = !reviewed || questions.length > 0;
   const answeredCount = questions.filter((_, i) => (answers[i] ?? '').trim() !== '').length;
 
   return (
@@ -280,8 +286,8 @@ export default function StepPrep({
         </h3>
         <p className="text-xs text-charcoal/50">
           {isAr
-            ? 'اكتب تعليماتك، ثم دع الذكاء يقرأ الملفات ويسألك عن أي تعارض أو غموض ويقترح هيكل الجدول — قبل إنتاجه. أو ابدأ الاستخراج مباشرة.'
-            : 'Write your instructions, then let the AI read the files and ask you about any contradiction or ambiguity and propose the table structure — before producing it. Or start extraction directly.'}
+            ? 'اكتب تعليماتك، ثم راجِع الملفات ووضّح: يقرأ الذكاء الملفات ويسألك عن أي تعارض أو غموض ويقترح هيكل الجدول. لازم تكمل المراجعة قبل أن تتمكن من بدء الاستخراج.'
+            : 'Write your instructions, then review & clarify: the AI reads the files, asks you about any contradiction or ambiguity, and proposes the table structure. You must complete the review before you can start extraction.'}
         </p>
       </div>
 
@@ -562,9 +568,13 @@ export default function StepPrep({
           {blocked && (
             <span className="text-[11px] text-gold inline-flex items-center gap-1">
               <Lock size={13} />
-              {isAr
-                ? `أجب عن ${questions.length} ${questions.length === 1 ? 'سؤال' : 'أسئلة'} أولاً`
-                : `Answer ${questions.length} question${questions.length === 1 ? '' : 's'} first`}
+              {!reviewed
+                ? isAr
+                  ? 'راجِع الملفات ووضّح أولاً'
+                  : 'Review & clarify the files first'
+                : isAr
+                  ? `أجب عن ${questions.length} ${questions.length === 1 ? 'سؤال' : 'أسئلة'} أولاً`
+                  : `Answer ${questions.length} question${questions.length === 1 ? '' : 's'} first`}
             </span>
           )}
           <button
@@ -572,9 +582,13 @@ export default function StepPrep({
             disabled={blocked || aiBusy}
             title={
               blocked
-                ? isAr
-                  ? 'أجب عن كل الأسئلة قبل بدء الاستخراج'
-                  : 'Answer all questions before starting extraction'
+                ? !reviewed
+                  ? isAr
+                    ? 'راجِع الملفات ووضّح قبل بدء الاستخراج'
+                    : 'Review & clarify the files before starting extraction'
+                  : isAr
+                    ? 'أجب عن كل الأسئلة قبل بدء الاستخراج'
+                    : 'Answer all questions before starting extraction'
                 : undefined
             }
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 disabled:cursor-not-allowed transition-colors font-medium"
