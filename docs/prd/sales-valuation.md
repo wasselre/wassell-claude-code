@@ -1,6 +1,6 @@
 # PRD: Sales Valuation (تقييم المبيعات) — Sales Quality & Coaching
 
-**Status:** Live (data + automation layer; rendered through the generic model/list/dashboard UI)
+**Status:** Live (data + automation layer + dedicated custom operational UI for all 5 pages in the تقييم المبيعات group)
 **Last updated:** 2026-06-23
 **Related PRDs:** [sales-process.md](sales-process.md), [followups-workspace.md](followups-workspace.md), [dashboards.md](dashboards.md), [access-control.md](access-control.md), [record-management.md](record-management.md)
 
@@ -44,10 +44,16 @@ Managers need a structured, repeatable way to review how reps handle follow-ups,
 | `public.svr_create_correction_task()` | Correction-task creation + back-link |
 | `public.svr_recompute_daily_summary()` | Per-rep/day rollup (preserves manager/rep text) |
 | `public.svr_sweep_overdue_tasks()` | Flips past-due open tasks to overdue |
-| (rendered by) `src/pages/Records/*`, `src/pages/Dashboard/*` | Generic list/form/dashboard UI — no bespoke code added |
+| `src/pages/SalesValuation/QueuePage.tsx` | Manager review queue — KPI cards, filter tabs, table + row actions |
+| `src/pages/SalesValuation/ReviewDetailPage.tsx` | Single-review decision screen (summary card, evidence modals, progressive decision panel) |
+| `src/pages/SalesValuation/CorrectionBoardPage.tsx` / `CorrectionDetailPage.tsx` | Correction kanban board + task detail |
+| `src/pages/SalesValuation/CoachingPage.tsx` | Rep daily coaching dashboard |
+| `src/pages/SalesValuation/CategoriesPage.tsx` / `SettingsPage.tsx` | Mistake-category settings table + operation settings |
+| `src/pages/SalesValuation/components/shared.tsx` | Shared primitives (cards, pills, label resolution from model options, evidence modals) |
+| `src/App.tsx` | `RecordListDispatcher`/`RecordDetailDispatcher` route the 5 models to the custom pages (generic form via `?generic=1`) |
 
 ## Open questions / known limitations
 - **No field-level permissions** in the platform: reps have scoped EDIT on their own reviews (so acknowledge/dispute works), which technically lets them edit manager-only fields on *their own* review. Mitigations: the manager's final-decision/close gate and the version/updated_at audit. A bespoke locked rep screen is the recommended Phase-2 hardening.
 - **Overdue stored-status** depends on activity (the daily-summary trigger sweeps overdue tasks opportunistically) + the callable `svr_sweep_overdue_tasks()`. For guaranteed time-based flips independent of activity, schedule that function (Vercel cron / Fly worker) — pg_cron is off on wassell-prod. The manager dashboard already counts overdue live.
 - **Automations are DB triggers, not client Workflow rows**, so they don't appear in the Workflow editor (by design — they need cross-record reads + dedup the client engine can't do, and must fire on server/direct writes).
-- **Bespoke screens** (a purpose-built queue with quick-action buttons, a friendly rep coaching page) are intentionally deferred; v1 ships through the generic model/list/dashboard UI with carefully ordered Arabic-first fields and saved views.
+- **Bespoke screens shipped:** all 5 group models now render purpose-built operational UIs (queue workbench, review decision screen, correction kanban + detail, rep coaching dashboard, categories + settings) dispatched by model name in `App.tsx`. The generic record form remains available per-record via `?generic=1` for admin/advanced edits. The Builder's per-record saved views on `sales_valuation_reviews` still exist but the queue page is the default experience.
