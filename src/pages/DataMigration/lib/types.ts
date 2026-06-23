@@ -78,8 +78,10 @@ export const MIGRATION_STEP_ORDER: MigrationStep[] = [
   'done',
 ];
 
-/** Coarse list-pill state, persisted on `record.data.status`. */
-export type MigrationStatus = 'draft' | 'extracting' | 'migrating' | 'done' | 'failed';
+/** Coarse list-pill state, persisted on `record.data.status`. `undoing` =
+ * reversing a completed import (deleting what it created) before re-opening the
+ * migration for editing. */
+export type MigrationStatus = 'draft' | 'extracting' | 'migrating' | 'done' | 'failed' | 'undoing';
 
 /**
  * One unit entity discovered across all uploaded sources (records-mode
@@ -396,6 +398,26 @@ export interface BuiltRecord {
   matchedExistingId?: string;
 }
 
+/**
+ * What a migration CREATED/CHANGED, captured at migrate time so the import can
+ * be UNDONE (delete the created records, revert the project merges) and re-run.
+ * Created dropdown options are intentionally NOT tracked here — they're left in
+ * place on undo (shared/deduped, harmless to keep). Absent on migrations run
+ * before this feature shipped (their import can't be auto-undone).
+ */
+export interface MigrationUndo {
+  /** The model the main records were imported into. */
+  target_model_id: string;
+  /** Ids of new main records created (the CREATE path — not updates). */
+  created_record_ids: string[];
+  /** New lookup-target records created (in their own models). */
+  created_lookup_records: { model_id: string; id: string }[];
+  /** PROJECT-PROFILE updates: each merged project's pre-merge `data` snapshot,
+   * so undo can restore the project's own fields (its units/rollups are separate
+   * records and are never touched by the merge). */
+  updated_projects: { model_id: string; id: string; data_before: Record<string, unknown> }[];
+}
+
 export interface MigrationResult {
   imported: number;
   /** PROJECT-PROFILE mode: records that UPDATED an existing one (vs created). */
@@ -407,6 +429,9 @@ export interface MigrationResult {
   /** Rows that were not migrated because they had blocking validation errors. */
   invalid_skipped: number;
   errors: { id?: string; error: string }[];
+  /** Undo payload — present only for migrations run with undo support; drives
+   * the "Undo migration" affordance on the done view. */
+  undo?: MigrationUndo;
 }
 
 export function readMigrationData(record: AppRecord): MigrationData {

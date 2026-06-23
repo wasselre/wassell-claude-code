@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle2, Plus, ExternalLink, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, Plus, ExternalLink, AlertTriangle, Undo2 } from 'lucide-react';
 import type { AppModel } from '@/types';
 import type { MigrationResult } from '../../lib/types';
 
@@ -8,12 +8,34 @@ interface StepDoneProps {
   model: AppModel;
   result: MigrationResult | undefined;
   onNewMigration: () => void;
+  /** Undo this migration (delete what it created, revert merges) then re-open
+   * it for editing. Only offered when the result carries an undo ledger. */
+  onUndo?: () => void;
 }
 
-export default function StepDone({ isAr, model, result, onNewMigration }: StepDoneProps) {
+export default function StepDone({ isAr, model, result, onNewMigration, onUndo }: StepDoneProps) {
   const navigate = useNavigate();
   const r = result ?? { imported: 0, updated: 0, skipped: 0, new_lookup_records: 0, new_options: 0, invalid_skipped: 0, errors: [] };
   const modelLabel = isAr ? model.label_ar : model.label_en;
+
+  // Undo is available only for migrations that captured an undo ledger.
+  const undo = r.undo;
+  const handleUndo = () => {
+    if (!undo || !onUndo) return;
+    const nRec = undo.created_record_ids.length;
+    const nLookup = undo.created_lookup_records.length;
+    const nProj = undo.updated_projects.length;
+    const msg = isAr
+      ? `سيؤدي التراجع إلى حذف ${nRec} سجل` +
+        (nLookup > 0 ? ` و${nLookup} سجل مرتبط` : '') +
+        (nProj > 0 ? ` واستعادة ${nProj} مشروع` : '') +
+        '. الخيارات المُضافة تبقى. بعدها يمكنك التعديل وإعادة الترحيل. هل تتابع؟'
+      : `Undo will delete ${nRec} record(s)` +
+        (nLookup > 0 ? ` and ${nLookup} linked record(s)` : '') +
+        (nProj > 0 ? ` and revert ${nProj} project update(s)` : '') +
+        '. Added options are kept. You can then edit and re-migrate. Continue?';
+    if (window.confirm(msg)) onUndo();
+  };
 
   return (
     <div className="flex flex-col items-center justify-center text-center p-10 gap-3 h-full">
@@ -71,6 +93,15 @@ export default function StepDone({ isAr, model, result, onNewMigration }: StepDo
           {isAr ? 'ترحيل جديد' : 'New migration'}
         </button>
       </div>
+      {undo && onUndo && (
+        <button
+          onClick={handleUndo}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 mt-1 rounded-lg text-sm text-red-600 hover:bg-red-50 transition-colors"
+        >
+          <Undo2 size={14} />
+          {isAr ? 'التراجع عن الترحيل' : 'Undo this migration'}
+        </button>
+      )}
     </div>
   );
 }

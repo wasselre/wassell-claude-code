@@ -312,10 +312,11 @@ function MigrationStatusPill({ status, isAr }: { status: MigrationStatus; isAr: 
     migrating: { ar: 'ترحيل', en: 'Migrating', bg: 'bg-blue-100', fg: 'text-blue-700', Icon: Loader2 },
     done: { ar: 'تم', en: 'Done', bg: 'bg-green-100', fg: 'text-green-700', Icon: CheckCircle2 },
     failed: { ar: 'فشل', en: 'Failed', bg: 'bg-red-100', fg: 'text-red-700', Icon: AlertCircle },
+    undoing: { ar: 'تراجع', en: 'Undoing', bg: 'bg-blue-100', fg: 'text-blue-700', Icon: Loader2 },
   };
   const c = config[status];
   const { Icon } = c;
-  const spinning = status === 'extracting' || status === 'migrating';
+  const spinning = status === 'extracting' || status === 'migrating' || status === 'undoing';
   return (
     <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium ${c.bg} ${c.fg} shrink-0`}>
       <Icon size={10} className={spinning ? 'animate-spin' : ''} />

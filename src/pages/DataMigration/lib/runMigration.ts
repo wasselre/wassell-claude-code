@@ -112,6 +112,16 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
   const optionsToCreate = plan.newOptions.filter((o) => usedValues.has(o.value));
   const lookupsToCreate = plan.newLookupRecords.filter((l) => usedValues.has(l.tempId));
 
+  // Undo ledger — what this run creates/merges, so the import can be reversed
+  // (delete created records, restore merged projects) and re-run. Options are
+  // NOT tracked (kept on undo). target_model_id stamped once below.
+  const undo: MigrationResult['undo'] = {
+    target_model_id: args.model.id,
+    created_record_ids: [],
+    created_lookup_records: [],
+    updated_projects: [],
+  };
+
   const result: MigrationResult = {
     imported: 0,
     updated: 0,
@@ -120,6 +130,7 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
     new_options: optionsToCreate.length,
     invalid_skipped: invalidSkipped,
     errors: [],
+    undo,
   };
 
   // Existing records by id — the merge target when a project-profile row updates
@@ -154,6 +165,9 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
       const res = await args.saveRecord(rec);
       if (res && res.status && res.status !== 'saved' && res.status !== 'queued') {
         result.errors.push({ id: rec.id, error: `lookup record: ${res.status}` });
+      } else {
+        // Track the created lookup record so undo can delete it.
+        undo.created_lookup_records.push({ model_id: pending.targetModelId, id: rec.id });
       }
     } catch (err) {
       result.errors.push({ id: rec.id, error: err instanceof Error ? err.message : String(err) });
@@ -184,8 +198,16 @@ export async function runMigration(args: RunMigrationArgs): Promise<MigrationRes
         result.errors.push({ id: rec.id, error: res.status });
       } else if (existing) {
         result.updated++;
+        // Snapshot the PRE-merge data so undo can restore the project's own
+        // fields (captured here = existing.data before the spread above).
+        undo.updated_projects.push({
+          model_id: args.model.id,
+          id: existing.id,
+          data_before: existing.data,
+        });
       } else {
         result.imported++;
+        undo.created_record_ids.push(rec.id);
       }
     } catch (err) {
       result.errors.push({ id: rec.id, error: err instanceof Error ? err.message : String(err) });

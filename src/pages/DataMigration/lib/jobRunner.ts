@@ -36,12 +36,13 @@ import {
  * says migrating but no job exists) and the step offers an explicit resume.
  */
 
-export type MigrationJobKind = 'migrate';
+export type MigrationJobKind = 'migrate' | 'undo';
 
 export interface MigrationJob {
   recordId: string;
   kind: MigrationJobKind;
-  /** migrate: saved rows out of planned writes. */
+  /** migrate: saved rows out of planned writes. undo: reversed items out of
+   * total created/merged items. */
   done: number;
   total: number;
 }
@@ -295,6 +296,94 @@ export async function startMigrationJob(recordId: string): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     await patchMigrationRecord(recordId, { status: 'failed', error_message: msg });
+    useAppStore.getState().addToast(msg, 'error');
+  } finally {
+    unregisterJob(recordId);
+  }
+}
+
+/**
+ * UNDO a completed migration: delete the records it created (+ the lookup
+ * records), revert the projects it merged into, then re-open the migration for
+ * editing (status='draft', step='preview') so the operator can adjust and
+ * re-run. Created dropdown options are intentionally KEPT (shared/deduped).
+ *
+ * Reads the `undo` ledger captured at migrate time (`result.undo`). Only runs on
+ * a `done` migration that HAS that ledger (migrations run before undo support
+ * have none — the UI hides the button for them). Like the import, this is an
+ * in-tab job of local record deletes/writes (no Anthropic), not a worker job.
+ *
+ * Idempotent: `deleteRecord` no-ops on an already-deleted id (fire-and-forget +
+ * the pending-sync retry queue), so a reload mid-undo and re-run is safe.
+ */
+export async function undoMigrationJob(recordId: string): Promise<void> {
+  if (useMigrationJobs.getState().jobs[recordId]) return;
+  const state = useAppStore.getState();
+  const isAr = state.language === 'ar';
+  const fresh = readFresh(recordId);
+  if (!fresh) return;
+  const undo = fresh.data.result?.undo;
+  if (fresh.data.status !== 'done' || !undo) {
+    state.addToast(
+      isAr ? 'لا يمكن التراجع عن هذا الترحيل.' : "This migration can't be undone.",
+      'info',
+    );
+    return;
+  }
+
+  const total =
+    undo.created_record_ids.length +
+    undo.created_lookup_records.length +
+    undo.updated_projects.length;
+  registerJob({ recordId, kind: 'undo', done: 0, total });
+  patchMigrationRecord(recordId, { status: 'undoing', error_message: null });
+  try {
+    let done = 0;
+    const tick = () => {
+      done += 1;
+      updateJob(recordId, { done });
+    };
+    // 1 — delete the main created records FIRST, so the lookup-record deletes
+    //     below don't dangle behind records that still reference them.
+    for (const id of undo.created_record_ids) {
+      useAppStore.getState().deleteRecord(undo.target_model_id, id);
+      tick();
+    }
+    // 2 — delete the created lookup-target records.
+    for (const l of undo.created_lookup_records) {
+      useAppStore.getState().deleteRecord(l.model_id, l.id);
+      tick();
+    }
+    // 3 — restore each merged project's pre-merge data (its units/rollups are
+    //     separate records, untouched). expectedVersion:null — deliberate
+    //     overwrite, same posture as the merge that created the snapshot.
+    const now = new Date().toISOString();
+    for (const p of undo.updated_projects) {
+      const s = useAppStore.getState();
+      const current = (s.records[p.model_id] ?? []).find((r) => r.id === p.id);
+      if (current) {
+        await s.saveRecord(
+          { ...current, data: p.data_before, updated_at: now },
+          { expectedVersion: null },
+        );
+      }
+      tick();
+    }
+    // Re-open for editing: back to the preview step, drop the result so the
+    // done view + Undo affordance disappear and Migrate returns.
+    await patchMigrationRecord(recordId, {
+      status: 'draft',
+      step: 'preview',
+      result: undefined,
+      error_message: null,
+    });
+    state.addToast(isAr ? 'تم التراجع عن الترحيل.' : 'Migration undone — edit and re-run.', 'success');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Revert to 'done' (NOT 'failed') so the done view + Undo button return —
+    // the undo ledger is untouched and undo is idempotent, so the user can
+    // simply retry it. Surface the error via toast.
+    await patchMigrationRecord(recordId, { status: 'done', error_message: msg });
     useAppStore.getState().addToast(msg, 'error');
   } finally {
     unregisterJob(recordId);

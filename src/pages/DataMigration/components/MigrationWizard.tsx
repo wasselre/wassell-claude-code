@@ -1,8 +1,9 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
-import { startExtractionJob, startMigrationJob } from '../lib/jobRunner';
+import { startExtractionJob, startMigrationJob, undoMigrationJob, useMigrationJobs } from '../lib/jobRunner';
 import { readMigrationData, type ColumnStandardization, type MigrationData, type MigrationStep } from '../lib/types';
 import StepPickModel from './steps/StepPickModel';
 import StepUpload from './steps/StepUpload';
@@ -46,6 +47,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
   const models = useAppStore((s) => s.models);
   const saveRecord = useAppStore((s) => s.saveRecord);
   const record = useAppStore((s) => (s.records[modelId] ?? []).find((r) => r.id === recordId));
+  const undoJob = useMigrationJobs((s) => s.jobs[recordId]);
 
   const data: MigrationData = useMemo(() => (record ? readMigrationData(record) : {}), [record]);
 
@@ -150,6 +152,28 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
 
       {/* Body — step machine */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        {data.status === 'undoing' ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-12 gap-3">
+            <Loader2 size={32} className="text-copper animate-spin" />
+            <div className="font-semibold text-charcoal">
+              {isAr ? 'جارٍ التراجع عن الترحيل…' : 'Undoing the migration…'}
+            </div>
+            <p className="text-sm text-charcoal/50 max-w-sm">
+              {isAr
+                ? 'يتم حذف السجلات التي أنشأها هذا الترحيل واستعادة التعديلات، ثم ستُفتح العملية للتعديل.'
+                : 'Deleting the records this migration created and reverting its changes, then it will re-open for editing.'}
+            </p>
+            {undoJob?.kind === 'undo' && undoJob.total > 0 && (
+              <div className="w-full max-w-xs h-1.5 rounded-full bg-sand/30 overflow-hidden">
+                <div
+                  className="h-full bg-copper transition-all"
+                  style={{ width: `${Math.min(100, Math.round((undoJob.done / undoJob.total) * 100))}%` }}
+                />
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         {step === 'pick_model' && (
           <div className="flex-1 overflow-y-auto">
             <StepPickModel
@@ -347,8 +371,11 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               model={targetModel}
               result={data.result}
               onNewMigration={() => navigate('/model/data_migration')}
+              onUndo={() => void undoMigrationJob(recordId)}
             />
           </div>
+        )}
+        </>
         )}
       </div>
     </div>
