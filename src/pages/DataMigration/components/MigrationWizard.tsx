@@ -24,6 +24,7 @@ interface MigrationWizardProps {
  * so the operator can revisit the extracted table, mapping, standardization,
  * preview, and result after the import — without being able to re-run it. */
 const DONE_NAV: { step: MigrationStep; ar: string; en: string }[] = [
+  { step: 'prep', ar: 'الأسئلة', en: 'Q&A' },
   { step: 'review_raw', ar: 'الجدول', en: 'Table' },
   { step: 'mapping', ar: 'الربط', en: 'Mapping' },
   { step: 'standardize', ar: 'التوحيد', en: 'Standardize' },
@@ -102,6 +103,7 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
   // Which DONE_NAV chips are reachable (their step's data exists on the record).
   const canView = (s: MigrationStep): boolean => {
     if (s === 'done') return true;
+    if (s === 'prep') return (data.prep_chat?.length ?? 0) > 0 || (data.prep_answered?.length ?? 0) > 0;
     if (s === 'review_raw') return !!data.raw_table;
     return !!data.raw_table && !!data.mappings; // mapping / standardize / preview
   };
@@ -201,10 +203,14 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               prepStructure={data.prep_structure}
               prepReady={data.prep_ready}
               prepQuestions={data.prep_questions}
+              prepAnswered={data.prep_answered}
+              prepAnswersDraft={data.prep_answers_draft}
+              onAnswersDraft={(draft) => patch({ prep_answers_draft: draft })}
               status={data.status}
               errorMessage={data.error_message}
               onStartExtraction={() => void startExtractionJob(recordId)}
               onBack={() => patch({ step: 'upload' })}
+              readOnly={isDone}
             />
           </div>
         )}
@@ -252,10 +258,14 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                 prepStructure={data.prep_structure}
                 prepReady={data.prep_ready}
                 prepQuestions={data.prep_questions}
+                prepAnswered={data.prep_answered}
+                prepAnswersDraft={data.prep_answers_draft}
+                onAnswersDraft={(draft) => patch({ prep_answers_draft: draft })}
                 status={data.status}
                 errorMessage={data.error_message}
                 onStartExtraction={() => void startExtractionJob(recordId)}
                 onBack={() => patch({ step: 'upload' })}
+                readOnly={isDone}
               />
             </div>
           ))}

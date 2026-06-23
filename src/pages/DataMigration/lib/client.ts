@@ -544,3 +544,46 @@ export async function planExtraction(input: {
     ready: Boolean(body.ready),
   };
 }
+
+// ─── Prompt library (saved extraction-instruction templates) ────────────────
+// A small SHARED library of reusable instruction prompts the operator picks from
+// (or saves the current instructions into) before starting an AI analysis. Lives
+// in the `migration_prompts` table (RLS: everyone reads; author edits/deletes).
+// Every call throws on failure — callers surface via addToast (see CLAUDE.md).
+
+export interface MigrationPrompt {
+  id: string;
+  label: string;
+  body: string;
+}
+
+/** All saved prompts (shared across the team), newest first. */
+export async function listMigrationPrompts(): Promise<MigrationPrompt[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('migration_prompts')
+    .select('id, label, body')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`Could not load the prompt library: ${error.message}`);
+  return (data ?? []) as MigrationPrompt[];
+}
+
+/** Save the current instructions as a new named prompt (stamped with the author). */
+export async function saveMigrationPrompt(label: string, body: string): Promise<MigrationPrompt> {
+  if (!supabase) throw new Error('Supabase is not configured — cannot save the prompt.');
+  const uid = await authUid();
+  const { data, error } = await supabase
+    .from('migration_prompts')
+    .insert({ label: label.trim(), body, created_by_user_id: uid })
+    .select('id, label, body')
+    .single();
+  if (error || !data) throw new Error(`Could not save the prompt: ${error?.message ?? 'unknown error'}`);
+  return data as MigrationPrompt;
+}
+
+/** Delete a prompt (RLS allows only the author). */
+export async function deleteMigrationPrompt(id: string): Promise<void> {
+  if (!supabase) throw new Error('Supabase is not configured — cannot delete the prompt.');
+  const { error } = await supabase.from('migration_prompts').delete().eq('id', id);
+  if (error) throw new Error(`Could not delete the prompt: ${error.message}`);
+}

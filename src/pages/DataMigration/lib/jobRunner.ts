@@ -20,6 +20,7 @@ import {
   type DiscoveredUnit,
   type RawCellConflict,
   type ChatMessage,
+  type AnsweredQuestion,
 } from './types';
 
 /** Units per fusion batch. Sized so a batch's tool output stays well under the
@@ -249,6 +250,13 @@ export async function startExtractionJob(recordId: string): Promise<void> {
   const lang: 'ar' | 'en' = isAr ? 'ar' : 'en';
   const fresh = readFresh(recordId);
   if (!fresh) return;
+  // Backstop: a completed migration's prep page is viewable (read-only); never
+  // let it re-extract (that would overwrite the migrated raw table + flip the
+  // status back to extracting). The UI hides Start extraction when done.
+  if (fresh.data.status === 'done') {
+    state.addToast(isAr ? 'تم ترحيل هذه العملية بالفعل.' : 'This migration already ran.', 'info');
+    return;
+  }
   const targetModel = state.models.find((m) => m.id === fresh.data.target_model_id);
   const uploads: MigrationUpload[] = fresh.data.source_files ?? [];
   if (!targetModel || uploads.length === 0) {
@@ -474,6 +482,10 @@ export async function startPlanJob(
   priorChat: ChatMessage[],
   userText: string,
   instructions: string,
+  /** Card answers the operator submitted this turn — logged to prep_answered so
+   * the Q&A stays viewable after the questions resolve. Empty for the seed pass
+   * and free-text chat turns. */
+  answeredToAppend: AnsweredQuestion[] = [],
 ): Promise<void> {
   const text = userText.trim();
   if (!text) return;
@@ -487,6 +499,14 @@ export async function startPlanJob(
   if (!targetModel) {
     state.addToast(isAr ? 'لم يتم اختيار النموذج الهدف.' : 'No target model selected.', 'error');
     return;
+  }
+  // Upsert this turn's card answers into the persisted Q&A log (by question
+  // text — a re-answered question updates in place rather than duplicating).
+  const mergedAnswered: AnsweredQuestion[] = [...(fresh.data.prep_answered ?? [])];
+  for (const a of answeredToAppend) {
+    const i = mergedAnswered.findIndex((x) => x.question === a.question);
+    if (i >= 0) mergedAnswered[i] = a;
+    else mergedAnswered.push(a);
   }
 
   registerJob({ recordId, kind: 'plan', done: 0, total: 0 });
@@ -520,6 +540,11 @@ export async function startPlanJob(
       prep_structure: proposedColumns,
       prep_questions: questions,
       prep_ready: ready,
+      prep_answered: mergedAnswered,
+      // The open-question set just changed — clear the in-progress card-answer
+      // draft atomically so a reload never restores answers keyed to the OLD
+      // questions' indices.
+      prep_answers_draft: {},
     });
   } catch (err) {
     // A failed plan turn just surfaces — no status flip (planning is optional,

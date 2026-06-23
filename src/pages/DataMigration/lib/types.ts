@@ -181,6 +181,15 @@ export interface MigrationData {
   /** PRE-extraction PREP step: the AI's CURRENT open questions / contradictions,
    * rendered as answerable cards. Extraction is blocked until this is empty. */
   prep_questions?: PrepQuestion[];
+  /** PRE-extraction PREP step: the cumulative log of questions the operator
+   * ANSWERED via the cards (question + their answer), so the Q&A stays viewable
+   * after the questions resolve and after the migration is done. */
+  prep_answered?: AnsweredQuestion[];
+  /** PRE-extraction PREP step: the IN-PROGRESS card answers (not yet submitted),
+   * keyed by the current question's index — debounce-persisted so typing an
+   * answer and reloading (or navigating away) doesn't lose it. Cleared when the
+   * open-question set changes (a turn lands). */
+  prep_answers_draft?: Record<string, string>;
   /** PRE-extraction PREP step: the AI's latest "no blocking questions, structure
    * is stable" signal — drives the "ready to extract" affordance (non-blocking). */
   prep_ready?: boolean;
@@ -228,6 +237,19 @@ export interface PrepQuestion {
   kind?: string;
   /** Optional specifics — the conflicting values / units, or why it's unclear. */
   detail?: string;
+}
+
+/** A prep question the operator ANSWERED via the cards, kept as a persisted log
+ * so the Q&A stays reviewable after the question is resolved (the AI drops a
+ * question from the open set once satisfied) and after the migration is done.
+ * Without this, the question + the operator's answer would only survive as raw
+ * text inside the clarification chat. */
+export interface AnsweredQuestion {
+  question: string;
+  kind?: string;
+  detail?: string;
+  answer: string;
+  ts?: string;
 }
 
 export interface ColumnMappingSuggestion {

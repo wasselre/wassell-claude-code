@@ -20,8 +20,9 @@ import {
 } from 'lucide-react';
 import type { MigrationUpload } from '../../lib/client';
 import { useMigrationJobs, startPlanJob } from '../../lib/jobRunner';
+import PromptLibrary from '../PromptLibrary';
 import { isProjectProfileTarget } from '../../lib/types';
-import type { ChatMessage, ProposedColumn, PrepQuestion, MigrationStatus } from '../../lib/types';
+import type { ChatMessage, ProposedColumn, PrepQuestion, AnsweredQuestion, MigrationStatus } from '../../lib/types';
 import type { AppModel } from '@/types';
 
 interface StepPrepProps {
@@ -41,11 +42,21 @@ interface StepPrepProps {
   prepReady?: boolean;
   /** The AI's current open questions / contradictions, shown as answer cards. */
   prepQuestions?: PrepQuestion[];
+  /** The persisted log of answered questions (question + the operator's answer),
+   * rendered read-only so the Q&A stays viewable after the cards resolve. */
+  prepAnswered?: AnsweredQuestion[];
+  /** In-progress (not-yet-submitted) card answers, persisted so a reload doesn't
+   * lose them. Keyed by the current question's index. */
+  prepAnswersDraft?: Record<string, string>;
+  onAnswersDraft: (draft: Record<string, string>) => void;
   status: MigrationStatus | undefined;
   errorMessage: string | null | undefined;
   /** Trigger the real extraction (discover/fuse or project extract). */
   onStartExtraction: () => void;
   onBack: () => void;
+  /** Read-only review (the migration already ran): no new turns / no extraction
+   * — just view the instructions, clarification, structure, and the Q&A. */
+  readOnly?: boolean;
 }
 
 /**
@@ -74,10 +85,14 @@ export default function StepPrep({
   prepStructure,
   prepReady,
   prepQuestions,
+  prepAnswered,
+  prepAnswersDraft,
+  onAnswersDraft,
   status,
   errorMessage,
   onStartExtraction,
   onBack,
+  readOnly,
 }: StepPrepProps) {
   const job = useMigrationJobs((s) => s.jobs[recordId]);
   // "Busy" is now the DETACHED plan job, not a local flag — so the spinner +
@@ -115,7 +130,45 @@ export default function StepPrep({
   // the AI returns a fresh open set each time). Extraction is blocked while any
   // question card remains.
   const [questions, setQuestions] = useState<PrepQuestion[]>(prepQuestions ?? []);
-  const [answers, setAnswers] = useState<Record<number, string>>({});
+  // In-progress card answers, keyed by question index. Seeded from the persisted
+  // draft (the wizard remounts per record, so this restores typed-but-unsubmitted
+  // answers after a reload / navigate-away) and debounce-persisted on every edit.
+  const [answers, setAnswers] = useState<Record<number, string>>(() => {
+    const out: Record<number, string> = {};
+    for (const [k, v] of Object.entries(prepAnswersDraft ?? {})) out[Number(k)] = v;
+    return out;
+  });
+  const answersLatest = useRef<Record<number, string>>(answers);
+  const answersTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistAnswers = (next: Record<number, string>) => {
+    answersLatest.current = next;
+    if (answersTimer.current) clearTimeout(answersTimer.current);
+    answersTimer.current = setTimeout(() => {
+      answersTimer.current = null;
+      onAnswersDraft({ ...next } as Record<string, string>);
+    }, 500);
+  };
+  const flushAnswers = () => {
+    if (answersTimer.current) {
+      clearTimeout(answersTimer.current);
+      answersTimer.current = null;
+      onAnswersDraft({ ...answersLatest.current } as Record<string, string>);
+    }
+  };
+  // Persist the latest in-progress answers when leaving the step.
+  useEffect(() => () => flushAnswers(), []); // eslint-disable-line react-hooks/exhaustive-deps
+  /** Reset the LOCAL in-progress answers when the open-question set changes (a
+   * turn landed). The persisted `prep_answers_draft` is cleared atomically by the
+   * plan job in the same write that changes the questions (so a reload mid-/post-
+   * turn never restores answers against a different question set). */
+  const clearAnswers = () => {
+    if (answersTimer.current) {
+      clearTimeout(answersTimer.current);
+      answersTimer.current = null;
+    }
+    answersLatest.current = {};
+    setAnswers({});
+  };
 
   // Adopt a planning turn that the DETACHED plan job persisted (jobRunner) into
   // the local view. FORWARD-ONLY on the conversation length: only a turn that
@@ -133,7 +186,7 @@ export default function StepPrep({
     setStructure(prepStructure ?? []);
     setQuestions(prepQuestions ?? []);
     setReady(prepReady ?? false);
-    setAnswers({}); // the open-question set just changed — drop in-progress answers
+    clearAnswers(); // the open-question set just changed — drop in-progress answers
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [persistedChatLen]);
 
@@ -157,6 +210,19 @@ export default function StepPrep({
     }, 600);
   };
 
+  /** Apply a prompt picked from the library — set the instructions immediately
+   * (cancel any pending debounce) and persist now, so the chosen template is
+   * what the next analysis uses. */
+  const applyInstructions = (body: string) => {
+    if (instrTimer.current) {
+      clearTimeout(instrTimer.current);
+      instrTimer.current = null;
+    }
+    setInstrDraft(body);
+    instrLatest.current = body;
+    onInstructions(body);
+  };
+
   /** One planning turn — handed to the DETACHED plan job (jobRunner), which
    * calls the AI and persists the whole turn (chat + structure + questions +
    * ready) in one write. Running it as a job (not inline here) is what makes a
@@ -168,11 +234,11 @@ export default function StepPrep({
    * debounced) instructions. We flush the instruction draft first so the
    * persisted record matches what the plan used. `aiBusy`/result come back
    * through the job store + the persisted props (see the adopt effect above). */
-  const sendTurn = (userText: string) => {
+  const sendTurn = (userText: string, answered: AnsweredQuestion[] = []) => {
     const text = userText.trim();
     if (!text || aiBusy) return;
     flushInstructions();
-    void startPlanJob(recordId, thread, text, instrLatest.current);
+    void startPlanJob(recordId, thread, text, instrLatest.current, answered);
     setAiInput('');
   };
 
@@ -197,7 +263,15 @@ export default function StepPrep({
     const body = answered
       .map((x) => `- ${x.q.question}\n  ${isAr ? 'إجابتي' : 'My answer'}: ${x.a}`)
       .join('\n');
-    sendTurn(`${header}\n${body}`);
+    // Log each answered card (question + answer) so the Q&A stays viewable after
+    // the AI drops the resolved questions from the open set.
+    const logged: AnsweredQuestion[] = answered.map((x) => ({
+      question: x.q.question,
+      kind: x.q.kind,
+      detail: x.q.detail,
+      answer: x.a,
+    }));
+    sendTurn(`${header}\n${body}`, logged);
   };
 
   const fileIcon = (mime: string) =>
@@ -282,12 +356,18 @@ export default function StepPrep({
     <div className="p-5 flex flex-col h-full">
       <div className="mb-3 shrink-0">
         <h3 className="font-bold text-charcoal">
-          {isAr ? 'التعليمات والمراجعة قبل الاستخراج' : 'Instructions & review before extraction'}
+          {readOnly
+            ? isAr ? 'المراجعة والأسئلة' : 'Clarification & questions'
+            : isAr ? 'التعليمات والمراجعة قبل الاستخراج' : 'Instructions & review before extraction'}
         </h3>
         <p className="text-xs text-charcoal/50">
-          {isAr
-            ? 'اكتب تعليماتك، ثم راجِع الملفات ووضّح: يقرأ الذكاء الملفات ويسألك عن أي تعارض أو غموض ويقترح هيكل الجدول. لازم تكمل المراجعة قبل أن تتمكن من بدء الاستخراج.'
-            : 'Write your instructions, then review & clarify: the AI reads the files, asks you about any contradiction or ambiguity, and proposes the table structure. You must complete the review before you can start extraction.'}
+          {readOnly
+            ? isAr
+              ? 'مراجعة للقراءة فقط: تعليماتك، محادثة التوضيح، الهيكل المقترح، والأسئلة وإجاباتك.'
+              : 'Read-only review: your instructions, the clarification chat, the proposed structure, and the questions with your answers.'
+            : isAr
+              ? 'اكتب تعليماتك، ثم راجِع الملفات ووضّح: يقرأ الذكاء الملفات ويسألك عن أي تعارض أو غموض ويقترح هيكل الجدول. لازم تكمل المراجعة قبل أن تتمكن من بدء الاستخراج.'
+              : 'Write your instructions, then review & clarify: the AI reads the files, asks you about any contradiction or ambiguity, and proposes the table structure. You must complete the review before you can start extraction.'}
         </p>
       </div>
 
@@ -304,23 +384,33 @@ export default function StepPrep({
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto pe-1 space-y-3">
-        {/* Instructions */}
-        <div>
-          <label className="block text-xs font-bold text-charcoal/70 uppercase tracking-wide mb-1.5">
-            {isAr ? 'تعليمات للذكاء (اختياري)' : 'Instructions for the AI (optional)'}
-          </label>
-          <textarea
-            dir="auto"
-            value={instrDraft}
-            onChange={(e) => handleInstr(e.target.value)}
-            placeholder={
-              isAr
-                ? 'مثال: اعتمد أسعار قائمة الأسعار وليس البروشور. اجعل المساحة بالمتر المربع. تجاهل الوحدات المباعة. لو تعارضت المخططات مع الجدول اسألني.'
-                : 'e.g. Use the price list, not the brochure, for prices. Areas in m². Skip sold units. If the plans contradict the sheet, ask me.'
-            }
-            className="form-input w-full text-sm leading-relaxed min-h-[90px] max-h-[200px] resize-y"
-          />
-        </div>
+        {/* Instructions (hidden when there are none in read-only review) */}
+        {(!readOnly || instrDraft.trim() !== '') && (
+          <div>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <label className="block text-xs font-bold text-charcoal/70 uppercase tracking-wide">
+                {isAr ? 'تعليمات للذكاء (اختياري)' : 'Instructions for the AI (optional)'}
+              </label>
+              {!readOnly && (
+                <PromptLibrary isAr={isAr} currentText={instrDraft} onInsert={applyInstructions} />
+              )}
+            </div>
+            <textarea
+              dir="auto"
+              value={instrDraft}
+              onChange={(e) => handleInstr(e.target.value)}
+              readOnly={readOnly}
+              placeholder={
+                isAr
+                  ? 'مثال: اعتمد أسعار قائمة الأسعار وليس البروشور. اجعل المساحة بالمتر المربع. تجاهل الوحدات المباعة. لو تعارضت المخططات مع الجدول اسألني.'
+                  : 'e.g. Use the price list, not the brochure, for prices. Areas in m². Skip sold units. If the plans contradict the sheet, ask me.'
+              }
+              className={`form-input w-full text-sm leading-relaxed min-h-[90px] max-h-[200px] resize-y ${
+                readOnly ? 'bg-charcoal/[0.03] cursor-default' : ''
+              }`}
+            />
+          </div>
+        )}
 
         {/* Source files (read-only summary) */}
         {sourceFiles && sourceFiles.length > 0 && (
@@ -408,19 +498,29 @@ export default function StepPrep({
             <div className="px-3 pb-3">
               {thread.length === 0 ? (
                 <div className="text-center py-3">
-                  <p className="text-xs text-charcoal/55 mb-2.5 max-w-md mx-auto">
-                    {isAr
-                      ? 'اطلب من الذكاء قراءة الملفات وتعليماتك ليسألك عن أي تعارض أو غموض ويقترح هيكل الجدول قبل إنتاجه.'
-                      : 'Have the AI read the files and your instructions, ask you about any contradiction or ambiguity, and propose the table structure before producing it.'}
-                  </p>
-                  <button
-                    onClick={startReview}
-                    disabled={aiBusy}
-                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors text-sm font-medium"
-                  >
-                    {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                    {isAr ? 'راجع الملفات ووضّح' : 'Review files & clarify'}
-                  </button>
+                  {readOnly ? (
+                    <p className="text-xs text-charcoal/45 max-w-md mx-auto">
+                      {isAr
+                        ? 'لم تُسجَّل محادثة توضيحية لهذا الترحيل.'
+                        : 'No clarification chat was recorded for this migration.'}
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-xs text-charcoal/55 mb-2.5 max-w-md mx-auto">
+                        {isAr
+                          ? 'اطلب من الذكاء قراءة الملفات وتعليماتك ليسألك عن أي تعارض أو غموض ويقترح هيكل الجدول قبل إنتاجه.'
+                          : 'Have the AI read the files and your instructions, ask you about any contradiction or ambiguity, and propose the table structure before producing it.'}
+                      </p>
+                      <button
+                        onClick={startReview}
+                        disabled={aiBusy}
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-copper text-white hover:bg-terracotta disabled:opacity-50 transition-colors text-sm font-medium"
+                      >
+                        {aiBusy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                        {isAr ? 'راجع الملفات ووضّح' : 'Review files & clarify'}
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="max-h-72 overflow-y-auto space-y-2 pe-1">
@@ -449,7 +549,7 @@ export default function StepPrep({
                 </div>
               )}
 
-              {thread.length > 0 && (
+              {thread.length > 0 && !readOnly && (
                 <div className="flex items-center gap-2 mt-2">
                   <input
                     value={aiInput}
@@ -481,8 +581,9 @@ export default function StepPrep({
 
         {/* Questions & contradictions — answerable CARDS (the quiz), shown BELOW
             the chat. Each must be resolved before extraction is allowed. The
-            operator answers here OR in the chat — both feed the same turn. */}
-        {questions.length > 0 && (
+            operator answers here OR in the chat — both feed the same turn.
+            Hidden in read-only review (a done migration has none open). */}
+        {!readOnly && questions.length > 0 && (
           <div className="rounded-xl border border-gold/40 bg-gold/[0.06] overflow-hidden">
             <div className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-charcoal border-b border-gold/30">
               <HelpCircle size={15} className="text-gold" />
@@ -527,7 +628,13 @@ export default function StepPrep({
                     <textarea
                       dir="auto"
                       value={answers[i] ?? ''}
-                      onChange={(e) => setAnswers((prev) => ({ ...prev, [i]: e.target.value }))}
+                      onChange={(e) =>
+                        setAnswers((prev) => {
+                          const next = { ...prev, [i]: e.target.value };
+                          persistAnswers(next);
+                          return next;
+                        })
+                      }
                       disabled={aiBusy}
                       placeholder={isAr ? 'اكتب إجابتك…' : 'Type your answer…'}
                       className="form-input w-full text-xs leading-relaxed min-h-[44px] max-h-[140px] resize-y"
@@ -553,6 +660,56 @@ export default function StepPrep({
             </div>
           </div>
         )}
+
+        {/* Answered questions — read-only LOG of each question + the operator's
+            answer, so the Q&A stays viewable after the cards resolve and after
+            the migration is done. */}
+        {(prepAnswered?.length ?? 0) > 0 && (
+          <div className="rounded-xl border border-green-200 bg-green-50/40 overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2 text-sm font-bold text-charcoal border-b border-green-200">
+              <CheckCircle2 size={15} className="text-green-500" />
+              <span className="flex-1 text-start">
+                {isAr ? 'أسئلة مُجاب عنها' : 'Answered questions'}
+              </span>
+              <span className="text-[11px] text-charcoal/50 font-normal">{prepAnswered!.length}</span>
+            </div>
+            <div className="px-3 py-2.5 space-y-2.5 max-h-[24rem] overflow-y-auto">
+              {prepAnswered!.map((a, i) => {
+                const isContradiction = (a.kind ?? '').toLowerCase().includes('contradict');
+                return (
+                  <div key={i} className="rounded-lg border border-green-200 bg-white p-2.5">
+                    <div className="flex items-start gap-2">
+                      {isContradiction ? (
+                        <AlertTriangle size={14} className="text-gold shrink-0 mt-0.5" />
+                      ) : (
+                        <HelpCircle size={14} className="text-copper shrink-0 mt-0.5" />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-charcoal" dir="auto">{a.question}</div>
+                        {a.detail && (
+                          <div className="text-[11px] text-charcoal/55 mt-0.5 leading-relaxed" dir="auto">
+                            {a.detail}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="mt-1.5 ps-6">
+                      <div className="text-[10px] font-bold text-green-700/80 uppercase tracking-wide mb-0.5">
+                        {isAr ? 'إجابتك' : 'Your answer'}
+                      </div>
+                      <div
+                        dir="auto"
+                        className="text-xs text-charcoal whitespace-pre-wrap leading-relaxed bg-green-50/70 rounded-lg px-2 py-1.5 border border-green-100"
+                      >
+                        {a.answer}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer — Back + Start extraction (gated until every question is answered). */}
@@ -564,6 +721,12 @@ export default function StepPrep({
           <Back size={15} />
           {isAr ? 'رجوع' : 'Back'}
         </button>
+        {readOnly ? (
+          <span className="text-[11px] text-charcoal/45 inline-flex items-center gap-1">
+            <CheckCircle2 size={13} className="text-green-500" />
+            {isAr ? 'مراجعة للقراءة فقط' : 'Read-only review'}
+          </span>
+        ) : (
         <div className="flex items-center gap-2">
           {blocked && (
             <span className="text-[11px] text-gold inline-flex items-center gap-1">
@@ -598,6 +761,7 @@ export default function StepPrep({
             <Next size={15} />
           </button>
         </div>
+        )}
       </div>
     </div>
   );
