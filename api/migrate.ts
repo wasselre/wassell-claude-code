@@ -104,7 +104,6 @@ interface MigrateRequestBody {
   rawValues?: string[];
 }
 
-const MAX_SAVE_ATTEMPTS = 6;
 const MIGRATION_MODEL_NAME = 'data_migration';
 
 function serviceClient(): SupabaseClient | null {
@@ -114,44 +113,45 @@ function serviceClient(): SupabaseClient | null {
   return createClient(url, key, { auth: { persistSession: false } });
 }
 
-function isVersionConflict(err: { code?: string; message?: string } | null): boolean {
-  if (!err) return false;
-  return err.code === '40001' || /version_mismatch/i.test(err.message ?? '');
-}
-
 /**
- * Merge `compute(freshData)` into a record's data via record_save with the
- * optimistic version + retry on 40001. Service-role; the SPA never writes the
- * migration record during a job (echo-dedup). Returns null on success or an
- * error string.
+ * Merge `compute(freshData)` into a record's data via record_save, VERSION-UNAWARE
+ * (`p_expected_version: null`) — 2026-06-23. The data_migration draft is a
+ * single-logical-owner record that the browser wizard ALSO writes version-unaware
+ * (MigrationWizard `patch` + jobRunner.patchMigrationRecord) and the Fly worker
+ * writes version-unaware too (runMigrationJob.patchRecord, commit 44d0200). This
+ * endpoint formerly used OPTIMISTIC concurrency + retry-on-40001 — the ROOT CAUSE
+ * of a Postgres CPU storm: the browser freely bumps the row `version`, so this
+ * server write lost every race and tight-looped on 40001 while the SPA re-fired
+ * `/api/migrate` (record ba9211b7, 2026-06-23 — the API-endpoint twin of the
+ * worker bug fixed in 44d0200). We still re-read the freshest row and MERGE, so
+ * concurrent writes to OTHER fields survive; the busy/status fields this endpoint
+ * owns are last-write-wins (correct). No retry loop: with no version check there
+ * is no conflict, so it can never tight-loop. Service-role; the SPA never writes
+ * the migration record during a job (echo-dedup).
  */
 async function patchRecordServer(
   sb: SupabaseClient,
   recordId: string,
   compute: (data: Record<string, unknown>) => Record<string, unknown>,
 ): Promise<{ data: Record<string, unknown>; modelId: string } | { error: string }> {
-  for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
-    const { data: row, error } = await sb
-      .from('records')
-      .select('data, version, created_by_user_id, model_id')
-      .eq('id', recordId)
-      .single();
-    if (error || !row) return { error: `record not found: ${error?.message ?? 'unknown'}` };
-    const data = ((row.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-    const modelId = (row as { model_id: string }).model_id;
-    const newData = { ...data, ...compute(data) };
-    const { error: saveErr } = await sb.rpc('record_save', {
-      p_model_id: modelId,
-      p_id: recordId,
-      p_data: newData,
-      p_created_by: (row as { created_by_user_id: string | null }).created_by_user_id ?? null,
-      p_expected_version: (row as { version: number | null }).version ?? null,
-    });
-    if (!saveErr) return { data: newData, modelId };
-    if (isVersionConflict(saveErr as { code?: string; message?: string })) continue;
-    return { error: `record_save failed: ${saveErr.message}` };
-  }
-  return { error: 'record_save failed after version-conflict retries' };
+  const { data: row, error } = await sb
+    .from('records')
+    .select('data, created_by_user_id, model_id')
+    .eq('id', recordId)
+    .single();
+  if (error || !row) return { error: `record not found: ${error?.message ?? 'unknown'}` };
+  const data = ((row.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
+  const modelId = (row as { model_id: string }).model_id;
+  const newData = { ...data, ...compute(data) };
+  const { error: saveErr } = await sb.rpc('record_save', {
+    p_model_id: modelId,
+    p_id: recordId,
+    p_data: newData,
+    p_created_by: (row as { created_by_user_id: string | null }).created_by_user_id ?? null,
+    p_expected_version: null,
+  });
+  if (saveErr) return { error: `record_save failed: ${saveErr.message}` };
+  return { data: newData, modelId };
 }
 
 /** Best-effort wake ping so the worker skips its ~3s poll. Never blocks. */
