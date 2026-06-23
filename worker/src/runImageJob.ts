@@ -178,7 +178,13 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
         p_expected_version: (current as { version: number | null }).version ?? null,
       });
       if (!saveErr) return;
-      if (isVersionConflict(saveErr as { code?: string; message?: string })) continue;
+      if (isVersionConflict(saveErr as { code?: string; message?: string })) {
+        // Jittered backoff so concurrent writers (this worker + the image-chat
+        // API endpoints) don't TIGHT-LOOP on 40001 and storm the DB under
+        // contention on a hot session record (2026-06-23).
+        await new Promise((r) => setTimeout(r, Math.min(500, 25 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 25)));
+        continue;
+      }
       throw new Error(`record_save failed: ${saveErr.message}`);
     }
     throw new Error(

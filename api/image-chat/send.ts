@@ -277,7 +277,12 @@ async function mutateRecordWithRetry(
       p_expected_version: (current as { version: number | null }).version ?? null,
     });
     if (!saveErr) return;
-    if (isVersionConflict(saveErr as { code?: string; message?: string })) continue;
+    if (isVersionConflict(saveErr as { code?: string; message?: string })) {
+      // Jittered backoff so concurrent writers don't tight-loop on 40001 and
+      // storm the DB under contention (2026-06-23).
+      await new Promise((r) => setTimeout(r, Math.min(500, 25 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 25)));
+      continue;
+    }
     throw new Error(`record_save failed: ${saveErr.message}`);
   }
   throw new Error(

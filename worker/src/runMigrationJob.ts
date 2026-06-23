@@ -63,7 +63,6 @@ const FUSE_BATCH_SIZE = 20;
 /** Signed-URL lifetime per Anthropic call. Re-minted before discover and before
  * each fuse batch so a long multi-batch run never trips URL expiry. */
 const SIGNED_URL_TTL = 3600;
-const MAX_SAVE_ATTEMPTS = 6;
 
 interface SourceFile {
   path: string;
@@ -94,11 +93,6 @@ interface RunArgs {
   supabase: SupabaseClient;
   env: WorkerEnv;
   job: MigrationJob;
-}
-
-function isVersionConflict(err: { code?: string; message?: string } | null): boolean {
-  if (!err) return false;
-  return err.code === '40001' || /version_mismatch/i.test(err.message ?? '');
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -190,26 +184,31 @@ export async function runMigrationJob({ supabase, env, job }: RunArgs): Promise<
    * 40001 version-mismatch it re-reads and re-applies (so a stray concurrent
    * write can never drop a progress patch). Preserves created_by_user_id.
    */
+  // Version-UNAWARE draft progress write (p_expected_version: null) — 2026-06-23.
+  // ROOT CAUSE of the CPU storm: this worker wrote with OPTIMISTIC concurrency
+  // while the BROWSER wizard writes the same draft VERSION-UNAWARE (jobRunner.ts +
+  // MigrationWizard `patch`, expectedVersion:null), which freely bumps the row's
+  // `version`. So the worker's optimistic save lost every race and tight-looped on
+  // 40001 — pinning Postgres CPU (record 09067350 "الماجدية 174"). These are
+  // background PROGRESS writes the worker OWNS; matching the browser's null posture
+  // removes the conflict entirely. We still re-read the freshest row and MERGE our
+  // patch into it, so concurrent writes to OTHER fields survive and only the
+  // worker's own progress fields are last-write-wins (correct — it owns them).
+  // No retry loop: with no version check there is no conflict, so a server process
+  // can never tight-loop here.
   const patchRecord = async (
     compute: (data: Record<string, unknown>) => Record<string, unknown>,
   ): Promise<void> => {
-    for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
-      const { data, version, createdBy } = await readRecord();
-      const newData = { ...data, ...compute(data) };
-      const { error: saveErr } = await supabase.rpc('record_save', {
-        p_model_id: modelId,
-        p_id: job.recordId,
-        p_data: newData,
-        p_created_by: createdBy,
-        p_expected_version: version,
-      });
-      if (!saveErr) return;
-      if (isVersionConflict(saveErr as { code?: string; message?: string })) continue;
-      throw new Error(`record_save failed: ${saveErr.message}`);
-    }
-    throw new Error(
-      `record_save failed after ${MAX_SAVE_ATTEMPTS} version-conflict retries (record ${job.recordId})`,
-    );
+    const { data, createdBy } = await readRecord();
+    const newData = { ...data, ...compute(data) };
+    const { error: saveErr } = await supabase.rpc('record_save', {
+      p_model_id: modelId,
+      p_id: job.recordId,
+      p_data: newData,
+      p_created_by: createdBy,
+      p_expected_version: null,
+    });
+    if (saveErr) throw new Error(`record_save failed: ${saveErr.message}`);
   };
 
   /** Mint fresh signed URLs for the record's source files (service role). */

@@ -283,6 +283,9 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         if (!saveErr) break;
         if (isVersionConflict(saveErr as { code?: string; message?: string })) {
           if (attempt === MAX_SAVE_ATTEMPTS) throw new Error('record_save version conflict (exhausted retries)');
+          // Jittered backoff so concurrent writers don't tight-loop on 40001
+          // and storm the DB under contention (2026-06-23).
+          await new Promise((r) => setTimeout(r, Math.min(500, 25 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 25)));
           continue;
         }
         throw new Error(`record_save failed: ${saveErr.message}`);
