@@ -208,6 +208,10 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
               onAnswersDraft={(draft) => patch({ prep_answers_draft: draft })}
               status={data.status}
               errorMessage={data.error_message}
+              prepBusy={data.prep_busy}
+              phase={data.phase}
+              progressDone={data.progress_done}
+              progressTotal={data.progress_total}
               onStartExtraction={() => void startExtractionJob(recordId)}
               onBack={() => patch({ step: 'upload' })}
               readOnly={isDone}
@@ -220,10 +224,12 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
             <div className="flex-1 min-h-0">
               <StepReviewRaw
                 isAr={isAr}
+                recordId={recordId}
                 model={targetModel}
                 table={data.raw_table}
                 sourceFiles={data.source_files}
                 chat={data.chat}
+                discussBusy={data.discuss_busy}
                 projectDocument={data.project_document}
                 projectIntelligence={data.project_intelligence}
                 onProjectDocument={(d) => patch({ project_document: d })}
@@ -237,7 +243,6 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
                     chat: undefined,
                   })
                 }
-                onChat={(next) => patch({ chat: next })}
                 onContinue={() => patch({ step: 'mapping' })}
                 onBack={() => patch({ step: 'upload' })}
               />

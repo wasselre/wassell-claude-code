@@ -169,6 +169,21 @@ export default function MigrationList({
                         <span className="text-[10px] text-charcoal/50 tabular-nums shrink-0">{job.done}/{job.total}</span>
                       </div>
                     )}
+                    {/* Worker extraction progress (records-mode fusion) — driven
+                        by the record's phase/progress, live via Realtime. */}
+                    {status === 'extracting' && d.phase === 'fusing' && (d.progress_total ?? 0) > 0 && (
+                      <div className="mt-1.5 ps-6 flex items-center gap-2">
+                        <div className="h-1 flex-1 rounded-full bg-sand/30 overflow-hidden">
+                          <div
+                            className="h-full bg-copper transition-all"
+                            style={{ width: `${Math.round(((d.progress_done ?? 0) / (d.progress_total || 1)) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] text-charcoal/50 tabular-nums shrink-0">
+                          {d.progress_done ?? 0}/{d.progress_total}
+                        </span>
+                      </div>
+                    )}
                   </button>
 
                   {/* Kebab — edit/move/delete */}

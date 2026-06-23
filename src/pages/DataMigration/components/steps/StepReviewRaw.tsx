@@ -17,13 +17,15 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import EditableRawGrid from '../EditableRawGrid';
-import { discussExtraction, type MigrationUpload } from '../../lib/client';
+import { enqueueDiscussTurn, type MigrationUpload } from '../../lib/client';
 import { targetFieldLites } from '../../lib/targetFields';
 import type { RawTable, ChatMessage, ProjectIntelligenceSection } from '../../lib/types';
 import type { AppModel } from '@/types';
 
 interface StepReviewRawProps {
   isAr: boolean;
+  /** The data_migration record id — to enqueue a worker DISCUSS turn. */
+  recordId: string;
   /** Target model — fed to the discussion as context (never to coerce values). */
   model: AppModel;
   table: RawTable;
@@ -31,6 +33,9 @@ interface StepReviewRawProps {
   sourceFiles?: MigrationUpload[];
   /** The post-extraction discussion thread (persisted on the record). */
   chat?: ChatMessage[];
+  /** A DISCUSS turn is running on the worker (record.data.discuss_busy) — drives
+   * the chat spinner, live via Realtime (survives reload). */
+  discussBusy?: boolean;
   /** PROJECT-PROFILE mode: the Arabic knowledge document — shown in its own
    * editable panel and saved onto the project record at import. */
   projectDocument?: string;
@@ -42,31 +47,8 @@ interface StepReviewRawProps {
   onChange: (t: RawTable) => void;
   /** Re-upload replaces the table AND resets downstream mappings/standardization. */
   onReplace: (t: RawTable) => void;
-  /** Persist the discussion thread. */
-  onChat: (next: ChatMessage[]) => void;
   onContinue: () => void;
   onBack: () => void;
-}
-
-/** Apply the AI's discussion column edits to the table: an existing header is
- * filled/overwritten with the AI's non-empty values (a recount or fix); an
- * unknown header is appended as a new column. */
-function applyDiscussColumns(table: RawTable, columns: { header: string; values: string[] }[]): RawTable {
-  const headers = [...table.headers];
-  const rows = table.rows.map((r) => [...r]);
-  for (const col of columns) {
-    let idx = headers.findIndex((h) => h.trim() === col.header.trim());
-    if (idx === -1) {
-      headers.push(col.header);
-      idx = headers.length - 1;
-    }
-    rows.forEach((r, i) => {
-      while (r.length <= idx) r.push('');
-      const val = (col.values[i] ?? '').trim();
-      if (val) r[idx] = val; // overwrite/fill with the AI's non-empty value
-    });
-  }
-  return { ...table, headers, rows };
 }
 
 /**
@@ -82,16 +64,16 @@ function applyDiscussColumns(table: RawTable, columns: { header: string; values:
  */
 export default function StepReviewRaw({
   isAr,
+  recordId,
   model,
   table,
-  sourceFiles,
   chat,
+  discussBusy,
   projectDocument,
   projectIntelligence,
   onProjectDocument,
   onChange,
   onReplace,
-  onChat,
   onContinue,
   onBack,
 }: StepReviewRawProps) {
@@ -99,7 +81,12 @@ export default function StepReviewRaw({
   const fileRef = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<RawTable>(table);
   const [aiInput, setAiInput] = useState('');
-  const [aiBusy, setAiBusy] = useState(false);
+  // The DISCUSS turn runs on the worker; busy state is read from the record's
+  // `discuss_busy` (set server-side at enqueue) so it survives reload. `sending`
+  // bridges the ~1s before that flag arrives via Realtime. The browser never
+  // writes the record itself (echo-dedup — see CLAUDE.md).
+  const [sending, setSending] = useState(false);
+  const aiBusy = !!discussBusy || sending;
   const [discussOpen, setDiscussOpen] = useState(true);
   const [conflictsOpen, setConflictsOpen] = useState(false);
   const [intelOpen, setIntelOpen] = useState(false);
@@ -114,54 +101,49 @@ export default function StepReviewRaw({
 
   const thread: ChatMessage[] = chat ?? [];
 
+  /** ENQUEUE one DISCUSS turn onto the worker. The endpoint appends this message
+   * to `chat` + sets discuss_busy server-side (both arrive via Realtime); the
+   * worker re-reads the files + table, replies, and may revise the raw table —
+   * writing the reply + updated table back onto the record. We flush any pending
+   * local edit FIRST so the worker reads the latest table. The revised table is
+   * adopted from the `table` prop when the turn finishes (the effect below). */
   const runAsk = async () => {
     const text = aiInput.trim();
     if (!text || aiBusy) return;
-    setAiBusy(true);
+    flush(); // persist pending local table/doc edits so the worker reads the latest
+    setAiInput('');
+    setSending(true);
     try {
-      // Seed the model with its own extraction summary (the conversation's
-      // opening), then the persisted thread, then the new question.
-      const apiMessages = [
-        ...(draft.summary ? [{ role: 'assistant' as const, content: draft.summary }] : []),
-        ...thread.map((m) => ({ role: m.role, content: m.content })),
-        { role: 'user' as const, content: text },
-      ];
-      const { reply, columns, truncated } = await discussExtraction({
-        messages: apiMessages,
-        headers: draft.headers,
-        rows: draft.rows,
-        uploads: sourceFiles,
+      await enqueueDiscussTurn({
+        recordId,
+        userText: text,
         fields: targetFieldLites(model),
         language: isAr ? 'ar' : 'en',
       });
-      const now = new Date().toISOString();
-      onChat([
-        ...thread,
-        { role: 'user', content: text, ts: now },
-        { role: 'assistant', content: reply || (isAr ? 'تم.' : 'Done.'), ts: now },
-      ]);
-      if (columns.length > 0) {
-        const next = applyDiscussColumns(draft, columns);
-        if (timer.current) {
-          clearTimeout(timer.current);
-          timer.current = null;
-        }
-        setDraft(next);
-        latest.current = next;
-        onChange(next); // persist the revised table immediately
-        addToast(
-          (isAr ? `حدّث الذكاء ${columns.length} عمود` : `AI updated ${columns.length} column(s)`) +
-            (truncated ? (isAr ? ' (أول 250 صف)' : ' (first 250 rows)') : ''),
-          'success',
-        );
-      }
-      setAiInput('');
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     } finally {
-      setAiBusy(false);
+      setSending(false);
     }
   };
+
+  // Adopt the worker's revised table when a DISCUSS turn finishes (discuss_busy
+  // 1→0). Editing is disabled while busy, so there's no pending local edit to
+  // clobber. The chat thread itself renders from the `chat` prop (live). The
+  // worker writes the new raw_table + the cleared busy flag in one record save,
+  // so `table` is already fresh when discussBusy flips false.
+  const prevBusy = useRef(false);
+  useEffect(() => {
+    if (prevBusy.current && !discussBusy) {
+      if (timer.current) {
+        clearTimeout(timer.current);
+        timer.current = null;
+      }
+      setDraft(table);
+      latest.current = table;
+    }
+    prevBusy.current = !!discussBusy;
+  }, [discussBusy, table]);
 
   const flush = () => {
     if (timer.current) {

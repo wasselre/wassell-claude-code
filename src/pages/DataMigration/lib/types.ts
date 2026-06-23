@@ -152,8 +152,17 @@ export interface MigrationData {
   step?: MigrationStep;
   target_model_id?: string;
   error_message?: string | null;
-  /** Realtime progress sub-phase for the async (worker) steps. */
+  /** Realtime progress sub-phase for the async (worker) extraction:
+   * 'queued' | 'discovering' | 'fusing' | 'analyzing' (project mode). */
   phase?: string;
+  /** Worker extraction progress — resolved units out of discovered units
+   * (records-mode fusion). Driven by the worker, read live via Realtime. */
+  progress_done?: number;
+  progress_total?: number | null;
+  /** A prep-step PLAN turn is running on the worker (drives the chat spinner). */
+  prep_busy?: boolean;
+  /** A review-step DISCUSS turn is running on the worker (drives the chat spinner). */
+  discuss_busy?: boolean;
   raw_table?: RawTable;
   /** PROJECT-PROFILE mode only: the Arabic Project Knowledge Document the
    * extraction wrote about the project. Editable in the review step; injected

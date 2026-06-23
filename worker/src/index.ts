@@ -30,6 +30,7 @@ import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
+import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 
 const env = loadEnv();
@@ -66,6 +67,11 @@ let reportsWakeRequested = false;
 // same LibreOffice path the office-preview queue uses.
 let documentBusy = false;
 let documentWakeRequested = false;
+// Data Migration extraction (data_migration_jobs, 2026-06-23) gets a SEVENTH
+// independent loop: run the file-heavy AI vision actions (extract / plan /
+// discuss) that used to be held-open HTTP requests on /api/migrate.
+let migrationBusy = false;
+let migrationWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -807,6 +813,126 @@ async function documentPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Data Migration — data_migration_jobs queue (extract / plan / discuss).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued migration job (if any) and run it to completion. Mirrors the
+ * deck/image claim-run-complete shape against data_migration_jobs. runMigrationJob
+ * already reflects a failure onto the record (so the SPA spinner exits); here we
+ * just mark the job done/failed. Returns true if a job was claimed.
+ */
+async function claimAndRunOneMigration(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('data_migration_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] migration claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    migration_record_id: string;
+    user_id: string;
+    kind: MigrationJob['kind'];
+    payload: Record<string, unknown>;
+    attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: MigrationJob = {
+    id: row.job_id,
+    recordId: row.migration_record_id,
+    userId: row.user_id,
+    kind: row.kind,
+    payload: row.payload ?? {},
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed migration job=${job.id} kind=${job.kind} record=${job.recordId} attempts=${job.attempts}`,
+  );
+
+  try {
+    const result = await runMigrationJob({ supabase, env, job });
+    // data_migration_job_complete only touches status='running' rows — a late
+    // finish after the watchdog/cancel already moved the job is a harmless no-op.
+    const { error: doneErr } = await supabase.rpc('data_migration_job_complete', {
+      p_job_id: job.id,
+      p_result: result ?? {},
+    });
+    if (doneErr) {
+      console.error(`[worker] data_migration_job_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed migration job=${job.id}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] migration job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('data_migration_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] data_migration_job_fail RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(`[worker] could not mark migration job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function runMigrationWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('data_migration_jobs_watchdog');
+    if (error) {
+      console.error(`[worker] migration watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) {
+      console.warn(`[worker] migration watchdog swept ${swept} stale job(s)`);
+    }
+  } catch (err) {
+    console.error(`[worker] migration watchdog threw:`, err);
+  }
+}
+
+/**
+ * Migration-queue twin of the other poll loops. Runs concurrently with its own
+ * busy/wake flags. Ticks data_migration_jobs_watchdog() on the same interval.
+ */
+async function migrationPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    migrationBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneMigration();
+    } catch (err) {
+      console.error('[worker] migration poll iteration error:', err);
+    }
+    migrationBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runMigrationWatchdog();
+    }
+
+    if (didClaim || migrationWakeRequested) {
+      migrationWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !migrationWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Scheduled Reports — time-gated. scheduled_report_claim_due returns only
 // reports whose next_run_at has passed (SKIP LOCKED), so no separate scheduler
 // is needed. Each due report is run by POSTing the owner-scoped runner endpoint
@@ -904,6 +1030,7 @@ const server = http.createServer((req, res) => {
         preview_busy: previewBusy,
         compress_busy: compressBusy,
         document_busy: documentBusy,
+        migration_busy: migrationBusy,
         reports_busy: reportsBusy,
         reports_enabled: !!env.REPORTS_RUNNER_SECRET,
         worker_id: env.WORKER_ID,
@@ -920,6 +1047,7 @@ const server = http.createServer((req, res) => {
     previewWakeRequested = true;
     compressWakeRequested = true;
     documentWakeRequested = true;
+    migrationWakeRequested = true;
     reportsWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
@@ -941,7 +1069,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || previewBusy || compressBusy || documentBusy || reportsBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -958,6 +1086,7 @@ const loops = [
   previewPollLoop(),
   compressPollLoop(),
   documentPollLoop(),
+  migrationPollLoop(),
   conflictWatchdogLoop(),
 ];
 // Scheduled-reports loop only runs when the shared secret is set (feature on).

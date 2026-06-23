@@ -3,23 +3,23 @@
  *
  * Uploads go to the private `wassel-migrations` bucket under
  *   <authUid>/<recordId>/uploads/<ts>_<name>
- * (RLS scopes read/write to the owner). For the AI EXTRACT step the client
- * mints a short-lived signed URL per file and passes it to POST /api/migrate
- * — no service-role, the function just fetches the URL. Excel can go either
- * way: parsed client-side by readExcelFile (the direct fast path) OR converted
- * to per-sheet CSV text and uploaded into the AI extraction set like a PDF.
+ * (RLS scopes read/write to the owner). The file-heavy AI steps (extract / plan
+ * / discuss) are ENQUEUE-ONLY now: the browser POSTs /api/migrate, which inserts
+ * a `data_migration_jobs` row and returns 202 fast; the Fly worker runs the long
+ * vision call (no timeout) and streams progress onto the record via Realtime. The
+ * browser never holds a multi-minute HTTP request and NEVER writes the migration
+ * record during a job (that would suppress the worker's updates via the realtime
+ * echo-dedup — see CLAUDE.md). The worker mints its own signed URLs from the
+ * record's persisted source_files, so the browser no longer signs files here.
+ *
+ * The fast text-only actions (suggest_mappings / standardize) stay synchronous.
  *
  * Every call throws on failure (no silent failure — see CLAUDE.md); callers
  * surface the message via addToast + a retry affordance.
  */
 
 import { supabase } from '@/lib/supabase';
-import type {
-  RawTable,
-  ColumnMappingSuggestion,
-  ProjectIntelligenceSection,
-  DiscoveredUnit,
-} from './types';
+import type { ColumnMappingSuggestion, AnsweredQuestion } from './types';
 import type { TargetFieldLite } from './targetFields';
 
 const MIGRATIONS_BUCKET = 'wassel-migrations';
@@ -60,7 +60,7 @@ async function fetchWithTimeout(url: string, opts: RequestInit, ms: number): Pro
     return await fetch(url, { ...opts, signal: ctrl.signal });
   } catch (err) {
     if (ctrl.signal.aborted) {
-      throw new Error('Request timed out — try again, or split the input into smaller files.');
+      throw new Error('Request timed out — try again.');
     }
     throw err;
   } finally {
@@ -150,197 +150,90 @@ export async function deleteMigrationFile(path: string): Promise<void> {
   if (error) throw new Error(`Remove failed: ${error.message}`);
 }
 
-export interface ExtractResult extends RawTable {
-  /** mode='project' only: the project-level intelligence sections. */
-  intelligence?: ProjectIntelligenceSection[];
-  /** mode='project' only: the Arabic Project Knowledge Document. */
-  document?: string;
-  files_processed: number;
-  files_skipped: { name: string; reason: string }[];
+// ─── Enqueue the file-heavy AI steps onto the worker (no held-open request) ──
+// Each POST returns fast (202 { job_id }). The worker runs the long vision call
+// and writes status / phase / progress / results onto the record; the SPA reads
+// them live via Realtime. Throws on a non-2xx (callers surface via addToast).
+
+async function postMigrate(payload: Record<string, unknown>, timeoutMs = 30_000): Promise<Record<string, unknown>> {
+  const res = await fetchWithTimeout(
+    '/api/migrate',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+      body: JSON.stringify(payload),
+    },
+    timeoutMs,
+  );
+  const body = (await res.json().catch(() => ({}))) as { error?: string; [k: string]: unknown };
+  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+  return body;
 }
 
-/**
- * Run AI extraction over the given uploaded files. Mints a fresh signed URL
- * per file, then POSTs to /api/migrate (action=extract). Returns the unified
- * raw table. mode='project' (the projects-model target) returns one project
- * row + the Arabic marketing `document` instead of a per-unit table. Throws
- * on failure.
- */
-export async function extractRawTable(
-  uploads: MigrationUpload[],
-  language: 'ar' | 'en' = 'ar',
-  fields: TargetFieldLite[] = [],
-  mode: 'records' | 'project' = 'records',
-  /** Operator guidance (prep-step instructions + resolved clarifications +
-   * confirmed structure) — steers the extraction; never coerces raw values. */
-  guidance?: string,
-): Promise<ExtractResult> {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  if (uploads.length === 0) throw new Error('No files to extract.');
-
-  const files: { name: string; mimeType: string; url: string }[] = [];
-  for (const u of uploads) {
-    const { data, error } = await supabase.storage
-      .from(MIGRATIONS_BUCKET)
-      .createSignedUrl(u.path, 600);
-    if (error || !data?.signedUrl) {
-      throw new Error(`Could not read "${u.name}": ${error?.message ?? 'no signed URL'}`);
-    }
-    files.push({ name: u.name, mimeType: u.mimeType, url: data.signedUrl });
-  }
-
-  const res = await fetchWithTimeout('/api/migrate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'extract', files, language, fields, mode, guidance }),
-  }, 300_000);
-  const body = (await res.json().catch(() => ({}))) as Partial<ExtractResult> & {
-    ok?: boolean;
-    error?: string;
-  };
-  if (!res.ok || !body.ok || !Array.isArray(body.headers)) {
-    throw new Error(body.error ?? `Extraction failed (${res.status})`);
-  }
-  return {
-    headers: body.headers,
-    rows: Array.isArray(body.rows) ? body.rows : [],
-    notes: body.notes,
-    summary: body.summary,
-    intelligence:
-      Array.isArray(body.intelligence) && body.intelligence.length > 0
-        ? body.intelligence
-        : undefined,
-    document: typeof body.document === 'string' && body.document.trim() ? body.document : undefined,
-    truncated: Boolean(body.truncated),
-    source: 'ai_extract',
-    files_processed: body.files_processed ?? uploads.length,
-    files_skipped: body.files_skipped ?? [],
-  };
+/** Enqueue the full extraction (records-mode source fusion OR project-mode
+ * single extract — the worker decides from `mode`). Returns the job id. */
+export async function enqueueExtraction(input: {
+  recordId: string;
+  fields: TargetFieldLite[];
+  mode: 'records' | 'project';
+  language: 'ar' | 'en';
+  guidance?: string;
+}): Promise<{ jobId: string }> {
+  const body = await postMigrate({
+    action: 'extract',
+    recordId: input.recordId,
+    fields: input.fields,
+    mode: input.mode,
+    language: input.language,
+    guidance: input.guidance,
+  });
+  return { jobId: String(body.job_id ?? '') };
 }
 
-// ─── Source-fusion extraction (records mode): discover → fuse_batch ──────────
-
-/** Mint a fresh 10-min signed URL per upload (RLS-scoped to the owner) for an
- * AI call. Minted per-call, so a multi-batch fusion run never trips URL expiry
- * even when the whole run takes longer than one URL's lifetime. */
-async function signUploads(
-  uploads: MigrationUpload[],
-): Promise<{ name: string; mimeType: string; url: string }[]> {
-  if (!supabase) throw new Error('Supabase is not configured.');
-  const files: { name: string; mimeType: string; url: string }[] = [];
-  for (const u of uploads) {
-    const { data, error } = await supabase.storage
-      .from(MIGRATIONS_BUCKET)
-      .createSignedUrl(u.path, 600);
-    if (error || !data?.signedUrl) {
-      throw new Error(`Could not read "${u.name}": ${error?.message ?? 'no signed URL'}`);
-    }
-    files.push({ name: u.name, mimeType: u.mimeType, url: data.signedUrl });
-  }
-  return files;
+/** Enqueue ONE pre-extraction PLAN turn. The endpoint appends the operator's
+ * message + submitted card answers to the record first (so the chat updates via
+ * Realtime); the worker writes the AI's reply + questions + structure. */
+export async function enqueuePlanTurn(input: {
+  recordId: string;
+  userText: string;
+  instructions?: string;
+  answered?: AnsweredQuestion[];
+  fields: TargetFieldLite[];
+  language: 'ar' | 'en';
+}): Promise<{ jobId: string }> {
+  const body = await postMigrate({
+    action: 'plan',
+    recordId: input.recordId,
+    userText: input.userText,
+    instructions: input.instructions,
+    answered: input.answered ?? [],
+    fields: input.fields,
+    language: input.language,
+  });
+  return { jobId: String(body.job_id ?? '') };
 }
 
-/** Throw a loud Error carrying any server `code` (e.g. 'max_tokens') so the
- * orchestrator can react — split the batch and retry rather than fail the run. */
-function migrateFailed(body: { error?: string; code?: string }, status: number, fallback: string): never {
-  const err = new Error(body.error ?? `${fallback} (${status})`);
-  if (body.code) (err as { code?: string }).code = body.code;
-  throw err;
+/** Enqueue ONE post-extraction DISCUSS turn (recount / revise / explain). */
+export async function enqueueDiscussTurn(input: {
+  recordId: string;
+  userText: string;
+  fields: TargetFieldLite[];
+  language: 'ar' | 'en';
+}): Promise<{ jobId: string }> {
+  const body = await postMigrate({
+    action: 'discuss',
+    recordId: input.recordId,
+    userText: input.userText,
+    fields: input.fields,
+    language: input.language,
+  });
+  return { jobId: String(body.job_id ?? '') };
 }
 
-export interface DiscoverResult {
-  headers: string[];
-  units: DiscoveredUnit[];
-  sources: { name: string; kind: string; note?: string }[];
-  notes?: string;
-  truncated: boolean;
-  files_processed: number;
-  files_skipped: { name: string; reason: string }[];
-}
-
-export interface FuseBatchResult {
-  rows: { key: string; values: string[] }[];
-  conflicts: {
-    unitKey: string;
-    header: string;
-    candidates: { source: string; value: string }[];
-    chosen: string;
-    note: string;
-  }[];
-  notes?: string;
-  truncated: boolean;
-}
-
-/**
- * Phase 1 — inventory the sources and discover every unit across ALL uploaded
- * files. Returns the unit index (identifiers only) + the canonical header set.
- * Throws on failure (no silent failure — see CLAUDE.md).
- */
-export async function discoverUnits(
-  uploads: MigrationUpload[],
-  language: 'ar' | 'en' = 'ar',
-  fields: TargetFieldLite[] = [],
-  guidance?: string,
-): Promise<DiscoverResult> {
-  if (uploads.length === 0) throw new Error('No files to analyze.');
-  const files = await signUploads(uploads);
-  const res = await fetchWithTimeout('/api/migrate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'discover', files, language, fields, guidance }),
-  }, 300_000);
-  const body = (await res.json().catch(() => ({}))) as Partial<DiscoverResult> & {
-    ok?: boolean;
-    error?: string;
-    code?: string;
-  };
-  if (!res.ok || !body.ok || !Array.isArray(body.headers) || !Array.isArray(body.units)) {
-    migrateFailed(body, res.status, 'Discovery failed');
-  }
-  return {
-    headers: body.headers,
-    units: body.units,
-    sources: Array.isArray(body.sources) ? body.sources : [],
-    notes: body.notes,
-    truncated: Boolean(body.truncated),
-    files_processed: body.files_processed ?? uploads.length,
-    files_skipped: body.files_skipped ?? [],
-  };
-}
-
-/**
- * Phase 2 — resolve ONE batch of units by fusing facts across every source.
- * On a truncation the thrown Error carries `code:'max_tokens'` so the caller
- * can split the batch in half and retry. Throws on failure.
- */
-export async function fuseUnitBatch(
-  uploads: MigrationUpload[],
-  language: 'ar' | 'en',
-  fields: TargetFieldLite[],
-  headers: string[],
-  units: DiscoveredUnit[],
-  guidance?: string,
-): Promise<FuseBatchResult> {
-  const files = await signUploads(uploads);
-  const res = await fetchWithTimeout('/api/migrate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({ action: 'fuse_batch', files, language, fields, headers, units, guidance }),
-  }, 300_000);
-  const body = (await res.json().catch(() => ({}))) as Partial<FuseBatchResult> & {
-    ok?: boolean;
-    error?: string;
-    code?: string;
-  };
-  if (!res.ok || !body.ok || !Array.isArray(body.rows)) {
-    migrateFailed(body, res.status, 'Fusion failed');
-  }
-  return {
-    rows: body.rows,
-    conflicts: Array.isArray(body.conflicts) ? body.conflicts : [],
-    notes: body.notes,
-    truncated: Boolean(body.truncated),
-  };
+/** Cancel the active extraction/plan/discuss job for a record + reset its busy
+ * state. Throws on failure. */
+export async function cancelMigrationJob(recordId: string): Promise<void> {
+  await postMigrate({ action: 'cancel', recordId });
 }
 
 /** Ask the AI to map source columns → target fields. Throws on failure. */
@@ -407,142 +300,6 @@ export async function standardizeColumn(input: {
     throw new Error(body.error ?? `Standardization failed (${res.status})`);
   }
   return body.decisions;
-}
-
-export interface EnrichColumnResult {
-  header: string;
-  values: string[];
-}
-
-/**
- * Post-extraction discussion — a multi-turn chat about the extracted table.
- * The AI explains its work (especially how it derived numbers from the floor
- * plans + text) and can revise the table (add / fill / recount a column, by
- * re-reading the brochure). Returns its `reply` plus any column edits the
- * caller merges into the table. Throws on failure.
- */
-export async function discussExtraction(input: {
-  messages: { role: 'user' | 'assistant'; content: string }[];
-  headers: string[];
-  rows: string[][];
-  /** the migration's uploaded source files — minted into signed URLs so the AI
-   * can re-read the brochure + floor plans. */
-  uploads?: MigrationUpload[];
-  /** the target model's fields (context only — never used to coerce values). */
-  fields?: TargetFieldLite[];
-  language?: 'ar' | 'en';
-}): Promise<{ reply: string; columns: EnrichColumnResult[]; truncated: boolean }> {
-  const files: { name: string; mimeType: string; url: string }[] = [];
-  if (input.uploads && input.uploads.length > 0 && supabase) {
-    for (const u of input.uploads) {
-      const { data } = await supabase.storage.from(MIGRATIONS_BUCKET).createSignedUrl(u.path, 600);
-      if (data?.signedUrl) files.push({ name: u.name, mimeType: u.mimeType, url: data.signedUrl });
-    }
-  }
-  const res = await fetchWithTimeout('/api/migrate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({
-      action: 'discuss',
-      messages: input.messages,
-      headers: input.headers,
-      rows: input.rows,
-      files,
-      fields: input.fields,
-      language: input.language ?? 'ar',
-    }),
-  }, 300_000);
-  const body = (await res.json().catch(() => ({}))) as {
-    ok?: boolean;
-    reply?: string;
-    columns?: EnrichColumnResult[];
-    truncated?: boolean;
-    error?: string;
-  };
-  if (!res.ok || !body.ok || typeof body.reply !== 'string') {
-    throw new Error(body.error ?? `Discuss failed (${res.status})`);
-  }
-  return {
-    reply: body.reply,
-    columns: Array.isArray(body.columns) ? body.columns : [],
-    truncated: Boolean(body.truncated),
-  };
-}
-
-/** One column the planning phase proposes to produce, with how it's derived. */
-export interface PlanColumnResult {
-  header: string;
-  description: string;
-}
-
-/** One open question / contradiction the planning phase surfaces (card). */
-export interface PlanQuestionResult {
-  question: string;
-  kind?: string;
-  detail?: string;
-}
-
-/**
- * Pre-extraction PLANNING turn — runs BEFORE any table is extracted. The AI
- * reads the uploaded files, follows the operator's instructions, and returns a
- * conversational reply, any clarifying questions (contradictions / unclear
- * items), and the proposed table structure (columns + how each is derived). The
- * operator converses until satisfied, then triggers the real extraction. Throws
- * on failure.
- */
-export async function planExtraction(input: {
-  messages: { role: 'user' | 'assistant'; content: string }[];
-  /** Free-text operator instructions written in the prep step. */
-  instructions?: string;
-  /** The migration's uploaded source files — minted into signed URLs so the AI
-   * can read the brochure + floor plans while planning. */
-  uploads?: MigrationUpload[];
-  /** The target model's fields (hunt-list — never used to coerce values). */
-  fields?: TargetFieldLite[];
-  language?: 'ar' | 'en';
-}): Promise<{ reply: string; questions: PlanQuestionResult[]; proposedColumns: PlanColumnResult[]; ready: boolean }> {
-  const files: { name: string; mimeType: string; url: string }[] = [];
-  if (input.uploads && input.uploads.length > 0 && supabase) {
-    for (const u of input.uploads) {
-      const { data } = await supabase.storage.from(MIGRATIONS_BUCKET).createSignedUrl(u.path, 600);
-      if (data?.signedUrl) files.push({ name: u.name, mimeType: u.mimeType, url: data.signedUrl });
-    }
-  }
-  const res = await fetchWithTimeout('/api/migrate', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
-    body: JSON.stringify({
-      action: 'plan',
-      messages: input.messages,
-      instructions: input.instructions,
-      files,
-      fields: input.fields,
-      language: input.language ?? 'ar',
-    }),
-  }, 300_000);
-  const body = (await res.json().catch(() => ({}))) as {
-    ok?: boolean;
-    reply?: string;
-    questions?: (PlanQuestionResult | string)[];
-    proposedColumns?: PlanColumnResult[];
-    ready?: boolean;
-    error?: string;
-  };
-  if (!res.ok || !body.ok || typeof body.reply !== 'string') {
-    throw new Error(body.error ?? `Plan failed (${res.status})`);
-  }
-  // Normalize questions (accept a bare string defensively → {question}).
-  const questions: PlanQuestionResult[] = Array.isArray(body.questions)
-    ? body.questions
-        .map((q) => (typeof q === 'string' ? { question: q } : q))
-        .filter((q): q is PlanQuestionResult => !!q && typeof q.question === 'string' && q.question.trim() !== '')
-    : [];
-  return {
-    reply: body.reply,
-    questions,
-    proposedColumns: Array.isArray(body.proposedColumns) ? body.proposedColumns : [],
-    ready: Boolean(body.ready),
-  };
 }
 
 // ─── Prompt library (saved extraction-instruction templates) ────────────────

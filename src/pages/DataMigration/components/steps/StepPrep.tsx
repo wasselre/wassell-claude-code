@@ -19,7 +19,7 @@ import {
   Lock,
 } from 'lucide-react';
 import type { MigrationUpload } from '../../lib/client';
-import { useMigrationJobs, startPlanJob } from '../../lib/jobRunner';
+import { startPlanJob } from '../../lib/jobRunner';
 import PromptLibrary from '../PromptLibrary';
 import { isProjectProfileTarget } from '../../lib/types';
 import type { ChatMessage, ProposedColumn, PrepQuestion, AnsweredQuestion, MigrationStatus } from '../../lib/types';
@@ -51,7 +51,14 @@ interface StepPrepProps {
   onAnswersDraft: (draft: Record<string, string>) => void;
   status: MigrationStatus | undefined;
   errorMessage: string | null | undefined;
-  /** Trigger the real extraction (discover/fuse or project extract). */
+  /** A PLAN turn is running on the worker (record.data.prep_busy) — drives the
+   * chat spinner + disables inputs, live via Realtime (survives reload). */
+  prepBusy?: boolean;
+  /** Worker extraction sub-phase + progress (record.data), for the live view. */
+  phase?: string;
+  progressDone?: number;
+  progressTotal?: number | null;
+  /** Trigger the real extraction (enqueues the worker job). Also the retry. */
   onStartExtraction: () => void;
   onBack: () => void;
   /** Read-only review (the migration already ran): no new turns / no extraction
@@ -90,15 +97,20 @@ export default function StepPrep({
   onAnswersDraft,
   status,
   errorMessage,
+  prepBusy,
+  phase,
+  progressDone,
+  progressTotal,
   onStartExtraction,
   onBack,
   readOnly,
 }: StepPrepProps) {
-  const job = useMigrationJobs((s) => s.jobs[recordId]);
-  // "Busy" is now the DETACHED plan job, not a local flag — so the spinner +
-  // disabled inputs survive navigating away and back mid-clarify (the job keeps
-  // running in jobRunner and re-subscribes here). See startPlanJob.
-  const aiBusy = job?.kind === 'plan';
+  // "Sending" bridges the ~1s between clicking send and the enqueue endpoint
+  // writing prep_busy=true (which then arrives via Realtime). The browser never
+  // writes the record itself (echo-dedup — see CLAUDE.md), so a PLAN turn's
+  // busy state is read from the record's `prep_busy`, set server-side.
+  const [sending, setSending] = useState(false);
+  const aiBusy = !!prepBusy || sending;
   const projectMode = isProjectProfileTarget(model);
   const Next = isAr ? ArrowLeft : ArrowRight;
   const Back = isAr ? ArrowRight : ArrowLeft;
@@ -234,12 +246,21 @@ export default function StepPrep({
    * debounced) instructions. We flush the instruction draft first so the
    * persisted record matches what the plan used. `aiBusy`/result come back
    * through the job store + the persisted props (see the adopt effect above). */
-  const sendTurn = (userText: string, answered: AnsweredQuestion[] = []) => {
+  const sendTurn = async (userText: string, answered: AnsweredQuestion[] = []) => {
     const text = userText.trim();
     if (!text || aiBusy) return;
     flushInstructions();
-    void startPlanJob(recordId, thread, text, instrLatest.current, answered);
     setAiInput('');
+    setSending(true);
+    try {
+      // Enqueues a worker PLAN turn. The endpoint appends this message to
+      // prep_chat + sets prep_busy server-side; both arrive via Realtime. The
+      // worker writes the reply. `thread` is no longer passed — the endpoint
+      // reads the record's prep_chat as the authoritative history.
+      await startPlanJob(recordId, text, instrLatest.current, answered);
+    } finally {
+      setSending(false);
+    }
   };
 
   /** Seed message for the first "Review files & clarify" pass. */
@@ -283,61 +304,53 @@ export default function StepPrep({
       <ImageIcon size={15} className="text-copper shrink-0" />
     );
 
-  // ── Extraction running in this tab → progress spinner ──
-  if (job?.kind === 'extract') {
+  // ── Extraction is running on the WORKER → live progress (Realtime-driven).
+  // This survives reload/navigation (the job lives on the worker, not the tab);
+  // a crashed worker is swept to status='failed' by the 45-min watchdog, so the
+  // record can never stay stuck here. The Retry link re-enqueues (idempotent —
+  // the one-active-job index collapses it onto the running job, or starts a
+  // fresh one if the prior failed).
+  if (status === 'extracting') {
+    const total = progressTotal ?? 0;
+    const done = progressDone ?? 0;
+    const progressText =
+      projectMode || phase === 'analyzing'
+        ? isAr
+          ? 'يقرأ Claude ملفات المشروع بالكامل، يستخرج معلوماته العامة، ويكتب الوثيقة التسويقية. قد يستغرق هذا بضع دقائق.'
+          : 'Claude is reading the whole project, extracting its general information, and writing the marketing document. This can take a few minutes.'
+        : phase === 'fusing'
+          ? isAr
+            ? `يدمج Claude حقائق كل وحدة من جميع المصادر (الجدول، البروشور، المخططات…)${total > 0 ? ` — ${done}/${total}` : ''}. قد يستغرق هذا عدة دقائق.`
+            : `Claude is fusing each unit's facts across all sources (table, brochure, floor plans…)${total > 0 ? ` — ${done}/${total}` : ''}. This can take a few minutes.`
+          : isAr
+            ? 'يفحص Claude الملفات، يصنّف المصادر، ويكتشف كل الوحدات…'
+            : 'Claude is scanning the files, classifying the sources, and discovering every unit…';
     return (
       <div className="flex flex-col items-center justify-center text-center p-12 gap-3 h-full">
         <Loader2 size={32} className="text-copper animate-spin" />
         <div className="font-semibold text-charcoal">
           {isAr ? 'جارٍ استخراج البيانات…' : 'Extracting data…'}
         </div>
-        <p className="text-sm text-charcoal/50 max-w-sm">
-          {projectMode
-            ? isAr
-              ? 'يقرأ Claude ملفات المشروع بالكامل، يستخرج معلوماته العامة، ويكتب الوثيقة التسويقية. قد يستغرق هذا بضع دقائق.'
-              : 'Claude is reading the whole project, extracting its general information, and writing the marketing document. This can take a few minutes.'
-            : job && job.phase === 'fuse'
-              ? isAr
-                ? `يدمج Claude حقائق كل وحدة من جميع المصادر (الجدول، البروشور، المخططات…)${
-                    job.total > 0 ? ` — ${job.done}/${job.total}` : ''
-                  }. قد يستغرق هذا عدة دقائق.`
-                : `Claude is fusing each unit's facts across all sources (table, brochure, floor plans…)${
-                    job.total > 0 ? ` — ${job.done}/${job.total}` : ''
-                  }. This can take a few minutes.`
-              : isAr
-                ? 'يفحص Claude الملفات، يصنّف المصادر، ويكتشف كل الوحدات…'
-                : 'Claude is scanning the files, classifying the sources, and discovering every unit…'}
-        </p>
+        <p className="text-sm text-charcoal/50 max-w-sm">{progressText}</p>
+        {phase === 'fusing' && total > 0 && (
+          <div className="w-full max-w-xs h-1.5 rounded-full bg-sand/30 overflow-hidden">
+            <div
+              className="h-full bg-copper transition-all"
+              style={{ width: `${Math.min(100, Math.round((done / total) * 100))}%` }}
+            />
+          </div>
+        )}
         <p className="text-xs text-charcoal/40 max-w-sm">
           {isAr
-            ? 'يستمر الاستخراج في الخلفية — يمكنك فتح ترحيل آخر أو بدء واحد جديد الآن.'
-            : 'Extraction keeps running in the background — you can open or start another migration now.'}
-        </p>
-      </div>
-    );
-  }
-
-  // ── Record says extracting but no job runs here — a reload interrupted it ──
-  if (status === 'extracting') {
-    return (
-      <div className="flex flex-col items-center justify-center text-center p-12 gap-3 h-full">
-        <div className="w-14 h-14 rounded-full bg-gold/15 flex items-center justify-center">
-          <AlertCircle size={28} className="text-gold" />
-        </div>
-        <div className="font-semibold text-charcoal">
-          {isAr ? 'توقّف الاستخراج' : 'Extraction was interrupted'}
-        </div>
-        <p className="text-sm text-charcoal/60 max-w-md">
-          {isAr
-            ? 'انقطع الاستخراج (غالبًا بسبب إعادة تحميل الصفحة). ملفاتك وتعليماتك محفوظة — أعد تشغيله.'
-            : 'The run was interrupted (usually a page reload). Your files and instructions are saved — run it again.'}
+            ? 'يستمر الاستخراج في الخلفية — يمكنك إغلاق الصفحة أو فتح ترحيل آخر؛ سيكمل ويظهر هنا.'
+            : 'Extraction keeps running in the background — close the page or open another migration; it will finish and show up here.'}
         </p>
         <button
           onClick={onStartExtraction}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-copper text-white hover:bg-terracotta transition-colors"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-charcoal/50 hover:bg-cream transition-colors"
         >
-          <RotateCcw size={15} />
-          {isAr ? 'إعادة الاستخراج' : 'Retry extraction'}
+          <RotateCcw size={13} />
+          {isAr ? 'تأخّر؟ أعد المحاولة' : 'Taking too long? Retry'}
         </button>
       </div>
     );
