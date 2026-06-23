@@ -678,6 +678,15 @@ function FieldMappings({
                   {isAssignee ? (
                     <>
                       <option value="static">{isAr ? 'مستخدم محدد' : 'Specific user'}</option>
+                      {/* Assignee fields can also be sourced dynamically: copy the
+                          user from the triggering record (e.g. carry the previous
+                          follow-up's sales rep onto the next one) or use the user
+                          who triggered the workflow. The engine already resolves
+                          both into an assignee field (resolveFieldMappingWithTrace
+                          returns the trigger field value / currentUserId verbatim);
+                          this just surfaces them in the editor. */}
+                      <option value="trigger_field">{t('workflow.source_trigger')}</option>
+                      <option value="current_user">{isAr ? 'المستخدم الحالي' : 'Current user'}</option>
                       <option value="role_variable">{isAr ? 'متغير (حسب الدور)' : 'Variable (by role)'}</option>
                     </>
                   ) : (
