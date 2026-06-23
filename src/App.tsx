@@ -44,6 +44,12 @@ import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
 import SalesValuationReviewPage from '@/pages/SalesValuation/ReviewDetailPage';
+import SalesValuationQueuePage from '@/pages/SalesValuation/QueuePage';
+import SalesValuationBoardPage from '@/pages/SalesValuation/CorrectionBoardPage';
+import SalesValuationCorrectionDetailPage from '@/pages/SalesValuation/CorrectionDetailPage';
+import SalesValuationCoachingPage from '@/pages/SalesValuation/CoachingPage';
+import SalesValuationCategoriesPage from '@/pages/SalesValuation/CategoriesPage';
+import SalesValuationSettingsPage from '@/pages/SalesValuation/SettingsPage';
 import SalesTasksPage from '@/pages/Sales/SalesTasksPage';
 import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
@@ -111,6 +117,11 @@ function RecordDetailDispatcher() {
     // decision interface (summary + evidence modals + progressive decision
     // panel). The generic form stays reachable via ?generic=1 for admin edits.
     return <SalesValuationReviewPage key={recordId ?? 'new'} />;
+  }
+  if (modelName === 'sales_correction_tasks' && searchParams.get('generic') !== '1') {
+    // Custom correction-task detail (context / action / rep response / manager
+    // approval). Generic form stays reachable via ?generic=1.
+    return <SalesValuationCorrectionDetailPage key={recordId ?? 'new'} />;
   }
   if (modelName === 'chats') {
     // ChatsSplitPage reads :recordId itself from useParams — no need to
@@ -220,6 +231,13 @@ function RecordListDispatcher() {
   if (modelName === 'project_details') {
     return <Navigate to="/settings/project-details" replace />;
   }
+  // Sales Valuation operation — each model in the تقييم المبيعات group renders a
+  // purpose-built operational screen instead of the generic record list.
+  if (modelName === 'sales_valuation_reviews') return <SalesValuationQueuePage />;
+  if (modelName === 'sales_correction_tasks') return <SalesValuationBoardPage />;
+  if (modelName === 'sales_rep_daily_valuations') return <SalesValuationCoachingPage />;
+  if (modelName === 'sales_mistake_categories') return <SalesValuationCategoriesPage />;
+  if (modelName === 'sales_valuation_settings') return <SalesValuationSettingsPage />;
   return <RecordListPage />;
 }
 
