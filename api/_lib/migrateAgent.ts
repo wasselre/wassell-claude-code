@@ -1011,19 +1011,40 @@ export async function runFuseBatch(
   }
 
   const rawRows = Array.isArray(out.rows) ? out.rows : [];
+  // NEVER silently positional-coerce a wrong-length row. The model occasionally
+  // inserts/duplicates a cell in the MIDDLE of `values` (e.g. emits the status
+  // twice, or a stray empty before the price), making vals longer/shorter than
+  // `headers`. The old `headers.map((_, i) => vals[i] ?? '')` only works if the
+  // extra/missing cell is at the END — for a middle insertion it propagates the
+  // shift and drops the last column, silently misaligning every field after the
+  // defect (this garbled 40 units on الماجدية 174, 2026-06-23). A wrong-length
+  // row is as unusable as a truncation: collect it and bounce the batch (below)
+  // so fuseResolved auto-splits + retries — a transient misalignment almost
+  // always resolves on a smaller batch.
+  const malformedKeys: string[] = [];
   const rows = rawRows
     .map((r) => {
       const o = r as Record<string, unknown>;
       const key = typeof o.key === 'string' ? o.key.trim() : '';
       const vals = Array.isArray(o.values) ? o.values.map((v) => String(v ?? '')) : [];
-      // Normalize to the header count so a stray short/long row can't misalign.
-      const values =
-        vals.length === headers.length
-          ? vals
-          : headers.map((_, i) => vals[i] ?? '');
-      return { key, values };
+      if (vals.length !== headers.length) {
+        if (key) malformedKeys.push(`${key} (${vals.length}≠${headers.length})`);
+        // Blank, header-aligned placeholder. Only ever surfaces when the batch
+        // is a single unit (the auto-split floor below); a multi-unit batch
+        // throws before returning, so these blanks never reach the caller.
+        return { key, values: headers.map(() => ''), malformed: true };
+      }
+      return { key, values: vals, malformed: false };
     })
     .filter((r) => r.key);
+
+  // Multi-unit batch with a misaligned row → bounce so fuseResolved splits the
+  // batch in half and retries. Never bank a misaligned row.
+  if (malformedKeys.length > 0 && units.length > 1) {
+    throw new ExtractionTruncatedError(
+      `Unit fusion returned ${malformedKeys.length} row(s) whose cell count did not match the headers (${malformedKeys.join(', ')}). Bouncing to re-batch.`,
+    );
+  }
 
   const conflicts: UnitFactConflict[] = (Array.isArray(out.conflicts) ? out.conflicts : [])
     .map((c) => {
@@ -1043,8 +1064,27 @@ export async function runFuseBatch(
     })
     .filter((c) => c.unitKey && c.header);
 
+  // Single-unit auto-split floor: a unit whose row is STILL misaligned can't be
+  // split further. Don't loop or fail the whole job — leave the row blank and
+  // surface it LOUDLY as a conflict so the operator enters it by hand, rather
+  // than banking a silently scrambled row.
+  for (const r of rows) {
+    if (r.malformed) {
+      conflicts.push({
+        unitKey: r.key,
+        header: '(row)',
+        candidates: [],
+        chosen: '',
+        note:
+          language === 'ar'
+            ? 'استخراج مشوّه: أعاد النموذج عدد خانات لا يطابق الأعمدة لهذه الوحدة؛ تُركت فارغة للإدخال اليدوي.'
+            : 'Malformed extraction: the model returned a cell count that did not match the columns for this unit; left blank for manual entry.',
+      });
+    }
+  }
+
   return {
-    rows,
+    rows: rows.map(({ key, values }) => ({ key, values })),
     conflicts,
     notes: typeof out.notes === 'string' ? out.notes : undefined,
     truncated: false,

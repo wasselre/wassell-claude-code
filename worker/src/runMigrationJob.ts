@@ -33,6 +33,7 @@ import {
   runFuseBatch,
   runDiscuss,
   runPlan,
+  ExtractionTruncatedError,
   type ExtractFileInput,
   type TargetFieldLite,
   type DiscoveredUnit,
@@ -433,12 +434,14 @@ export async function runMigrationJob({ supabase, env, job }: RunArgs): Promise<
 }
 
 /**
- * Resolve ONE batch of units by fusing facts across every source. On a
- * max_tokens truncation (the thrown Error carries code:'max_tokens') the batch
- * is split in half and each half retried recursively — so the output can never
- * overflow. A genuine non-truncation error still propagates (loud failure).
- * Conflicts are re-keyed from the unit key to the row key. Ports fuseResolved
- * from jobRunner.ts.
+ * Resolve ONE batch of units by fusing facts across every source. On an
+ * ExtractionTruncatedError — raised when the output was cut off by max_tokens,
+ * self-reported as truncated, OR returned a misaligned row whose cell count !=
+ * the headers — the batch is split in half and each half retried recursively,
+ * so a transient overflow/misalignment resolves on a smaller batch and the
+ * output can never overflow. A genuine non-truncation error still propagates
+ * (loud failure). Conflicts are re-keyed from the unit key to the row key.
+ * Ports fuseResolved from jobRunner.ts.
  */
 async function fuseResolved(
   apiKey: string,
@@ -462,8 +465,14 @@ async function fuseResolved(
       })),
     };
   } catch (err) {
+    // runFuseBatch raises ExtractionTruncatedError for ANY unbankable output —
+    // a max_tokens cut-off, a self-reported truncation, OR a misaligned row
+    // (cell count != headers). All three are fixed the same way: split the
+    // batch and retry. (The error carries no `.code` in the worker — match it
+    // by type, not by a property that was never set.)
     const code = (err as { code?: string }).code;
-    if (code === 'max_tokens' && units.length > 1) {
+    const splittable = err instanceof ExtractionTruncatedError || code === 'max_tokens';
+    if (splittable && units.length > 1) {
       const mid = Math.ceil(units.length / 2);
       const a = await fuseResolved(apiKey, files, language, fields, headers, units.slice(0, mid), guidance);
       const b = await fuseResolved(apiKey, files, language, fields, headers, units.slice(mid), guidance);
