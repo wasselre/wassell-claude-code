@@ -384,12 +384,24 @@ export default function StepPrep({
         </p>
       </div>
 
-      {status === 'failed' && errorMessage && (
+      {/* Surface the LAST failed AI turn. Extraction failures set status='failed';
+          a failed PLAN turn (jobRunner/worker) leaves status='draft' but sets
+          error_message and clears prep_busy. Without covering the draft case, a
+          plan failure (e.g. an Anthropic billing / API error while the operator
+          submits clarification answers) looked like a dead "Start extraction"
+          button with NO explanation — a silent failure (see CLAUDE.md). The
+          worker clears error_message on ANY successful turn, so a non-null value
+          here always pertains to the most recent failure. Hidden while a turn is
+          in flight (aiBusy); the live extraction view returns earlier (status
+          is already narrowed to exclude 'extracting' here). */}
+      {errorMessage && !aiBusy && (
         <div className="mb-3 shrink-0 flex items-start gap-2.5 px-3.5 py-3 rounded-xl bg-red-50 border border-red-200 text-sm text-charcoal/80">
           <AlertCircle size={18} className="text-red-500 shrink-0 mt-0.5" />
           <div>
             <span className="font-bold text-charcoal">
-              {isAr ? 'فشل الاستخراج: ' : 'Extraction failed: '}
+              {status === 'failed'
+                ? isAr ? 'فشل الاستخراج: ' : 'Extraction failed: '
+                : isAr ? 'تعذّرت معالجة طلبك: ' : "Couldn't process your request: "}
             </span>
             {errorMessage}
           </div>
