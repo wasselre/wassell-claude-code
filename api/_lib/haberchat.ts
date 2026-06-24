@@ -511,6 +511,13 @@ export async function sendMessage(input: {
   if (input.quotedWid) payload.quoted = input.quotedWid;
   if (input.reference) payload.reference = input.reference;
 
+  // Stub mode for offline / CI / preview testing — short-circuits BEFORE the
+  // live API call so NO real WhatsApp is ever delivered. Mirrors imageGen's
+  // FAL_KEY='stub'. Activated only when HABERCHAT_TOKEN is exactly 'stub'.
+  if (process.env.HABERCHAT_TOKEN === 'stub') {
+    const ref = input.reference ?? null;
+    return { wid: `stub-${ref ?? 'msg'}`, status: 'stub', reference: ref };
+  }
   const raw = await request<Record<string, unknown>>(`/messages`, {
     method: 'POST',
     body: JSON.stringify(payload),

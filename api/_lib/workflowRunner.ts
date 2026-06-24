@@ -38,16 +38,21 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
   AppModel, AppRecord, User, Workflow, WorkflowBranch, WorkflowAction,
-  WorkflowActionCreateRecord, WorkflowActionUpdateRecord, FieldMapping,
-  WorkflowConditionTrace, WorkflowBranchTrace,
+  WorkflowActionCreateRecord, WorkflowActionUpdateRecord, WorkflowActionSendWhatsAppMessage,
+  OutboundIvrDestination, FieldMapping, WorkflowConditionTrace, WorkflowBranchTrace,
 } from '../../src/types/index.js';
 import {
   applyDateExpression, evaluateCondition, formatDateForField, getWorkflowBranches,
-  roleVariableCandidates, pickRoleVariableUser,
+  substituteFieldTokens, roleVariableCandidates, pickRoleVariableUser,
 } from '../../src/lib/workflowEngineCore.js';
 import { evaluateFormula } from '../../src/lib/formulaEngine.js';
+import { normalizePhone } from '../../src/lib/phone.js';
+// SAME server-side send path the on_due sweeper uses — no second WhatsApp impl.
+import { sendMessage as haberchatSendMessage, defaultDeviceId } from './haberchat.js';
 
-export const SUPPORTED_ACTION_TYPES = new Set<WorkflowAction['type']>(['create_record', 'update_record']);
+export const SUPPORTED_ACTION_TYPES = new Set<WorkflowAction['type']>([
+  'create_record', 'update_record', 'send_whatsapp_message',
+]);
 
 /** The DB-authoritative captured event. Source of truth is the workflow_jobs row. */
 export interface CapturedJob {
@@ -180,6 +185,7 @@ interface ResolveCtx {
   users: User[];
   triggerData: Record<string, unknown>;
   recordId: string;
+  triggerModelId: string;      // the model the workflow triggers on (job.model_id)
   actorUserId: string | null;
   targetModelId: string;       // the action's target model
   roleVarDebug: unknown[];     // collected per-run for the action trace
@@ -353,6 +359,65 @@ async function execUpdate(
   return { action_id: action.id, type: 'update_record', status: 'executed', detail: { matched_record_id: target.id } };
 }
 
+/* ── send_whatsapp_message (reuses haberchat.sendMessage — the SAME server path
+      the on_due sweeper uses; no second WhatsApp implementation) ──────────── */
+
+async function resolveDestinationPhone(dest: OutboundIvrDestination, ctx: ResolveCtx): Promise<string | null> {
+  switch (dest.kind) {
+    case 'trigger_field': {
+      const raw = ctx.triggerData[dest.field_name];
+      return typeof raw === 'string' ? normalizePhone(raw) : null;
+    }
+    case 'static':
+      return normalizePhone(dest.phone);
+    case 'lookup': {
+      const lookupValue = ctx.triggerData[dest.lookup_field_name];
+      const targetId = Array.isArray(lookupValue) ? lookupValue[0] : lookupValue;
+      if (typeof targetId !== 'string' || !targetId) return null;
+      const triggerModel = ctx.models.find((m) => m.id === ctx.triggerModelId);
+      const lookupField = triggerModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === dest.lookup_field_name);
+      if (!lookupField?.lookup_model_id) return null;
+      const targetRecords = await loadRecordsForModel(ctx.supabase, lookupField.lookup_model_id);
+      const raw = targetRecords.find((r) => r.id === targetId)?.data[dest.target_phone_field_name];
+      return typeof raw === 'string' ? normalizePhone(raw) : null;
+    }
+    default:
+      return null; // prev_action_output not tracked in runner v1
+  }
+}
+
+async function execSendWhatsApp(action: WorkflowActionSendWhatsAppMessage, runId: string, ctx: ResolveCtx): Promise<ActionResult> {
+  // Unlike the sweeper (which 'skips' a missing destination/body), the runner
+  // treats these as FAILURES — a follow-up's WhatsApp that can't send must not
+  // ride along silently in an otherwise-success run (no silent partial).
+  const dest: OutboundIvrDestination = action.to ?? { kind: 'trigger_field', field_name: action.to_field_id ?? '' };
+  const phone = await resolveDestinationPhone(dest, ctx);
+  if (!phone) return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'no_destination_number' };
+
+  const triggerModel = ctx.models.find((m) => m.id === ctx.triggerModelId);
+  const body = substituteFieldTokens(
+    action.body_template ?? '',
+    { id: ctx.recordId, model_id: ctx.triggerModelId, data: ctx.triggerData } as AppRecord,
+    { triggerModel, recordsByModel: {} },
+  );
+  if (!body.trim()) return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'empty_body_after_substitution' };
+
+  const deviceId = action.device_id || defaultDeviceId();
+  if (!deviceId) return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'no_device_id' };
+
+  // Stable idempotency reference per (run, action): a worker retry of the SAME
+  // reused run sends the SAME reference → Haberchat dedups server-side, so a
+  // retry cannot deliver a duplicate. (Run-level skip already prevents re-send
+  // on a prior SUCCESS run.)
+  const reference = createHash('sha256').update(`${runId}|${action.id}`).digest('hex').slice(0, 32);
+  try {
+    const r = await haberchatSendMessage({ deviceId, phone, body, reference });
+    return { action_id: action.id, type: 'send_whatsapp_message', status: 'executed', detail: { wid: r.wid, status: r.status, phone, reference } };
+  } catch (err) {
+    return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'haberchat_error', detail: { message: err instanceof Error ? err.message : String(err) } };
+  }
+}
+
 /* ── branch evaluation (before-image only_on_change) ──────────────────── */
 
 function evaluateBranches(w: Workflow, triggerData: Record<string, unknown>, prevData: Record<string, unknown> | null, event: string) {
@@ -467,14 +532,17 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
     await supabase.from('workflow_runs').upsert({ ...baseRow, status: 'processing', conditions_passed: true, actions_trace: [], selected_branch_id: winner.id });
 
     const roleVarDebug: unknown[] = [];
-    const ctx: ResolveCtx = { supabase, models, users, triggerData, recordId: job.record_id, actorUserId: job.actor_user_id, targetModelId: '', roleVarDebug };
+    const ctx: ResolveCtx = { supabase, models, users, triggerData, recordId: job.record_id, triggerModelId: job.model_id, actorUserId: job.actor_user_id, targetModelId: '', roleVarDebug };
     const actionsTrace: ActionResult[] = [];
     let anyFailed = false, anyExecuted = false, topErr: string | undefined;
     try {
       for (const action of winner.actions) {
+        // Preflight guarantees action.type is in SUPPORTED_ACTION_TYPES.
         const r = action.type === 'create_record'
           ? await execCreate(action as WorkflowActionCreateRecord, job, runId, w.id, ctx)
-          : await execUpdate(action as WorkflowActionUpdateRecord, job, runId, ctx);
+          : action.type === 'update_record'
+            ? await execUpdate(action as WorkflowActionUpdateRecord, job, runId, ctx)
+            : await execSendWhatsApp(action as WorkflowActionSendWhatsAppMessage, runId, ctx);
         actionsTrace.push(r);
         if (r.status === 'failed') anyFailed = true;
         if (r.status === 'executed') anyExecuted = true;
