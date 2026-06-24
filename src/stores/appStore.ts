@@ -5,6 +5,15 @@ import {
   isStaleBuildWriteLocked,
   engageHardWriteStop,
 } from '@/lib/staleBuild';
+import {
+  noteRecordConflict,
+  recordSaveBlocked,
+  markRecordWedged,
+  releaseBreakerForRetry,
+  clearRecordConflict,
+  noteReloadAttempt,
+  reachedReloadCap,
+} from '@/lib/conflictBreaker';
 import { getSession, getSessionEmail, getSessionUid, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
@@ -825,79 +834,11 @@ function serializeRecord(record: AppRecord): SupabaseRecordsRow {
 // for it and surface ONE loud toast telling the user to reload (CLAUDE.md:
 // fail loudly, never spin silently). A successful save — or a page reload,
 // which resets this module state — clears the breaker.
-const RECORD_CONFLICT_LIMIT = 4;
-const RECORD_CONFLICT_WINDOW_MS = 10_000;
-const recordConflicts = new Map<string, { count: number; first: number; tripped: boolean }>();
-
-/** Returns true the moment a record crosses the conflict threshold (so the
- *  caller can fire exactly one toast). */
-function noteRecordConflict(id: string): boolean {
-  const now = Date.now();
-  const cur = recordConflicts.get(id);
-  if (!cur) {
-    recordConflicts.set(id, { count: 1, first: now, tripped: false });
-    return false;
-  }
-  // Once tripped, the breaker is PERMANENT until a successful save clears it
-  // (clearRecordConflict) or the page reloads (this module state resets).
-  // Deliberate: a stale tab whose local version is wedged behind the server
-  // never advances on its own, so re-opening the breaker every window just
-  // leaks RECORD_CONFLICT_LIMIT conflicts to the DB forever. That is exactly
-  // what the 2026-06-16 storm was — a pre-fix tab hammering at ~1k req/s.
-  if (cur.tripped) return false;
-  // Still counting toward the trip: only the COUNTING window rolls over.
-  if (now - cur.first > RECORD_CONFLICT_WINDOW_MS) {
-    recordConflicts.set(id, { count: 1, first: now, tripped: false });
-    return false;
-  }
-  cur.count += 1;
-  if (cur.count >= RECORD_CONFLICT_LIMIT) {
-    cur.tripped = true;
-    return true;
-  }
-  return false;
-}
-
-/** Whether saves for this record are currently short-circuited. Once the
- *  breaker trips it stays blocked until a successful save (clearRecordConflict)
- *  or a page reload — it does NOT auto-clear on a timer, so a wedged client
- *  can never resume hammering the DB every window. */
-function recordSaveBlocked(id: string): boolean {
-  return recordConflicts.get(id)?.tripped ?? false;
-}
-
-// T1 (req 3/4): bound reload-on-conflict to ONE retry per record. The first
-// version_mismatch is allowed a reload-and-retry; if the SAME record conflicts
-// AGAIN after that reload it is WEDGED (a stale form version, or a trigger that
-// self-bumps the row's version) and the breaker must STAY tripped — the
-// reload-on-conflict path must NOT keep clearing it (that repeated clearing was
-// the storm engine: clear → retry → conflict → clear → ...). This counter
-// persists across reloads and is reset only on a SUCCESSFUL save.
-const recordReloadAttempts = new Map<string, number>();
-const MAX_RELOAD_RETRIES = 1;
-
-/** Force the per-record breaker permanently tripped — the server terminally
- *  blocked the record/session, or it stayed wedged after its one allowed reload.
- *  Unlike the count-based trip this is immediate + terminal until a successful
- *  save (clearRecordConflict) or a page reload. */
-function markRecordWedged(id: string): void {
-  recordConflicts.set(id, { count: RECORD_CONFLICT_LIMIT, first: Date.now(), tripped: true });
-}
-
-/** Release the breaker so exactly ONE reload-and-retry may proceed, WITHOUT
- *  resetting the reload-attempt counter — so a recurrence is still capped. Used
- *  only by reload-on-conflict. */
-function releaseBreakerForRetry(id: string): void {
-  recordConflicts.delete(id);
-}
-
-/** Clear the breaker AND the reload-attempt counter for a record. Called after
- *  any SUCCESSFUL save — a clean save means the client is no longer wedged, so
- *  the next conflict starts a fresh one-reload allowance. */
-function clearRecordConflict(id: string): void {
-  recordConflicts.delete(id);
-  recordReloadAttempts.delete(id);
-}
+// The per-record conflict breaker + the reload-attempt cap (T1) now live in a
+// PURE, unit-tested module — src/lib/conflictBreaker.ts (imported at the top of
+// this file) — so the kill-switch state machine can be tested in the node test
+// env. See src/lib/__tests__/conflictBreaker.test.ts. Behavior is unchanged;
+// this is an extraction-for-testability move.
 
 // Phase F.2 fix (audit H5): the second arg lets the caller override which
 // version to send as p_expected_version. Form pages snapshot the version
@@ -2957,12 +2898,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       result.status === 'conflict' && result.kind === 'version_mismatch'
       && supabase && !isModelHardcoded(record.model_id)
     ) {
-      const attempts = recordReloadAttempts.get(record.id) ?? 0;
-      if (attempts >= MAX_RELOAD_RETRIES) {
+      if (reachedReloadCap(record.id)) {
         markRecordWedged(record.id);
         engageHardWriteStop('wedged-after-reload');
       } else {
-        recordReloadAttempts.set(record.id, attempts + 1);
+        noteReloadAttempt(record.id);
         void (async () => {
           try {
             const { data: fresh, error } = await supabase!

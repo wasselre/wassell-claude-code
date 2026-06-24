@@ -12,6 +12,7 @@ import { isFieldVisible } from '@/lib/fieldVisibility';
 import { activityLogger } from '@/lib/activityLogger';
 import { supabase } from '@/lib/supabase';
 import { setFormUnsaved } from '@/lib/staleBuild';
+import { shouldAdoptResync } from '@/lib/conflictBreaker';
 import type { CustomButton } from '@/types';
 
 /**
@@ -151,10 +152,9 @@ export default function RecordFormPage() {
   // (a concurrent edit the user hasn't tried to save over yet) still surfaces as
   // a conflict rather than being silently adopted.
   useEffect(() => {
-    if (!resyncPendingRef.current) return;
     const live = existingRecord?.version ?? null;
     const snap = versionSnapshotRef.current?.version ?? null;
-    if (live != null && (snap == null || live > snap)) {
+    if (shouldAdoptResync(resyncPendingRef.current, live, snap)) {
       versionSnapshotRef.current = { navKey, version: live };
       resyncPendingRef.current = false;
     }

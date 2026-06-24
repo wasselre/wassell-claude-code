@@ -93,6 +93,16 @@ export function isStaleBuildWriteLocked(): boolean {
 /** Preferred name going forward; same flag. */
 export const isHardWriteStopped = isStaleBuildWriteLocked;
 
+/** TEST-ONLY: reset all module state between tests. */
+export function __resetStaleBuild(): void {
+  outdated = false;
+  forcedReloadAt = 0;
+  writeLocked = false;
+  hardStopReason = null;
+  unsavedKeys.clear();
+  emit();
+}
+
 /** Forms register their dirty state so the forced reload can protect real work. */
 export function setFormUnsaved(key: string, dirty: boolean): void {
   const had = unsavedKeys.size > 0;
