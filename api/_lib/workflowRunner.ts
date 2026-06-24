@@ -49,6 +49,7 @@ import { evaluateFormula } from '../../src/lib/formulaEngine.js';
 import { normalizePhone } from '../../src/lib/phone.js';
 // SAME server-side send path the on_due sweeper uses — no second WhatsApp impl.
 import { sendMessage as haberchatSendMessage, defaultDeviceId } from './haberchat.js';
+import { resolveActorPublicUserId } from './actorMapping.js';
 
 export const SUPPORTED_ACTION_TYPES = new Set<WorkflowAction['type']>([
   'create_record', 'update_record', 'send_whatsapp_message',
@@ -96,6 +97,9 @@ export interface RunnerResult {
   // body classifies the outcome; HTTP 200 alone never means "complete".
   retryable: boolean;
   results: RunnerWorkflowResult[];
+  // Actor identity for this job, so the auth.uid → public.users.id mapping is
+  // inspectable in the endpoint response + worker logs without guessing.
+  actor?: { auth_user_id: string | null; public_user_id: string | null; mapping_missing: boolean };
 }
 
 // Action `reason` codes that are transient/infra ⇒ a job retry may succeed.
@@ -209,7 +213,13 @@ interface ResolveCtx {
   triggerData: Record<string, unknown>;
   recordId: string;
   triggerModelId: string;      // the model the workflow triggers on (job.model_id)
-  actorUserId: string | null;
+  // Actor identity is TWO ids. The capture trigger stamps the raw auth.uid into
+  // workflow_jobs.actor_user_id; but records.created_by_user_id FKs to
+  // public.users(id) and user-reference fields (assignee, current_user) store
+  // public.users.id. So we carry both and use the MAPPED public id for
+  // created_by + current_user (parity with the client engine).
+  actorAuthUserId: string | null;    // raw workflow_jobs.actor_user_id (auth.uid)
+  actorPublicUserId: string | null;  // mapped public.users.id (null if unmapped/system)
   targetModelId: string;       // the action's target model
   roleVarDebug: unknown[];     // collected per-run for the action trace
 }
@@ -224,8 +234,9 @@ async function resolveMapping(mapping: FieldMapping, ctx: ResolveCtx): Promise<u
     case 'current_date':
       return formatDateForField(new Date(), targetType);
     case 'current_user':
-      // DB-authoritative actor; null for system/cron/webhook writes. Never fabricated.
-      return ctx.actorUserId ?? null;
+      // Mapped public.users.id — matches the client engine + how user-reference
+      // fields store ids; null for system/cron/webhook or an unmapped actor.
+      return ctx.actorPublicUserId ?? null;
     case 'record_id':
       return ctx.recordId;
     case 'date_expression': {
@@ -255,7 +266,7 @@ async function resolveMapping(mapping: FieldMapping, ctx: ResolveCtx): Promise<u
       return raw;
     }
     case 'current_user' as never:
-      return ctx.actorUserId ?? null;
+      return ctx.actorPublicUserId ?? null;
     case 'role_variable': {
       const candidates = roleVariableCandidates(mapping, ctx.triggerData, ctx.users);
       const assigneeField = mapping.target_field_id;
@@ -343,7 +354,7 @@ async function execCreate(
     p_workflow_run_id: runId, p_workflow_id: workflowId, p_workflow_job_id: job.job_id,
     p_action_id: action.id, p_source_record_id: job.record_id,
     p_target_model_id: action.target_model_id, p_business_key: businessKey,
-    p_new_record_id: newId, p_data: data, p_created_by: ctx.actorUserId,
+    p_new_record_id: newId, p_data: data, p_created_by: ctx.actorPublicUserId,
     p_depth: job.depth + 1, p_origin_run: runId, p_parent_job: job.job_id,
   });
   // RPC error — incl. a RAISE from a failed record create inside the tx — is
@@ -500,6 +511,22 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
   if (uErr) throw new Error(`load users failed: ${uErr.message}`);
   const users = (userRows ?? []) as unknown as User[];
 
+  // Resolve the job's actor (a raw auth.uid stamped by the capture trigger) to
+  // the public.users.id that records.created_by_user_id FKs to + that
+  // user-reference fields store. NULL stays NULL (service/cron/webhook). An
+  // auth.uid with no matching public.users row resolves to NULL and is logged
+  // LOUDLY — a missing actor mapping must NEVER fail the workflow (the record is
+  // still created with created_by = null).
+  const actorAuthUserId = job.actor_user_id;
+  const actorPublicUserId = resolveActorPublicUserId(actorAuthUserId, users);
+  const actorMappingMissing = actorAuthUserId != null && actorPublicUserId == null;
+  if (actorMappingMissing) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[workflow-runner] LOUD: actor auth.uid=${actorAuthUserId} has no public.users row (job=${job.job_id}); created_by + current_user resolve to NULL for this run. The record is still created — actor attribution is just missing.`,
+    );
+  }
+
   const triggerData = job.new_data ?? job.previous_data ?? {};
   const triggerModel = models.find((m) => m.id === job.model_id);
 
@@ -539,7 +566,7 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
       trigger_model_label_ar: triggerModel?.label_ar, trigger_model_label_en: triggerModel?.label_en,
       trigger_record_id: job.record_id, trigger_record_snapshot: triggerData,
       previous_record_snapshot: job.previous_data ?? undefined,
-      triggered_by_user_id: job.actor_user_id, depth: job.depth,
+      triggered_by_user_id: actorPublicUserId, depth: job.depth,
       started_at: startedAt.toISOString(), branches_trace: branchesTrace.length > 1 ? branchesTrace : undefined,
       conditions_trace: winningTrace?.conditions_trace ?? [], idempotency_key: key,
       workflow_config_hash: configHash, workflow_job_id: job.job_id,
@@ -571,7 +598,7 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
     await supabase.from('workflow_runs').upsert({ ...baseRow, status: 'processing', conditions_passed: true, actions_trace: [], selected_branch_id: winner.id });
 
     const roleVarDebug: unknown[] = [];
-    const ctx: ResolveCtx = { supabase, models, users, triggerData, recordId: job.record_id, triggerModelId: job.model_id, actorUserId: job.actor_user_id, targetModelId: '', roleVarDebug };
+    const ctx: ResolveCtx = { supabase, models, users, triggerData, recordId: job.record_id, triggerModelId: job.model_id, actorAuthUserId, actorPublicUserId, targetModelId: '', roleVarDebug };
     const actionsTrace: ActionResult[] = [];
     let anyFailed = false, anyExecuted = false, topErr: string | undefined;
     try {
@@ -611,5 +638,8 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
     });
   }
 
-  return { job_id: job.job_id, eligible: workflows.length, retryable: results.some((r) => r.retryable), results };
+  return {
+    job_id: job.job_id, eligible: workflows.length, retryable: results.some((r) => r.retryable), results,
+    actor: { auth_user_id: actorAuthUserId, public_user_id: actorPublicUserId, mapping_missing: actorMappingMissing },
+  };
 }
