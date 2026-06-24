@@ -330,29 +330,36 @@ async function execCreate(
     ? String(data[action.dedup_target_field_id] ?? '')
     : null;
 
-  // Reserve BEFORE create — one winner under race across both unique indexes.
-  const { data: resRows, error: resErr } = await ctx.supabase.rpc('workflow_action_emit_reserve', {
+  // ATOMIC create + filled emission — reserve, create, and fill in ONE DB
+  // transaction (workflow_action_emit_and_create, 2026-06-24 migration). This
+  // eliminates the unfilled-reservation window that LOST the create on a retry:
+  // the OLD reserve→record_save→fill round-trips left an orphaned reservation
+  // (created_record_id NULL) when an attempt stalled between reserve and fill,
+  // and the retry's dedup then skipped the create as success. Now the emission
+  // is only ever committed already-filled — either the whole tx commits (record
+  // + filled emission together) or it rolls back (nothing). Retry- & crash-safe.
+  const newId = randomUUID();
+  const { data: resRows, error: resErr } = await ctx.supabase.rpc('workflow_action_emit_and_create', {
     p_workflow_run_id: runId, p_workflow_id: workflowId, p_workflow_job_id: job.job_id,
     p_action_id: action.id, p_source_record_id: job.record_id,
     p_target_model_id: action.target_model_id, p_business_key: businessKey,
+    p_new_record_id: newId, p_data: data, p_created_by: ctx.actorUserId,
+    p_depth: job.depth + 1, p_origin_run: runId, p_parent_job: job.job_id,
   });
-  if (resErr) return { action_id: action.id, type: 'create_record', status: 'failed', reason: 'emit_reserve_error', detail: { message: resErr.message } };
-  const res = (resRows as Array<{ emission_id: string; created_record_id: string | null; is_new: boolean; deduped_by: string | null }>)[0]!;
+  // RPC error — incl. a RAISE from a failed record create inside the tx — is
+  // infra/transient ⇒ retryable. The whole tx rolled back (no record, no
+  // emission), so the retry starts clean. NEVER a success with a null record.
+  if (resErr) return { action_id: action.id, type: 'create_record', status: 'failed', reason: 'record_save_error', detail: { message: resErr.message } };
+  const res = (resRows as Array<{ created_record_id: string | null; is_new: boolean; deduped_by: string | null }>)[0]!;
 
   if (!res.is_new) {
-    // Dedup hit — reuse, never create a second record.
+    // Genuine dedup against a FILLED emission — reuse the created record, never
+    // create a second. The RPC only returns is_new=false when created_record_id
+    // is non-null, so a stalled prior attempt can no longer suppress the create.
     return { action_id: action.id, type: 'create_record', status: 'skipped', reason: `deduped:${res.deduped_by}`, detail: { created_record_id: res.created_record_id } };
   }
 
-  const newId = randomUUID();
-  const { error: saveErr } = await ctx.supabase.rpc('record_save_workflow', {
-    p_model_id: action.target_model_id, p_id: newId, p_data: data,
-    p_created_by: ctx.actorUserId, p_expected_version: null,
-    p_depth: job.depth + 1, p_origin_run: runId, p_parent_job: job.job_id,
-  });
-  if (saveErr) return { action_id: action.id, type: 'create_record', status: 'failed', reason: 'record_save_error', detail: { message: saveErr.message } };
-  await ctx.supabase.rpc('workflow_action_emit_fill', { p_emission_id: res.emission_id, p_created_record_id: newId });
-  return { action_id: action.id, type: 'create_record', status: 'executed', detail: { created_record_id: newId, business_key: businessKey } };
+  return { action_id: action.id, type: 'create_record', status: 'executed', detail: { created_record_id: res.created_record_id ?? newId, business_key: businessKey } };
 }
 
 async function execUpdate(
