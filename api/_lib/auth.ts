@@ -13,6 +13,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { logApiRequest } from './activityLogger.js';
+import { serviceIdentityHeaders } from './serviceClient.js';
 
 export class AuthError extends Error {
   constructor(public status: number, message: string) {
@@ -106,6 +107,45 @@ export async function withAuth(
     error: errorMessage,
   });
   return response;
+}
+
+/**
+ * Authorization gate for record-scoped endpoints (T3). Confirms the authenticated
+ * caller can ACCESS the target record under Postgres RLS — by querying it through
+ * an ANON client carrying the caller's OWN JWT, so Supabase RLS (not a manual
+ * user-id comparison) decides. Use this BEFORE any service-role write/read that
+ * acts on a client-supplied record id: service role bypasses RLS, so without this
+ * gate any authenticated user could drive another user's record.
+ *
+ * RLS denial returns zero rows (`data` null) → AuthError(403). A genuine query
+ * error fails loud (500) rather than falling through to a privileged write.
+ * The scoped client also carries the T2 service-identity headers so the access
+ * check is attributable in Postgres logs like every other api:migrate call.
+ *
+ * Throws AuthError; callers run inside `withAuth`, which maps it to the response.
+ */
+export async function assertCanAccessRecord(
+  req: Request,
+  recordId: string,
+  serviceName: string,
+  modelId?: string,
+): Promise<void> {
+  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new AuthError(500, 'Supabase env vars missing (URL or anon key)');
+  const authHeader = req.headers.get('Authorization');
+  if (!authHeader || !authHeader.toLowerCase().startsWith('bearer ')) {
+    throw new AuthError(401, 'missing bearer token');
+  }
+  const scoped = createClient(url, anonKey, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: authHeader, ...serviceIdentityHeaders(serviceName) } },
+  });
+  let query = scoped.from('records').select('id').eq('id', recordId);
+  if (modelId) query = query.eq('model_id', modelId);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new AuthError(500, `access check failed: ${error.message}`);
+  if (!data) throw new AuthError(403, 'not permitted for this record');
 }
 
 export function jsonError(status: number, message: string): Response {

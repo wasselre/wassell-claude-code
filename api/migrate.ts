@@ -32,7 +32,7 @@
 
 import type { IncomingMessage, ServerResponse } from 'http';
 import { type SupabaseClient } from '@supabase/supabase-js';
-import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { withAuth, jsonError, jsonOk, assertCanAccessRecord } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
 import {
   runSuggestMappings,
@@ -106,6 +106,11 @@ interface MigrateRequestBody {
 }
 
 const MIGRATION_MODEL_NAME = 'data_migration';
+
+// All record ids are UUIDs. Validate the client-supplied recordId BEFORE the
+// access gate so a malformed id is a 400 (bad request) rather than falling
+// through to the RLS-scoped query and surfacing as a 500.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function serviceClient(): SupabaseClient | null {
   // T2: identity-tagged service-role client (x-wassel-service='api:migrate').
@@ -192,9 +197,14 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       case 'plan':
       case 'discuss': {
         const recordId = body.recordId;
-        if (!recordId || typeof recordId !== 'string') {
-          return jsonError(400, `${body.action}: recordId is required`);
+        if (!recordId || typeof recordId !== 'string' || !UUID_RE.test(recordId)) {
+          return jsonError(400, `${body.action}: a valid recordId is required`);
         }
+        // T3 access gate: the caller must be able to SEE this record under RLS
+        // (anon key + their own JWT) BEFORE any service-role write. Service role
+        // bypasses RLS, so without this any authenticated user could drive
+        // another user's migration. Throws AuthError(403) → withAuth maps it.
+        await assertCanAccessRecord(req, recordId, 'api:migrate');
         const sb = serviceClient();
         if (!sb) return jsonError(500, 'server env missing: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
 
@@ -286,7 +296,8 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       // ── Cancel the active job + reset the record's busy state ───────────
       case 'cancel': {
         const recordId = body.recordId;
-        if (!recordId || typeof recordId !== 'string') return jsonError(400, 'cancel: recordId is required');
+        if (!recordId || typeof recordId !== 'string' || !UUID_RE.test(recordId)) return jsonError(400, 'cancel: a valid recordId is required');
+        await assertCanAccessRecord(req, recordId, 'api:migrate'); // T3 access gate
         const sb = serviceClient();
         if (!sb) return jsonError(500, 'server env missing: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
         const { error: cancelErr } = await sb.rpc('data_migration_job_cancel', { p_record_id: recordId });
@@ -304,7 +315,8 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       // ── Status read (Realtime is primary; this is a fallback) ───────────
       case 'status': {
         const recordId = body.recordId;
-        if (!recordId || typeof recordId !== 'string') return jsonError(400, 'status: recordId is required');
+        if (!recordId || typeof recordId !== 'string' || !UUID_RE.test(recordId)) return jsonError(400, 'status: a valid recordId is required');
+        await assertCanAccessRecord(req, recordId, 'api:migrate'); // T3 access gate
         const sb = serviceClient();
         if (!sb) return jsonError(500, 'server env missing: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
         const { data: jobRow, error } = await sb
