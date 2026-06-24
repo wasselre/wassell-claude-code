@@ -23,6 +23,11 @@ export interface UseResolvedLocationsResult {
   unresolved: AppRecord[];
   resolving: boolean; // true while any async resolution is in-flight
   resolvingCount: number;
+  /** Re-run async resolution for records that haven't placed yet. Short
+   *  `maps.app.goo.gl` links need a server round-trip that can transiently
+   *  fail (rate-limit/timeout); failures aren't cached, so a retry re-fires
+   *  them. */
+  retry: () => void;
 }
 
 /**
@@ -62,6 +67,9 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
   // Bumps when a batch of async resolutions finishes — forces recompute.
   const [tick, setTick] = useState(0);
   const [resolvingCount, setResolvingCount] = useState(0);
+  // Bumps when the user hits "retry" on the unplaced-records chip — re-fires
+  // the resolution effect so transiently-failed short links get another go.
+  const [retryNonce, setRetryNonce] = useState(0);
 
   useEffect(() => {
     const urls = collectUrlsNeedingResolution(records, cfg, allFields, ctx);
@@ -103,8 +111,9 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
     // `records` identity changes when the filter pipeline re-runs upstream;
     // `cfg` and `allFields` change when the model is edited in the Builder;
     // `ctx` changes only for mirror-location models when the source records do.
+    // `retryNonce` bumps on a manual retry to re-fire failed short-link lookups.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [records, cfg, allFields, ctx]);
+  }, [records, cfg, allFields, ctx, retryNonce]);
 
   const { resolved, unresolved } = useMemo(() => {
     const res: ResolvedPin[] = [];
@@ -132,5 +141,6 @@ export function useResolvedLocations(model: AppModel, records: AppRecord[]): Use
     unresolved,
     resolving: resolvingCount > 0,
     resolvingCount,
+    retry: () => setRetryNonce((n) => n + 1),
   };
 }

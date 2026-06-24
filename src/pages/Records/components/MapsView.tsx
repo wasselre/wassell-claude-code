@@ -209,7 +209,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   }, [model, models]);
   const labelEf = cfg.pin_label_field_id ? expandedById.get(cfg.pin_label_field_id) : undefined;
 
-  const { resolved, unresolved, resolving, resolvingCount } = useResolvedLocations(model, records);
+  const { resolved, unresolved, resolving, resolvingCount, retry } = useResolvedLocations(model, records);
 
   // Persisted view state (cross-navigation): center/zoom/selected pin.
   // Hydrate from the in-memory store on mount so back-from-record-edit
@@ -246,6 +246,25 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resolved, labelEf, isAr, allRecords, models, users, model]);
+
+  // Friendly names for records that couldn't be placed — same label source as
+  // the pins (pin-label field, falling back to the popup title) so the
+  // "not on the map" chip lists recognizable project names, not raw ids.
+  const titleEf = cfg.popup_title_field_id ? expandedById.get(cfg.popup_title_field_id) : undefined;
+  const nameEf = labelEf ?? titleEf;
+  const unresolvedNamed = useMemo(() => {
+    const ctxBase: Omit<FormatCtx, 'recordData'> = { isAr, t, allRecords, models, users };
+    return unresolved.map((rec) => {
+      let label = `#${rec.id.slice(0, 8)}`;
+      if (nameEf) {
+        const value = readExpandedValue(nameEf, rec, allRecords, model, models);
+        const text = formatFieldValue(nameEf.field, value, { ...ctxBase, recordData: rec.data });
+        if (text && text !== '—') label = text;
+      }
+      return { record: rec, label };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unresolved, nameEf, isAr, allRecords, models, users, model]);
 
   // Persist selection changes — onIdle only fires on pan/zoom, not on
   // pin clicks, so we mirror selectedId into the store separately.
@@ -422,16 +441,55 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
         </div>
       )}
 
-      {resolved.length === 0 && !resolving && (
+      {/* Truly-empty map (nothing resolved AND nothing pending to place) —
+          centered "configure the location field" hint. */}
+      {resolved.length === 0 && unresolved.length === 0 && !resolving && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           <div className="bg-white/90 rounded-lg border border-sand/50 px-4 py-2 text-center">
             <p className="text-sm font-bold text-charcoal/70">{t('maps.no_pins')}</p>
-            <p className="text-xs text-charcoal/50 mt-0.5">
-              {unresolved.length > 0
-                ? t('maps.unresolvable_records', { count: unresolved.length })
-                : t('maps.configure_in_builder')}
-            </p>
+            <p className="text-xs text-charcoal/50 mt-0.5">{t('maps.configure_in_builder')}</p>
           </div>
+        </div>
+      )}
+
+      {/* Unplaced-records chip — ALWAYS shown when some records couldn't be
+          placed, no matter how many pins succeeded. Previously this was only
+          surfaced when EVERY pin failed, so partial failures (e.g. a short
+          maps.app.goo.gl link that the server couldn't follow on this load)
+          vanished silently. Lists names + a retry that re-fires resolution. */}
+      {unresolvedNamed.length > 0 && !resolving && (
+        <div className="absolute bottom-3 start-3 z-20 max-w-[280px] bg-white/95 rounded-xl border border-copper/40 shadow-lg overflow-hidden" dir={isAr ? 'rtl' : 'ltr'}>
+          <div className="flex items-center justify-between gap-2 px-3 py-2 bg-copper/10 border-b border-copper/20">
+            <span className="text-xs font-bold text-chocolate">
+              {t('maps.unresolvable_records', { count: unresolvedNamed.length })}
+            </span>
+            <button
+              type="button"
+              onClick={retry}
+              className="shrink-0 text-[11px] font-bold text-copper hover:text-terracotta underline decoration-dotted transition-colors"
+            >
+              {t('maps.unplaced_retry')}
+            </button>
+          </div>
+          <ul className="max-h-40 overflow-y-auto py-1">
+            {unresolvedNamed.slice(0, 8).map(({ record, label }) => (
+              <li key={record.id}>
+                <button
+                  type="button"
+                  onClick={() => onCardClick(record)}
+                  title={t('maps.unplaced_open')}
+                  className="w-full text-start px-3 py-1.5 text-xs text-charcoal hover:bg-cream truncate transition-colors"
+                >
+                  {label}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {unresolvedNamed.length > 8 && (
+            <div className="px-3 py-1.5 text-[11px] text-charcoal/50 border-t border-sand/40">
+              {t('maps.unplaced_more', { count: unresolvedNamed.length - 8 })}
+            </div>
+          )}
         </div>
       )}
     </div>
