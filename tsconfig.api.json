@@ -1,0 +1,13 @@
+{
+  // Typecheck for the serverless `api/**` functions, which the main build
+  // (`tsc -b` over `include:["src"]`) does NOT cover — Vercel transpiles
+  // functions with esbuild, so type defects there would only surface at
+  // runtime. This project typechecks api + the src modules they import,
+  // preserving the `@/` path alias. Run via `npm run typecheck:api`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["api/**/*.ts", "src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "api/**/*.test.ts"]
+}
