@@ -214,6 +214,13 @@ async function resolveMapping(mapping: FieldMapping, ctx: ResolveCtx): Promise<u
       return formatDateForField(applyDateExpression(baseDate, mapping.date_expression ?? ''), targetType);
     }
     case 'formula': {
+      // Uses the SHARED formulaEngine — identical to the client, so no drift.
+      // PROVEN BEHAVIOR (preview proof, 2026-06-23) for `{followup_number}+1`:
+      //   null → 1, 0 → 1, 1 → 2, but the STRING "1" → "11" (the engine
+      //   concatenates when an operand is a string). This is parity, not a
+      //   server bug. ⇒ followup_number (and any field feeding a `+1` formula)
+      //   MUST be numeric in the data before a model is enrolled, or the next
+      //   number will concatenate instead of increment.
       const expr = mapping.formula_expression?.trim();
       if (!expr) return null;
       const raw = evaluateFormula(expr, ctx.triggerData);
