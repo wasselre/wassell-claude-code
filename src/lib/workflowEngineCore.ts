@@ -11,7 +11,7 @@
  */
 
 import type { AppModel, AppRecord, Workflow, WorkflowBranch, WorkflowCondition, FieldMapping, User, SelectionStrategy } from '@/types';
-import { formatDateHumanAr } from './dateFormat';
+import { formatDateHumanAr } from './dateFormat.js';
 
 /**
  * Format a Date for storage in a record field so that the HTML form inputs
