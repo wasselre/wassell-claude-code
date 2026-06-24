@@ -23,7 +23,7 @@
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import crypto from 'node:crypto';
-import { createClient } from '@supabase/supabase-js';
+import { makeServiceClient } from '../_lib/serviceClient.js';
 import { runWorkflowJob, type CapturedJob } from '../_lib/workflowRunner.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 120 };
@@ -75,7 +75,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceKey) return send(503, { error: 'Supabase service env not configured' });
-  const supabase = createClient(url, serviceKey, { auth: { persistSession: false } });
+  // T2: identity-tagged service-role client (x-wassel-service='api:workflow-runner')
+  // so the server workflow runner's DB writes are attributable in Postgres logs.
+  // env presence is asserted just above, so makeServiceClient is non-null here.
+  const supabase = makeServiceClient('api:workflow-runner')!;
 
   // Load the job FRESH — the body is never the source of truth.
   const { data: jobRow, error: loadErr } = await supabase

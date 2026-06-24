@@ -105,8 +105,6 @@ interface MigrateRequestBody {
   rawValues?: string[];
 }
 
-const MIGRATION_MODEL_NAME = 'data_migration';
-
 // All record ids are UUIDs. Validate the client-supplied recordId BEFORE the
 // access gate so a malformed id is a 400 (bad request) rather than falling
 // through to the RLS-scoped query and surfacing as a 500.
