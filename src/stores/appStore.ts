@@ -10,6 +10,7 @@ import { getSession, getSessionEmail, getSessionUid, onAuthChange, signOut as au
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
 import { SEED_PROFILES, SEED_ROLES, SEED_USERS } from '@/data/seedUsers';
 import { executeWorkflows, executeWebhookWorkflows } from '@/lib/workflowEngine';
+import { isModelServerEnrolled, loadServerEnrolledModelIds } from '@/lib/serverWorkflowEnrollment';
 import { assignAutoIdsAsync } from '@/lib/autoIdAssigner';
 import { applyFieldFallbacks } from '@/lib/fieldFallbackResolver';
 import { computeAllFormulas } from '@/lib/formulaEngine';
@@ -1353,6 +1354,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   workflows: [],
   workflowGroups: [],
   workflowRuns: [],
+  serverEnrolledModelIds: new Set<string>(),
   activityLog: loadLocal<ActivityLogEntry[]>('wassell_activity_log') ?? [],
   dashboards: [],
   metricDefinitions: [],
@@ -2221,6 +2223,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (supabase) {
       startRealtimeOrchestrator(set as Parameters<typeof startRealtimeOrchestrator>[0]);
 
+      // Server-authoritative workflow enrollment: load the allowlist so the
+      // client engine SKIPS models the Fly worker now owns (no client+server
+      // double-fire), and keep it fresh via a realtime channel so enroll/
+      // unenroll propagates without a hard refresh. Same singleton-channel
+      // pattern as the marketing pipeline.
+      void loadServerEnrolledModelIds().then((ids) => set({ serverEnrolledModelIds: ids }));
+      const seGlobals = globalThis as unknown as { __wasselServerEnrollChannel?: unknown };
+      if (!seGlobals.__wasselServerEnrollChannel) {
+        seGlobals.__wasselServerEnrollChannel = supabase
+          .channel('server-workflow-enrollment')
+          .on(
+            'postgres_changes' as never,
+            { event: '*', schema: 'public', table: 'workflow_capture_models' },
+            () => {
+              void loadServerEnrolledModelIds().then((ids) => set({ serverEnrolledModelIds: ids }));
+            },
+          )
+          .subscribe();
+      }
+
       // Phase D.3: backstop realtime with a stale-while-revalidate sweep
       // on window focus + online events. Tables that have an updated_at
       // column get a `WHERE updated_at > <last-load-ts>` delta fetch and
@@ -2887,6 +2909,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     // Execute workflows after state is settled
     queueMicrotask(() => {
       const s = get();
+      // Server-authoritative skip: when this model is enrolled in
+      // workflow_capture_models, the Fly worker is the SOLE executor. Running
+      // the client engine too would double-fire every create/update (duplicate
+      // follow-ups). Skip loudly. (Delete is unaffected — the client engine
+      // never fires on delete; webhook/on_due paths are separate and the
+      // capture trigger doesn't enqueue for them.)
+      if (isModelServerEnrolled(finalRecord.model_id, s.serverEnrolledModelIds)) {
+        // eslint-disable-next-line no-console
+        console.debug(
+          `[server-workflows] client workflow skipped: model is server-enrolled (model_id=${finalRecord.model_id}, trigger=${isNew ? 'create' : 'update'})`,
+        );
+        return;
+      }
       void executeWorkflows(
         isNew ? 'create' : 'update',
         finalRecord,

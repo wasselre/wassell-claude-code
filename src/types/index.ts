@@ -2433,6 +2433,12 @@ export interface AppState {
   workflows: Workflow[];
   workflowGroups: WorkflowGroup[];
   workflowRuns: WorkflowRun[];
+  /** Model ids enrolled in server-authoritative workflow execution
+   *  (`workflow_capture_models`). When a saved record's model is in this set,
+   *  the CLIENT engine SKIPS execution (the Fly worker is the sole executor) to
+   *  prevent client+server double-fire. Loaded at init + kept fresh via a
+   *  realtime channel; empty on load failure (fail-safe: existing behavior). */
+  serverEnrolledModelIds: Set<string>;
   /** Unified activity log — capped at 200 most recent entries in memory + localStorage.
    *  Older entries live in Supabase only and are paged in by the LogsPage. */
   activityLog: ActivityLogEntry[];
