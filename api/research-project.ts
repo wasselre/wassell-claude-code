@@ -29,6 +29,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { chromium, type Page } from 'playwright-core';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { recordSaveWithRetry } from './_lib/recordSaveRetry.js';
 
 // Use the Node runtime — Edge can't ship playwright-core.
 // maxDuration: 240s — Paseet's chat response can take 30–90s and we want
@@ -638,46 +639,21 @@ async function mainHandler(req: Request): Promise<Response> {
     // We only retry once; a second collision is an outlier worth surfacing.
     if (targetedRecordId) {
       log('[research-project] updating existing targeted record', targetedRecordId, 'with', mergedRows.length, 'rows');
-      const baseData = (existingTp?.data as Record<string, unknown> | undefined) ?? {};
-      const { error: upErr } = await supabase.rpc('record_save', {
-        p_model_id: tpModel.id,
-        p_id: targetedRecordId,
-        p_data: { ...baseData, [tableField.name]: mergedRows },
-        p_expected_version: versionAtFind,
-      });
-      if (upErr) {
-        const isVersionConflict =
-          upErr.code === '40001' || (upErr.message ?? '').includes('version_mismatch');
-        if (!isVersionConflict) {
-          return jsonError(500, `Targeted Projects record update failed: ${upErr.message}`);
-        }
-        log('[research-project] version_mismatch on first save — re-reading and retrying');
-        const { data: freshRow, error: freshErr } = await supabase
-          .from('records')
-          .select('data, version')
-          .eq('id', targetedRecordId)
-          .maybeSingle();
-        if (freshErr || !freshRow) {
-          return jsonError(500, `Targeted Projects record vanished during research: ${freshErr?.message ?? 'not found'}`);
-        }
-        const freshData = ((freshRow as { data?: Record<string, unknown> }).data) ?? {};
-        const freshVersion = (freshRow as { version?: number }).version ?? null;
-        const freshTableRows = Array.isArray(freshData[tableField.name])
-          ? (freshData[tableField.name] as Record<string, unknown>[])
-          : [];
-        const reMerged = [...freshTableRows, ...newCells];
-        const { error: retryErr } = await supabase.rpc('record_save', {
-          p_model_id: tpModel.id,
-          p_id: targetedRecordId,
-          p_data: { ...freshData, [tableField.name]: reMerged },
-          p_expected_version: freshVersion,
+      // Append newCells onto the FRESH table rows each attempt (preserving any
+      // concurrent user edit), under the standardized T4 retry contract: max 3
+      // attempts, full-jitter backoff, terminal on conflict_storm_blocked.
+      try {
+        await recordSaveWithRetry(supabase, {
+          recordId: targetedRecordId,
+          build: (cur) => {
+            const rows = Array.isArray(cur[tableField.name])
+              ? (cur[tableField.name] as Record<string, unknown>[])
+              : [];
+            return { ...cur, [tableField.name]: [...rows, ...newCells] };
+          },
         });
-        if (retryErr) {
-          return jsonError(
-            409,
-            `Targeted Projects record update lost a race twice — try again later: ${retryErr.message}`,
-          );
-        }
+      } catch (err) {
+        return jsonError(500, `Targeted Projects record update failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     } else {
       log('[research-project] inserting new targeted record with', newCells.length, 'rows');

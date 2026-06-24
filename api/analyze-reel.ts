@@ -27,6 +27,7 @@
 
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { recordSaveWithRetry } from './_lib/recordSaveRetry.js';
 import { cleanAndAnalyzeReel, MIN_TRANSCRIPT_CHARS } from './_lib/reelAnalyst.mjs';
 
 export const config = { runtime: 'edge' };
@@ -77,19 +78,7 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonError(400, `This reel has no transcript to analyze (needs ≥ ${MIN_TRANSCRIPT_CHARS} chars in "content")`);
     }
 
-    // 2. Snapshot the version for optimistic concurrency (frozen models have no
-    //    version column → maybeSingle returns null → RPC skips the check).
-    let versionAtFind: number | null = null;
-    {
-      const { data: vRow } = await supabase
-        .from('records')
-        .select('version')
-        .eq('id', recordId)
-        .maybeSingle();
-      versionAtFind = (vRow as { version?: number } | null)?.version ?? null;
-    }
-
-    // 3. Clean + analyze. Engine throws loudly on failure → 502 (no silent skip).
+    // 2. Clean + analyze. Engine throws loudly on failure → 502 (no silent skip).
     let result;
     try {
       result = await cleanAndAnalyzeReel(apiKey, content);
@@ -112,39 +101,17 @@ export default async function handler(req: Request): Promise<Response> {
       analysis_notes: result.analysis_notes,
       processing_status: 'analyzed',
     };
-    const mergedData = { ...data, ...patch };
-
-    const persist = (dataToWrite: Record<string, unknown>, expectedVersion: number | null) =>
-      supabase.rpc('record_save', {
-        p_model_id: record.model_id,
-        p_id: recordId,
-        p_data: dataToWrite,
-        p_expected_version: expectedVersion,
+    // Persist under the standardized T4 retry contract: re-reads the fresh row
+    // and re-applies only our analysis `patch` onto the CURRENT data each attempt
+    // (preserving a concurrent edit), max 3 attempts with full-jitter backoff,
+    // and stops terminally on conflict_storm_blocked (no blind retry).
+    try {
+      await recordSaveWithRetry(supabase, {
+        recordId,
+        build: (cur) => ({ ...cur, ...patch }),
       });
-
-    const { error: upErr } = await persist(mergedData, versionAtFind);
-    if (upErr) {
-      const isVersionConflict =
-        upErr.code === '40001' || (upErr.message ?? '').includes('version_mismatch');
-      if (!isVersionConflict) {
-        return jsonError(500, `Failed to persist analysis: ${upErr.message}`);
-      }
-      // A concurrent edit landed during the model call — re-read, re-apply only
-      // our analysis patch onto the CURRENT data, retry once.
-      const { data: freshRow, error: freshErr } = await supabase
-        .from('records')
-        .select('data, version')
-        .eq('id', recordId)
-        .maybeSingle();
-      if (freshErr || !freshRow) {
-        return jsonError(500, `Record vanished mid-run: ${freshErr?.message ?? 'not found'}`);
-      }
-      const freshData = ((freshRow as { data?: Record<string, unknown> }).data) ?? {};
-      const freshVersion = (freshRow as { version?: number }).version ?? null;
-      const { error: retryErr } = await persist({ ...freshData, ...patch }, freshVersion);
-      if (retryErr) {
-        return jsonError(409, `Failed to persist analysis (lost a race twice): ${retryErr.message}`);
-      }
+    } catch (err) {
+      return jsonError(500, `Failed to persist analysis: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     return jsonOk({ ok: true, record_id: recordId, analysis: result });
