@@ -22,7 +22,7 @@
 //   node scripts/seed-icon-library.mjs
 //   node scripts/seed-icon-library.mjs --only=building,metro
 
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -93,9 +93,7 @@ const onlyFilter = typeof args.only === 'string'
   ? new Set(args.only.split(',').map((s) => s.trim()).filter(Boolean))
   : null;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-  auth: { persistSession: false },
-});
+const supabase = makeIdentifiedClient('script:seed-icon-library', SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 async function uploadSvg(slug, svg) {
   const { error } = await supabase.storage

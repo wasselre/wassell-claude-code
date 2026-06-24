@@ -28,6 +28,10 @@ export const supabase: SupabaseClient | null =
     ? createClient(supabaseUrl, supabaseKey, {
         global: {
           headers: {
+            // T2 (2026-06-24): identify the SPA as a caller in Postgres logs /
+            // conflict telemetry, alongside the per-tab + per-build ids. Mirrors
+            // the x-wassel-service header the server/worker factories attach.
+            'x-wassel-service': 'spa',
             'x-wassel-tab': CLIENT_TAB_ID,
             'x-wassel-build': CLIENT_BUILD_ID,
           },

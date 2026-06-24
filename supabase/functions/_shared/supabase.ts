@@ -3,17 +3,36 @@
 
 import { createClient, SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-let cached: SupabaseClient | null = null;
+// Cache one client per service name (each edge function is its own isolate, so
+// the map holds at most a couple of entries).
+const cache = new Map<string, SupabaseClient>();
 
-export function getServiceClient(): SupabaseClient {
-  if (cached) return cached;
+/**
+ * Service-role client for edge functions, tagged with caller identity (T2).
+ * `serviceName` should be `edge:<function>` (e.g. 'edge:invite-user') so a
+ * looping/storming edge call is attributable in Postgres logs. Defaults to
+ * 'edge:unknown' to stay backward-compatible with any no-arg caller.
+ */
+export function getServiceClient(serviceName = "edge:unknown"): SupabaseClient {
+  const hit = cache.get(serviceName);
+  if (hit) return hit;
   const url = Deno.env.get("SUPABASE_URL");
   const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!url || !key) {
     throw new Error("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing from env");
   }
-  cached = createClient(url, key, { auth: { persistSession: false } });
-  return cached;
+  const client = createClient(url, key, {
+    auth: { persistSession: false },
+    global: {
+      headers: {
+        "x-wassel-service": serviceName,
+        "x-wassel-build": Deno.env.get("WASSEL_EDGE_BUILD") ?? "unknown",
+        "x-wassel-instance": Deno.env.get("DENO_REGION") ?? "unknown",
+      },
+    },
+  });
+  cache.set(serviceName, client);
+  return client;
 }
 
 export function functionUrl(name: string): string {

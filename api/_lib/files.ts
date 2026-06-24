@@ -14,6 +14,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { AuthError } from './auth.js';
+import { makeServiceClient } from './serviceClient.js';
 
 export const FILES_BUCKET = 'wassel-files';
 /** Signed URLs for authenticated in-app preview. 5-minute TTL — short enough
@@ -66,12 +67,12 @@ let serviceClientSingleton: SupabaseClient | null = null;
 
 export function getServiceClient(): SupabaseClient {
   if (serviceClientSingleton) return serviceClientSingleton;
-  const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!supabaseUrl || !serviceKey) {
+  // T2: identity-tagged service-role client (x-wassel-service='api:files').
+  const client = makeServiceClient('api:files');
+  if (!client) {
     throw new AuthError(500, 'Supabase env vars missing (URL or service key)');
   }
-  serviceClientSingleton = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  serviceClientSingleton = client;
   return serviceClientSingleton;
 }
 

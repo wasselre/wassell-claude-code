@@ -18,7 +18,7 @@
  * USAGE:  node scripts/gen-arabic-enums.mjs
  * ----------------------------------------------------------------------------
  */
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 import { writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -56,7 +56,7 @@ if (!URL || !KEY) {
   process.exit(1);
 }
 
-const supabase = createClient(URL, KEY, { auth: { persistSession: false } });
+const supabase = makeIdentifiedClient('script:gen-arabic-enums', URL, KEY);
 
 function optionValues(schema, fieldSlug) {
   for (const section of schema?.sections ?? []) {

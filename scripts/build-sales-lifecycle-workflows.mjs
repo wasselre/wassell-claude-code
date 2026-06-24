@@ -549,8 +549,8 @@ if (which && BUILDERS[which]) {
     const URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
     const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
     if (!URL || !KEY) { console.error('apply: missing Supabase env'); process.exit(1); }
-    const { createClient } = await import('@supabase/supabase-js');
-    const sb = createClient(URL, KEY, { auth: { persistSession: false } });
+    const { makeIdentifiedClient } = await import('./_lib/serviceClient.mjs');
+    const sb = makeIdentifiedClient('script:build-sales-lifecycle-workflows', URL, KEY);
     const row = {
       id: wf.id, label_ar: wf.label_ar, label_en: wf.label_en, group_id: wf.group_id,
       trigger_model_id: wf.trigger_model_id, trigger_event: wf.trigger_event, is_active: false,

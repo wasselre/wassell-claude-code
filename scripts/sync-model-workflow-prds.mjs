@@ -43,7 +43,7 @@
  * ----------------------------------------------------------------------------
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 import { writeFileSync, readFileSync, existsSync, readdirSync, unlinkSync, mkdirSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,7 +102,7 @@ if (!SUPABASE_URL || !SUPABASE_KEY) {
   bail('missing SUPABASE_URL or a Supabase key (service-role/anon) in env, .env.local, or .env');
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: false } });
+const supabase = makeIdentifiedClient('script:sync-model-workflow-prds', SUPABASE_URL, SUPABASE_KEY);
 
 // ── paginated load (dodges the 1000-row PostgREST truncation; see CLAUDE.md) ─
 async function loadAll(table) {

@@ -24,8 +24,9 @@
  */
 
 import http from 'node:http';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
+import { makeServiceClient } from './lib/serviceClient.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
@@ -35,11 +36,10 @@ import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 
 const env = loadEnv();
 
-const supabase: SupabaseClient = createClient(
-  env.SUPABASE_URL,
-  env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } },
-);
+// T2: identity-tagged service-role client (x-wassel-service='worker',
+// x-wassel-instance=FLY_MACHINE_ID) so a worker storm/loop is attributable
+// in Postgres logs. Shared by all poll loops in this process.
+const supabase: SupabaseClient = makeServiceClient(env, 'worker');
 
 let shuttingDown = false;
 let busy = false;

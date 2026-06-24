@@ -19,7 +19,7 @@
 // Without a secret, the slug is effectively public — callable by anyone who
 // knows the URL, no auth. Treat it like a webhook URL in Stripe/GitHub.
 
-import { createClient } from "jsr:@supabase/supabase-js@2";
+import { getServiceClient } from "../_shared/supabase.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -40,7 +40,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const url = Deno.env.get("SUPABASE_URL");
     const key = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!url || !key) return json({ ok: false, error: "server misconfigured" }, 500);
-    const sb = createClient(url, key, { auth: { persistSession: false } });
+    // T2: identity-tagged service-role client (x-wassel-service='edge:inbox').
+    const sb = getServiceClient("edge:inbox");
 
     // Look up the slug. Unknown or inactive slugs are rejected with 404 so an
     // attacker probing for valid slugs can't distinguish "disabled" from

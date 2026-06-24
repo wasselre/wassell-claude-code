@@ -31,8 +31,9 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'http';
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { makeServiceClient } from './_lib/serviceClient.js';
 import {
   runSuggestMappings,
   runStandardize,
@@ -107,10 +108,8 @@ interface MigrateRequestBody {
 const MIGRATION_MODEL_NAME = 'data_migration';
 
 function serviceClient(): SupabaseClient | null {
-  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) return null;
-  return createClient(url, key, { auth: { persistSession: false } });
+  // T2: identity-tagged service-role client (x-wassel-service='api:migrate').
+  return makeServiceClient('api:migrate');
 }
 
 /**

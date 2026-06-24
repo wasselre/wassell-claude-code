@@ -36,6 +36,7 @@
 // Deploy: `supabase functions deploy delete-user`.
 
 import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { getServiceClient } from "../_shared/supabase.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -97,9 +98,8 @@ Deno.serve(async (req) => {
     return json({ ok: false, error: "invalid_session" }, 401);
   }
 
-  const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false },
-  });
+  // T2: identity-tagged service-role client (x-wassel-service='edge:delete-user').
+  const adminClient: SupabaseClient = getServiceClient("edge:delete-user");
 
   const { data: isAdminData, error: isAdminErr } = await adminClient.rpc(
     "wassell_is_admin",

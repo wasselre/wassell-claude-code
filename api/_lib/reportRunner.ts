@@ -10,6 +10,7 @@
  */
 import crypto from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { makeServiceClient } from './serviceClient.js';
 import { effectiveQuery, effectiveViz } from '../../src/lib/analytics/widgetAdapter.js';
 import { prepareContext, runQueryWithClient } from './analyticsRun.js';
 import { renderReportEmail, type ReportSection, type RenderedEmail } from './reportEmail.js';
@@ -140,7 +141,10 @@ export async function runReportById(reportId: string, triggeredBy: 'schedule' | 
   const jwtSecret = process.env.SUPABASE_JWT_SECRET;
   if (!url || !serviceKey || !anonKey) throw new Error('Supabase env missing (URL / service / anon)');
 
-  const service = createClient(url, serviceKey, { auth: { persistSession: false } });
+  // T2: identity-tagged service-role client (x-wassel-service='api:reports').
+  // serviceKey presence is already asserted above; makeServiceClient reads the
+  // same env, so the non-null assertion is safe.
+  const service = makeServiceClient('api:reports')!;
   const startedAt = new Date();
   const dataAsOf = startedAt.toISOString();
 

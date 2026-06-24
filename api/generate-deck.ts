@@ -26,8 +26,8 @@
  *   - docs/prd/decks.md
  */
 
-import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { makeServiceClient } from './_lib/serviceClient.js';
 
 export const config = { runtime: 'edge' };
 // 30s is plenty — we do one DB insert and one fire-and-forget HTTP ping.
@@ -93,17 +93,14 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     // ── Insert deck_jobs row (service role) ───────────────────────────
-    const supabaseUrl = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    if (!supabaseUrl || !serviceRoleKey) {
+    // T2: identity-tagged service-role client (x-wassel-service='api:generate-deck').
+    const supabase = makeServiceClient('api:generate-deck');
+    if (!supabase) {
       return jsonError(
         500,
         'server env missing: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required',
       );
     }
-    const supabase = createClient(supabaseUrl, serviceRoleKey, {
-      auth: { persistSession: false },
-    });
 
     // Guard: caller must own the deck record they're queuing work for.
     // Service role bypasses RLS, so we have to re-check here.

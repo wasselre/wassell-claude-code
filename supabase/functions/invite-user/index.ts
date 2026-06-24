@@ -29,6 +29,7 @@
 // CORS-bearing gateway error — you'd reintroduce the masked-error bug.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
+import { getServiceClient } from "../_shared/supabase.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
@@ -74,9 +75,8 @@ Deno.serve(async (req) => {
   // Resolve the caller's profile + admin flag via the SQL helper. We could
   // also query the `users`/`profiles` tables directly; using the helper
   // keeps the admin definition in one place.
-  const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
-    auth: { persistSession: false },
-  });
+  // T2: identity-tagged service-role client (x-wassel-service='edge:invite-user').
+  const adminClient = getServiceClient("edge:invite-user");
 
   const { data: isAdminData, error: isAdminErr } = await adminClient.rpc(
     "wassell_is_admin",

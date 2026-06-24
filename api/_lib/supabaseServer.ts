@@ -7,19 +7,20 @@
  * the user's JWT via `verifySupabaseJWT`.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { type SupabaseClient } from '@supabase/supabase-js';
+import { makeServiceClient } from './serviceClient.js';
 
 let cached: SupabaseClient | null = null;
 
 export function getServiceSupabase(): SupabaseClient {
   if (cached) return cached;
-  const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
+  // T2: identity-tagged service-role client (x-wassel-service='api:server').
+  const client = makeServiceClient('api:server');
+  if (!client) {
     throw new Error(
       'SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY are required for the service-role client',
     );
   }
-  cached = createClient(url, serviceKey, { auth: { persistSession: false } });
+  cached = client;
   return cached;
 }

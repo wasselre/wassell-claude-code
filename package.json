@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "check:service-clients": "node scripts/check-service-clients.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "sync:prds": "node scripts/sync-model-workflow-prds.mjs",

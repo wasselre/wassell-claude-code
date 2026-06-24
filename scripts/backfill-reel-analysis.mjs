@@ -34,7 +34,7 @@
  * ----------------------------------------------------------------------------
  */
 
-import { createClient } from '@supabase/supabase-js';
+import { makeIdentifiedClient } from './_lib/serviceClient.mjs';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,7 +92,7 @@ if (!SUPABASE_URL) bail('SUPABASE_URL (or VITE_SUPABASE_URL) is not set');
 if (!SERVICE_KEY) bail('SUPABASE_SERVICE_ROLE_KEY is not set (required to read+write all reels)');
 if (!ANTHROPIC_API_KEY) bail('ANTHROPIC_API_KEY is not set');
 
-const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+const supabase = makeIdentifiedClient('script:backfill-reel-analysis', SUPABASE_URL, SERVICE_KEY);
 
 const ANALYSIS_KEYS = [
   'clean_content', 'hook', 'hook_type', 'angle', 'psych_trigger',
