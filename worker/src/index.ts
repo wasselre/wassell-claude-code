@@ -1204,6 +1204,7 @@ const server = http.createServer((req, res) => {
         reports_busy: reportsBusy,
         reports_enabled: !!env.REPORTS_RUNNER_SECRET,
         workflow_enabled: !!env.WORKFLOW_RUNNER_SECRET,
+        workflow_proof_only: env.WORKFLOW_PROOF_ONLY,
         workflow_auth_disabled: workflowAuthDisabled,
         workflow_auth_failures: workflowAuthFailures,
         workflow_busy: workflowBusy,
@@ -1253,32 +1254,41 @@ async function shutdown(signal: string): Promise<void> {
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
 
-// Drain all four queues concurrently for the lifetime of the process, plus the
-// conflict-storm watchdog (its own short-interval loop).
-const loops = [
-  pollLoop(),
-  imagePollLoop(),
-  previewPollLoop(),
-  compressPollLoop(),
-  documentPollLoop(),
-  migrationPollLoop(),
-  conflictWatchdogLoop(),
-];
-// Scheduled-reports loop only runs when the shared secret is set (feature on).
-if (env.REPORTS_RUNNER_SECRET) {
-  console.log('[worker] scheduled-reports loop enabled');
-  loops.push(reportsPollLoop());
+// Drain the queues concurrently for the lifetime of the process.
+let loops: Array<Promise<void>>;
+if (env.WORKFLOW_PROOF_ONLY) {
+  // LOCAL PROOF MODE ONLY — register ONLY the workflow loop so a local run
+  // against a preview endpoint can't claim/process live deck/image/document/
+  // migration jobs from the shared prod DB. MUST NOT be set on the prod Fly
+  // worker. Default behavior (all loops) is unchanged when the flag is absent.
+  console.warn('[worker] ⚠️ WORKFLOW_PROOF_ONLY=1 — registering ONLY the workflow loop (local proof; never set this in prod)');
+  loops = [workflowPollLoop()];
 } else {
-  console.log('[worker] scheduled-reports loop disabled (REPORTS_RUNNER_SECRET unset)');
-}
-// Workflow runner loop — self-disabled (inert) until WORKFLOW_RUNNER_SECRET is
-// set on the Fly worker (matching the Vercel prod env). Deploying this code is
-// a no-op for the queue until the secret exists.
-if (env.WORKFLOW_RUNNER_SECRET) {
-  console.log('[worker] workflow runner loop enabled');
-  loops.push(workflowPollLoop());
-} else {
-  console.log('[worker] workflow runner loop disabled (WORKFLOW_RUNNER_SECRET unset)');
+  loops = [
+    pollLoop(),
+    imagePollLoop(),
+    previewPollLoop(),
+    compressPollLoop(),
+    documentPollLoop(),
+    migrationPollLoop(),
+    conflictWatchdogLoop(),
+  ];
+  // Scheduled-reports loop only runs when the shared secret is set (feature on).
+  if (env.REPORTS_RUNNER_SECRET) {
+    console.log('[worker] scheduled-reports loop enabled');
+    loops.push(reportsPollLoop());
+  } else {
+    console.log('[worker] scheduled-reports loop disabled (REPORTS_RUNNER_SECRET unset)');
+  }
+  // Workflow runner loop — self-disabled (inert) until WORKFLOW_RUNNER_SECRET is
+  // set on the Fly worker (matching the Vercel prod env). Deploying this code is
+  // a no-op for the queue until the secret exists.
+  if (env.WORKFLOW_RUNNER_SECRET) {
+    console.log('[worker] workflow runner loop enabled');
+    loops.push(workflowPollLoop());
+  } else {
+    console.log('[worker] workflow runner loop disabled (WORKFLOW_RUNNER_SECRET unset)');
+  }
 }
 Promise.all(loops).catch((err) => {
   console.error('[worker] poll loop crashed:', err);

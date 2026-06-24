@@ -62,6 +62,12 @@ export interface WorkerEnv {
    *  the worker boots fine while the feature is inert. Set it (matching the
    *  Vercel prod env) to turn the workflow queue on. */
   WORKFLOW_RUNNER_SECRET: string | null;
+  /** LOCAL PROOF MODE: when '1', the worker registers ONLY the workflow loop
+   *  (skips deck/image/preview/compress/document/migration/reports/conflict),
+   *  so the real worker code can be run locally against a preview endpoint
+   *  without claiming live jobs from the OTHER shared-prod queues. Default
+   *  (absent) = all loops, unchanged. MUST NEVER be set on the prod Fly worker. */
+  WORKFLOW_PROOF_ONLY: boolean;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -89,5 +95,6 @@ export function loadEnv(): WorkerEnv {
     APP_URL: process.env.APP_URL ?? 'https://app.wassel.re',
     REPORTS_RUNNER_SECRET: process.env.REPORTS_RUNNER_SECRET ?? null,
     WORKFLOW_RUNNER_SECRET: process.env.WORKFLOW_RUNNER_SECRET ?? null,
+    WORKFLOW_PROOF_ONLY: process.env.WORKFLOW_PROOF_ONLY === '1',
   };
 }
