@@ -335,22 +335,12 @@ GRANT SELECT ON public.conflict_storm_now TO service_role;
 COMMIT;
 
 -- =====================================================================
--- DOWN / ROLLBACK  (copy-paste to undo T5; restores the pre-T5 functions)
+-- DOWN / ROLLBACK
 -- =====================================================================
--- BEGIN;
---   DROP VIEW  IF EXISTS public.conflict_storm_now;
---   DROP TABLE IF EXISTS public.conflict_telemetry_buckets;
---   DROP TABLE IF EXISTS public.conflict_rate_samples;
---
---   -- Restore record_conflict_report() to the layer-3 body (2026-06-21_conflict_
---   -- storm_layer3_session_ratelimit.sql, lines 136-215) WITHOUT the telemetry block.
---   -- (Re-run that file's CREATE OR REPLACE FUNCTION public.record_conflict_report(uuid) ... block.)
---
---   -- Restore conflict_storm_sweep() to the hardening body (2026-06-21_conflict_
---   -- storm_hardening.sql, lines 169-246) WITHOUT the rate-sample/prune block.
---   -- (Re-run that file's CREATE OR REPLACE FUNCTION public.conflict_storm_sweep() ... block.)
---
---   GRANT EXECUTE ON FUNCTION public.record_conflict_report(uuid) TO authenticated, service_role;
---   GRANT EXECUTE ON FUNCTION public.conflict_storm_sweep() TO service_role;
--- COMMIT;
+-- The rollback is a DIRECTLY EXECUTABLE companion file (no copy-paste prose):
+--   supabase/migrations/2026-06-24_conflict_telemetry_buckets_down.sql
+-- It drops conflict_storm_now / conflict_telemetry_buckets / conflict_rate_samples
+-- and restores record_conflict_report(uuid) + conflict_storm_sweep() to their
+-- exact pre-T5 (layer-3 / hardening) bodies + grants. Validated on a Supabase
+-- branch (objects dropped, function bodies byte-restored, deps intact).
 -- =====================================================================
