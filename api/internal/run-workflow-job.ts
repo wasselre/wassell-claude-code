@@ -107,7 +107,10 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const result = await runWorkflowJob(supabase, job);
     // Do NOT complete/fail the job here — the worker owns the queue lifecycle.
-    return send(200, { ok: true, result });
+    // The body classifies the outcome (job_id / retryable / results[].
+    // failure_class) — HTTP 200 alone never means "complete". The worker reads
+    // `retryable` to decide complete vs fail.
+    return send(200, { ok: true, ...result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return send(500, { error: msg });

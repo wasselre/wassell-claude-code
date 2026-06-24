@@ -67,19 +67,42 @@ export interface CapturedJob {
   depth: number;
 }
 
+// Response status is the 3-value contract the worker reads (success|skipped|
+// failed). The richer per-run lifecycle value (incl. partial_success) is stored
+// on workflow_runs; partial_success maps to 'failed' here since the worker's
+// decision is driven by failure_class + retryable, not the status string.
+export type RunnerResponseStatus = 'success' | 'skipped' | 'failed';
+export type FailureClass = 'none' | 'deterministic' | 'retryable';
+
 export interface RunnerWorkflowResult {
   workflow_id: string;
   workflow_label: string;
   run_id: string | null;
-  status: 'success' | 'partial_success' | 'failed' | 'skipped';
+  status: RunnerResponseStatus;
+  // 'none' for success/skipped. 'deterministic' = the workflow correctly failed
+  // for a reason a job retry can't fix (unsupported action, missing WhatsApp
+  // destination, …) ⇒ worker COMPLETES the job (the failure lives in
+  // workflow_runs). 'retryable' = infra/transient (record_save, emit_reserve,
+  // haberchat transport, unhandled) ⇒ worker FAILS the job for backoff.
+  failure_class: FailureClass;
+  retryable: boolean;
   reason?: string;
 }
 
 export interface RunnerResult {
   job_id: string;
   eligible: number;
+  // True iff ANY run had a retryable failure ⇒ the worker fails the job. The
+  // body classifies the outcome; HTTP 200 alone never means "complete".
+  retryable: boolean;
   results: RunnerWorkflowResult[];
 }
+
+// Action `reason` codes that are transient/infra ⇒ a job retry may succeed.
+// Everything else that fails is deterministic (won't change on retry).
+const RETRYABLE_ACTION_REASONS = new Set([
+  'record_save_error', 'emit_reserve_error', 'rpc_error', 'haberchat_error', 'exception',
+]);
 
 /* ── hashing / config fingerprint ─────────────────────────────────────── */
 
@@ -459,7 +482,7 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
   const workflows = (wfRows ?? []) as unknown as Workflow[];
 
   const results: RunnerWorkflowResult[] = [];
-  if (workflows.length === 0) return { job_id: job.job_id, eligible: 0, results };
+  if (workflows.length === 0) return { job_id: job.job_id, eligible: 0, retryable: false, results };
 
   // Shared lookups loaded once.
   const { data: modelRows, error: mErr } = await supabase.from('models').select('*');
@@ -487,13 +510,13 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
 
     let runId: string;
     if (prior && (prior.status === 'success' || prior.status === 'partial_success' || prior.status === 'skipped')) {
-      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: prior.id, status: 'skipped', reason: 'idempotent:already_done' });
+      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: prior.id, status: 'skipped', failure_class: 'none', retryable: false, reason: 'idempotent:already_done' });
       continue;
     } else if (prior && (prior.status === 'processing' || prior.status === 'failed') && prior.workflow_job_id === job.job_id) {
       runId = prior.id; // same-job retry → reuse the run row.
     } else if (prior && (prior.status === 'processing' || prior.status === 'failed')) {
       // Non-terminal run from ANOTHER job — do not casually revive.
-      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: prior.id, status: 'skipped', reason: `idempotent:non_terminal_other_job:${prior.status}` });
+      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: prior.id, status: 'skipped', failure_class: 'none', retryable: false, reason: `idempotent:non_terminal_other_job:${prior.status}` });
       continue;
     } else {
       runId = randomUUID();
@@ -517,7 +540,7 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
 
     if (!winner) {
       await supabase.from('workflow_runs').upsert({ ...baseRow, status: 'skipped', conditions_passed: false, actions_trace: [], finished_at: new Date().toISOString(), duration_ms: Date.now() - startedAt.getTime(), selected_branch_id: undefined });
-      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: runId, status: 'skipped', reason: 'no_branch_matched' });
+      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: runId, status: 'skipped', failure_class: 'none', retryable: false, reason: 'no_branch_matched' });
       continue;
     }
 
@@ -531,7 +554,9 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
         selected_branch_id: winner.id, finished_at: new Date().toISOString(), duration_ms: Date.now() - startedAt.getTime(),
         error: reason,
       });
-      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: runId, status: 'failed', reason });
+      // Unsupported action = deterministic: a job retry will never make it
+      // supported, so the worker COMPLETES the job (the failure is in the run).
+      results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: runId, status: 'failed', failure_class: 'deterministic', retryable: false, reason });
       continue;
     }
 
@@ -557,13 +582,27 @@ export async function runWorkflowJob(supabase: SupabaseClient, job: CapturedJob)
     } catch (err) { anyFailed = true; topErr = err instanceof Error ? err.message : String(err); }
 
     const status = topErr ? 'failed' : anyFailed ? (anyExecuted ? 'partial_success' : 'failed') : 'success';
+    // Classify for the worker. retryable ONLY when the run threw or a failed
+    // action hit a transient/infra reason; an ordinary action failure
+    // (no_destination, unsupported, …) is deterministic → the job completes.
+    let failureClass: FailureClass = 'none';
+    if (topErr) failureClass = 'retryable';
+    else if (anyFailed) {
+      failureClass = actionsTrace.some((a) => a.status === 'failed' && RETRYABLE_ACTION_REASONS.has(a.reason ?? ''))
+        ? 'retryable' : 'deterministic';
+    }
     await supabase.from('workflow_runs').upsert({
       ...baseRow, status, conditions_passed: true, selected_branch_id: winner.id,
       actions_trace: roleVarDebug.length ? [...actionsTrace, { id: '__role_variable_debug__', order: 999, status: 'executed', type: 'update_record', role_variable_debug: roleVarDebug }] : actionsTrace,
       finished_at: new Date().toISOString(), duration_ms: Date.now() - startedAt.getTime(), error: topErr,
     });
-    results.push({ workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: runId, status });
+    results.push({
+      workflow_id: w.id, workflow_label: w.label_en || w.label_ar, run_id: runId,
+      status: status === 'success' ? 'success' : 'failed', // partial_success → 'failed' in the contract
+      failure_class: failureClass, retryable: failureClass === 'retryable',
+      reason: topErr ?? (anyFailed ? actionsTrace.find((a) => a.status === 'failed')?.reason : undefined),
+    });
   }
 
-  return { job_id: job.job_id, eligible: workflows.length, results };
+  return { job_id: job.job_id, eligible: workflows.length, retryable: results.some((r) => r.retryable), results };
 }

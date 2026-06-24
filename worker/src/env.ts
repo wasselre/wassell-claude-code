@@ -57,6 +57,11 @@ export interface WorkerEnv {
    *  scheduled-reports loop self-disables (so the worker boots fine before the
    *  Scheduled Reports feature is enabled). Set it to turn reports on. */
   REPORTS_RUNNER_SECRET: string | null;
+  /** Shared secret for POST /api/internal/run-workflow-job (server-authoritative
+   *  workflow runner). When UNSET the worker's workflow loop self-disables, so
+   *  the worker boots fine while the feature is inert. Set it (matching the
+   *  Vercel prod env) to turn the workflow queue on. */
+  WORKFLOW_RUNNER_SECRET: string | null;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -83,5 +88,6 @@ export function loadEnv(): WorkerEnv {
     GS_BIN: process.env.GS_BIN ?? 'gs',
     APP_URL: process.env.APP_URL ?? 'https://app.wassel.re',
     REPORTS_RUNNER_SECRET: process.env.REPORTS_RUNNER_SECRET ?? null,
+    WORKFLOW_RUNNER_SECRET: process.env.WORKFLOW_RUNNER_SECRET ?? null,
   };
 }

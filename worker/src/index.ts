@@ -72,6 +72,17 @@ let documentWakeRequested = false;
 // discuss) that used to be held-open HTTP requests on /api/migrate.
 let migrationBusy = false;
 let migrationWakeRequested = false;
+// Server-authoritative workflow runner (workflow_jobs, EIGHTH loop). Claims a
+// captured record-write event and POSTs the protected runner endpoint; the
+// worker owns the queue lifecycle (complete/fail), driven by the RESPONSE BODY
+// classification — never HTTP 200 alone. Self-disables until
+// WORKFLOW_RUNNER_SECRET is set; 3 consecutive 401/503 auth-disable the loop
+// (a config fault won't be fixed by retrying jobs) while the watchdog keeps
+// running. `workflowAuthFailures` resets on any successful runner call.
+let workflowBusy = false;
+let workflowWakeRequested = false;
+let workflowAuthDisabled = false;
+let workflowAuthFailures = 0;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -1017,6 +1028,165 @@ async function reportsPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Server-authoritative workflow runner — workflow_jobs queue.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface RunnerResponseBody {
+  ok?: boolean;
+  job_id?: string;
+  retryable?: boolean;
+  results?: Array<{ workflow_id: string; run_id: string | null; status: string; failure_class?: string; reason?: string }>;
+  error?: string;
+  reason?: string;
+}
+
+async function failWorkflowJob(jobId: string, errMsg: string): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('workflow_job_fail', { p_job_id: jobId, p_error: errMsg });
+    if (error) console.error(`[worker] workflow_job_fail RPC failed job=${jobId}: ${error.message}`);
+  } catch (e) {
+    console.error(`[worker] could not fail workflow job=${jobId}: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * Claim ONE workflow job and run it via the protected runner endpoint. The
+ * worker owns complete/fail; the decision is driven by the RESPONSE BODY
+ * classification, never HTTP 200 alone:
+ *   transport (network / timeout / 5xx / malformed body) → fail (backoff → dead)
+ *   401 / 503 (auth/misconfig)                           → 3-strike self-disable, LEAVE job
+ *   409 not_processing/lease_expired/locked_by_mismatch  → leave (watchdog owns it)
+ *   400 / 404                                            → leave + loud log (non-retryable)
+ *   200 + body.retryable === true                        → fail (a run hit a transient failure)
+ *   200 + body.retryable === false                       → complete (deterministic run
+ *        failures belong in workflow_runs, not the queue → completed_with_failed_runs)
+ */
+async function claimAndRunOneWorkflow(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('workflow_job_claim_next', { p_worker_id: env.WORKER_ID });
+  if (error) {
+    console.error(`[worker] workflow claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{ job_id: string }>;
+  if (rows.length === 0) return false;
+  const jobId = rows[0]!.job_id;
+  console.log(`[worker] claimed workflow job=${jobId}`);
+
+  let res: Awaited<ReturnType<typeof fetch>>;
+  try {
+    res = await fetch(`${env.APP_URL}/api/internal/run-workflow-job`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-workflow-runner-secret': env.WORKFLOW_RUNNER_SECRET! },
+      body: JSON.stringify({ job_id: jobId, worker_id: env.WORKER_ID }),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] workflow job=${jobId} transport error: ${msg}`);
+    await failWorkflowJob(jobId, `transport: ${msg}`);
+    return true;
+  }
+
+  // Auth / misconfig — retrying jobs won't fix it. Leave the job (the watchdog
+  // requeues it after the lease, so no attempt is wasted) and 3-strike-disable.
+  if (res.status === 401 || res.status === 503) {
+    workflowAuthFailures += 1;
+    console.error(`[worker] workflow job=${jobId} HTTP ${res.status} (auth/misconfig) — strike ${workflowAuthFailures}/3; leaving job for the watchdog`);
+    if (workflowAuthFailures >= 3 && !workflowAuthDisabled) {
+      workflowAuthDisabled = true;
+      console.error('[worker] 🚨 workflow loop AUTH-DISABLED after 3 consecutive 401/503 — set WORKFLOW_RUNNER_SECRET (Vercel + Fly) then redeploy/restart the worker. Watchdog keeps running.');
+    }
+    return true;
+  }
+  // Any reachable runner call (even one reporting failures) clears the counter.
+  workflowAuthFailures = 0;
+
+  let body: RunnerResponseBody = {};
+  try {
+    body = (await res.json()) as RunnerResponseBody;
+  } catch {
+    console.error(`[worker] workflow job=${jobId} HTTP ${res.status} malformed body → fail`);
+    await failWorkflowJob(jobId, `malformed body (HTTP ${res.status})`);
+    return true;
+  }
+
+  // State discipline — the job moved on (watchdog/another worker). Leave it.
+  if (res.status === 409) {
+    console.warn(`[worker] workflow job=${jobId} 409 ${body.reason ?? ''} — leaving job (state moved on)`);
+    return true;
+  }
+  // Non-retryable client errors — not ours to complete/fail; log loud + leave.
+  if (res.status === 400 || res.status === 404) {
+    console.error(`[worker] workflow job=${jobId} HTTP ${res.status} ${body.error ?? ''} — leaving job (non-retryable client error)`);
+    return true;
+  }
+  // 5xx → transport-class → retry/backoff.
+  if (res.status >= 500) {
+    console.error(`[worker] workflow job=${jobId} HTTP ${res.status} ${body.error ?? ''} → fail`);
+    await failWorkflowJob(jobId, `HTTP ${res.status}: ${body.error ?? ''}`);
+    return true;
+  }
+
+  // 200 — classify by the BODY, not the status.
+  if (body.retryable) {
+    console.warn(`[worker] workflow job=${jobId} 200 but body.retryable → failing for backoff`);
+    await failWorkflowJob(jobId, 'runner reported a retryable failure');
+    return true;
+  }
+  const failedRuns = (body.results ?? []).filter((r) => r.status === 'failed');
+  const { error: doneErr } = await supabase.rpc('workflow_job_complete', { p_job_id: jobId });
+  if (doneErr) console.error(`[worker] workflow_job_complete failed job=${jobId}: ${doneErr.message}`);
+  else if (failedRuns.length) console.log(`[worker] completed_with_failed_runs job=${jobId} (${failedRuns.length} deterministic run failure(s))`);
+  else console.log(`[worker] completed workflow job=${jobId}`);
+  return true;
+}
+
+async function runWorkflowWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('workflow_jobs_watchdog');
+    if (error) { console.error(`[worker] workflow watchdog RPC error: ${error.message}`); return; }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] workflow watchdog swept ${swept} stale job(s)`);
+  } catch (err) {
+    console.error('[worker] workflow watchdog threw:', err);
+  }
+}
+
+/**
+ * Workflow-queue twin of the other poll loops. When auth-disabled it STOPS
+ * claiming but the loop stays alive so the watchdog keeps freeing stuck jobs
+ * (the watchdog never calls the protected endpoint).
+ */
+async function workflowPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    workflowBusy = true;
+    let didClaim = false;
+    if (!workflowAuthDisabled) {
+      try {
+        didClaim = await claimAndRunOneWorkflow();
+      } catch (err) {
+        console.error('[worker] workflow poll iteration error:', err);
+      }
+    }
+    workflowBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runWorkflowWatchdog();
+    }
+
+    if (didClaim || workflowWakeRequested) {
+      workflowWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !workflowWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // HTTP server: /healthz for Fly health checks, /wake for API ping.
 // ─────────────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
@@ -1033,6 +1203,10 @@ const server = http.createServer((req, res) => {
         migration_busy: migrationBusy,
         reports_busy: reportsBusy,
         reports_enabled: !!env.REPORTS_RUNNER_SECRET,
+        workflow_enabled: !!env.WORKFLOW_RUNNER_SECRET,
+        workflow_auth_disabled: workflowAuthDisabled,
+        workflow_auth_failures: workflowAuthFailures,
+        workflow_busy: workflowBusy,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -1049,6 +1223,7 @@ const server = http.createServer((req, res) => {
     documentWakeRequested = true;
     migrationWakeRequested = true;
     reportsWakeRequested = true;
+    workflowWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -1069,7 +1244,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -1095,6 +1270,15 @@ if (env.REPORTS_RUNNER_SECRET) {
   loops.push(reportsPollLoop());
 } else {
   console.log('[worker] scheduled-reports loop disabled (REPORTS_RUNNER_SECRET unset)');
+}
+// Workflow runner loop — self-disabled (inert) until WORKFLOW_RUNNER_SECRET is
+// set on the Fly worker (matching the Vercel prod env). Deploying this code is
+// a no-op for the queue until the secret exists.
+if (env.WORKFLOW_RUNNER_SECRET) {
+  console.log('[worker] workflow runner loop enabled');
+  loops.push(workflowPollLoop());
+} else {
+  console.log('[worker] workflow runner loop disabled (WORKFLOW_RUNNER_SECRET unset)');
 }
 Promise.all(loops).catch((err) => {
   console.error('[worker] poll loop crashed:', err);
