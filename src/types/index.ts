@@ -757,7 +757,15 @@ export interface SaveRecordOpts {
 export type SaveResult =
   | { status: 'saved' }
   | { status: 'queued'; reason: string }
-  | { status: 'conflict'; message: string };
+  // `kind` (T1) lets callers distinguish a recoverable concurrent edit
+  // (`version_mismatch` — one reload/retry is allowed) from a terminal stop
+  // (`storm_blocked` from the server, `wedged` after a failed reload, or a
+  // `hard_stop` tab-wide write lock) where NO automatic retry must happen.
+  | {
+      status: 'conflict';
+      message: string;
+      kind?: 'version_mismatch' | 'storm_blocked' | 'wedged' | 'hard_stop';
+    };
 
 // Field template — a reusable snapshot of a ModelField (options, type, width, etc.).
 // Created by the user from any saved field; inserted into any section via the

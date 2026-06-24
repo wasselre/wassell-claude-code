@@ -166,19 +166,24 @@ export function useAppVersionPoller(): AppVersionState {
   // difference from the old "hidden tabs only" behavior). The beforeunload
   // guard below protects unsaved work; a storming tab already had its writes
   // locked so it isn't hammering the DB while it waits out the grace.
+  // Forced reload at the deadline — REGARDLESS of tab visibility AND regardless
+  // of whether a newer BUILD is available. A deadline can be armed by stale-build
+  // detection (updateAvailable) OR by a build-INDEPENDENT hard write-stop (T1,
+  // req 6): the server returning conflict_storm_blocked, or a record wedged after
+  // its one allowed reload. So this watcher is ALWAYS on (a storming tab on the
+  // CURRENT build must still be force-reloaded), gated only on a pending deadline.
   useEffect(() => {
-    if (!updateAvailable) return;
     const interval = setInterval(() => {
       const { forcedReloadAt } = getStaleBuildState();
       if (forcedReloadAt > 0 && Date.now() >= forcedReloadAt) {
         lockStaleBuildWrites(); // belt-and-suspenders: no save can race the reload
         window.location.reload();
-      } else {
-        setTick((n) => n + 1); // keep the countdown ticking
+      } else if (forcedReloadAt > 0) {
+        setTick((n) => n + 1); // keep the countdown ticking while a deadline pends
       }
     }, 1_000);
     return () => clearInterval(interval);
-  }, [updateAvailable]);
+  }, []);
 
   // Unsaved-changes guard: the browser's native prompt is our safety net so a
   // forced reload can never silently discard real work. Only engages when a

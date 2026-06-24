@@ -131,6 +131,9 @@ export default function RecordFormPage() {
   // Captured the first time the user touches a mirror field for that
   // target — same reasoning as the main versionSnapshotRef.
   const targetVersionSnapshotsRef = useRef<Record<string, number | null>>({});
+  // T1 (req 5): armed when a save hits a recoverable version_mismatch, so the
+  // effect below adopts the reloaded version exactly once. Reset on navigation.
+  const resyncPendingRef = useRef(false);
   const navKey = `${modelName ?? ''}/${recordId ?? 'new'}`;
   if (existingRecord && versionSnapshotRef.current?.navKey !== navKey) {
     versionSnapshotRef.current = {
@@ -139,6 +142,23 @@ export default function RecordFormPage() {
     };
   }
   const versionSnapshot = versionSnapshotRef.current?.version ?? null;
+  // T1 (req 5): after THIS form's save hit a recoverable version_mismatch, the
+  // store's reload-on-conflict re-fetches the live row and advances
+  // existingRecord.version. Adopt that advanced version into the (otherwise
+  // frozen) snapshot ONCE so the user's explicit re-save sends the CURRENT
+  // version and succeeds — instead of re-sending the stale mount snapshot and
+  // wedging. Guarded by resyncPendingRef so an UNRELATED realtime version bump
+  // (a concurrent edit the user hasn't tried to save over yet) still surfaces as
+  // a conflict rather than being silently adopted.
+  useEffect(() => {
+    if (!resyncPendingRef.current) return;
+    const live = existingRecord?.version ?? null;
+    const snap = versionSnapshotRef.current?.version ?? null;
+    if (live != null && (snap == null || live > snap)) {
+      versionSnapshotRef.current = { navKey, version: live };
+      resyncPendingRef.current = false;
+    }
+  }, [existingRecord, navKey]);
   // Audit fix M2: snapshot the model's `updated_at` at form-mount so
   // we can detect "the schema changed while this form was open" on
   // Save. If an admin renamed/added/removed a field via the Builder
@@ -241,6 +261,7 @@ export default function RecordFormPage() {
     // The main versionSnapshotRef is keyed on navKey and re-captures
     // automatically during render when navKey changes — no reset here.
     targetVersionSnapshotsRef.current = {};
+    resyncPendingRef.current = false; // T1 (req 5): drop any pending re-sync on nav
     setModelUpdatedAtSnapshot(model?.updated_at ?? null);
   }, [recordId, modelName, existingRecord?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1005,6 +1026,10 @@ export default function RecordFormPage() {
 
     const result = await saveRecord(record, { expectedVersion: versionSnapshot });
     if (result.status === 'conflict') {
+      // req 5: only a recoverable version_mismatch arms the one-shot re-sync;
+      // storm_blocked/wedged/hard_stop are terminal (the tab is reloading) and
+      // must NOT re-arm a retry.
+      if (result.kind === 'version_mismatch') resyncPendingRef.current = true;
       addToast(
         isAr
           ? 'تم تعديل هذا السجل من مستخدم آخر — حدّث الصفحة لمشاهدة التغييرات قبل الحفظ.'

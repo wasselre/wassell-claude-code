@@ -3,8 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { supabase } from '@/lib/supabase';
 import {
   isStaleBuildWriteLocked,
-  lockStaleBuildWrites,
-  getStaleBuildState,
+  engageHardWriteStop,
 } from '@/lib/staleBuild';
 import { getSession, getSessionEmail, getSessionUid, onAuthChange, signOut as authSignOut, isAuthAvailable } from '@/lib/auth';
 import { SEED_MODELS, SEED_GROUPS } from '@/data/seedModels';
@@ -867,9 +866,37 @@ function recordSaveBlocked(id: string): boolean {
   return recordConflicts.get(id)?.tripped ?? false;
 }
 
-/** Clear the breaker for a record (called after any successful save). */
+// T1 (req 3/4): bound reload-on-conflict to ONE retry per record. The first
+// version_mismatch is allowed a reload-and-retry; if the SAME record conflicts
+// AGAIN after that reload it is WEDGED (a stale form version, or a trigger that
+// self-bumps the row's version) and the breaker must STAY tripped — the
+// reload-on-conflict path must NOT keep clearing it (that repeated clearing was
+// the storm engine: clear → retry → conflict → clear → ...). This counter
+// persists across reloads and is reset only on a SUCCESSFUL save.
+const recordReloadAttempts = new Map<string, number>();
+const MAX_RELOAD_RETRIES = 1;
+
+/** Force the per-record breaker permanently tripped — the server terminally
+ *  blocked the record/session, or it stayed wedged after its one allowed reload.
+ *  Unlike the count-based trip this is immediate + terminal until a successful
+ *  save (clearRecordConflict) or a page reload. */
+function markRecordWedged(id: string): void {
+  recordConflicts.set(id, { count: RECORD_CONFLICT_LIMIT, first: Date.now(), tripped: true });
+}
+
+/** Release the breaker so exactly ONE reload-and-retry may proceed, WITHOUT
+ *  resetting the reload-attempt counter — so a recurrence is still capped. Used
+ *  only by reload-on-conflict. */
+function releaseBreakerForRetry(id: string): void {
+  recordConflicts.delete(id);
+}
+
+/** Clear the breaker AND the reload-attempt counter for a record. Called after
+ *  any SUCCESSFUL save — a clean save means the client is no longer wedged, so
+ *  the next conflict starts a fresh one-reload allowance. */
 function clearRecordConflict(id: string): void {
   recordConflicts.delete(id);
+  recordReloadAttempts.delete(id);
 }
 
 // Phase F.2 fix (audit H5): the second arg lets the caller override which
@@ -892,8 +919,14 @@ async function supabaseRecordUpsert(
   // form keeps the user's edits until the forced reload) — so a stale tab can't
   // keep hammering the DB while it waits out the forced-reload grace.
   if (isStaleBuildWriteLocked()) {
+    // T1 (req 7): the build-independent hard write-stop is engaged — EVERY record
+    // write from this tab (manual save, autosave, workflow chain, assistant-panel
+    // action, import) short-circuits HERE, terminally, before touching the DB.
+    // kind:'hard_stop' (not 'version_mismatch') so reload-on-conflict never
+    // re-fetches/retries on this; the tab is reloading regardless.
     return {
       status: 'conflict',
+      kind: 'hard_stop',
       message: 'A required update is loading — reload to continue. Your changes are kept in the form.',
     };
   }
@@ -957,8 +990,13 @@ async function supabaseRecordUpsert(
         // froze behind the server's, pinning DB CPU). No-op for the common case
         // — only trips after repeated rapid conflicts on the same record.
         if (recordSaveBlocked(id)) {
+          // Breaker tripped (count-based, or wedged/storm-blocked). Terminal:
+          // kind:'wedged' so reload-on-conflict does NOT re-fetch/retry — the
+          // record only resumes on a successful save (impossible while tripped)
+          // or a page reload, which resets this module state.
           outcome = {
             status: 'conflict',
+            kind: 'wedged',
             message: 'save paused after repeated version conflicts — reload the page to continue',
           };
           return;
@@ -976,15 +1014,46 @@ async function supabaseRecordUpsert(
           p_expected_version: expectedVersion,
         });
         if (error) {
-          // serialization_failure is the version_mismatch the RPC raises.
-          // PostgreSQL SQLSTATE 40001 — surface a clear "reload" toast and
-          // do NOT enqueue for retry; replaying would hit the same conflict.
-          // 40001/serialization_failure covers BOTH the version_mismatch AND the
-          // server-side `conflict_storm_blocked` terminal reject — treat them
-          // identically: terminal, no blind retry, tell the user to reload.
+          const errMsg = error.message ?? '';
+          // T1 (req 1/2): split the SERVER's terminal storm block from a normal
+          // concurrent-edit version_mismatch. They used to be treated identically;
+          // they must NOT be. conflict_storm_blocked = "the DB has rate-limited
+          // you" → STOP everything, no reload-retry. version_mismatch = a possibly
+          // one-off concurrent edit → allow exactly one reload-and-retry.
+          const isStormBlocked = errMsg.includes('conflict_storm_blocked');
+          // serialization_failure (SQLSTATE 40001) is the version_mismatch raise.
           const isVersionConflict =
-            error.code === '40001' || (error.message ?? '').includes('version_mismatch') ||
-            (error.message ?? '').includes('conflict_storm_blocked');
+            !isStormBlocked &&
+            (error.code === '40001' || errMsg.includes('version_mismatch'));
+
+          if (isStormBlocked) {
+            // req 1/2/6: terminal. Wedge the breaker so no path retries this
+            // record, and engage the BUILD-INDEPENDENT hard write-stop so every
+            // other write in this tab stops too and the tab force-reloads (even
+            // on the current build). Still report the conflict for telemetry.
+            markRecordWedged(id);
+            engageHardWriteStop('server-blocked');
+            void supabase!.rpc('record_conflict_report', { p_record_id: id })
+              .then(({ error: reportErr }) => {
+                if (reportErr) console.warn('[conflict] record_conflict_report failed:', reportErr.message);
+              });
+            try {
+              const ar = useAppStore.getState().language === 'ar';
+              useAppStore.getState().addToast(
+                ar
+                  ? 'تم إيقاف الحفظ بعد تكرار التعارض. ستُعاد تهيئة الصفحة تلقائياً للمتابعة.'
+                  : 'Saving was blocked after a conflict storm. The page will reload to recover.',
+                'error',
+              );
+            } catch { /* store not ready */ }
+            outcome = {
+              status: 'conflict',
+              kind: 'storm_blocked',
+              message: 'Saving is blocked after repeated conflicts — reloading to recover.',
+            };
+            return;
+          }
+
           if (isVersionConflict) {
             const tripped = noteRecordConflict(id);
             // Report this conflict to the backend auto-throttle (fire-and-forget).
@@ -998,11 +1067,14 @@ async function supabaseRecordUpsert(
               });
             const msg = 'Another user just edited this record. Reload to see their changes before re-saving.';
             if (tripped) {
-              // If this tab is ALSO running a stale build, a tripped breaker
-              // means a STALE tab is storming — lock all writes now and pull the
-              // forced reload in (layer 2), instead of letting it idle out the
-              // full grace while the breaker holds the line for this one record.
-              if (getStaleBuildState().outdated) lockStaleBuildWrites();
+              // req 6 (T1): a tripped per-record breaker means this tab is
+              // storming one record — escalate to the BUILD-INDEPENDENT hard
+              // write-stop (previously this only happened when the build was
+              // already outdated, so a storming tab on the CURRENT build never
+              // stopped). The reload-on-conflict re-sync (req 5) keeps a LEGIT
+              // single concurrent edit from ever reaching the trip, so reaching
+              // it here means a genuinely wedged client.
+              engageHardWriteStop('record-storm');
               // Repeated conflicts in a short window = a stuck client (stale
               // local version), not a one-off race. Fire ONE strong toast and
               // let the breaker short-circuit future saves above so we stop
@@ -1019,7 +1091,7 @@ async function supabaseRecordUpsert(
             } else {
               reportSupabaseError('records', 'upsert', msg);
             }
-            outcome = { status: 'conflict', message: msg };
+            outcome = { status: 'conflict', kind: 'version_mismatch', message: msg };
           } else {
             const msg = error.message ?? String(error);
             reportSupabaseError('records', 'upsert', msg);
@@ -2872,38 +2944,58 @@ export const useAppStore = create<AppState>((set, get) => ({
     // on an old version (the 2026-06-16 incident). Best-effort + guarded; the
     // permanent breaker still protects the DB if this read fails. Frozen models
     // live in dedicated tables (not `records`) and don't hit this path.
-    if (result.status === 'conflict' && supabase && !isModelHardcoded(record.model_id)) {
-      void (async () => {
-        try {
-          const { data: fresh, error } = await supabase!
-            .from('records')
-            .select('data, created_by_user_id, updated_at, version')
-            .eq('id', record.id)
-            .maybeSingle();
-          if (error || !fresh) return;
-          set((s) => {
-            const list = s.records[record.model_id] ?? [];
-            const idx = list.findIndex((r) => r.id === record.id);
-            if (idx < 0) return {};
-            const next = list.slice();
-            next[idx] = {
-              ...next[idx]!,
-              data: (fresh.data as Record<string, unknown>) ?? next[idx]!.data,
-              created_by_user_id:
-                (fresh.created_by_user_id as string | null) ?? next[idx]!.created_by_user_id ?? null,
-              updated_at: (fresh.updated_at as string) ?? next[idx]!.updated_at,
-              version: (fresh.version as number | null) ?? undefined,
-            };
-            saveLocalRecordsForModel(record.model_id, next);
-            return { records: { ...s.records, [record.model_id]: next } };
-          });
-          // Fresh version is now loaded → the next save can succeed, so release
-          // the breaker for this record.
-          clearRecordConflict(record.id);
-        } catch {
-          /* best-effort reload; the conflict breaker still protects the DB */
-        }
-      })();
+    // Reload-on-conflict — BOUNDED by T1 (req 3/4). Only a recoverable
+    // 'version_mismatch' is re-fetched; 'storm_blocked'/'wedged'/'hard_stop' are
+    // terminal and never re-fetched. The re-fetch is allowed AT MOST ONCE per
+    // record (MAX_RELOAD_RETRIES): if the record conflicts AGAIN after a reload it
+    // is WEDGED (a stale FORM version that never re-synced, or a trigger that
+    // self-bumps the row) — so we keep the breaker tripped and engage the hard
+    // write-stop instead of re-fetching forever. The repeated clear→retry→conflict
+    // cycle was the storm engine; this cap + releaseBreakerForRetry (which does
+    // NOT reset the attempt counter) ends it.
+    if (
+      result.status === 'conflict' && result.kind === 'version_mismatch'
+      && supabase && !isModelHardcoded(record.model_id)
+    ) {
+      const attempts = recordReloadAttempts.get(record.id) ?? 0;
+      if (attempts >= MAX_RELOAD_RETRIES) {
+        markRecordWedged(record.id);
+        engageHardWriteStop('wedged-after-reload');
+      } else {
+        recordReloadAttempts.set(record.id, attempts + 1);
+        void (async () => {
+          try {
+            const { data: fresh, error } = await supabase!
+              .from('records')
+              .select('data, created_by_user_id, updated_at, version')
+              .eq('id', record.id)
+              .maybeSingle();
+            if (error || !fresh) return;
+            set((s) => {
+              const list = s.records[record.model_id] ?? [];
+              const idx = list.findIndex((r) => r.id === record.id);
+              if (idx < 0) return {};
+              const next = list.slice();
+              next[idx] = {
+                ...next[idx]!,
+                data: (fresh.data as Record<string, unknown>) ?? next[idx]!.data,
+                created_by_user_id:
+                  (fresh.created_by_user_id as string | null) ?? next[idx]!.created_by_user_id ?? null,
+                updated_at: (fresh.updated_at as string) ?? next[idx]!.updated_at,
+                version: (fresh.version as number | null) ?? undefined,
+              };
+              saveLocalRecordsForModel(record.model_id, next);
+              return { records: { ...s.records, [record.model_id]: next } };
+            });
+            // Fresh version loaded → allow ONE retry by releasing the breaker, but
+            // KEEP the reload-attempt counter so a recurrence is capped (a clean
+            // SAVE — clearRecordConflict — is what resets it).
+            releaseBreakerForRetry(record.id);
+          } catch {
+            /* best-effort reload; the conflict breaker still protects the DB */
+          }
+        })();
+      }
     }
 
     // Execute workflows after state is settled
