@@ -48,6 +48,12 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { recordSaveWithRetry } from '../_lib/recordSaveRetry.js';
 import {
+  readNodeBodyLimited,
+  PayloadTooLargeError,
+  sendPayloadTooLarge,
+  MAX_REQUEST_BODY_BYTES,
+} from '../_lib/httpBody.js';
+import {
   assertCanAccessFile,
   getServiceClient,
   loadFileBypassRls,
@@ -115,12 +121,6 @@ function isChatModelId(s: unknown): s is ChatModelId {
 
 /* ─── Node ↔ Web Request adapter (mirrors icons/generate.ts) ──────── */
 
-async function readNodeBody(req: IncomingMessage): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks);
-}
-
 async function nodeToWebRequest(nodeReq: IncomingMessage): Promise<Request> {
   const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
   const url = new URL(nodeReq.url ?? '/', `https://${host}`);
@@ -130,7 +130,7 @@ async function nodeToWebRequest(nodeReq: IncomingMessage): Promise<Request> {
     else if (Array.isArray(v)) headers.set(k, v.join(', '));
   }
   const method = nodeReq.method ?? 'GET';
-  const body = method === 'GET' || method === 'HEAD' ? undefined : await readNodeBody(nodeReq);
+  const body = method === 'GET' || method === 'HEAD' ? undefined : await readNodeBodyLimited(nodeReq, MAX_REQUEST_BODY_BYTES);
   return new Request(url.toString(), { method, headers, body });
 }
 
@@ -258,7 +258,13 @@ async function mutateRecordWithRetry(
 /* ─── Main handler ─────────────────────────────────────────────────── */
 
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
-  const req = await nodeToWebRequest(nodeReq);
+  let req: Request;
+  try {
+    req = await nodeToWebRequest(nodeReq);
+  } catch (err) {
+    if (err instanceof PayloadTooLargeError) return sendPayloadTooLarge(nodeRes, err.limitBytes);
+    throw err;
+  }
   const resp = await withAuth(req, async (user) => {
     if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
 
