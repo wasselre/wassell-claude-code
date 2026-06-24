@@ -39,6 +39,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
+import { recordSaveWithRetry } from '../_lib/recordSaveRetry.js';
 import { getJwtClient, logFileActivityServer, FILES_BUCKET } from '../_lib/files.js';
 
 export const config = { runtime: 'edge' };
@@ -212,48 +213,29 @@ async function cacheFileIdOnChatMessage(
   imageIndex: number,
   fileId: string,
 ): Promise<void> {
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    const { data: cur, error } = await jwtClient
-      .from('records')
-      .select('model_id, data, version, created_by_user_id')
-      .eq('id', recordId)
-      .single();
-    if (error || !cur) throw new Error(error?.message ?? 'chat record not found');
-    const data = ((cur.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-    const messages = Array.isArray(data.messages)
-      ? (data.messages as Array<Record<string, unknown>>)
-      : [];
-    let changed = false;
-    const newMessages = messages.map((m) => {
-      if (m.id !== messageId) return m;
-      const images = Array.isArray(m.images) ? (m.images as Array<Record<string, unknown>>) : [];
-      if (imageIndex >= images.length) return m;
-      const img = images[imageIndex];
-      if (img && !img.file_id) {
-        changed = true;
-        return {
-          ...m,
-          images: images.map((x, i) => (i === imageIndex ? { ...x, file_id: fileId } : x)),
-        };
-      }
-      return m;
-    });
-    if (!changed) return; // already cached, or message/image not found — nothing to do
-    const { error: saveErr } = await jwtClient.rpc('record_save', {
-      p_model_id: cur.model_id,
-      p_id: recordId,
-      p_data: { ...data, messages: newMessages },
-      p_created_by: (cur as { created_by_user_id: string | null }).created_by_user_id ?? null,
-      p_expected_version: (cur as { version: number | null }).version ?? null,
-    });
-    if (!saveErr) return;
-    if (saveErr.code === '40001' || /version_mismatch/i.test(saveErr.message ?? '')) {
-      // Jittered backoff so concurrent writers (worker + endpoints) don't
-      // tight-loop on 40001 and storm the DB under contention (2026-06-23).
-      await new Promise((r) => setTimeout(r, Math.min(500, 25 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 25)));
-      continue;
-    }
-    throw new Error(saveErr.message);
-  }
-  throw new Error('cache file_id failed after version-conflict retries');
+  await recordSaveWithRetry(jwtClient, {
+    recordId,
+    build: (data) => {
+      const messages = Array.isArray(data.messages)
+        ? (data.messages as Array<Record<string, unknown>>)
+        : [];
+      let changed = false;
+      const newMessages = messages.map((m) => {
+        if (m.id !== messageId) return m;
+        const images = Array.isArray(m.images) ? (m.images as Array<Record<string, unknown>>) : [];
+        if (imageIndex >= images.length) return m;
+        const img = images[imageIndex];
+        if (img && !img.file_id) {
+          changed = true;
+          return {
+            ...m,
+            images: images.map((x, i) => (i === imageIndex ? { ...x, file_id: fileId } : x)),
+          };
+        }
+        return m;
+      });
+      if (!changed) return null; // already cached, or message/image not found — skip the save
+      return { ...data, messages: newMessages };
+    },
+  });
 }

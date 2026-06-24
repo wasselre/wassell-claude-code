@@ -28,6 +28,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
+import { recordSaveWithRetry } from '../_lib/recordSaveRetry.js';
 import {
   assertCanAccessFile,
   getServiceClient,
@@ -37,7 +38,6 @@ import type { ChatAspectRatio, ChatModelId } from '../_lib/imageGen.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
-const MAX_SAVE_ATTEMPTS = 6;
 const BUCKET = 'marketing-assets';
 
 interface RequestBody {
@@ -138,11 +138,6 @@ async function resolveUploadRef(
   const { data: pub } = jwtClient.storage.from(BUCKET).getPublicUrl(path);
   if (!pub?.publicUrl) throw new Error('re-host succeeded but no public URL');
   return pub.publicUrl;
-}
-
-function isVersionConflict(err: { code?: string; message?: string } | null): boolean {
-  if (!err) return false;
-  return err.code === '40001' || /version_mismatch/i.test(err.message ?? '');
 }
 
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
@@ -255,41 +250,24 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     };
 
     try {
-      for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
-        const { data: current, error: readErr } = await supabase
-          .from('records').select('data, version, created_by_user_id').eq('id', sessionId).single();
-        if (readErr || !current) throw new Error(`read session failed: ${readErr?.message ?? 'not found'}`);
-        const data = ((current.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-        const existing = Array.isArray(data.generations) ? (data.generations as Generation[]) : [];
-        const newData = {
-          ...data,
-          generations: [...existing, generation],
-          generation_count: existing.length + 1,
-          last_generation_at: nowIso,
-          last_aspect_ratio: aspectRatio,
-          last_preset_id: presetId,
-          last_model: modelId,
-          ...(existing.length === 0 && userPrompt.trim()
-            ? { title: userPrompt.trim().slice(0, 60) }
-            : {}),
-        };
-        const { error: saveErr } = await supabase.rpc('record_save', {
-          p_model_id: imageChatsModelId,
-          p_id: sessionId,
-          p_data: newData,
-          p_created_by: (current as { created_by_user_id: string | null }).created_by_user_id ?? null,
-          p_expected_version: (current as { version: number | null }).version ?? null,
-        });
-        if (!saveErr) break;
-        if (isVersionConflict(saveErr as { code?: string; message?: string })) {
-          if (attempt === MAX_SAVE_ATTEMPTS) throw new Error('record_save version conflict (exhausted retries)');
-          // Jittered backoff so concurrent writers don't tight-loop on 40001
-          // and storm the DB under contention (2026-06-23).
-          await new Promise((r) => setTimeout(r, Math.min(500, 25 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 25)));
-          continue;
-        }
-        throw new Error(`record_save failed: ${saveErr.message}`);
-      }
+      await recordSaveWithRetry(supabase, {
+        recordId: sessionId,
+        build: (data) => {
+          const existing = Array.isArray(data.generations) ? (data.generations as Generation[]) : [];
+          return {
+            ...data,
+            generations: [...existing, generation],
+            generation_count: existing.length + 1,
+            last_generation_at: nowIso,
+            last_aspect_ratio: aspectRatio,
+            last_preset_id: presetId,
+            last_model: modelId,
+            ...(existing.length === 0 && userPrompt.trim()
+              ? { title: userPrompt.trim().slice(0, 60) }
+              : {}),
+          };
+        },
+      });
     } catch (err) {
       return jsonError(500, `failed to append generation: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -346,29 +324,30 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 /** Best-effort: mark a generation failed (optimistic concurrency). */
 async function failGeneration(
   supabase: SupabaseClient,
-  modelId: string,
+  _modelId: string,
   sessionId: string,
   generationId: string,
   message: string,
 ): Promise<void> {
-  for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
-    const { data: current, error } = await supabase
-      .from('records').select('data, version, created_by_user_id').eq('id', sessionId).single();
-    if (error || !current) return;
-    const data = ((current.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-    const gens = Array.isArray(data.generations) ? (data.generations as Generation[]) : [];
-    const newGens = gens.map((g) =>
-      g.id === generationId ? { ...g, status: 'failed' as const, error: `could not enqueue: ${message}` } : g,
-    );
-    const { error: saveErr } = await supabase.rpc('record_save', {
-      p_model_id: modelId,
-      p_id: sessionId,
-      p_data: { ...data, generations: newGens },
-      p_created_by: (current as { created_by_user_id: string | null }).created_by_user_id ?? null,
-      p_expected_version: (current as { version: number | null }).version ?? null,
+  // Best-effort: mark the generation failed under the standard retry contract.
+  // Swallow any terminal error (conflict_storm_blocked / record gone) — this is
+  // cleanup and must NEVER throw into the caller.
+  try {
+    await recordSaveWithRetry(supabase, {
+      recordId: sessionId,
+      build: (data) => {
+        const gens = Array.isArray(data.generations) ? (data.generations as Generation[]) : [];
+        return {
+          ...data,
+          generations: gens.map((g) =>
+            g.id === generationId
+              ? { ...g, status: 'failed' as const, error: `could not enqueue: ${message}` }
+              : g,
+          ),
+        };
+      },
     });
-    if (!saveErr) return;
-    if (isVersionConflict(saveErr as { code?: string; message?: string })) continue;
-    return;
+  } catch {
+    /* best-effort cleanup — never throw */
   }
 }

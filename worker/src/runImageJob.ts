@@ -41,6 +41,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
+import { recordSaveWithRetry } from './lib/recordSaveRetry.js';
 import {
   imageGenChat,
   pollImageGen,
@@ -88,15 +89,9 @@ interface RecordArrayItem {
 const BUCKET = 'marketing-assets';
 const POLL_TIMEOUT_MS = 13 * 60_000;
 const POLL_INTERVAL_MS = 2500;
-const MAX_SAVE_ATTEMPTS = 6;
 
 const ASPECTS: readonly ChatAspectRatio[] = ['1:1', '9:16', '16:9', '4:3', '3:4'];
 const CHAT_MODELS: readonly ChatModelId[] = ['nano-banana', 'gpt-image-2'];
-
-function isVersionConflict(err: { code?: string; message?: string } | null): boolean {
-  if (!err) return false;
-  return err.code === '40001' || /version_mismatch/i.test(err.message ?? '');
-}
 
 interface RunArgs {
   supabase: SupabaseClient;
@@ -119,17 +114,6 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
     throw new Error(`job ${job.id} has neither generationId nor messageId — cannot run`);
   }
 
-  // ── Resolve image_chats model id ────────────────────────────────────
-  const { data: modelRow, error: modelErr } = await supabase
-    .from('models')
-    .select('id')
-    .eq('name', 'image_chats')
-    .single();
-  if (modelErr || !modelRow) {
-    throw new Error(`image_chats model not found: ${modelErr?.message ?? 'unknown'}`);
-  }
-  const modelId = modelRow.id as string;
-
   // ── Patch ONE item in records.data[targetKey] (optimistic concurrency) ─
   // Reads (data, version, created_by) → merges `patch` into the item with the
   // matching id → record_save with p_expected_version. Retries on 40001 by
@@ -138,58 +122,30 @@ export async function runImageJob({ supabase, job }: RunArgs): Promise<Record<st
     patch: Record<string, unknown>,
     extraRecordFields: Record<string, unknown> = {},
   ): Promise<void> => {
-    for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
-      const { data: current, error: readErr } = await supabase
-        .from('records')
-        .select('data, version, created_by_user_id')
-        .eq('id', job.recordId)
-        .single();
-      if (readErr || !current) {
-        throw new Error(
-          `failed to read session record ${job.recordId}: ${readErr?.message ?? 'not found'}`,
-        );
-      }
-      const data = ((current.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-      const arr: RecordArrayItem[] = Array.isArray(data[targetKey])
-        ? (data[targetKey] as RecordArrayItem[])
-        : [];
-      let found = false;
-      const newArr = arr.map((it) => {
-        if (it.id === targetId) {
-          found = true;
-          return { ...it, ...patch };
+    await recordSaveWithRetry(supabase, {
+      recordId: job.recordId,
+      build: (data) => {
+        const arr: RecordArrayItem[] = Array.isArray(data[targetKey])
+          ? (data[targetKey] as RecordArrayItem[])
+          : [];
+        let found = false;
+        const newArr = arr.map((it) => {
+          if (it.id === targetId) {
+            found = true;
+            return { ...it, ...patch };
+          }
+          return it;
+        });
+        if (!found) {
+          // The session (or this item) is gone — e.g. deleted mid-run. Abort
+          // loudly; never silently no-op (CLAUDE.md).
+          throw new Error(
+            `${targetKey} item ${targetId} not present in record ${job.recordId} — aborting`,
+          );
         }
-        return it;
-      });
-      if (!found) {
-        // The session (or this item) is gone — e.g. deleted mid-run. Abort
-        // loudly; never silently no-op (CLAUDE.md).
-        throw new Error(
-          `${targetKey} item ${targetId} not present in record ${job.recordId} — aborting`,
-        );
-      }
-      const newData = { ...data, [targetKey]: newArr, ...extraRecordFields };
-      const { error: saveErr } = await supabase.rpc('record_save', {
-        p_model_id: modelId,
-        p_id: job.recordId,
-        p_data: newData,
-        p_created_by:
-          (current as { created_by_user_id: string | null }).created_by_user_id ?? null,
-        p_expected_version: (current as { version: number | null }).version ?? null,
-      });
-      if (!saveErr) return;
-      if (isVersionConflict(saveErr as { code?: string; message?: string })) {
-        // Jittered backoff so concurrent writers (this worker + the image-chat
-        // API endpoints) don't TIGHT-LOOP on 40001 and storm the DB under
-        // contention on a hot session record (2026-06-23).
-        await new Promise((r) => setTimeout(r, Math.min(500, 25 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 25)));
-        continue;
-      }
-      throw new Error(`record_save failed: ${saveErr.message}`);
-    }
-    throw new Error(
-      `record_save failed after ${MAX_SAVE_ATTEMPTS} version-conflict retries (record ${job.recordId})`,
-    );
+        return { ...data, [targetKey]: newArr, ...extraRecordFields };
+      },
+    });
   };
 
   // ── Parse frozen params (shared) ─────────────────────────────────────

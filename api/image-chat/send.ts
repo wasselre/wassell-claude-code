@@ -46,6 +46,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
+import { recordSaveWithRetry } from '../_lib/recordSaveRetry.js';
 import {
   assertCanAccessFile,
   getServiceClient,
@@ -62,8 +63,6 @@ export const config = {
   maxDuration: 60,
 };
 
-/** Bounded retry budget for optimistic-concurrency version conflicts. */
-const MAX_SAVE_ATTEMPTS = 6;
 
 interface RequestBody {
   record_id?: string;
@@ -239,55 +238,21 @@ async function readImageChatsModelId(supabase: SupabaseClient): Promise<string> 
   return data.id as string;
 }
 
-function isVersionConflict(err: { code?: string; message?: string } | null): boolean {
-  if (!err) return false;
-  return err.code === '40001' || /version_mismatch/i.test(err.message ?? '');
-}
-
 /**
- * Read-transform-save the record via record_save with optimistic concurrency.
- * The `build` callback receives the CURRENT data and returns the new data. On
- * a version-mismatch (40001) — meaning another rapid send or the worker's
- * fill-in bumped the row — we re-read and re-apply onto the latest state, so
- * no concurrent turn is clobbered. Runs under the caller's JWT (RLS-correct).
+ * Read-transform-save the record via record_save under the standard T4 retry
+ * contract (api/_lib/recordSaveRetry): re-reads + re-merges the fresh row on
+ * every attempt, stops terminally on conflict_storm_blocked, max 3 attempts with
+ * full-jitter backoff. `build` receives the CURRENT data and returns the new
+ * data. Runs under the caller's JWT (RLS-correct). `_modelId` is unused — the
+ * helper reads model_id from the row.
  */
 async function mutateRecordWithRetry(
   jwtClient: SupabaseClient,
-  modelId: string,
+  _modelId: string,
   recordId: string,
   build: (current: Record<string, unknown>) => Record<string, unknown>,
 ): Promise<void> {
-  for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
-    const { data: current, error: readErr } = await jwtClient
-      .from('records')
-      .select('data, version, created_by_user_id')
-      .eq('id', recordId)
-      .single();
-    if (readErr || !current) {
-      throw new Error(`failed to read image_chats record: ${readErr?.message ?? 'not found'}`);
-    }
-    const data = ((current.data as Record<string, unknown>) ?? {}) as Record<string, unknown>;
-    const newData = build(data);
-    const { error: saveErr } = await jwtClient.rpc('record_save', {
-      p_model_id: modelId,
-      p_id: recordId,
-      p_data: newData,
-      p_created_by:
-        (current as { created_by_user_id: string | null }).created_by_user_id ?? null,
-      p_expected_version: (current as { version: number | null }).version ?? null,
-    });
-    if (!saveErr) return;
-    if (isVersionConflict(saveErr as { code?: string; message?: string })) {
-      // Jittered backoff so concurrent writers don't tight-loop on 40001 and
-      // storm the DB under contention (2026-06-23).
-      await new Promise((r) => setTimeout(r, Math.min(500, 25 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 25)));
-      continue;
-    }
-    throw new Error(`record_save failed: ${saveErr.message}`);
-  }
-  throw new Error(
-    `record_save failed after ${MAX_SAVE_ATTEMPTS} version-conflict retries`,
-  );
+  await recordSaveWithRetry(jwtClient, { recordId, build });
 }
 
 /* ─── Main handler ─────────────────────────────────────────────────── */
