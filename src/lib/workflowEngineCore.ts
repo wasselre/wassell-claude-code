@@ -10,7 +10,7 @@
  * module. The whole point is that this file loads cleanly under Node.
  */
 
-import type { AppModel, AppRecord, Workflow, WorkflowBranch, WorkflowCondition } from '@/types';
+import type { AppModel, AppRecord, Workflow, WorkflowBranch, WorkflowCondition, FieldMapping, User, SelectionStrategy } from '@/types';
 import { formatDateHumanAr } from './dateFormat';
 
 /**
@@ -235,4 +235,62 @@ export function getWorkflowBranches(workflow: Workflow): WorkflowBranch[] {
     conditions: workflow.conditions ?? [],
     actions: workflow.actions ?? [],
   }];
+}
+
+/**
+ * Candidate users for a `role_variable` assignee mapping: active users assigned
+ * the mapping's role whose role field_values satisfy every role_condition. This
+ * is the SHARED filter — the same logic the client engine uses inline — so the
+ * server runner and the browser agree on who is eligible. The workload count +
+ * selection is split out into `pickRoleVariableUser` because the two engines
+ * source workload differently (client: in-memory records; server: SQL count).
+ */
+export function roleVariableCandidates(
+  mapping: FieldMapping,
+  triggerData: Record<string, unknown>,
+  users: User[],
+): User[] {
+  if (!mapping.role_id || !mapping.role_conditions) return [];
+  return users.filter((u) => {
+    if (!u.is_active) return false;
+    const ra = u.role_assignments.find((r) => r.role_id === mapping.role_id);
+    if (!ra) return false;
+    return mapping.role_conditions!.every((cond) => {
+      const fieldValue = ra.field_values[cond.field_name];
+      const compareValue = cond.value_source === 'trigger_field' && cond.trigger_field_id
+        ? triggerData[cond.trigger_field_id]
+        : cond.value;
+      return evaluateCondition(
+        { id: cond.id, field_id: cond.field_name, operator: cond.operator, value: compareValue },
+        { [cond.field_name]: fieldValue },
+      );
+    });
+  });
+}
+
+/**
+ * Deterministically pick one candidate. `least_workload` → minimum workload,
+ * tie-break by `user.id` ascending; `first_match` → `user.id` ascending. The
+ * stable `user.id` tie-break is REQUIRED for server retry-safety: a re-run of
+ * the same transition must select the same user, so it can never create a
+ * second assignee. (This is a deliberate determinism refinement over the
+ * client's historical load-order pick.) `workloadOf` is supplied by the caller.
+ */
+export function pickRoleVariableUser(
+  candidates: User[],
+  strategy: SelectionStrategy | undefined,
+  workloadOf: (userId: string) => number,
+): User | null {
+  if (candidates.length === 0) return null;
+  const sorted = [...candidates].sort((a, b) => a.id.localeCompare(b.id));
+  if ((strategy ?? 'first_match') === 'least_workload') {
+    let best = sorted[0]!;
+    let bestLoad = workloadOf(best.id);
+    for (const u of sorted.slice(1)) {
+      const load = workloadOf(u.id);
+      if (load < bestLoad) { best = u; bestLoad = load; }
+    }
+    return best;
+  }
+  return sorted[0]!;
 }
