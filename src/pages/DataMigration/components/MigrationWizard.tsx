@@ -1,9 +1,10 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import { startExtractionJob, startMigrationJob, undoMigrationJob, useMigrationJobs } from '../lib/jobRunner';
+import { clearMigrationJobPending, isMigrationJobPending } from '../lib/jobPending';
 import { readMigrationData, type ColumnStandardization, type MigrationData, type MigrationStep } from '../lib/types';
 import StepPickModel from './steps/StepPickModel';
 import StepUpload from './steps/StepUpload';
@@ -50,6 +51,60 @@ export default function MigrationWizard({ recordId, modelId }: MigrationWizardPr
   const undoJob = useMigrationJobs((s) => s.jobs[recordId]);
 
   const data: MigrationData = useMemo(() => (record ? readMigrationData(record) : {}), [record]);
+
+  // ── Realtime-INDEPENDENT fallback poll ──────────────────────────────────────
+  //
+  // The file-heavy AI steps (plan / discuss / extract) run on the worker and
+  // surface their result ONLY through Supabase Realtime. If the Realtime socket
+  // isn't reaching this browser (a corporate proxy / firewall blocking wss://, a
+  // dropped socket), the wizard would sit forever on a spinner that already
+  // stopped — the job finishes and persists, but the tab never sees it. This
+  // polls the record as a backstop, but ONLY while a worker job is plausibly
+  // in flight, so the per-request cost stays negligible.
+  //
+  // It is READ-ONLY (`refreshRecordById` → one `unified_records` row, merged via
+  // the same handler Realtime uses) — it issues no `record_save`, so it cannot
+  // contribute to the conflict-storm (docs/conflict-storm-hardening.md) and never
+  // touches the write breaker. Paused while the tab is hidden. When Realtime IS
+  // working this is mostly a no-op (it just re-confirms what Realtime delivered).
+  const refreshRecordById = useAppStore((s) => s.refreshRecordById);
+  useEffect(() => {
+    if (!recordId) return;
+    const POLL_MS = 4_000;
+    // Read the FRESHEST record straight from the store each tick (not this
+    // render's closure) so the in-flight decision tracks live state.
+    const readFresh = () =>
+      (useAppStore.getState().records[modelId] ?? []).find((r) => r.id === recordId);
+    // A worker turn is in flight when the server-set busy/extracting signal is
+    // visible OR we just enqueued one and haven't seen the server ack yet (the
+    // busy flag arrives via the very Realtime channel that may be down — the
+    // local marker bridges that gap). The in-tab steps (migrating / undoing)
+    // write through the store directly, so they need no poll.
+    const isActive = (d: MigrationData) =>
+      !!d.prep_busy || !!d.discuss_busy || d.status === 'extracting';
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      const before = readFresh();
+      if (!before) return;
+      const d = readMigrationData(before);
+      if (d.status === 'done') {
+        clearMigrationJobPending(recordId);
+        return;
+      }
+      if (!isActive(d) && !isMigrationJobPending(recordId)) return;
+      void refreshRecordById(recordId).then(() => {
+        // After the merge, if no turn is active anymore, drop the pre-ack marker
+        // so polling stops promptly (the busy flag, once seen, drives it from
+        // here; once the busy flag clears, the turn has landed).
+        const after = readFresh();
+        if (after && !isActive(readMigrationData(after))) {
+          clearMigrationJobPending(recordId);
+        }
+      });
+    };
+    const id = setInterval(tick, POLL_MS);
+    return () => clearInterval(id);
+  }, [recordId, modelId, refreshRecordById]);
 
   const patch = (partial: Partial<MigrationData>) => {
     // Read the FRESHEST record from the store (not this render's closure) so

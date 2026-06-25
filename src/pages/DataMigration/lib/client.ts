@@ -19,6 +19,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
+import { markMigrationJobEnqueued } from './jobPending';
 import type { ColumnMappingSuggestion, AnsweredQuestion } from './types';
 import type { TargetFieldLite } from './targetFields';
 
@@ -187,6 +188,8 @@ export async function enqueueExtraction(input: {
     language: input.language,
     guidance: input.guidance,
   });
+  // Start the wizard's Realtime-independent poll (covers a blocked wss://).
+  markMigrationJobEnqueued(input.recordId);
   return { jobId: String(body.job_id ?? '') };
 }
 
@@ -210,6 +213,8 @@ export async function enqueuePlanTurn(input: {
     fields: input.fields,
     language: input.language,
   });
+  // Start the wizard's Realtime-independent poll (covers a blocked wss://).
+  markMigrationJobEnqueued(input.recordId);
   return { jobId: String(body.job_id ?? '') };
 }
 
@@ -227,6 +232,8 @@ export async function enqueueDiscussTurn(input: {
     fields: input.fields,
     language: input.language,
   });
+  // Start the wizard's Realtime-independent poll (covers a blocked wss://).
+  markMigrationJobEnqueued(input.recordId);
   return { jobId: String(body.job_id ?? '') };
 }
 

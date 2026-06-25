@@ -2571,6 +2571,11 @@ export interface AppState {
    */
   saveRecord: (record: AppRecord, opts?: SaveRecordOpts) => Promise<SaveResult>;
   deleteRecord: (modelId: string, recordId: string) => void;
+  /** Read-only single-record refresh from `unified_records`, merged through the
+   * same path as Realtime. The Realtime-independent fallback for surfacing a
+   * worker's writes when the WebSocket isn't reaching this browser. Issues no
+   * write, so it never interacts with the conflict-storm machinery. */
+  refreshRecordById: (recordId: string) => Promise<void>;
   // Re-saves every record on the model where `targetFieldId`'s value is empty,
   // causing the save-time fallback resolver to fill it. Used by the Builder's
   // "Apply to existing records" button. Returns the count of records touched.

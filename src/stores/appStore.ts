@@ -30,6 +30,7 @@ import { normalizePhone } from '@/lib/phone';
 import { markRecentlyWritten } from '@/lib/realtime/dedup';
 import { startRealtimeOrchestrator } from '@/lib/realtime/RealtimeOrchestrator';
 import { markLoaded, startStaleWhileRevalidate } from '@/lib/realtime/staleWhileRevalidate';
+import { mergeRecord } from '@/lib/realtime/mergeHandlers';
 import { installPerfMarkers, markEvent } from '@/lib/perfMarkers';
 import { assertSerializable, validateAnalyticsQuery } from '@/lib/analytics/validate';
 import type { AnalyticsQuery } from '@/lib/analytics/types';
@@ -3111,6 +3112,47 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
         // If the toast bus isn't ready (very early in init), the console.warn above is enough.
       }
+    }
+  },
+  // Targeted single-record refresh — the Realtime-INDEPENDENT fallback for
+  // surfacing a worker's writes when the Realtime WebSocket isn't reaching this
+  // browser (corporate proxy / firewall blocking wss://, a silently dropped
+  // socket). Reads ONE row from `unified_records` and feeds it through the SAME
+  // `mergeRecord` handler Realtime + stale-while-revalidate use: identical
+  // staleness guard (only a STRICTLY-newer row is adopted) and store mutation,
+  // so it can never revert in-progress local state.
+  //
+  // READ-ONLY by design: it issues no `record_save`, so it cannot create a
+  // version_mismatch, cannot contribute to the record_save conflict-storm (see
+  // docs/conflict-storm-hardening.md — the storm is a WRITE pathology), and never
+  // touches the write breaker. Used by the Data Migration wizard's in-flight poll
+  // (MigrationWizard.tsx) — gated to only run while a worker job is actually
+  // pending, so the per-request cost stays negligible. No-op when Supabase isn't
+  // configured.
+  refreshRecordById: async (recordId: string) => {
+    if (!supabase) return;
+    try {
+      const { data, error } = await supabase
+        .from('unified_records')
+        .select('*')
+        .eq('id', recordId)
+        .maybeSingle();
+      if (error) {
+        // A transient read miss is not data loss and must NOT spam a toast every
+        // few seconds. This is a deliberately scoped silence (read-only poll),
+        // logged loudly — NOT a swallowed error on a write/error-surfacing path
+        // (see CLAUDE.md "Silent Failures").
+        // eslint-disable-next-line no-console
+        console.error('[refreshRecordById] fetch failed', recordId, error.message);
+        return;
+      }
+      if (!data) return;
+      // Cast `set` to the merge handler's SetState shape — same pattern as the
+      // startRealtimeOrchestrator / startStaleWhileRevalidate call sites.
+      mergeRecord('UPDATE', { new: data as AppRecord }, set as Parameters<typeof mergeRecord>[2]);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[refreshRecordById] unexpected error', recordId, err);
     }
   },
   // Bulk-apply the fallback configured on `targetFieldId` to every existing
