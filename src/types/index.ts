@@ -27,6 +27,8 @@ export type FieldType =
   | 'table'
   | 'image'
   | 'multi_image'
+  | 'video'
+  | 'multi_video'
   | 'file'
   | 'multi_file'
   | 'attachment'
@@ -243,16 +245,19 @@ export interface ModelField {
   // 'multi_file', 'attachment'). Uploads land in the Files System
   // (`wassel-files` Storage bucket + `files` table), NOT the legacy
   // marketing-assets bucket. Stored value shapes:
-  //   image        → string (a `files.id` UUID)
-  //   multi_image  → string[] (array of `files.id`)
+  //   image        → string (a `files.id` UUID, or a legacy/external http(s) URL)
+  //   multi_image  → string[] (array of `files.id` / URLs)
+  //   video        → string (a `files.id` UUID, or an external video URL —
+  //                  direct media file OR a YouTube/Vimeo link, embedded inline)
+  //   multi_video  → string[] (array of `files.id` / video URLs)
   //   file         → string (a `files.id` UUID)
   //   multi_file   → string[]
   //   attachment   → AttachmentRef[] (file OR folder references; preserves order)
   // The form input is a drop-zone + chip / thumbnail row that, on upload,
   // opens a folder picker so the user chooses where in the Drive the
   // bytes land. Click on a chip opens the existing FilePreviewModal.
-  image_max_size_mb?: number; // default 25; soft cap enforced client-side. Applies to image/file/multi_*/attachment.
-  image_accept?: string; // MIME pattern; default for `image` is 'image/*'; for `file` is everything in the FILES bucket allowlist.
+  image_max_size_mb?: number; // default 25 (image) / 200 (video); soft cap enforced client-side. Applies to image/video/file/multi_*/attachment.
+  image_accept?: string; // MIME pattern; default for `image` is 'image/*'; `video` is 'video/*'; for `file` is everything in the FILES bucket allowlist.
   // Preferred destination folder in the user's Drive when uploading through
   // this field. `null` (or absent) = upload to Drive root. User can override
   // at upload time via the folder picker. NOT a hard constraint — the user

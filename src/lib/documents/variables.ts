@@ -55,6 +55,8 @@ const SKIP_TYPES = new Set([
   'call_history',
   'image',
   'multi_image',
+  'video',
+  'multi_video',
   'file',
   'multi_file',
   'attachment',

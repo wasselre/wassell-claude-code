@@ -14,6 +14,7 @@ import {
   FileFieldInput,
   MultiFileFieldInput,
 } from './DriveFieldInputs';
+import { VideoFieldInput, MultiVideoFieldInput } from './VideoField';
 import AttachmentFieldInput from './AttachmentFieldInput';
 import { filterEligibleAssignees } from '@/lib/assigneeEligibility';
 import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
@@ -674,6 +675,43 @@ function InlineInput({
             value={list}
             acceptMime={field.image_accept ?? 'image/*'}
             maxSizeMb={field.image_max_size_mb ?? 25}
+            maxItems={field.attachment_max_items}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId}
+            recordId={recordId}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        </div>
+      );
+    }
+
+    case 'video':
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <VideoFieldInput
+            value={typeof value === 'string' ? value : ''}
+            acceptMime={field.image_accept ?? 'video/*'}
+            maxSizeMb={field.image_max_size_mb ?? 200}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId}
+            recordId={recordId}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        </div>
+      );
+
+    case 'multi_video': {
+      const list = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string')
+        : [];
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <MultiVideoFieldInput
+            value={list}
+            acceptMime={field.image_accept ?? 'video/*'}
+            maxSizeMb={field.image_max_size_mb ?? 200}
             maxItems={field.attachment_max_items}
             defaultFolderId={field.attachment_default_folder_id ?? null}
             modelId={modelId}

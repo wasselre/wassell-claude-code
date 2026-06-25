@@ -7,7 +7,7 @@ import {
   StickyNote, SlidersHorizontal, Rows3, Fingerprint, Calculator, Table2,
   Image as ImageIcon, Images as MultiImagesIcon, File as FileFieldIcon,
   Files as MultiFilesIcon, Paperclip as PaperclipIcon, MessageSquare, PhoneCall,
-  Home,
+  Home, Film as FilmIcon, Clapperboard as ClapperboardIcon,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { validateFormula, findUnknownReferences } from '@/lib/formulaEngine';
@@ -40,6 +40,8 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   table:            { icon: Table2,             color: '#B8734F', bg: '#B8734F12' },
   image:            { icon: ImageIcon,          color: '#0D9488', bg: '#0D948812' },
   multi_image:      { icon: MultiImagesIcon,    color: '#10B981', bg: '#10B98112' },
+  video:            { icon: FilmIcon,           color: '#DB2777', bg: '#DB277712' },
+  multi_video:      { icon: ClapperboardIcon,   color: '#E11D48', bg: '#E11D4812' },
   file:             { icon: FileFieldIcon,      color: '#0EA5E9', bg: '#0EA5E912' },
   multi_file:       { icon: MultiFilesIcon,     color: '#3B82F6', bg: '#3B82F612' },
   attachment:       { icon: PaperclipIcon,      color: '#B8734F', bg: '#B8734F12' },

@@ -105,6 +105,8 @@ const TEMPLATE_SKIP_TYPES = new Set<string>([
   'table',
   'image',
   'multi_image',
+  'video',
+  'multi_video',
   'file',
   'multi_file',
   'multi_link',

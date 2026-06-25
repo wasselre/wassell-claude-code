@@ -14,6 +14,7 @@ import {
   MultiFileCell,
   AttachmentCell,
 } from './DriveCells';
+import { VideoCell, MultiVideoCell } from './VideoField';
 import type { ModelField, AppRecord, AttachmentRef, NoteEntry } from '@/types';
 
 interface DynamicCellProps {
@@ -169,6 +170,16 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
         ? value.filter((v): v is string => typeof v === 'string' && v.length > 0)
         : [];
       return <MultiImageCell fileIds={ids} isAr={isAr} />;
+    }
+
+    case 'video':
+      return <VideoCell value={String(value)} isAr={isAr} />;
+
+    case 'multi_video': {
+      const vids = Array.isArray(value)
+        ? value.filter((v): v is string => typeof v === 'string' && v.length > 0)
+        : [];
+      return <MultiVideoCell values={vids} isAr={isAr} />;
     }
 
     case 'file':

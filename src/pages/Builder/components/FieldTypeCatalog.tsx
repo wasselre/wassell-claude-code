@@ -7,6 +7,7 @@ import {
   StickyNote, SlidersHorizontal, Plus, Rows3, Fingerprint, Calculator, Table2,
   Image as ImageIcon, Images as MultiImagesIcon, File as FileFieldIcon,
   Files as MultiFilesIcon, Paperclip as PaperclipIcon, MessageSquare, PhoneCall,
+  Film as FilmIcon, Clapperboard as ClapperboardIcon,
 } from 'lucide-react';
 import type { FieldType } from '@/types';
 import type { ComponentType } from 'react';
@@ -46,6 +47,8 @@ const TYPE_CARDS: TypeCard[] = [
   { type: 'table',            icon: Table2,            color: '#B8734F', bg: '#B8734F15' },
   { type: 'image',            icon: ImageIcon,         color: '#0D9488', bg: '#0D948815' },
   { type: 'multi_image',      icon: MultiImagesIcon,   color: '#10B981', bg: '#10B98115' },
+  { type: 'video',            icon: FilmIcon,          color: '#DB2777', bg: '#DB277715' },
+  { type: 'multi_video',      icon: ClapperboardIcon,  color: '#E11D48', bg: '#E11D4815' },
   { type: 'file',             icon: FileFieldIcon,     color: '#0EA5E9', bg: '#0EA5E915' },
   { type: 'multi_file',       icon: MultiFilesIcon,    color: '#3B82F6', bg: '#3B82F615' },
   { type: 'attachment',       icon: PaperclipIcon,     color: '#B8734F', bg: '#B8734F15' },

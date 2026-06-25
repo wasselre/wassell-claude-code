@@ -28,6 +28,7 @@ import {
   FileFieldInput,
   MultiFileFieldInput,
 } from './DriveFieldInputs';
+import { VideoFieldInput, MultiVideoFieldInput } from './VideoField';
 import AttachmentFieldInput from './AttachmentFieldInput';
 import type { AttachmentRef, FieldOption, ModelField } from '@/types';
 
@@ -486,6 +487,39 @@ export default function DynamicField({
             value={list}
             acceptMime={field.image_accept ?? 'image/*'}
             maxSizeMb={field.image_max_size_mb ?? 25}
+            maxItems={field.attachment_max_items}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId ?? null}
+            recordId={recordId ?? null}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        );
+      }
+
+      case 'video':
+        return (
+          <VideoFieldInput
+            value={typeof value === 'string' ? value : ''}
+            acceptMime={field.image_accept ?? 'video/*'}
+            maxSizeMb={field.image_max_size_mb ?? 200}
+            defaultFolderId={field.attachment_default_folder_id ?? null}
+            modelId={modelId ?? null}
+            recordId={recordId ?? null}
+            onChange={(v) => onChange(v)}
+            isAr={isAr}
+          />
+        );
+
+      case 'multi_video': {
+        const list = Array.isArray(value)
+          ? value.filter((v): v is string => typeof v === 'string')
+          : [];
+        return (
+          <MultiVideoFieldInput
+            value={list}
+            acceptMime={field.image_accept ?? 'video/*'}
+            maxSizeMb={field.image_max_size_mb ?? 200}
             maxItems={field.attachment_max_items}
             defaultFolderId={field.attachment_default_folder_id ?? null}
             modelId={modelId ?? null}

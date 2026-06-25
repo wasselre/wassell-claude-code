@@ -29,7 +29,7 @@ const TEXTUAL: ReadonlySet<FieldType> = new Set([
 const MIRRORS: ReadonlySet<FieldType> = new Set(['mirror', 'section_mirror']);
 // Display-only / binary blobs — never grouped or aggregated (count of records only).
 const NON_ANALYTIC: ReadonlySet<FieldType> = new Set([
-  'image', 'multi_image', 'file', 'multi_file', 'attachment',
+  'image', 'multi_image', 'video', 'multi_video', 'file', 'multi_file', 'attachment',
   'whatsapp_history', 'call_history', 'templates_picker', 'template_variables', 'generations_gallery',
   'notes', 'table',
 ]);
