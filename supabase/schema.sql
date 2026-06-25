@@ -1388,6 +1388,20 @@ SELECT public.regenerate_all_model_views();
 -- ============================================================
 -- FREEZE INFRASTRUCTURE (added 2026-05-05)
 -- ============================================================
+-- ⚠️  DRIFT WARNING (2026-06-25): the freeze functions BELOW in this file are a
+--     STALE SNAPSHOT. The live prod bodies have moved ahead via MCP-applied
+--     migrations and are AUTHORITATIVE. Before editing any freeze function,
+--     `pg_get_functiondef('public.<fn>'::regprocedure)` against prod — do NOT
+--     trust the body here. Known-ahead-of-this-file:
+--       • freeze_model / freeze_apply_row / regenerate_frozen_model_artifacts
+--         → hybrid custom_data overflow + storage flag + frozen `version`
+--         column/bump trigger. Source: migrations/2026-06-25_freeze_hybrid_overflow.sql
+--       • refresh_frozen_model_artifacts(model_id) → NEW safe re-regen wrapper.
+--         Source: migrations/2026-06-25_refresh_frozen_model_artifacts.sql
+--       • record_save / freeze_apply_row are 5-arg (…, p_expected_version int).
+--       • freeze_is_virtual excludes only 'mirror' in prod.
+--     Full drift inventory + reconciliation plan: docs/schema-prod-drift.md
+-- ------------------------------------------------------------
 -- "Freezing" a model promotes it from a JSONB row in the unified `records`
 -- table to a real Postgres table with proper typed columns, junction tables
 -- for multi-value fields (multiselect, multi-lookup), and subtables for
