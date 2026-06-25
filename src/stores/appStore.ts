@@ -1148,88 +1148,101 @@ function workflowToSupabaseRow(w: Workflow): Record<string, unknown> {
 
 async function supabaseLoad<T>(table: string): Promise<T[] | null> {
   if (!supabase) return null;
-  // Paginate via .range() in 1000-row pages. Supabase/PostgREST silently
-  // caps a bare .select('*') at db-max-rows=1000 — no error, just truncated
-  // data — which manifests downstream as missing records, "deleted but not
-  // really" rows, dashboard miscounts, and AI-agent / UI count drift.
+  // KEYSET pagination (id > cursor ORDER BY id), sharded for parallelism.
   //
-  // The pages are fetched in PARALLEL, not one-at-a-time. The DB work per
-  // page is trivial (an index scan, ~ms) — the ~2s/page we measured is
-  // round-trip + JSONB payload, so a serial walk of N pages was N round-trips
-  // nose-to-tail (~29 pages × ~2s ≈ 58s of boot latency on `unified_records`,
-  // the actual cause of "records take forever to show up"). We grab page 0
-  // WITH an exact count (the count is index-only, ~14ms), then fan the
-  // remaining pages out with bounded concurrency so the wall-clock collapses
-  // to a few round-trips. Bounded so we don't exhaust the PostgREST pool or
-  // starve the other boot loads that run alongside this one.
+  // Why not OFFSET: every read of `unified_records` (and the RLS tables) runs
+  // the per-row scope check `wassell_can_view_record` on each scanned row.
+  // With OFFSET, page N re-scans+re-filters ALL rows up to the offset, so a
+  // full load is O(n²) RLS evaluations — measured ~2.1s for a single deep page
+  // as a real user (vs 14ms bypassing RLS). Keyset filters only ~pageSize rows
+  // per page (~74ms DB) because the index seeks straight to the cursor.
+  //
+  // Why shard: keyset is inherently sequential (each page needs the previous
+  // page's last id), and the per-page cost is dominated by the network round
+  // trip (~0.9s), so 29 pages nose-to-tail is still ~25s. The id space is
+  // uniformly distributed v4 uuids, so we split it into fixed half-open ranges
+  // (lo, hi] and walk them CONCURRENTLY — each range keyset-walks itself; no
+  // row lands in two ranges, none is skipped.
+  //
+  // The 1000-row PostgREST cap (db-max-rows) still applies per request — the
+  // keyset loop is what reads PAST it. A bare select silently truncates at
+  // 1000 (no error), which historically surfaced as missing records / count
+  // drift; that guard is preserved.
   const pageSize = 1000;
-  const MAX_CONCURRENCY = 8;
-  const fetchPage = (from: number, withCount: boolean) =>
-    (withCount
-      ? supabase!.from(table).select('*', { count: 'exact' })
-      : supabase!.from(table).select('*')
-    ).range(from, from + pageSize - 1);
+  const MIN_ID = '00000000-0000-0000-0000-000000000000';
+  const MAX_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
+  const idOf = (row: T): string => (row as unknown as { id: string }).id;
+
+  // Keyset-walk one (loExclusive, hiInclusive] id-range into `out`. Returns an
+  // error string on failure (caller surfaces + aborts), else null.
+  const walkRange = async (loExclusive: string, hiInclusive: string, out: T[]): Promise<string | null> => {
+    let cursor = loExclusive;
+    for (;;) {
+      const { data, error } = await supabase!
+        .from(table)
+        .select('*')
+        .gt('id', cursor)
+        .lte('id', hiInclusive)
+        .order('id', { ascending: true })
+        .limit(pageSize);
+      if (error) return error.message ?? String(error);
+      const batch = (data ?? []) as T[];
+      out.push(...batch);
+      if (batch.length < pageSize) return null;   // short page ⇒ range drained
+      cursor = idOf(batch[batch.length - 1] as T); // advance keyset cursor
+    }
+  };
+
   try {
-    // Page 0 doubles as the count probe.
-    const first = await fetchPage(0, true);
-    if (first.error) {
-      reportSupabaseError(table, 'load', first.error.message ?? String(first.error));
+    // First page over the whole space. The common case (small config tables)
+    // finishes here in ONE request — no shard amplification.
+    const head: T[] = [];
+    const { data: headData, error: headError } = await supabase
+      .from(table)
+      .select('*')
+      .gt('id', MIN_ID)
+      .order('id', { ascending: true })
+      .limit(pageSize);
+    if (headError) {
+      reportSupabaseError(table, 'load', headError.message ?? String(headError));
       return null;
     }
-    const firstBatch = (first.data ?? []) as T[];
-    // Done if the first page already covers everything.
-    if (firstBatch.length < pageSize) return firstBatch;
+    head.push(...((headData ?? []) as T[]));
+    if (head.length < pageSize) return head;       // whole table fit in one page
 
-    const total = first.count;
-    if (total == null) {
-      // No count header (shouldn't happen for our tables/views, but stay
-      // correct): fall back to the original sequential walk from page 1.
-      const all = [...firstBatch];
-      for (let from = pageSize; ; from += pageSize) {
-        const { data, error } = await fetchPage(from, false);
-        if (error) {
-          reportSupabaseError(table, 'load', error.message ?? String(error));
-          return null;
-        }
-        const batch = (data ?? []) as T[];
-        all.push(...batch);
-        if (batch.length < pageSize) break;
+    // Large table: page 0 covered (MIN_ID, lastId]. Shard the REMAINING id
+    // space into fixed ranges and walk them in parallel. Clamp each range's
+    // lower bound up to lastId so we never re-fetch page 0's rows.
+    const lastId = idOf(head[head.length - 1] as T);
+    // 16 half-open id ranges (one per leading hex nibble) walked concurrently.
+    // 16 measured ~15% faster than 8 here; the keyset pages are cheap (~74ms
+    // DB) so even 16 in flight don't saturate the DB the way OFFSET did.
+    const BOUNDS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f']
+      .map((nibble) => `${nibble}0000000-0000-0000-0000-000000000000`)
+      .concat(MAX_ID);
+    const ranges: Array<{ lo: string; hi: string; out: T[] }> = [];
+    let lo = lastId;
+    for (const hi of BOUNDS) {
+      if (hi > lo) {
+        ranges.push({ lo, hi, out: [] });
+        lo = hi;
       }
-      return all;
     }
 
-    // Build the remaining page offsets (page 1 .. last) and drain them with a
-    // fixed pool of workers. `pages[i]` keeps result order stable.
-    const starts: number[] = [];
-    const lastFrom = Math.floor((total - 1) / pageSize) * pageSize;
-    for (let from = pageSize; from <= lastFrom; from += pageSize) starts.push(from);
-
-    const pages: T[][] = new Array(starts.length);
-    let cursor = 0;
     let failure: string | null = null;
-    const worker = async () => {
-      while (failure === null) {
-        const i = cursor++;
-        const from = starts[i];
-        if (from === undefined) return;
-        const { data, error } = await fetchPage(from, false);
-        if (error) {
-          failure = error.message ?? String(error);
-          return;
-        }
-        pages[i] = (data ?? []) as T[];
-      }
-    };
     await Promise.all(
-      Array.from({ length: Math.min(MAX_CONCURRENCY, starts.length) }, worker),
+      ranges.map(async (r) => {
+        const err = await walkRange(r.lo, r.hi, r.out);
+        if (err && failure === null) failure = err;
+      }),
     );
     if (failure !== null) {
       reportSupabaseError(table, 'load', failure);
       return null;
     }
 
-    const all = [...firstBatch];
-    for (const p of pages) all.push(...p);
+    const all = head.slice();
+    for (const r of ranges) all.push(...r.out);
     return all;
   } catch (err) {
     reportSupabaseError(table, 'load', err instanceof Error ? err.message : String(err));
