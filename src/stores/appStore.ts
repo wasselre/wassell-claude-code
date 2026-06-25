@@ -1151,26 +1151,85 @@ async function supabaseLoad<T>(table: string): Promise<T[] | null> {
   // Paginate via .range() in 1000-row pages. Supabase/PostgREST silently
   // caps a bare .select('*') at db-max-rows=1000 — no error, just truncated
   // data — which manifests downstream as missing records, "deleted but not
-  // really" rows, dashboard miscounts, and AI-agent / UI count drift. The
-  // loop walks pages until a short batch (< pageSize) comes back, meaning
-  // we've hit the end. Stops cleanly on error and surfaces via the same
-  // toast path the original code used.
+  // really" rows, dashboard miscounts, and AI-agent / UI count drift.
+  //
+  // The pages are fetched in PARALLEL, not one-at-a-time. The DB work per
+  // page is trivial (an index scan, ~ms) — the ~2s/page we measured is
+  // round-trip + JSONB payload, so a serial walk of N pages was N round-trips
+  // nose-to-tail (~29 pages × ~2s ≈ 58s of boot latency on `unified_records`,
+  // the actual cause of "records take forever to show up"). We grab page 0
+  // WITH an exact count (the count is index-only, ~14ms), then fan the
+  // remaining pages out with bounded concurrency so the wall-clock collapses
+  // to a few round-trips. Bounded so we don't exhaust the PostgREST pool or
+  // starve the other boot loads that run alongside this one.
   const pageSize = 1000;
-  const all: T[] = [];
+  const MAX_CONCURRENCY = 8;
+  const fetchPage = (from: number, withCount: boolean) =>
+    (withCount
+      ? supabase!.from(table).select('*', { count: 'exact' })
+      : supabase!.from(table).select('*')
+    ).range(from, from + pageSize - 1);
   try {
-    for (let from = 0; ; from += pageSize) {
-      const { data, error } = await supabase
-        .from(table)
-        .select('*')
-        .range(from, from + pageSize - 1);
-      if (error) {
-        reportSupabaseError(table, 'load', error.message ?? String(error));
-        return null;
-      }
-      const batch = (data ?? []) as T[];
-      all.push(...batch);
-      if (batch.length < pageSize) break;
+    // Page 0 doubles as the count probe.
+    const first = await fetchPage(0, true);
+    if (first.error) {
+      reportSupabaseError(table, 'load', first.error.message ?? String(first.error));
+      return null;
     }
+    const firstBatch = (first.data ?? []) as T[];
+    // Done if the first page already covers everything.
+    if (firstBatch.length < pageSize) return firstBatch;
+
+    const total = first.count;
+    if (total == null) {
+      // No count header (shouldn't happen for our tables/views, but stay
+      // correct): fall back to the original sequential walk from page 1.
+      const all = [...firstBatch];
+      for (let from = pageSize; ; from += pageSize) {
+        const { data, error } = await fetchPage(from, false);
+        if (error) {
+          reportSupabaseError(table, 'load', error.message ?? String(error));
+          return null;
+        }
+        const batch = (data ?? []) as T[];
+        all.push(...batch);
+        if (batch.length < pageSize) break;
+      }
+      return all;
+    }
+
+    // Build the remaining page offsets (page 1 .. last) and drain them with a
+    // fixed pool of workers. `pages[i]` keeps result order stable.
+    const starts: number[] = [];
+    const lastFrom = Math.floor((total - 1) / pageSize) * pageSize;
+    for (let from = pageSize; from <= lastFrom; from += pageSize) starts.push(from);
+
+    const pages: T[][] = new Array(starts.length);
+    let cursor = 0;
+    let failure: string | null = null;
+    const worker = async () => {
+      while (failure === null) {
+        const i = cursor++;
+        const from = starts[i];
+        if (from === undefined) return;
+        const { data, error } = await fetchPage(from, false);
+        if (error) {
+          failure = error.message ?? String(error);
+          return;
+        }
+        pages[i] = (data ?? []) as T[];
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(MAX_CONCURRENCY, starts.length) }, worker),
+    );
+    if (failure !== null) {
+      reportSupabaseError(table, 'load', failure);
+      return null;
+    }
+
+    const all = [...firstBatch];
+    for (const p of pages) all.push(...p);
     return all;
   } catch (err) {
     reportSupabaseError(table, 'load', err instanceof Error ? err.message : String(err));
