@@ -80,6 +80,11 @@ export interface GeoContext {
   reqLat?: number | null;
   reqLng?: number | null;
   geoConfidence?: string | null; // the project's geo_source confidence (high/medium)
+  // Phase 3 (district lookup migration): the authoritative `districts` record id the
+  // request resolved to. When set, a project whose `district_lookup` equals it is an
+  // EXACT match (relational, lookup-first); text fuzzy-match on preferred_neighborhoods
+  // remains as the dual-read fallback for projects not yet backfilled.
+  reqDistrictId?: string | null;
 }
 
 // Deterministic, stable across requests → prompt-cacheable. DO NOT interpolate.
@@ -597,7 +602,11 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   const projDistrict = asStr(data.preferred_neighborhoods);
   const projCity = asStr(data.preferred_city);
   if (req.district || req.city) {
-    const districtMatch = !!req.district && fuzzyContains(projDistrict, req.district);
+    // Lookup-first (dual-read): an exact match is the authoritative district_lookup id
+    // equality when both sides are backfilled; otherwise fall back to text fuzzy-match.
+    const projDistrictId = asStr(data.district_lookup);
+    const lookupMatch = !!geo?.reqDistrictId && !!projDistrictId && projDistrictId === geo.reqDistrictId;
+    const districtMatch = lookupMatch || (!!req.district && fuzzyContains(projDistrict, req.district));
     const cityMatch = !!req.city && fuzzyContains(projCity, req.city);
     // True distance to the requested district's centroid, when both ends have coords.
     const haveDist =
@@ -913,6 +922,47 @@ export function reconcileRecommendationPayload(
   return { payload: p, corrections };
 }
 
+/** Resolve a requested district name to the authoritative `districts` record
+ *  (id + centroid). Lookup-first matching backbone: an exact match is later defined
+ *  as a project whose district_lookup equals this id. City-aware when req.city is
+ *  given (the same district name can exist in multiple cities). Returns null when the
+ *  district isn't in the SPL set, in which case the caller falls back to text/averaged. */
+async function resolveRequestedDistrict(
+  supabase: SupabaseClient,
+  req: MatchRequirements,
+): Promise<{ id: string; lat: number | null; lng: number | null } | null> {
+  if (!req.district) return null;
+  const dm = await getModelByName(supabase, 'districts');
+  if (!dm) return null;
+  const token = req.district.replace(/^\s*حي\s+/, '').trim();
+  if (!token) return null;
+  const pat = `%${token}%`;
+  const { data, error } = await supabase
+    .from('unified_records')
+    .select('id, data')
+    .eq('model_id', dm.id)
+    .or(`data->>name_ar.ilike.${pat},data->>name_en.ilike.${pat}`)
+    .limit(60);
+  if (error || !data || data.length === 0) return null;
+  const named = data.filter(
+    (r) =>
+      fuzzyContains(asStr(r.data.name_ar), req.district!) ||
+      fuzzyContains(asStr(r.data.name_en), req.district!),
+  );
+  const pool = named.length ? named : data;
+  let pick = pool[0];
+  if (!pick) return null;
+  if (req.city) {
+    const byCity = pool.find(
+      (r) =>
+        fuzzyContains(asStr(r.data.city_name_ar), req.city!) ||
+        fuzzyContains(asStr(r.data.city_name_en), req.city!),
+    );
+    if (byCity) pick = byCity;
+  }
+  return { id: pick.id, lat: asNum(pick.data.centroid_lat), lng: asNum(pick.data.centroid_lng) };
+}
+
 export async function matchProjects(supabase: SupabaseClient, req: MatchRequirements): Promise<string> {
   const model = await getModelByName(supabase, 'all_projects');
   if (!model) return JSON.stringify({ error: 'all_projects model not found', our_projects: { count: 0, results: [] }, all_projects: null });
@@ -927,20 +977,31 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
 
   const includeSoldOut = req.include_sold_out === true;
 
-  // ── Location intelligence: centroid of the REQUESTED district (averaged from
-  //    the coords of projects in that district), so we can measure true distance
-  //    to candidates that aren't in the requested district (the "nearby" tier). ──
+  // ── Location intelligence: centroid of the REQUESTED district. Lookup-first —
+  //    resolve req.district to the authoritative `districts` record and use its
+  //    real centroid + record id (so exact matches are relational, not text). If it
+  //    can't be resolved (district not in the SPL set), fall back to the legacy
+  //    approach: average the coords of projects whose text matches (dual-read). ──
   let reqLat: number | null = null;
   let reqLng: number | null = null;
+  let reqDistrictId: string | null = null;
   if (req.district) {
-    let sLat = 0, sLng = 0, n = 0;
-    for (const r of rows) {
-      if (!fuzzyContains(asStr(r.data.preferred_neighborhoods), req.district)) continue;
-      const lat = asNum(r.data.latitude);
-      const lng = asNum(r.data.longitude);
-      if (lat != null && lng != null) { sLat += lat; sLng += lng; n += 1; }
+    const resolved = await resolveRequestedDistrict(supabase, req);
+    if (resolved) {
+      reqDistrictId = resolved.id;
+      reqLat = resolved.lat;
+      reqLng = resolved.lng;
     }
-    if (n > 0) { reqLat = sLat / n; reqLng = sLng / n; }
+    if (reqLat == null) {
+      let sLat = 0, sLng = 0, n = 0;
+      for (const r of rows) {
+        if (!fuzzyContains(asStr(r.data.preferred_neighborhoods), req.district)) continue;
+        const lat = asNum(r.data.latitude);
+        const lng = asNum(r.data.longitude);
+        if (lat != null && lng != null) { sLat += lat; sLng += lng; n += 1; }
+      }
+      if (n > 0) { reqLat = sLat / n; reqLng = sLng / n; }
+    }
   }
 
   // Rank by BAND first, then score — so a genuine good/strong match always
@@ -962,6 +1023,7 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
         projLng: asNum(r.data.longitude),
         reqLat,
         reqLng,
+        reqDistrictId,
         geoConfidence: asStr(r.data.geo_confidence) || null,
       });
       if (s.district_exact) anyDistrictExact = true;

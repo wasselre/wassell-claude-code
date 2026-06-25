@@ -526,3 +526,94 @@ export function collectUrlsNeedingResolution(
   }
   return [...out];
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// District geometry + name-normalization helpers (district lookup migration).
+// Used by the district map layer and by district resolution. GeoJSON coordinate
+// order is [lng, lat] throughout.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Great-circle distance in km between two points (haversine). */
+export function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371;
+  const dLat = ((bLat - aLat) * Math.PI) / 180;
+  const dLng = ((bLng - aLng) * Math.PI) / 180;
+  const s =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((aLat * Math.PI) / 180) * Math.cos((bLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(s)));
+}
+
+/** Distance in km between two district centroids. */
+export function distanceBetweenCentroids(a: LatLng, b: LatLng): number {
+  return haversineKm(a.lat, a.lng, b.lat, b.lng);
+}
+
+/** Ray-casting point-in-ring test. `ring` is an array of [lng, lat] pairs. */
+function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const pi = ring[i], pj = ring[j];
+    if (!pi || !pj) continue;
+    const xi = pi[0]!, yi = pi[1]!, xj = pj[0]!, yj = pj[1]!;
+    const intersect = yi > lat !== yj > lat && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+type GeoJsonGeometry =
+  | { type: 'Polygon'; coordinates: number[][][] }
+  | { type: 'MultiPolygon'; coordinates: number[][][][] };
+
+/** True if (lng,lat) is inside the GeoJSON Polygon/MultiPolygon, honoring holes. */
+export function pointInPolygon(lng: number, lat: number, geometry: GeoJsonGeometry): boolean {
+  if (!geometry) return false;
+  const inPoly = (poly: number[][][]) => {
+    const outer = poly[0];
+    if (!outer || !pointInRing(lng, lat, outer)) return false; // outside outer ring
+    for (let h = 1; h < poly.length; h++) {
+      const hole = poly[h];
+      if (hole && pointInRing(lng, lat, hole)) return false; // in a hole
+    }
+    return true;
+  };
+  if (geometry.type === 'Polygon') return inPoly(geometry.coordinates);
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates.some(inPoly);
+  return false;
+}
+
+/** True if a project pin (lat,lng) falls within a district boundary (GeoJSON object or string). */
+export function pointInDistrict(lat: number, lng: number, boundary: GeoJsonGeometry | string | null | undefined): boolean {
+  if (!boundary) return false;
+  let geom: GeoJsonGeometry | null = null;
+  if (typeof boundary === 'string') {
+    try { geom = JSON.parse(boundary) as GeoJsonGeometry; } catch { return false; } // malformed GeoJSON → not contained
+  } else {
+    geom = boundary;
+  }
+  return pointInPolygon(lng, lat, geom);
+}
+
+/** Normalize an Arabic district name for matching: drop the "حي " prefix, strip
+ *  tatweel, unify alef/teh-marbuta variants, collapse whitespace, lower-case. */
+export function normalizeArabicDistrictName(name: string | null | undefined): string {
+  return String(name ?? '')
+    .replace(/^\s*حي\s+/, '')
+    .replace(/ـ/g, '') // tatweel
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/** Normalize an English district name: drop the trailing "Dist." suffix, lower-case. */
+export function normalizeEnglishDistrictName(name: string | null | undefined): string {
+  return String(name ?? '')
+    .replace(/\s*Dist\.?\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
