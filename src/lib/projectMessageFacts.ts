@@ -162,7 +162,12 @@ export function resolveProjectFacts(
 
   // City / district — dropdowns on all_projects, resolved to bilingual labels.
   const city = resolveOptionLabels(citySlug ? fieldBySlug(allProjectsModel, citySlug) : undefined, citySlug ? ap[citySlug] : null);
-  const district = resolveOptionLabels(districtSlug ? fieldBySlug(allProjectsModel, districtSlug) : undefined, districtSlug ? ap[districtSlug] : null);
+  // Lookup-first: prefer the denormalized district_name (from the linked districts
+  // record); fall back to the legacy preferred_neighborhoods dropdown label.
+  const districtName = asString(ap.district_name);
+  const district: Bilingual | null = districtName
+    ? { ar: districtName, en: districtName }
+    : resolveOptionLabels(districtSlug ? fieldBySlug(allProjectsModel, districtSlug) : undefined, districtSlug ? ap[districtSlug] : null);
 
   // Units linked to this project (project_id → all_projects.id).
   const units = unitsModel ? (records[unitsModel.id] ?? []) : [];

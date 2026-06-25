@@ -777,7 +777,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     facts[k] = v;
   };
   put('city', projCity);
-  put('district', projDistrict);
+  // Lookup-first display: the denormalized district_name (from the linked districts
+  // record) is the canonical value; fall back to the legacy preferred_neighborhoods text.
+  put('district', asStr(data.district_name) || projDistrict);
   put('unit_types', asArr(data.unit_types));
   put('project_status', data.project_status);
   put('project_type', data.project_type);

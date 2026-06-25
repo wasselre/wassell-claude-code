@@ -43,7 +43,7 @@ const cityMap=new Map();
 for(const r of rows) if(!cityMap.has(String(r.city_id))) cityMap.set(String(r.city_id),r);
 const cityRecs=[...cityMap.values()].map(r=>({
   id:cid(String(r.city_id)), model_id:CITIES, created_by_user_id:null,
-  data:{name_ar:r.city_name_ar,name_en:r.city_name_en,display_name:`${r.city_name_ar} - ${r.region_name_ar}`,
+  data:{name_ar:r.city_name_ar,name_en:r.city_name_en,display_name:r.city_name_ar,
     spl_city_id:String(r.city_id),region_lookup:rid(String(r.region_id)),region_name_ar:r.region_name_ar,region_name_en:r.region_name_en,
     source:SOURCE,source_updated_at:EXTRACT,has_districts:true,is_active:true}
 }));
@@ -52,7 +52,7 @@ const cityRecs=[...cityMap.values()].map(r=>({
 const distRecs=rows.map(r=>({
   id:did(String(r.district_id)), model_id:DISTRICTS, created_by_user_id:null,
   data:{name_ar:r.district_name_ar,name_en:r.district_name_en,spl_district_id:String(r.district_id),
-    display_name:`${r.district_name_ar} - ${r.city_name_ar} - ${r.region_name_ar}`,
+    display_name:stripHayy(r.district_name_ar),
     city_lookup:cid(String(r.city_id)),city_id:String(r.city_id),city_name_ar:r.city_name_ar,city_name_en:r.city_name_en,
     region_lookup:rid(String(r.region_id)),region_id:String(r.region_id),region_name_ar:r.region_name_ar,region_name_en:r.region_name_en,
     centroid_lat:r.centroid_lat,centroid_lng:r.centroid_lng,center_lat:r.centroid_lat,center_lng:r.centroid_lng,
