@@ -569,6 +569,11 @@ interface ScoredProject {
   band: 'strong' | 'good' | 'partial';
   match_type: 'exact' | 'nearby' | 'same_city' | 'stretch' | 'partial';
   district_exact: boolean;
+  /** How the district matched: 'lookup' = authoritative district_lookup id equality
+   *  (high confidence), 'text' = legacy free-text fuzzy match (lower confidence),
+   *  null = district not matched (or only city matched). Lets the grouping layer flag
+   *  `legacy_text_match_only` and downgrade data_confidence. */
+  district_match_basis: 'lookup' | 'text' | null;
   available_units_zero: boolean;
   breakdown: Record<string, number | null>;
   data_gaps: string[];
@@ -598,6 +603,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
 
   // ── Location (district/city text + distance for the "nearby" tier) ──
   let districtExact = false;
+  let districtMatchBasis: ScoredProject['district_match_basis'] = null;
   let matchType: ScoredProject['match_type'] = 'partial';
   let locationTier: ScoredProject['location_tier'] = 'none';
   let distanceKm: number | null = null;
@@ -617,6 +623,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
       if (districtMatch) {
         dims.location.value = 1;
         districtExact = true;
+        // Geography is now lookup-ONLY (the 2026-06-26 hard cutover removed the
+        // legacy text path), so an exact district match is always relational.
+        districtMatchBasis = 'lookup';
         matchType = 'exact';
         locationTier = 'exact';
         distanceKm = dist != null ? Math.round(dist * 10) / 10 : null;
@@ -798,6 +807,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     band,
     match_type: matchType,
     district_exact: districtExact,
+    district_match_basis: districtMatchBasis,
     available_units_zero: availZero,
     breakdown,
     data_gaps: gaps,
@@ -811,7 +821,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
 
 // ─── match_projects ─────────────────────────────────────────────────────────
 
-interface MatchResultItem {
+export interface MatchResultItem {
   project_id: string;
   project_name: string;
   data_source: 'our_projects' | 'all_projects';
@@ -820,6 +830,7 @@ interface MatchResultItem {
   score: number;
   match_band: 'strong' | 'good' | 'partial';
   match_type: ScoredProject['match_type'];
+  district_match_basis: ScoredProject['district_match_basis'];
   score_breakdown: Record<string, number | null>;
   facts: Record<string, unknown>;
   data_gaps: string[];
@@ -1011,16 +1022,41 @@ async function resolveLookupNames(supabase: SupabaseClient, modelName: string, i
   return arr.map((id) => byId.get(id)).filter((s): s is string => !!s);
 }
 
-export async function matchProjects(supabase: SupabaseClient, req: MatchRequirements): Promise<string> {
+/** The full, un-truncated result of one match run — the object behind the
+ *  `match_projects` tool's JSON. Exposed so the deterministic `/api/suggest-projects`
+ *  endpoint can group/label the SAME scored candidates without re-running the LLM
+ *  or duplicating scoring logic (Algorithm decides; AI explains). `our`/`all` carry
+ *  the FULL sorted lists (the tool wrapper slices them to TOP_N for the model). */
+export interface MatchCoreSuccess {
+  ok: true;
+  requirements: MatchRequirements;
+  district_exact_match: boolean;
+  used_fallback: boolean;
+  notes: string[];
+  /** The authoritative districts record id the request resolved to (lookup-first),
+   *  or null when the district wasn't in the SPL set (then matching used the legacy
+   *  text-averaged centroid → metadata.used_legacy_fallback). */
+  reqDistrictId: string | null;
+  /** True when a real district centroid was available for distance ranking. */
+  reqHasCentroid: boolean;
+  our: MatchResultItem[];
+  all: MatchResultItem[];
+}
+export type MatchCoreResult = MatchCoreSuccess | { ok: false; error: string };
+
+export async function matchProjectsCore(
+  supabase: SupabaseClient,
+  req: MatchRequirements,
+): Promise<MatchCoreResult> {
   const model = await getModelByName(supabase, 'all_projects');
-  if (!model) return JSON.stringify({ error: 'all_projects model not found', our_projects: { count: 0, results: [] }, all_projects: null });
+  if (!model) return { ok: false, error: 'all_projects model not found' };
 
   let rows: RecordRow[];
   let tier1Ids: Set<string>;
   try {
     [rows, tier1Ids] = await Promise.all([pageRecords(supabase, model.id), loadTier1ProjectIds(supabase)]);
   } catch (err) {
-    return JSON.stringify({ error: err instanceof Error ? err.message : String(err), our_projects: { count: 0, results: [] }, all_projects: null });
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
   const includeSoldOut = req.include_sold_out === true;
@@ -1080,6 +1116,7 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
         score: s.score,
         match_band: s.band,
         match_type: s.match_type,
+        district_match_basis: s.district_match_basis,
         score_breakdown: s.breakdown,
         facts: s.facts,
         data_gaps: s.data_gaps,
@@ -1129,28 +1166,49 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
     notes.push('No good match in our_projects — falling back to all_projects. Those results MUST be verified before offering.');
   }
 
-  // The two tiers are returned as SEPARATE objects and the all_projects group is
-  // ONLY present when the fallback fired — so a good in-portfolio match returns
-  // our_projects ONLY, and the model can never blend the lists.
-  return JSON.stringify({
-    requirements_echo: req,
+  return {
+    ok: true,
+    requirements: req,
     district_exact_match: anyDistrictExact,
     used_fallback: usedFallback,
+    notes,
+    reqDistrictId,
+    reqHasCentroid: reqLat != null && reqLng != null,
+    our: tier1,
+    all: tier2,
+  };
+}
+
+/**
+ * The `match_projects` tool surface — a thin string wrapper over matchProjectsCore.
+ * The shape is kept BYTE-IDENTICAL to the historical output (the LLM + match.ts +
+ * the Follow-up panel all depend on it): two never-mixed tiers, all_projects ONLY
+ * present when the Tier-1 fallback fired, each results array sliced to TOP_N.
+ */
+export async function matchProjects(supabase: SupabaseClient, req: MatchRequirements): Promise<string> {
+  const core = await matchProjectsCore(supabase, req);
+  if (!core.ok) {
+    return JSON.stringify({ error: core.error, our_projects: { count: 0, results: [] }, all_projects: null });
+  }
+  return JSON.stringify({
+    requirements_echo: core.requirements,
+    district_exact_match: core.district_exact_match,
+    used_fallback: core.used_fallback,
     our_projects: {
       source: 'our_projects',
-      count: tier1.length,
-      results: tier1.slice(0, TOP_N),
+      count: core.our.length,
+      results: core.our.slice(0, TOP_N),
     },
-    all_projects: usedFallback
+    all_projects: core.used_fallback
       ? {
           source: 'all_projects',
           requires_verification: true,
           warning: VERIFY_WARNING,
-          count: tier2.length,
-          results: tier2.slice(0, TOP_N),
+          count: core.all.length,
+          results: core.all.slice(0, TOP_N),
         }
       : null,
-    notes,
+    notes: core.notes,
   });
 }
 

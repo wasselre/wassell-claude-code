@@ -1,8 +1,8 @@
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, beforeAll } from 'vitest';
 import { writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { matchProjects, type MatchRequirements } from '../../../api/_lib/matchAgent';
 
 const REPORT: string[] = [];
@@ -52,7 +52,10 @@ const SCENARIOS: Array<{ label: string; requirements: MatchRequirements }> = [
 ];
 
 live('match_projects — live Arabic scenarios', () => {
-  const supabase = createClient(URL, KEY, { auth: { persistSession: false } });
+  // Construct lazily so a skipped suite (no secrets) never calls createClient at
+  // factory-eval time (which would throw "supabaseUrl is required").
+  let supabase: SupabaseClient;
+  beforeAll(() => { supabase = createClient(URL, KEY, { auth: { persistSession: false } }); });
 
   afterAll(() => {
     // Write to the OS temp dir so a local run never litters the repo. Path is

@@ -18,6 +18,8 @@ import NextActionCard from '@/pages/Matching/components/NextActionCard';
 import MessageCard from '@/pages/Matching/components/MessageCard';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import { useAppStore } from '@/stores/appStore';
+import { useFeatureFlag } from '@/lib/featureFlags';
+import SuggestedProjectsModal from './SuggestedProjectsModal';
 
 /** A structured card rendered inline in the panel transcript. */
 type PanelCard =
@@ -42,6 +44,9 @@ interface Props {
   prefDraft: Record<string, unknown>;
   /** The follow-up's own draft (outcome_notes, etc.) for added context. */
   followupDraft: Record<string, unknown>;
+  /** The follow-up record id — passed to the Suggested Projects modal for the
+   *  recommendation audit log + add-to-client context. */
+  followupId?: string | null;
   /** Name of the project the follow-up centers on, if any. */
   projectName?: string | null;
 }
@@ -58,10 +63,12 @@ interface Props {
  * record discards the panel conversation.
  */
 export default function SalesAssistantSidePanel({
-  isAr, clientsModel, clientRec, prefDraft, followupDraft, projectName,
+  isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
 
+  const assistantEnabled = useFeatureFlag('sales_assistant_enabled');
+  const [showSuggested, setShowSuggested] = useState(false);
   const [messages, setMessages] = useState<PanelMessage[]>([]);
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
@@ -224,10 +231,9 @@ export default function SalesAssistantSidePanel({
   }
 
   function onSuggestProjects() {
-    void send(L(
-      'رشّح أنسب المشاريع لهذا العميل بناءً على تفضيلاته الحالية في نموذج المتابعة.',
-      'Suggest the best-fit projects for this customer based on their current preferences in the follow-up form.',
-    ));
+    // Open the grouped, deterministic Suggested Projects modal (reads the current
+    // unsaved preference draft). The in-panel chat remains for free-form questions.
+    setShowSuggested(true);
   }
 
   function onProjectInfo() {
@@ -268,24 +274,45 @@ export default function SalesAssistantSidePanel({
     }
   }
 
+  // Feature-flag kill switch — hides the panel + Suggested Projects + modal.
+  // Rollback for the whole feature = flip feature_flags.sales_assistant_enabled.
+  if (!assistantEnabled) return null;
+
+  const suggestedModal = showSuggested ? (
+    <SuggestedProjectsModal
+      isAr={isAr}
+      clientsModel={clientsModel}
+      clientRec={clientRec}
+      prefDraft={prefDraft}
+      followupDraft={followupDraft}
+      followupId={followupId ?? null}
+      projectName={projectName}
+      onClose={() => setShowSuggested(false)}
+    />
+  ) : null;
+
   if (collapsed) {
     return (
-      <div className="w-full xl:w-12 xl:shrink-0 xl:sticky xl:top-4">
-        <button
-          type="button"
-          onClick={() => setCollapsed(false)}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl border border-copper/30 bg-copper/10 px-3 py-2 text-sm font-bold text-copper transition hover:bg-copper/20 xl:h-full xl:flex-col xl:py-4"
-          title={L('فتح مساعد المبيعات', 'Open the Sales Assistant')}
-        >
-          <Compass size={18} />
-          <span className="xl:[writing-mode:vertical-rl] xl:rotate-180">{L('مساعد المبيعات', 'Sales Assistant')}</span>
-        </button>
-      </div>
+      <>
+        <div className="w-full xl:w-12 xl:shrink-0 xl:sticky xl:top-4">
+          <button
+            type="button"
+            onClick={() => setCollapsed(false)}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-copper/30 bg-copper/10 px-3 py-2 text-sm font-bold text-copper transition hover:bg-copper/20 xl:h-full xl:flex-col xl:py-4"
+            title={L('فتح مساعد المبيعات', 'Open the Sales Assistant')}
+          >
+            <Compass size={18} />
+            <span className="xl:[writing-mode:vertical-rl] xl:rotate-180">{L('مساعد المبيعات', 'Sales Assistant')}</span>
+          </button>
+        </div>
+        {suggestedModal}
+      </>
     );
   }
 
   return (
     <div className="w-full xl:w-[400px] xl:shrink-0 xl:sticky xl:top-4">
+      {suggestedModal}
       <div className="flex h-[600px] flex-col overflow-hidden rounded-2xl border border-copper/30 bg-white shadow-sm xl:h-[calc(100vh-6rem)]">
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-sand/30 bg-copper/10 px-3 py-2.5">

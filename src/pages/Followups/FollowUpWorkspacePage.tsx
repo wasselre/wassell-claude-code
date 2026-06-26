@@ -355,6 +355,7 @@ export default function FollowUpWorkspacePage() {
         clientRec={clientRec}
         prefDraft={prefDraft}
         followupDraft={draft}
+        followupId={record.id}
         projectName={(ctx.project?.project_name as string | undefined) ?? null}
       />
       </div>
