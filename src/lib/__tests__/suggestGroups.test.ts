@@ -157,6 +157,29 @@ describe('groupMatchResults — bucketing', () => {
     expect(g.metadata.used_legacy_fallback).toBe(true);
   });
 
+  it('with NO criteria, routes everything to fallback as honest "not matched" (never strong)', () => {
+    // Empty requirements → scoreProject only has `availability` to score, which
+    // renormalizes to 100/strong. The grouping must NOT present that as a match.
+    const it1 = item({
+      project_id: 'nc1', match_band: 'strong', match_type: 'partial', district_match_basis: null,
+      score: 100, facts: { project_status: ACTIVE, price_range: { min: 870_000, max: 1_290_000 }, available_units: 66 },
+    });
+    const g = groupMatchResults(core([it1]), {});
+    expect(g.metadata.has_criteria).toBe(false);
+    expect(g.groups.exact_matches).toHaveLength(0);
+    expect(g.groups.location_matches).toHaveLength(0);
+    expect(g.groups.fallback_matches.map((x) => x.project_id)).toContain('nc1');
+    const card = g.groups.fallback_matches[0]!;
+    expect(card.reason_code).toBe('no_criteria');
+    expect(card.match_band).toBe('partial'); // not the engine's misleading "strong"
+    expect(card.data_confidence).toBe('low');
+  });
+
+  it('with at least one criterion, has_criteria is true', () => {
+    const it1 = item({ project_id: 'c1', match_type: 'exact', district_match_basis: 'lookup', facts: { project_status: ACTIVE } });
+    expect(groupMatchResults(core([it1]), { district: 'النرجس' }).metadata.has_criteria).toBe(true);
+  });
+
   it('caps each group at perGroup', () => {
     const many = Array.from({ length: 12 }, (_, i) => item({
       project_id: `m${i}`, match_type: 'exact', district_match_basis: 'lookup', facts: { project_status: ACTIVE },

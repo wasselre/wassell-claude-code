@@ -62,7 +62,8 @@ export type ReasonCode =
   | 'strong_location_no_price'
   | 'strong_location_over_budget'
   | 'fallback_verify'
-  | 'fallback_weak';
+  | 'fallback_weak'
+  | 'no_criteria';
 
 export interface SuggestionItem {
   project_id: string;
@@ -97,6 +98,10 @@ export interface GroupedSuggestions {
      *  matched via legacy free text rather than the district_lookup id. */
     used_legacy_fallback: boolean;
     req_district_resolved: boolean;
+    /** False when the client has NO matchable preference at all (no location,
+     *  budget, type, area, or bedrooms). Then results are general available
+     *  inventory, NOT matched to the client — the UI must say so. */
+    has_criteria: boolean;
     counts: Record<SuggestionGroupKey, number>;
   };
 }
@@ -264,6 +269,17 @@ export function groupMatchResults(
     fallback_matches: [],
   };
 
+  // Does the client have ANY matchable preference? With none, the only dimension
+  // scoreProject can apply is `availability`, which renormalizes to 100/strong —
+  // so EVERY available project looks like a "strong match". That's misleading: it
+  // matched nothing about the client. In that case we present everything as honest
+  // fallback ("available inventory, not matched") so the UI can't claim a match.
+  const hasAnyCriteria = !!(
+    req.district || req.city || req.property_type ||
+    req.budget_min != null || req.budget_max != null ||
+    req.area_min != null || req.area_max != null || req.bedrooms != null
+  );
+
   // our_projects first, then all_projects (only present when the fallback fired).
   const candidates = [...core.our, ...core.all];
   let anyTextMatch = false;
@@ -276,8 +292,17 @@ export function groupMatchResults(
     const fit = computeBudgetFit(req, priceRange);
     if (item.district_match_basis === 'text') anyTextMatch = true;
 
-    const group = pickBucket(item, req, status, priceKnown, fit);
-    const reason = reasonFor(group, item, fit);
+    let group = pickBucket(item, req, status, priceKnown, fit);
+    let reason = reasonFor(group, item, fit);
+    let confidence = computeConfidence(item, status, priceKnown, unitKnown);
+    let band = item.match_band;
+    if (!hasAnyCriteria) {
+      // No criteria → honest fallback, never a "strong match".
+      group = 'fallback_matches';
+      reason = { code: 'no_criteria', text: 'No preferences set — general available inventory, not matched to this client.' };
+      confidence = 'low';
+      band = 'partial';
+    }
 
     groups[group].push({
       project_id: item.project_id,
@@ -285,10 +310,10 @@ export function groupMatchResults(
       data_source: item.data_source,
       requires_verification: item.requires_verification === true || item.data_source === 'all_projects',
       score: item.score,
-      match_band: item.match_band,
+      match_band: band,
       match_type: item.match_type,
       group,
-      data_confidence: computeConfidence(item, status, priceKnown, unitKnown),
+      data_confidence: confidence,
       data_gaps: buildGaps(item, req, priceKnown),
       distance_km: item.distance_km,
       distance_basis: item.distance_km != null ? 'district_centroid' : null,
@@ -315,6 +340,7 @@ export function groupMatchResults(
       used_fallback: core.used_fallback,
       used_legacy_fallback: (!!req.district && !core.reqDistrictId) || anyTextMatch,
       req_district_resolved: !!core.reqDistrictId,
+      has_criteria: hasAnyCriteria,
       counts,
     },
   };

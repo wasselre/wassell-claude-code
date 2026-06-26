@@ -84,7 +84,13 @@ export default function SuggestionCard({
             {[district, city].filter(Boolean).join('، ') || L('الموقع غير محدد', 'Location not set')}
           </div>
         </div>
-        <BandBadge band={item.match_band} score={item.score} isAr={isAr} />
+        {item.reason_code === 'no_criteria' ? (
+          <span className="shrink-0 inline-flex items-center px-2 py-0.5 rounded-full border border-gray-200 bg-gray-100 text-gray-600 text-[11px] font-bold">
+            {L('غير مطابق', 'Not matched')}
+          </span>
+        ) : (
+          <BandBadge band={item.match_band} score={item.score} isAr={isAr} />
+        )}
       </div>
 
       <div className="p-3 space-y-2.5">
@@ -269,6 +275,7 @@ function localizedReason(item: SuggestionItem, isAr: boolean): string {
     case 'budget_fit': return isAr ? 'سعر موثوق ضمن الميزانية.' : 'Reliable pricing that fits the budget.';
     case 'strong_location_over_budget': return isAr ? 'الموقع ممتاز لكن السعر أعلى من الميزانية — تأكد من المرونة.' : 'Strong location, but priced above budget — confirm flexibility.';
     case 'strong_location_no_price': return isAr ? 'مطابقة موقع قوية؛ بيانات السعر/الوحدات ناقصة — تحقّق قبل العرض.' : 'Strong location match; price/unit data missing — verify before offering.';
+    case 'no_criteria': return isAr ? 'لا توجد تفضيلات محددة لهذا العميل — هذه مشاريع متاحة عامة وليست مطابقة لتفضيلاته.' : 'No preferences set for this client — general available inventory, not matched to them.';
     case 'fallback_verify': return isAr ? 'من القاعدة الموسّعة — تحقّق من التفاصيل قبل العرض.' : 'From the broad database — verify details before offering.';
     case 'fallback_weak': default: return isAr ? 'مطابقة جزئية — ملاءمة أضعف أو بيانات ناقصة.' : 'Partial match — weaker fit or missing data.';
   }

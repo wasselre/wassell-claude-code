@@ -260,6 +260,14 @@ export default function SuggestedProjectsModal({
               {!loading && error && (
                 <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
               )}
+              {!loading && !error && resp && !resp.metadata.has_criteria && total > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  {L(
+                    'لم تُحدَّد أي تفضيلات لهذا العميل، لذلك هذه ليست ترشيحات مطابقة — إنما مشاريع متاحة عامة. حدِّد الحي أو الميزانية أو نوع العقار (أو اسأل العميل) للحصول على ترشيح دقيق.',
+                    'No preferences are set for this client, so these are not matched recommendations — just generally available projects. Set a district, budget, or unit type (or ask the client) for a precise match.',
+                  )}
+                </div>
+              )}
               {!loading && !error && total === 0 && (
                 <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
                   <Info size={22} className="text-copper" />

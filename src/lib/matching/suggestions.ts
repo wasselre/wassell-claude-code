@@ -49,7 +49,8 @@ export type ReasonCode =
   | 'strong_location_no_price'
   | 'strong_location_over_budget'
   | 'fallback_verify'
-  | 'fallback_weak';
+  | 'fallback_weak'
+  | 'no_criteria';
 
 export interface SuggestionItem {
   project_id: string;
@@ -84,6 +85,7 @@ export interface SuggestionsResponse {
     used_legacy_fallback: boolean;
     used_draft_values: boolean;
     req_district_resolved: boolean;
+    has_criteria: boolean;
     counts: Record<SuggestionGroupKey, number>;
     generated_at: string;
   };

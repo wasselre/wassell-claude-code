@@ -112,6 +112,44 @@ export default async function handler(req: Request): Promise<Response> {
     const requirements = normalizeRequirements(body.requirements);
     const usedDraftValues = body.used_draft_values === true;
 
+    // No criteria → no recommendation. With zero requirements the scorer can only
+    // grade availability, which makes EVERY in-stock project a meaningless 100/strong
+    // "match". That's not a recommendation — it's the whole catalogue. Short-circuit
+    // to an empty result + `needs_preferences` so the UI asks for preferences instead
+    // of showing misleading strong matches. (No audit row — nothing was recommended.)
+    const hasCriteria = !!(
+      requirements.district ||
+      requirements.city ||
+      requirements.property_type ||
+      requirements.budget_min != null ||
+      requirements.budget_max != null ||
+      requirements.area_min != null ||
+      requirements.area_max != null ||
+      requirements.bedrooms != null ||
+      (requirements.amenities && requirements.amenities.length > 0)
+    );
+    if (!hasCriteria) {
+      const emptyGroups = Object.fromEntries(SUGGESTION_GROUP_KEYS.map((k) => [k, []]));
+      const zeroCounts = Object.fromEntries(SUGGESTION_GROUP_KEYS.map((k) => [k, 0]));
+      return jsonOk({
+        client_preferences_summary: {
+          requirements,
+          missing_required_preferences: missingPreferences(requirements),
+        },
+        groups: emptyGroups,
+        metadata: {
+          total_candidates: 0,
+          used_fallback: false,
+          used_legacy_fallback: false,
+          req_district_resolved: false,
+          counts: zeroCounts,
+          used_draft_values: usedDraftValues,
+          needs_preferences: true,
+          generated_at: new Date().toISOString(),
+        },
+      });
+    }
+
     const core = await matchProjectsCore(supabase, requirements);
     if (!core.ok) {
       // Surface loudly (never silently swallow) but keep a renderable shape.
