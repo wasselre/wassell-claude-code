@@ -20,8 +20,10 @@ function clientField(client: AppRecord, candidates: string[]): unknown {
 
 const SOURCE_SLUGS = ['lead_source', 'source', 'client_source'];
 const PROJECT_SLUGS = ['preferred_project', 'preferred_projects', 'project', 'interested_project'];
-const CITY_SLUGS = ['preferred_city', 'city', 'client_city'];
-const DISTRICT_SLUGS = ['district', 'preferred_district', 'neighborhood', 'preferred_neighborhoods'];
+// Relational geography only — match on the lookup fields (preferred_cities /
+// preferred_districts hold cities/districts record ids), not legacy text dropdowns.
+const CITY_SLUGS = ['preferred_cities'];
+const DISTRICT_SLUGS = ['preferred_districts'];
 const BUDGET_SLUGS = ['budget', 'budget_max', 'max_budget', 'budget_amount'];
 const STAGE_SLUGS = ['client_stage'];
 const STATUS_SLUGS = ['client_status'];

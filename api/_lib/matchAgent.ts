@@ -80,11 +80,13 @@ export interface GeoContext {
   reqLat?: number | null;
   reqLng?: number | null;
   geoConfidence?: string | null; // the project's geo_source confidence (high/medium)
-  // Phase 3 (district lookup migration): the authoritative `districts` record id the
-  // request resolved to. When set, a project whose `district_lookup` equals it is an
-  // EXACT match (relational, lookup-first); text fuzzy-match on preferred_neighborhoods
-  // remains as the dual-read fallback for projects not yet backfilled.
+  // The authoritative `districts` record id the request resolved to. A project whose
+  // `district_lookup` equals it is an EXACT match (relational — no legacy text).
   reqDistrictId?: string | null;
+  // The authoritative `cities` record id the request resolved to (the requested
+  // district's city, or a city-only request). A project whose `city_lookup` equals it
+  // is a same-city match.
+  reqCityId?: string | null;
 }
 
 // Deterministic, stable across requests → prompt-cacheable. DO NOT interpolate.
@@ -599,15 +601,14 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   let matchType: ScoredProject['match_type'] = 'partial';
   let locationTier: ScoredProject['location_tier'] = 'none';
   let distanceKm: number | null = null;
-  const projDistrict = asStr(data.preferred_neighborhoods);
-  const projCity = asStr(data.preferred_city);
+  const projDistrictId = asStr(data.district_lookup);
+  const projCityId = asStr(data.city_lookup);
   if (req.district || req.city) {
-    // Lookup-first (dual-read): an exact match is the authoritative district_lookup id
-    // equality when both sides are backfilled; otherwise fall back to text fuzzy-match.
-    const projDistrictId = asStr(data.district_lookup);
-    const lookupMatch = !!geo?.reqDistrictId && !!projDistrictId && projDistrictId === geo.reqDistrictId;
-    const districtMatch = lookupMatch || (!!req.district && fuzzyContains(projDistrict, req.district));
-    const cityMatch = !!req.city && fuzzyContains(projCity, req.city);
+    // Lookup-ONLY (no legacy text): a match is authoritative lookup-id equality —
+    // project.district_lookup vs the resolved requested district, project.city_lookup
+    // vs the resolved requested city. The whole geography runs on the relational layer.
+    const districtMatch = !!geo?.reqDistrictId && !!projDistrictId && projDistrictId === geo.reqDistrictId;
+    const cityMatch = !!geo?.reqCityId && !!projCityId && projCityId === geo.reqCityId;
     // True distance to the requested district's centroid, when both ends have coords.
     const haveDist =
       geo?.projLat != null && geo?.projLng != null && geo?.reqLat != null && geo?.reqLng != null;
@@ -776,10 +777,10 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     if (Array.isArray(v) && v.length === 0) return;
     facts[k] = v;
   };
-  put('city', projCity);
-  // Lookup-first display: the denormalized district_name (from the linked districts
-  // record) is the canonical value; fall back to the legacy preferred_neighborhoods text.
-  put('district', asStr(data.district_name) || projDistrict);
+  // Display sourced only from the denormalized lookup names (city_lookup → city_name,
+  // district_lookup → district_name). No legacy preferred_city / preferred_neighborhoods.
+  put('city', asStr(data.city_name));
+  put('district', asStr(data.district_name));
   put('unit_types', asArr(data.unit_types));
   put('project_status', data.project_status);
   put('project_type', data.project_type);
@@ -925,14 +926,14 @@ export function reconcileRecommendationPayload(
 }
 
 /** Resolve a requested district name to the authoritative `districts` record
- *  (id + centroid). Lookup-first matching backbone: an exact match is later defined
- *  as a project whose district_lookup equals this id. City-aware when req.city is
- *  given (the same district name can exist in multiple cities). Returns null when the
- *  district isn't in the SPL set, in which case the caller falls back to text/averaged. */
+ *  (id + centroid + its city's id). The matching backbone: a project whose
+ *  district_lookup equals this id is an EXACT match. City-aware when req.city is given
+ *  (the same district name can exist in multiple cities). Returns null when the district
+ *  isn't in the SPL set. */
 async function resolveRequestedDistrict(
   supabase: SupabaseClient,
   req: MatchRequirements,
-): Promise<{ id: string; lat: number | null; lng: number | null } | null> {
+): Promise<{ id: string; cityId: string | null; lat: number | null; lng: number | null } | null> {
   if (!req.district) return null;
   const dm = await getModelByName(supabase, 'districts');
   if (!dm) return null;
@@ -962,7 +963,52 @@ async function resolveRequestedDistrict(
     );
     if (byCity) pick = byCity;
   }
-  return { id: pick.id, lat: asNum(pick.data.centroid_lat), lng: asNum(pick.data.centroid_lng) };
+  return {
+    id: pick.id,
+    cityId: asStr(pick.data.city_lookup) || null,
+    lat: asNum(pick.data.centroid_lat),
+    lng: asNum(pick.data.centroid_lng),
+  };
+}
+
+/** Resolve a requested city name to the authoritative `cities` record id (for
+ *  city-only requests, or when the requested district couldn't be resolved). */
+async function resolveRequestedCity(
+  supabase: SupabaseClient,
+  req: MatchRequirements,
+): Promise<string | null> {
+  if (!req.city) return null;
+  const cm = await getModelByName(supabase, 'cities');
+  if (!cm) return null;
+  const token = req.city.trim();
+  if (!token) return null;
+  const pat = `%${token}%`;
+  const { data, error } = await supabase
+    .from('unified_records')
+    .select('id, data')
+    .eq('model_id', cm.id)
+    .or(`data->>name_ar.ilike.${pat},data->>name_en.ilike.${pat}`)
+    .limit(30);
+  if (error || !data || data.length === 0) return null;
+  const pick =
+    data.find(
+      (r) =>
+        fuzzyContains(asStr(r.data.name_ar), req.city!) ||
+        fuzzyContains(asStr(r.data.name_en), req.city!),
+    ) ?? data[0];
+  return pick ? pick.id : null;
+}
+
+/** Resolve an array of lookup record ids (districts/cities) to their display names. */
+async function resolveLookupNames(supabase: SupabaseClient, modelName: string, ids: unknown): Promise<string[]> {
+  const arr = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x !== '') : [];
+  if (!arr.length) return [];
+  const m = await getModelByName(supabase, modelName);
+  if (!m) return [];
+  const { data } = await supabase.from('unified_records').select('id, data').eq('model_id', m.id).in('id', arr);
+  if (!data) return [];
+  const byId = new Map(data.map((r) => [r.id, asStr(r.data.display_name) || asStr(r.data.name_ar)]));
+  return arr.map((id) => byId.get(id)).filter((s): s is string => !!s);
 }
 
 export async function matchProjects(supabase: SupabaseClient, req: MatchRequirements): Promise<string> {
@@ -979,31 +1025,25 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
 
   const includeSoldOut = req.include_sold_out === true;
 
-  // ── Location intelligence: centroid of the REQUESTED district. Lookup-first —
-  //    resolve req.district to the authoritative `districts` record and use its
-  //    real centroid + record id (so exact matches are relational, not text). If it
-  //    can't be resolved (district not in the SPL set), fall back to the legacy
-  //    approach: average the coords of projects whose text matches (dual-read). ──
+  // ── Location intelligence (relational, no legacy text): resolve the requested
+  //    district to its authoritative `districts` record → record id (for exact match),
+  //    its city id (for same-city), and its real centroid (for the "nearby" tier).
+  //    A city-only request (or an unresolved district) resolves the city directly. ──
   let reqLat: number | null = null;
   let reqLng: number | null = null;
   let reqDistrictId: string | null = null;
+  let reqCityId: string | null = null;
   if (req.district) {
     const resolved = await resolveRequestedDistrict(supabase, req);
     if (resolved) {
       reqDistrictId = resolved.id;
+      reqCityId = resolved.cityId;
       reqLat = resolved.lat;
       reqLng = resolved.lng;
     }
-    if (reqLat == null) {
-      let sLat = 0, sLng = 0, n = 0;
-      for (const r of rows) {
-        if (!fuzzyContains(asStr(r.data.preferred_neighborhoods), req.district)) continue;
-        const lat = asNum(r.data.latitude);
-        const lng = asNum(r.data.longitude);
-        if (lat != null && lng != null) { sLat += lat; sLng += lng; n += 1; }
-      }
-      if (n > 0) { reqLat = sLat / n; reqLng = sLng / n; }
-    }
+  }
+  if (reqCityId == null && req.city) {
+    reqCityId = await resolveRequestedCity(supabase, req);
   }
 
   // Rank by BAND first, then score — so a genuine good/strong match always
@@ -1026,6 +1066,7 @@ export async function matchProjects(supabase: SupabaseClient, req: MatchRequirem
         reqLat,
         reqLng,
         reqDistrictId,
+        reqCityId,
         geoConfidence: asStr(r.data.geo_confidence) || null,
       });
       if (s.district_exact) anyDistrictExact = true;
@@ -1232,8 +1273,8 @@ async function searchProjects(supabase: SupabaseClient, input: SearchProjectsInp
     return {
       project_id: r.id,
       project_name: asStr(r.data.project_name),
-      city: asStr(r.data.preferred_city),
-      district: asStr(r.data.preferred_neighborhoods),
+      city: asStr(r.data.city_name),
+      district: asStr(r.data.district_name),
       data_source: (isOurs ? 'our_projects' : 'all_projects') as 'our_projects' | 'all_projects',
       requires_verification: !isOurs,
     };
@@ -1366,7 +1407,11 @@ function computeLeadTemperature(d: Record<string, unknown>): LeadTemp {
   return { temperature, reasons, days_since_activity: days };
 }
 
-function cleanClientPrefs(d: Record<string, unknown>): Record<string, unknown> {
+function cleanClientPrefs(
+  d: Record<string, unknown>,
+  cityNames: string[],
+  districtNames: string[],
+): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   const put = (k: string, v: unknown) => {
     if (v === null || v === undefined || v === '' || v === '#REF') return;
@@ -1375,8 +1420,10 @@ function cleanClientPrefs(d: Record<string, unknown>): Record<string, unknown> {
   };
   put('budget', d.budget);
   put('preferred_area', d.preferred_area);
-  put('preferred_city', d.preferred_city);
-  put('preferred_neighborhoods', d.preferred_neighborhoods);
+  // Relational geography only — names resolved from preferred_cities / preferred_districts
+  // lookups (no legacy preferred_city / preferred_neighborhoods text).
+  put('preferred_cities', cityNames);
+  put('preferred_districts', districtNames);
   put('preferred_unit_type', d.preferred_unit_type);
   put('preferred_amenities', d.preferred_amenities);
   put('preferred_direction', d.preferred_direction);
@@ -1435,6 +1482,10 @@ async function getCustomerContext(supabase: SupabaseClient, input: CustomerLooku
   }
 
   const d = rec.data;
+  const [cityNames, districtNames] = await Promise.all([
+    resolveLookupNames(supabase, 'cities', d.preferred_cities),
+    resolveLookupNames(supabase, 'districts', d.preferred_districts),
+  ]);
   const temp = computeLeadTemperature(d);
   const dueIso = asStr(d.next_action_due_at);
   const overdue = dueIso ? Date.parse(dueIso) < Date.now() : false;
@@ -1454,7 +1505,7 @@ async function getCustomerContext(supabase: SupabaseClient, input: CustomerLooku
     temperature_reasons: temp.reasons,
     next_action: dueIso || nextType ? { type: nextType || null, due_at: dueIso || null, overdue } : null,
     signals: { days_since_activity: temp.days_since_activity, last_activity_at: asStr(d.last_activity_at) },
-    preferences: cleanClientPrefs(d),
+    preferences: cleanClientPrefs(d, cityNames, districtNames),
     note: 'lead_temperature, stage, status, next_action are DETERMINISTIC from the CRM — quote them, do not re-judge. If a field is empty it is unknown; never invent client history.',
   });
 }

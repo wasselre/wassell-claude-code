@@ -154,20 +154,16 @@ export function resolveProjectFacts(
   // Resolve scalar field slugs from the LIVE model (live slug first, seed
   // fallback). The live all_projects was rebuilt in the Builder, so the seed
   // slugs (city/district/brochure_link/location) don't exist there.
-  const citySlug = slugByCandidates(allProjectsModel, ['preferred_city', 'city']);
-  const districtSlug = slugByCandidates(allProjectsModel, ['preferred_neighborhoods', 'district', 'neighborhood']);
   const unitTypesSlug = slugByCandidates(allProjectsModel, ['unit_types', 'unit_type']);
   const brochureSlug = slugByCandidates(allProjectsModel, ['brochure_url', 'brochure_link', 'brochure']);
   const locationSlug = slugByCandidates(allProjectsModel, ['project_location', 'location', 'location_url']);
 
-  // City / district — dropdowns on all_projects, resolved to bilingual labels.
-  const city = resolveOptionLabels(citySlug ? fieldBySlug(allProjectsModel, citySlug) : undefined, citySlug ? ap[citySlug] : null);
-  // Lookup-first: prefer the denormalized district_name (from the linked districts
-  // record); fall back to the legacy preferred_neighborhoods dropdown label.
+  // City / district — relational only: the denormalized lookup names (city_lookup →
+  // city_name, district_lookup → district_name). No legacy preferred_city / dropdown.
+  const cityName = asString(ap.city_name);
+  const city: Bilingual | null = cityName ? { ar: cityName, en: cityName } : null;
   const districtName = asString(ap.district_name);
-  const district: Bilingual | null = districtName
-    ? { ar: districtName, en: districtName }
-    : resolveOptionLabels(districtSlug ? fieldBySlug(allProjectsModel, districtSlug) : undefined, districtSlug ? ap[districtSlug] : null);
+  const district: Bilingual | null = districtName ? { ar: districtName, en: districtName } : null;
 
   // Units linked to this project (project_id → all_projects.id).
   const units = unitsModel ? (records[unitsModel.id] ?? []) : [];

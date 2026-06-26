@@ -70,8 +70,8 @@ describe('resolveProjectFacts', () => {
     const records: Record<string, AppRecord[]> = {
       [AP_ID]: [rec('ap1', AP_ID, {
         project_name: 'مينا 52',
-        city: 'riyadh',
-        district: 'narjis',
+        city_name: 'الرياض',
+        district_name: 'النرجس',
         min_price: 900000,
         brochure_link: 'https://wassel.re/brochure.pdf',
         location: '24.7,46.6',
@@ -88,8 +88,8 @@ describe('resolveProjectFacts', () => {
 
     expect(f.allProjectId).toBe('ap1');                       // links to the master
     expect(f.name).toBe('مينا 52');                            // prefers master name
-    expect(f.city).toEqual({ ar: 'الرياض', en: 'Riyadh' });    // dropdown → bilingual labels
-    expect(f.district).toEqual({ ar: 'النرجس', en: 'Al Narjis' });
+    expect(f.city).toEqual({ ar: 'الرياض', en: 'الرياض' });    // denormalized city_name (lookup)
+    expect(f.district).toEqual({ ar: 'النرجس', en: 'النرجس' }); // denormalized district_name (lookup)
     expect(f.unitTypes).toEqual([                              // distinct, first-seen order
       { ar: 'شقة', en: 'Apartment' },
       { ar: 'فيلا', en: 'Villa' },
@@ -174,8 +174,8 @@ describe('resolveProjectFacts', () => {
     const recs: Record<string, AppRecord[]> = {
       [AP]: [rec('ap', AP, {
         project_name: 'مينا 52',
-        preferred_city: 'riyadh',
-        preferred_neighborhoods: 'narjis',
+        city_name: 'الرياض',
+        district_name: 'النرجس',
         unit_types: ['apartment'],
         brochure_url: 'https://wassel.re/m52.pdf',
         project_location: 'https://maps.app.goo.gl/KvrmddYBhAjiQfcNA',
@@ -191,8 +191,8 @@ describe('resolveProjectFacts', () => {
     };
     const f = resolveProjectFacts(recs[OP][0]!, ms, recs);
     expect(f.name).toBe('مينا 52');
-    expect(f.city).toEqual({ ar: 'الرياض', en: 'Riyadh' });               // preferred_city
-    expect(f.district).toEqual({ ar: 'النرجس', en: 'Al Narjis' });        // preferred_neighborhoods
+    expect(f.city).toEqual({ ar: 'الرياض', en: 'الرياض' });               // city_name (lookup)
+    expect(f.district).toEqual({ ar: 'النرجس', en: 'النرجس' });           // district_name (lookup)
     expect(f.unitTypes).toEqual([{ ar: 'شقة', en: 'Apartment' }]);        // all_projects unit_types
     expect(f.bedrooms).toEqual({ min: 2, max: 3 });                       // rollup on all_projects
     expect(f.bathrooms).toEqual({ min: 2, max: 3 });

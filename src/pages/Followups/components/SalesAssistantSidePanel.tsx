@@ -17,6 +17,7 @@ import ComparisonCard from '@/pages/Matching/components/ComparisonCard';
 import NextActionCard from '@/pages/Matching/components/NextActionCard';
 import MessageCard from '@/pages/Matching/components/MessageCard';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
+import { useAppStore } from '@/stores/appStore';
 
 /** A structured card rendered inline in the panel transcript. */
 type PanelCard =
@@ -76,6 +77,23 @@ export default function SalesAssistantSidePanel({
   // Resolve the draft-first preferences for both the "used preferences" summary
   // and the assistant context. Recomputed on every render so the freshest
   // unsaved edits are always reflected the moment a quick action fires.
+  // id → display name for districts + cities, so the client's preferred_districts /
+  // preferred_cities lookup ids resolve to readable names for the assistant context.
+  const records = useAppStore((s) => s.records);
+  const models = useAppStore((s) => s.models);
+  const geoNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const name of ['districts', 'cities']) {
+      const m = models.find((mm) => mm.name === name);
+      if (!m) continue;
+      for (const r of records[m.id] ?? []) {
+        const dn = (r.data?.display_name ?? r.data?.name_ar) as unknown;
+        if (typeof dn === 'string' && dn) map[r.id] = dn;
+      }
+    }
+    return map;
+  }, [records, models]);
+
   const ctx = useMemo(
     () => buildAssistantContext({
       clientsModel,
@@ -83,9 +101,10 @@ export default function SalesAssistantSidePanel({
       savedClientData: clientRec?.data ?? null,
       followupDraft,
       projectName,
+      geoNames,
       isAr,
     }),
-    [clientsModel, prefDraft, clientRec, followupDraft, projectName, isAr],
+    [clientsModel, prefDraft, clientRec, followupDraft, projectName, geoNames, isAr],
   );
 
   useEffect(() => {

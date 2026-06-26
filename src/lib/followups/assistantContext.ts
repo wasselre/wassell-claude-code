@@ -29,15 +29,27 @@ export interface UsedPreference {
  *  we present them. Slugs verified against the live `clients` model (2026-06-21).
  *  All but the two ranges are multiselect storing the Arabic label as the value,
  *  which is exactly what match_projects fuzzy-matches against project text. */
-const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kind: 'list' | 'money' | 'area' }> = [
-  { slug: 'preferred_city', label_ar: 'المدينة', label_en: 'City', kind: 'list' },
-  { slug: 'preferred_neighborhoods', label_ar: 'الحي', label_en: 'District', kind: 'list' },
+const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kind: 'list' | 'money' | 'area' | 'geo' }> = [
+  // Relational geography: preferred_cities / preferred_districts hold cities/districts
+  // record ids, resolved to names via geoNames (no legacy preferred_city / neighborhoods).
+  { slug: 'preferred_cities', label_ar: 'المدينة', label_en: 'City', kind: 'geo' },
+  { slug: 'preferred_districts', label_ar: 'الحي', label_en: 'District', kind: 'geo' },
   { slug: 'preferred_unit_type', label_ar: 'نوع العقار', label_en: 'Property type', kind: 'list' },
   { slug: 'budget', label_ar: 'الميزانية', label_en: 'Budget', kind: 'money' },
   { slug: 'preferred_area', label_ar: 'المساحة', label_en: 'Area', kind: 'area' },
   { slug: 'preferred_amenities', label_ar: 'المرافق / نمط الحياة', label_en: 'Amenities / lifestyle', kind: 'list' },
   { slug: 'preferred_direction', label_ar: 'الاتجاه', label_en: 'Direction', kind: 'list' },
 ];
+
+/** Resolve an array of lookup record ids (districts/cities) to display names. */
+function geoValue(raw: unknown, geoNames: Record<string, string> | undefined): string | null {
+  const arr = Array.isArray(raw) ? raw : raw ? [raw] : [];
+  const names = arr
+    .filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+    .map((id) => geoNames?.[id])
+    .filter((s): s is string => !!s);
+  return names.length ? names.join('، ') : null;
+}
 
 const isPresent = (v: unknown): boolean => {
   if (v === null || v === undefined || v === '') return false;
@@ -105,6 +117,9 @@ export interface BuildContextArgs {
   followupDraft: Record<string, unknown>;
   /** Optional project the follow-up is centered on (ctx.project), for context. */
   projectName?: string | null;
+  /** id → display name map for districts + cities, so preferred_districts /
+   *  preferred_cities lookup ids resolve to readable names. Built by the caller. */
+  geoNames?: Record<string, string>;
   isAr: boolean;
 }
 
@@ -123,7 +138,7 @@ export interface AssistantContext {
  * that grounds the shared assistant in the current, unsaved follow-up values.
  */
 export function buildAssistantContext(args: BuildContextArgs): AssistantContext {
-  const { clientsModel, prefDraft, savedClientData, followupDraft, projectName, isAr } = args;
+  const { clientsModel, prefDraft, savedClientData, followupDraft, projectName, geoNames, isAr } = args;
   const fieldBySlug = new Map<string, ModelField>();
   for (const sec of clientsModel?.schema.sections ?? []) {
     for (const f of sec.fields) fieldBySlug.set(f.name, f);
@@ -144,6 +159,7 @@ export function buildAssistantContext(args: BuildContextArgs): AssistantContext 
     let value: string | null = null;
     if (def.kind === 'money') value = formatMoneyRange(raw, isAr);
     else if (def.kind === 'area') value = formatAreaRange(raw, isAr);
+    else if (def.kind === 'geo') value = geoValue(raw, geoNames);
     else value = listValue(field, raw, isAr);
     if (!value) continue;
     used.push({ slug: def.slug, label_ar: def.label_ar, label_en: def.label_en, value });
