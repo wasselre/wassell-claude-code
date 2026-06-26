@@ -44,6 +44,20 @@ function fmtRange(v: unknown, unit: string): string | null {
   return null;
 }
 
+// The project unit_types are stored as English slugs (apartment / villa / floor …);
+// render them in Arabic when the UI is Arabic. Unknown values fall back to the raw
+// value (so a new type still shows). English UI keeps the slug as-is.
+const UNIT_TYPE_AR: Record<string, string> = {
+  apartment: 'شقة', apartments: 'شقة', flat: 'شقة', flats: 'شقة', penthouse: 'بنتهاوس',
+  villa: 'فيلا', villas: 'فيلا', townhouse: 'تاون هاوس', townhouses: 'تاون هاوس',
+  studio: 'استوديو', studios: 'استوديو', duplex: 'دوبلكس', duplexes: 'دوبلكس',
+  floor: 'دور', floors: 'أدوار', land: 'أرض', lands: 'أرض', plot: 'أرض', plots: 'أرض',
+};
+function localizeUnitType(v: string, isAr: boolean): string {
+  if (!isAr) return v;
+  return UNIT_TYPE_AR[v.trim().toLowerCase()] ?? v;
+}
+
 export default function SuggestionCard({
   item, isAr, compareSelected, onToggleCompare, onPitch, onDraftWhatsApp, onAsk, onOpenDetails, onAddToClient, addState,
 }: Props) {
@@ -53,7 +67,7 @@ export default function SuggestionCard({
 
   const city = typeof f.city === 'string' ? f.city : '';
   const district = typeof f.district === 'string' ? f.district : '';
-  const unitTypes = Array.isArray(f.unit_types) ? (f.unit_types as unknown[]).filter((x): x is string => typeof x === 'string').join('، ') : '';
+  const unitTypes = Array.isArray(f.unit_types) ? (f.unit_types as unknown[]).filter((x): x is string => typeof x === 'string').map((t) => localizeUnitType(t, isAr)).join('، ') : '';
   const cur = L('ر.س', 'SAR');
   const price = fmtRange(f.price_range, cur);
   const area = fmtRange(f.area_range, L('م²', 'm²'));
