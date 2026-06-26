@@ -30,6 +30,7 @@ export default function StartChatModal({
   onClose,
   initialClient,
   initialPhone,
+  initialBody,
   onSent,
 }: {
   onClose: () => void;
@@ -37,6 +38,12 @@ export default function StartChatModal({
   initialClient?: PickedClient | null;
   /** Pre-fill a manual number when no client is supplied. */
   initialPhone?: string;
+  /**
+   * Pre-fill the first-message composer (e.g. a project's WhatsApp template,
+   * surfaced from the Suggested Projects card). The textarea stays the source of
+   * truth — the user can still edit before sending.
+   */
+  initialBody?: string;
   /**
    * Called after the first message is sent with the new chat's record id. When
    * provided, the modal hands the conversation back to the caller INSTEAD of
@@ -72,7 +79,7 @@ export default function StartChatModal({
     () => (!initialClient && initialPhone ? normalizePhone(initialPhone) ?? undefined : undefined),
   ); // E.164 from PhoneInput
   const [client, setClient] = useState<PickedClient | null>(initialClient ?? null);
-  const [body, setBody] = useState('');
+  const [body, setBody] = useState(initialBody ?? '');
   const [deviceId, setDeviceId] = useState<string>(defaultDevice?.device_id ?? '');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);

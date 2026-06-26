@@ -11,6 +11,7 @@ import {
 import { addProjectToClient } from '@/lib/matching/addToClient';
 import SuggestionCard from './SuggestionCard';
 import AssistantChatPane, { type AssistantChatHandle } from './AssistantChatPane';
+import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
 
 /**
  * The large "Suggested Projects" modal — the completion-phase centerpiece.
@@ -65,6 +66,8 @@ export default function SuggestedProjectsModal({
   const [activeTab, setActiveTab] = useState<SuggestionGroupKey>('exact_matches');
   const [compare, setCompare] = useState<SuggestionItem[]>([]);
   const [addStates, setAddStates] = useState<Record<string, 'idle' | 'saving' | 'added'>>({});
+  // The project whose WhatsApp flow is open (popup over this modal), if any.
+  const [waProject, setWaProject] = useState<SuggestionItem | null>(null);
 
   // id → display name for districts + cities, from the loaded geography records.
   // Wires both the requirements mapper's lookup-first path AND the assistant
@@ -156,7 +159,9 @@ export default function SuggestedProjectsModal({
     chatRef.current?.ask(L(`اكتب عرضاً مختصراً لمشروع «${item.project_name}» لهذا العميل بناءً على تفضيلاته.`, `Write a short pitch for "${item.project_name}" for this customer based on their preferences.`));
   }
   function onDraftWhatsApp(item: SuggestionItem) {
-    chatRef.current?.ask(L(`جهّز رسالة واتساب عن مشروع «${item.project_name}» لهذا العميل.`, `Draft a WhatsApp message about "${item.project_name}" for this customer.`));
+    // Open the project's WhatsApp flow: prefill the client's chat with the stored
+    // project template (or generate + save one first) — a popup over this modal.
+    setWaProject(item);
   }
   function onAsk(item: SuggestionItem) {
     chatRef.current?.ask(L(`لماذا يُعتبر مشروع «${item.project_name}» مناسباً لهذا العميل؟`, `Why is "${item.project_name}" a good fit for this customer?`));
@@ -184,6 +189,7 @@ export default function SuggestedProjectsModal({
   const activeItems = resp?.groups[activeTab] ?? [];
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-3 sm:p-6" onMouseDown={onClose}>
       <div
         className="flex h-full max-h-[92vh] w-full max-w-[1200px] flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl"
@@ -318,5 +324,19 @@ export default function SuggestedProjectsModal({
         </div>
       </div>
     </div>
+
+    {/* WhatsApp flow — a SIBLING popup (not nested in the modal's onMouseDown
+        backdrop, so clicking it never closes the whole modal). Finds/generates the
+        project template → opens the client chat prefilled. Keeps the rep here. */}
+    {waProject && (
+      <ProjectWhatsAppFlow
+        isAr={isAr}
+        projectId={waProject.project_id}
+        projectName={waProject.project_name}
+        clientRec={clientRec}
+        onClose={() => setWaProject(null)}
+      />
+    )}
+    </>
   );
 }
