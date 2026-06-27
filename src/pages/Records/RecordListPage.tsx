@@ -22,12 +22,14 @@ import { collectViewFields, type ExpandedField } from '@/lib/sectionMirrorExpand
 import {
   adhocStorageKey,
   applyAdhocFilters,
+  isAdhocActive,
   loadAdhocFilters,
   saveAdhocFilters,
   type AdhocFilterState,
 } from '@/lib/adhocFilterUtils';
 import { useApplyViewScope, useApplyVisibleViews, useModelPermissions } from '@/hooks/usePermission';
 import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
+import { isLazyModel } from '@/lib/lazyModels';
 import type { AppRecord, ModelView } from '@/types';
 
 // Stable empty array reference. Returned when a model has no records yet
@@ -42,11 +44,22 @@ export default function RecordListPage() {
   const { modelName } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { models, records, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
+  const { models, records, recordsByModel, loadRecordsPage, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
   const isAr = language === 'ar';
 
   const model = models.find((m) => m.name === modelName);
-  const rawModelRecords = model ? (records[model.id] ?? EMPTY_RECORDS) : EMPTY_RECORDS;
+  // Lazy models (e.g. market_listings) never load their rows into the
+  // in-memory `records` slice at boot — they're paged in on demand via
+  // `loadRecordsPage` into `recordsByModel`. EVERYTHING below branches on
+  // this single predicate; non-lazy models take the exact same path as
+  // before (client filter/sort/slice over `records[model.id]`).
+  const isLazy = isLazyModel(model);
+  const lazyCache = model && isLazy ? recordsByModel[model.id] : undefined;
+  const rawModelRecords = model
+    ? isLazy
+      ? (lazyCache?.rows ?? EMPTY_RECORDS)
+      : (records[model.id] ?? EMPTY_RECORDS)
+    : EMPTY_RECORDS;
   // Inject cross-record rollup values (our_projects → units stats) BEFORE
   // view-scope / search / filters run, so a profile can filter or sort by
   // Project rollup fields are now STORED in record.data (maintained by a DB
@@ -119,6 +132,10 @@ export default function RecordListPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewId, activeView?.sort_field_id, activeView?.sort_direction]);
   const toggleColumnSort = (fieldName: string) => {
+    // Lazy models are server-ordered (created_at DESC) over a partial
+    // window; a client header sort would reorder only the loaded pages.
+    // Disable it so the header click is a no-op for these models.
+    if (isLazy) return;
     setCurrentPage(1);
     if (sortFieldName === fieldName) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -177,6 +194,85 @@ export default function RecordListPage() {
   const updateAdhocFilters = (next: AdhocFilterState) => {
     setAdhocFilters(next);
     if (adhocKey) saveAdhocFilters(adhocKey, next);
+  };
+
+  // ─── Lazy model: server-side filter/search mapping ──────────────
+  // For lazy models the ad-hoc panel + search box drive the
+  // `record_search` RPC (JSONB containment + ILIKE) instead of an
+  // in-memory pass. Only EQUALITY filters that the server path can
+  // express are mapped here:
+  //   - single-value `values` filter in `is` mode on an OWN scalar
+  //     dropdown/lookup/assignee/section_selector field → `{slug: value}`
+  //   - single-value `values` filter in `is` mode on an OWN multiselect
+  //     field → `{slug: [value]}` (array containment)
+  // Everything the server path can't express (ranges, OR/multi-value,
+  // `is_not`, contains, date/number ranges, and any MIRRORED field whose
+  // key is a `<container>::<id>` composite) is intentionally NOT applied
+  // server-side for lazy models — acceptable for v1. The chip still shows
+  // in the panel; it just doesn't narrow the lazy result set.
+  const lazyServerFilters = useMemo<Record<string, unknown>>(() => {
+    if (!isLazy || !model) return {};
+    const ownFieldsById = new Map(
+      model.schema.sections.flatMap((s) => s.fields).map((f) => [f.id, f]),
+    );
+    const out: Record<string, unknown> = {};
+    for (const [key, filter] of Object.entries(adhocFilters)) {
+      if (!isAdhocActive(filter)) continue;
+      if (filter.kind !== 'values') continue;
+      if (filter.mode === 'is_not') continue;
+      if (filter.values.length !== 1) continue; // OR / multi can't go through @>
+      const field = ownFieldsById.get(key); // composite mirror keys won't resolve → skipped
+      if (!field) continue;
+      const v = filter.values[0]!;
+      if (field.type === 'multiselect') {
+        out[field.name] = [v];
+      } else if (
+        field.type === 'dropdown' ||
+        field.type === 'lookup' ||
+        field.type === 'assignee' ||
+        field.type === 'section_selector'
+      ) {
+        out[field.name] = v;
+      }
+    }
+    return out;
+  }, [isLazy, model, adhocFilters]);
+
+  // Debounced search text (~300ms) so each keystroke doesn't fire an RPC.
+  const [lazySearchDebounced, setLazySearchDebounced] = useState('');
+  useEffect(() => {
+    if (!isLazy) return;
+    const h = setTimeout(() => setLazySearchDebounced(search.trim()), 300);
+    return () => clearTimeout(h);
+  }, [isLazy, search]);
+
+  // Stable key for the (filters, search) tuple so the load effect only
+  // re-fires when the effective server query actually changes.
+  const lazyFilterKey = useMemo(
+    () => JSON.stringify({ f: lazyServerFilters, s: lazySearchDebounced }),
+    [lazyServerFilters, lazySearchDebounced],
+  );
+
+  // Fire a fresh page-1 load on mount and whenever the effective server
+  // query (equality filters or debounced search) changes. `reset: true`
+  // discards the accumulated pages and starts from the top.
+  useEffect(() => {
+    if (!isLazy || !model) return;
+    void loadRecordsPage(model.id, {
+      filters: lazyServerFilters,
+      searchText: lazySearchDebounced || undefined,
+      reset: true,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLazy, model?.id, lazyFilterKey]);
+
+  // "Load more": append the next server page with the SAME filter context.
+  const loadMoreLazy = () => {
+    if (!model || !isLazy) return;
+    void loadRecordsPage(model.id, {
+      filters: lazyServerFilters,
+      searchText: lazySearchDebounced || undefined,
+    });
   };
 
   const openEditor = (view: ModelView | null) => {
@@ -243,6 +339,10 @@ export default function RecordListPage() {
 
   const filteredRecords = useMemo(() => {
     if (!model) return modelRecords;
+    // Lazy models: filtering happens server-side in `record_search`
+    // (equality filters + ILIKE search mapped above). The loaded rows are
+    // already the filtered set — pass them through untouched.
+    if (isLazy) return modelRecords;
     const allFields = model.schema.sections.flatMap((s) => s.fields);
 
     // 1. Saved view filter conditions (AND-only).
@@ -263,7 +363,7 @@ export default function RecordListPage() {
       out = out.filter((rec) => (searchIndex.get(rec.id) ?? '').includes(q));
     }
     return out;
-  }, [search, modelRecords, model, models, records, activeView, adhocFilters, searchIndex]);
+  }, [isLazy, search, modelRecords, model, models, records, activeView, adhocFilters, searchIndex]);
 
   // Sort the FULL filtered list before pagination, using the lifted
   // column-header sort (seeded from the active view's default sort). This is
@@ -275,9 +375,14 @@ export default function RecordListPage() {
   // whatever the user sorted by here.
   const orderedFilteredRecords = useMemo(() => {
     if (!model) return filteredRecords;
+    // Lazy models: the server returns rows ordered created_at DESC and we
+    // only hold the pages loaded so far, so a client-side column sort would
+    // reorder a partial window and mislead. Keep server order (column-sort
+    // is disabled in the header for lazy models — see toggleColumnSort).
+    if (isLazy) return filteredRecords;
     const ctx: SortCtx = { isAr, allRecords: records, models, users };
     return sortRecordsByFieldName(filteredRecords, model, sortFieldName, sortDir, ctx);
-  }, [filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users]);
+  }, [isLazy, filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users]);
 
   // Publish the currently-visible, sorted record IDs so the record form can
   // offer prev/next navigation in the same order the user was browsing.
@@ -293,9 +398,12 @@ export default function RecordListPage() {
   }, [orderedFilteredRecords.length, activeViewId]);
 
   const pagedRecords = useMemo(() => {
+    // Lazy models page server-side via "Load more" — render every row
+    // loaded so far (no client-side slice window).
+    if (isLazy) return orderedFilteredRecords;
     const start = (currentPage - 1) * pageSize;
     return orderedFilteredRecords.slice(start, start + pageSize);
-  }, [orderedFilteredRecords, currentPage, pageSize]);
+  }, [isLazy, orderedFilteredRecords, currentPage, pageSize]);
 
   if (!model) {
     return (
@@ -416,7 +524,11 @@ export default function RecordListPage() {
                   {isAr ? model.label_ar : model.label_en}
                 </h1>
                 <span className="text-xs text-charcoal/40">
-                  {t('records.record_count', { count: modelRecords.length })}
+                  {isLazy
+                    ? `${t('records.record_count', { count: modelRecords.length })}${
+                        lazyCache?.hasMore ? (isAr ? ' +المزيد' : '+') : ''
+                      }`
+                    : t('records.record_count', { count: modelRecords.length })}
                 </span>
               </div>
             </div>
@@ -564,8 +676,10 @@ export default function RecordListPage() {
         );
       })()}
 
-      {/* Page size selector — sits just above the list (hidden in maps mode) */}
-      {viewMode !== 'maps' && filteredRecords.length > 0 && (
+      {/* Page size selector — sits just above the list (hidden in maps mode).
+          Lazy models page server-side via "Load more", so the client page-size
+          selector doesn't apply. */}
+      {viewMode !== 'maps' && !isLazy && filteredRecords.length > 0 && (
         <div className="flex items-center justify-end mb-2">
           <PageSizeSelector pageSize={pageSize} onChange={updatePageSize} />
         </div>
@@ -635,14 +749,39 @@ export default function RecordListPage() {
         </div>
       )}
 
-      {/* Page navigator — sits below the list (not shown in maps view) */}
-      {viewMode !== 'maps' && (
+      {/* Pagination — below the list (not in maps view).
+          Non-lazy models: the client-side page navigator over the in-memory
+          set. Lazy models: a server-driven "Load more" that appends the next
+          record_search page. */}
+      {viewMode !== 'maps' && !isLazy && (
         <PageNavigator
           totalCount={filteredRecords.length}
           currentPage={currentPage}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
         />
+      )}
+      {viewMode !== 'maps' && isLazy && (
+        <div className="mt-4 flex flex-col items-center gap-2">
+          {lazyCache?.error && (
+            <p className="text-xs text-terracotta">
+              {isAr ? `تعذّر التحميل: ${lazyCache.error}` : `Load failed: ${lazyCache.error}`}
+            </p>
+          )}
+          {lazyCache?.hasMore ? (
+            <Button
+              variant="secondary"
+              onClick={loadMoreLazy}
+              disabled={lazyCache?.loading}
+            >
+              {lazyCache?.loading
+                ? (isAr ? 'جارٍ التحميل…' : 'Loading…')
+                : (isAr ? 'تحميل المزيد' : 'Load more')}
+            </Button>
+          ) : lazyCache?.loading ? (
+            <p className="text-xs text-charcoal/40">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</p>
+          ) : null}
+        </div>
       )}
 
       {/* View editor modal */}

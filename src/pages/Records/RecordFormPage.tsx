@@ -13,7 +13,8 @@ import { activityLogger } from '@/lib/activityLogger';
 import { supabase } from '@/lib/supabase';
 import { setFormUnsaved } from '@/lib/staleBuild';
 import { shouldAdoptResync } from '@/lib/conflictBreaker';
-import type { CustomButton } from '@/types';
+import { isLazyModel } from '@/lib/lazyModels';
+import type { AppRecord, CustomButton } from '@/types';
 
 /**
  * Resolve a lucide-react icon by name. Names are kebab-case in the Builder
@@ -84,16 +85,59 @@ export default function RecordFormPage() {
   const canCreate = usePermission(model?.id ?? '', 'create');
   const canDelete = usePermission(model?.id ?? '', 'delete');
   const isNew = !recordId || recordId === 'new';
-  const rawExistingRecord = model && !isNew
+  // Lazy models (e.g. market_listings) aren't loaded into the in-memory
+  // `records` slice at boot, so the in-memory lookup below misses on a
+  // deep-link / refresh. For those we fetch the single row by id from
+  // `unified_records` (RLS-gated) and keep it in local state. Non-lazy
+  // models keep the pure in-memory lookup unchanged.
+  const isLazy = isLazyModel(model);
+  const inMemoryRecord = model && !isNew
     ? (records[model.id] ?? []).find((r) => r.id === recordId)
     : null;
-  // Inject cross-record rollup values (our_projects → units rollups) so
-  // the form shows live computed counts/ranges/per-meter stats. Pass-
-  // through for every other model. Computed values are render-only —
-  // the save path (appStore.saveRecord) strips them before persist.
-  // Project rollups are now STORED in record.data (DB trigger), so the raw
-  // record already carries them — no read-time rollup needed.
-  const existingRecord = rawExistingRecord;
+  const [lazyFetchedRecord, setLazyFetchedRecord] = useState<AppRecord | null>(null);
+  const [lazyLoading, setLazyLoading] = useState(false);
+  const [lazyNotFound, setLazyNotFound] = useState(false);
+  useEffect(() => {
+    // Reset the lazy-fetch state whenever the target record changes.
+    setLazyFetchedRecord(null);
+    setLazyNotFound(false);
+    // Only fetch for lazy models, an existing record, when the in-memory
+    // store doesn't already have it, and Supabase is available.
+    if (!isLazy || isNew || !model || !recordId || inMemoryRecord || !supabase) {
+      setLazyLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLazyLoading(true);
+    void (async () => {
+      const { data, error } = await supabase
+        .from('unified_records')
+        .select('*')
+        .eq('id', recordId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        addToast(
+          isAr ? `تعذّر تحميل السجل: ${error.message}` : `Failed to load record: ${error.message}`,
+          'error',
+        );
+        setLazyLoading(false);
+        return;
+      }
+      if (data) {
+        setLazyFetchedRecord(data as AppRecord);
+      } else {
+        setLazyNotFound(true);
+      }
+      setLazyLoading(false);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLazy, isNew, model?.id, recordId, inMemoryRecord]);
+  // Prefer the in-memory record (kept live by realtime); fall back to the
+  // lazily-fetched one. Project rollups are STORED in record.data (DB
+  // trigger), so the raw record already carries them — no read-time rollup.
+  const existingRecord = inMemoryRecord ?? lazyFetchedRecord;
   // For existing records, view/edit eligibility threads through view_scope and
   // edit_scope (canViewRecord/canEditRecord compose both with the model-level
   // perms). For new records, we still gate on the create permission only —
@@ -439,6 +483,27 @@ export default function RecordFormPage() {
         <p className="text-lg font-bold">404</p>
       </div>
     );
+  }
+
+  // Lazy models: a deep-linked existing record is fetched from
+  // unified_records (it isn't in the boot payload). Show a spinner while
+  // that fetch is in flight, and a 404 when the row doesn't exist (or RLS
+  // hides it). Non-lazy models never enter these branches.
+  if (!isNew && isLazy && !existingRecord) {
+    if (lazyNotFound) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 text-charcoal/40">
+          <p className="text-lg font-bold">404</p>
+        </div>
+      );
+    }
+    if (lazyLoading) {
+      return (
+        <div className="flex flex-col items-center justify-center py-20 text-charcoal/40">
+          <Loader2 size={28} className="animate-spin" />
+        </div>
+      );
+    }
   }
 
   // View-scope gate. A record that fails the profile's view_scope is invisible

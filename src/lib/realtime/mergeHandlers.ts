@@ -30,6 +30,7 @@ import type {
   User,
 } from '../../types';
 import { upsertRow as upsertCachedRow, removeRow as removeCachedRow } from '../recordsCache';
+import { isLazyModelName } from '../lazyModels';
 
 export type RealtimeOutcome = 'applied' | 'skipped_stale' | 'skipped_unknown_model' | 'noop';
 export type PgEvent = 'INSERT' | 'UPDATE' | 'DELETE';
@@ -120,10 +121,40 @@ export function mergeRecord(
     // If the model isn't loaded into memory, drop the event — Phase E
     // (paginated cache) will load it on demand. For now, ignoring an
     // unknown model is safer than synthesizing a half-record.
-    if (!s.models.some((m) => m.id === row.model_id)) {
+    const eventModel = s.models.find((m) => m.id === row.model_id);
+    if (!eventModel) {
       outcome = 'skipped_unknown_model';
       return s;
     }
+
+    // Lazy models (e.g. market_listings) are NEVER materialized into the
+    // legacy `records[modelId]` slice — their rows live only in the
+    // paginated `recordsByModel` cache. Appending here would re-bloat the
+    // legacy slice over a session (defeating the boot exclusion), so we
+    // touch ONLY the cache bucket (if one exists), with the same
+    // upsert-if-present / stale-dedup posture as below.
+    if (isLazyModelName(eventModel.name)) {
+      const cache = s.recordsByModel[row.model_id];
+      if (!cache) {
+        // No paginated bucket yet — nothing to update, and we must not
+        // create the legacy slice. The next loadRecordsPage picks it up.
+        outcome = 'noop';
+        return s;
+      }
+      const cachedExisting = cache.rows.find((r) => r.id === row.id);
+      if (event === 'UPDATE' && isIncomingStale(cachedExisting, row)) {
+        outcome = 'skipped_stale';
+        return s;
+      }
+      outcome = 'applied';
+      return {
+        recordsByModel: {
+          ...s.recordsByModel,
+          [row.model_id]: upsertCachedRow(cache, row),
+        },
+      };
+    }
+
     const list = s.records[row.model_id] ?? [];
     const existing = list.find((r) => r.id === row.id);
     if (event === 'UPDATE' && isIncomingStale(existing, row)) {

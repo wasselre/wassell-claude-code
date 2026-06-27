@@ -42,6 +42,7 @@ import {
   setError as setCacheError,
 } from '@/lib/recordsCache';
 import type { PaginatedRecordsByModel, RecordsPageCache } from '@/lib/recordsCache';
+import { lazyModelIds } from '@/lib/lazyModels';
 import type {
   AppState,
   AppModel,
@@ -1146,8 +1147,18 @@ function workflowToSupabaseRow(w: Workflow): Record<string, unknown> {
   };
 }
 
-async function supabaseLoad<T>(table: string): Promise<T[] | null> {
+async function supabaseLoad<T>(
+  table: string,
+  opts?: { excludeModelIds?: string[] },
+): Promise<T[] | null> {
   if (!supabase) return null;
+  // Lazy models (e.g. market_listings) are excluded from the bulk boot
+  // load via `.not('model_id','in',(…))` so their (potentially huge) row
+  // sets never enter the in-memory `records` slice. They're paged in on
+  // demand by `loadRecordsPage`. Empty list ⇒ no filter (every other
+  // supabaseLoad call passes nothing and behaves exactly as before).
+  const excludeIds = opts?.excludeModelIds ?? [];
+  const excludeInList = excludeIds.length > 0 ? `(${excludeIds.join(',')})` : null;
   // KEYSET pagination (id > cursor ORDER BY id), sharded for parallelism.
   //
   // Why not OFFSET: every read of `unified_records` (and the RLS tables) runs
@@ -1178,13 +1189,15 @@ async function supabaseLoad<T>(table: string): Promise<T[] | null> {
   const walkRange = async (loExclusive: string, hiInclusive: string, out: T[]): Promise<string | null> => {
     let cursor = loExclusive;
     for (;;) {
-      const { data, error } = await supabase!
+      let q = supabase!
         .from(table)
         .select('*')
         .gt('id', cursor)
         .lte('id', hiInclusive)
         .order('id', { ascending: true })
         .limit(pageSize);
+      if (excludeInList) q = q.not('model_id', 'in', excludeInList);
+      const { data, error } = await q;
       if (error) return error.message ?? String(error);
       const batch = (data ?? []) as T[];
       out.push(...batch);
@@ -1197,12 +1210,14 @@ async function supabaseLoad<T>(table: string): Promise<T[] | null> {
     // First page over the whole space. The common case (small config tables)
     // finishes here in ONE request — no shard amplification.
     const head: T[] = [];
-    const { data: headData, error: headError } = await supabase
+    let headQ = supabase
       .from(table)
       .select('*')
       .gt('id', MIN_ID)
       .order('id', { ascending: true })
       .limit(pageSize);
+    if (excludeInList) headQ = headQ.not('model_id', 'in', excludeInList);
+    const { data: headData, error: headError } = await headQ;
     if (headError) {
       reportSupabaseError(table, 'load', headError.message ?? String(headError));
       return null;
@@ -1533,7 +1548,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     performance.mark('wassell:init:loads:start');
     const groupsP            = supabaseLoad<ModelGroup>('model_groups');
     const modelsP            = supabaseLoad<AppModel>('models');
-    const unifiedRecordsP    = supabaseLoad<AppRecord>('unified_records');
+    // Lazy models' rows must never enter the boot payload. We need the
+    // model list to map name → id, so the unified-records load awaits
+    // modelsP first (the other parallel loads are unaffected — modelsP
+    // itself is already in flight above). When models fail to load we
+    // exclude nothing (fail-safe: same payload as before this change).
+    const unifiedRecordsP    = (async () => {
+      const loadedModels = await modelsP;
+      const excludeModelIds = loadedModels ? lazyModelIds(loadedModels) : [];
+      return supabaseLoad<AppRecord>('unified_records', { excludeModelIds });
+    })();
     const workflowsP         = supabaseLoad<Workflow>('workflows');
     const workflowGroupsP    = (async () => {
       // Tolerate the table not existing yet on older installs that haven't
