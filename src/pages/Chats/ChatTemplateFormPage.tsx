@@ -64,6 +64,30 @@ export default function ChatTemplateFormPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [recordId]);
 
+  // Re-seed the form fields when the record first becomes available. On a hard
+  // reload / direct URL load, `initialize()`'s records slow-tail resolves AFTER
+  // first paint, so the `useState` initializers above captured a null `existing`
+  // and every field would otherwise stay blank until a client-side
+  // re-navigation remounts the component. Keyed on `existing?.id` (NOT the data)
+  // so it only fires on the null→loaded transition (or a switch to another
+  // template) — realtime echoes during editing keep the same id and never
+  // clobber in-progress edits. Same pattern as RecordFormPage / the Follow-up
+  // Workspace.
+  useEffect(() => {
+    const d = (existing?.data as Record<string, unknown> | undefined) ?? {};
+    setName((d.name as string) ?? '');
+    setLanguage((d.language as string) ?? 'ar');
+    setTagsInput(Array.isArray(d.tags) ? (d.tags as string[]).join(', ') : '');
+    setBodyAr((d.body_ar as string) ?? '');
+    setBodyEn((d.body_en as string) ?? '');
+    setMediaKind((d.media_kind as string) ?? '');
+    setMediaFileId((d.media_file_id as string) ?? null);
+    setMediaMime((d.media_mime as string) ?? null);
+    setMediaSize((d.media_size as number) ?? null);
+    setMediaFilename((d.media_filename as string) ?? null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existing?.id]);
+
   if (!model) {
     return (
       <div className="p-8 text-center text-charcoal/50">

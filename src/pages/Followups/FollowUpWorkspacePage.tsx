@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { SlidersHorizontal, ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanEditRecord, useCanViewRecord } from '@/hooks/usePermission';
+import { useRecordDraft } from '@/hooks/useRecordDraft';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import { applyOverridesToConfig, buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
 import type { AppRecord } from '@/types';
@@ -50,8 +51,11 @@ export default function FollowUpWorkspacePage() {
   const canView = useCanViewRecord(model, record ?? undefined);
   const canEdit = useCanEditRecord(model, record ?? undefined);
 
-  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...(record?.data ?? {}) }));
-  const patchDraft = (patch: Record<string, unknown>) => setDraft((d) => ({ ...d, ...patch }));
+  // Editable draft of the follow-up's data. useRecordDraft re-seeds it when the
+  // record first arrives — on a hard reload / direct URL load the records
+  // slow-tail resolves AFTER first paint, so a once-only seed would leave the
+  // workspace stuck in a degraded no-client state until a re-navigation.
+  const { draft, patchDraft } = useRecordDraft(record);
   const [saving, setSaving] = useState(false);
   const [showApptModal, setShowApptModal] = useState(false);
   const [showChatModal, setShowChatModal] = useState(false);
