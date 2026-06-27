@@ -821,10 +821,12 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
 
 // ─── match_projects ─────────────────────────────────────────────────────────
 
+export type MatchSource = 'our_projects' | 'all_projects' | 'market_listings';
+
 export interface MatchResultItem {
   project_id: string;
   project_name: string;
-  data_source: 'our_projects' | 'all_projects';
+  data_source: MatchSource;
   requires_verification?: boolean;
   verification_warning?: string;
   score: number;
@@ -842,6 +844,41 @@ export interface MatchResultItem {
 
 const VERIFY_WARNING =
   'From the All Projects database (unverified, often competitor/scraped data). Verify price, availability, and details before offering to the customer.';
+
+const MARKET_WARNING =
+  'From external Market Listings (scraped public ads). Verify the listing, price, and availability with the advertiser before offering to the customer.';
+
+/**
+ * Adapt one `market_listings` record into the all_projects-shaped object that
+ * scoreProject reads. A listing is a SINGLE unit (single price/area/bedrooms),
+ * so its scalars become {min,max} ranges; availability is derived from is_active
+ * + sold_at; geography rides on the same `district_lookup` + real per-listing
+ * lat/lng. Keeps ONE deterministic scorer for all three sources.
+ */
+function adaptListingToScorable(d: Record<string, unknown>): Record<string, unknown> {
+  const price = asNum(d.price);
+  const area = asNum(d.area);
+  const beds = asNum(d.bedrooms);
+  const baths = asNum(d.bathrooms);
+  const active = d.is_active === true && !asStr(d.sold_at);
+  const types = [asStr(d.property_type), asStr(d.listing_type), asStr(d.category)].filter((s) => s !== '');
+  return {
+    project_name: asStr(d.title) || asStr(d.advertiser_name) || asStr(d.external_id) || 'إعلان سوق',
+    preferred_city: asStr(d.city),
+    district_name: asStr(d.district),
+    district_lookup: asStr(d.district_lookup),
+    unit_types: types,
+    price_range: price != null ? { min: price, max: price } : undefined,
+    area_range: area != null ? { min: area, max: area } : undefined,
+    bedroom_range: beds != null ? { min: beds, max: beds } : undefined,
+    bathroom_range: baths != null ? { min: baths, max: baths } : undefined,
+    available_units: active ? 1 : 0,
+    preferred_amenities: Array.isArray(d.features) ? d.features : [],
+    latitude: asNum(d.latitude),
+    longitude: asNum(d.longitude),
+    project_status: active ? 'available' : 'sold_out',
+  };
+}
 
 // ─── Deterministic-metadata enforcement (Phase 1.1) ──────────────────────────
 // The match score / band / type / source / verification flag are computed by
@@ -1041,12 +1078,25 @@ export interface MatchCoreSuccess {
   reqHasCentroid: boolean;
   our: MatchResultItem[];
   all: MatchResultItem[];
+  /** External Market Listings (scraped public ads), scored as a THIRD source.
+   *  Populated only when opts.includeMarket is set (the grouped endpoint); the
+   *  LLM tool wrapper leaves it empty so its output stays unchanged. */
+  market: MatchResultItem[];
 }
 export type MatchCoreResult = MatchCoreSuccess | { ok: false; error: string };
+
+export interface MatchCoreOptions {
+  /** Score the broad all_projects DB even when Tier-1 has a good match (the
+   *  grouped endpoint shows ALL three sources; the LLM tool keeps fallback-gating). */
+  alwaysScoreAll?: boolean;
+  /** Also score the `market_listings` model as a third source. */
+  includeMarket?: boolean;
+}
 
 export async function matchProjectsCore(
   supabase: SupabaseClient,
   req: MatchRequirements,
+  opts: MatchCoreOptions = {},
 ): Promise<MatchCoreResult> {
   const model = await getModelByName(supabase, 'all_projects');
   if (!model) return { ok: false, error: 'all_projects model not found' };
@@ -1146,11 +1196,65 @@ export async function matchProjectsCore(
   const tier1HasGood = tier1.some((r) => r.match_band !== 'partial');
   const usedFallback = !tier1HasGood;
 
-  // PASS 2 — all_projects is scored ONLY when there is no good in-portfolio
-  // match. When Tier 1 is good, the broad database is never scanned or shown.
-  const tier2 = usedFallback
+  // PASS 2 — all_projects. The LLM tool scores it ONLY on fallback (Tier-1 had no
+  // good match). The grouped endpoint passes alwaysScoreAll so all three sources
+  // are shown side by side, each labelled by source.
+  const tier2 = (usedFallback || opts.alwaysScoreAll)
     ? scoreInto(rows.filter((r) => !tier1Ids.has(r.id)), 'all_projects')
     : [];
+
+  // PASS 3 — market_listings (external scraped ads), scored as a third source via
+  // the same deterministic scorer (each listing adapted to the project shape).
+  // Only the grouped endpoint requests it (opts.includeMarket).
+  let market: MatchResultItem[] = [];
+  if (opts.includeMarket) {
+    const mModel = await getModelByName(supabase, 'market_listings');
+    if (mModel) {
+      let listingRows: RecordRow[] = [];
+      try {
+        listingRows = await pageRecords(supabase, mModel.id);
+      } catch (err) {
+        // Non-fatal: a market-listings read failure must not sink the whole
+        // recommendation (our_projects + all_projects still return). Log loudly.
+        console.error('[matchProjectsCore] market_listings load failed:', err instanceof Error ? err.message : String(err));
+      }
+      for (const r of listingRows) {
+        const adapted = adaptListingToScorable(r.data);
+        const name = asStr(adapted.project_name);
+        if (!name) continue;
+        const s = scoreProject(adapted, req, {
+          projLat: asNum(r.data.latitude),
+          projLng: asNum(r.data.longitude),
+          reqLat,
+          reqLng,
+          reqDistrictId,
+          reqCityId,
+          geoConfidence: (asNum(r.data.latitude) != null && asNum(r.data.longitude) != null) ? 'high' : null,
+        });
+        if (s.score < MIN_RETURN) continue;
+        if (s.available_units_zero && !includeSoldOut) continue;
+        market.push({
+          project_id: r.id,
+          project_name: name,
+          data_source: 'market_listings',
+          requires_verification: true,
+          verification_warning: MARKET_WARNING,
+          score: s.score,
+          match_band: s.band,
+          match_type: s.match_type,
+          district_match_basis: s.district_match_basis,
+          score_breakdown: s.breakdown,
+          facts: s.facts,
+          data_gaps: s.data_gaps,
+          missing_info: s.missing_info,
+          location_tier: s.location_tier,
+          distance_km: s.distance_km,
+          geo_confidence: s.geo_confidence,
+        });
+      }
+      market = market.sort(byBandThenScore);
+    }
+  }
 
   const notes: string[] = [];
   if (req.district && !anyDistrictExact) {
@@ -1176,6 +1280,7 @@ export async function matchProjectsCore(
     reqHasCentroid: reqLat != null && reqLng != null,
     our: tier1,
     all: tier2,
+    market,
   };
 }
 
@@ -1704,4 +1809,4 @@ export async function executeMatchTool(
 }
 
 // Exported for unit testing the deterministic scorer + metadata enforcement.
-export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates };
+export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates, adaptListingToScorable };

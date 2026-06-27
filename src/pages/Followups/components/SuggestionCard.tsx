@@ -3,7 +3,7 @@ import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
   HelpCircle, Megaphone, MessageCircle, GitCompareArrows, ExternalLink, Plus, Check, ChevronDown,
 } from 'lucide-react';
-import type { SuggestionItem, DataConfidence, DataGapCode, MatchBand } from '@/lib/matching/suggestions';
+import type { SuggestionItem, DataConfidence, DataGapCode, MatchBand, MatchSource } from '@/lib/matching/suggestions';
 
 /**
  * One project in the Suggested Projects modal — renders the deterministic match
@@ -84,7 +84,9 @@ export default function SuggestionCard({
       {item.requires_verification && (
         <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 border-b border-amber-200 text-amber-800 text-xs">
           <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-          <span>{item.verification_warning || L('من قاعدة «كل المشاريع» (غير موثّقة) — تحقّق قبل العرض.', 'From the All Projects database (unverified) — verify before offering.')}</span>
+          <span>{item.data_source === 'market_listings'
+            ? L('إعلان سوق خارجي — تحقّق من الإعلان والسعر والتوفر مع المعلِن قبل العرض.', 'External market listing — verify the ad, price, and availability with the advertiser before offering.')
+            : L('من قاعدة «كل المشاريع» (غير موثّقة) — تحقّق قبل العرض.', 'From the All Projects database (unverified) — verify before offering.')}</span>
         </div>
       )}
 
@@ -108,8 +110,9 @@ export default function SuggestionCard({
       </div>
 
       <div className="p-3 space-y-2.5">
-        {/* Category + confidence + distance */}
+        {/* Source + category + confidence + distance */}
         <div className="flex flex-wrap items-center gap-1.5">
+          <SourcePill source={item.data_source} isAr={isAr} />
           <CategoryPill group={item.group} isAr={isAr} />
           <ConfidencePill confidence={item.data_confidence} isAr={isAr} />
           {item.distance_km != null && (
@@ -239,6 +242,16 @@ function CategoryPill({ group, isAr }: { group: SuggestionItem['group']; isAr: b
   };
   const e = map[group];
   return <span className="inline-flex items-center rounded-full border border-copper/30 bg-copper/10 px-2 py-0.5 text-[11px] font-bold text-copper">{isAr ? e.ar : e.en}</span>;
+}
+
+function SourcePill({ source, isAr }: { source: MatchSource; isAr: boolean }) {
+  const map: Record<MatchSource, { cls: string; ar: string; en: string }> = {
+    our_projects: { cls: 'bg-green-600 text-white border-green-600', ar: 'مشاريعنا', en: 'Our Projects' },
+    market_listings: { cls: 'bg-chocolate text-white border-chocolate', ar: 'إعلانات السوق', en: 'Market' },
+    all_projects: { cls: 'bg-charcoal/70 text-white border-charcoal/70', ar: 'كل المشاريع', en: 'Listings DB' },
+  };
+  const e = map[source];
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${e.cls}`}>{isAr ? e.ar : e.en}</span>;
 }
 
 function ConfidencePill({ confidence, isAr }: { confidence: DataConfidence; isAr: boolean }) {

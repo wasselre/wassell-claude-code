@@ -37,6 +37,7 @@ function core(our: MatchResultItem[], all: MatchResultItem[] = [], extra?: Parti
     reqHasCentroid: true,
     our,
     all,
+    market: [],
     ...extra,
   };
 }
@@ -111,16 +112,45 @@ describe('groupMatchResults — bucketing', () => {
     expect(g.groups.exact_matches[0]!.data_confidence).toBe('low');
   });
 
-  it('all_projects fallback → fallback_matches + requires_verification gap', () => {
+  it('all_projects is bucketed by QUALITY (source is orthogonal) with a verify gap + low confidence', () => {
     const it1 = item({
       project_id: 'p7', data_source: 'all_projects', requires_verification: true,
       verification_warning: 'verify me', match_type: 'exact',
-      facts: { project_status: ACTIVE, price_range: { min: 500_000, max: 600_000 } },
+      facts: { project_status: ACTIVE, price_range: { min: 500_000, max: 600_000 }, available_units: 4 },
     });
     const g = groupMatchResults(core([], [it1], { used_fallback: true }), REQ_WITH_BUDGET);
-    expect(g.groups.fallback_matches.map((x) => x.project_id)).toContain('p7');
-    expect(g.groups.fallback_matches[0]!.data_gaps).toContain('requires_verification');
-    expect(g.groups.fallback_matches[0]!.data_confidence).toBe('low');
+    // A good all_projects match now shows in its quality bucket, NOT auto-fallback…
+    expect(g.groups.exact_matches.map((x) => x.project_id)).toContain('p7');
+    // …but still flagged for verification + low confidence (it's unverified).
+    expect(g.groups.exact_matches[0]!.data_gaps).toContain('requires_verification');
+    expect(g.groups.exact_matches[0]!.data_confidence).toBe('low');
+  });
+
+  it('a weak (partial) all_projects match still falls back', () => {
+    const it1 = item({ project_id: 'p7b', data_source: 'all_projects', requires_verification: true, match_band: 'partial', match_type: 'exact', facts: { project_status: ACTIVE } });
+    const g = groupMatchResults(core([], [it1], { used_fallback: true }), REQ_WITH_BUDGET);
+    expect(g.groups.fallback_matches.map((x) => x.project_id)).toContain('p7b');
+  });
+
+  it('market_listings is a third source: bucketed by quality, labelled, verify-flagged', () => {
+    const listing = item({
+      project_id: 'm1', data_source: 'market_listings', requires_verification: true,
+      verification_warning: 'verify with advertiser', match_type: 'exact', district_match_basis: 'lookup',
+      facts: { project_status: 'available', price_range: { min: 800_000, max: 800_000 }, available_units: 1, district: 'النرجس', city: 'الرياض' },
+    });
+    const g = groupMatchResults(core([], [], { market: [listing] }), REQ_WITH_BUDGET);
+    expect(g.groups.exact_matches.map((x) => x.project_id)).toContain('m1');
+    expect(g.groups.exact_matches[0]!.data_source).toBe('market_listings');
+    expect(g.groups.exact_matches[0]!.data_gaps).toContain('requires_verification');
+    expect(g.metadata.source_counts.market_listings).toBe(1);
+  });
+
+  it('source_counts reflect all three sources across shown results', () => {
+    const ours = item({ project_id: 's-our', data_source: 'our_projects', match_type: 'exact', district_match_basis: 'lookup', facts: { project_status: ACTIVE } });
+    const market = item({ project_id: 's-mkt', data_source: 'market_listings', requires_verification: true, match_type: 'exact', facts: { project_status: 'available', available_units: 1 } });
+    const broad = item({ project_id: 's-all', data_source: 'all_projects', requires_verification: true, match_type: 'exact', facts: { project_status: ACTIVE } });
+    const g = groupMatchResults(core([ours], [broad], { market: [market] }), { district: 'النرجس' });
+    expect(g.metadata.source_counts).toEqual({ our_projects: 1, market_listings: 1, all_projects: 1 });
   });
 
   it('partial band → fallback_matches', () => {

@@ -6,7 +6,7 @@ import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import { draftToMatchRequirements } from '@/lib/matching/requirements';
 import {
   fetchSuggestedProjects, totalSuggestions, SUGGESTION_GROUP_KEYS,
-  type SuggestionsResponse, type SuggestionGroupKey, type SuggestionItem,
+  type SuggestionsResponse, type SuggestionGroupKey, type SuggestionItem, type MatchSource,
 } from '@/lib/matching/suggestions';
 import { addProjectToClient } from '@/lib/matching/addToClient';
 import SuggestionCard from './SuggestionCard';
@@ -68,6 +68,7 @@ export default function SuggestedProjectsModal({
   const [addStates, setAddStates] = useState<Record<string, 'idle' | 'saving' | 'added'>>({});
   // The project whose WhatsApp flow is open (popup over this modal), if any.
   const [waProject, setWaProject] = useState<SuggestionItem | null>(null);
+  const [sourceFilter, setSourceFilter] = useState<'all' | MatchSource>('all');
 
   // id → display name for districts + cities, from the loaded geography records.
   // Wires both the requirements mapper's lookup-first path AND the assistant
@@ -186,7 +187,17 @@ export default function SuggestedProjectsModal({
 
   const total = totalSuggestions(resp);
   const missing = resp?.client_preferences_summary.missing_required_preferences ?? [];
-  const activeItems = resp?.groups[activeTab] ?? [];
+  const sourceCounts = resp?.metadata.source_counts;
+  const activeItems = (resp?.groups[activeTab] ?? []).filter(
+    (it) => sourceFilter === 'all' || it.data_source === sourceFilter,
+  );
+  // Which sources actually appear in the results (drives the filter chips).
+  const SOURCE_FILTERS: Array<{ key: 'all' | MatchSource; ar: string; en: string }> = [
+    { key: 'all', ar: 'الكل', en: 'All' },
+    { key: 'our_projects', ar: 'مشاريعنا', en: 'Our Projects' },
+    { key: 'market_listings', ar: 'إعلانات السوق', en: 'Market' },
+    { key: 'all_projects', ar: 'كل المشاريع', en: 'Listings DB' },
+  ];
 
   return (
     <>
@@ -255,6 +266,31 @@ export default function SuggestedProjectsModal({
                 );
               })}
             </div>
+
+            {/* Source filter — separates our projects / market listings / all projects */}
+            {!loading && !error && total > 0 && sourceCounts && (
+              <div className="flex flex-wrap items-center gap-1 border-b border-sand/20 bg-cream/30 px-3 py-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-charcoal/40 me-1">{L('المصدر', 'Source')}</span>
+                {SOURCE_FILTERS.map((sf) => {
+                  const count = sf.key === 'all'
+                    ? sourceCounts.our_projects + sourceCounts.market_listings + sourceCounts.all_projects
+                    : sourceCounts[sf.key];
+                  if (sf.key !== 'all' && count === 0) return null;
+                  const on = sourceFilter === sf.key;
+                  return (
+                    <button
+                      key={sf.key}
+                      type="button"
+                      onClick={() => setSourceFilter(sf.key)}
+                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold transition ${on ? 'bg-chocolate text-white' : 'border border-sand/60 bg-white text-charcoal/70 hover:bg-cream/70'}`}
+                    >
+                      {isAr ? sf.ar : sf.en}
+                      <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
 
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
               {loading && (

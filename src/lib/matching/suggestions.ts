@@ -52,10 +52,12 @@ export type ReasonCode =
   | 'fallback_weak'
   | 'no_criteria';
 
+export type MatchSource = 'our_projects' | 'all_projects' | 'market_listings';
+
 export interface SuggestionItem {
   project_id: string;
   project_name: string;
-  data_source: 'our_projects' | 'all_projects';
+  data_source: MatchSource;
   requires_verification: boolean;
   score: number;
   match_band: MatchBand;
@@ -85,8 +87,13 @@ export interface SuggestionsResponse {
     used_legacy_fallback: boolean;
     used_draft_values: boolean;
     req_district_resolved: boolean;
-    has_criteria: boolean;
+    /** Present on the criteria path; absent on the no-criteria short-circuit. */
+    has_criteria?: boolean;
+    /** True on the no-criteria short-circuit (the UI asks for preferences). */
+    needs_preferences?: boolean;
     counts: Record<SuggestionGroupKey, number>;
+    /** How many SHOWN results came from each source (drives the source filter). */
+    source_counts?: Record<MatchSource, number>;
     generated_at: string;
   };
 }

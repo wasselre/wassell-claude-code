@@ -21,7 +21,7 @@
  *   all_projects fallback / needs verification / legacy-text / weak → fallback_matches
  */
 
-import type { MatchCoreSuccess, MatchRequirements, MatchResultItem } from './matchAgent.js';
+import type { MatchCoreSuccess, MatchRequirements, MatchResultItem, MatchSource } from './matchAgent.js';
 
 export type SuggestionGroupKey =
   | 'exact_matches'
@@ -68,7 +68,7 @@ export type ReasonCode =
 export interface SuggestionItem {
   project_id: string;
   project_name: string;
-  data_source: 'our_projects' | 'all_projects';
+  data_source: MatchSource;
   requires_verification: boolean;
   score: number;
   match_band: 'strong' | 'good' | 'partial';
@@ -103,6 +103,8 @@ export interface GroupedSuggestions {
      *  inventory, NOT matched to the client — the UI must say so. */
     has_criteria: boolean;
     counts: Record<SuggestionGroupKey, number>;
+    /** How many of the SHOWN results came from each source (drives the source filter). */
+    source_counts: Record<MatchSource, number>;
   };
 }
 
@@ -204,9 +206,11 @@ function pickBucket(
   priceKnown: boolean,
   fit: BudgetFit,
 ): SuggestionGroupKey {
-  // Honest fallbacks first.
+  // Honest fallbacks first. NOTE: SOURCE is orthogonal to quality — an
+  // all_projects / market_listings result is bucketed by how well it MATCHES
+  // (and badged with its source + a verify banner), not auto-dumped to fallback.
+  // Only a sold-out/inactive project or a genuinely weak (partial) match falls back.
   if (INACTIVE_STATUSES.has(status)) return 'fallback_matches';
-  if (item.data_source === 'all_projects' || item.requires_verification) return 'fallback_matches';
   if (item.match_band === 'partial') return 'fallback_matches';
 
   const hasBudgetReq = req.budget_min != null || req.budget_max != null;
@@ -280,8 +284,10 @@ export function groupMatchResults(
     req.area_min != null || req.area_max != null || req.bedrooms != null
   );
 
-  // our_projects first, then all_projects (only present when the fallback fired).
-  const candidates = [...core.our, ...core.all];
+  // All three sources, each carrying its own data_source label: our_projects
+  // (curated) first, then market_listings (external ads), then the broad
+  // all_projects DB. Quality buckets are source-agnostic; the card shows the source.
+  const candidates = [...core.our, ...core.market, ...core.all];
   let anyTextMatch = false;
 
   for (const item of candidates) {
@@ -333,6 +339,12 @@ export function groupMatchResults(
     groups[key] = groups[key].slice(0, perGroup);
   }
 
+  // Per-source counts across the SHOWN (post-slice) results — drives the source filter.
+  const source_counts: Record<MatchSource, number> = { our_projects: 0, all_projects: 0, market_listings: 0 };
+  for (const key of SUGGESTION_GROUP_KEYS) {
+    for (const it of groups[key]) source_counts[it.data_source] += 1;
+  }
+
   return {
     groups,
     metadata: {
@@ -342,6 +354,7 @@ export function groupMatchResults(
       req_district_resolved: !!core.reqDistrictId,
       has_criteria: hasAnyCriteria,
       counts,
+      source_counts,
     },
   };
 }

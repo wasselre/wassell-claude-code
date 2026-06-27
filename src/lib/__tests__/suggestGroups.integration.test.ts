@@ -23,9 +23,10 @@ live('groupMatchResults — live prod data', () => {
     // never calls createClient at factory-eval time.
     const supabase = createClient(URL, KEY, { auth: { persistSession: false } });
     const req: MatchRequirements = { city: 'الرياض', district: 'النرجس', property_type: 'شقة', budget_max: 2_000_000 };
-    const core = await matchProjectsCore(supabase, req);
+    const core = await matchProjectsCore(supabase, req, { alwaysScoreAll: true, includeMarket: true });
     expect(core.ok).toBe(true);
     if (!core.ok) return;
+    expect(Array.isArray(core.market)).toBe(true); // third source present (may be empty until listings exist)
 
     const g = groupMatchResults(core, req, { perGroup: 10 });
 

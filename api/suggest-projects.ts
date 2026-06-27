@@ -150,7 +150,9 @@ export default async function handler(req: Request): Promise<Response> {
       });
     }
 
-    const core = await matchProjectsCore(supabase, requirements);
+    // Show all THREE sources side by side (our_projects + market_listings +
+    // all_projects), each labelled by source — not the LLM tool's fallback-gated view.
+    const core = await matchProjectsCore(supabase, requirements, { alwaysScoreAll: true, includeMarket: true });
     if (!core.ok) {
       // Surface loudly (never silently swallow) but keep a renderable shape.
       console.error('[suggest-projects] match core failed:', core.error);
