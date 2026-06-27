@@ -59,6 +59,15 @@ export function resolveExternalEmbed(url: string): VideoEmbed {
   if (vimeo?.[1]) {
     return { kind: 'embed', src: `https://player.vimeo.com/video/${vimeo[1]}` };
   }
+  // Cloudflare Stream — listing videos (e.g. imported from Aqar) come as HLS
+  // .m3u8 manifests, which a native <video> can't play outside Safari. Map any
+  // Stream customer URL to its iframe player, which handles HLS everywhere.
+  const cfStream = url.match(
+    /^(https:\/\/customer-[a-z0-9]+\.cloudflarestream\.com\/[\w-]+)\/(?:manifest\/[\w.]+|iframe|watch|thumbnails)/i,
+  );
+  if (cfStream?.[1]) {
+    return { kind: 'embed', src: `${cfStream[1]}/iframe` };
+  }
   return { kind: 'file', src: url };
 }
 
