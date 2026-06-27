@@ -61,6 +61,25 @@ const TOP_N = 5; // max results returned per tier
 // within NEARBY_MAX_KM of that district's centroid is a "nearby" alternative.
 const NEARBY_MAX_KM = 12;
 
+// Market-listings area pre-filter (2026-06-27). When pulling the ~46k external
+// market_listings, we don't scan them all — we pre-filter server-side to the set
+// of districts whose CENTROID is within NEARBY_DISTRICT_KM of the requested
+// district's centroid, then let scoreProject tier them in-memory. This radius is
+// DELIBERATELY WIDER than the scorer's NEARBY_MAX_KM (12 km): the scorer measures
+// each listing's OWN lat/lng against the requested centroid, but a district is an
+// AREA — a listing physically within 12 km of the requested centre can sit in a
+// neighbouring district whose CENTROID is farther than 12 km. A 20 km centroid
+// buffer captures essentially every listing the scorer would still call "nearby"
+// (measured on live Riyadh data: ≈96.6% of scorer-relevant listings, vs ≈94.2%
+// at 12 km, with the district-id set staying small — ~61 ids — well within the
+// PostgREST `.in(...)` limit). See the report / git history for the measurement.
+const NEARBY_DISTRICT_KM = 20;
+
+// Hard cap for the area-less fallback scan of market_listings (no district AND no
+// city to filter on). We can't afford to scan all 46k, so we take the newest N in
+// a STABLE order (created_at desc) — never an arbitrary slice — and log loudly.
+const MARKET_FALLBACK_CAP = 4000;
+
 /** Great-circle distance in km between two lat/lng points (haversine). */
 function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371;
@@ -1047,6 +1066,98 @@ async function resolveRequestedCity(
   return pick ? pick.id : null;
 }
 
+/** All `districts` record ids whose centroid is within NEARBY_DISTRICT_KM of the
+ *  requested district's centroid (always INCLUDING the requested district itself).
+ *  This is the geographic pre-filter for market_listings: a listing in any of
+ *  these districts is at least a candidate for the scorer's exact/nearby tiers.
+ *  Returns null when the centroid is missing (caller falls back to city/region). */
+async function nearbyDistrictIds(
+  supabase: SupabaseClient,
+  reqDistrictId: string,
+  reqLat: number,
+  reqLng: number,
+): Promise<string[] | null> {
+  const dm = await getModelByName(supabase, 'districts');
+  if (!dm) return null;
+  let rows: RecordRow[];
+  try {
+    rows = await pageRecords(supabase, dm.id, 10); // ~3.7k districts → 4 pages
+  } catch (err) {
+    console.error(
+      '[matchProjectsCore] districts load for area pre-filter failed:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return null;
+  }
+  const ids = new Set<string>([reqDistrictId]); // always keep the exact district
+  for (const r of rows) {
+    const lat = asNum(r.data.centroid_lat);
+    const lng = asNum(r.data.centroid_lng);
+    if (lat == null || lng == null) continue;
+    if (haversineKm(reqLat, reqLng, lat, lng) <= NEARBY_DISTRICT_KM) ids.add(r.id);
+  }
+  return [...ids];
+}
+
+/** Load market_listings rows for the area pre-filter — paginated, filtered
+ *  server-side by a JSONB-text equality set (`data->>filterKey` IN values), in a
+ *  STABLE order so paging is deterministic. Used to pull only the listings in the
+ *  requested district + its geographic neighbours (or, on fallback, its city)
+ *  instead of scanning all ~46k. Non-throwing pagination matches pageRecords. */
+async function loadMarketByFilter(
+  supabase: SupabaseClient,
+  modelId: string,
+  filterKey: 'district_lookup' | 'city_lookup',
+  values: string[],
+  maxPages = 30,
+): Promise<RecordRow[]> {
+  if (values.length === 0) return [];
+  const pageSize = 1000;
+  const rows: RecordRow[] = [];
+  for (let page = 0; page < maxPages; page++) {
+    const from = page * pageSize;
+    const { data, error } = await supabase
+      .from('unified_records')
+      .select('id, data')
+      .eq('model_id', modelId)
+      .in(`data->>${filterKey}`, values)
+      .order('created_at', { ascending: false })
+      .range(from, from + pageSize - 1);
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as RecordRow[];
+    rows.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return rows;
+}
+
+/** Fallback load when the request has no usable area signal: the newest N
+ *  market_listings (STABLE created_at-desc order — never an arbitrary slice). */
+async function loadMarketNewestCapped(
+  supabase: SupabaseClient,
+  modelId: string,
+  cap: number,
+): Promise<RecordRow[]> {
+  const pageSize = 1000;
+  const rows: RecordRow[] = [];
+  const maxPages = Math.ceil(cap / pageSize);
+  for (let page = 0; page < maxPages; page++) {
+    const from = page * pageSize;
+    const to = Math.min(from + pageSize, cap) - 1;
+    const { data, error } = await supabase
+      .from('unified_records')
+      .select('id, data')
+      .eq('model_id', modelId)
+      .order('created_at', { ascending: false })
+      .range(from, to);
+    if (error) throw new Error(error.message);
+    const batch = (data ?? []) as RecordRow[];
+    rows.push(...batch);
+    if (batch.length < pageSize || rows.length >= cap) break;
+  }
+  return rows;
+}
+
 /** Resolve an array of lookup record ids (districts/cities) to their display names. */
 async function resolveLookupNames(supabase: SupabaseClient, modelName: string, ids: unknown): Promise<string[]> {
   const arr = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x !== '') : [];
@@ -1210,9 +1321,37 @@ export async function matchProjectsCore(
   if (opts.includeMarket) {
     const mModel = await getModelByName(supabase, 'market_listings');
     if (mModel) {
+      // Pre-filter the ~46k listings to the client's relevant AREA server-side so
+      // we never scan the whole model (the old `pageRecords(20)` only saw the first
+      // ~20k in an arbitrary, order-less slice). Budget/type/etc. are still applied
+      // in-memory by scoreProject below — only the geographic narrowing happens here.
+      //   1. Requested district resolved (with centroid) → all listings in that
+      //      district + its geographic neighbours (district-centroid ≤ NEARBY_DISTRICT_KM).
+      //   2. Else a city resolved → all listings in that city (city_lookup equality).
+      //   3. Else no area signal → newest MARKET_FALLBACK_CAP listings (stable order),
+      //      logged as a capped scan.
       let listingRows: RecordRow[] = [];
       try {
-        listingRows = await pageRecords(supabase, mModel.id);
+        if (reqDistrictId && reqLat != null && reqLng != null) {
+          const ids = await nearbyDistrictIds(supabase, reqDistrictId, reqLat, reqLng);
+          if (ids && ids.length) {
+            listingRows = await loadMarketByFilter(supabase, mModel.id, 'district_lookup', ids);
+          } else if (reqCityId) {
+            listingRows = await loadMarketByFilter(supabase, mModel.id, 'city_lookup', [reqCityId]);
+          } else {
+            console.warn(
+              `[matchProjectsCore] market_listings: district "${req.district}" resolved but no neighbour set — capped scan of newest ${MARKET_FALLBACK_CAP}.`,
+            );
+            listingRows = await loadMarketNewestCapped(supabase, mModel.id, MARKET_FALLBACK_CAP);
+          }
+        } else if (reqCityId) {
+          listingRows = await loadMarketByFilter(supabase, mModel.id, 'city_lookup', [reqCityId]);
+        } else {
+          console.warn(
+            `[matchProjectsCore] market_listings: no usable area signal (district/city) — capped scan of newest ${MARKET_FALLBACK_CAP}.`,
+          );
+          listingRows = await loadMarketNewestCapped(supabase, mModel.id, MARKET_FALLBACK_CAP);
+        }
       } catch (err) {
         // Non-fatal: a market-listings read failure must not sink the whole
         // recommendation (our_projects + all_projects still return). Log loudly.
