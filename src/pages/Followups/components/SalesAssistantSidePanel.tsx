@@ -18,7 +18,7 @@ import NextActionCard from '@/pages/Matching/components/NextActionCard';
 import MessageCard from '@/pages/Matching/components/MessageCard';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import { useAppStore } from '@/stores/appStore';
-import { useFeatureFlag } from '@/lib/featureFlags';
+import { useFeatureFlag, PROJECT_FINDER_ONLY } from '@/lib/featureFlags';
 import SuggestedProjectsModal from './SuggestedProjectsModal';
 
 /** A structured card rendered inline in the panel transcript. */
@@ -290,6 +290,43 @@ export default function SalesAssistantSidePanel({
       onClose={() => setShowSuggested(false)}
     />
   ) : null;
+
+  // Project-Finder-only direction: the conversational co-pilot is unwired. The
+  // side panel becomes a focused launcher for the DETERMINISTIC Suggested Projects
+  // finder (geography boundary-verified). No free-text chat, no next-best-action,
+  // no message drafting, no task creation.
+  if (PROJECT_FINDER_ONLY) {
+    return (
+      <div className="w-full xl:w-[340px] xl:shrink-0 xl:sticky xl:top-4">
+        {suggestedModal}
+        <div className="rounded-2xl border border-copper/30 bg-white p-4 shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-copper/15">
+              <Compass size={18} className="text-copper" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-bold text-chocolate">{L('الباحث عن المشاريع', 'Project Finder')}</div>
+              <div className="text-[11px] text-charcoal/60">{L('ترتيب دقيق حسب الموقع والميزانية', 'Precise ranking by location & budget')}</div>
+            </div>
+          </div>
+          <p className="mt-3 text-xs leading-relaxed text-charcoal/65">
+            {L(
+              'يجد المشاريع المناسبة لتفضيلات العميل ويرتّبها حسب تطابق الحي (موثّق بالإحداثيات)، القرب، الميزانية، والمواصفات.',
+              'Finds the right projects for the client and ranks them by district match (coordinate-verified), proximity, budget, and specs.',
+            )}
+          </p>
+          <button
+            type="button"
+            onClick={onSuggestProjects}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-copper px-3 py-2.5 text-sm font-bold text-white transition hover:bg-terracotta"
+          >
+            <Sparkles size={16} />
+            {L('المشاريع المقترحة', 'Suggested Projects')}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (collapsed) {
     return (

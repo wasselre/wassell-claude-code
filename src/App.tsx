@@ -39,6 +39,8 @@ import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
 import CopywriterPage from '@/pages/Copywriter/CopywriterPage';
 import MatchingPage from '@/pages/Matching/MatchingPage';
+import RetiredAssistantNotice from '@/components/RetiredAssistantNotice';
+import { isRetiredAssistantModel } from '@/lib/featureFlags';
 import AssistantInsightsPage from '@/pages/Matching/AssistantInsightsPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
@@ -106,6 +108,8 @@ function RecordFormPageRoute() {
 function RecordDetailDispatcher() {
   const { modelName, recordId } = useParams();
   const [searchParams] = useSearchParams();
+  // Retired broad-assistant models (Project-Finder-only direction) — unwired.
+  if (isRetiredAssistantModel(modelName)) return <RetiredAssistantNotice />;
   if (modelName === 'followups' && searchParams.get('generic') !== '1') {
     // Custom guided "Follow-up Workspace" replaces the generic form. The
     // generic form stays reachable for advanced editing via ?generic=1 (the
@@ -189,6 +193,8 @@ function RecordNewDispatcher() {
  */
 function RecordListDispatcher() {
   const { modelName } = useParams();
+  // Retired broad-assistant models (Project-Finder-only direction) — unwired.
+  if (isRetiredAssistantModel(modelName)) return <RetiredAssistantNotice />;
   if (modelName === 'chats') {
     return <ChatsSplitPage />;
   }

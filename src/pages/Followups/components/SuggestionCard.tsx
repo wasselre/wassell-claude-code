@@ -18,9 +18,12 @@ interface Props {
   isAr: boolean;
   compareSelected: boolean;
   onToggleCompare: (item: SuggestionItem) => void;
-  onPitch: (item: SuggestionItem) => void;
-  onDraftWhatsApp: (item: SuggestionItem) => void;
-  onAsk: (item: SuggestionItem) => void; // "why this project?" → chat
+  // Chat-handoff actions. Optional: under the Project-Finder-only direction the
+  // conversational assistant is unwired, so these are omitted and their buttons
+  // hidden (the deterministic "Why this project?" breakdown stays).
+  onPitch?: (item: SuggestionItem) => void;
+  onDraftWhatsApp?: (item: SuggestionItem) => void;
+  onAsk?: (item: SuggestionItem) => void; // "why this project?" → chat
   onOpenDetails: (item: SuggestionItem) => void;
   onAddToClient: (item: SuggestionItem) => void;
   addState: 'idle' | 'saving' | 'added';
@@ -163,16 +166,18 @@ export default function SuggestionCard({
                   <span className="font-semibold text-charcoal/85">{Math.round((v as number) * 100)}%</span>
                 </div>
               ))}
-            <button type="button" onClick={() => onAsk(item)} className="mt-1 text-[11px] font-semibold text-copper hover:underline">
-              {L('اشرح أكثر في المحادثة ←', 'Explain more in chat →')}
-            </button>
+            {onAsk && (
+              <button type="button" onClick={() => onAsk(item)} className="mt-1 text-[11px] font-semibold text-copper hover:underline">
+                {L('اشرح أكثر في المحادثة ←', 'Explain more in chat →')}
+              </button>
+            )}
           </div>
         )}
 
         {/* Actions */}
         <div className="flex flex-wrap gap-1.5 pt-1">
-          <ActionBtn icon={<Megaphone size={12} />} label={L('عرض', 'Pitch')} onClick={() => onPitch(item)} />
-          <ActionBtn icon={<MessageCircle size={12} />} label={L('واتساب', 'WhatsApp')} onClick={() => onDraftWhatsApp(item)} />
+          {onPitch && <ActionBtn icon={<Megaphone size={12} />} label={L('عرض', 'Pitch')} onClick={() => onPitch(item)} />}
+          {onDraftWhatsApp && <ActionBtn icon={<MessageCircle size={12} />} label={L('واتساب', 'WhatsApp')} onClick={() => onDraftWhatsApp(item)} />}
           <ActionBtn icon={<GitCompareArrows size={12} />} label={compareSelected ? L('مُحدد للمقارنة', 'Selected') : L('قارن', 'Compare')} onClick={() => onToggleCompare(item)} active={compareSelected} />
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
           <ActionBtn

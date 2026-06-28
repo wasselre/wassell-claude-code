@@ -9,6 +9,7 @@ import {
   type SuggestionsResponse, type SuggestionGroupKey, type SuggestionItem, type MatchSource,
 } from '@/lib/matching/suggestions';
 import { addProjectToClient } from '@/lib/matching/addToClient';
+import { PROJECT_FINDER_ONLY } from '@/lib/featureFlags';
 import SuggestionCard from './SuggestionCard';
 import AssistantChatPane, { type AssistantChatHandle } from './AssistantChatPane';
 import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
@@ -326,9 +327,11 @@ export default function SuggestedProjectsModal({
                   isAr={isAr}
                   compareSelected={compare.some((c) => c.project_id === item.project_id)}
                   onToggleCompare={toggleCompare}
-                  onPitch={onPitch}
-                  onDraftWhatsApp={onDraftWhatsApp}
-                  onAsk={onAsk}
+                  // Chat-handoff actions (pitch / WhatsApp draft / ask) are omitted
+                  // under the Project-Finder-only direction — no conversational AI.
+                  onPitch={PROJECT_FINDER_ONLY ? undefined : onPitch}
+                  onDraftWhatsApp={PROJECT_FINDER_ONLY ? undefined : onDraftWhatsApp}
+                  onAsk={PROJECT_FINDER_ONLY ? undefined : onAsk}
                   onOpenDetails={onOpenDetails}
                   onAddToClient={onAddToClient}
                   addState={addStates[item.project_id] ?? 'idle'}
@@ -350,13 +353,17 @@ export default function SuggestedProjectsModal({
             )}
           </div>
 
-          {/* Right — assistant chat */}
-          <div className="flex min-h-0 w-full flex-col bg-white lg:w-[400px] lg:shrink-0">
-            <div className="border-b border-sand/30 bg-copper/10 px-3 py-2 text-sm font-bold text-chocolate">{L('اسأل المساعد', 'Ask the assistant')}</div>
-            <div className="min-h-0 flex-1">
-              <AssistantChatPane ref={chatRef} isAr={isAr} getPreface={getPreface} />
+          {/* Right — assistant chat. Unwired under the Project-Finder-only
+              direction (no conversational AI); the deterministic ranked groups
+              are the whole surface. */}
+          {!PROJECT_FINDER_ONLY && (
+            <div className="flex min-h-0 w-full flex-col bg-white lg:w-[400px] lg:shrink-0">
+              <div className="border-b border-sand/30 bg-copper/10 px-3 py-2 text-sm font-bold text-chocolate">{L('اسأل المساعد', 'Ask the assistant')}</div>
+              <div className="min-h-0 flex-1">
+                <AssistantChatPane ref={chatRef} isAr={isAr} getPreface={getPreface} />
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>

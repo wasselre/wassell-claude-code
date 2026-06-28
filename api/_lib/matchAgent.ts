@@ -31,6 +31,7 @@
 
 import type Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { classifyGeo, type GeoStatus } from './geoVerify.js';
 
 export const MATCH_MODEL = 'claude-opus-4-7';
 export const MATCH_MAX_TOKENS = 8_000;
@@ -44,6 +45,7 @@ const WEIGHTS = {
   type: 20,
   area: 10,
   bedrooms: 8,
+  bathrooms: 6,
   availability: 5,
   amenities: 2,
 } as const;
@@ -106,6 +108,14 @@ export interface GeoContext {
   // district's city, or a city-only request). A project whose city equals it
   // is a same-city match.
   reqCityId?: string | null;
+  // MULTI-district support (client preferences): the full set of authoritative
+  // `districts` ids the request resolved to. A project whose verified district is
+  // in this set is an EXACT match. `reqDistrictId` stays the primary (first) for
+  // back-compat. The set of those districts' centroids feeds the nearby tier
+  // (distance to the NEAREST requested district centre).
+  reqDistrictIds?: string[];
+  reqCityIds?: string[];
+  reqCentroids?: Array<{ lat: number; lng: number }>;
   // The scored record's OWN geography, extracted from its `location` cascade field
   // ({region,city,district} ids) by the caller. The district id drives the exact
   // tier, the city id the same-city tier. Names are resolved (display_name) from the
@@ -572,12 +582,17 @@ async function loadTier1ProjectIds(supabase: SupabaseClient): Promise<Set<string
 export interface MatchRequirements {
   city?: string;
   district?: string;
+  /** Multiple preferred districts (client preferences). When present, a project in
+   *  ANY of these is an exact match. `district` (the first) is kept for the nearby
+   *  centroid + market pre-filter. */
+  districts?: string[];
   property_type?: string;
   budget_min?: number;
   budget_max?: number;
   area_min?: number;
   area_max?: number;
   bedrooms?: number;
+  bathrooms?: number;
   lifestyle?: string[];
   amenities?: string[];
   financing_needed?: boolean;
@@ -624,6 +639,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     type: { value: null },
     area: { value: null },
     bedrooms: { value: null },
+    bathrooms: { value: null },
     availability: { value: null },
     amenities: { value: null },
   };
@@ -637,16 +653,30 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   const projDistrictId = asStr(geo?.projDistrictId);
   const projCityId = asStr(geo?.projCityId);
   if (req.district || req.city) {
-    // Lookup-ONLY (no legacy text): a match is authoritative id equality —
-    // the project's location.district vs the resolved requested district, its
-    // location.city vs the resolved requested city. The caller extracts both from
-    // the record's `location` cascade field. Geography runs on the relational layer.
-    const districtMatch = !!geo?.reqDistrictId && !!projDistrictId && projDistrictId === geo.reqDistrictId;
-    const cityMatch = !!geo?.reqCityId && !!projCityId && projCityId === geo.reqCityId;
-    // True distance to the requested district's centroid, when both ends have coords.
-    const haveDist =
-      geo?.projLat != null && geo?.projLng != null && geo?.reqLat != null && geo?.reqLng != null;
-    const dist = haveDist ? haversineKm(geo!.projLat!, geo!.projLng!, geo!.reqLat!, geo!.reqLng!) : null;
+    // Lookup-ONLY (no legacy text): a match is authoritative id equality — the
+    // project's verified district vs the resolved requested district(s), its city
+    // vs the resolved requested city(ies). The caller passes the COORDINATE-VERIFIED
+    // district id (point-in-polygon) as projDistrictId, so an exact match is
+    // boundary-verified, not a blind trust of the stored text.
+    const districtIdSet = geo?.reqDistrictIds && geo.reqDistrictIds.length ? new Set(geo.reqDistrictIds) : null;
+    const cityIdSet = geo?.reqCityIds && geo.reqCityIds.length ? new Set(geo.reqCityIds) : null;
+    const districtMatch =
+      !!projDistrictId &&
+      (((!!geo?.reqDistrictId && projDistrictId === geo.reqDistrictId)) || (districtIdSet?.has(projDistrictId) ?? false));
+    const cityMatch =
+      !!projCityId &&
+      (((!!geo?.reqCityId && projCityId === geo.reqCityId)) || (cityIdSet?.has(projCityId) ?? false));
+    // True distance to the NEAREST requested district centroid, when both ends have coords.
+    const centroids: Array<{ lat: number; lng: number }> =
+      geo?.reqCentroids && geo.reqCentroids.length
+        ? geo.reqCentroids
+        : geo?.reqLat != null && geo?.reqLng != null
+          ? [{ lat: geo.reqLat, lng: geo.reqLng }]
+          : [];
+    const haveDist = geo?.projLat != null && geo?.projLng != null && centroids.length > 0;
+    const dist = haveDist
+      ? Math.min(...centroids.map((c) => haversineKm(geo!.projLat!, geo!.projLng!, c.lat, c.lng)))
+      : null;
     if (req.district) {
       if (districtMatch) {
         dims.location.value = 1;
@@ -753,6 +783,20 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
       if (req.bedrooms >= bmin && req.bedrooms <= bmax) dims.bedrooms.value = 1;
       else if (req.bedrooms >= bmin - 1 && req.bedrooms <= bmax + 1) dims.bedrooms.value = 0.6;
       else dims.bedrooms.value = 0;
+    }
+  }
+
+  // ── Bathrooms ──
+  if (req.bathrooms != null) {
+    const range = pickRange(data, 'bathroom_range');
+    if (!range || (range.min == null && range.max == null)) {
+      gaps.push('no bathroom data');
+    } else {
+      const btmin = range.min ?? range.max ?? 0;
+      const btmax = range.max ?? range.min ?? btmin;
+      if (req.bathrooms >= btmin && req.bathrooms <= btmax) dims.bathrooms.value = 1;
+      else if (req.bathrooms >= btmin - 1 && req.bathrooms <= btmax + 1) dims.bathrooms.value = 0.6;
+      else dims.bathrooms.value = 0;
     }
   }
 
@@ -868,6 +912,10 @@ export interface MatchResultItem {
   location_tier: ScoredProject['location_tier'];
   distance_km: number | null;
   geo_confidence: string | null;
+  /** PostGIS boundary-verification status (present when opts.verifyGeo ran). */
+  geo_status?: GeoStatus;
+  /** Geo data-integrity warnings (e.g. stored district ≠ coordinate polygon). */
+  mismatch_warnings?: string[];
 }
 
 const VERIFY_WARNING =
@@ -1245,6 +1293,41 @@ export interface MatchCoreOptions {
   alwaysScoreAll?: boolean;
   /** Also score the `market_listings` model as a third source. */
   includeMarket?: boolean;
+  /** PostGIS-verify each candidate's district from its coordinates (point-in-polygon)
+   *  before matching, so an "exact" district match is coordinate/boundary verified —
+   *  never a blind trust of the stored `location.district`. Adds geo_status +
+   *  mismatch_warnings + an honest geo_confidence to each result, and uses the
+   *  polygon-derived district (not the stored one) for the exact tier. Default OFF
+   *  so the legacy match_projects tool output stays byte-identical. */
+  verifyGeo?: boolean;
+}
+
+/** Resolve each row's containing district via the PostGIS `districts_for_points`
+ *  RPC (one bulk call). Returns id → polygon district id (null when the point is
+ *  outside every boundary or has no coords). On RPC failure returns an EMPTY map —
+ *  callers then treat every project as unverified, which fails CLOSED (no false
+ *  exacts) rather than silently trusting stored districts. */
+async function resolvePolygonDistricts(
+  supabase: SupabaseClient,
+  rows: RecordRow[],
+): Promise<Map<string, string | null>> {
+  const map = new Map<string, string | null>();
+  const points: Array<{ id: string; lat: number; lng: number }> = [];
+  for (const r of rows) {
+    const lat = asNum(r.data.latitude);
+    const lng = asNum(r.data.longitude);
+    if (lat != null && lng != null) points.push({ id: r.id, lat, lng });
+  }
+  if (points.length === 0) return map;
+  const { data, error } = await supabase.rpc('districts_for_points', { p_points: points });
+  if (error) {
+    console.error('[matchProjectsCore] districts_for_points RPC failed:', error.message);
+    return map; // fail closed — no verified districts rather than wrong ones
+  }
+  for (const row of (data ?? []) as Array<{ id: string; district_record_id: string | null }>) {
+    map.set(row.id, row.district_record_id ?? null);
+  }
+  return map;
 }
 
 export async function matchProjectsCore(
@@ -1273,9 +1356,24 @@ export async function matchProjectsCore(
   let reqLng: number | null = null;
   let reqDistrictId: string | null = null;
   let reqCityId: string | null = null;
-  if (req.district) {
-    const resolved = await resolveRequestedDistrict(supabase, req);
-    if (resolved) {
+  // MULTI-district support: resolve EACH requested district name (client may have
+  // several preferred districts). The first resolved one is the "primary" used for
+  // the back-compat single fields + the market-listings prefilter; the full sets
+  // (ids / city ids / centroids) drive exact membership + nearest-centroid distance.
+  const reqDistrictIds: string[] = [];
+  const reqCityIds: string[] = [];
+  const reqCentroids: Array<{ lat: number; lng: number }> = [];
+  const districtNames =
+    req.districts && req.districts.length ? req.districts : req.district ? [req.district] : [];
+  for (const dn of districtNames) {
+    const token = (dn ?? '').trim();
+    if (!token) continue;
+    const resolved = await resolveRequestedDistrict(supabase, { ...req, district: token });
+    if (!resolved) continue;
+    if (!reqDistrictIds.includes(resolved.id)) reqDistrictIds.push(resolved.id);
+    if (resolved.cityId && !reqCityIds.includes(resolved.cityId)) reqCityIds.push(resolved.cityId);
+    if (resolved.lat != null && resolved.lng != null) reqCentroids.push({ lat: resolved.lat, lng: resolved.lng });
+    if (reqDistrictId == null) {
       reqDistrictId = resolved.id;
       reqCityId = resolved.cityId;
       reqLat = resolved.lat;
@@ -1285,11 +1383,27 @@ export async function matchProjectsCore(
   if (reqCityId == null && req.city) {
     reqCityId = await resolveRequestedCity(supabase, req);
   }
+  if (reqCityId && !reqCityIds.includes(reqCityId)) reqCityIds.push(reqCityId);
 
-  // Resolve each candidate project's OWN location.{district,city} ids to display
-  // names (shown in the facts). Geography is relational-only now — no denormalized
-  // city_name/district_name on the record. Extended with market ids below.
-  const districtNameById = await geoNameMap(supabase, 'districts', rows.map((r) => recordLocationIds(r.data).district));
+  const verifyGeo = opts.verifyGeo === true;
+
+  // PostGIS boundary verification: resolve every candidate project's REAL district
+  // from its coordinates (point-in-polygon, one bulk RPC). The polygon-derived
+  // district is the source of truth — matching uses it, not the stored text — so
+  // an "exact" match is coordinate-verified. (Skipped when verifyGeo is off so the
+  // legacy match_projects tool output is unchanged.)
+  const polyMap: Map<string, string | null> = verifyGeo
+    ? await resolvePolygonDistricts(supabase, rows)
+    : new Map();
+
+  // Resolve each candidate project's location ids to display names (shown in the
+  // facts). Include BOTH the stored district id AND the polygon-derived district id
+  // so the facts show the verified district name even when the stored one differs.
+  const polyDistrictIds = [...polyMap.values()].filter((v): v is string => !!v);
+  const districtNameById = await geoNameMap(supabase, 'districts', [
+    ...rows.map((r) => recordLocationIds(r.data).district),
+    ...polyDistrictIds,
+  ]);
   const cityNameById = await geoNameMap(supabase, 'cities', rows.map((r) => recordLocationIds(r.data).city));
 
   // Rank by BAND first, then score — so a genuine good/strong match always
@@ -1301,23 +1415,68 @@ export async function matchProjectsCore(
 
   let anyDistrictExact = false;
   let anyNearby = false;
+
+  // Build the GeoContext + per-result geo annotations for one record. When
+  // verifyGeo is on, the project's district is the polygon that CONTAINS its pin
+  // (source of truth) — not the stored text — and we attach geo_status,
+  // mismatch_warnings, an honest geo_confidence, and any extra data_gaps.
+  const geoFor = (r: RecordRow, loc: { district: string; city: string }, pmap: Map<string, string | null>) => {
+    const projLat = asNum(r.data.latitude);
+    const projLng = asNum(r.data.longitude);
+    if (!verifyGeo) {
+      return {
+        projLat,
+        projLng,
+        geoConfidence: asStr(r.data.geo_confidence) || null,
+        projDistrictId: loc.district || null,
+        projDistrictName: districtNameById.get(loc.district) ?? null,
+        annotate: (_item: MatchResultItem) => {},
+      };
+    }
+    const v = classifyGeo({
+      lat: projLat,
+      lng: projLng,
+      storedDistrictId: loc.district || null,
+      polygonDistrictId: pmap.get(r.id) ?? null,
+    });
+    const effDistrict = v.effectiveDistrictId;
+    return {
+      projLat,
+      projLng,
+      geoConfidence: v.geoConfidence,
+      projDistrictId: effDistrict,
+      // Show the VERIFIED district name when coords resolved one; else the stored.
+      projDistrictName: districtNameById.get(effDistrict ?? loc.district) ?? null,
+      annotate: (item: MatchResultItem) => {
+        item.geo_status = v.status;
+        item.geo_confidence = v.geoConfidence;
+        if (v.mismatchWarnings.length) item.mismatch_warnings = v.mismatchWarnings;
+        if (v.dataGaps.length) item.data_gaps = [...item.data_gaps, ...v.dataGaps];
+      },
+    };
+  };
+
   const scoreInto = (sourceRows: RecordRow[], source: 'our_projects' | 'all_projects'): MatchResultItem[] => {
     const out: MatchResultItem[] = [];
     for (const r of sourceRows) {
       const name = asStr(r.data.project_name);
       if (!name) continue;
       const loc = recordLocationIds(r.data);
+      const g = geoFor(r, loc, polyMap);
       const s = scoreProject(r.data, req, {
-        projLat: asNum(r.data.latitude),
-        projLng: asNum(r.data.longitude),
+        projLat: g.projLat,
+        projLng: g.projLng,
         reqLat,
         reqLng,
         reqDistrictId,
         reqCityId,
-        geoConfidence: asStr(r.data.geo_confidence) || null,
-        projDistrictId: loc.district || null,
+        reqDistrictIds,
+        reqCityIds,
+        reqCentroids,
+        geoConfidence: g.geoConfidence,
+        projDistrictId: g.projDistrictId,
         projCityId: loc.city || null,
-        projDistrictName: districtNameById.get(loc.district) ?? null,
+        projDistrictName: g.projDistrictName,
         projCityName: cityNameById.get(loc.city) ?? null,
       });
       if (s.district_exact) anyDistrictExact = true;
@@ -1340,6 +1499,7 @@ export async function matchProjectsCore(
         distance_km: s.distance_km,
         geo_confidence: s.geo_confidence,
       };
+      g.annotate(item);
       if (source === 'all_projects') {
         item.requires_verification = true;
         item.verification_warning = VERIFY_WARNING;
@@ -1411,30 +1571,42 @@ export async function matchProjectsCore(
         // recommendation (our_projects + all_projects still return). Log loudly.
         console.error('[matchProjectsCore] market_listings load failed:', err instanceof Error ? err.message : String(err));
       }
-      // Extend the geography name maps with the listings' own location ids.
-      for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
+      // PostGIS-verify the listings' districts from their own coordinates too.
+      const marketPolyMap = verifyGeo ? await resolvePolygonDistricts(supabase, listingRows) : new Map<string, string | null>();
+      // Extend the geography name maps with the listings' stored + polygon location ids.
+      const marketPolyDistrictIds = [...marketPolyMap.values()].filter((v): v is string => !!v);
+      for (const [k, v] of await geoNameMap(supabase, 'districts', [
+        ...listingRows.map((r) => recordLocationIds(r.data).district),
+        ...marketPolyDistrictIds,
+      ])) districtNameById.set(k, v);
       for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
       for (const r of listingRows) {
         const adapted = adaptListingToScorable(r.data);
         const name = asStr(adapted.project_name);
         if (!name) continue;
         const loc = recordLocationIds(r.data);
+        const g = geoFor(r, loc, marketPolyMap);
         const s = scoreProject(adapted, req, {
-          projLat: asNum(r.data.latitude),
-          projLng: asNum(r.data.longitude),
+          projLat: g.projLat,
+          projLng: g.projLng,
           reqLat,
           reqLng,
           reqDistrictId,
           reqCityId,
-          geoConfidence: (asNum(r.data.latitude) != null && asNum(r.data.longitude) != null) ? 'high' : null,
-          projDistrictId: loc.district || null,
+          reqDistrictIds,
+          reqCityIds,
+          reqCentroids,
+          // A listing's own pin is high-confidence when present; otherwise the geo
+          // verifier supplies the honest confidence from its district status.
+          geoConfidence: verifyGeo ? g.geoConfidence : ((g.projLat != null && g.projLng != null) ? 'high' : null),
+          projDistrictId: g.projDistrictId,
           projCityId: loc.city || null,
-          projDistrictName: districtNameById.get(loc.district) ?? null,
+          projDistrictName: g.projDistrictName,
           projCityName: cityNameById.get(loc.city) ?? null,
         });
         if (s.score < MIN_RETURN) continue;
         if (s.available_units_zero && !includeSoldOut) continue;
-        market.push({
+        const item: MatchResultItem = {
           project_id: r.id,
           project_name: name,
           data_source: 'market_listings',
@@ -1451,7 +1623,9 @@ export async function matchProjectsCore(
           location_tier: s.location_tier,
           distance_km: s.distance_km,
           geo_confidence: s.geo_confidence,
-        });
+        };
+        g.annotate(item);
+        market.push(item);
       }
       market = market.sort(byBandThenScore);
     }
