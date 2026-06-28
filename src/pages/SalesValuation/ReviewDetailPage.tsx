@@ -10,6 +10,7 @@ import Button from '@/components/ui/Button';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import CallHistoryPanel from '@/pages/Records/components/CallHistoryPanel';
 import WhatsAppHistoryPanel from '@/pages/Records/components/WhatsAppHistoryPanel';
+import VoiceNoteRecorder from './components/VoiceNoteRecorder';
 import type { AppModel, AppRecord } from '@/types';
 
 const REVIEWS = 'sales_valuation_reviews';
@@ -278,6 +279,11 @@ export default function ReviewDetailPage() {
             <Labeled label={isAr ? 'ملاحظات' : 'Notes'}>
               <textarea value={(d.coaching_note as string) ?? ''} disabled={!canEdit} rows={4}
                 onChange={(e) => patch({ coaching_note: e.target.value })} className="form-input w-full" />
+            </Labeled>
+            <Labeled label={isAr ? 'ملاحظة صوتية (اختياري)' : 'Voice Note (optional)'}>
+              <VoiceNoteRecorder isAr={isAr} disabled={!canEdit}
+                value={(d.coaching_voice_note as string) || ''}
+                onChange={(url) => patch({ coaching_voice_note: url ?? '' })} />
             </Labeled>
             <Button onClick={() => save()} disabled={!canEdit || saving}>
               {saving ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ التقييم' : 'Save Review')}
