@@ -1,6 +1,7 @@
-import { useMemo } from 'react';
+import { useMemo, useRef, useState, useEffect } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import LookupCombobox from './LookupCombobox';
+import { resolveLookupDisplayValue } from '@/lib/mirrorResolver';
+import { Search, ChevronLeft, MapPin, Check, X } from 'lucide-react';
 import type { LocationLevel, ModelField } from '@/types';
 
 interface LocationCascadeFieldProps {
@@ -9,28 +10,40 @@ interface LocationCascadeFieldProps {
   onChange: (value: unknown) => void;
 }
 
-// Singular display label per geography level. Falls back to the level's model
-// label when the key isn't one of the known geography roles.
 const LEVEL_LABELS: Record<string, { ar: string; en: string }> = {
   region: { ar: 'المنطقة', en: 'Region' },
   city: { ar: 'المدينة', en: 'City' },
   district: { ar: 'الحي', en: 'District' },
 };
 
+const isStr = (v: unknown): v is string => typeof v === 'string' && v !== '';
+
 /**
- * Guided region → city → district picker. Each level is gated by its parent:
- * a child level is disabled until its parent has a selection, and its candidate
- * list is filtered to records whose `parent_link_field` holds one of the parent's
- * selected ids. Changing/clearing a parent prunes now-orphaned descendant picks.
+ * ONE guided location field. It renders as a single box; clicking it opens a single
+ * dropdown that STEPS through region → city → district (each with a search). You
+ * pick the region, then the city (filtered to that region), then the district
+ * (filtered to that city) — not three separate inputs.
  *
- * Single mode (`location_multi` false) stores `{ region: id, city: id, district: id }`;
- * multi mode stores `{ region: id[], city: id[], district: id[] }`.
+ * Empty fields pre-seed region/city from `location_default` (e.g. الرياض/الرياض) so
+ * the user only has to pick a district; they can still go back and change region or
+ * city via the breadcrumb. Nothing is written until the user actually picks.
+ *
+ * Single mode (`location_multi` false) stores scalars { region, city, district }.
+ * Multi mode (clients) keeps region/city single (1-element arrays) and lets the
+ * deepest level (district) hold many — stored as { region:[id], city:[id], district:[ids] }.
  */
 export default function LocationCascadeField({ field, value, onChange }: LocationCascadeFieldProps) {
   const { models, records, language } = useAppStore();
   const isAr = language === 'ar';
   const multi = !!field.location_multi;
   const levels = field.location_levels ?? [];
+  const def = field.location_default ?? {};
+  const lastIdx = levels.length - 1;
+
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState(0);
+  const [query, setQuery] = useState('');
 
   const compound: Record<string, string | string[]> =
     value && typeof value === 'object' && !Array.isArray(value)
@@ -39,13 +52,24 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
 
   const idsOf = (key: string): string[] => {
     const v = compound[key];
-    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
-    return typeof v === 'string' && v ? [v] : [];
+    if (Array.isArray(v)) return v.filter(isStr);
+    return isStr(v) ? [v] : [];
+  };
+  // Effective ids for a level: the real selection, else the default (only for the
+  // non-deepest levels — region/city — so the deepest stays an explicit choice).
+  const effIds = (idx: number): string[] => {
+    const lv = levels[idx];
+    if (!lv) return [];
+    const real = idsOf(lv.key);
+    if (real.length) return real;
+    if (idx < lastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
+    return [];
   };
 
-  // Resolve the slug on a child level's records that points at its parent level.
-  // Config wins; otherwise auto-detect the child model's first lookup field whose
-  // target is the parent level's model (cities.region_lookup, districts.city_lookup).
+  const levelIsMulti = (idx: number) => multi && idx === lastIdx;
+
+  // Resolve the parent-link slug on a child level (config wins, else auto-detect the
+  // child model's lookup pointing at the parent level's model).
   const parentLinkFor = useMemo(() => {
     return (level: LocationLevel, parent: LocationLevel | null): string | null => {
       if (level.parent_link_field) return level.parent_link_field;
@@ -58,101 +82,240 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
     };
   }, [models]);
 
-  const levelLabel = (level: LocationLevel): string => {
-    const known = LEVEL_LABELS[level.key];
+  const levelLabel = (idx: number): string => {
+    const lv = levels[idx];
+    if (!lv) return '';
+    const known = LEVEL_LABELS[lv.key];
     if (known) return isAr ? known.ar : known.en;
-    const model = models.find((m) => m.id === level.model_id);
-    return model ? (isAr ? model.label_ar : model.label_en) : level.key;
+    const m = models.find((mm) => mm.id === lv.model_id);
+    return m ? (isAr ? m.label_ar : m.label_en) : lv.key;
   };
 
-  const setLevel = (idx: number, newIds: string[]) => {
-    const current = levels[idx];
-    if (!current) return;
-    const next: Record<string, string | string[] | undefined> = { ...compound };
-    next[current.key] = multi ? newIds : newIds[0];
+  const nameOf = (idx: number, id: string): string => {
+    const lv = levels[idx];
+    if (!lv) return id.slice(0, 8);
+    const recs = records[lv.model_id] ?? [];
+    const rec = recs.find((r) => r.id === id);
+    if (!rec) return isAr ? 'محذوف' : 'Deleted';
+    const m = models.find((mm) => mm.id === lv.model_id);
+    const dv = resolveLookupDisplayValue(rec, lv.display_field, { targetModel: m, allModels: models, allRecords: records });
+    return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
+  };
 
-    // Cascade-prune deeper levels: each child keeps only the picks whose parent
-    // link still points at a selected parent id (and clears entirely if the
-    // parent emptied).
-    for (let d = idx + 1; d < levels.length; d++) {
-      const child = levels[d]!;
-      const parent = levels[d - 1]!;
-      const plf = parentLinkFor(child, parent);
-      const parentVal = next[parent.key];
-      const parentIds = new Set(
-        Array.isArray(parentVal) ? parentVal : typeof parentVal === 'string' && parentVal ? [parentVal] : [],
-      );
-      const childVal = next[child.key];
-      const childIds = Array.isArray(childVal) ? childVal : typeof childVal === 'string' && childVal ? [childVal] : [];
-      let kept: string[];
-      if (parentIds.size === 0) {
-        kept = [];
-      } else if (plf) {
-        const childRecs = records[child.model_id] ?? [];
-        kept = childIds.filter((id) => {
-          const rec = childRecs.find((r) => r.id === id);
-          const pv = rec ? rec.data[plf] : undefined;
-          return typeof pv === 'string' && parentIds.has(pv);
-        });
+  // Candidates for a level, filtered to the effective parent's children + the query.
+  const candidates = useMemo(() => {
+    const lv = levels[step];
+    if (!lv) return [];
+    let recs = records[lv.model_id] ?? [];
+    if (step > 0) {
+      const parent = levels[step - 1]!;
+      const plf = parentLinkFor(lv, parent);
+      const parentIds = effIds(step - 1);
+      if (plf && parentIds.length) {
+        recs = recs.filter((r) => { const pv = r.data[plf]; return isStr(pv) && parentIds.includes(pv); });
       } else {
-        kept = childIds;
+        recs = [];
       }
-      next[child.key] = multi ? kept : kept[0];
     }
+    const q = query.trim().toLowerCase();
+    const scored = recs
+      .map((r) => ({ r, name: nameOf(step, r.id) }))
+      .filter((x) => !q || x.name.toLowerCase().includes(q))
+      .sort((a, b) => a.name.localeCompare(b.name, 'ar'));
+    return scored.slice(0, 60);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, query, records, compound, levels]);
 
-    const cleaned: Record<string, string | string[]> = {};
-    for (const lv of levels) {
-      const v = next[lv.key];
-      if (multi) {
-        if (Array.isArray(v) && v.length) cleaned[lv.key] = v;
-      } else if (typeof v === 'string' && v) {
-        cleaned[lv.key] = v;
-      }
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  // Write helper: scalar in single mode; 1-element array for region/city in multi
+  // mode; full array for the deepest level in multi mode.
+  const shape = (idx: number, ids: string[]): string | string[] | undefined => {
+    if (!multi) return ids[0];
+    if (idx === lastIdx) return ids;
+    return ids.slice(0, 1);
+  };
+
+  const commit = (nextIds: Record<number, string[]>) => {
+    const out: Record<string, string | string[]> = {};
+    levels.forEach((lv, i) => {
+      const ids = nextIds[i] ?? idsOf(lv.key);
+      const s = shape(i, ids);
+      if (s !== undefined && (Array.isArray(s) ? s.length : s)) out[lv.key] = s;
+    });
+    onChange(Object.keys(out).length ? out : undefined);
+  };
+
+  const pick = (idx: number, id: string) => {
+    const nextIds: Record<number, string[]> = {};
+    // Fill ancestors from their effective (real-or-default) selection so picking a
+    // district also commits the defaulted region + city.
+    for (let i = 0; i < idx; i++) nextIds[i] = effIds(i);
+    if (levelIsMulti(idx)) {
+      const cur = idsOf(levels[idx]!.key);
+      nextIds[idx] = cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id];
+      commit(nextIds); // stay open to add more
+      setQuery('');
+      return;
     }
-    onChange(Object.keys(cleaned).length ? cleaned : undefined);
+    nextIds[idx] = [id];
+    for (let d = idx + 1; d < levels.length; d++) nextIds[d] = []; // prune deeper
+    commit(nextIds);
+    setQuery('');
+    if (idx < lastIdx) setStep(idx + 1); else setOpen(false);
+  };
+
+  const openAt = () => {
+    // Start at the first level the user still needs to pick (region/city are
+    // satisfied by the default, so an empty field opens straight to the district).
+    let s = levels.findIndex((_, i) => effIds(i).length === 0);
+    if (s < 0) s = lastIdx; // all filled → let them edit the deepest
+    setStep(s);
+    setQuery('');
+    setOpen(true);
   };
 
   if (levels.length === 0) {
     return <div className="text-sm text-red-400">{isAr ? 'لم يتم إعداد حقل الموقع' : 'Location field not configured'}</div>;
   }
 
+  // ── Collapsed box: the path of chosen (or defaulted) levels ──
+  const pathParts: Array<{ idx: number; text: string; isReal: boolean }> = [];
+  levels.forEach((lv, idx) => {
+    const real = idsOf(lv.key);
+    if (real.length) {
+      const text = idx === lastIdx && multi && real.length > 1
+        ? `${real.length} ${isAr ? 'أحياء' : 'districts'}`
+        : nameOf(idx, real[0]!);
+      pathParts.push({ idx, text, isReal: true });
+    } else if (idx < lastIdx && isStr(def[lv.key])) {
+      pathParts.push({ idx, text: nameOf(idx, def[lv.key] as string), isReal: false });
+    }
+  });
+  const districtChosen = idsOf(levels[lastIdx]!.key).length > 0;
+
   return (
-    <div className="space-y-2">
-      {levels.map((level, idx) => {
-        const parent = idx > 0 ? levels[idx - 1] ?? null : null;
-        const plf = parent ? parentLinkFor(level, parent) : null;
-        const parentIds = parent ? idsOf(parent.key) : null;
-        const disabled = idx > 0 && (!parentIds || parentIds.length === 0);
-        const predicate =
-          idx > 0 && plf && parentIds && parentIds.length
-            ? (rec: { id: string; data: Record<string, unknown> }) => {
-                const pv = rec.data[plf];
-                return typeof pv === 'string' && parentIds.includes(pv);
-              }
-            : undefined;
-        const disabledHint = parent
-          ? isAr
-            ? `اختر ${levelLabel(parent)} أولاً`
-            : `Pick the ${levelLabel(parent).toLowerCase()} first`
-          : undefined;
-        const selected = idsOf(level.key);
-        return (
-          <div key={level.key}>
-            <label className="block text-xs font-bold text-charcoal/50 mb-1">{levelLabel(level)}</label>
-            <LookupCombobox
-              lookupModelId={level.model_id}
-              lookupDisplayField={level.display_field}
-              isMulti={multi}
-              value={multi ? selected : selected[0]}
-              onChange={(v) => setLevel(idx, Array.isArray(v) ? v : typeof v === 'string' && v ? [v] : [])}
-              candidatePredicate={predicate}
-              disabled={disabled}
-              disableCreate
-              placeholder={disabled ? disabledHint : undefined}
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => (open ? setOpen(false) : openAt())}
+        className="form-input flex items-center gap-2 text-start w-full"
+      >
+        <MapPin size={14} className="text-copper/70 shrink-0" />
+        {pathParts.length === 0 ? (
+          <span className="text-charcoal/40">{isAr ? 'اختر الموقع...' : 'Select location...'}</span>
+        ) : (
+          <span className="flex items-center flex-wrap gap-x-1 gap-y-0.5">
+            {pathParts.map((p, i) => (
+              <span key={p.idx} className="flex items-center gap-1">
+                {i > 0 && <ChevronLeft size={12} className="text-charcoal/30" />}
+                <span className={p.isReal ? 'text-charcoal font-semibold' : 'text-charcoal/45'}>{p.text}</span>
+              </span>
+            ))}
+            {!districtChosen && (
+              <span className="flex items-center gap-1 text-copper">
+                <ChevronLeft size={12} className="text-charcoal/30" />
+                {isAr ? `اختر ${levelLabel(lastIdx)}` : `pick ${levelLabel(lastIdx).toLowerCase()}`}
+              </span>
+            )}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute z-30 mt-1 w-full bg-white rounded-xl border border-sand shadow-xl overflow-hidden animate-[fadeIn_0.1s_ease]">
+          {/* Breadcrumb steps — click any to (re)pick that level */}
+          <div className="flex items-center flex-wrap gap-1 px-3 pt-2.5 pb-2 border-b border-sand/40">
+            {levels.map((lv, idx) => {
+              const sel = idsOf(lv.key);
+              const eff = effIds(idx);
+              const label = levelLabel(idx);
+              const active = idx === step;
+              const valueText = sel.length
+                ? (idx === lastIdx && multi && sel.length > 1 ? `${sel.length}` : nameOf(idx, sel[0]!))
+                : eff.length ? nameOf(idx, eff[0]!) : '—';
+              const disabled = idx > 0 && effIds(idx - 1).length === 0;
+              return (
+                <button
+                  key={lv.key}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => { setStep(idx); setQuery(''); }}
+                  className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-colors ${
+                    active ? 'bg-copper/10 text-copper font-bold' : disabled ? 'text-charcoal/25' : 'text-charcoal/60 hover:bg-cream'
+                  }`}
+                >
+                  {idx > 0 && <ChevronLeft size={11} className="text-charcoal/25" />}
+                  <span className="font-semibold">{label}:</span>
+                  <span className={sel.length ? '' : 'opacity-60'}>{valueText}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Search for the active level */}
+          <div className="relative px-2 pt-2">
+            <Search size={14} className="absolute start-4 top-1/2 -translate-y-1/2 text-charcoal/30" />
+            <input
+              type="text"
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={isAr ? `ابحث في ${levelLabel(step)}...` : `Search ${levelLabel(step).toLowerCase()}...`}
+              className="form-input ps-8 text-sm"
             />
           </div>
-        );
-      })}
+
+          {/* Candidate list */}
+          <div className="max-h-56 overflow-y-auto py-1">
+            {candidates.length === 0 ? (
+              <div className="px-3 py-3 text-sm text-charcoal/30 text-center">{isAr ? 'لا توجد نتائج' : 'No results'}</div>
+            ) : (
+              candidates.map(({ r, name }) => {
+                const selected = idsOf(levels[step]!.key).includes(r.id);
+                return (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => pick(step, r.id)}
+                    className={`w-full px-3 py-2 text-start hover:bg-cream transition-colors text-sm flex items-center justify-between ${selected ? 'text-copper font-bold' : ''}`}
+                  >
+                    <span>{name}</span>
+                    {selected && <Check size={14} className="text-copper" />}
+                  </button>
+                );
+              })
+            )}
+          </div>
+
+          {levelIsMulti(step) && (
+            <div className="flex items-center justify-between px-3 py-2 border-t border-sand/40">
+              <span className="text-xs text-charcoal/40">
+                {idsOf(levels[step]!.key).length} {isAr ? 'محدد' : 'selected'}
+              </span>
+              <button type="button" onClick={() => setOpen(false)} className="text-xs font-bold text-copper hover:underline px-2 py-1">
+                {isAr ? 'تم' : 'Done'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Clear */}
+      {pathParts.some((p) => p.isReal) && (
+        <button
+          type="button"
+          onClick={() => onChange(undefined)}
+          className="absolute top-1/2 -translate-y-1/2 end-2 text-charcoal/30 hover:text-red-500"
+          title={isAr ? 'مسح' : 'Clear'}
+        >
+          <X size={14} />
+        </button>
+      )}
     </div>
   );
 }

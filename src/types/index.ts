@@ -172,8 +172,13 @@ export interface ModelField {
   // parent's children. Stored value is a compound object keyed by each level's
   // `key`: single mode → { region?: id, city?: id, district?: id }; multi mode →
   // { region: id[], city: id[], district: id[] }. See LocationLevel.
-  location_multi?: boolean; // false = one pick per level (projects/listings/offices); true = multi per level (client preferences)
+  location_multi?: boolean; // false = one pick per level (projects/listings/offices); true = multi only on the deepest level (client preferences)
   location_levels?: LocationLevel[]; // ordered top → bottom; defaults to the regions/cities/districts geography models
+  // Default ids per level key, used to pre-seed an EMPTY location field so the user
+  // only has to pick the deepest level (e.g. region+city default to الرياض → the user
+  // just picks a district; they can still change region/city). Display/seed only —
+  // nothing is written until the user actually picks.
+  location_default?: Record<string, string>;
 
   // Unit picker (type: 'unit_picker'). A cascading project→unit selector: the
   // user first picks a project (filter only, NOT stored) from the project model

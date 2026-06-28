@@ -485,6 +485,7 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       lookup_max_records: type === 'lookup' ? lookupMaxRecords : undefined,
       location_multi: type === 'location' ? locationMulti : undefined,
       location_levels: type === 'location' ? locationLevels : undefined,
+      location_default: type === 'location' ? field?.location_default : undefined,
       // Carry-through for advanced props that have no dedicated Builder UI yet
       // (they're configured via the seed/migrations). Sourcing them from the
       // original `field` means editing a field in the Builder never silently
