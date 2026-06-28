@@ -1,0 +1,285 @@
+import {
+  Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
+  ExternalLink, Plus, Check, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
+} from 'lucide-react';
+import { useState } from 'react';
+import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus } from '@/lib/matching/projectFinder';
+
+/**
+ * One project in the deterministic Project Finder modal (Phase 2). Renders ONLY
+ * what /api/project-finder decided — score, band, match type, geography
+ * verification (geo_status + geo_confidence), distance, key facts, data gaps,
+ * mismatch warnings, and the deterministic explanation. The card NEVER scores.
+ * Actions are limited to Details + Add-to-client (no chat / pitch / WhatsApp /
+ * compare / next-action).
+ */
+
+interface Props {
+  item: FinderMatch;
+  isAr: boolean;
+  onOpenDetails: (item: FinderMatch) => void;
+  onAddToClient: (item: FinderMatch) => void;
+  addState: 'idle' | 'saving' | 'added';
+}
+
+const fmtNum = (n: number) => n.toLocaleString('en-US');
+
+function fmtRange(v: unknown, unit: string): string | null {
+  if (v == null) return null;
+  if (typeof v === 'number' && Number.isFinite(v)) return `${fmtNum(v)} ${unit}`.trim();
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    const min = typeof o.min === 'number' ? o.min : Number(o.min);
+    const max = typeof o.max === 'number' ? o.max : Number(o.max);
+    const hasMin = Number.isFinite(min);
+    const hasMax = Number.isFinite(max);
+    if (hasMin && hasMax) return min === max ? `${fmtNum(min)} ${unit}`.trim() : `${fmtNum(min)} – ${fmtNum(max)} ${unit}`.trim();
+    if (hasMax) return `${fmtNum(max)} ${unit}`.trim();
+    if (hasMin) return `${fmtNum(min)} ${unit}`.trim();
+  }
+  return null;
+}
+
+const UNIT_TYPE_AR: Record<string, string> = {
+  apartment: 'شقة', apartments: 'شقة', flat: 'شقة', flats: 'شقة', penthouse: 'بنتهاوس',
+  villa: 'فيلا', villas: 'فيلا', townhouse: 'تاون هاوس', townhouses: 'تاون هاوس',
+  studio: 'استوديو', studios: 'استوديو', duplex: 'دوبلكس', duplexes: 'دوبلكس',
+  floor: 'دور', floors: 'أدوار', land: 'أرض', lands: 'أرض', plot: 'أرض', plots: 'أرض',
+};
+const localizeUnitType = (v: string, isAr: boolean) => (isAr ? UNIT_TYPE_AR[v.trim().toLowerCase()] ?? v : v);
+
+export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, addState }: Props) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const [showWhy, setShowWhy] = useState(false);
+  const f = item.facts;
+
+  const city = typeof f.city === 'string' ? f.city : '';
+  const district = typeof f.district === 'string' ? f.district : '';
+  const unitTypes = Array.isArray(f.unit_types)
+    ? (f.unit_types as unknown[]).filter((x): x is string => typeof x === 'string').map((t) => localizeUnitType(t, isAr)).join('، ')
+    : '';
+  const cur = L('ر.س', 'SAR');
+  const price = fmtRange(f.price_range, cur);
+  const area = fmtRange(f.area_range, L('م²', 'm²'));
+  const beds = fmtRange(f.bedroom_range, '');
+  const baths = fmtRange(f.bathroom_range, '');
+  const avail = typeof f.available_units === 'number' ? f.available_units : null;
+
+  const requiresVerify = item.source !== 'our_projects';
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-sand/50 bg-white shadow-sm">
+      {requiresVerify && (
+        <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+          <span>{L('من قاعدة «كل المشاريع» (غير موثّقة) — تحقّق قبل العرض.', 'From the All Projects database (unverified) — verify before offering.')}</span>
+        </div>
+      )}
+
+      {/* Title row */}
+      <div className="flex items-center gap-2 border-b border-sand/30 px-3 py-2">
+        <Building2 size={15} className="shrink-0 text-charcoal/50" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-bold text-charcoal">{item.project_name}</div>
+          <div className="flex items-center gap-1 truncate text-[11px] text-charcoal/55">
+            <MapPin size={11} className="shrink-0 text-copper" />
+            {[district, city].filter(Boolean).join('، ') || L('الموقع غير محدد', 'Location not set')}
+          </div>
+        </div>
+        <BandBadge band={item.match_band} score={item.score} isAr={isAr} />
+      </div>
+
+      <div className="space-y-2.5 p-3">
+        {/* Match type + geography verification + distance */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <MatchTypePill type={item.match_type} isAr={isAr} />
+          <SourcePill source={item.source} isAr={isAr} />
+          {item.geo_status && <GeoStatusPill status={item.geo_status} isAr={isAr} />}
+          {item.geo_confidence && <GeoConfidencePill confidence={item.geo_confidence} isAr={isAr} />}
+          {item.distance_km != null && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] text-charcoal/70">
+              <MapPin size={11} className="text-copper" />
+              {L(`~${item.distance_km} كم`, `~${item.distance_km} km`)}
+            </span>
+          )}
+        </div>
+
+        {/* Deterministic explanation */}
+        {item.explanation && <div className="text-sm text-charcoal/90">{item.explanation}</div>}
+
+        {/* Mismatch warnings */}
+        {item.mismatch_warnings.length > 0 && (
+          <div className="space-y-1">
+            {item.mismatch_warnings.map((w, i) => (
+              <div key={i} className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-700">
+                <ShieldAlert size={12} className="mt-0.5 shrink-0" />
+                <span>{w}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Specs grid */}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg bg-cream/30 p-2.5 text-xs">
+          <Spec icon={<Wallet size={12} />} label={L('السعر', 'Price')} value={price} isAr={isAr} />
+          <Spec icon={<PackageCheck size={12} />} label={L('وحدات متاحة', 'Available')} value={avail != null ? String(avail) : null} isAr={isAr} />
+          <Spec icon={<Building2 size={12} />} label={L('النوع', 'Type')} value={unitTypes || null} isAr={isAr} />
+          <Spec icon={<Ruler size={12} />} label={L('المساحة', 'Area')} value={area} isAr={isAr} />
+          <Spec icon={<BedDouble size={12} />} label={L('الغرف', 'Bedrooms')} value={beds} isAr={isAr} />
+          <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} isAr={isAr} />
+        </div>
+
+        {/* Data gaps */}
+        {item.data_gaps.length > 0 && (
+          <div className="flex flex-wrap gap-1">
+            {item.data_gaps.map((g) => (
+              <span key={g} className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700">
+                <AlertTriangle size={10} />{gapLabel(g, isAr)}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* Why (deterministic score breakdown) */}
+        <button type="button" onClick={() => setShowWhy((v) => !v)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-copper hover:underline">
+          <HelpCircle size={12} /> {L('لماذا هذا المشروع؟', 'Why this project?')}
+          <ChevronDown size={12} className={`transition ${showWhy ? 'rotate-180' : ''}`} />
+        </button>
+        {showWhy && (
+          <div className="space-y-1 rounded-lg border border-sand/40 bg-cream/30 p-2.5">
+            {Object.entries(item.score_breakdown).filter(([, v]) => v != null).map(([k, v]) => (
+              <div key={k} className="flex items-center justify-between text-[11px]">
+                <span className="text-charcoal/60">{dimLabel(k, isAr)}</span>
+                <span className="font-semibold text-charcoal/85">{Math.round((v as number) * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Actions — Details + Add-to-client ONLY */}
+        <div className="flex flex-wrap gap-1.5 pt-1">
+          <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
+          <ActionBtn
+            icon={addState === 'added' ? <Check size={12} /> : <Plus size={12} />}
+            label={addState === 'added' ? L('أُضيف', 'Added') : addState === 'saving' ? L('…', '…') : L('أضف للعميل', 'Add to client')}
+            onClick={() => addState === 'idle' && onAddToClient(item)}
+            active={addState === 'added'}
+            disabled={addState !== 'idle'}
+            primary
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionBtn({ icon, label, onClick, active, disabled, primary }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean; disabled?: boolean; primary?: boolean }) {
+  const base = 'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition disabled:opacity-60';
+  const cls = primary
+    ? (active ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-copper text-white hover:bg-terracotta')
+    : 'border border-sand/60 bg-white text-charcoal/75 hover:bg-cream/60';
+  return <button type="button" onClick={onClick} disabled={disabled} className={`${base} ${cls}`}>{icon}{label}</button>;
+}
+
+function Spec({ icon, label, value, isAr }: { icon: React.ReactNode; label: string; value: string | null; isAr: boolean }) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  return (
+    <div className="flex items-start gap-1.5">
+      <span className="mt-0.5 shrink-0 text-copper">{icon}</span>
+      <div className="min-w-0">
+        <div className="text-charcoal/50">{label}</div>
+        {value ? <div className="break-words font-medium text-charcoal/90">{value}</div> : <div className="italic text-charcoal/40">{L('غير متوفر', 'n/a')}</div>}
+      </div>
+    </div>
+  );
+}
+
+function BandBadge({ band, score, isAr }: { band: FinderBand; score: number; isAr: boolean }) {
+  const map: Record<FinderBand, { cls: string; ar: string; en: string }> = {
+    strong: { cls: 'bg-green-100 text-green-700 border-green-200', ar: 'قوية', en: 'Strong' },
+    good: { cls: 'bg-copper/15 text-copper border-copper/30', ar: 'جيدة', en: 'Good' },
+    partial: { cls: 'bg-gray-100 text-gray-600 border-gray-200', ar: 'جزئية', en: 'Partial' },
+    weak: { cls: 'bg-gray-50 text-gray-500 border-gray-200', ar: 'ضعيفة', en: 'Weak' },
+  };
+  const e = map[band];
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${e.cls}`}>
+      {isAr ? e.ar : e.en}<span className="opacity-70">· {score}</span>
+    </span>
+  );
+}
+
+function MatchTypePill({ type, isAr }: { type: FinderMatchType; isAr: boolean }) {
+  const map: Record<FinderMatchType, { ar: string; en: string }> = {
+    exact: { ar: 'مطابقة تامة', en: 'Exact' },
+    nearby: { ar: 'قريب', en: 'Nearby' },
+    same_city: { ar: 'نفس المدينة', en: 'Same city' },
+    fallback: { ar: 'بديل', en: 'Fallback' },
+  };
+  const e = map[type];
+  return <span className="inline-flex items-center rounded-full border border-copper/30 bg-copper/10 px-2 py-0.5 text-[11px] font-bold text-copper">{isAr ? e.ar : e.en}</span>;
+}
+
+function SourcePill({ source, isAr }: { source: FinderSource; isAr: boolean }) {
+  const map: Record<FinderSource, { cls: string; ar: string; en: string }> = {
+    our_projects: { cls: 'bg-green-600 text-white border-green-600', ar: 'مشاريعنا', en: 'Our Projects' },
+    all_projects: { cls: 'bg-charcoal/70 text-white border-charcoal/70', ar: 'كل المشاريع', en: 'Listings DB' },
+    market_listings: { cls: 'bg-chocolate text-white border-chocolate', ar: 'إعلانات السوق', en: 'Market' },
+  };
+  const e = map[source];
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-bold ${e.cls}`}>{isAr ? e.ar : e.en}</span>;
+}
+
+/** Geography boundary-verification status (the Phase-1 correctness signal). */
+function GeoStatusPill({ status, isAr }: { status: GeoStatus; isAr: boolean }) {
+  const map: Record<GeoStatus, { cls: string; icon: React.ReactNode; ar: string; en: string }> = {
+    verified_match: { cls: 'bg-green-50 text-green-700 border-green-200', icon: <ShieldCheck size={11} />, ar: 'موقع موثّق بالإحداثيات', en: 'Coordinate-verified' },
+    verified_derived: { cls: 'bg-green-50 text-green-700 border-green-200', icon: <ShieldCheck size={11} />, ar: 'حي مشتق من الإحداثيات', en: 'District from coords' },
+    mismatch: { cls: 'bg-red-50 text-red-700 border-red-200', icon: <ShieldAlert size={11} />, ar: 'تعارض حي مخزّن', en: 'District mismatch' },
+    outside_known_districts: { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: <ShieldAlert size={11} />, ar: 'خارج الحدود المعروفة', en: 'Outside boundaries' },
+    unverified_no_coords: { cls: 'bg-amber-50 text-amber-700 border-amber-200', icon: <ShieldX size={11} />, ar: 'بدون إحداثيات', en: 'No coordinates' },
+    no_geography: { cls: 'bg-gray-50 text-gray-500 border-gray-200', icon: <ShieldX size={11} />, ar: 'لا بيانات جغرافية', en: 'No geography' },
+  };
+  const e = map[status];
+  return <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${e.cls}`}>{e.icon}{isAr ? e.ar : e.en}</span>;
+}
+
+function GeoConfidencePill({ confidence, isAr }: { confidence: string; isAr: boolean }) {
+  const map: Record<string, { cls: string; ar: string; en: string }> = {
+    high: { cls: 'bg-green-50 text-green-700 border-green-200', ar: 'ثقة عالية', en: 'High geo' },
+    medium: { cls: 'bg-amber-50 text-amber-700 border-amber-200', ar: 'ثقة متوسطة', en: 'Med geo' },
+    low: { cls: 'bg-gray-50 text-gray-500 border-gray-200', ar: 'ثقة منخفضة', en: 'Low geo' },
+  };
+  const e = map[confidence] ?? map.low!;
+  return <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${e.cls}`}>{isAr ? e.ar : e.en}</span>;
+}
+
+function gapLabel(code: string, isAr: boolean): string {
+  const map: Record<string, { ar: string; en: string }> = {
+    missing_project_coordinates: { ar: 'لا إحداثيات', en: 'No coordinates' },
+    district_mismatch: { ar: 'تعارض حي', en: 'District mismatch' },
+    coordinates_outside_known_districts: { ar: 'خارج الحدود', en: 'Outside boundaries' },
+    missing_geography: { ar: 'لا جغرافيا', en: 'No geography' },
+    'no price data': { ar: 'لا سعر', en: 'No price' },
+    'no unit type data': { ar: 'لا نوع وحدة', en: 'No unit type' },
+    'no area data': { ar: 'لا مساحة', en: 'No area' },
+    'no bedroom data': { ar: 'لا غرف', en: 'No bedrooms' },
+    'no bathroom data': { ar: 'لا دورات مياه', en: 'No bathrooms' },
+    'no availability data': { ar: 'لا مخزون', en: 'No inventory' },
+  };
+  return map[code] ? (isAr ? map[code]!.ar : map[code]!.en) : code;
+}
+
+function dimLabel(key: string, isAr: boolean): string {
+  const map: Record<string, { ar: string; en: string }> = {
+    location: { ar: 'الموقع', en: 'Location' },
+    budget: { ar: 'الميزانية', en: 'Budget' },
+    type: { ar: 'النوع', en: 'Type' },
+    area: { ar: 'المساحة', en: 'Area' },
+    bedrooms: { ar: 'الغرف', en: 'Bedrooms' },
+    bathrooms: { ar: 'دورات المياه', en: 'Bathrooms' },
+    availability: { ar: 'التوفّر', en: 'Availability' },
+    amenities: { ar: 'المرافق', en: 'Amenities' },
+  };
+  return map[key] ? (isAr ? map[key]!.ar : map[key]!.en) : key;
+}

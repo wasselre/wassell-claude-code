@@ -1,29 +1,30 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Loader2, Sparkles, AlertTriangle, GitCompareArrows, Info } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { X, Loader2, Sparkles, AlertTriangle, Info } from 'lucide-react';
 import type { AppModel, AppRecord } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import { draftToMatchRequirements } from '@/lib/matching/requirements';
 import {
-  fetchSuggestedProjects, totalSuggestions, SUGGESTION_GROUP_KEYS,
-  type SuggestionsResponse, type SuggestionGroupKey, type SuggestionItem, type MatchSource,
-} from '@/lib/matching/suggestions';
+  fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
+  type FinderResponse, type FinderGroupKey, type FinderMatch,
+} from '@/lib/matching/projectFinder';
 import { addProjectToClient } from '@/lib/matching/addToClient';
-import { PROJECT_FINDER_ONLY } from '@/lib/featureFlags';
-import SuggestionCard from './SuggestionCard';
-import AssistantChatPane, { type AssistantChatHandle } from './AssistantChatPane';
-import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
+import FinderCard from './FinderCard';
 
 /**
- * The large "Suggested Projects" modal — the completion-phase centerpiece.
- *   Top:   current preferences + missing-preference warnings
- *   Left:  grouped, ranked project cards (Exact / Nearby / Budget / Location / Fallback)
- *   Right: the assistant chat (explain / compare / pitch / WhatsApp), grounded in
- *          the SAME draft-first context.
+ * The "Suggested Projects" modal — the Follow-up completion-phase centerpiece.
+ * Phase 2: powered by the DETERMINISTIC, geography boundary-verified
+ * /api/project-finder (NO LLM — parse:false, explain:false). Shows the four
+ * location-centric groups (exact_district / nearby_district / same_city /
+ * broader_fallback) ranked by code, reading the UNSAVED follow-up preferences
+ * captured when the modal opened.
  *
- * The grouped cards come from the DETERMINISTIC /api/suggest-projects (no LLM).
- * It reads the UNSAVED follow-up preferences (prefDraft) captured when the modal
- * opened, so recommendations reflect what the rep is editing on the call.
+ *   Top:  current preferences + missing-preference warnings
+ *   Body: 4 group tabs → ranked, boundary-verified cards
+ *
+ * Default sources are our_projects + all_projects only — market_listings is NOT
+ * used here (opt-in only; its area scan is slow for dense districts). No chat
+ * pane, no compare, no WhatsApp, no next-action, no task creation.
  */
 
 interface Props {
@@ -37,12 +38,11 @@ interface Props {
   onClose: () => void;
 }
 
-const TAB_LABELS: Record<SuggestionGroupKey, { ar: string; en: string }> = {
-  exact_matches: { ar: 'مطابقة تامة', en: 'Exact' },
-  nearby_alternatives: { ar: 'قريب', en: 'Nearby' },
-  budget_matches: { ar: 'ضمن الميزانية', en: 'Budget' },
-  location_matches: { ar: 'الموقع', en: 'Location' },
-  fallback_matches: { ar: 'بدائل', en: 'Fallback' },
+const TAB_LABELS: Record<FinderGroupKey, { ar: string; en: string }> = {
+  exact_district_matches: { ar: 'في الحي المطلوب', en: 'Exact district' },
+  nearby_district_matches: { ar: 'أحياء قريبة', en: 'Nearby' },
+  same_city_matches: { ar: 'نفس المدينة', en: 'Same city' },
+  broader_fallback: { ar: 'بدائل أوسع', en: 'Broader' },
 };
 
 const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
@@ -60,20 +60,13 @@ export default function SuggestedProjectsModal({
   const records = useAppStore((s) => s.records);
   const addToast = useAppStore((s) => s.addToast);
 
-  const chatRef = useRef<AssistantChatHandle>(null);
-  const [resp, setResp] = useState<SuggestionsResponse | null>(null);
+  const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<SuggestionGroupKey>('exact_matches');
-  const [compare, setCompare] = useState<SuggestionItem[]>([]);
+  const [activeTab, setActiveTab] = useState<FinderGroupKey>('exact_district_matches');
   const [addStates, setAddStates] = useState<Record<string, 'idle' | 'saving' | 'added'>>({});
-  // The project whose WhatsApp flow is open (popup over this modal), if any.
-  const [waProject, setWaProject] = useState<SuggestionItem | null>(null);
-  const [sourceFilter, setSourceFilter] = useState<'all' | MatchSource>('all');
 
   // id → display name for districts + cities, from the loaded geography records.
-  // Wires both the requirements mapper's lookup-first path AND the assistant
-  // context preface (which now reads lookup ids, resolved via geoNames).
   const geoNames = useMemo(() => {
     const map: Record<string, string> = {};
     for (const name of ['districts', 'cities']) {
@@ -91,9 +84,8 @@ export default function SuggestedProjectsModal({
     [geoNames],
   );
 
-  // Snapshot the draft-first context + requirements when the modal opens. The
-  // underlying form can't be edited while the modal is up, so this captures the
-  // rep's CURRENT unsaved values (the acceptance-critical behavior).
+  // Snapshot the draft-first context + requirements when the modal opens (the
+  // underlying form can't be edited while the modal is up).
   const ctx = useMemo(
     () => buildAssistantContext({ clientsModel, prefDraft, savedClientData: clientRec?.data ?? null, followupDraft, projectName, geoNames, isAr }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -109,20 +101,13 @@ export default function SuggestedProjectsModal({
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetchSuggestedProjects(
-      {
-        requirements,
-        clientId: clientRec?.id ?? null,
-        followupId,
-        usedDraftValues: true,
-        perGroup: 8,
-      },
+    fetchProjectFinder(
+      { requirements, clientId: clientRec?.id ?? null, followupId, perGroup: 8 },
       controller.signal,
     )
       .then((r) => {
         setResp(r);
-        // Land on the first non-empty tab so the rep sees results immediately.
-        const firstFilled = SUGGESTION_GROUP_KEYS.find((k) => (r.groups[k]?.length ?? 0) > 0);
+        const firstFilled = FINDER_GROUP_KEYS.find((k) => (r.groups[k]?.length ?? 0) > 0);
         if (firstFilled) setActiveTab(firstFilled);
       })
       .catch((e) => {
@@ -140,38 +125,10 @@ export default function SuggestedProjectsModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  const getPreface = () => ctx.preface;
-
-  function toggleCompare(item: SuggestionItem) {
-    setCompare((prev) => {
-      const exists = prev.some((p) => p.project_id === item.project_id);
-      if (exists) return prev.filter((p) => p.project_id !== item.project_id);
-      if (prev.length >= 4) return prev; // matcher compares 2–4
-      return [...prev, item];
-    });
-  }
-
-  function runCompare() {
-    if (compare.length < 2) return;
-    const names = compare.map((c) => c.project_name).join('، ');
-    chatRef.current?.ask(L(`قارن بين هذه المشاريع لهذا العميل: ${names}`, `Compare these projects for this customer: ${names}`));
-  }
-
-  function onPitch(item: SuggestionItem) {
-    chatRef.current?.ask(L(`اكتب عرضاً مختصراً لمشروع «${item.project_name}» لهذا العميل بناءً على تفضيلاته.`, `Write a short pitch for "${item.project_name}" for this customer based on their preferences.`));
-  }
-  function onDraftWhatsApp(item: SuggestionItem) {
-    // Open the project's WhatsApp flow: prefill the client's chat with the stored
-    // project template (or generate + save one first) — a popup over this modal.
-    setWaProject(item);
-  }
-  function onAsk(item: SuggestionItem) {
-    chatRef.current?.ask(L(`لماذا يُعتبر مشروع «${item.project_name}» مناسباً لهذا العميل؟`, `Why is "${item.project_name}" a good fit for this customer?`));
-  }
-  function onOpenDetails(item: SuggestionItem) {
+  function onOpenDetails(item: FinderMatch) {
     window.open(`/model/all_projects/${item.project_id}`, '_blank', 'noopener');
   }
-  async function onAddToClient(item: SuggestionItem) {
+  async function onAddToClient(item: FinderMatch) {
     if (!clientRec?.id) { addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error'); return; }
     setAddStates((s) => ({ ...s, [item.project_id]: 'saving' }));
     const res = await addProjectToClient(clientRec.id, item.project_id);
@@ -186,25 +143,15 @@ export default function SuggestedProjectsModal({
     }
   }
 
-  const total = totalSuggestions(resp);
-  const missing = resp?.client_preferences_summary.missing_required_preferences ?? [];
-  const sourceCounts = resp?.metadata.source_counts;
-  const activeItems = (resp?.groups[activeTab] ?? []).filter(
-    (it) => sourceFilter === 'all' || it.data_source === sourceFilter,
-  );
-  // Which sources actually appear in the results (drives the filter chips).
-  const SOURCE_FILTERS: Array<{ key: 'all' | MatchSource; ar: string; en: string }> = [
-    { key: 'all', ar: 'الكل', en: 'All' },
-    { key: 'our_projects', ar: 'مشاريعنا', en: 'Our Projects' },
-    { key: 'market_listings', ar: 'إعلانات السوق', en: 'Market' },
-    { key: 'all_projects', ar: 'كل المشاريع', en: 'Listings DB' },
-  ];
+  const total = totalFinderMatches(resp);
+  const missing = resp?.metadata.missing_required_preferences ?? [];
+  const needsPreferences = resp?.metadata.needs_preferences === true;
+  const activeItems = resp?.groups[activeTab] ?? [];
 
   return (
-    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-3 sm:p-6" onMouseDown={onClose}>
       <div
-        className="flex h-full max-h-[92vh] w-full max-w-[1200px] flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl"
+        className="flex h-full max-h-[92vh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl"
         onMouseDown={(e) => e.stopPropagation()}
         dir={isAr ? 'rtl' : 'ltr'}
       >
@@ -212,8 +159,8 @@ export default function SuggestedProjectsModal({
         <div className="flex items-center gap-2 border-b border-sand/40 bg-white px-4 py-3">
           <Sparkles size={18} className="text-copper" />
           <div className="min-w-0 flex-1">
-            <div className="text-base font-bold text-chocolate">{L('المشاريع المقترحة', 'Suggested Projects')}</div>
-            <div className="text-[11px] text-charcoal/60">{L('مبنية على تفضيلات العميل الحالية في نموذج المتابعة (تشمل تعديلات لم تُحفظ).', 'Based on the current follow-up preferences (including unsaved edits).')}</div>
+            <div className="text-base font-bold text-chocolate">{L('الباحث عن المشاريع', 'Project Finder')}</div>
+            <div className="text-[11px] text-charcoal/60">{L('ترتيب دقيق موثّق بالإحداثيات — مبني على تفضيلات العميل الحالية (تشمل تعديلات لم تُحفظ).', 'Coordinate-verified ranking — based on the current follow-up preferences (including unsaved edits).')}</div>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-2 text-charcoal/50 transition hover:bg-cream hover:text-charcoal" aria-label={L('إغلاق', 'Close')}>
             <X size={18} />
@@ -245,141 +192,63 @@ export default function SuggestedProjectsModal({
           )}
         </div>
 
-        {/* Body: grouped cards (left) + chat (right) */}
-        <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
-          {/* Left — grouped cards */}
-          <div className="flex min-h-0 flex-1 flex-col border-b border-sand/30 lg:border-b-0 lg:border-e">
-            {/* Tabs */}
-            <div className="flex flex-wrap gap-1 border-b border-sand/30 bg-white/40 px-3 py-2">
-              {SUGGESTION_GROUP_KEYS.map((k) => {
-                const count = resp?.groups[k]?.length ?? 0;
-                const on = activeTab === k;
-                return (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setActiveTab(k)}
-                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${on ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream/70'} ${count === 0 ? 'opacity-50' : ''}`}
-                  >
-                    {isAr ? TAB_LABELS[k].ar : TAB_LABELS[k].en}
-                    <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
-                  </button>
-                );
-              })}
-            </div>
+        {/* Group tabs */}
+        <div className="flex flex-wrap gap-1 border-b border-sand/30 bg-white/40 px-3 py-2">
+          {FINDER_GROUP_KEYS.map((k) => {
+            const count = resp?.groups[k]?.length ?? 0;
+            const on = activeTab === k;
+            return (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setActiveTab(k)}
+                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${on ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream/70'} ${count === 0 ? 'opacity-50' : ''}`}
+              >
+                {isAr ? TAB_LABELS[k].ar : TAB_LABELS[k].en}
+                <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
 
-            {/* Source filter — separates our projects / market listings / all projects */}
-            {!loading && !error && total > 0 && sourceCounts && (
-              <div className="flex flex-wrap items-center gap-1 border-b border-sand/20 bg-cream/30 px-3 py-1.5">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-charcoal/40 me-1">{L('المصدر', 'Source')}</span>
-                {SOURCE_FILTERS.map((sf) => {
-                  const count = sf.key === 'all'
-                    ? sourceCounts.our_projects + sourceCounts.market_listings + sourceCounts.all_projects
-                    : sourceCounts[sf.key];
-                  if (sf.key !== 'all' && count === 0) return null;
-                  const on = sourceFilter === sf.key;
-                  return (
-                    <button
-                      key={sf.key}
-                      type="button"
-                      onClick={() => setSourceFilter(sf.key)}
-                      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-bold transition ${on ? 'bg-chocolate text-white' : 'border border-sand/60 bg-white text-charcoal/70 hover:bg-cream/70'}`}
-                    >
-                      {isAr ? sf.ar : sf.en}
-                      <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
-              {loading && (
-                <div className="flex h-full flex-col items-center justify-center gap-2 text-charcoal/55">
-                  <Loader2 size={22} className="animate-spin text-copper" />
-                  <span className="text-sm">{L('جارٍ ترشيح المشاريع…', 'Finding the best-fit projects…')}</span>
-                </div>
-              )}
-              {!loading && error && (
-                <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
-              )}
-              {!loading && !error && resp && !resp.metadata.has_criteria && total > 0 && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-                  {L(
-                    'لم تُحدَّد أي تفضيلات لهذا العميل، لذلك هذه ليست ترشيحات مطابقة — إنما مشاريع متاحة عامة. حدِّد الحي أو الميزانية أو نوع العقار (أو اسأل العميل) للحصول على ترشيح دقيق.',
-                    'No preferences are set for this client, so these are not matched recommendations — just generally available projects. Set a district, budget, or unit type (or ask the client) for a precise match.',
-                  )}
-                </div>
-              )}
-              {!loading && !error && total === 0 && (
-                <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
-                  <Info size={22} className="text-copper" />
-                  <p className="text-sm">{L('لا توجد مشاريع مطابقة بالتفضيلات الحالية. جرّب توسيع الميزانية أو الموقع، أو اسأل العميل عن تفاصيل أكثر.', 'No matching projects for the current preferences. Try widening the budget or location, or gather more details from the client.')}</p>
-                </div>
-              )}
-              {!loading && !error && total > 0 && activeItems.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
-              )}
-              {!loading && !error && activeItems.map((item) => (
-                <SuggestionCard
-                  key={item.project_id}
-                  item={item}
-                  isAr={isAr}
-                  compareSelected={compare.some((c) => c.project_id === item.project_id)}
-                  onToggleCompare={toggleCompare}
-                  // Chat-handoff actions (pitch / WhatsApp draft / ask) are omitted
-                  // under the Project-Finder-only direction — no conversational AI.
-                  onPitch={PROJECT_FINDER_ONLY ? undefined : onPitch}
-                  onDraftWhatsApp={PROJECT_FINDER_ONLY ? undefined : onDraftWhatsApp}
-                  onAsk={PROJECT_FINDER_ONLY ? undefined : onAsk}
-                  onOpenDetails={onOpenDetails}
-                  onAddToClient={onAddToClient}
-                  addState={addStates[item.project_id] ?? 'idle'}
-                />
-              ))}
-            </div>
-
-            {/* Compare bar */}
-            {compare.length > 0 && (
-              <div className="flex items-center gap-2 border-t border-sand/30 bg-white px-3 py-2">
-                <GitCompareArrows size={15} className="text-copper" />
-                <span className="text-xs text-charcoal/70">{L(`${compare.length} مُحدد للمقارنة`, `${compare.length} selected`)}</span>
-                <div className="flex-1" />
-                <button type="button" onClick={() => setCompare([])} className="text-[11px] text-charcoal/55 hover:underline">{L('مسح', 'Clear')}</button>
-                <button type="button" onClick={runCompare} disabled={compare.length < 2} className="rounded-lg bg-copper px-3 py-1 text-xs font-bold text-white transition hover:bg-terracotta disabled:opacity-50">
-                  {L('قارن', 'Compare')}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Right — assistant chat. Unwired under the Project-Finder-only
-              direction (no conversational AI); the deterministic ranked groups
-              are the whole surface. */}
-          {!PROJECT_FINDER_ONLY && (
-            <div className="flex min-h-0 w-full flex-col bg-white lg:w-[400px] lg:shrink-0">
-              <div className="border-b border-sand/30 bg-copper/10 px-3 py-2 text-sm font-bold text-chocolate">{L('اسأل المساعد', 'Ask the assistant')}</div>
-              <div className="min-h-0 flex-1">
-                <AssistantChatPane ref={chatRef} isAr={isAr} getPreface={getPreface} />
-              </div>
+        {/* Cards */}
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+          {loading && (
+            <div className="flex h-full flex-col items-center justify-center gap-2 text-charcoal/55">
+              <Loader2 size={22} className="animate-spin text-copper" />
+              <span className="text-sm">{L('جارٍ ترشيح المشاريع…', 'Finding the best-fit projects…')}</span>
             </div>
           )}
+          {!loading && error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+          )}
+          {!loading && !error && needsPreferences && (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+              <Info size={22} className="text-copper" />
+              <p className="text-sm">{L('لم تُحدَّد أي تفضيلات لهذا العميل. حدِّد الحي أو الميزانية أو نوع العقار (أو اسأل العميل) للحصول على ترشيح دقيق.', 'No preferences are set for this client. Set a district, budget, or unit type (or ask the client) for a precise match.')}</p>
+            </div>
+          )}
+          {!loading && !error && !needsPreferences && total === 0 && (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+              <Info size={22} className="text-copper" />
+              <p className="text-sm">{L('لا توجد مشاريع مطابقة بالتفضيلات الحالية. جرّب توسيع الميزانية أو الموقع، أو اسأل العميل عن تفاصيل أكثر.', 'No matching projects for the current preferences. Try widening the budget or location, or gather more details from the client.')}</p>
+            </div>
+          )}
+          {!loading && !error && total > 0 && activeItems.length === 0 && (
+            <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
+          )}
+          {!loading && !error && activeItems.map((item) => (
+            <FinderCard
+              key={item.project_id}
+              item={item}
+              isAr={isAr}
+              onOpenDetails={onOpenDetails}
+              onAddToClient={onAddToClient}
+              addState={addStates[item.project_id] ?? 'idle'}
+            />
+          ))}
         </div>
       </div>
     </div>
-
-    {/* WhatsApp flow — a SIBLING popup (not nested in the modal's onMouseDown
-        backdrop, so clicking it never closes the whole modal). Finds/generates the
-        project template → opens the client chat prefilled. Keeps the rep here. */}
-    {waProject && (
-      <ProjectWhatsAppFlow
-        isAr={isAr}
-        projectId={waProject.project_id}
-        projectName={waProject.project_name}
-        clientRec={clientRec}
-        onClose={() => setWaProject(null)}
-      />
-    )}
-    </>
   );
 }
