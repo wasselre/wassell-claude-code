@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { GoogleMap, OverlayView, useJsApiLoader } from '@react-google-maps/api';
 import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
+import Supercluster from 'supercluster';
 import { useAppStore } from '@/stores/appStore';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import {
@@ -13,6 +14,7 @@ import {
   buildPillIcon,
   resolveMapStyles,
 } from '@/lib/locationUtils';
+import { isSummaryModel } from '@/lib/lazyModels';
 import { useResolvedLocations, type ResolvedPin } from '@/hooks/useResolvedLocations';
 import { resolveMirror, resolveLookupDisplayValue } from '@/lib/mirrorResolver';
 import { collectViewFields, readExpandedValue, type ExpandedField } from '@/lib/sectionMirrorExpand';
@@ -202,7 +204,19 @@ export function formatFieldValue(field: ModelField, raw: unknown, ctx: FormatCtx
   }
 }
 
-export default function MapsView({ model, records, onCardClick }: MapsViewProps) {
+/**
+ * Map view dispatcher. Summary models (e.g. `market_listings`, ~46k rows) use a
+ * VIEWPORT-DRIVEN supercluster path (`SummaryMapsView`) that only ever
+ * instantiates google.maps.Marker objects for what's currently visible. Every
+ * other model keeps the original markerclusterer pipeline (`LegacyMapsView`),
+ * unchanged.
+ */
+export default function MapsView(props: MapsViewProps) {
+  if (isSummaryModel(props.model)) return <SummaryMapsView {...props} />;
+  return <LegacyMapsView {...props} />;
+}
+
+function LegacyMapsView({ model, records, onCardClick }: MapsViewProps) {
   const { t } = useTranslation();
   const { language, records: allRecords, models, users, mapsViewState, setMapsViewState } = useAppStore();
   const isAr = language === 'ar';
@@ -528,6 +542,417 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
           {unresolvedNamed.length > 8 && (
             <div className="px-3 py-1.5 text-[11px] text-charcoal/50 border-t border-sand/40">
               {t('maps.unplaced_more', { count: unresolvedNamed.length - 8 })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Summary-model map (viewport-driven supercluster)
+//
+// For huge summary models (market_listings, ~46k rows already loaded as a slim
+// set in the store) we DO NOT instantiate a google.maps.Marker per record. That
+// would freeze the tab and the old global "first 2,000" slice silently hid the
+// other ~40k. Instead we build ONE in-memory Supercluster spatial index from the
+// records' top-level lat/lng and, on every map idle, query it for the CURRENT
+// viewport + zoom — creating marker objects only for the handful of clusters +
+// pins actually visible (tens–hundreds), never the whole set.
+// ───────────────────────────────────────────────────────────────────────────
+
+// Supercluster tuning. `radius`/`maxZoom` are chosen so that by the time a user
+// is zoomed in far enough to want individual pins, the per-viewport point count
+// is comfortably under PIN_CAP — so the dense-viewport banner is rare.
+//   radius   80px — aggressive enough to keep zoomed-out Riyadh as a few big
+//                    clusters (no freeze), loose enough to split into district
+//                    clusters as you zoom in.
+//   maxZoom  16   — above this, getClusters returns individual points (pins).
+//   minPoints 2   — a lone listing is always a pin, never a 1-count cluster.
+const SUPERCLUSTER_RADIUS = 80;
+const SUPERCLUSTER_MAX_ZOOM = 16;
+// Per-viewport SAFETY CAP — applies ONLY to individual clickable PINS. Clusters
+// always represent the rest, so nothing is ever hidden behind a global slice;
+// the only effect of the cap is "very dense + zoomed-in" views render up to this
+// many pins and surface a "zoom in / narrow filters" banner. Tuned high enough
+// that the radius/maxZoom above keep it from firing in normal use.
+const PIN_CAP = 2000;
+
+/** Geometry shape returned by getClusters for an individual (non-cluster) point. */
+type SummaryPointProps = { cluster?: false; id: string };
+
+/** A finite numeric coordinate read from a top-level slim field. Null otherwise. */
+function finiteCoord(v: unknown): number | null {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
+  const { t } = useTranslation();
+  const { language, records: allRecords, models, users, mapsViewState, setMapsViewState } = useAppStore();
+  const isAr = language === 'ar';
+
+  const cfg = model.maps_config;
+  const expandedById = useMemo(() => {
+    const m = new Map<string, ExpandedField>();
+    for (const ef of collectViewFields(model, models)) m.set(ef.id, ef);
+    return m;
+  }, [model, models]);
+
+  const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
+  const keyMissing = !isMapsKeyConfigured();
+
+  // Partition the (already-filtered) records into mapped (valid finite top-level
+  // lat/lng) and no-location. Read lat/lng DIRECTLY off the slim summary data —
+  // no geocode pipeline. Each mapped point becomes a GeoJSON feature carrying its
+  // record id (the only payload the index needs; we re-resolve the full record
+  // by id at click time).
+  const { points, mappedById, noLocation } = useMemo(() => {
+    const pts: Supercluster.PointFeature<SummaryPointProps>[] = [];
+    const byId = new Map<string, AppRecord>();
+    const none: AppRecord[] = [];
+    for (const rec of records) {
+      const lat = finiteCoord(rec.data.latitude);
+      const lng = finiteCoord(rec.data.longitude);
+      if (lat === null || lng === null || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+        none.push(rec);
+        continue;
+      }
+      byId.set(rec.id, rec);
+      pts.push({
+        type: 'Feature',
+        properties: { cluster: false, id: rec.id },
+        geometry: { type: 'Point', coordinates: [lng, lat] },
+      });
+    }
+    return { points: pts, mappedById: byId, noLocation: none };
+  }, [records]);
+
+  // ONE spatial index, rebuilt only when the mapped point set changes (i.e. the
+  // filtered records change). Pure JS — creates NO google.maps.Marker objects.
+  const index = useMemo(() => {
+    const sc = new Supercluster<SummaryPointProps>({
+      radius: SUPERCLUSTER_RADIUS,
+      maxZoom: SUPERCLUSTER_MAX_ZOOM,
+      minPoints: 2,
+    });
+    sc.load(points);
+    return sc;
+  }, [points]);
+
+  // Persisted view state (cross-navigation), same as the legacy path.
+  const persisted = mapsViewState[model.id];
+  const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
+  const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+
+  const styles = resolveMapStyles(cfg.map_style_json);
+  const firstPoint = points[0];
+  // coordinates are [lng, lat]; indexed access is `number | undefined` under
+  // noUncheckedIndexedAccess, so coerce to finite numbers.
+  const firstLng = firstPoint?.geometry.coordinates[0];
+  const firstLat = firstPoint?.geometry.coordinates[1];
+  const center = persisted?.center
+    ? persisted.center
+    : firstPoint && Number.isFinite(firstLat) && Number.isFinite(firstLng)
+      ? { lat: firstLat as number, lng: firstLng as number }
+      : cfg.default_center_lat != null && cfg.default_center_lng != null
+        ? { lat: cfg.default_center_lat, lng: cfg.default_center_lng }
+        : DEFAULT_MAP_CENTER;
+  const zoom = persisted?.zoom ?? cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
+
+  // Friendly names for no-location records — reuse the pin-label / popup-title
+  // field so the "without location" panel lists recognizable titles.
+  const labelEf = cfg.pin_label_field_id ? expandedById.get(cfg.pin_label_field_id) : undefined;
+  const titleEf = cfg.popup_title_field_id ? expandedById.get(cfg.popup_title_field_id) : undefined;
+  const nameEf = labelEf ?? titleEf;
+  const noLocationNamed = useMemo(() => {
+    const ctxBase: Omit<FormatCtx, 'recordData'> = { isAr, t, allRecords, models, users };
+    return noLocation.map((rec) => {
+      let label = `#${rec.id.slice(0, 8)}`;
+      if (nameEf) {
+        const value = readExpandedValue(nameEf, rec, allRecords, model, models);
+        const text = formatFieldValue(nameEf.field, value, { ...ctxBase, recordData: rec.data });
+        if (text && text !== '—') label = text;
+      }
+      return { record: rec, label };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noLocation, nameEf, isAr, allRecords, models, users, model]);
+
+  // Persist selection separately (idle only fires on pan/zoom).
+  useEffect(() => {
+    if (!mapInstance) return;
+    const c = mapInstance.getCenter();
+    const z = mapInstance.getZoom();
+    if (!c || z == null) return;
+    setMapsViewState(model.id, { center: { lat: c.lat(), lng: c.lng() }, zoom: z, selectedId });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, mapInstance, model.id]);
+
+  // Viewport version — bumped on every map `idle` (settles after pan/zoom and
+  // the initial load). The marker effect below re-queries the index for the new
+  // viewport whenever this changes.
+  const [viewportVersion, setViewportVersion] = useState(0);
+  const [pinCapHit, setPinCapHit] = useState(false);
+
+  // Imperative marker pipeline — query getClusters for the CURRENT bounds+zoom
+  // and render ONLY those features. No MarkerClusterer: supercluster IS the
+  // clustering, so we just place the returned cluster/point markers directly.
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  // Latest record-by-id snapshot for click handlers (re-resolve by id at click
+  // time, defensive against stale closures).
+  const mappedRef = useRef(mappedById);
+  useEffect(() => {
+    mappedRef.current = mappedById;
+  }, [mappedById]);
+
+  useEffect(() => {
+    if (!mapInstance || !isLoaded) return;
+
+    const bounds = mapInstance.getBounds();
+    const zNow = mapInstance.getZoom();
+    if (!bounds || zNow == null) return;
+
+    const ne = bounds.getNorthEast();
+    const sw = bounds.getSouthWest();
+    const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
+    const clusters = index.getClusters(bbox, Math.round(zNow));
+
+    // Tear down previous markers. Cheap — SVG data-URI icons, no network.
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+
+    const newMarkers: google.maps.Marker[] = [];
+    let pinsRendered = 0;
+    let capExceeded = false;
+
+    for (const feature of clusters) {
+      // coordinates are [lng, lat]; indexed access is `number | undefined` under
+      // noUncheckedIndexedAccess. Skip any malformed feature defensively, then
+      // pin to plain numbers so position literals type-check.
+      const rawLng = feature.geometry.coordinates[0];
+      const rawLat = feature.geometry.coordinates[1];
+      if (typeof rawLng !== 'number' || typeof rawLat !== 'number') continue;
+      const lng: number = rawLng;
+      const lat: number = rawLat;
+      const props = feature.properties;
+
+      if (props && (props as Supercluster.ClusterProperties).cluster) {
+        // Cluster feature → count marker. Click zooms to its expansion zoom.
+        const clusterProps = props as Supercluster.ClusterProperties;
+        const count = clusterProps.point_count;
+        const clusterId = clusterProps.cluster_id;
+        const icon = buildClusterIcon(count);
+        const marker = new google.maps.Marker({
+          position: { lat, lng },
+          icon: icon as google.maps.Icon | undefined,
+          zIndex: Number(google.maps.Marker.MAX_ZINDEX) + Math.min(count, 1000),
+          title: String(count),
+        });
+        marker.addListener('click', () => {
+          const expansionZoom = Math.min(index.getClusterExpansionZoom(clusterId), 20);
+          mapInstance.setZoom(expansionZoom);
+          mapInstance.panTo({ lat, lng });
+        });
+        newMarkers.push(marker);
+        continue;
+      }
+
+      // Individual point feature → clickable listing pin. Per-viewport cap
+      // applies HERE only; clusters above represent everything else, so the cap
+      // never hides a record permanently — zoom/pan and it appears.
+      if (pinsRendered >= PIN_CAP) {
+        capExceeded = true;
+        continue;
+      }
+      pinsRendered += 1;
+      const id = (props as SummaryPointProps).id;
+      const rec = mappedRef.current.get(id);
+      const color = model.color || PILL_DEFAULT_COLOR;
+      const icon = buildPillIcon('•', color);
+      const marker = new google.maps.Marker({
+        position: { lat, lng },
+        icon: icon as google.maps.Icon | undefined,
+        title: id.slice(0, 8),
+      });
+      marker.addListener('click', () => {
+        const cur = mappedRef.current.get(id) ?? rec;
+        if (!cur) return;
+        if (cfg.click_action === 'navigate') onCardClick(cur);
+        else setSelectedId(id);
+      });
+      newMarkers.push(marker);
+    }
+
+    newMarkers.forEach((m) => m.setMap(mapInstance));
+    markersRef.current = newMarkers;
+    setPinCapHit(capExceeded);
+
+    return () => {
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, isLoaded, index, viewportVersion, cfg.click_action, model.color]);
+
+  if (keyMissing) {
+    return <EmptyState title={t('maps.api_key_missing')} hint={t('maps.api_key_missing_hint')} />;
+  }
+  if (loadError) {
+    return <EmptyState title={t('maps.api_key_missing')} hint={String(loadError.message ?? loadError)} />;
+  }
+  if (!isLoaded) {
+    return (
+      <div className="flex items-center justify-center py-20 text-charcoal/40">
+        <p>{t('common.loading')}</p>
+      </div>
+    );
+  }
+
+  const selectedRec = selectedId ? mappedById.get(selectedId) : undefined;
+  const selectedPin: ResolvedPin | undefined = selectedRec
+    ? {
+        record: selectedRec,
+        lat: finiteCoord(selectedRec.data.latitude) ?? 0,
+        lng: finiteCoord(selectedRec.data.longitude) ?? 0,
+        color: model.color || PILL_DEFAULT_COLOR,
+      }
+    : undefined;
+
+  const total = records.length;
+  const mappedCount = points.length;
+  const noLocationCount = noLocation.length;
+  const fmt = (n: number) => n.toLocaleString(isAr ? 'ar-SA' : 'en-US');
+
+  return (
+    <div className="relative h-full">
+      <GoogleMap
+        mapContainerStyle={mapContainerStyle}
+        center={center}
+        zoom={zoom}
+        options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: false }}
+        onLoad={(m) => {
+          setMapInstance(m);
+          // Kick the first viewport query once the map reports a viewport.
+          setViewportVersion((v) => v + 1);
+        }}
+        onUnmount={() => setMapInstance(null)}
+        onIdle={() => {
+          // Re-query the index for the new viewport AND persist pan/zoom.
+          setViewportVersion((v) => v + 1);
+          if (!mapInstance) return;
+          const c = mapInstance.getCenter();
+          const z = mapInstance.getZoom();
+          if (!c || z == null) return;
+          setMapsViewState(model.id, { center: { lat: c.lat(), lng: c.lng() }, zoom: z, selectedId });
+        }}
+      >
+        {cfg.click_action === 'popup' && selectedPin && (
+          <OverlayView
+            position={{ lat: selectedPin.lat, lng: selectedPin.lng }}
+            mapPaneName={OverlayView.FLOAT_PANE}
+            getPixelPositionOffset={(width, height) => ({ x: -width / 2, y: -height - 40 })}
+          >
+            <PopupCard
+              pin={selectedPin}
+              cfg={cfg}
+              model={model}
+              expandedById={expandedById}
+              isAr={isAr}
+              t={t}
+              allRecords={allRecords}
+              models={models}
+              users={users}
+              openLabel={t('maps.open_record')}
+              onOpen={() => onCardClick(selectedPin.record)}
+              onClose={() => setSelectedId(null)}
+            />
+          </OverlayView>
+        )}
+      </GoogleMap>
+
+      {/* Counts strip — total / on the map / without location. Always shown so
+          the user knows nothing is silently hidden (the old 2k-slice bug). */}
+      <div
+        className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-white/95 rounded-full border border-copper/30 px-4 py-1.5 shadow-lg"
+        dir={isAr ? 'rtl' : 'ltr'}
+      >
+        <p className="text-xs font-bold text-chocolate whitespace-nowrap">
+          {isAr ? (
+            <>
+              <span>{fmt(total)} إجمالي</span>
+              <span className="text-charcoal/40"> · </span>
+              <span>{fmt(mappedCount)} على الخريطة</span>
+              <span className="text-charcoal/40"> · </span>
+              <span>{fmt(noLocationCount)} بدون موقع</span>
+            </>
+          ) : (
+            <>
+              <span>{fmt(total)} total</span>
+              <span className="text-charcoal/40"> · </span>
+              <span>{fmt(mappedCount)} on map</span>
+              <span className="text-charcoal/40"> · </span>
+              <span>{fmt(noLocationCount)} without location</span>
+            </>
+          )}
+        </p>
+      </div>
+
+      {/* Per-viewport PIN cap banner — only when more than PIN_CAP individual
+          points fall in the current view. Clusters still represent the rest, so
+          nothing is hidden; this just nudges the user to zoom/narrow to see them
+          all as pins. */}
+      {pinCapHit && (
+        <div
+          className="absolute top-14 left-1/2 -translate-x-1/2 z-20 bg-white/95 rounded-xl border border-copper/40 px-4 py-2 shadow-lg text-center max-w-[90%]"
+          dir={isAr ? 'rtl' : 'ltr'}
+        >
+          <p className="text-[11px] font-bold text-chocolate">
+            {isAr
+              ? 'زوّم أكثر أو حدّد عوامل التصفية لعرض كل القوائم كنقاط'
+              : 'Zoom in or narrow filters to show all listings as pins'}
+          </p>
+        </div>
+      )}
+
+      {/* Truly-empty map — nothing mapped AND nothing without location. */}
+      {mappedCount === 0 && noLocationCount === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="bg-white/90 rounded-lg border border-sand/50 px-4 py-2 text-center">
+            <p className="text-sm font-bold text-charcoal/70">{t('maps.no_pins')}</p>
+            <p className="text-xs text-charcoal/50 mt-0.5">{t('maps.configure_in_builder')}</p>
+          </div>
+        </div>
+      )}
+
+      {/* No-location side panel — records without valid coordinates. */}
+      {noLocationNamed.length > 0 && (
+        <div className="absolute bottom-3 start-3 z-20 max-w-[280px] bg-white/95 rounded-xl border border-copper/40 shadow-lg overflow-hidden" dir={isAr ? 'rtl' : 'ltr'}>
+          <div className="flex items-center justify-between gap-2 px-3 py-2 bg-copper/10 border-b border-copper/20">
+            <span className="text-xs font-bold text-chocolate">
+              {isAr
+                ? `${fmt(noLocationNamed.length)} بدون موقع`
+                : `${fmt(noLocationNamed.length)} without location`}
+            </span>
+          </div>
+          <ul className="max-h-40 overflow-y-auto py-1">
+            {noLocationNamed.slice(0, 8).map(({ record, label }) => (
+              <li key={record.id}>
+                <button
+                  type="button"
+                  onClick={() => onCardClick(record)}
+                  title={t('maps.unplaced_open')}
+                  className="w-full text-start px-3 py-1.5 text-xs text-charcoal hover:bg-cream truncate transition-colors"
+                >
+                  {label}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {noLocationNamed.length > 8 && (
+            <div className="px-3 py-1.5 text-[11px] text-charcoal/50 border-t border-sand/40">
+              {t('maps.unplaced_more', { count: noLocationNamed.length - 8 })}
             </div>
           )}
         </div>
