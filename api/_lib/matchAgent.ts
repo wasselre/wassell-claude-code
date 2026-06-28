@@ -1420,10 +1420,10 @@ export async function matchProjectsCore(
   // verifyGeo is on, the project's district is the polygon that CONTAINS its pin
   // (source of truth) — not the stored text — and we attach geo_status,
   // mismatch_warnings, an honest geo_confidence, and any extra data_gaps.
-  const geoFor = (r: RecordRow, loc: { district: string; city: string }, pmap: Map<string, string | null>) => {
+  const geoFor = (r: RecordRow, loc: { district: string; city: string }, pmap: Map<string, string | null>, doVerify: boolean) => {
     const projLat = asNum(r.data.latitude);
     const projLng = asNum(r.data.longitude);
-    if (!verifyGeo) {
+    if (!doVerify) {
       return {
         projLat,
         projLng,
@@ -1462,7 +1462,7 @@ export async function matchProjectsCore(
       const name = asStr(r.data.project_name);
       if (!name) continue;
       const loc = recordLocationIds(r.data);
-      const g = geoFor(r, loc, polyMap);
+      const g = geoFor(r, loc, polyMap, verifyGeo);
       const s = scoreProject(r.data, req, {
         projLat: g.projLat,
         projLng: g.projLng,
@@ -1571,21 +1571,20 @@ export async function matchProjectsCore(
         // recommendation (our_projects + all_projects still return). Log loudly.
         console.error('[matchProjectsCore] market_listings load failed:', err instanceof Error ? err.message : String(err));
       }
-      // PostGIS-verify the listings' districts from their own coordinates too.
-      const marketPolyMap = verifyGeo ? await resolvePolygonDistricts(supabase, listingRows) : new Map<string, string | null>();
-      // Extend the geography name maps with the listings' stored + polygon location ids.
-      const marketPolyDistrictIds = [...marketPolyMap.values()].filter((v): v is string => !!v);
-      for (const [k, v] of await geoNameMap(supabase, 'districts', [
-        ...listingRows.map((r) => recordLocationIds(r.data).district),
-        ...marketPolyDistrictIds,
-      ])) districtNameById.set(k, v);
+      // Market listings are EXTERNAL / unverified by design (already flagged
+      // "verify before offering"), and a busy district can pull thousands of nearby
+      // listings — boundary-verifying every one (point-in-polygon + name resolution)
+      // blew past the edge function timeout. Boundary verification is for OUR project
+      // catalog; market listings keep their stored district + own coords (doVerify=false).
+      const noMarketVerify = new Map<string, string | null>();
+      for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
       for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
       for (const r of listingRows) {
         const adapted = adaptListingToScorable(r.data);
         const name = asStr(adapted.project_name);
         if (!name) continue;
         const loc = recordLocationIds(r.data);
-        const g = geoFor(r, loc, marketPolyMap);
+        const g = geoFor(r, loc, noMarketVerify, false);
         const s = scoreProject(adapted, req, {
           projLat: g.projLat,
           projLng: g.projLng,
@@ -1596,9 +1595,9 @@ export async function matchProjectsCore(
           reqDistrictIds,
           reqCityIds,
           reqCentroids,
-          // A listing's own pin is high-confidence when present; otherwise the geo
-          // verifier supplies the honest confidence from its district status.
-          geoConfidence: verifyGeo ? g.geoConfidence : ((g.projLat != null && g.projLng != null) ? 'high' : null),
+          // A listing's own pin is high-confidence when present (market listings
+          // are not boundary-verified — see above).
+          geoConfidence: (g.projLat != null && g.projLng != null) ? 'high' : null,
           projDistrictId: g.projDistrictId,
           projCityId: loc.city || null,
           projDistrictName: g.projDistrictName,
