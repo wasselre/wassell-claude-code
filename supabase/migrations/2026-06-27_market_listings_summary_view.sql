@@ -20,9 +20,11 @@ SELECT
     'external_id', data->'external_id', 'source', data->'source', 'title', data->'title',
     'listing_type', data->'listing_type', 'category', data->'category', 'property_type', data->'property_type',
     'price', data->'price', 'price_per_m2', data->'price_per_m2', 'area', data->'area',
-    'bedrooms', data->'bedrooms', 'bathrooms', data->'bathrooms', 'city', data->'city',
-    'region', data->'region', 'district', data->'district', 'district_lookup', data->'district_lookup',
-    'city_lookup', data->'city_lookup', 'latitude', data->'latitude', 'longitude', data->'longitude',
+    'bedrooms', data->'bedrooms', 'bathrooms', data->'bathrooms',
+    -- Geography is the nested `location` object ({city, region, district} record
+    -- ids) since the 2026-06-28 geography migration (flat *_lookup keys stripped).
+    'location', data->'location',
+    'latitude', data->'latitude', 'longitude', data->'longitude',
     'is_active', data->'is_active', 'main_image_url', data->'main_image_url',
     'advertiser_name', data->'advertiser_name', 'image_count', data->'image_count', 'video_count', data->'video_count'
   ) AS data

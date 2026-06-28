@@ -61,8 +61,11 @@ export function summaryViewName(modelName: string): string {
 export const SUMMARY_DATA_KEYS: Readonly<Record<string, readonly string[]>> = {
   market_listings: [
     'external_id', 'source', 'title', 'listing_type', 'category', 'property_type',
-    'price', 'price_per_m2', 'area', 'bedrooms', 'bathrooms', 'city', 'region',
-    'district', 'district_lookup', 'city_lookup', 'latitude', 'longitude',
+    'price', 'price_per_m2', 'area', 'bedrooms', 'bathrooms',
+    // Geography lives in the nested `location` object ({city, region, district}
+    // record ids) since the 2026-06-28 geography migration — the old flat
+    // district_lookup / city_lookup / region_lookup keys were stripped.
+    'location', 'latitude', 'longitude',
     'is_active', 'main_image_url', 'advertiser_name', 'image_count', 'video_count',
   ],
 };
