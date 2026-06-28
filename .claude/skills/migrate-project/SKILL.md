@@ -69,8 +69,22 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   service key. New records: `p_id = crypto.randomUUID()`, `p_expected_version = null`. Returns the id.
 - Lookups store the **target UUID** (developer → developers.id, unit.project_id → all_projects.id,
   district_lookup → districts.id, …). Dropdowns/multiselects store the option **`value`**, not the label.
-- **Auto-IDs:** call `record_assign_auto_id(model_id, field_id, scope_key, start)` and put the returned
-  code into `data` BEFORE `record_save`. Assign `project_id` (all_projects) and `unit_code` (units).
+- **Auto-IDs (⚠ READ — the RPC does NOT work over the service key):** `record_assign_auto_id(model_id,
+  field_id, scope_key, start)` is `SECURITY DEFINER` and **gates on `wassell_user_has_action(auth.uid(),
+  model, 'create')`** — under the service-role key `auth.uid()` is NULL, so it RAISES `42501 insufficient_
+  privilege`. It also returns a **bare INTEGER** (not the formatted code); the prefix+padding are applied
+  client-side. So calling it via REST with the service key fails, and if you blindly stuff the response
+  into `data` you write the *error JSON* as the code (the `42501`-everywhere bug — see Decisions Log).
+  **Correct path (no profile/JWT needed): compute the next id yourself in raw SQL via the Supabase MCP**
+  (runs as postgres, bypasses the auth gate), replicating the RPC's self-heal = `max existing numeric + 1`,
+  then format. Use the **real formatted codes only** for the max (regex `^U-\d+$` for units / `^م ش\d+$`
+  for projects) so stale garbage codes from a prior failed run don't inflate it:
+  - project_id: prefix `م ش`, no padding → ``'م ش' || (max(substring(project_id from '^م ش(\d+)$')::int)+1)``
+  - unit_code:  prefix `U-`, padding 4 → ``'U-' || lpad((real_max+rn)::text,4,'0')`` over the N new units.
+  ⚠ Do NOT use a `(SELECT max FROM cte)` scalar inside an `UPDATE … FROM ranked` that also writes
+  unit_code — it misread/clustered the values; **materialize the max as a literal first**, then UPDATE.
+  Assign `project_id` (all_projects) and `unit_code` (units). Set the code into `data` directly via the
+  same SQL `UPDATE records SET data = jsonb_set(...)` (the row is unfrozen JSONB; the version trigger is fine).
 - **New options:** call the atomic RPC `add_field_option(model_name, field_name, value, label_ar,
   label_en, color)` — it locks + de-dupes so 5 parallel sessions can't clobber the schema.
 - **Images:** download bytes → `POST /storage/v1/object/wassel-files/<auth_uid>/<uuid>.jpg` (service
@@ -181,6 +195,25 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   permanent for all projects.) Verify both are set in step 7.
 - **[2026-06-28] Inputs:** accept a URL AND/OR files (units spreadsheet, brochure PDF, plans PDF/images,
   screenshots) — see Inputs section. A plans file is the right source for units a sparse API misses.
+- **[2026-06-28] Auto-id over service key FAILS (root-caused the `42501` bug):** `record_assign_auto_id`
+  gates on `auth.uid()` create-permission → raises `42501` under the service-role key, and returns a bare
+  INTEGER. Don't call it via REST with the service key. Compute the next id in raw SQL via the Supabase MCP
+  (max **real-formatted** code +1) and set it with `jsonb_set` — see the rewritten "Auto-IDs" bullet in
+  Write channel. The reference script `04-build-and-write.mjs` still does the OLD broken `rpc(...).code`
+  thing — treat the Write-channel bullet as the source of truth, not that script.
+- **[2026-06-28] Filter the unit_code max to real codes (`^U-\d+$`):** during the nuwar run, units of a
+  CONCURRENT migration (project `413b9850…`, سدن فلل سكنية-51) were transiently sitting at the `42501`
+  error-code (mid auto-id fix by a parallel session) and inflated the global max to 42501. They self-resolved
+  to clean `U-42xx` shortly after. Lesson: **5 sessions run in parallel** — never trust the raw global max;
+  compute next unit_code over `unit_code ~ '^U-\d+$'` only so an in-flight sibling's interim garbage can't
+  push your codes into the 40000s. (Same idea for project_id: filter `^م ش\d+$`.)
+- **[2026-06-28] نوار run (Alajlan, `our_projects`):** project `aac8ea71-cee4-4913-81d3-e2cbc6d5a64c`
+  (`م ش2808`), 16 units `U-4325`–`U-4340`, dev `5db67fcc…`. Geography for **حي الملك عبدالله، الرياض** =
+  `location:{district:'d24d7f93-0e7f-72c0-f1fa-c81b85328d8d', city:'44254a38-ce40-938f-17b7-55814a44e45c',
+  region:'9c0c7a82-738d-6456-2101-b7226cc84e20'}` (Riyadh city/region are shared with riv52). The
+  all_projects `location` field (type `location`) holds those three UUIDs; legacy `preferred_city`/
+  `preferred_neighborhoods` are free-text mirrors. districts/cities/regions are **FROZEN** (own tables) —
+  look up the district UUID in `public.districts` by `name_ar` + `city_name_ar`, NOT in `records`.
 
 ## Per-developer API/source adapters (document each site as you learn it)
 - **Almajdiah** → JSON units API `https://etmaam.almajdiah.com/api/client/v1/projects/{id}?…&page=N`
@@ -199,6 +232,19 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   `building_number`/`block` and the full code (`I1`) in `unit_model`/notes. riv52 had 86 units (I:27,
   J:29, K:30), 80 available / 6 sold; brochure `بروشور-سدن-شقق.pdf` (17pp, image-heavy, reversed text
   layer) → 4 model plans + landmarks + the map link.
+  - **Alajlan `nuwar` variant (أدوار/فلل, 2026-06-28):** same Browserbase DOM-scrape, but the units render
+    as **ONE single `<table>`** (no per-building tabs) with **7 columns**: `الوحدة | نوع الوحدة | الدور |
+    المساحة | المواصفات | السعر | المميزات`. Code = `V{block}-{suffix}` (e.g. `V3-2`) → `block`/
+    `building_number`=`V3`, `unit_number` (NUMBER)=suffix `2`, full code `V3-2` → `unit_model`+notes.
+    `نوع الوحدة`=`دور` → `unit_type='دور'`. `الدور`: الأرضي→`ارضي`, الأول→`اول`, **الملحق العلوي→`الروف`**.
+    `المساحة` `190م`→`unit_area` (NET). `المواصفات` = `N غرف نوم / N دورات مياه / مطبخ→مطبخ / صالة→صالة جلوس /
+    غرفة خادمة`. `السعر` = number OR `مباعة` (=sold, no price). `المميزات` = تراس→تراس / مساحة خارجية→فناء
+    خارجي / سطح خاص→سطح / **زاوية→note (corner)**. Components also enriched from the brochure's single
+    **Model A** plan per level (ground: +مستودع/فناء خارجي/مصعد/غرفة-نوم-رييسية; first: +مجلس/مصعد; ملحق:
+    +سطح/فتحة-سماوية/مصعد). Brochure text layer was **clean & readable** (not reversed) — `get_text()` worked.
+    Map `goo.gl` link resolved to a precise pin (24.7157, 46.7574) — better than district centroid. nuwar:
+    16 units listed (15 available / 1 sold) though the brochure states 84 floors + 28 villas total (live
+    table = current released inventory only). Plans = generic Model A only → **SKIP `unit_plan`** (logged rule).
 - Other non-Almajdiah sites: document each site's units source + field shape here as you learn it.
 
 ## Verify & cleanup
