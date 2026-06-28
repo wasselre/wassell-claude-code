@@ -885,7 +885,11 @@ function adaptListingToScorable(d: Record<string, unknown>): Record<string, unkn
     project_name: asStr(d.title) || asStr(d.advertiser_name) || asStr(d.external_id) || 'إعلان سوق',
     preferred_city: asStr(d.city),
     district_name: asStr(d.district),
+    // Relational geography (lookup-first, same as projects): district id drives
+    // the exact tier, city id the same-city tier. region_lookup is display-only
+    // (the engine matches district + city for every source, never region).
     district_lookup: asStr(d.district_lookup),
+    city_lookup: asStr(d.city_lookup),
     unit_types: types,
     price_range: price != null ? { min: price, max: price } : undefined,
     area_range: area != null ? { min: area, max: area } : undefined,

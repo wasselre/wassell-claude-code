@@ -12,8 +12,11 @@ describe('adaptListingToScorable', () => {
   const RAW = {
     title: 'شقة فاخرة في النرجس',
     city: 'الرياض',
+    region: 'منطقة الرياض',
     district: 'النرجس',
     district_lookup: 'district-narjis',
+    city_lookup: 'city-riyadh',
+    region_lookup: 'region-riyadh',
     property_type: 'شقة',
     price: 850_000,
     area: 165,
@@ -33,7 +36,18 @@ describe('adaptListingToScorable', () => {
     expect(a.available_units).toBe(1);
     expect(a.unit_types).toContain('شقة');
     expect(a.district_lookup).toBe('district-narjis');
+    expect(a.city_lookup).toBe('city-riyadh'); // relational city drives same-city matching
     expect(a.project_name).toBe('شقة فاخرة في النرجس');
+  });
+
+  it('matches SAME-CITY via city_lookup when the district differs', () => {
+    const a = adaptListingToScorable(RAW);
+    const s = scoreProject(a, { district: 'العليا', city: 'الرياض' }, {
+      reqDistrictId: 'district-olaya', reqCityId: 'city-riyadh',
+    });
+    expect(s.district_exact).toBe(false);   // not the requested district
+    expect(s.match_type).toBe('same_city'); // …but same city via city_lookup id
+    expect(s.breakdown.location).toBe(0.5);
   });
 
   it('a sold/inactive listing reads as zero availability', () => {
