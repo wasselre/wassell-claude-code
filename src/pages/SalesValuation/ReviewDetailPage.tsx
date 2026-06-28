@@ -260,6 +260,12 @@ export default function ReviewDetailPage() {
 
         {(outcome === 'minor' || outcome === 'major' || outcome === 'critical') && (
           <div className="space-y-3 pt-2">
+            {/* When there's a mistake the manager only fills two things: the
+                mistake classification + a single notes field. Score is derived
+                by the DB trigger (category deduction / outcome default) and
+                requires_correction follows the category's default. The full
+                set (details, correct action, deadline, manual score, etc.)
+                stays available via the advanced full form (?generic=1). */}
             <Labeled label={isAr ? 'تصنيف الخطأ' : 'Mistake Category'}>
               <select value={(d.mistake_category as string) ?? ''} disabled={!canEdit}
                 onChange={(e) => pickCategory(e.target.value)} className="form-input w-full">
@@ -269,35 +275,10 @@ export default function ReviewDetailPage() {
                 ))}
               </select>
             </Labeled>
-            <Labeled label={isAr ? 'تفاصيل الخطأ' : 'Mistake Details'}>
-              <textarea value={(d.mistake_details as string) ?? ''} disabled={!canEdit} rows={2}
-                onChange={(e) => patch({ mistake_details: e.target.value })} className="form-input w-full" />
-            </Labeled>
-            <Labeled label={isAr ? 'التصرف الصحيح' : 'Correct Action'}>
-              <textarea value={(d.correct_action as string) ?? ''} disabled={!canEdit} rows={2}
-                onChange={(e) => patch({ correct_action: e.target.value })} className="form-input w-full" />
-            </Labeled>
-            <Labeled label={isAr ? 'ملاحظة تدريبية للمندوب' : 'Coaching Note'}>
-              <textarea value={(d.coaching_note as string) ?? ''} disabled={!canEdit} rows={2}
+            <Labeled label={isAr ? 'ملاحظات' : 'Notes'}>
+              <textarea value={(d.coaching_note as string) ?? ''} disabled={!canEdit} rows={4}
                 onChange={(e) => patch({ coaching_note: e.target.value })} className="form-input w-full" />
             </Labeled>
-            <div className="grid sm:grid-cols-2 gap-4">
-              <Labeled label={isAr ? 'الدرجة' : 'Score'}>
-                <input type="number" value={String(d.overall_score ?? '')} disabled={!canEdit}
-                  onChange={(e) => { scoreTouched.current = true; patch({ overall_score: e.target.value === '' ? '' : Number(e.target.value) }); }}
-                  className="form-input w-32" />
-              </Labeled>
-              <Labeled label={isAr ? 'مهلة التصحيح' : 'Correction Deadline'}>
-                <input type="datetime-local" value={toLocalInput(d.correction_deadline)} disabled={!canEdit}
-                  onChange={(e) => patch({ correction_deadline: e.target.value ? new Date(e.target.value).toISOString() : '' })}
-                  className="form-input w-full" />
-              </Labeled>
-            </div>
-            <label className="flex items-center gap-2 text-sm font-medium text-charcoal">
-              <input type="checkbox" checked={Boolean(d.requires_correction)} disabled={!canEdit}
-                onChange={(e) => patch({ requires_correction: e.target.checked })} />
-              {isAr ? 'يتطلب تصحيح' : 'Requires Correction'}
-            </label>
             <Button onClick={() => save()} disabled={!canEdit || saving}>
               {saving ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ التقييم' : 'Save Review')}
             </Button>
@@ -461,14 +442,6 @@ function Modal({ title, onClose, isAr, children }: { title: string; onClose: () 
 }
 
 // ── pure helpers ─────────────────────────────────────────────────────
-
-function toLocalInput(v: unknown): string {
-  if (typeof v !== 'string' || !v) return '';
-  const dt = new Date(v);
-  if (isNaN(dt.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
-}
 
 function nextStep(followup: AppRecord | null, isAr: boolean): string {
   if (!followup) return '';

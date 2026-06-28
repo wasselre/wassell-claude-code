@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Info } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Info } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import { useSv, SectionCard, PageHeader } from './components/shared';
@@ -18,6 +18,18 @@ export default function SettingsPage() {
   }, [record]);
 
   const set = (k: string, v: unknown) => setD((x) => ({ ...x, [k]: v }));
+
+  // Available call-result outcomes come from the live followups model so they
+  // never drift from what reps actually pick on a follow-up.
+  const callResultOptions = useMemo(
+    () => m.followups?.schema.sections.flatMap((s) => s.fields).find((x) => x.name === 'call_result')?.options ?? [],
+    [m.followups],
+  );
+  const selectedResults = Array.isArray(d.review_call_results) ? (d.review_call_results as string[]) : [];
+  const toggleResult = (val: string) =>
+    set('review_call_results', selectedResults.includes(val)
+      ? selectedResults.filter((v) => v !== val)
+      : [...selectedResults, val]);
 
   if (!record) {
     return (
@@ -55,6 +67,41 @@ export default function SettingsPage() {
         <Toggle label={isAr ? 'مراجعة الزيارات' : 'Visits'} checked={Boolean(d.review_visits)} onChange={(v) => set('review_visits', v)} />
         <Toggle label={isAr ? 'مراجعة المتابعات بدون خطوة تالية' : 'Missing next step'} checked={Boolean(d.review_missing_next_step)} onChange={(v) => set('review_missing_next_step', v)} />
         <Toggle label={isAr ? 'مراجعة مندوبي التدريب' : 'New reps'} checked={Boolean(d.review_new_reps)} onChange={(v) => set('review_new_reps', v)} />
+      </SectionCard>
+
+      <SectionCard title={isAr ? 'نتائج المكالمات التي تستوجب مراجعة' : 'Call results that require a review'}>
+        <p className="text-xs text-charcoal/55 -mt-1">
+          {isAr
+            ? 'اختر نتائج المكالمة التي إذا تحققت في متابعة مكتملة يتم إنشاء سجل مراجعة تلقائيًا لها.'
+            : 'Pick the call results that, when they occur on a completed follow-up, automatically create a review record.'}
+        </p>
+        {callResultOptions.length === 0 ? (
+          <p className="text-sm text-charcoal/50">{isAr ? 'لا توجد نتائج مكالمات متاحة' : 'No call results available'}</p>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {callResultOptions.map((o) => {
+              const active = selectedResults.includes(o.value);
+              const color = o.color || '#B8734F';
+              return (
+                <button key={o.id} type="button" onClick={() => toggleResult(o.value)}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-start text-sm transition-colors ${active ? 'font-semibold' : 'border-sand/50 hover:border-copper/40 text-charcoal/80'}`}
+                  style={active ? { borderColor: color, backgroundColor: `${color}14`, color } : undefined}>
+                  <span className={`flex h-4 w-4 flex-shrink-0 items-center justify-center rounded ${active ? '' : 'border border-charcoal/25'}`}
+                    style={active ? { backgroundColor: color } : undefined}>
+                    {active && <Check size={12} className="text-white" />}
+                  </span>
+                  <span className="truncate">{(isAr ? o.label_ar : o.label_en) || o.value}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {selectedResults.length > 0 && (
+          <button type="button" onClick={() => set('review_call_results', [])}
+            className="text-xs font-medium text-copper hover:underline">
+            {isAr ? `مسح التحديد (${selectedResults.length})` : `Clear selection (${selectedResults.length})`}
+          </button>
+        )}
       </SectionCard>
 
       <SectionCard title={isAr ? 'نسب العينات' : 'Sample Percentages'}>
