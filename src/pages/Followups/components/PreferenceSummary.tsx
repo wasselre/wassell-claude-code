@@ -18,10 +18,11 @@ interface PreferenceSummaryProps {
   onFieldChange?: (slug: string, value: unknown) => void;
 }
 
-// The five preference fields the rep edits inline, in display order. Always
-// shown (even when empty) so the rep can fill them in without leaving the
-// Workspace — budget renders as the new dropdown range, the rest as pickers.
-const PREF_SLUGS = ['preferred_unit_type', 'budget', 'preferred_city', 'preferred_direction', 'preferred_neighborhoods'] as const;
+// The preference fields the rep edits inline, in display order. Always shown
+// (even when empty) so the rep can fill them in without leaving the Workspace —
+// budget renders as the dropdown range, purchase_objective/unit_type as
+// multiselect pickers, preferred_bedrooms as a number, the rest as pickers.
+const PREF_SLUGS = ['preferred_unit_type', 'preferred_bedrooms', 'budget', 'purchase_objective', 'preferred_city', 'preferred_direction', 'preferred_neighborhoods'] as const;
 
 /** Inline-editable client preferences — unit type, budget, city, direction, district. */
 export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange }: PreferenceSummaryProps) {

@@ -837,6 +837,18 @@ const clientsModel: AppModel = {
             range_unit_ar: 'ر.س',
             range_unit_en: 'SAR',
           },
+          {
+            id: uuid(),
+            name: 'preferred_bedrooms',
+            label_ar: 'عدد غرف النوم المفضل',
+            label_en: 'Preferred Bedrooms',
+            type: 'number',
+            required: false,
+            order: 11,
+            section_id: clientsPrefsSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
         ],
       },
       // WhatsApp History — derived view of every chat_messages row exchanged

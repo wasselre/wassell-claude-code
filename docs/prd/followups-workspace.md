@@ -1,7 +1,7 @@
 # PRD: Follow-up Workspace
 
 **Status:** Live
-**Last updated:** 2026-06-23
+**Last updated:** 2026-06-28
 **Related PRDs:** [sales-process.md](sales-process.md), [workflow-automation.md](workflow-automation.md), [visit-rating.md](visit-rating.md), [clients.md](clients.md), [calling.md](calling.md), [chats.md](chats.md), [project-matching-assistant.md](project-matching-assistant.md), [record-management.md](record-management.md)
 
 ## What it is (in plain English)
@@ -81,7 +81,7 @@ The generic form treated a follow-up like any other record — every field visib
 | `supabase/migrations/2026-06-17_visits_source_followup.sql` | Adds `source_followup_id` (lookup → followups) to the unfrozen `visits` model schema so the registered visit links back to its follow-up (mirrors `appointments.source_followup_id`) |
 | `src/pages/Followups/components/ScriptPanel.tsx` | The call-guidance panel ("إرشادات المكالمة") for the type — reads `typeConfig.script`, which reflects any manager override |
 | `src/pages/Followups/components/ContextPanel.tsx` | Renders only the context blocks the config lists for this type |
-| `src/pages/Followups/components/PreferenceSummary.tsx` | Inline-editable client preferences (unit type / budget / city / direction / district), always shown, with a Save button that writes to the client record; "Edit Full Preferences" opens the client modal. Supports a **controlled** mode (`draft` + `onFieldChange` props) so the Workspace can lift the edit buffer and share it with the assistant panel |
+| `src/pages/Followups/components/PreferenceSummary.tsx` | Inline-editable client preferences (unit type / preferred bedrooms / budget / purchase objective / city / direction / district), always shown, with a Save button that writes to the client record; "Edit Full Preferences" opens the client modal. The visible fields are the `PREF_SLUGS` list; each must be a slug on the `clients` model (`preferred_bedrooms` is a number, `purchase_objective` a multiselect). Supports a **controlled** mode (`draft` + `onFieldChange` props) so the Workspace can lift the edit buffer and share it with the assistant panel |
 | `src/pages/Followups/components/SalesAssistantSidePanel.tsx` | **Contextual Sales Assistant** — collapsible right panel: draft-first preference summary, Suggested Projects / Project Info quick actions, ephemeral chat over `/api/match`, same recommendation/comparison/next-action/message cards as the main page |
 | `src/lib/followups/assistantContext.ts` | Pure helper: resolves the follow-up's client preferences **draft-first** (`prefDraft` > saved > missing) into the panel's chip summary + the Arabic context preface sent to `/api/match` |
 | `api/_lib/matchAgent.ts` | The shared Sales Assistant brain (also powers the main page). The follow-up panel uses its `search_projects` tool for "Project Info"; see [project-matching-assistant.md](project-matching-assistant.md) |
