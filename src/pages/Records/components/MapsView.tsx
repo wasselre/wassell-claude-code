@@ -633,16 +633,29 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
     return { points: pts, mappedById: byId, noLocation: none };
   }, [records]);
 
-  // ONE spatial index, rebuilt only when the mapped point set changes (i.e. the
-  // filtered records change). Pure JS — creates NO google.maps.Marker objects.
-  const index = useMemo(() => {
-    const sc = new Supercluster<SummaryPointProps>({
+  // ONE spatial index, rebuilt only when the mapped point set changes. Pure JS —
+  // creates NO google.maps.Marker objects. Built OFF the render/commit path (in a
+  // deferred effect) so loading a heavy point set (46k) can never block the
+  // GoogleMap from mounting + painting tiles on first load. Starts empty; fills
+  // in right after `points` settle, and the marker effect below (which depends on
+  // `index`) then renders the clusters — no user interaction required.
+  const makeIndex = () =>
+    new Supercluster<SummaryPointProps>({
       radius: SUPERCLUSTER_RADIUS,
       maxZoom: SUPERCLUSTER_MAX_ZOOM,
       minPoints: 2,
     });
-    sc.load(points);
-    return sc;
+  const [index, setIndex] = useState<Supercluster<SummaryPointProps>>(makeIndex);
+  useEffect(() => {
+    // setTimeout(0) yields a frame so the map can mount/paint before we spend
+    // ~hundreds of ms building the KD-tree.
+    const handle = window.setTimeout(() => {
+      const sc = makeIndex();
+      sc.load(points);
+      setIndex(sc);
+    }, 0);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points]);
 
   // Persisted view state (cross-navigation), same as the legacy path.
@@ -700,6 +713,20 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   // viewport whenever this changes.
   const [viewportVersion, setViewportVersion] = useState(0);
   const [pinCapHit, setPinCapHit] = useState(false);
+
+  // Background-tab safety net: browsers gate Google-map init + tile paint on tab
+  // visibility, so a page opened in a hidden tab can show a blank map until the
+  // user switches to it. When the tab becomes visible, force a resize + viewport
+  // re-query so the map fills in tiles + clusters immediately — no pan/zoom.
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState !== 'visible' || !mapInstance) return;
+      google.maps.event.trigger(mapInstance, 'resize');
+      setViewportVersion((v) => v + 1);
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [mapInstance]);
 
   // Imperative marker pipeline — query getClusters for the CURRENT bounds+zoom
   // and render ONLY those features. No MarkerClusterer: supercluster IS the
