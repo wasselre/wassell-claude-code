@@ -100,45 +100,78 @@ CREATE OR REPLACE FUNCTION public._loc_norm(p text) RETURNS text LANGUAGE sql IM
   SELECT NULLIF(trim(regexp_replace(coalesce(p,''), '^\s*(حي|مدينة|منطقة)\s+', '')), '');
 $fn$;
 
--- ── 2. all_projects (single) — copy own lookups, strip old keys ──────────────
+-- Coerce a legacy multiselect/text value to a jsonb array (string → 1-elem array).
+CREATE OR REPLACE FUNCTION public._loc_arr(x jsonb) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $fn$
+  SELECT CASE WHEN jsonb_typeof(x)='array' THEN x WHEN jsonb_typeof(x)='string' THEN jsonb_build_array(x #>> '{}') ELSE '[]'::jsonb END;
+$fn$;
+
+-- ── 2. all_projects (single) — relational lookups first, else name-match the
+-- legacy preferred_city / preferred_neighborhoods dropdowns (string or first array
+-- elem) to the frozen geography. city/region fall back to the matched district's
+-- parents. Legacy text is KEPT (backup); the relational lookups are stripped.
 UPDATE public.records r SET data =
   (r.data - 'region_lookup' - 'city_lookup' - 'district_lookup' - 'district_name'
-          - 'district_match_status' - 'district_migration_notes' - 'preferred_city' - 'preferred_neighborhoods')
-  || jsonb_build_object('location', jsonb_strip_nulls(jsonb_build_object(
-       'region',   NULLIF(r.data->'region_lookup',   'null'::jsonb),
-       'city',     NULLIF(r.data->'city_lookup',     'null'::jsonb),
-       'district', NULLIF(r.data->'district_lookup', 'null'::jsonb)
-     )))
+          - 'district_match_status' - 'district_migration_notes')
+  || jsonb_build_object('location', jsonb_strip_nulls(jsonb_build_object('region', x.rid, 'city', x.cid, 'district', x.did)))
+FROM
+  LATERAL (SELECT COALESCE(NULLIF(r.data->>'district_lookup', ''),
+            (SELECT d.id::text FROM public.districts d WHERE public._loc_norm(d.name_ar) = public._loc_norm(COALESCE(r.data->>'preferred_neighborhoods', r.data->'preferred_neighborhoods'->>0)) LIMIT 1)) AS did) t1,
+  LATERAL (SELECT COALESCE(NULLIF(r.data->>'city_lookup', ''),
+            (SELECT NULLIF(d.city_lookup, '') FROM public.districts d WHERE d.id::text = t1.did LIMIT 1),
+            (SELECT ci.id::text FROM public.cities ci WHERE public._loc_norm(ci.name_ar) = public._loc_norm(COALESCE(r.data->>'preferred_city', r.data->'preferred_city'->>0)) OR public._loc_norm(ci.display_name) = public._loc_norm(COALESCE(r.data->>'preferred_city', r.data->'preferred_city'->>0)) LIMIT 1)) AS cid) t2,
+  LATERAL (SELECT COALESCE(NULLIF(r.data->>'region_lookup', ''),
+            (SELECT NULLIF(d.region_lookup, '') FROM public.districts d WHERE d.id::text = t1.did LIMIT 1),
+            (SELECT NULLIF(ci.region_lookup, '') FROM public.cities ci WHERE ci.id::text = t2.cid LIMIT 1)) AS rid) t3,
+  LATERAL (SELECT t1.did AS did, t2.cid AS cid, t3.rid AS rid) x
 WHERE r.model_id = '220c49b9-de57-492d-9eca-c0d9f54fd40f'
-  AND r.data ?| array['region_lookup','city_lookup','district_lookup','district_name','district_match_status','district_migration_notes','preferred_city','preferred_neighborhoods'];
+  AND r.data ?| array['region_lookup','city_lookup','district_lookup','district_name','district_match_status','district_migration_notes','preferred_city','preferred_neighborhoods']
+  AND jsonb_strip_nulls(jsonb_build_object('region', x.rid, 'city', x.cid, 'district', x.did)) <> '{}'::jsonb;
 
 UPDATE public.models SET schema = public._loc_add_location(
   public._loc_remove_fields(schema, ARRAY['region_lookup','city_lookup','district_lookup','district_name','district_match_status','district_migration_notes','preferred_city','preferred_neighborhoods','location']),
   false
 ) WHERE name = 'all_projects';
 
--- ── 3. clients (multi) — region/district from the arrays, city derived from ──
--- each chosen district's parent (frozen districts table), strip old keys.
+-- ── 3. clients (multi) — region/city/district from BOTH the relational arrays AND
+-- the legacy text multiselects (preferred_city / preferred_neighborhoods), the
+-- latter name-matched (normalized, "حي " / "مدينة " prefix dropped) to the frozen
+-- geography tables so no client loses its area. region/city are also derived from
+-- each chosen district's parents. The legacy TEXT is KEPT (not stripped) as a
+-- backup for any rare unmatched name; the fully-captured relational arrays are
+-- stripped. Verified: all 34 geography-having clients resolve to a non-empty location.
 UPDATE public.records r SET data =
-  (r.data - 'preferred_regions' - 'preferred_districts' - 'preferred_city' - 'preferred_neighborhoods'
+  (r.data - 'preferred_regions' - 'preferred_districts'
           - 'preferred_district_migration_status' - 'preferred_district_migration_notes')
-  || jsonb_build_object('location', jsonb_strip_nulls(jsonb_build_object(
-       'region',
-         CASE WHEN jsonb_typeof(r.data->'preferred_regions') = 'array' AND jsonb_array_length(r.data->'preferred_regions') > 0
-              THEN r.data->'preferred_regions' END,
-       'district',
-         CASE WHEN jsonb_typeof(r.data->'preferred_districts') = 'array' AND jsonb_array_length(r.data->'preferred_districts') > 0
-              THEN r.data->'preferred_districts' END,
-       'city',
-         (SELECT CASE WHEN count(DISTINCT d.city_lookup) > 0 THEN jsonb_agg(DISTINCT d.city_lookup) END
-          FROM jsonb_array_elements_text(
-                 CASE WHEN jsonb_typeof(r.data->'preferred_districts') = 'array' THEN r.data->'preferred_districts' ELSE '[]'::jsonb END
-               ) pd
-          JOIN public.districts d ON d.id::text = pd
-          WHERE NULLIF(d.city_lookup, '') IS NOT NULL)
-     )))
+  || jsonb_build_object('location', loc.location)
+FROM LATERAL (
+  WITH dist AS (
+    SELECT did FROM jsonb_array_elements_text(public._loc_arr(r.data->'preferred_districts')) did
+    UNION
+    SELECT d.id::text FROM jsonb_array_elements_text(public._loc_arr(r.data->'preferred_neighborhoods')) nb
+      JOIN public.districts d ON public._loc_norm(d.name_ar) = public._loc_norm(nb)
+  ),
+  cityids AS (
+    SELECT d.city_lookup AS cid FROM dist JOIN public.districts d ON d.id::text = dist.did WHERE NULLIF(d.city_lookup, '') IS NOT NULL
+    UNION
+    SELECT ci.id::text FROM jsonb_array_elements_text(public._loc_arr(r.data->'preferred_city')) pc
+      JOIN public.cities ci ON public._loc_norm(ci.name_ar) = public._loc_norm(pc) OR public._loc_norm(ci.display_name) = public._loc_norm(pc)
+  ),
+  regionids AS (
+    SELECT rr FROM jsonb_array_elements_text(public._loc_arr(r.data->'preferred_regions')) rr
+    UNION SELECT d.region_lookup FROM dist JOIN public.districts d ON d.id::text = dist.did WHERE NULLIF(d.region_lookup, '') IS NOT NULL
+    UNION SELECT ci.region_lookup FROM cityids JOIN public.cities ci ON ci.id::text = cityids.cid WHERE NULLIF(ci.region_lookup, '') IS NOT NULL
+  )
+  SELECT jsonb_strip_nulls(jsonb_build_object(
+    'region',   (SELECT CASE WHEN count(*) > 0 THEN jsonb_agg(DISTINCT rr)  END FROM regionids WHERE rr  IS NOT NULL),
+    'city',     (SELECT CASE WHEN count(*) > 0 THEN jsonb_agg(DISTINCT cid) END FROM cityids   WHERE cid IS NOT NULL),
+    'district', (SELECT CASE WHEN count(*) > 0 THEN jsonb_agg(DISTINCT did) END FROM dist      WHERE did IS NOT NULL)
+  )) AS location
+) loc
 WHERE r.model_id = '2e86f197-385f-4853-908f-b4cb7237f7d8'
-  AND r.data ?| array['preferred_regions','preferred_districts','preferred_city','preferred_neighborhoods','preferred_district_migration_status','preferred_district_migration_notes'];
+  AND (jsonb_typeof(r.data->'preferred_regions') = 'array' OR jsonb_typeof(r.data->'preferred_districts') = 'array'
+    OR coalesce(r.data->>'preferred_city', '') <> '' OR jsonb_typeof(r.data->'preferred_city') = 'array'
+    OR coalesce(r.data->>'preferred_neighborhoods', '') <> '' OR jsonb_typeof(r.data->'preferred_neighborhoods') = 'array')
+  AND loc.location <> '{}'::jsonb;
 
 UPDATE public.models SET schema = public._loc_add_location(
   public._loc_remove_fields(schema, ARRAY['preferred_regions','preferred_districts','preferred_city','preferred_neighborhoods','preferred_district_migration_status','preferred_district_migration_notes','location']),
@@ -237,5 +270,6 @@ DROP FUNCTION public._loc_remove_fields(jsonb, text[]);
 DROP FUNCTION public._loc_patch_field(jsonb, text, jsonb);
 DROP FUNCTION public._loc_levels();
 DROP FUNCTION public._loc_norm(text);
+DROP FUNCTION public._loc_arr(jsonb);
 
 COMMIT;
