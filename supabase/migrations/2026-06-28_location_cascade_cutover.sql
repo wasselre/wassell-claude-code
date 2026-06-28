@@ -116,7 +116,9 @@ UPDATE public.records r SET data =
   || jsonb_build_object('location', (
     SELECT jsonb_strip_nulls(jsonb_build_object('region', c.rid, 'city', b.cid, 'district', a.did))
     FROM (SELECT COALESCE(NULLIF(r.data->>'district_lookup',''),
-            (SELECT d.id::text FROM public.districts d WHERE public._loc_norm(d.name_ar)=public._loc_norm(COALESCE(r.data->>'preferred_neighborhoods', r.data->'preferred_neighborhoods'->>0)) LIMIT 1)) AS did) a,
+            -- Relational district_lookup is multi-city + authoritative (kept as-is). Only the
+            -- legacy free-text fallback is scoped to الرياض (all legacy project text is الرياض).
+            (SELECT d.id::text FROM public.districts d WHERE public._loc_norm(d.name_ar)=public._loc_norm(COALESCE(r.data->>'preferred_neighborhoods', r.data->'preferred_neighborhoods'->>0)) AND d.city_lookup='44254a38-ce40-938f-17b7-55814a44e45c' LIMIT 1)) AS did) a,
          LATERAL (SELECT COALESCE(NULLIF(r.data->>'city_lookup',''),
             (SELECT NULLIF(d.city_lookup,'') FROM public.districts d WHERE d.id::text=a.did LIMIT 1),
             (SELECT ci.id::text FROM public.cities ci WHERE public._loc_norm(ci.name_ar)=public._loc_norm(COALESCE(r.data->>'preferred_city', r.data->'preferred_city'->>0)) OR public._loc_norm(ci.display_name)=public._loc_norm(COALESCE(r.data->>'preferred_city', r.data->'preferred_city'->>0)) LIMIT 1)) AS cid) b,
@@ -146,7 +148,10 @@ UPDATE public.records r SET data =
     WITH dist AS (
       SELECT did FROM jsonb_array_elements_text(public._loc_arr(r.data->'preferred_districts')) did
       UNION SELECT d.id::text FROM jsonb_array_elements_text(public._loc_arr(r.data->'preferred_neighborhoods')) nb
-        JOIN public.districts d ON public._loc_norm(d.name_ar) = public._loc_norm(nb)
+        -- All legacy free-text client geography in this dataset is الرياض; scope the
+        -- name-match to الرياض city so a common district name (الياسمين/النرجس/…) doesn't
+        -- match the same-named district in every other city and explode the array.
+        JOIN public.districts d ON public._loc_norm(d.name_ar) = public._loc_norm(nb) AND d.city_lookup = '44254a38-ce40-938f-17b7-55814a44e45c'
     ), cityids AS (
       SELECT d.city_lookup AS cid FROM dist JOIN public.districts d ON d.id::text = dist.did WHERE NULLIF(d.city_lookup, '') IS NOT NULL
       UNION SELECT ci.id::text FROM jsonb_array_elements_text(public._loc_arr(r.data->'preferred_city')) pc
