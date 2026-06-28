@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { getIconComponent } from '@/components/layout/Sidebar';
-import { Plus, Search, Table2, LayoutGrid, MapPin, Trash2, Download, Upload, Pencil, FileDown } from 'lucide-react';
+import { Plus, Search, Table2, LayoutGrid, MapPin, Trash2, Download, Upload, Pencil, FileDown, Loader2 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import TableView from './components/TableView';
@@ -22,14 +22,13 @@ import { collectViewFields, type ExpandedField } from '@/lib/sectionMirrorExpand
 import {
   adhocStorageKey,
   applyAdhocFilters,
-  isAdhocActive,
   loadAdhocFilters,
   saveAdhocFilters,
   type AdhocFilterState,
 } from '@/lib/adhocFilterUtils';
 import { useApplyViewScope, useApplyVisibleViews, useModelPermissions } from '@/hooks/usePermission';
 import { sortRecordsByFieldName, type SortCtx } from '@/lib/recordSort';
-import { isLazyModel } from '@/lib/lazyModels';
+import { isSummaryModel } from '@/lib/lazyModels';
 import type { AppRecord, ModelView } from '@/types';
 
 // Stable empty array reference. Returned when a model has no records yet
@@ -44,22 +43,18 @@ export default function RecordListPage() {
   const { modelName } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { models, records, recordsByModel, loadRecordsPage, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
+  const { models, records, summaryLoadState, loadSummaryRecords, views, language, currentUserId, users, deleteRecord, addToast, setRecordNavContext, loadChatsFromHaberchat } = useAppStore();
   const isAr = language === 'ar';
 
   const model = models.find((m) => m.name === modelName);
-  // Lazy models (e.g. market_listings) never load their rows into the
-  // in-memory `records` slice at boot — they're paged in on demand via
-  // `loadRecordsPage` into `recordsByModel`. EVERYTHING below branches on
-  // this single predicate; non-lazy models take the exact same path as
-  // before (client filter/sort/slice over `records[model.id]`).
-  const isLazy = isLazyModel(model);
-  const lazyCache = model && isLazy ? recordsByModel[model.id] : undefined;
-  const rawModelRecords = model
-    ? isLazy
-      ? (lazyCache?.rows ?? EMPTY_RECORDS)
-      : (records[model.id] ?? EMPTY_RECORDS)
-    : EMPTY_RECORDS;
+  // Summary models (e.g. market_listings) browse the NORMAL full-store
+  // path — all rows live in `records[model.id]`, loaded as a slim full set
+  // in the background after boot. The only difference from a normal model:
+  // a brief "loading listings…" state if the user lands here before that
+  // background load finishes.
+  const isSummary = isSummaryModel(model);
+  const summaryState = model && isSummary ? summaryLoadState[model.id] : undefined;
+  const rawModelRecords = model ? (records[model.id] ?? EMPTY_RECORDS) : EMPTY_RECORDS;
   // Inject cross-record rollup values (our_projects → units stats) BEFORE
   // view-scope / search / filters run, so a profile can filter or sort by
   // Project rollup fields are now STORED in record.data (maintained by a DB
@@ -132,10 +127,6 @@ export default function RecordListPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewId, activeView?.sort_field_id, activeView?.sort_direction]);
   const toggleColumnSort = (fieldName: string) => {
-    // Lazy models are server-ordered (created_at DESC) over a partial
-    // window; a client header sort would reorder only the loaded pages.
-    // Disable it so the header click is a no-op for these models.
-    if (isLazy) return;
     setCurrentPage(1);
     if (sortFieldName === fieldName) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -196,85 +187,6 @@ export default function RecordListPage() {
     if (adhocKey) saveAdhocFilters(adhocKey, next);
   };
 
-  // ─── Lazy model: server-side filter/search mapping ──────────────
-  // For lazy models the ad-hoc panel + search box drive the
-  // `record_search` RPC (JSONB containment + ILIKE) instead of an
-  // in-memory pass. Only EQUALITY filters that the server path can
-  // express are mapped here:
-  //   - single-value `values` filter in `is` mode on an OWN scalar
-  //     dropdown/lookup/assignee/section_selector field → `{slug: value}`
-  //   - single-value `values` filter in `is` mode on an OWN multiselect
-  //     field → `{slug: [value]}` (array containment)
-  // Everything the server path can't express (ranges, OR/multi-value,
-  // `is_not`, contains, date/number ranges, and any MIRRORED field whose
-  // key is a `<container>::<id>` composite) is intentionally NOT applied
-  // server-side for lazy models — acceptable for v1. The chip still shows
-  // in the panel; it just doesn't narrow the lazy result set.
-  const lazyServerFilters = useMemo<Record<string, unknown>>(() => {
-    if (!isLazy || !model) return {};
-    const ownFieldsById = new Map(
-      model.schema.sections.flatMap((s) => s.fields).map((f) => [f.id, f]),
-    );
-    const out: Record<string, unknown> = {};
-    for (const [key, filter] of Object.entries(adhocFilters)) {
-      if (!isAdhocActive(filter)) continue;
-      if (filter.kind !== 'values') continue;
-      if (filter.mode === 'is_not') continue;
-      if (filter.values.length !== 1) continue; // OR / multi can't go through @>
-      const field = ownFieldsById.get(key); // composite mirror keys won't resolve → skipped
-      if (!field) continue;
-      const v = filter.values[0]!;
-      if (field.type === 'multiselect') {
-        out[field.name] = [v];
-      } else if (
-        field.type === 'dropdown' ||
-        field.type === 'lookup' ||
-        field.type === 'assignee' ||
-        field.type === 'section_selector'
-      ) {
-        out[field.name] = v;
-      }
-    }
-    return out;
-  }, [isLazy, model, adhocFilters]);
-
-  // Debounced search text (~300ms) so each keystroke doesn't fire an RPC.
-  const [lazySearchDebounced, setLazySearchDebounced] = useState('');
-  useEffect(() => {
-    if (!isLazy) return;
-    const h = setTimeout(() => setLazySearchDebounced(search.trim()), 300);
-    return () => clearTimeout(h);
-  }, [isLazy, search]);
-
-  // Stable key for the (filters, search) tuple so the load effect only
-  // re-fires when the effective server query actually changes.
-  const lazyFilterKey = useMemo(
-    () => JSON.stringify({ f: lazyServerFilters, s: lazySearchDebounced }),
-    [lazyServerFilters, lazySearchDebounced],
-  );
-
-  // Fire a fresh page-1 load on mount and whenever the effective server
-  // query (equality filters or debounced search) changes. `reset: true`
-  // discards the accumulated pages and starts from the top.
-  useEffect(() => {
-    if (!isLazy || !model) return;
-    void loadRecordsPage(model.id, {
-      filters: lazyServerFilters,
-      searchText: lazySearchDebounced || undefined,
-      reset: true,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLazy, model?.id, lazyFilterKey]);
-
-  // "Load more": append the next server page with the SAME filter context.
-  const loadMoreLazy = () => {
-    if (!model || !isLazy) return;
-    void loadRecordsPage(model.id, {
-      filters: lazyServerFilters,
-      searchText: lazySearchDebounced || undefined,
-    });
-  };
-
   const openEditor = (view: ModelView | null) => {
     setEditingView(view);
     setEditorOpen(true);
@@ -301,6 +213,15 @@ export default function RecordListPage() {
     void loadChatsFromHaberchat();
   }, [model?.id, model?.name, loadChatsFromHaberchat]);
 
+  // Summary-model first-visit kick: ensure the slim full set is loading
+  // even if the user landed on this list before the post-boot background
+  // load fired. Idempotent — loadSummaryRecords no-ops if already
+  // loading/loaded for this session.
+  useEffect(() => {
+    if (!model || !isSummary) return;
+    void loadSummaryRecords(model.id);
+  }, [model, isSummary, loadSummaryRecords]);
+
   // Filter pipeline: view conditions → ad-hoc faceted filters → text search.
   // Scope options for the search box: local fields + mirrored children (so search
   // can target a lookup or a mirrored field). Same expansion the table columns use.
@@ -317,6 +238,22 @@ export default function RecordListPage() {
   const searchIndex = useMemo(() => {
     const idx = new Map<string, string>();
     if (!model) return idx;
+    // Summary models (market_listings, ~46k rows): the normal per-record
+    // builder calls collectViewFields + resolves lookups with an O(target
+    // rows) linear scan PER record — at 46k × a multi-thousand-row lookup
+    // target (district_lookup / city_lookup) that's >100M ops and would
+    // freeze the tab on first render. The slim summary data already holds
+    // the human-readable text (title, city, region, district,
+    // property_type, category, advertiser_name), so index it directly off
+    // the stored JSON — O(1) per record, no lookup resolution. Scoped
+    // search still narrows via the scoped field below for normal models;
+    // for summary models the search box is whole-record (acceptable v1).
+    if (isSummary) {
+      for (const rec of modelRecords) {
+        idx.set(rec.id, normalizeForSearch(JSON.stringify(rec.data ?? {})));
+      }
+      return idx;
+    }
     const ctx = { models, records };
     const scopedField =
       searchField === 'all' ? null : expandedSearchFields.find((f) => f.id === searchField) ?? null;
@@ -327,7 +264,7 @@ export default function RecordListPage() {
       idx.set(rec.id, normalizeForSearch(text));
     }
     return idx;
-  }, [modelRecords, model, models, records, searchField, expandedSearchFields]);
+  }, [isSummary, modelRecords, model, models, records, searchField, expandedSearchFields]);
 
   const searchPlaceholder = (() => {
     if (searchField === 'all') return t('records.search_placeholder');
@@ -339,10 +276,6 @@ export default function RecordListPage() {
 
   const filteredRecords = useMemo(() => {
     if (!model) return modelRecords;
-    // Lazy models: filtering happens server-side in `record_search`
-    // (equality filters + ILIKE search mapped above). The loaded rows are
-    // already the filtered set — pass them through untouched.
-    if (isLazy) return modelRecords;
     const allFields = model.schema.sections.flatMap((s) => s.fields);
 
     // 1. Saved view filter conditions (AND-only).
@@ -363,7 +296,7 @@ export default function RecordListPage() {
       out = out.filter((rec) => (searchIndex.get(rec.id) ?? '').includes(q));
     }
     return out;
-  }, [isLazy, search, modelRecords, model, models, records, activeView, adhocFilters, searchIndex]);
+  }, [search, modelRecords, model, models, records, activeView, adhocFilters, searchIndex]);
 
   // Sort the FULL filtered list before pagination, using the lifted
   // column-header sort (seeded from the active view's default sort). This is
@@ -375,14 +308,9 @@ export default function RecordListPage() {
   // whatever the user sorted by here.
   const orderedFilteredRecords = useMemo(() => {
     if (!model) return filteredRecords;
-    // Lazy models: the server returns rows ordered created_at DESC and we
-    // only hold the pages loaded so far, so a client-side column sort would
-    // reorder a partial window and mislead. Keep server order (column-sort
-    // is disabled in the header for lazy models — see toggleColumnSort).
-    if (isLazy) return filteredRecords;
     const ctx: SortCtx = { isAr, allRecords: records, models, users };
     return sortRecordsByFieldName(filteredRecords, model, sortFieldName, sortDir, ctx);
-  }, [isLazy, filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users]);
+  }, [filteredRecords, model, sortFieldName, sortDir, isAr, records, models, users]);
 
   // Publish the currently-visible, sorted record IDs so the record form can
   // offer prev/next navigation in the same order the user was browsing.
@@ -398,12 +326,9 @@ export default function RecordListPage() {
   }, [orderedFilteredRecords.length, activeViewId]);
 
   const pagedRecords = useMemo(() => {
-    // Lazy models page server-side via "Load more" — render every row
-    // loaded so far (no client-side slice window).
-    if (isLazy) return orderedFilteredRecords;
     const start = (currentPage - 1) * pageSize;
     return orderedFilteredRecords.slice(start, start + pageSize);
-  }, [isLazy, orderedFilteredRecords, currentPage, pageSize]);
+  }, [orderedFilteredRecords, currentPage, pageSize]);
 
   if (!model) {
     return (
@@ -524,11 +449,7 @@ export default function RecordListPage() {
                   {isAr ? model.label_ar : model.label_en}
                 </h1>
                 <span className="text-xs text-charcoal/40">
-                  {isLazy
-                    ? `${t('records.record_count', { count: modelRecords.length })}${
-                        lazyCache?.hasMore ? (isAr ? ' +المزيد' : '+') : ''
-                      }`
-                    : t('records.record_count', { count: modelRecords.length })}
+                  {t('records.record_count', { count: modelRecords.length })}
                 </span>
               </div>
             </div>
@@ -676,12 +597,31 @@ export default function RecordListPage() {
         );
       })()}
 
-      {/* Page size selector — sits just above the list (hidden in maps mode).
-          Lazy models page server-side via "Load more", so the client page-size
-          selector doesn't apply. */}
-      {viewMode !== 'maps' && !isLazy && filteredRecords.length > 0 && (
+      {/* Page size selector — sits just above the list (hidden in maps mode) */}
+      {viewMode !== 'maps' && filteredRecords.length > 0 && (
         <div className="flex items-center justify-end mb-2">
           <PageSizeSelector pageSize={pageSize} onChange={updatePageSize} />
+        </div>
+      )}
+
+      {/* Summary models (market_listings): brief banner while the slim full
+          set background-loads, shown only on first visit before any rows have
+          landed. Once rows are present the normal list renders and a still-in-
+          flight load (re-fetch) doesn't disrupt browsing. */}
+      {isSummary && summaryState?.loading && modelRecords.length === 0 && (
+        <div className="flex items-center justify-center gap-2 py-16 text-charcoal/50">
+          <Loader2 size={18} className="animate-spin" />
+          <span className="text-sm">{isAr ? 'جارٍ تحميل القوائم…' : 'Loading listings…'}</span>
+        </div>
+      )}
+      {isSummary && summaryState?.error && modelRecords.length === 0 && (
+        <div className="flex flex-col items-center justify-center gap-2 py-16 text-charcoal/50">
+          <span className="text-sm text-terracotta">
+            {isAr ? 'تعذّر تحميل القوائم.' : 'Could not load listings.'}
+          </span>
+          <Button variant="secondary" onClick={() => model && void loadSummaryRecords(model.id, { force: true })}>
+            {isAr ? 'إعادة المحاولة' : 'Retry'}
+          </Button>
         </div>
       )}
 
@@ -749,39 +689,14 @@ export default function RecordListPage() {
         </div>
       )}
 
-      {/* Pagination — below the list (not in maps view).
-          Non-lazy models: the client-side page navigator over the in-memory
-          set. Lazy models: a server-driven "Load more" that appends the next
-          record_search page. */}
-      {viewMode !== 'maps' && !isLazy && (
+      {/* Page navigator — sits below the list (not shown in maps view) */}
+      {viewMode !== 'maps' && (
         <PageNavigator
           totalCount={filteredRecords.length}
           currentPage={currentPage}
           pageSize={pageSize}
           onPageChange={setCurrentPage}
         />
-      )}
-      {viewMode !== 'maps' && isLazy && (
-        <div className="mt-4 flex flex-col items-center gap-2">
-          {lazyCache?.error && (
-            <p className="text-xs text-terracotta">
-              {isAr ? `تعذّر التحميل: ${lazyCache.error}` : `Load failed: ${lazyCache.error}`}
-            </p>
-          )}
-          {lazyCache?.hasMore ? (
-            <Button
-              variant="secondary"
-              onClick={loadMoreLazy}
-              disabled={lazyCache?.loading}
-            >
-              {lazyCache?.loading
-                ? (isAr ? 'جارٍ التحميل…' : 'Loading…')
-                : (isAr ? 'تحميل المزيد' : 'Load more')}
-            </Button>
-          ) : lazyCache?.loading ? (
-            <p className="text-xs text-charcoal/40">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</p>
-          ) : null}
-        </div>
       )}
 
       {/* View editor modal */}

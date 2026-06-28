@@ -30,7 +30,7 @@ import type {
   User,
 } from '../../types';
 import { upsertRow as upsertCachedRow, removeRow as removeCachedRow } from '../recordsCache';
-import { isLazyModelName } from '../lazyModels';
+import { isLazyModelName, isSummaryModelName, slimSummaryData } from '../lazyModels';
 
 export type RealtimeOutcome = 'applied' | 'skipped_stale' | 'skipped_unknown_model' | 'noop';
 export type PgEvent = 'INSERT' | 'UPDATE' | 'DELETE';
@@ -127,12 +127,42 @@ export function mergeRecord(
       return s;
     }
 
-    // Lazy models (e.g. market_listings) are NEVER materialized into the
-    // legacy `records[modelId]` slice — their rows live only in the
-    // paginated `recordsByModel` cache. Appending here would re-bloat the
-    // legacy slice over a session (defeating the boot exclusion), so we
-    // touch ONLY the cache bucket (if one exists), with the same
-    // upsert-if-present / stale-dedup posture as below.
+    // Summary models (e.g. market_listings) keep ALL rows in the normal
+    // `records[modelId]` slice, but SLIM — the in-memory store must never
+    // accumulate the heavy per-record fields. So we project the incoming
+    // full row's data down to the summary keys before merging. Same
+    // upsert-if-present / stale-dedup / cache-tee posture as a normal row.
+    if (isSummaryModelName(eventModel.name)) {
+      const slimRow: AppRecord = { ...row, data: slimSummaryData(eventModel.name, row.data) };
+      const list = s.records[row.model_id] ?? [];
+      const existing = list.find((r) => r.id === slimRow.id);
+      if (event === 'UPDATE' && isIncomingStale(existing, slimRow)) {
+        outcome = 'skipped_stale';
+        return s;
+      }
+      const nextList = existing
+        ? list.map((r) => (r.id === slimRow.id ? slimRow : r))
+        : [...list, slimRow];
+      const cache = s.recordsByModel[row.model_id];
+      const updates: Partial<AppState> = {
+        records: { ...s.records, [row.model_id]: nextList },
+      };
+      if (cache) {
+        updates.recordsByModel = {
+          ...s.recordsByModel,
+          [row.model_id]: upsertCachedRow(cache, slimRow),
+        };
+      }
+      outcome = 'applied';
+      return updates;
+    }
+
+    // Lazy models (dormant — no model uses this path today) are NEVER
+    // materialized into the legacy `records[modelId]` slice — their rows
+    // live only in the paginated `recordsByModel` cache. Appending here
+    // would re-bloat the legacy slice over a session, so we touch ONLY the
+    // cache bucket (if one exists), with the same upsert-if-present /
+    // stale-dedup posture as below.
     if (isLazyModelName(eventModel.name)) {
       const cache = s.recordsByModel[row.model_id];
       if (!cache) {

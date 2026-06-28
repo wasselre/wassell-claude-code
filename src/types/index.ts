@@ -2464,6 +2464,17 @@ export interface LoadRecordsPageOpts {
   limit?: number;
 }
 
+/** Background slim-full-load state for a SUMMARY model. */
+export interface SummaryLoadState {
+  /** True while the keyset-paged background load is in flight. */
+  loading: boolean;
+  /** True once at least one successful background load has completed for
+   *  this session (rows are now in `records[modelId]`). */
+  loaded: boolean;
+  /** Last background-load error message, or null on success. */
+  error: string | null;
+}
+
 export interface AppState {
   // Data
   models: AppModel[];
@@ -2474,6 +2485,12 @@ export interface AppState {
    *  RecordListPage opts in via the VITE_PAGINATED_RECORDS feature
    *  flag. */
   recordsByModel: PaginatedRecordsByModel;
+  /** Per-model load state for SUMMARY models (e.g. market_listings):
+   *  their slim full set is loaded into `records[modelId]` in the
+   *  background after boot. Keyed by model id. Lets the list page show a
+   *  brief "loading listings…" state on first visit before the
+   *  background load lands. Models not background-loaded are absent. */
+  summaryLoadState: Record<string, SummaryLoadState>;
   workflows: Workflow[];
   workflowGroups: WorkflowGroup[];
   workflowRuns: WorkflowRun[];
@@ -2528,6 +2545,14 @@ export interface AppState {
    *  cached cursor. Pass `reset: true` to start from page 1 (used
    *  when filters change). Result lands in `state.recordsByModel`. */
   loadRecordsPage: (modelId: string, opts?: LoadRecordsPageOpts) => Promise<void>;
+
+  /** Background slim-full-load for a SUMMARY model: keyset-pages the
+   *  model's `<name>_summary` view into `records[modelId]` and tracks
+   *  progress in `summaryLoadState[modelId]`. Idempotent — a no-op if a
+   *  load for this model is already in flight or has already completed
+   *  this session (pass `force: true` to reload). Fired automatically
+   *  after boot; the list page can also trigger it on first visit. */
+  loadSummaryRecords: (modelId: string, opts?: { force?: boolean }) => Promise<void>;
 
   // Init
   initialized: boolean;

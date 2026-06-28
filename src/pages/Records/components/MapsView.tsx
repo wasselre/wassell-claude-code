@@ -33,6 +33,15 @@ const mapContainerStyle = { width: '100%', height: '100%' };
 // overrides take effect when a `pin_color_field_id` is configured.
 const PILL_DEFAULT_COLOR = '#4A4E54';
 
+// Hard ceiling on how many markers we instantiate on the map at once. Each pin
+// is a real google.maps.Marker (SVG data-URI icon + click listener), so tens of
+// thousands would freeze the tab even WITH clustering — the cost is creating the
+// marker objects, not the clustering math. When the resolved set exceeds this we
+// render the first MAX and show a "narrow filters / zoom in" banner. Applies to
+// EVERY model's map but only ever triggers for very large sets (e.g.
+// market_listings, ~46k); normal models resolve far fewer than this.
+const MAX_MAP_MARKERS = 2000;
+
 export interface FormatCtx {
   isAr: boolean;
   t: TFunction;
@@ -211,6 +220,16 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
 
   const { resolved, unresolved, resolving, resolvingCount, retry } = useResolvedLocations(model, records);
 
+  // Cap how many markers we actually put on the map (see MAX_MAP_MARKERS). The
+  // full `resolved` set still drives the count + center; only the marker
+  // pipeline (and pin labels) use the capped slice, so a huge filtered set
+  // (e.g. all 46k market listings) can't freeze the tab.
+  const markersCapped = resolved.length > MAX_MAP_MARKERS;
+  const cappedResolved = useMemo(
+    () => (markersCapped ? resolved.slice(0, MAX_MAP_MARKERS) : resolved),
+    [resolved, markersCapped],
+  );
+
   // Persisted view state (cross-navigation): center/zoom/selected pin.
   // Hydrate from the in-memory store on mount so back-from-record-edit
   // returns the user to the exact map view they left.
@@ -238,14 +257,14 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
     const out: Record<string, string> = {};
     if (!labelEf) return out;
     const ctx: Omit<FormatCtx, 'recordData'> = { isAr, t, allRecords, models, users };
-    for (const p of resolved) {
+    for (const p of cappedResolved) {
       const value = readExpandedValue(labelEf, p.record, allRecords, model, models);
       const text = formatFieldValue(labelEf.field, value, { ...ctx, recordData: p.record.data });
       out[p.record.id] = text === '—' ? '' : text;
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resolved, labelEf, isAr, allRecords, models, users, model]);
+  }, [cappedResolved, labelEf, isAr, allRecords, models, users, model]);
 
   // Friendly names for records that couldn't be placed — same label source as
   // the pins (pin-label field, falling back to the popup title) so the
@@ -290,10 +309,10 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
   // by record id at click time. Belt-and-suspenders against any closure
   // capturing the wrong record (e.g. if `resolved` mutates between mount and
   // click — shouldn't happen given our useMemo, but cheap insurance).
-  const resolvedRef = useRef(resolved);
+  const resolvedRef = useRef(cappedResolved);
   useEffect(() => {
-    resolvedRef.current = resolved;
-  }, [resolved]);
+    resolvedRef.current = cappedResolved;
+  }, [cappedResolved]);
 
   useEffect(() => {
     if (!mapInstance || !isLoaded) return;
@@ -305,7 +324,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
     markersRef.current = [];
 
     const newMarkers: google.maps.Marker[] = [];
-    for (const p of resolved) {
+    for (const p of cappedResolved) {
       const label = pinLabels[p.record.id] || '';
       const icon = label
         ? buildPillIcon(label, p.color || PILL_DEFAULT_COLOR)
@@ -364,7 +383,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
       markersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, isLoaded, resolved, pinLabels, cfg.click_action]);
+  }, [mapInstance, isLoaded, cappedResolved, pinLabels, cfg.click_action]);
 
   if (keyMissing) {
     return <EmptyState title={t('maps.api_key_missing')} hint={t('maps.api_key_missing_hint')} />;
@@ -380,7 +399,7 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
     );
   }
 
-  const selectedPin = resolved.find((r) => r.record.id === selectedId);
+  const selectedPin = cappedResolved.find((r) => r.record.id === selectedId);
 
   return (
     <div className="relative h-full">
@@ -438,6 +457,27 @@ export default function MapsView({ model, records, onCardClick }: MapsViewProps)
           <span className="text-sm font-bold text-copper">
             {t('maps.resolving', { count: resolvingCount })}
           </span>
+        </div>
+      )}
+
+      {/* Marker-cap banner — when more than MAX_MAP_MARKERS records resolve to a
+          location we only instantiate the first MAX (so the tab never freezes on
+          e.g. all 46k market listings). Tell the user how to see the rest. */}
+      {markersCapped && !resolving && (
+        <div
+          className="absolute top-3 left-1/2 -translate-x-1/2 z-20 bg-white/95 rounded-xl border border-copper/40 px-4 py-2 shadow-lg text-center max-w-[90%]"
+          dir={isAr ? 'rtl' : 'ltr'}
+        >
+          <p className="text-xs font-bold text-chocolate">
+            {isAr
+              ? `يتم عرض ${MAX_MAP_MARKERS.toLocaleString('ar-SA')} من ${resolved.length.toLocaleString('ar-SA')} قائمة على الخريطة`
+              : `Showing ${MAX_MAP_MARKERS.toLocaleString()} of ${resolved.length.toLocaleString()} listings on the map`}
+          </p>
+          <p className="text-[11px] text-charcoal/60 mt-0.5">
+            {isAr
+              ? 'عدد كبير جدًا من القوائم لعرضها دفعة واحدة. حدّد عوامل التصفية لعرض نتائج خريطة أكثر صلة.'
+              : 'Too many listings to display at once. Narrow your filters to show more relevant map results.'}
+          </p>
         </div>
       )}
 

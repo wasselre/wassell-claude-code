@@ -13,7 +13,7 @@ import { activityLogger } from '@/lib/activityLogger';
 import { supabase } from '@/lib/supabase';
 import { setFormUnsaved } from '@/lib/staleBuild';
 import { shouldAdoptResync } from '@/lib/conflictBreaker';
-import { isLazyModel } from '@/lib/lazyModels';
+import { isSummaryModel } from '@/lib/lazyModels';
 import type { AppRecord, CustomButton } from '@/types';
 
 /**
@@ -85,59 +85,74 @@ export default function RecordFormPage() {
   const canCreate = usePermission(model?.id ?? '', 'create');
   const canDelete = usePermission(model?.id ?? '', 'delete');
   const isNew = !recordId || recordId === 'new';
-  // Lazy models (e.g. market_listings) aren't loaded into the in-memory
-  // `records` slice at boot, so the in-memory lookup below misses on a
-  // deep-link / refresh. For those we fetch the single row by id from
-  // `unified_records` (RLS-gated) and keep it in local state. Non-lazy
-  // models keep the pure in-memory lookup unchanged.
-  const isLazy = isLazyModel(model);
+  // Summary models (e.g. market_listings) keep ALL rows in the in-memory
+  // store but SLIM — the heavy per-record fields (description, image_urls,
+  // video_urls, …) are NOT loaded in bulk. So on open we ALWAYS fetch the
+  // full row by id from `unified_records` (RLS-gated) and MERGE the full
+  // data OVER the slim store record, so those fields render. The slim row
+  // (cover/title/price) shows immediately while the detail resolves.
+  // Non-summary models keep the pure in-memory lookup unchanged.
+  const isSummary = isSummaryModel(model);
   const inMemoryRecord = model && !isNew
     ? (records[model.id] ?? []).find((r) => r.id === recordId)
     : null;
-  const [lazyFetchedRecord, setLazyFetchedRecord] = useState<AppRecord | null>(null);
-  const [lazyLoading, setLazyLoading] = useState(false);
-  const [lazyNotFound, setLazyNotFound] = useState(false);
+  const [summaryDetail, setSummaryDetail] = useState<AppRecord | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryNotFound, setSummaryNotFound] = useState(false);
   useEffect(() => {
-    // Reset the lazy-fetch state whenever the target record changes.
-    setLazyFetchedRecord(null);
-    setLazyNotFound(false);
-    // Only fetch for lazy models, an existing record, when the in-memory
-    // store doesn't already have it, and Supabase is available.
-    if (!isLazy || isNew || !model || !recordId || inMemoryRecord || !supabase) {
-      setLazyLoading(false);
+    // Reset the detail-fetch state whenever the target record changes.
+    setSummaryDetail(null);
+    setSummaryNotFound(false);
+    // Only fetch for summary models, an existing record, with Supabase.
+    if (!isSummary || isNew || !model || !recordId || !supabase) {
+      setSummaryLoading(false);
       return;
     }
     let cancelled = false;
-    setLazyLoading(true);
+    setSummaryLoading(true);
     void (async () => {
       const { data, error } = await supabase
         .from('unified_records')
-        .select('*')
+        .select('id,model_id,data,created_by_user_id,created_at,updated_at')
         .eq('id', recordId)
         .maybeSingle();
       if (cancelled) return;
       if (error) {
         addToast(
-          isAr ? `تعذّر تحميل السجل: ${error.message}` : `Failed to load record: ${error.message}`,
+          isAr ? `تعذّر تحميل تفاصيل السجل: ${error.message}` : `Failed to load record details: ${error.message}`,
           'error',
         );
-        setLazyLoading(false);
+        setSummaryLoading(false);
         return;
       }
       if (data) {
-        setLazyFetchedRecord(data as AppRecord);
+        setSummaryDetail(data as AppRecord);
       } else {
-        setLazyNotFound(true);
+        setSummaryNotFound(true);
       }
-      setLazyLoading(false);
+      setSummaryLoading(false);
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLazy, isNew, model?.id, recordId, inMemoryRecord]);
-  // Prefer the in-memory record (kept live by realtime); fall back to the
-  // lazily-fetched one. Project rollups are STORED in record.data (DB
-  // trigger), so the raw record already carries them — no read-time rollup.
-  const existingRecord = inMemoryRecord ?? lazyFetchedRecord;
+  }, [isSummary, isNew, model?.id, recordId]);
+  // Resolve the record the form renders. Non-summary: pure in-memory.
+  // Summary: the in-memory slim row immediately, with the full detail
+  // merged OVER it once fetched (full fields override slim). On a deep
+  // link / refresh before the background slim load lands, the in-memory
+  // row may be absent — then the fetched full row stands alone.
+  // Project rollups are STORED in record.data (DB trigger), so the raw
+  // record already carries them — no read-time rollup.
+  const existingRecord = useMemo<AppRecord | null>(() => {
+    if (!isSummary) return inMemoryRecord ?? null;
+    const base = inMemoryRecord ?? summaryDetail;
+    if (!base) return null;
+    if (!summaryDetail) return base; // detail not in yet — show slim now
+    return {
+      ...base,
+      ...summaryDetail,
+      data: { ...(base.data ?? {}), ...(summaryDetail.data ?? {}) },
+    };
+  }, [isSummary, inMemoryRecord, summaryDetail]);
   // For existing records, view/edit eligibility threads through view_scope and
   // edit_scope (canViewRecord/canEditRecord compose both with the model-level
   // perms). For new records, we still gate on the create permission only —
@@ -308,6 +323,26 @@ export default function RecordFormPage() {
     resyncPendingRef.current = false; // T1 (req 5): drop any pending re-sync on nav
     setModelUpdatedAtSnapshot(model?.updated_at ?? null);
   }, [recordId, modelName, existingRecord?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Summary models: the heavy detail arrives AFTER the initial slim seed
+  // (the re-seed effect above keys on existingRecord.id, which doesn't
+  // change when detail merges in). When the detail lands, fold its fields
+  // into formData WITHOUT disturbing the dirty flag or other form state.
+  // If the user hasn't edited yet (not dirty), seed the full data so every
+  // heavy field shows. If they HAVE started editing, only fill heavy keys
+  // not already present so we never clobber an in-progress edit.
+  useEffect(() => {
+    if (!isSummary || !summaryDetail?.data) return;
+    setFormData((prev) => {
+      if (!isDirty) return { ...prev, ...summaryDetail.data };
+      const next = { ...prev };
+      for (const [k, v] of Object.entries(summaryDetail.data)) {
+        if (!(k in next)) next[k] = v;
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSummary, summaryDetail]);
 
   // Activity log — fire one "record opened" event per record-mount. The
   // RecordFormPageRoute wrapper in App.tsx remounts on recordId change, so
@@ -485,19 +520,21 @@ export default function RecordFormPage() {
     );
   }
 
-  // Lazy models: a deep-linked existing record is fetched from
-  // unified_records (it isn't in the boot payload). Show a spinner while
-  // that fetch is in flight, and a 404 when the row doesn't exist (or RLS
-  // hides it). Non-lazy models never enter these branches.
-  if (!isNew && isLazy && !existingRecord) {
-    if (lazyNotFound) {
+  // Summary models: when neither the slim store row NOR the fetched full
+  // detail is available, show a spinner while the detail fetch is in
+  // flight, and a 404 when the row doesn't exist (or RLS hides it). When
+  // the slim row IS present we render the form straightaway (cover / title
+  // / price); the heavy fields fill in when the detail resolves. Non-
+  // summary models never enter these branches.
+  if (!isNew && isSummary && !existingRecord) {
+    if (summaryNotFound) {
       return (
         <div className="flex flex-col items-center justify-center py-20 text-charcoal/40">
           <p className="text-lg font-bold">404</p>
         </div>
       );
     }
-    if (lazyLoading) {
+    if (summaryLoading) {
       return (
         <div className="flex flex-col items-center justify-center py-20 text-charcoal/40">
           <Loader2 size={28} className="animate-spin" />
@@ -897,6 +934,20 @@ export default function RecordFormPage() {
           ? 'تم تعديل بنية النموذج أثناء فتح هذه الصفحة. حدّث الصفحة قبل الحفظ لتجنّب فقدان البيانات.'
           : 'The model schema changed while this form was open. Reload before saving to avoid losing data.',
         'error',
+      );
+      return false;
+    }
+    // Summary models: refuse to save an EXISTING record until the heavy
+    // detail has merged into formData. The in-memory store row is SLIM; if
+    // we saved with only the slim fields the full data->>'data' write would
+    // drop description / image_urls / video_urls / etc. Block until detail
+    // resolves (it fetches on open and lands within ~one round-trip).
+    if (!isNew && isSummary && (summaryLoading || !summaryDetail)) {
+      addToast(
+        isAr
+          ? 'لا تزال تفاصيل السجل قيد التحميل — انتظر لحظة قبل الحفظ لتجنّب فقدان الحقول.'
+          : 'Record details are still loading — wait a moment before saving to avoid losing fields.',
+        'info',
       );
       return false;
     }

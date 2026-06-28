@@ -42,7 +42,7 @@ import {
   setError as setCacheError,
 } from '@/lib/recordsCache';
 import type { PaginatedRecordsByModel, RecordsPageCache } from '@/lib/recordsCache';
-import { lazyModelIds } from '@/lib/lazyModels';
+import { bootExcludedModelIds, isSummaryModelName, summaryViewName, SUMMARY_MODEL_NAMES } from '@/lib/lazyModels';
 import type {
   AppState,
   AppModel,
@@ -1491,6 +1491,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Phase E.2: empty paginated cache. First loadRecordsPage call per
   // (modelId, filterKey) populates this lazily — never blocks init.
   recordsByModel: {} as PaginatedRecordsByModel,
+  // Background slim-full-load state for SUMMARY models (market_listings).
+  // Populated by loadSummaryRecords after boot.
+  summaryLoadState: {},
 
   // --- Initialize ---
   initialize: async () => {
@@ -1548,14 +1551,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     performance.mark('wassell:init:loads:start');
     const groupsP            = supabaseLoad<ModelGroup>('model_groups');
     const modelsP            = supabaseLoad<AppModel>('models');
-    // Lazy models' rows must never enter the boot payload. We need the
-    // model list to map name → id, so the unified-records load awaits
-    // modelsP first (the other parallel loads are unaffected — modelsP
-    // itself is already in flight above). When models fail to load we
-    // exclude nothing (fail-safe: same payload as before this change).
+    // Large models (summary + lazy) must never enter the boot payload —
+    // their rows would bloat the main records tail that gates clients /
+    // followups / units. We need the model list to map name → id, so the
+    // unified-records load awaits modelsP first (the other parallel loads
+    // are unaffected — modelsP itself is already in flight above). When
+    // models fail to load we exclude nothing (fail-safe). Summary models'
+    // slim full set is background-loaded after `initialized` (see below).
     const unifiedRecordsP    = (async () => {
       const loadedModels = await modelsP;
-      const excludeModelIds = loadedModels ? lazyModelIds(loadedModels) : [];
+      const excludeModelIds = loadedModels ? bootExcludedModelIds(loadedModels) : [];
       return supabaseLoad<AppRecord>('unified_records', { excludeModelIds });
     })();
     const workflowsP         = supabaseLoad<Workflow>('workflows');
@@ -2321,6 +2326,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       initialized: true,
     });
 
+    // ─── Background slim-full-load for SUMMARY models ─────────────
+    // Fire AFTER `initialized` so the ~31MB slim market_listings set
+    // (all ~46k rows) lands in the normal `records` store WITHOUT
+    // delaying boot or the main records tail. Non-blocking, errors
+    // surfaced via reportSupabaseError inside loadSummaryRecords. Each
+    // call is idempotent (skips if already loading/loaded). queueMicrotask
+    // defers it past this synchronous tick so paint isn't blocked.
+    for (const m of models) {
+      if (SUMMARY_MODEL_NAMES.has(m.name)) {
+        const summaryModelId = m.id;
+        queueMicrotask(() => { void get().loadSummaryRecords(summaryModelId); });
+      }
+    }
+
     // Realtime: watch the webhook_payloads table so incoming agent
     // webhooks fan out to the workflow engine without a page reload.
     get().subscribeMarketingRealtime();
@@ -2832,6 +2851,56 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       }));
     }
+  },
+
+  // ─── Background slim-full-load for SUMMARY models ──────────────
+  // Keyset-pages the model's `<name>_summary` view (a slim projection of
+  // ALL rows) into `records[modelId]` so the list page browses/searches/
+  // filters every row client-side like a normal model. Non-blocking:
+  // fired AFTER `initialized` so it never delays boot or the main records
+  // tail. Idempotent — skips if a load is in flight or already completed
+  // this session unless `force: true`. The heavy per-record fields are
+  // fetched on demand when a single record is opened (RecordFormPage).
+  loadSummaryRecords: async (modelId, opts = {}) => {
+    const { force = false } = opts;
+    const model = get().models.find((m) => m.id === modelId);
+    if (!model || !isSummaryModelName(model.name)) return;
+    const existing = get().summaryLoadState[modelId];
+    if (!force && existing && (existing.loading || existing.loaded)) return;
+    if (!supabase) return;
+
+    set((s) => ({
+      summaryLoadState: {
+        ...s.summaryLoadState,
+        [modelId]: { loading: true, loaded: existing?.loaded ?? false, error: null },
+      },
+    }));
+
+    // supabaseLoad keyset-pages by id (sharded) and surfaces errors via
+    // reportSupabaseError on failure (returns null) — no silent fail.
+    const rows = await supabaseLoad<AppRecord>(summaryViewName(model.name));
+    if (rows === null) {
+      // Error already surfaced by supabaseLoad. Record it so the list page
+      // can show a retry affordance instead of an indefinite spinner.
+      set((s) => ({
+        summaryLoadState: {
+          ...s.summaryLoadState,
+          [modelId]: { loading: false, loaded: existing?.loaded ?? false, error: 'load_failed' },
+        },
+      }));
+      return;
+    }
+
+    // Land the slim rows in the normal in-memory store, keyed by model id.
+    // Replace the slice wholesale (these are the authoritative full set);
+    // realtime keeps it fresh afterward via mergeRecord (which slims).
+    set((s) => ({
+      records: { ...s.records, [modelId]: rows },
+      summaryLoadState: {
+        ...s.summaryLoadState,
+        [modelId]: { loading: false, loaded: true, error: null },
+      },
+    }));
   },
 
   saveRecord: async (record: AppRecord, opts: SaveRecordOpts = {}): Promise<SaveResult> => {
