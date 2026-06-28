@@ -578,6 +578,10 @@ const SUPERCLUSTER_MAX_ZOOM = 16;
 // many pins and surface a "zoom in / narrow filters" banner. Tuned high enough
 // that the radius/maxZoom above keep it from firing in normal use.
 const PIN_CAP = 2000;
+// How many no-location rows the side panel lists. We resolve friendly labels for
+// ONLY these — never the full no-location set (3,652+ on market_listings), which
+// would block the map's first paint with thousands of synchronous lookups.
+const NO_LOCATION_PANEL_LIMIT = 8;
 
 /** Geometry shape returned by getClusters for an individual (non-cluster) point. */
 type SummaryPointProps = { cluster?: false; id: string };
@@ -668,7 +672,8 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   const nameEf = labelEf ?? titleEf;
   const noLocationNamed = useMemo(() => {
     const ctxBase: Omit<FormatCtx, 'recordData'> = { isAr, t, allRecords, models, users };
-    return noLocation.map((rec) => {
+    // Only the rows the panel renders — the total count uses noLocation.length.
+    return noLocation.slice(0, NO_LOCATION_PANEL_LIMIT).map((rec) => {
       let label = `#${rec.id.slice(0, 8)}`;
       if (nameEf) {
         const value = readExpandedValue(nameEf, rec, allRecords, model, models);
@@ -834,7 +839,13 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
         options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: false }}
         onLoad={(m) => {
           setMapInstance(m);
-          // Kick the first viewport query once the map reports a viewport.
+          // Force the map to (re)measure its container and paint tiles even if it
+          // mounted before layout settled, then query the FIRST viewport as soon
+          // as the map actually has bounds (its first `idle`). Without this the
+          // map could stay grey with no clusters until the user panned/zoomed —
+          // the `idle` listener guarantees the initial cluster render on load.
+          google.maps.event.trigger(m, 'resize');
+          google.maps.event.addListenerOnce(m, 'idle', () => setViewportVersion((v) => v + 1));
           setViewportVersion((v) => v + 1);
         }}
         onUnmount={() => setMapInstance(null)}
@@ -927,17 +938,17 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
       )}
 
       {/* No-location side panel — records without valid coordinates. */}
-      {noLocationNamed.length > 0 && (
+      {noLocationCount > 0 && (
         <div className="absolute bottom-3 start-3 z-20 max-w-[280px] bg-white/95 rounded-xl border border-copper/40 shadow-lg overflow-hidden" dir={isAr ? 'rtl' : 'ltr'}>
           <div className="flex items-center justify-between gap-2 px-3 py-2 bg-copper/10 border-b border-copper/20">
             <span className="text-xs font-bold text-chocolate">
               {isAr
-                ? `${fmt(noLocationNamed.length)} بدون موقع`
-                : `${fmt(noLocationNamed.length)} without location`}
+                ? `${fmt(noLocationCount)} بدون موقع`
+                : `${fmt(noLocationCount)} without location`}
             </span>
           </div>
           <ul className="max-h-40 overflow-y-auto py-1">
-            {noLocationNamed.slice(0, 8).map(({ record, label }) => (
+            {noLocationNamed.map(({ record, label }) => (
               <li key={record.id}>
                 <button
                   type="button"
@@ -950,9 +961,9 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
               </li>
             ))}
           </ul>
-          {noLocationNamed.length > 8 && (
+          {noLocationCount > noLocationNamed.length && (
             <div className="px-3 py-1.5 text-[11px] text-charcoal/50 border-t border-sand/40">
-              {t('maps.unplaced_more', { count: noLocationNamed.length - 8 })}
+              {t('maps.unplaced_more', { count: noLocationCount - noLocationNamed.length })}
             </div>
           )}
         </div>
