@@ -11,6 +11,7 @@ interface LocationCascadeFieldProps {
 }
 
 const LEVEL_LABELS: Record<string, { ar: string; en: string }> = {
+  country: { ar: 'الدولة', en: 'Country' },
   region: { ar: 'المنطقة', en: 'Region' },
   city: { ar: 'المدينة', en: 'City' },
   district: { ar: 'الحي', en: 'District' },
@@ -115,12 +116,13 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
     if (step > 0) {
       const parent = levels[step - 1]!;
       const plf = parentLinkFor(lv, parent);
-      const parentIds = effIds(step - 1);
-      if (plf && parentIds.length) {
-        recs = recs.filter((r) => { const pv = r.data[plf]; return isStr(pv) && parentIds.includes(pv); });
-      } else {
-        recs = [];
+      if (plf) {
+        // This level links to its parent → show only the chosen parent's children
+        // (empty until a parent is picked).
+        const parentIds = effIds(step - 1);
+        recs = parentIds.length ? recs.filter((r) => { const pv = r.data[plf]; return isStr(pv) && parentIds.includes(pv); }) : [];
       }
+      // No parent link (e.g. region under a single country) → show all candidates.
     }
     const q = query.trim().toLowerCase();
     const scored = recs

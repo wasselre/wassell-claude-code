@@ -38,15 +38,20 @@ const FIELD_TYPES: FieldType[] = [
 // districts.city_lookup). Returns [] if the geography models aren't present.
 function defaultGeographyLevels(models: AppModel[]): LocationLevel[] {
   const find = (name: string) => models.find((m) => m.name === name);
+  const countries = find('countries');
   const regions = find('regions');
   const cities = find('cities');
   const districts = find('districts');
   if (!regions || !cities || !districts) return [];
-  return [
+  const levels: LocationLevel[] = [];
+  // Country is the top level (no parent link — a single country shows all regions).
+  if (countries) levels.push({ key: 'country', model_id: countries.id, display_field: 'name_ar' });
+  levels.push(
     { key: 'region', model_id: regions.id, display_field: 'name_ar' },
     { key: 'city', model_id: cities.id, display_field: 'display_name', parent_link_field: 'region_lookup' },
     { key: 'district', model_id: districts.id, display_field: 'display_name', parent_link_field: 'city_lookup' },
-  ];
+  );
+  return levels;
 }
 
 // Field types that can be the scope of an auto_id counter — values we can use
