@@ -14,8 +14,9 @@
 -- ============================================================================
 BEGIN;
 
--- 1. Countries model.
-INSERT INTO public.models (id, name, label_ar, label_en, icon, color, schema, card_config, is_system, "order", is_hardcoded)
+-- 1. Countries model — in the الجغرافيا (geography) group, ordered first (it's the
+--    top of the country → region → city → district hierarchy).
+INSERT INTO public.models (id, name, label_ar, label_en, icon, color, schema, card_config, is_system, "order", is_hardcoded, group_id)
 VALUES (
   'd15a0001-0000-4000-8000-000000000003', 'countries', 'الدول', 'Countries', 'globe', '#0D9488',
   jsonb_build_object('section_selector_field_id', NULL, 'sections', jsonb_build_array(
@@ -27,7 +28,7 @@ VALUES (
       jsonb_build_object('id','d15a0003-f1d0-4000-8001-000000000005','name','is_active','label_ar','نشط','label_en','Active','type','checkbox','required',false,'order',4,'section_id','d15a0003-5ec0-4000-8000-000000000001','width','half','show_in_table',false)
     )))),
   jsonb_build_object('title_field_id','d15a0003-f1d0-4000-8001-000000000001','shown_field_ids', jsonb_build_array('d15a0003-f1d0-4000-8001-000000000004')),
-  true, 50, false
+  true, 0, false, 'd15a0001-9700-4000-8000-000000000000'
 )
 ON CONFLICT (id) DO NOTHING;
 
