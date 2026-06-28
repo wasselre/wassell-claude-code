@@ -583,6 +583,18 @@ const PIN_CAP = 2000;
 // would block the map's first paint with thousands of synchronous lookups.
 const NO_LOCATION_PANEL_LIMIT = 8;
 
+/** Temporary, opt-in map lifecycle logging. Enable in the browser console with
+ *  `localStorage.wassell_map_debug = '1'` then reload — no redeploy needed.
+ *  Logs zoom, bbox, cluster count, markers rendered, and every clear + reason. */
+const MAP_DEBUG = (() => {
+  try {
+    return typeof window !== 'undefined' && window.localStorage.getItem('wassell_map_debug') === '1';
+  } catch {
+    // localStorage can throw in locked-down/private contexts — never block on it.
+    return false;
+  }
+})();
+
 /** Geometry shape returned by getClusters for an individual (non-cluster) point. */
 type SummaryPointProps = { cluster?: false; id: string };
 
@@ -645,14 +657,20 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
       maxZoom: SUPERCLUSTER_MAX_ZOOM,
       minPoints: 2,
     });
-  const [index, setIndex] = useState<Supercluster<SummaryPointProps>>(makeIndex);
+  // Index lives in state with a `ready` flag. `ready` is false until the first
+  // build finishes, so the marker effect never renders (and so never clears the
+  // existing markers) against an un-loaded index.
+  const [indexState, setIndexState] = useState<{ index: Supercluster<SummaryPointProps>; ready: boolean }>(
+    () => ({ index: makeIndex(), ready: false }),
+  );
+  const { index, ready: indexReady } = indexState;
   useEffect(() => {
     // setTimeout(0) yields a frame so the map can mount/paint before we spend
     // ~hundreds of ms building the KD-tree.
     const handle = window.setTimeout(() => {
       const sc = makeIndex();
       sc.load(points);
-      setIndex(sc);
+      setIndexState({ index: sc, ready: true });
     }, 0);
     return () => window.clearTimeout(handle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -740,21 +758,37 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   }, [mappedById]);
 
   useEffect(() => {
-    if (!mapInstance || !isLoaded) return;
+    // LIFECYCLE RULE (the fix for "clusters vanish when panning stops"):
+    // never clear the existing markers on a transient/invalid state. We build the
+    // new set first and swap it in atomically; the only place markers are fully
+    // removed is the unmount cleanup below. Each guard here RETURNS without
+    // touching markersRef, so whatever is on the map stays on the map.
+    if (!mapInstance || !isLoaded) return;          // keep existing markers
+    if (!indexReady && points.length > 0) {
+      // Index not built yet but we have data → keep the current markers, wait
+      // for the deferred build to flip `indexReady` (which re-runs this effect).
+      if (MAP_DEBUG) console.debug('[map] keep %o markers — index not ready', markersRef.current.length);
+      return;
+    }
 
     const bounds = mapInstance.getBounds();
     const zNow = mapInstance.getZoom();
-    if (!bounds || zNow == null) return;
+    if (!bounds || zNow == null) {                  // transient → keep existing
+      if (MAP_DEBUG) console.debug('[map] keep %o markers — no bounds/zoom yet', markersRef.current.length);
+      return;
+    }
 
     const ne = bounds.getNorthEast();
     const sw = bounds.getSouthWest();
     const bbox: [number, number, number, number] = [sw.lng(), sw.lat(), ne.lng(), ne.lat()];
-    const clusters = index.getClusters(bbox, Math.round(zNow));
+    const z = Math.round(zNow);
+    const clusters = index.getClusters(bbox, z);
 
-    // Tear down previous markers. Cheap — SVG data-URI icons, no network.
-    markersRef.current.forEach((m) => m.setMap(null));
-    markersRef.current = [];
+    if (MAP_DEBUG) {
+      console.debug('[map] query zoom=%o bbox=%o → %o features (prev markers=%o)', z, bbox, clusters.length, markersRef.current.length);
+    }
 
+    // Build the new marker set BEFORE removing the old one (see lifecycle rule).
     const newMarkers: google.maps.Marker[] = [];
     let pinsRendered = 0;
     let capExceeded = false;
@@ -817,16 +851,29 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
       newMarkers.push(marker);
     }
 
+    // SWAP: add the new set, then remove the previous set — never an empty frame.
+    // If `clusters` was genuinely empty (panned to an area with no listings) the
+    // new set is empty and the old is removed, which is the correct "none here"
+    // state. NO effect cleanup clears markers — that was the bug.
     newMarkers.forEach((m) => m.setMap(mapInstance));
+    const prevMarkers = markersRef.current;
     markersRef.current = newMarkers;
+    prevMarkers.forEach((m) => m.setMap(null));
     setPinCapHit(capExceeded);
+    if (MAP_DEBUG) console.debug('[map] rendered %o markers, removed %o old', newMarkers.length, prevMarkers.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapInstance, isLoaded, index, indexReady, viewportVersion, cfg.click_action, model.color, points.length]);
 
-    return () => {
+  // Clear markers ONLY on unmount — never on a dependency change. Clearing on
+  // every re-run (the old effect cleanup) is what wiped clusters on each `idle`.
+  useEffect(
+    () => () => {
+      if (MAP_DEBUG) console.debug('[map] unmount — clearing %o markers', markersRef.current.length);
       markersRef.current.forEach((m) => m.setMap(null));
       markersRef.current = [];
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, isLoaded, index, viewportVersion, cfg.click_action, model.color]);
+    },
+    [],
+  );
 
   if (keyMissing) {
     return <EmptyState title={t('maps.api_key_missing')} hint={t('maps.api_key_missing_hint')} />;
