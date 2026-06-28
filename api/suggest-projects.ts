@@ -152,7 +152,13 @@ export default async function handler(req: Request): Promise<Response> {
 
     // Show all THREE sources side by side (our_projects + market_listings +
     // all_projects), each labelled by source — not the LLM tool's fallback-gated view.
-    const core = await matchProjectsCore(supabase, requirements, { alwaysScoreAll: true, includeMarket: true, verifyGeo: true });
+    // NOTE: this existing modal path is intentionally left at its prior behavior
+    // (no verifyGeo) to avoid any change to the live Suggested Projects modal — the
+    // boundary-verified engine is exposed via /api/project-finder, and repointing
+    // this modal onto it is a separate, deferred phase. (The market scan here also
+    // already approaches the edge timeout for ultra-dense districts — a pre-existing
+    // perf characteristic of the market_listings inclusion, unrelated to geo.)
+    const core = await matchProjectsCore(supabase, requirements, { alwaysScoreAll: true, includeMarket: true });
     if (!core.ok) {
       // Surface loudly (never silently swallow) but keep a renderable shape.
       console.error('[suggest-projects] match core failed:', core.error);

@@ -34,6 +34,7 @@ import {
   hasAnyCriteria,
   missingPreferences,
   FINDER_GROUP_KEYS,
+  DEFAULT_FINDER_SOURCES,
   type MatchSource,
 } from './_lib/projectFinder.js';
 import { parseRequirements, explainMatches, applyLlmExplanations } from './_lib/projectFinderAI.js';
@@ -129,8 +130,11 @@ export default async function handler(req: Request): Promise<Response> {
     }
     const requirements = mergeRequirements(parsed, explicit);
 
+    // Default to the boundary-verified catalog (our_projects + all_projects).
+    // market_listings is OPT-IN via an explicit `sources` (external/unverified +
+    // its area scan can exceed the edge timeout for ultra-dense districts).
     const sources = (strArr(body.sources)?.filter((s): s is MatchSource => (VALID_SOURCES as string[]).includes(s)) ??
-      VALID_SOURCES) as MatchSource[];
+      DEFAULT_FINDER_SOURCES) as MatchSource[];
 
     // Short-circuit: no matchable preference → ask for preferences (no misleading
     // "everything is a strong match"). No audit row — nothing was recommended.

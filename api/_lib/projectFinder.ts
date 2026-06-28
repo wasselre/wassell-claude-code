@@ -86,9 +86,14 @@ export interface FinderResult {
 
 export interface FinderOptions {
   perGroup?: number;
-  /** Which sources to include. Default: all three. */
+  /** Which sources to include. Default: our_projects + all_projects (the
+   *  boundary-verified catalog). `market_listings` is OPT-IN — it's external/
+   *  unverified and its area scan can be slow for ultra-dense districts. */
   sources?: MatchSource[];
 }
+
+/** Default finder sources — the verified project catalog, market opt-in. */
+export const DEFAULT_FINDER_SOURCES: MatchSource[] = ['our_projects', 'all_projects'];
 
 // ── pure helpers ────────────────────────────────────────────────────────────
 
@@ -249,7 +254,7 @@ export function groupForFinder(
   opts: FinderOptions = {},
 ): FinderResult {
   const perGroup = opts.perGroup ?? 8;
-  const sources = opts.sources ?? ['our_projects', 'all_projects', 'market_listings'];
+  const sources = opts.sources ?? DEFAULT_FINDER_SOURCES;
   const districtRequested = !!(req.district || (req.districts && req.districts.length));
 
   const pool: MatchResultItem[] = [];
@@ -353,7 +358,7 @@ export async function findMatchingProjects(
 ): Promise<{ ok: true; result: FinderResult } | { ok: false; error: string }> {
   const core = await matchProjectsCore(supabase, req, {
     alwaysScoreAll: true,
-    includeMarket: (opts.sources ?? ['our_projects', 'all_projects', 'market_listings']).includes('market_listings'),
+    includeMarket: (opts.sources ?? DEFAULT_FINDER_SOURCES).includes('market_listings'),
     verifyGeo: true,
   });
   if (!core.ok) return { ok: false, error: core.error };
