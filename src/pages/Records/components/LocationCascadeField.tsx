@@ -55,14 +55,19 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
     if (Array.isArray(v)) return v.filter(isStr);
     return isStr(v) ? [v] : [];
   };
-  // Effective ids for a level: the real selection, else the default (only for the
-  // non-deepest levels — region/city — so the deepest stays an explicit choice).
+  // True only when NOTHING is picked yet — the default applies in this state only,
+  // so once the user picks (e.g. changes the region) the الرياض default stops
+  // forcing the city.
+  const isEmpty = levels.every((lv) => idsOf(lv.key).length === 0);
+  // Effective ids for a level: the real selection, else (only while totally empty)
+  // the default for the non-deepest levels — region/city — so the deepest (district)
+  // stays an explicit choice.
   const effIds = (idx: number): string[] => {
     const lv = levels[idx];
     if (!lv) return [];
     const real = idsOf(lv.key);
     if (real.length) return real;
-    if (idx < lastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
+    if (isEmpty && idx < lastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
     return [];
   };
 
