@@ -15,6 +15,7 @@ export type FieldType =
   | 'dropdown'
   | 'multiselect'
   | 'lookup'
+  | 'location'
   | 'unit_picker'
   | 'mirror'
   | 'section_mirror'
@@ -132,6 +133,23 @@ export interface FieldVisibilityRule {
   values: string[]; // show this field when the controller's value is one of these
 }
 
+/**
+ * One level of a `location` cascade field (region → city → district). Levels are
+ * ordered top → bottom. Each level points at a geography model and stores the
+ * picked record id under `key` in the field's compound value. A child level's
+ * candidate list is filtered to records whose `parent_link_field` holds the
+ * parent level's selected id(s). When `parent_link_field` is omitted it's
+ * auto-detected: the child model's first `lookup` field whose `lookup_model_id`
+ * equals the parent level's `model_id` (e.g. cities.region_lookup → regions,
+ * districts.city_lookup → cities).
+ */
+export interface LocationLevel {
+  key: string; // role key in the stored value: 'region' | 'city' | 'district'
+  model_id: string; // geography model this level picks from
+  display_field: string; // slug shown to the user (name_ar / display_name)
+  parent_link_field?: string | null; // slug on this level's records holding the parent record id; null/absent for the top level
+}
+
 export interface ModelField {
   id: string;
   name: string; // snake_case slug
@@ -149,6 +167,14 @@ export interface ModelField {
   lookup_display_field?: string | null;
   is_multi?: boolean; // When type: 'lookup', allows picking multiple records (value becomes string[]).
   lookup_max_records?: number; // When type: 'lookup', caps how many records show in the combobox dropdown (default 20).
+  // Location cascade (type: 'location'). A guided region → city → district picker
+  // where each level is gated by its parent and the child list is filtered to the
+  // parent's children. Stored value is a compound object keyed by each level's
+  // `key`: single mode → { region?: id, city?: id, district?: id }; multi mode →
+  // { region: id[], city: id[], district: id[] }. See LocationLevel.
+  location_multi?: boolean; // false = one pick per level (projects/listings/offices); true = multi per level (client preferences)
+  location_levels?: LocationLevel[]; // ordered top → bottom; defaults to the regions/cities/districts geography models
+
   // Unit picker (type: 'unit_picker'). A cascading project→unit selector: the
   // user first picks a project (filter only, NOT stored) from the project model
   // that owns units, then picks one or more units rendered as cards (the unit

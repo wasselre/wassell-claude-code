@@ -71,7 +71,7 @@ The search returns projects from three models, tagged via the "source" field:
 A result from "all_projects" is still a real result. Share it. Frame it honestly: "هذا من السوق العام، ما هو ضمن المشاريع اللي نسوّقها حالياً مباشرة، لكن أقدر أربطك بأحد مستشارينا لو يهمك."
 
 # Reading project data
-- Field names vary. The common human-readable fields are: project_name, preferred_city, preferred_neighborhoods, price_range ({min,max}), area_range ({min,max}), bedroom_range ({min,max}).
+- Field names vary. The common human-readable fields are: project_name, city, district (resolved from the project's location), price_range ({min,max}), area_range ({min,max}), bedroom_range ({min,max}).
 - Some fields may be missing on a given record. State only what's present. Don't invent.
 - Prices are in SAR. Format them with thousand separators when presenting: "1,298,000 ر.س".
 
@@ -385,12 +385,27 @@ async function searchProjects(
     });
   console.log('[search_projects] total matches', allMatches.length);
 
-  const top = allMatches.slice(0, 15).map(({ row }) => ({
-    id: row.id,
-    source: modelMap.get(row.model_id) ?? 'unknown',
-    ...cleanRecord(row.data),
-  }));
-  const aggregate = aggregateMatches(allMatches.map((m) => m.row));
+  // Resolve every matched project's location.{city,district} ids → display names
+  // (geography is relational now — no preferred_city/preferred_neighborhoods text).
+  const locNameMap = await resolveLocationNames(
+    supabase,
+    allMatches.flatMap(({ row }) => {
+      const { city, district } = projectLocationIds(row.data);
+      return [city, district].filter((x): x is string => !!x);
+    }),
+  );
+  const nameOf = (id?: string) => (id ? locNameMap.get(id) : undefined);
+  const top = allMatches.slice(0, 15).map(({ row }) => {
+    const { city, district } = projectLocationIds(row.data);
+    return {
+      id: row.id,
+      source: modelMap.get(row.model_id) ?? 'unknown',
+      city: nameOf(city) ?? '',
+      district: nameOf(district) ?? '',
+      ...cleanRecord(row.data),
+    };
+  });
+  const aggregate = aggregateMatches(allMatches.map((m) => m.row), nameOf);
   console.log('[search_projects] returning', top.length, 'top picks +', aggregate.total, 'aggregate');
   return JSON.stringify({
     total: aggregate.total,
@@ -403,7 +418,30 @@ async function searchProjects(
 // prompt directs the agent to surface these when fewer than all 5
 // qualifying fields are known — better than guessing 3 results out of
 // hundreds. Customer self-narrows by picking a district / price band.
-function aggregateMatches(rows: RecordRow[]): {
+/** Read a project record's location.{city,district} as single ids (first element if multi). */
+function projectLocationIds(d: Record<string, unknown>): { city?: string; district?: string } {
+  const loc = d.location && typeof d.location === 'object' && !Array.isArray(d.location)
+    ? (d.location as Record<string, unknown>) : {};
+  const one = (v: unknown): string | undefined =>
+    Array.isArray(v) ? (typeof v[0] === 'string' ? v[0] : undefined) : (typeof v === 'string' && v ? v : undefined);
+  return { city: one(loc.city), district: one(loc.district) };
+}
+
+/** Resolve geography record ids → display names via unified_records (ids are globally unique). */
+async function resolveLocationNames(supabase: SupabaseClient, ids: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const uniq = [...new Set(ids.filter((x) => !!x))];
+  for (let i = 0; i < uniq.length; i += 400) {
+    const { data } = await supabase.from('unified_records').select('id, data').in('id', uniq.slice(i, i + 400));
+    for (const r of (data ?? []) as RecordRow[]) {
+      const n = r.data.display_name ?? r.data.name_ar;
+      if (typeof n === 'string' && n) map.set(r.id, n);
+    }
+  }
+  return map;
+}
+
+function aggregateMatches(rows: RecordRow[], nameOf: (id?: string) => string | undefined): {
   total: number;
   by_city: Record<string, number>;
   top_districts: Array<{ district: string; count: number }>;
@@ -421,10 +459,11 @@ function aggregateMatches(rows: RecordRow[]): {
 
   for (const r of rows) {
     const d = r.data;
-    const city = d.preferred_city;
-    if (typeof city === 'string' && city.trim()) byCity[city] = (byCity[city] ?? 0) + 1;
-    const district = d.preferred_neighborhoods;
-    if (typeof district === 'string' && district.trim())
+    const { city: cityId, district: districtId } = projectLocationIds(d);
+    const city = nameOf(cityId);
+    if (city && city.trim()) byCity[city] = (byCity[city] ?? 0) + 1;
+    const district = nameOf(districtId);
+    if (district && district.trim())
       byDistrict[district] = (byDistrict[district] ?? 0) + 1;
     // Unit type lives under various slugs depending on how the model was
     // built. We just collect anything plausibly-typed for honesty.

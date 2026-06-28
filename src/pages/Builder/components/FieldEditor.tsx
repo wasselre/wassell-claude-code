@@ -21,16 +21,33 @@ import { countRenameImpact, type RenameImpact } from '@/lib/fieldRename';
 import { countRecordsWithFieldData, isTypeChangeLossy } from '@/lib/fieldDataImpact';
 import type {
   ModelField, FieldType, FieldWidth, FieldOption, FieldOptionGroup, AppModel,
-  SectionMirrorControlMode, SectionMirrorFieldMode, TableColumn, TableColumnType,
+  SectionMirrorControlMode, SectionMirrorFieldMode, TableColumn, TableColumnType, LocationLevel,
 } from '@/types';
 
 const FIELD_TYPES: FieldType[] = [
   'text', 'textarea', 'notes', 'number', 'range', 'email', 'phone', 'date', 'datetime',
-  'currency', 'url', 'multi_link', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'unit_picker', 'mirror', 'section_mirror', 'section_selector', 'assignee',
+  'currency', 'url', 'multi_link', 'checkbox', 'dropdown', 'multiselect', 'lookup', 'location', 'unit_picker', 'mirror', 'section_mirror', 'section_selector', 'assignee',
   'auto_id', 'formula', 'table',
   'image', 'multi_image', 'video', 'multi_video', 'file', 'multi_file', 'attachment',
   'whatsapp_history', 'call_history',
 ];
+
+// Default region → city → district levels for a new `location` field, resolved
+// from the live geography models by slug. Each child's parent link is left
+// undefined so LocationCascadeField auto-detects it (cities.region_lookup,
+// districts.city_lookup). Returns [] if the geography models aren't present.
+function defaultGeographyLevels(models: AppModel[]): LocationLevel[] {
+  const find = (name: string) => models.find((m) => m.name === name);
+  const regions = find('regions');
+  const cities = find('cities');
+  const districts = find('districts');
+  if (!regions || !cities || !districts) return [];
+  return [
+    { key: 'region', model_id: regions.id, display_field: 'name_ar' },
+    { key: 'city', model_id: cities.id, display_field: 'display_name', parent_link_field: 'region_lookup' },
+    { key: 'district', model_id: districts.id, display_field: 'display_name', parent_link_field: 'city_lookup' },
+  ];
+}
 
 // Field types that can be the scope of an auto_id counter — values we can use
 // as a per-group counter key. Excludes complex types (lookups, mirrors, etc.)
@@ -114,6 +131,11 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
   const [lookupDisplayField, setLookupDisplayField] = useState<string | null>(null);
   const [isMulti, setIsMulti] = useState<boolean>(false);
   const [lookupMaxRecords, setLookupMaxRecords] = useState<number>(20);
+  // Location cascade (type: 'location'). `locationMulti` toggles single vs
+  // multi-pick per level; `locationLevels` is the ordered region→city→district
+  // config. New location fields default their levels to the geography models.
+  const [locationMulti, setLocationMulti] = useState<boolean>(false);
+  const [locationLevels, setLocationLevels] = useState<LocationLevel[]>([]);
   // Unit picker (type: 'unit_picker') — which model holds the units, and which
   // lookup field on it points at the project. Both fall back to the live
   // defaults (`units` model / `project_id` slug) when left unset.
@@ -226,6 +248,12 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setLookupDisplayField(field.lookup_display_field ?? null);
       setIsMulti(field.is_multi ?? false);
       setLookupMaxRecords(field.lookup_max_records ?? 20);
+      setLocationMulti(field.location_multi ?? false);
+      setLocationLevels(
+        field.location_levels && field.location_levels.length > 0
+          ? field.location_levels
+          : defaultGeographyLevels(models),
+      );
       setUnitPickerUnitModelId(field.unit_picker_unit_model_id ?? null);
       setUnitPickerProjectLinkField(field.unit_picker_project_link_field ?? '');
       setAssigneeRoleIds(field.assignee_role_ids ?? []);
@@ -285,6 +313,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       setLookupDisplayField(null);
       setIsMulti(false);
       setLookupMaxRecords(20);
+      setLocationMulti(false);
+      setLocationLevels(defaultGeographyLevels(models));
       setUnitPickerUnitModelId(null);
       setUnitPickerProjectLinkField('');
       setAssigneeRoleIds([]);
@@ -453,6 +483,8 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
       lookup_display_field: type === 'lookup' ? lookupDisplayField : null,
       is_multi: type === 'lookup' || type === 'unit_picker' ? isMulti : undefined,
       lookup_max_records: type === 'lookup' ? lookupMaxRecords : undefined,
+      location_multi: type === 'location' ? locationMulti : undefined,
+      location_levels: type === 'location' ? locationLevels : undefined,
       // Carry-through for advanced props that have no dedicated Builder UI yet
       // (they're configured via the seed/migrations). Sourcing them from the
       // original `field` means editing a field in the Builder never silently
@@ -1123,6 +1155,67 @@ export default function FieldEditor({ field, sectionId, model, defaultType, onSa
                   </p>
                 </div>
               )}
+            </div>
+          </>
+        )}
+
+        {/* Location cascade config — region → city → district */}
+        {type === 'location' && (
+          <>
+            <div className="border-t border-sand/10" />
+            <div className="space-y-3">
+              <label className="flex items-center gap-2.5 cursor-pointer group py-0.5">
+                <input
+                  type="checkbox"
+                  checked={locationMulti}
+                  onChange={(e) => setLocationMulti(e.target.checked)}
+                  className="w-4 h-4 rounded border-sand/50 text-copper focus:ring-copper/20 transition-colors"
+                />
+                <span className="text-[13px] font-semibold text-charcoal/70 group-hover:text-charcoal transition-colors">
+                  {isAr ? 'السماح بتحديد أكثر من قيمة لكل مستوى' : 'Allow multiple values per level'}
+                </span>
+              </label>
+              {locationLevels.length === 0 ? (
+                <p className="text-[12px] text-red-500">
+                  {isAr
+                    ? 'نماذج الجغرافيا (المناطق/المدن/الأحياء) غير موجودة — لا يمكن إعداد حقل الموقع.'
+                    : 'Geography models (regions/cities/districts) not found — cannot configure a location field.'}
+                </p>
+              ) : (
+                locationLevels.map((level, idx) => {
+                  const lvModel = models.find((m) => m.id === level.model_id);
+                  const lvFields = lvModel
+                    ? lvModel.schema.sections.flatMap((s) => s.fields).filter((f) => LOOKUP_DISPLAY_TYPES.includes(f.type))
+                    : [];
+                  return (
+                    <div key={level.key}>
+                      <label className="block text-xs font-bold text-charcoal/50 mb-1.5">
+                        {(isAr ? 'مستوى: ' : 'Level: ') + (lvModel ? (isAr ? lvModel.label_ar : lvModel.label_en) : level.key)}
+                      </label>
+                      <select
+                        value={level.display_field}
+                        onChange={(e) => {
+                          const next = [...locationLevels];
+                          next[idx] = { ...level, display_field: e.target.value };
+                          setLocationLevels(next);
+                        }}
+                        className="form-input text-sm"
+                      >
+                        {lvFields.map((f) => (
+                          <option key={f.id} value={f.name}>
+                            {isAr ? f.label_ar : f.label_en}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  );
+                })
+              )}
+              <p className="text-[11px] text-charcoal/40">
+                {isAr
+                  ? 'يختار المستخدم المنطقة ثم المدينة ثم الحي، وتُصفّى كل قائمة حسب اختيار المستوى الأعلى.'
+                  : 'The user picks region, then city, then district — each list filtered by the level above.'}
+              </p>
             </div>
           </>
         )}

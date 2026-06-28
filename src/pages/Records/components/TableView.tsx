@@ -6,6 +6,7 @@ import DynamicCell from './DynamicCell';
 import PhoneInput from './PhoneInput';
 import RangeField from './RangeField';
 import LookupCombobox from './LookupCombobox';
+import LocationCascadeField from './LocationCascadeField';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import {
@@ -621,6 +622,13 @@ function InlineInput({
         </select>
       );
     }
+
+    case 'location':
+      return (
+        <div onClick={(e) => e.stopPropagation()} className="min-w-[12rem]">
+          <LocationCascadeField field={field} value={value} onChange={onChange} />
+        </div>
+      );
 
     case 'assignee': {
       const eligibleUsers = filterEligibleAssignees(field, users);

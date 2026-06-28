@@ -20,11 +20,17 @@ function clientField(client: AppRecord, candidates: string[]): unknown {
 
 const SOURCE_SLUGS = ['lead_source', 'source', 'client_source'];
 const PROJECT_SLUGS = ['preferred_project', 'preferred_projects', 'project', 'interested_project'];
-// Relational geography only — match on the lookup fields (preferred_cities /
-// preferred_districts hold cities/districts record ids), not legacy text dropdowns.
-const CITY_SLUGS = ['preferred_cities'];
-const DISTRICT_SLUGS = ['preferred_districts'];
 const BUDGET_SLUGS = ['budget', 'budget_max', 'max_budget', 'budget_amount'];
+
+// Relational geography lives in the `location` cascade compound { region:[], city:[],
+// district:[] } of record ids. Pull the matching level for experiment targeting.
+function clientLocationIds(client: AppRecord, key: 'city' | 'district' | 'region'): string[] {
+  const loc = client.data.location;
+  if (loc && typeof loc === 'object' && !Array.isArray(loc)) {
+    return asArray((loc as Record<string, unknown>)[key]);
+  }
+  return [];
+}
 const STAGE_SLUGS = ['client_stage'];
 const STATUS_SLUGS = ['client_status'];
 const REP_SLUGS = ['sales_rep', 'assigned_to', 'owner'];
@@ -58,8 +64,8 @@ export function clientMatchesRules(client: AppRecord, rules: SalesExperimentTarg
   if (!rules) return true;
   if (!intersects(asArray(clientField(client, SOURCE_SLUGS)), rules.source)) return false;
   if (!intersects(asArray(clientField(client, PROJECT_SLUGS)), rules.project)) return false;
-  if (!intersects(asArray(clientField(client, CITY_SLUGS)), rules.city)) return false;
-  if (!intersects(asArray(clientField(client, DISTRICT_SLUGS)), rules.district)) return false;
+  if (!intersects(clientLocationIds(client, 'city'), rules.city)) return false;
+  if (!intersects(clientLocationIds(client, 'district'), rules.district)) return false;
   if (!intersects(asArray(clientField(client, STAGE_SLUGS)), rules.client_stage)) return false;
   if (!intersects(asArray(clientField(client, STATUS_SLUGS)), rules.client_status)) return false;
   if (!intersects(asArray(clientField(client, REP_SLUGS)), rules.sales_rep)) return false;

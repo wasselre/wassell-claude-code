@@ -3,15 +3,14 @@ import { buildAssistantContext } from '../assistantContext';
 import type { AppModel } from '@/types';
 
 /** Minimal clients model carrying only the preference fields the context helper
- *  reads. Geography is relational now: preferred_cities / preferred_districts are
- *  multi-lookups (their values are record ids resolved via geoNames). */
+ *  reads. Geography is the `location` cascade compound { city:[], district:[] } of
+ *  record ids resolved to names via geoNames. */
 const clientsModel = {
   schema: {
     sections: [
       {
         fields: [
-          { name: 'preferred_cities', type: 'lookup', is_multi: true },
-          { name: 'preferred_districts', type: 'lookup', is_multi: true },
+          { name: 'location', type: 'location', location_multi: true },
           {
             name: 'preferred_unit_type', type: 'multiselect',
             options: [{ id: '5', value: 'تاون هاوس', label_ar: 'تاون هاوس', label_en: 'Townhouse' }],
@@ -33,18 +32,22 @@ const geoNames: Record<string, string> = {
 };
 
 describe('buildAssistantContext — draft-first preference resolution (lookup geography)', () => {
+  const districtRow = (ctx: ReturnType<typeof buildAssistantContext>) =>
+    ctx.used.find((p) => p.slug === 'location' && p.label_ar === 'الحي');
+  const cityRow = (ctx: ReturnType<typeof buildAssistantContext>) =>
+    ctx.used.find((p) => p.slug === 'location' && p.label_ar === 'المدينة');
+
   it('prefers the unsaved draft value over the saved record value', () => {
-    const savedClientData = { preferred_districts: ['d-narjis'], budget: { min: 0, max: 2_000_000 } };
-    const prefDraft = { preferred_districts: ['d-aridh'], budget: { min: 0, max: 2_500_000 } };
+    const savedClientData = { location: { district: ['d-narjis'] }, budget: { min: 0, max: 2_000_000 } };
+    const prefDraft = { location: { district: ['d-aridh'] }, budget: { min: 0, max: 2_500_000 } };
 
     const ctx = buildAssistantContext({
       clientsModel, prefDraft, savedClientData, followupDraft: {}, geoNames, isAr: true,
     });
 
-    const district = ctx.used.find((p) => p.slug === 'preferred_districts');
     const budget = ctx.used.find((p) => p.slug === 'budget');
     // DRAFT wins — العارض not النرجس, 2,500,000 not 2,000,000.
-    expect(district?.value).toBe('العارض');
+    expect(districtRow(ctx)?.value).toBe('العارض');
     expect(budget?.value).toContain('2,500,000');
     expect(ctx.preface).toContain('العارض');
     expect(ctx.preface).not.toContain('النرجس');
@@ -52,14 +55,14 @@ describe('buildAssistantContext — draft-first preference resolution (lookup ge
   });
 
   it('falls back to the saved value when the draft slot is empty', () => {
-    const savedClientData = { preferred_cities: ['c-riyadh'], preferred_unit_type: ['تاون هاوس'] };
+    const savedClientData = { location: { city: ['c-riyadh'] }, preferred_unit_type: ['تاون هاوس'] };
     const prefDraft = {}; // nothing edited yet
 
     const ctx = buildAssistantContext({
       clientsModel, prefDraft, savedClientData, followupDraft: {}, geoNames, isAr: true,
     });
 
-    expect(ctx.used.find((p) => p.slug === 'preferred_cities')?.value).toBe('الرياض');
+    expect(cityRow(ctx)?.value).toBe('الرياض');
     expect(ctx.used.find((p) => p.slug === 'preferred_unit_type')?.value).toBe('تاون هاوس');
     expect(ctx.hasAny).toBe(true);
   });
@@ -67,10 +70,10 @@ describe('buildAssistantContext — draft-first preference resolution (lookup ge
   it('resolves multiple preferred districts to a joined name list', () => {
     const ctx = buildAssistantContext({
       clientsModel,
-      prefDraft: { preferred_districts: ['d-narjis', 'd-aridh'] },
+      prefDraft: { location: { district: ['d-narjis', 'd-aridh'] } },
       savedClientData: null, followupDraft: {}, geoNames, isAr: true,
     });
-    expect(ctx.used.find((p) => p.slug === 'preferred_districts')?.value).toBe('النرجس، العارض');
+    expect(districtRow(ctx)?.value).toBe('النرجس، العارض');
   });
 
   it('formats a budget range with thousands separators and currency', () => {
@@ -103,7 +106,7 @@ describe('buildAssistantContext — draft-first preference resolution (lookup ge
   it('includes follow-up notes and project context in the preface', () => {
     const ctx = buildAssistantContext({
       clientsModel,
-      prefDraft: { preferred_cities: ['c-riyadh'] },
+      prefDraft: { location: { city: ['c-riyadh'] } },
       savedClientData: null,
       followupDraft: { outcome_notes: 'يفضل التواصل مساءً' },
       projectName: 'دروازة',

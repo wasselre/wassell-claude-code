@@ -12,6 +12,11 @@ interface LookupComboboxProps {
   maxRecords?: number;
   value: string | string[] | undefined;
   onChange: (value: string | string[] | undefined) => void;
+  // Cascade support (used by LocationCascadeField). Optional + backward-compatible.
+  candidatePredicate?: (rec: { id: string; data: Record<string, unknown> }) => boolean; // pre-filter the dropdown candidates (e.g. children of the chosen parent)
+  disabled?: boolean; // render an inert, greyed-out control (e.g. a child level before its parent is chosen)
+  disableCreate?: boolean; // suppress the inline "Create:" row (you can't invent a geography record here)
+  placeholder?: string; // override the default "Search <model>..." placeholder
 }
 
 export default function LookupCombobox({
@@ -21,6 +26,10 @@ export default function LookupCombobox({
   maxRecords,
   value,
   onChange,
+  candidatePredicate,
+  disabled,
+  disableCreate,
+  placeholder,
 }: LookupComboboxProps) {
   const { models, records, language, saveRecord } = useAppStore();
   const isAr = language === 'ar';
@@ -91,13 +100,14 @@ export default function LookupCombobox({
 
   const limit = maxRecords && maxRecords > 0 ? maxRecords : 20;
   const filteredRecords = useMemo(() => {
-    const base = linkedRecords.filter((r) => !selectedIds.includes(r.id));
+    let base = linkedRecords.filter((r) => !selectedIds.includes(r.id));
+    if (candidatePredicate) base = base.filter(candidatePredicate);
     if (!query.trim()) return base.slice(0, limit);
     const q = query.toLowerCase();
     return base
       .filter((r) => labelFor(r).toLowerCase().includes(q))
       .slice(0, limit);
-  }, [query, linkedRecords, selectedIds, limit, labelFor]);
+  }, [query, linkedRecords, selectedIds, limit, labelFor, candidatePredicate]);
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -134,6 +144,7 @@ export default function LookupCombobox({
   // value written to the configured display field, then auto-select it.
   const trimmedQuery = query.trim();
   const canCreate =
+    !disableCreate &&
     trimmedQuery.length > 0 &&
     !!lookupDisplayField &&
     !displayIsComputed &&
@@ -156,6 +167,17 @@ export default function LookupCombobox({
   if (!linkedModel) {
     return <div className="text-sm text-red-400">{isAr ? 'نموذج غير موجود' : 'Linked model not found'}</div>;
   }
+
+  // ── Disabled (cascade child whose parent isn't chosen yet) ──
+  if (disabled) {
+    return (
+      <div className="form-input flex items-center text-sm text-charcoal/30 bg-cream/40 cursor-not-allowed select-none">
+        {placeholder ?? (isAr ? `بحث في ${linkedModel.label_ar}...` : `Search ${linkedModel.label_en}...`)}
+      </div>
+    );
+  }
+
+  const searchPlaceholder = placeholder ?? (isAr ? `بحث في ${linkedModel.label_ar}...` : `Search ${linkedModel.label_en}...`);
 
   // ── Multi-select mode ──
   if (isMulti) {
@@ -191,7 +213,7 @@ export default function LookupCombobox({
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
             onFocus={() => setOpen(true)}
-            placeholder={isAr ? `بحث في ${linkedModel.label_ar}...` : `Search ${linkedModel.label_en}...`}
+            placeholder={searchPlaceholder}
             className="form-input ps-8 text-sm"
           />
         </div>
@@ -246,7 +268,7 @@ export default function LookupCombobox({
             value={query}
             onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
             onFocus={() => setOpen(true)}
-            placeholder={isAr ? `بحث في ${linkedModel.label_ar}...` : `Search ${linkedModel.label_en}...`}
+            placeholder={searchPlaceholder}
             className="form-input ps-8 text-sm"
           />
         </div>

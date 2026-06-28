@@ -90,7 +90,7 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     primary_channel: 'call',
     stage: 'الاتصال لحجز موعد',
     context_blocks: ['lead_source', 'campaign', 'preferred_project', 'budget', 'preferred_area', 'preferred_unit_type', 'previous_attempts', 'latest_call_summary', 'latest_whatsapp'],
-    preference_summary_fields: ['budget', 'preferred_projects', 'preferred_neighborhoods', 'preferred_unit_type', 'preferred_area', 'preferred_language'],
+    preference_summary_fields: ['budget', 'preferred_projects', 'location', 'preferred_unit_type', 'preferred_area', 'preferred_language'],
     script: {
       ar: ['ما المنطقة التي تهمك؟', 'ما نطاق الميزانية المناسب لك؟', 'هل البحث للاستخدام الشخصي أم للاستثمار؟', 'هل يناسبك تحديد موعد زيارة قريبًا؟'],
       en: ['Which area interests you?', 'What budget range are you considering?', 'Personal use or investment?', 'Could we schedule a project visit soon?'],

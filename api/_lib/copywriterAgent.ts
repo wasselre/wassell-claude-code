@@ -453,6 +453,29 @@ interface ProjectSearchInput {
   limit?: number;
 }
 
+/** Read a project's location.{city,district} as single ids (first element if multi). */
+function projLoc(d: Record<string, unknown>): { city?: string; district?: string } {
+  const loc = d.location && typeof d.location === 'object' && !Array.isArray(d.location)
+    ? (d.location as Record<string, unknown>) : {};
+  const one = (v: unknown): string | undefined =>
+    Array.isArray(v) ? (typeof v[0] === 'string' ? v[0] : undefined) : (typeof v === 'string' && v ? v : undefined);
+  return { city: one(loc.city), district: one(loc.district) };
+}
+
+/** Resolve geography record ids → display names via unified_records (ids are globally unique). */
+async function resolveLocNames(supabase: SupabaseClient, ids: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const uniq = [...new Set(ids.filter((x): x is string => !!x))];
+  for (let i = 0; i < uniq.length; i += 400) {
+    const { data } = await supabase.from('unified_records').select('id, data').in('id', uniq.slice(i, i + 400));
+    for (const r of (data ?? []) as RecordRow[]) {
+      const n = r.data.display_name ?? r.data.name_ar;
+      if (typeof n === 'string' && n) map.set(r.id, n);
+    }
+  }
+  return map;
+}
+
 async function searchProjects(supabase: SupabaseClient, input: ProjectSearchInput): Promise<string> {
   const model = await getModelByName(supabase, 'all_projects');
   if (!model) return JSON.stringify({ error: 'all_projects model not found', projects: [] });
@@ -463,6 +486,12 @@ async function searchProjects(supabase: SupabaseClient, input: ProjectSearchInpu
   } catch (err) {
     return JSON.stringify({ error: err instanceof Error ? err.message : String(err), projects: [] });
   }
+
+  // Resolve each project's location.{city,district} ids → display names (relational geography).
+  const locNames = await resolveLocNames(
+    supabase,
+    rows.flatMap((r) => { const { city, district } = projLoc(r.data); return [city, district].filter((x): x is string => !!x); }),
+  );
 
   const queryNorm = normalizeForSearch(input.query ?? '');
   const queryTerms = queryNorm.split(' ').filter(Boolean);
@@ -493,8 +522,11 @@ async function searchProjects(supabase: SupabaseClient, input: ProjectSearchInpu
           else if (bodyNorm.includes(t)) score += 1; // term elsewhere (weak tiebreak)
         }
       }
-      if (cityNorm && normalizeForSearch(asStr(d.preferred_city)).includes(cityNorm)) score += 6;
-      if (districtNorm && normalizeForSearch(asStr(d.preferred_neighborhoods)).includes(districtNorm)) score += 8;
+      const { city: cityId, district: districtId } = projLoc(d);
+      const cityName = cityId ? locNames.get(cityId) ?? '' : '';
+      const districtName = districtId ? locNames.get(districtId) ?? '' : '';
+      if (cityNorm && normalizeForSearch(cityName).includes(cityNorm)) score += 6;
+      if (districtNorm && normalizeForSearch(districtName).includes(districtNorm)) score += 8;
 
       if (hasFilters && score === 0) return null; // filters given but nothing matched
       if (!hasFilters) score = 1; // no filters → list everything
@@ -503,8 +535,8 @@ async function searchProjects(supabase: SupabaseClient, input: ProjectSearchInpu
         summary: {
           id: r.id,
           project_name: name,
-          city: asStr(d.preferred_city),
-          district: asStr(d.preferred_neighborhoods),
+          city: cityName,
+          district: districtName,
           project_type: asStr(d.project_type),
           unit_types: asArr(d.unit_types),
           // NOTE: pricing/size are NOT in the search summary — they're computed

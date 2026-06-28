@@ -6,17 +6,20 @@ import { __test } from '../../../api/_lib/matchAgent';
 const { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload } = __test;
 
 // A realistic project from the live all_projects shape (Riyadh apartment).
-// Geography is relational: district_lookup / city_lookup hold record ids; the
-// denormalized district_name / city_name are what facts display.
+// Geography is relational + caller-resolved: the scorer reads the project's
+// district/city ids + display names from the GeoContext (the caller extracts them
+// from the record's `location` cascade), NOT from the record data.
 const DIST_FAROUQ = 'dist-farouq';
 const CITY_RIYADH = 'city-riyadh';
-const GEO = { reqDistrictId: DIST_FAROUQ, reqCityId: CITY_RIYADH }; // request resolved to الفاروق / الرياض
+// Request resolved to الفاروق / الرياض; the project is in the same district/city.
+const GEO = {
+  reqDistrictId: DIST_FAROUQ, reqCityId: CITY_RIYADH,
+  projDistrictId: DIST_FAROUQ, projCityId: CITY_RIYADH,
+  projDistrictName: 'الفاروق', projCityName: 'الرياض',
+};
 const PROJECT = {
   project_name: 'الماجدية 163',
-  district_lookup: DIST_FAROUQ,
-  city_lookup: CITY_RIYADH,
-  district_name: 'الفاروق',
-  city_name: 'الرياض',
+  location: { region: 'reg-riyadh', city: CITY_RIYADH, district: DIST_FAROUQ },
   unit_types: ['apartments'], // note plural — synonym matching must handle it
   project_status: 'unknown',
   price_range: { min: 519000, max: 1149000 },
@@ -46,7 +49,7 @@ describe('scoreProject (Phase 1 text matching)', () => {
   });
 
   it('falls back to a same-city half-credit when the district does not match', () => {
-    const r = scoreProject(PROJECT, { city: 'الرياض', district: 'النرجس' }, { reqDistrictId: 'dist-narjis', reqCityId: CITY_RIYADH });
+    const r = scoreProject(PROJECT, { city: 'الرياض', district: 'النرجس' }, { reqDistrictId: 'dist-narjis', reqCityId: CITY_RIYADH, projDistrictId: DIST_FAROUQ, projCityId: CITY_RIYADH });
     expect(r.district_exact).toBe(false);
     expect(r.match_type).toBe('same_city');
     expect(r.breakdown.location).toBe(0.5);
@@ -66,7 +69,7 @@ describe('scoreProject (Phase 1 text matching)', () => {
   });
 
   it('renormalizes: a lone matched city yields full marks (unspecified dims excluded)', () => {
-    const r = scoreProject(PROJECT, { city: 'الرياض' }, { reqCityId: CITY_RIYADH });
+    const r = scoreProject(PROJECT, { city: 'الرياض' }, { reqCityId: CITY_RIYADH, projCityId: CITY_RIYADH });
     // Only location (matched) + availability (>0) apply → both 1 → 100.
     expect(r.match_type).toBe('exact');
     expect(r.score).toBe(100);
@@ -106,12 +109,11 @@ describe('scoreProject (Phase 1 text matching)', () => {
   it('builds facts only from present values — never emits a null/empty field', () => {
     const sparse = {
       project_name: 'X',
-      city_name: 'الرياض',
-      district_name: '',
       unit_types: [],
       available_units: 5,
     };
-    const r = scoreProject(sparse, { city: 'الرياض' }, { reqCityId: CITY_RIYADH });
+    // City name resolved (present); district name absent → district fact omitted.
+    const r = scoreProject(sparse, { city: 'الرياض' }, { reqCityId: CITY_RIYADH, projCityId: CITY_RIYADH, projCityName: 'الرياض' });
     expect(r.facts).toHaveProperty('city', 'الرياض');
     expect(r.facts).not.toHaveProperty('district'); // empty string omitted
     expect(r.facts).not.toHaveProperty('unit_types'); // empty array omitted

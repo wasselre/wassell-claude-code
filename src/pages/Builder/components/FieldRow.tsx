@@ -7,7 +7,7 @@ import {
   StickyNote, SlidersHorizontal, Rows3, Fingerprint, Calculator, Table2,
   Image as ImageIcon, Images as MultiImagesIcon, File as FileFieldIcon,
   Files as MultiFilesIcon, Paperclip as PaperclipIcon, MessageSquare, PhoneCall,
-  Home, Film as FilmIcon, Clapperboard as ClapperboardIcon,
+  Home, Film as FilmIcon, Clapperboard as ClapperboardIcon, MapPin,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { validateFormula, findUnknownReferences } from '@/lib/formulaEngine';
@@ -30,6 +30,7 @@ const FIELD_TYPE_CONFIG: Record<FieldType, { icon: typeof Type; color: string; b
   dropdown:         { icon: ChevronDown,       color: '#EF4444', bg: '#EF444412' },
   multiselect:      { icon: List,              color: '#F97316', bg: '#F9731612' },
   lookup:           { icon: Search,            color: '#B8734F', bg: '#B8734F12' },
+  location:         { icon: MapPin,            color: '#0D9488', bg: '#0D948812' },
   unit_picker:      { icon: Home,              color: '#8E4E3A', bg: '#8E4E3A12' },
   mirror:           { icon: Copy,              color: '#8E4E3A', bg: '#8E4E3A12' },
   section_mirror:   { icon: Rows3,             color: '#6B4226', bg: '#6B422612' },

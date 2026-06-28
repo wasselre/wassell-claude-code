@@ -103,9 +103,17 @@ export interface GeoContext {
   // `district_lookup` equals it is an EXACT match (relational — no legacy text).
   reqDistrictId?: string | null;
   // The authoritative `cities` record id the request resolved to (the requested
-  // district's city, or a city-only request). A project whose `city_lookup` equals it
+  // district's city, or a city-only request). A project whose city equals it
   // is a same-city match.
   reqCityId?: string | null;
+  // The scored record's OWN geography, extracted from its `location` cascade field
+  // ({region,city,district} ids) by the caller. The district id drives the exact
+  // tier, the city id the same-city tier. Names are resolved (display_name) from the
+  // geography records for the facts shown to the agent.
+  projDistrictId?: string | null;
+  projCityId?: string | null;
+  projDistrictName?: string | null;
+  projCityName?: string | null;
 }
 
 // Deterministic, stable across requests → prompt-cacheable. DO NOT interpolate.
@@ -626,12 +634,13 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   let matchType: ScoredProject['match_type'] = 'partial';
   let locationTier: ScoredProject['location_tier'] = 'none';
   let distanceKm: number | null = null;
-  const projDistrictId = asStr(data.district_lookup);
-  const projCityId = asStr(data.city_lookup);
+  const projDistrictId = asStr(geo?.projDistrictId);
+  const projCityId = asStr(geo?.projCityId);
   if (req.district || req.city) {
-    // Lookup-ONLY (no legacy text): a match is authoritative lookup-id equality —
-    // project.district_lookup vs the resolved requested district, project.city_lookup
-    // vs the resolved requested city. The whole geography runs on the relational layer.
+    // Lookup-ONLY (no legacy text): a match is authoritative id equality —
+    // the project's location.district vs the resolved requested district, its
+    // location.city vs the resolved requested city. The caller extracts both from
+    // the record's `location` cascade field. Geography runs on the relational layer.
     const districtMatch = !!geo?.reqDistrictId && !!projDistrictId && projDistrictId === geo.reqDistrictId;
     const cityMatch = !!geo?.reqCityId && !!projCityId && projCityId === geo.reqCityId;
     // True distance to the requested district's centroid, when both ends have coords.
@@ -805,10 +814,10 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     if (Array.isArray(v) && v.length === 0) return;
     facts[k] = v;
   };
-  // Display sourced only from the denormalized lookup names (city_lookup → city_name,
-  // district_lookup → district_name). No legacy preferred_city / preferred_neighborhoods.
-  put('city', asStr(data.city_name));
-  put('district', asStr(data.district_name));
+  // Display names resolved by the caller from the project's location ids
+  // (location.city → city display_name, location.district → district display_name).
+  put('city', geo?.projCityName ?? undefined);
+  put('district', geo?.projDistrictName ?? undefined);
   put('unit_types', asArr(data.unit_types));
   put('project_status', data.project_status);
   put('project_type', data.project_type);
@@ -883,13 +892,9 @@ function adaptListingToScorable(d: Record<string, unknown>): Record<string, unkn
   const types = [asStr(d.property_type), asStr(d.listing_type), asStr(d.category)].filter((s) => s !== '');
   return {
     project_name: asStr(d.title) || asStr(d.advertiser_name) || asStr(d.external_id) || 'إعلان سوق',
-    preferred_city: asStr(d.city),
-    district_name: asStr(d.district),
-    // Relational geography (lookup-first, same as projects): district id drives
-    // the exact tier, city id the same-city tier. region_lookup is display-only
-    // (the engine matches district + city for every source, never region).
-    district_lookup: asStr(d.district_lookup),
-    city_lookup: asStr(d.city_lookup),
+    // Geography is no longer carried on the adapted shape — the caller extracts the
+    // listing's location.{district,city} ids from the raw record and passes them
+    // (plus resolved names) through the GeoContext, same as projects.
     unit_types: types,
     price_range: price != null ? { min: price, max: price } : undefined,
     area_range: area != null ? { min: area, max: area } : undefined,
@@ -1111,7 +1116,7 @@ async function nearbyDistrictIds(
 async function loadMarketByFilter(
   supabase: SupabaseClient,
   modelId: string,
-  filterKey: 'district_lookup' | 'city_lookup',
+  filterKey: 'district' | 'city',
   values: string[],
   maxPages = 30,
 ): Promise<RecordRow[]> {
@@ -1124,7 +1129,8 @@ async function loadMarketByFilter(
       .from('unified_records')
       .select('id, data')
       .eq('model_id', modelId)
-      .in(`data->>${filterKey}`, values)
+      // Geography now lives in the `location` cascade compound: location->>district / city.
+      .in(`data->location->>${filterKey}`, values)
       .order('created_at', { ascending: false })
       .range(from, from + pageSize - 1);
     if (error) throw new Error(error.message);
@@ -1172,6 +1178,39 @@ async function resolveLookupNames(supabase: SupabaseClient, modelName: string, i
   if (!data) return [];
   const byId = new Map(data.map((r) => [r.id, asStr(r.data.display_name) || asStr(r.data.name_ar)]));
   return arr.map((id) => byId.get(id)).filter((s): s is string => !!s);
+}
+
+/** Read a record's `location` cascade compound into single district/city ids. Single-mode
+ *  values are strings; multi-mode arrays take the first element. */
+function recordLocationIds(data: Record<string, unknown>): { district: string; city: string } {
+  const loc =
+    data.location && typeof data.location === 'object' && !Array.isArray(data.location)
+      ? (data.location as Record<string, unknown>)
+      : {};
+  const one = (v: unknown): string => (Array.isArray(v) ? asStr(v[0]) : asStr(v));
+  return { district: one(loc.district), city: one(loc.city) };
+}
+
+/** Build an id → display name map for a geography model over the given ids (chunked .in). */
+async function geoNameMap(
+  supabase: SupabaseClient,
+  modelName: 'cities' | 'districts',
+  ids: string[],
+): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  const uniq = [...new Set(ids.filter((x) => !!x))];
+  if (!uniq.length) return map;
+  const m = await getModelByName(supabase, modelName);
+  if (!m) return map;
+  for (let i = 0; i < uniq.length; i += 400) {
+    const chunk = uniq.slice(i, i + 400);
+    const { data } = await supabase.from('unified_records').select('id, data').eq('model_id', m.id).in('id', chunk);
+    for (const r of (data ?? []) as RecordRow[]) {
+      const n = asStr(r.data.display_name) || asStr(r.data.name_ar);
+      if (n) map.set(r.id, n);
+    }
+  }
+  return map;
 }
 
 /** The full, un-truncated result of one match run — the object behind the
@@ -1247,6 +1286,12 @@ export async function matchProjectsCore(
     reqCityId = await resolveRequestedCity(supabase, req);
   }
 
+  // Resolve each candidate project's OWN location.{district,city} ids to display
+  // names (shown in the facts). Geography is relational-only now — no denormalized
+  // city_name/district_name on the record. Extended with market ids below.
+  const districtNameById = await geoNameMap(supabase, 'districts', rows.map((r) => recordLocationIds(r.data).district));
+  const cityNameById = await geoNameMap(supabase, 'cities', rows.map((r) => recordLocationIds(r.data).city));
+
   // Rank by BAND first, then score — so a genuine good/strong match always
   // outranks a 'partial' one even if the partial has a higher raw score (e.g. a
   // wrong-type project whose location+budget inflate its number).
@@ -1261,6 +1306,7 @@ export async function matchProjectsCore(
     for (const r of sourceRows) {
       const name = asStr(r.data.project_name);
       if (!name) continue;
+      const loc = recordLocationIds(r.data);
       const s = scoreProject(r.data, req, {
         projLat: asNum(r.data.latitude),
         projLng: asNum(r.data.longitude),
@@ -1269,6 +1315,10 @@ export async function matchProjectsCore(
         reqDistrictId,
         reqCityId,
         geoConfidence: asStr(r.data.geo_confidence) || null,
+        projDistrictId: loc.district || null,
+        projCityId: loc.city || null,
+        projDistrictName: districtNameById.get(loc.district) ?? null,
+        projCityName: cityNameById.get(loc.city) ?? null,
       });
       if (s.district_exact) anyDistrictExact = true;
       if (s.location_tier === 'nearby') anyNearby = true;
@@ -1339,9 +1389,9 @@ export async function matchProjectsCore(
         if (reqDistrictId && reqLat != null && reqLng != null) {
           const ids = await nearbyDistrictIds(supabase, reqDistrictId, reqLat, reqLng);
           if (ids && ids.length) {
-            listingRows = await loadMarketByFilter(supabase, mModel.id, 'district_lookup', ids);
+            listingRows = await loadMarketByFilter(supabase, mModel.id, 'district', ids);
           } else if (reqCityId) {
-            listingRows = await loadMarketByFilter(supabase, mModel.id, 'city_lookup', [reqCityId]);
+            listingRows = await loadMarketByFilter(supabase, mModel.id, 'city', [reqCityId]);
           } else {
             console.warn(
               `[matchProjectsCore] market_listings: district "${req.district}" resolved but no neighbour set — capped scan of newest ${MARKET_FALLBACK_CAP}.`,
@@ -1349,7 +1399,7 @@ export async function matchProjectsCore(
             listingRows = await loadMarketNewestCapped(supabase, mModel.id, MARKET_FALLBACK_CAP);
           }
         } else if (reqCityId) {
-          listingRows = await loadMarketByFilter(supabase, mModel.id, 'city_lookup', [reqCityId]);
+          listingRows = await loadMarketByFilter(supabase, mModel.id, 'city', [reqCityId]);
         } else {
           console.warn(
             `[matchProjectsCore] market_listings: no usable area signal (district/city) — capped scan of newest ${MARKET_FALLBACK_CAP}.`,
@@ -1361,10 +1411,14 @@ export async function matchProjectsCore(
         // recommendation (our_projects + all_projects still return). Log loudly.
         console.error('[matchProjectsCore] market_listings load failed:', err instanceof Error ? err.message : String(err));
       }
+      // Extend the geography name maps with the listings' own location ids.
+      for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
+      for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
       for (const r of listingRows) {
         const adapted = adaptListingToScorable(r.data);
         const name = asStr(adapted.project_name);
         if (!name) continue;
+        const loc = recordLocationIds(r.data);
         const s = scoreProject(adapted, req, {
           projLat: asNum(r.data.latitude),
           projLng: asNum(r.data.longitude),
@@ -1373,6 +1427,10 @@ export async function matchProjectsCore(
           reqDistrictId,
           reqCityId,
           geoConfidence: (asNum(r.data.latitude) != null && asNum(r.data.longitude) != null) ? 'high' : null,
+          projDistrictId: loc.district || null,
+          projCityId: loc.city || null,
+          projDistrictName: districtNameById.get(loc.district) ?? null,
+          projCityName: cityNameById.get(loc.city) ?? null,
         });
         if (s.score < MIN_RETURN) continue;
         if (s.available_units_zero && !includeSoldOut) continue;
@@ -1574,13 +1632,17 @@ async function searchProjects(supabase: SupabaseClient, input: SearchProjectsInp
     .sort((a, b) => rank(a.name) - rank(b.name) || a.name.length - b.name.length)
     .slice(0, 10);
 
+  // Resolve the hits' location ids → city/district display names (relational only).
+  const districtNameById = await geoNameMap(supabase, 'districts', hits.map(({ r }) => recordLocationIds(r.data).district));
+  const cityNameById = await geoNameMap(supabase, 'cities', hits.map(({ r }) => recordLocationIds(r.data).city));
   const results = hits.map(({ r }) => {
     const isOurs = tier1Ids.has(r.id);
+    const loc = recordLocationIds(r.data);
     return {
       project_id: r.id,
       project_name: asStr(r.data.project_name),
-      city: asStr(r.data.city_name),
-      district: asStr(r.data.district_name),
+      city: cityNameById.get(loc.city) ?? '',
+      district: districtNameById.get(loc.district) ?? '',
       data_source: (isOurs ? 'our_projects' : 'all_projects') as 'our_projects' | 'all_projects',
       requires_verification: !isOurs,
     };
@@ -1633,9 +1695,17 @@ async function compareProjects(supabase: SupabaseClient, input: CompareInput): P
   const req = input.requirements ?? {};
   const scored = Object.keys(req).length > 0;
   const tier1Ids = await loadTier1ProjectIds(supabase);
+  const districtNameById = await geoNameMap(supabase, 'districts', rows.map((r) => recordLocationIds(r.data).district));
+  const cityNameById = await geoNameMap(supabase, 'cities', rows.map((r) => recordLocationIds(r.data).city));
 
   const projects = rows.map((r) => {
-    const s = scoreProject(r.data, req);
+    const loc = recordLocationIds(r.data);
+    const s = scoreProject(r.data, req, {
+      projDistrictId: loc.district || null,
+      projCityId: loc.city || null,
+      projDistrictName: districtNameById.get(loc.district) ?? null,
+      projCityName: cityNameById.get(loc.city) ?? null,
+    });
     const isOurs = tier1Ids.has(r.id);
     return {
       project_id: r.id,
@@ -1788,9 +1858,12 @@ async function getCustomerContext(supabase: SupabaseClient, input: CustomerLooku
   }
 
   const d = rec.data;
+  // Client geography is the multi-mode `location` cascade: { region:[], city:[], district:[] }.
+  const clientLoc = d.location && typeof d.location === 'object' && !Array.isArray(d.location)
+    ? (d.location as Record<string, unknown>) : {};
   const [cityNames, districtNames] = await Promise.all([
-    resolveLookupNames(supabase, 'cities', d.preferred_cities),
-    resolveLookupNames(supabase, 'districts', d.preferred_districts),
+    resolveLookupNames(supabase, 'cities', clientLoc.city),
+    resolveLookupNames(supabase, 'districts', clientLoc.district),
   ]);
   const temp = computeLeadTemperature(d);
   const dueIso = asStr(d.next_action_due_at);

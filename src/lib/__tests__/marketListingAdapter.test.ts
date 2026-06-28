@@ -11,12 +11,9 @@ const { adaptListingToScorable, scoreProject } = __test;
 describe('adaptListingToScorable', () => {
   const RAW = {
     title: 'شقة فاخرة في النرجس',
-    city: 'الرياض',
-    region: 'منطقة الرياض',
-    district: 'النرجس',
-    district_lookup: 'district-narjis',
-    city_lookup: 'city-riyadh',
-    region_lookup: 'region-riyadh',
+    // Geography is the `location` cascade compound (region/city/district ids); the
+    // matcher caller extracts these and passes them to the scorer via GeoContext.
+    location: { region: 'region-riyadh', city: 'city-riyadh', district: 'district-narjis' },
     property_type: 'شقة',
     price: 850_000,
     area: 165,
@@ -35,18 +32,17 @@ describe('adaptListingToScorable', () => {
     expect(a.bedroom_range).toEqual({ min: 3, max: 3 });
     expect(a.available_units).toBe(1);
     expect(a.unit_types).toContain('شقة');
-    expect(a.district_lookup).toBe('district-narjis');
-    expect(a.city_lookup).toBe('city-riyadh'); // relational city drives same-city matching
     expect(a.project_name).toBe('شقة فاخرة في النرجس');
   });
 
-  it('matches SAME-CITY via city_lookup when the district differs', () => {
+  it('matches SAME-CITY via the listing city id when the district differs', () => {
     const a = adaptListingToScorable(RAW);
     const s = scoreProject(a, { district: 'العليا', city: 'الرياض' }, {
       reqDistrictId: 'district-olaya', reqCityId: 'city-riyadh',
+      projDistrictId: 'district-narjis', projCityId: 'city-riyadh',
     });
     expect(s.district_exact).toBe(false);   // not the requested district
-    expect(s.match_type).toBe('same_city'); // …but same city via city_lookup id
+    expect(s.match_type).toBe('same_city'); // …but same city via the location.city id
     expect(s.breakdown.location).toBe(0.5);
   });
 
@@ -55,10 +51,11 @@ describe('adaptListingToScorable', () => {
     expect(adaptListingToScorable({ ...RAW, sold_at: '2026-06-01' }).available_units).toBe(0);
   });
 
-  it('scores as an EXACT, in-budget match when its district_lookup equals the request', () => {
+  it('scores as an EXACT, in-budget match when its location.district equals the request', () => {
     const a = adaptListingToScorable(RAW);
     const s = scoreProject(a, { district: 'النرجس', property_type: 'شقة', budget_max: 1_000_000, bedrooms: 3 }, {
       reqDistrictId: 'district-narjis', reqLat: 24.83, reqLng: 46.64, projLat: 24.83, projLng: 46.64,
+      projDistrictId: 'district-narjis', projCityId: 'city-riyadh',
     });
     expect(s.district_exact).toBe(true);
     expect(s.district_match_basis).toBe('lookup');

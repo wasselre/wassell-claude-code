@@ -5,12 +5,11 @@
  * beats the saved client value beats nothing (same priority as
  * `buildAssistantContext`, which this mirrors).
  *
- * Geography is dual-read, lookup-FIRST: if the client set the relational
- * `preferred_districts` / `preferred_cities` lookups, we resolve them to the
+ * Geography is the `location` cascade compound ({ region:[], city:[], district:[] }
+ * of record ids). We take the first district/city id and resolve it to the
  * district/city NAME (via the caller-supplied resolver, wired to the loaded
- * districts/cities records); otherwise we fall back to the legacy free-text
- * multiselects (`preferred_neighborhoods` / `preferred_city`). The matcher
- * resolves the name back to the authoritative district id + centroid internally.
+ * districts/cities records). The matcher resolves the name back to the
+ * authoritative district id + centroid internally.
  *
  * This is the SHAPE contract the client mirror (suggestions.ts) feeds the
  * endpoint; the field SLUGS are verified against the live `clients` model.
@@ -45,10 +44,9 @@ export interface DraftToRequirementsArgs {
 const isPresent = (v: unknown): boolean => {
   if (v === null || v === undefined || v === '') return false;
   if (Array.isArray(v)) return v.some((x) => x !== null && x !== undefined && x !== '');
-  if (typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return o.min != null || o.max != null;
-  }
+  // Objects: a range {min,max} OR a `location` compound { city:[], district:[] }
+  // is present when any nested value is present.
+  if (typeof v === 'object') return Object.values(v as Record<string, unknown>).some((x) => isPresent(x));
   return true;
 };
 
@@ -83,18 +81,17 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
 
   const out: MatchRequirementsInput = {};
 
-  // ── District (lookup-first → legacy text) ──
-  const districtLookupId = firstString(pick('preferred_districts'));
-  const districtName =
-    (districtLookupId && resolveLookupName?.(districtLookupId, 'districts')) ||
-    firstString(pick('preferred_neighborhoods'));
+  // ── Geography: the `location` cascade compound { region:[], city:[], district:[] }.
+  //    Take the first district/city id and resolve it to a name. ──
+  const locVal = pick('location');
+  const loc = locVal && typeof locVal === 'object' && !Array.isArray(locVal)
+    ? (locVal as Record<string, unknown>) : {};
+  const districtLookupId = firstString(loc.district);
+  const districtName = districtLookupId ? resolveLookupName?.(districtLookupId, 'districts') ?? undefined : undefined;
   if (districtName) out.district = districtName;
 
-  // ── City (lookup-first → legacy text) ──
-  const cityLookupId = firstString(pick('preferred_cities'));
-  const cityName =
-    (cityLookupId && resolveLookupName?.(cityLookupId, 'cities')) ||
-    firstString(pick('preferred_city'));
+  const cityLookupId = firstString(loc.city);
+  const cityName = cityLookupId ? resolveLookupName?.(cityLookupId, 'cities') ?? undefined : undefined;
   if (cityName) out.city = cityName;
 
   // ── Property type (multiselect of Arabic labels — first is enough; the matcher

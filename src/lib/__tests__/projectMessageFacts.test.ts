@@ -39,11 +39,10 @@ const UN_ID = 'm_units';
 
 const allProjects = model('all_projects', AP_ID, [
   field({ name: 'project_name', type: 'text' }),
-  field({ name: 'city', type: 'dropdown', options: [opt('riyadh', 'الرياض', 'Riyadh'), opt('jeddah', 'جدة', 'Jeddah')] }),
-  field({ name: 'district', type: 'dropdown', options: [opt('narjis', 'النرجس', 'Al Narjis')] }),
+  field({ name: 'location', type: 'location' }), // region→city→district cascade (geography ids)
   field({ name: 'min_price', type: 'currency' }),
   field({ name: 'brochure_link', type: 'url' }),
-  field({ name: 'location', type: 'text' }),
+  field({ name: 'project_location', type: 'url' }), // the maps URL (distinct from the geography `location`)
 ]);
 
 const ourProjects = model('our_projects', OP_ID, [
@@ -63,18 +62,29 @@ const units = model('units', UN_ID, [
   field({ name: 'unit_status', type: 'dropdown' }),
 ]);
 
-const models = [allProjects, ourProjects, units];
+// Frozen geography reference models — resolveProjectFacts resolves the project's
+// location.{city,district} ids to display names against these records in the store.
+const CITIES_ID = 'm_cities';
+const DISTRICTS_ID = 'm_districts';
+const cities = model('cities', CITIES_ID, [field({ name: 'display_name', type: 'text' })]);
+const districts = model('districts', DISTRICTS_ID, [field({ name: 'display_name', type: 'text' })]);
+const geoRecords: Record<string, AppRecord[]> = {
+  [CITIES_ID]: [rec('c-riyadh', CITIES_ID, { display_name: 'الرياض' })],
+  [DISTRICTS_ID]: [rec('d-narjis', DISTRICTS_ID, { display_name: 'النرجس' })],
+};
+
+const models = [allProjects, ourProjects, units, cities, districts];
 
 describe('resolveProjectFacts', () => {
   it('resolves the full hybrid fact set for a project with units', () => {
     const records: Record<string, AppRecord[]> = {
+      ...geoRecords,
       [AP_ID]: [rec('ap1', AP_ID, {
         project_name: 'مينا 52',
-        city_name: 'الرياض',
-        district_name: 'النرجس',
+        location: { region: 'r-riyadh', city: 'c-riyadh', district: 'd-narjis' },
         min_price: 900000,
         brochure_link: 'https://wassel.re/brochure.pdf',
-        location: '24.7,46.6',
+        project_location: '24.7,46.6',
       })],
       [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1', price_range: { min: 500000, max: 750000 }, bedroom_range: { min: 2, max: 5 }, bathroom_range: { min: 2, max: 4 } })],
       [UN_ID]: [
@@ -124,9 +134,9 @@ describe('resolveProjectFacts', () => {
   it('uses a full http(s) location value as the link verbatim, and falls back to master min_price', () => {
     const records: Record<string, AppRecord[]> = {
       [AP_ID]: [rec('ap3', AP_ID, {
-        project_name: 'P3', city: 'jeddah', district: 'narjis',
+        project_name: 'P3',
         min_price: 1200000,                                   // no priced units → this is the fallback
-        brochure_link: '', location: 'https://maps.app.goo.gl/abc123',
+        brochure_link: '', project_location: 'https://maps.app.goo.gl/abc123',
       })],
       [OP_ID]: [rec('op3', OP_ID, { project_name: 'P3 ours', project: 'ap3' })],
       [UN_ID]: [],                                            // no units
@@ -151,8 +161,7 @@ describe('resolveProjectFacts', () => {
     const AP = 'm_all2', OP = 'm_our2', UN = 'm_units2';
     const allLive = model('all_projects', AP, [
       field({ name: 'project_name', type: 'text' }),
-      field({ name: 'preferred_city', type: 'dropdown', options: [opt('riyadh', 'الرياض', 'Riyadh')] }),
-      field({ name: 'preferred_neighborhoods', type: 'dropdown', options: [opt('narjis', 'النرجس', 'Al Narjis')] }),
+      field({ name: 'location', type: 'location' }),
       field({ name: 'unit_types', type: 'multiselect', options: [opt('apartment', 'شقة', 'Apartment'), opt('villa', 'فيلا', 'Villa')] }),
       field({ name: 'brochure_url', type: 'url' }),
       field({ name: 'project_location', type: 'url' }),
@@ -170,12 +179,12 @@ describe('resolveProjectFacts', () => {
       field({ name: 'bathrooms', type: 'number' }),
       field({ name: 'total_price', type: 'number' }),
     ]);
-    const ms = [allLive, ourLive, unitsLive];
+    const ms = [allLive, ourLive, unitsLive, cities, districts];
     const recs: Record<string, AppRecord[]> = {
+      ...geoRecords,
       [AP]: [rec('ap', AP, {
         project_name: 'مينا 52',
-        city_name: 'الرياض',
-        district_name: 'النرجس',
+        location: { region: 'r-riyadh', city: 'c-riyadh', district: 'd-narjis' },
         unit_types: ['apartment'],
         brochure_url: 'https://wassel.re/m52.pdf',
         project_location: 'https://maps.app.goo.gl/KvrmddYBhAjiQfcNA',

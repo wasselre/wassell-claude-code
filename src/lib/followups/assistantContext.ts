@@ -29,11 +29,11 @@ export interface UsedPreference {
  *  we present them. Slugs verified against the live `clients` model (2026-06-21).
  *  All but the two ranges are multiselect storing the Arabic label as the value,
  *  which is exactly what match_projects fuzzy-matches against project text. */
-const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kind: 'list' | 'money' | 'area' | 'geo' }> = [
-  // Relational geography: preferred_cities / preferred_districts hold cities/districts
-  // record ids, resolved to names via geoNames (no legacy preferred_city / neighborhoods).
-  { slug: 'preferred_cities', label_ar: 'المدينة', label_en: 'City', kind: 'geo' },
-  { slug: 'preferred_districts', label_ar: 'الحي', label_en: 'District', kind: 'geo' },
+const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kind: 'list' | 'money' | 'area' | 'geo'; geoKey?: 'city' | 'district' }> = [
+  // Relational geography: the `location` cascade compound { region:[], city:[], district:[] }
+  // of record ids, resolved to names via geoNames. geoKey selects which level to show.
+  { slug: 'location', geoKey: 'city', label_ar: 'المدينة', label_en: 'City', kind: 'geo' },
+  { slug: 'location', geoKey: 'district', label_ar: 'الحي', label_en: 'District', kind: 'geo' },
   { slug: 'preferred_unit_type', label_ar: 'نوع العقار', label_en: 'Property type', kind: 'list' },
   { slug: 'budget', label_ar: 'الميزانية', label_en: 'Budget', kind: 'money' },
   { slug: 'preferred_area', label_ar: 'المساحة', label_en: 'Area', kind: 'area' },
@@ -54,10 +54,9 @@ function geoValue(raw: unknown, geoNames: Record<string, string> | undefined): s
 const isPresent = (v: unknown): boolean => {
   if (v === null || v === undefined || v === '') return false;
   if (Array.isArray(v)) return v.some((x) => x !== null && x !== undefined && x !== '');
-  if (typeof v === 'object') {
-    const o = v as Record<string, unknown>;
-    return o.min != null || o.max != null;
-  }
+  // Objects: a range {min,max} OR a `location` compound { city:[], district:[] }
+  // is present when any nested value is present.
+  if (typeof v === 'object') return Object.values(v as Record<string, unknown>).some((x) => isPresent(x));
   return true;
 };
 
@@ -159,8 +158,12 @@ export function buildAssistantContext(args: BuildContextArgs): AssistantContext 
     let value: string | null = null;
     if (def.kind === 'money') value = formatMoneyRange(raw, isAr);
     else if (def.kind === 'area') value = formatAreaRange(raw, isAr);
-    else if (def.kind === 'geo') value = geoValue(raw, geoNames);
-    else value = listValue(field, raw, isAr);
+    else if (def.kind === 'geo') {
+      // raw is the `location` compound; geoKey selects the city / district level.
+      const sub = raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)[def.geoKey ?? 'district'] : undefined;
+      value = geoValue(sub, geoNames);
+    } else value = listValue(field, raw, isAr);
     if (!value) continue;
     used.push({ slug: def.slug, label_ar: def.label_ar, label_en: def.label_en, value });
   }

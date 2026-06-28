@@ -158,11 +158,23 @@ export function resolveProjectFacts(
   const brochureSlug = slugByCandidates(allProjectsModel, ['brochure_url', 'brochure_link', 'brochure']);
   const locationSlug = slugByCandidates(allProjectsModel, ['project_location', 'location', 'location_url']);
 
-  // City / district — relational only: the denormalized lookup names (city_lookup →
-  // city_name, district_lookup → district_name). No legacy preferred_city / dropdown.
-  const cityName = asString(ap.city_name);
+  // City / district — relational only: resolve the project's `location` cascade
+  // ids ({region,city,district}) to display names via the geography records in store.
+  const loc = ap.location && typeof ap.location === 'object' && !Array.isArray(ap.location)
+    ? (ap.location as Record<string, unknown>) : {};
+  const oneId = (v: unknown): string | null =>
+    Array.isArray(v) ? (typeof v[0] === 'string' ? v[0] : null) : (typeof v === 'string' && v ? v : null);
+  const resolveGeoName = (modelName: 'cities' | 'districts', id: string | null): string | null => {
+    if (!id) return null;
+    const m = models.find((mm) => mm.name === modelName);
+    if (!m) return null;
+    const rec = (records[m.id] ?? []).find((r) => r.id === id);
+    const dn = rec?.data?.display_name ?? rec?.data?.name_ar;
+    return typeof dn === 'string' && dn ? dn : null;
+  };
+  const cityName = resolveGeoName('cities', oneId(loc.city));
   const city: Bilingual | null = cityName ? { ar: cityName, en: cityName } : null;
-  const districtName = asString(ap.district_name);
+  const districtName = resolveGeoName('districts', oneId(loc.district));
   const district: Bilingual | null = districtName ? { ar: districtName, en: districtName } : null;
 
   // Units linked to this project (project_id → all_projects.id).

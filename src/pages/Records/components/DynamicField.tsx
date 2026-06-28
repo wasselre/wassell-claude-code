@@ -6,6 +6,7 @@ import { ExternalLink, Fingerprint, Calculator, X, Plus } from 'lucide-react';
 import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
+import LocationCascadeField from './LocationCascadeField';
 import UnitPickerField from './UnitPickerField';
 import PhoneInput from './PhoneInput';
 import DynamicCell from './DynamicCell';
@@ -364,6 +365,9 @@ export default function DynamicField({
             onChange={onChange}
           />
         );
+
+      case 'location':
+        return <LocationCascadeField field={field} value={value} onChange={onChange} />;
 
       case 'unit_picker':
         return <UnitPickerField field={field} value={value} onChange={onChange} />;

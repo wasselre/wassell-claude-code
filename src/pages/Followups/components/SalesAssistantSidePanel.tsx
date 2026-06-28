@@ -84,8 +84,8 @@ export default function SalesAssistantSidePanel({
   // Resolve the draft-first preferences for both the "used preferences" summary
   // and the assistant context. Recomputed on every render so the freshest
   // unsaved edits are always reflected the moment a quick action fires.
-  // id → display name for districts + cities, so the client's preferred_districts /
-  // preferred_cities lookup ids resolve to readable names for the assistant context.
+  // id → display name for districts + cities, so the client's `location` cascade
+  // ids (city/district) resolve to readable names for the assistant context.
   const records = useAppStore((s) => s.records);
   const models = useAppStore((s) => s.models);
   const geoNames = useMemo(() => {

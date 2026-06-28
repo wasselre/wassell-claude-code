@@ -19,12 +19,11 @@ describe('haversineKm', () => {
 
 describe('scoreProject — location intelligence', () => {
   const CITY_RIYADH = 'city-riyadh';
+  // العارض project — the scorer reads its district/city ids from the GeoContext
+  // (proj* fields), which the matcher caller extracts from the record's `location`.
   const PROJECT = {
     project_name: 'X',
-    city_lookup: CITY_RIYADH,
-    district_lookup: 'dist-aridh', // العارض — NOT the requested district…
-    city_name: 'الرياض',
-    district_name: 'العارض',
+    location: { city: CITY_RIYADH, district: 'dist-aridh' },
     unit_types: ['villa'],
     available_units: 5,
     latitude: 24.83,
@@ -49,6 +48,7 @@ describe('scoreProject — location intelligence', () => {
       projLat: 24.83, projLng: 46.64,
       reqLat: 25.6, reqLng: 47.5, // far away (>12 km)
       reqDistrictId: 'dist-narjis', reqCityId: CITY_RIYADH, // same city, different district
+      projDistrictId: 'dist-aridh', projCityId: CITY_RIYADH,
     });
     expect(r.match_type).toBe('same_city'); // beyond radius → city match takes over
     expect(r.location_tier).toBe('same_city');
@@ -57,6 +57,7 @@ describe('scoreProject — location intelligence', () => {
   it('no nearby tier without coordinates → same_city via city lookup', () => {
     const r = scoreProject(PROJECT, { city: 'الرياض', district: 'النرجس' }, {
       reqDistrictId: 'dist-narjis', reqCityId: CITY_RIYADH, // resolved, but no coords supplied
+      projDistrictId: 'dist-aridh', projCityId: CITY_RIYADH,
     });
     expect(r.match_type).toBe('same_city');
     expect(r.distance_km).toBeNull();

@@ -15,7 +15,7 @@ import {
   AttachmentCell,
 } from './DriveCells';
 import { VideoCell, MultiVideoCell } from './VideoField';
-import type { ModelField, AppRecord, AttachmentRef, NoteEntry } from '@/types';
+import type { ModelField, AppRecord, AttachmentRef, NoteEntry, LocationLevel } from '@/types';
 
 interface DynamicCellProps {
   field: ModelField;
@@ -414,6 +414,51 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
       // Single-select
       if (typeof value !== 'string' || !value) return <span className="text-charcoal/30">—</span>;
       return renderOne(value);
+    }
+
+    case 'location': {
+      // Compound value keyed by each level's role key. Resolve every populated
+      // level to its display name. Single → join deepest-first ("النرجس، الرياض،
+      // منطقة الرياض"); multi (client prefs) → chips of the deepest populated level.
+      const levels = field.location_levels ?? [];
+      const compound =
+        value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+      const idsOf = (key: string): string[] => {
+        const v = compound[key];
+        if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string');
+        return typeof v === 'string' && v ? [v] : [];
+      };
+      const nameFor = (level: { model_id: string; display_field: string }, id: string): string => {
+        const recs = allRecords[level.model_id] ?? [];
+        const rec = recs.find((r) => r.id === id);
+        if (!rec) return isAr ? 'محذوف' : 'Deleted';
+        const m = models.find((mm) => mm.id === level.model_id);
+        const dv = resolveLookupDisplayValue(rec, level.display_field, { targetModel: m, allModels: models, allRecords });
+        return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
+      };
+      if (field.location_multi) {
+        let deepest: LocationLevel | null = null;
+        for (const lv of levels) if (idsOf(lv.key).length) deepest = lv;
+        if (!deepest) return <span className="text-charcoal/20">—</span>;
+        const deepestLevel = deepest;
+        const ids = idsOf(deepestLevel.key);
+        return (
+          <div className="flex flex-wrap gap-1">
+            {ids.map((id) => (
+              <Badge key={id} label={nameFor(deepestLevel, id)} />
+            ))}
+          </div>
+        );
+      }
+      const parts: string[] = [];
+      for (let i = levels.length - 1; i >= 0; i--) {
+        const lv = levels[i];
+        if (!lv) continue;
+        const id = idsOf(lv.key)[0];
+        if (id) parts.push(nameFor(lv, id));
+      }
+      if (parts.length === 0) return <span className="text-charcoal/30">—</span>;
+      return <span className="text-copper font-bold">{parts.join(isAr ? '، ' : ', ')}</span>;
     }
 
     case 'unit_picker': {
