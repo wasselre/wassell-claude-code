@@ -681,7 +681,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
   const [selectedId, setSelectedId] = useState<string | null>(persisted?.selectedId ?? null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
 
-  const styles = resolveMapStyles(cfg.map_style_json);
+  const styles = useMemo(() => resolveMapStyles(cfg.map_style_json), [cfg.map_style_json]);
   const firstPoint = points[0];
   // coordinates are [lng, lat]; indexed access is `number | undefined` under
   // noUncheckedIndexedAccess, so coerce to finite numbers.
@@ -695,6 +695,26 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
         ? { lat: cfg.default_center_lat, lng: cfg.default_center_lng }
         : DEFAULT_MAP_CENTER;
   const zoom = persisted?.zoom ?? cfg.default_zoom ?? DEFAULT_MAP_ZOOM;
+
+  // STABLE props for <GoogleMap> (the fix for the idle/re-render storm).
+  // @react-google-maps re-applies center/zoom/options whenever their REFERENCE
+  // changes; passing fresh objects every render made it re-apply on each
+  // re-render, nudging the viewport → firing `idle` → setMapsViewState →
+  // re-render → an idle loop. We freeze the INITIAL view once (restored from
+  // persisted view / first point / default) and memoize the options, so the map
+  // is left alone after mount. The user still pans/zooms freely (the prop ref
+  // never changes, so @react-google-maps won't fight them), and onIdle keeps
+  // persisting the live view to the store for the next mount.
+  const initialViewRef = useRef<{ center: { lat: number; lng: number }; zoom: number } | null>(null);
+  if (!initialViewRef.current && (persisted?.center || firstPoint)) {
+    initialViewRef.current = { center, zoom };
+  }
+  const stableCenter = initialViewRef.current?.center ?? center;
+  const stableZoom = initialViewRef.current?.zoom ?? zoom;
+  const mapOptions = useMemo(
+    () => ({ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: false }),
+    [styles],
+  );
 
   // Friendly names for no-location records — reuse the pin-label / popup-title
   // field so the "without location" panel lists recognizable titles.
@@ -908,9 +928,9 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
     <div className="relative h-full">
       <GoogleMap
         mapContainerStyle={mapContainerStyle}
-        center={center}
-        zoom={zoom}
-        options={{ styles, mapTypeControl: false, streetViewControl: false, fullscreenControl: false }}
+        center={stableCenter}
+        zoom={stableZoom}
+        options={mapOptions}
         onLoad={(m) => {
           setMapInstance(m);
           // Force the map to (re)measure its container and paint tiles even if it
