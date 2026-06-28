@@ -23,6 +23,8 @@ From one project link (or files), produce in **wassell-prod**:
   facade, parking, prices, areas, floor, and its floor-plan image in `unit_plan`.
 - Auto-ID codes assigned (`project_id` code on the project, `unit_code` on each unit).
 - Rollups (`unit_count`, `available_units`, `price_range`, …) fill **automatically** via DB triggers.
+- A **detailed `project_analysis`** AND a **`marketing_document`** written on the project record
+  (ALWAYS — both are standard deliverables, not optional). See the "Content fields" step below.
 
 ## When you're with the user
 The user runs ~5 of these in parallel, one project per session, and stays available to answer.
@@ -98,8 +100,20 @@ Run them from a scratch dir; they load the keys from `.env.local`.
 5. **Build + write.** Find-or-create developer; find-or-create project (dedup by `project_name` — if it
    exists, see Decisions Log); assign auto-IDs; write project; write each unit with `project_id`=the
    project UUID. Create any missing options via `add_field_option` first.
-6. **Verify.** Query: units linked == expected, rollups populated, sample unit components/plan resolve
-   (signed URL 200). Hand the user a short summary with the project UUID.
+6. **Content fields (ALWAYS — both, every project).** After the units land (so rollups/stats exist),
+   compute pricing/area/floor/bedroom stats from the written units and write TWO textarea fields on the
+   `all_projects` record, both in **Arabic**, merging onto existing `data` (never null other fields):
+   - **`project_analysis`** — a *detailed* analysis: overview, location & access (landmarks + drive
+     times), inventory breakdown (by building/floor/bedroom + sold list), areas, **pricing** (range,
+     avg, median, price/m², per-bedroom tiers + the key driver, e.g. "bedroom-driven not area-driven"),
+     models/components, sales channel + payment plan, developer context, and sales strengths/considerations.
+   - **`marketing_document`** — persuasive marketing copy in the developer/brochure voice: location
+     hooks, lifestyle/design highlights, segment-tailored options, a price anchor ("تبدأ من …"),
+     sales-channel reassurance (سكني/وافي if applicable), and a contact/CTA.
+   Ground every number in the actual written units — don't invent figures.
+7. **Verify.** Query: units linked == expected, rollups populated, sample unit components/plan resolve
+   (signed URL 200), AND `project_analysis` + `marketing_document` are both set. Hand the user a short
+   summary with the project UUID.
 
 ---
 
@@ -141,21 +155,51 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   wassel-files), AND read the plan to extract components + confirm beds/baths. Plan coverage is often
   sparse (developer attaches one plan per layout, not per unit). Propagation policy for the un-planned
   units = **DEFERRED — ask the user per project until decided here.**
+- **[2026-06-28] Plans — brochure-only generic MODEL plans (no per-unit plans):** when the ONLY plans
+  available are a handful of generic نموذج/model drawings in the brochure (e.g. الشقة 1–4) and the unit
+  inventory carries NO model tag (so unit→plan is inference-only and areas overlap), **SKIP per-unit
+  `unit_plan` entirely** (leave empty on all units). The model plans stay accessible via the brochure
+  already linked on the project (`broucher_developer`). User chose this for Alajlan riv52 (2026-06-28)
+  over fuzzy bedroom-match or representative-only attaching. Only attach `unit_plan` when the source
+  gives a real per-unit (or per-exact-layout) plan.
 - **[2026-06-28] Classification:** decide per source. **Almajdiah → `our_projects`** (project_type +
   project_classification = our_projects, is_public=true). For a new developer, ask once, then log it.
+- **[2026-06-28] Alajlan Invest (العجلان ريفيرا, developer `5db67fcc-6a6f-4d0a-83a2-c1e7f41e03d6`) →
+  `our_projects`** (matches the existing record + ALL sibling ريفييرا projects already in CRM). Already
+  in `developers`; do NOT create a new developer. Many Alajlan Riviera projects were bulk-seeded
+  2026-04-26 as bare project rows with **0 units** — the migration job is to ENRICH the existing row +
+  ADD its units, never duplicate.
 - **[2026-06-28] Auto-IDs:** assign them on real runs (`project_id` code + `unit_code`).
 - **[2026-06-28] Dedup:** dedup by `project_name`. If the project already exists, do NOT blindly
   duplicate — surface it and confirm update/reconcile vs. duplicate with the user.
 - **[2026-06-28] Rollups:** never set the 11 rollup fields; triggers compute them from units.
+- **[2026-06-28] Content fields ALWAYS:** every migration writes BOTH a detailed `project_analysis`
+  AND a `marketing_document` (Arabic, merged onto existing `data`) as standard deliverables — see
+  pipeline step 6. The `project_analysis` is the deep evidence-based analysis (pricing/location/
+  inventory/strategy); the `marketing_document` is persuasive customer-facing copy. Numbers must be
+  computed from the actually-written units. (User asked for these on Alajlan riv52, 2026-06-28 → now
+  permanent for all projects.) Verify both are set in step 7.
 - **[2026-06-28] Inputs:** accept a URL AND/OR files (units spreadsheet, brochure PDF, plans PDF/images,
   screenshots) — see Inputs section. A plans file is the right source for units a sparse API misses.
 
-## Open questions (resolve → move into Decisions Log)
-- Un-planned-units plan policy (propagate by exact beds/baths/area signature, or leave, or request full
-  plans file from developer).
-- Per-developer API discovery for non-Almajdiah sites (Alajlan Invest etc.): document each site's
-  units endpoint + field shape here as you learn it.
-- Per-developer classification (log each developer → our_projects vs general here).
+## Per-developer API/source adapters (document each site as you learn it)
+- **Almajdiah** → JSON units API `https://etmaam.almajdiah.com/api/client/v1/projects/{id}?…&page=N`
+  (paginated 30/page; `units.meta.last_page`). `{id}` from the page URL `/projects/{id}`. No auth.
+- **Alajlan Invest** (`alajlaninvest.com/project/<slug>/`, e.g. `riv52`) → **WordPress (Mharty theme),
+  NO JSON units API.** The static HTML has none of the unit data; the units render client-side into
+  **HTML `<table>`s, one per building** (tabs "المبنى I / J / K"), only after the page runs JS +
+  scrolls. **Adapter = Browserbase DOM scrape** (`_riv52_units2.mjs` pattern): goto
+  `domcontentloaded`, wait ~6s, wheel-scroll ~16×, then `document.querySelectorAll('table')` →
+  rows → cells. Columns (RTL): **الوحدة | الأدوار | المساحة | المواصفات | السعر | المميزات**.
+  Unit code = building-letter+number (`I1`,`J6`,`K28`). Price cell is a number OR `مباعة` (=sold, no
+  price). المواصفات = `Nغرف نوم / صالة / مطبخ / غرفة خادمة / Nدورات مياه`. المميزات =
+  parking (`موقف خارجي`→external, `موقف في القبو`→basement) + balcony (`بلكونة واجهة`→facade امامية,
+  `بلكونة جانبية`→facade جانبية) + `تراس` / `سطح خاص`→سطح / `مساحة خارجية`→فناء خارجي / `زاوية`(corner→notes).
+  Floor `السطح`→`الروف`. `unit_number` is a NUMBER field → store the numeric part; put the letter in
+  `building_number`/`block` and the full code (`I1`) in `unit_model`/notes. riv52 had 86 units (I:27,
+  J:29, K:30), 80 available / 6 sold; brochure `بروشور-سدن-شقق.pdf` (17pp, image-heavy, reversed text
+  layer) → 4 model plans + landmarks + the map link.
+- Other non-Almajdiah sites: document each site's units source + field shape here as you learn it.
 
 ## Verify & cleanup
 - Verify: `count units WHERE project_id=<uuid>` == expected; project `unit_count` populated; a sample
