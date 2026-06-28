@@ -20,12 +20,12 @@ interface PreferenceSummaryProps {
 
 // The preference fields the rep edits inline, in display order. Always shown
 // (even when empty) so the rep can fill them in without leaving the Workspace.
-// Geography: `location` is the region→city→district cascade (City), `preferred_cities`
-// + `preferred_districts` are multi-lookups (Preferred city / Preferred districts).
+// Geography is the single `location` field (the country → region → city → district
+// cascade) — there are no separate preferred_cities / preferred_districts fields.
 // budget + preferred_bedrooms render as min/max ranges, unit_type/purchase_objective
 // as multiselect, preference_notes as a textarea. Slugs missing from the live model
 // are skipped.
-const PREF_SLUGS = ['location', 'preferred_cities', 'preferred_unit_type', 'preferred_area', 'preferred_bedrooms', 'preferred_districts', 'budget', 'purchase_objective', 'preference_notes'] as const;
+const PREF_SLUGS = ['location', 'preferred_unit_type', 'preferred_area', 'preferred_bedrooms', 'budget', 'purchase_objective', 'preference_notes'] as const;
 
 /** Inline-editable client preferences — unit type, budget, location, direction. */
 export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange }: PreferenceSummaryProps) {
