@@ -80,7 +80,13 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   then format. Use the **real formatted codes only** for the max (regex `^U-\d+$` for units / `^م ش\d+$`
   for projects) so stale garbage codes from a prior failed run don't inflate it:
   - project_id: prefix `م ش`, no padding → ``'م ش' || (max(substring(project_id from '^م ش(\d+)$')::int)+1)``
-  - unit_code:  prefix `U-`, padding 4 → ``'U-' || lpad((real_max+rn)::text,4,'0')`` over the N new units.
+  - unit_code:  prefix `U-`, **NO lpad** → ``'U-' || (real_max+rn)::text`` over the N new units.
+    ⚠ **NEVER `lpad((real_max+rn)::text, 4, '0')` — Postgres `lpad` TRUNCATES (keeps the LEFT n chars) when
+    the string is longer than the target width.** unit_code is now in 5-digit territory (`U-43552`…), so
+    `lpad(…,4,…)` silently turned `43552`→`4355`, collapsing all 69 codes into 8 collided 4-digit codes
+    (and those short codes also collide with real units elsewhere). The live codes are plain `'U-'||n`
+    (unpadded, e.g. `U-43551`), so just concatenate — no padding needed. Bit الرمز/سديم-فلل, 2026-06-28;
+    caught by the `count(distinct unit_code)` verify step (which is why that check is mandatory).
   ⚠ Do NOT use a `(SELECT max FROM cte)` scalar inside an `UPDATE … FROM ranked` that also writes
   unit_code — it misread/clustered the values; **materialize the max as a literal first**, then UPDATE.
   Assign `project_id` (all_projects) and `unit_code` (units). Set the code into `data` directly via the
@@ -215,6 +221,34 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   `preferred_neighborhoods` are free-text mirrors. districts/cities/regions are **FROZEN** (own tables) —
   look up the district UUID in `public.districts` by `name_ar` + `city_name_ar`, NOT in `records`.
 
+- **[2026-06-28] الرمز (Al Ramz Real Estate) run — files-only (brochure + sales PDF), `our_projects`:**
+  developer `dfe055a2-de6a-49e6-8502-14d10d6d6b62` (name `الرمز`, alramzre.com) ALREADY exists — do NOT
+  create. Project **سديم فلل** ALREADY existed as a bare row `93181558-b673-4cb1-83b6-c738c41b1f21`
+  (`م ش1884`, our_projects, حي الصفا/الرياض, district `31b81461-50a2-d93c-4a90-5c2936e5fa51`, lat/lng +
+  brochure already set) with **0 units** → classic ENRICH-existing + ADD-units (same posture as the
+  Alajlan bulk-seeded rows). Added 69 villas `U-43552`–`U-43620`, 16 available @ flat 2,140,000 ر.س / 53
+  reserved / 0 sold; enriched `nearby_landmarks`+`features`+`preferred_amenities`(replaced 4 INVALID stale
+  values `صالة/غرفة-نوم/دورة-مياه/مطبخ` — none were real options — with `نظام-مراقبة-امنية/نظام-دخول-ذكي/مصاعد`)
+  +`data_sources`+`project_analysis`+`marketing_document`. Rollups auto-filled (area_range 324–440 = build).
+- **[2026-06-28] Villa area mapping (مساحة البناء / مساحة الأرض):** for villa sales sheets with TWO area
+  columns, `unit_area` = **مساحة البناء** (built-up, the larger; the rollup `area_range` follows it) and
+  `deed_area` = **مساحة الأرض** (plot/land = registered deed area). Don't use total_area/private_area for
+  these. (الرمز سديم: build 324–440, land 200–362.)
+- **[2026-06-28] Sales-PDF parsing (PyMuPDF positional + NFKC):** Arabic price/units PDFs extract as
+  REVERSED **presentation-form glyphs** that fragment words and fuse cells (`هنا325محجو`, `261محجو`,
+  `هنا22`). Recipe: `get_text("words")` for x/y coords, cluster rows by y (~140px apart), assign columns by
+  x-center, and **`unicodedata.normalize("NFKC", t)`** every token so presentation forms collapse to
+  standard Arabic (then `"محجوز" in row` = reserved, `"بلك" in page` = block header). Cross-validate
+  available-count against the independent price-count. `محجوزة`=reserved (no price shown); priced units
+  carried a flat launch price. (الرمز سديم: blocks 191/192/195 = 26/21/22 units; 192 fully reserved.)
+- **[2026-06-28] No per-unit model tag + generic A–F model plans (Adobe-share links):** the sales sheet's
+  `المخططات`→`إضغط هنا` links are per-MODEL Adobe share URLs (not downloadable images) and the inventory
+  has NO model column, so unit→plan is inference-only → **SKIP `unit_plan`** (existing brochure-only rule
+  extends to Adobe-share-link plans). When no per-unit model mapping exists, apply ONE representative
+  components/bedrooms/bathrooms set uniformly across all units (derived from the brochure's floor
+  breakdowns) and DOCUMENT the per-model variation (e.g. "A/B = 4 beds, C–F = 5") in `project_analysis`.
+  (Set bedrooms=5/bathrooms=5/elevator=مؤسس/parking=internal + a 16-item فيلا component set for سديم.)
+
 ## Per-developer API/source adapters (document each site as you learn it)
 - **Almajdiah** → JSON units API `https://etmaam.almajdiah.com/api/client/v1/projects/{id}?…&page=N`
   (paginated 30/page; `units.meta.last_page`). `{id}` from the page URL `/projects/{id}`. No auth.
@@ -245,6 +279,16 @@ Run them from a scratch dir; they load the keys from `.env.local`.
     Map `goo.gl` link resolved to a precise pin (24.7157, 46.7574) — better than district centroid. nuwar:
     16 units listed (15 available / 1 sold) though the brochure states 84 floors + 28 villas total (live
     table = current released inventory only). Plans = generic Model A only → **SKIP `unit_plan`** (logged rule).
+- **الرمز (Al Ramz, alramzre.com)** → **files-only adapter (no API scraped this run).** Source = the
+  developer's two PDFs: a **villa brochure** (`get_text` gave clean-ish Arabic for amenities/landmarks/
+  developer stats/model floor breakdowns) and a **sales price PDF** (`ملف أسعار`). Sales PDF shape: a
+  `NNN بلك` header page precedes each block's data pages; each data page is a 6-row table, RTL columns by
+  x-center (page width 1920): **الوحدة** (unit#, x≈1630) | **مساحة البناء** (build, x≈1270) | **مساحة الأرض**
+  (land, x≈925) | **المخططات** (`إضغط هنا` plan link, x≈600, per-MODEL Adobe-share URL) | **السعر**
+  (x≈200 = `محجوزة` OR a flat price number). Parse with the PyMuPDF positional + NFKC recipe in the
+  Decisions Log. Map: build→`unit_area`, land→`deed_area`, block→`block`, in-block number→`unit_number`,
+  `محجوزة`→reserved/`unit_status`, priced→available + `total_price`. SKIP `unit_plan` (per-model only).
+  No model column → uniform representative components/beds/baths (see Decisions Log).
 - Other non-Almajdiah sites: document each site's units source + field shape here as you learn it.
 
 ## Verify & cleanup
