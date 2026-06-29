@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Info } from 'lucide-react';
+import { Check, Info, History, X, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import Button from '@/components/ui/Button';
 import { useSv, SectionCard, PageHeader } from './components/shared';
 
@@ -12,6 +13,9 @@ export default function SettingsPage() {
   const record = rows(m.settings)[0] ?? null;
   const [d, setD] = useState<Record<string, unknown>>(() => ({ ...(record?.data ?? {}) }));
   const [saving, setSaving] = useState(false);
+  const [backfilling, setBackfilling] = useState(false);
+  const [includeFlags, setIncludeFlags] = useState(false);
+  const [confirm, setConfirm] = useState<{ count: number; includeFlags: boolean } | null>(null);
   const seededRef = useRef<string | null>(null);
   useEffect(() => {
     if (record && seededRef.current !== record.id) { seededRef.current = record.id; setD({ ...record.data }); }
@@ -40,13 +44,55 @@ export default function SettingsPage() {
     );
   }
 
-  async function save() {
-    if (!record) return;
+  // Persist the current criteria. Returns true on success (used both by the
+  // Save button and the retroactive backfill, which must run against the saved
+  // criteria, not the unsaved draft).
+  async function persist(): Promise<boolean> {
+    if (!record) return false;
     setSaving(true);
     const res = await saveRecord({ ...record, data: d, updated_at: new Date().toISOString() }, { expectedVersion: record.version ?? null });
     setSaving(false);
-    if (res.status === 'conflict') { addToast(isAr ? 'تم التعديل من مستخدم آخر — حدّث الصفحة' : 'Edited elsewhere — reload', 'error'); return; }
-    addToast(isAr ? 'تم حفظ الإعدادات' : 'Settings saved', 'success');
+    if (res.status === 'conflict') { addToast(isAr ? 'تم التعديل من مستخدم آخر — حدّث الصفحة' : 'Edited elsewhere — reload', 'error'); return false; }
+    return true;
+  }
+
+  async function save() {
+    if (await persist()) addToast(isAr ? 'تم حفظ الإعدادات' : 'Settings saved', 'success');
+  }
+
+  // Retroactive backfill: save the criteria first (so the DB rules match what's
+  // on screen), preview how many reviews WOULD be created, then — on confirm —
+  // create them. The DB function applies ONLY the configured criteria to past
+  // completed follow-ups (no auto-flags, no random sample) and never duplicates.
+  async function startBackfill() {
+    if (!isSupabaseConfigured() || !supabase) {
+      addToast(isAr ? 'غير متاح بدون اتصال' : 'Unavailable offline', 'error');
+      return;
+    }
+    setBackfilling(true);
+    const saved = await persist();
+    if (!saved) { setBackfilling(false); return; }
+    const { data: count, error } = await supabase.rpc('svr_backfill_reviews', { p_dry_run: true, p_include_flags: includeFlags });
+    setBackfilling(false);
+    if (error) { addToast(isAr ? `تعذّر حساب المتابعات: ${error.message}` : `Preview failed: ${error.message}`, 'error'); return; }
+    setConfirm({ count: Number(count) || 0, includeFlags });
+  }
+
+  async function runBackfill() {
+    if (!supabase || !confirm) return;
+    const flags = confirm.includeFlags;
+    setConfirm(null);
+    setBackfilling(true);
+    const { data: count, error } = await supabase.rpc('svr_backfill_reviews', { p_dry_run: false, p_include_flags: flags });
+    setBackfilling(false);
+    if (error) { addToast(isAr ? `تعذّر إنشاء المراجعات: ${error.message}` : `Backfill failed: ${error.message}`, 'error'); return; }
+    const n = Number(count) || 0;
+    addToast(
+      n > 0
+        ? (isAr ? `تم إنشاء ${n} مراجعة للمتابعات السابقة` : `Created ${n} review(s) for previous follow-ups`)
+        : (isAr ? 'لا توجد متابعات سابقة جديدة مطابقة' : 'No new matching previous follow-ups'),
+      'success',
+    );
   }
 
   return (
@@ -127,6 +173,32 @@ export default function SettingsPage() {
         </div>
       </SectionCard>
 
+      <SectionCard title={isAr ? 'تطبيق المعايير على المتابعات السابقة' : 'Apply criteria to previous follow-ups'}>
+        <p className="text-sm text-charcoal/70">
+          {isAr
+            ? 'المعايير أعلاه تُطبَّق تلقائيًا على المتابعات الجديدة فقط. يمكنك أيضًا تطبيقها بأثر رجعي لإنشاء مراجعات للمتابعات المكتملة السابقة المطابقة للمعايير الحالية (تُطبَّق المعايير المحددة فقط، دون إشارات النظام أو العينة العشوائية، ولا يتم تكرار أي مراجعة موجودة).'
+            : 'The criteria above apply automatically to new follow-ups only. You can also apply them retroactively to create reviews for already-completed follow-ups that match the current criteria (only the configured criteria are applied — no system flags or random sample — and existing reviews are never duplicated).'}
+        </p>
+        <div className="rounded-xl border border-sand/40 bg-cream/40 px-4 py-2">
+          <Toggle
+            label={isAr ? 'تضمين المتابعات ذات الإشارات التلقائية' : 'Include auto-flagged follow-ups'}
+            hint={isAr ? 'مثل: ملاحظات ضعيفة، تأخّر في المتابعة، نتيجة غير متطابقة، زيارة غير مسجلة' : 'e.g. weak notes, late follow-up, result mismatch, unregistered visit'}
+            checked={includeFlags} onChange={setIncludeFlags} />
+        </div>
+        <div className="flex items-center gap-3 pt-1">
+          <Button variant="secondary" onClick={startBackfill} disabled={backfilling || saving}>
+            <History size={16} /> {backfilling
+              ? (isAr ? 'جارٍ الحساب…' : 'Calculating…')
+              : (isAr ? 'تطبيق على المتابعات السابقة' : 'Apply to previous follow-ups')}
+          </Button>
+        </div>
+        <p className="text-xs text-charcoal/50">
+          {isAr
+            ? 'سيتم حفظ المعايير الحالية أولًا، ثم عرض عدد المراجعات قبل الإنشاء.'
+            : 'The current criteria are saved first, then the number of reviews is shown before anything is created.'}
+        </p>
+      </SectionCard>
+
       <SectionCard title={isAr ? 'شرح الأتمتة' : 'How the automation works'}>
         <ul className="space-y-1.5 text-sm text-charcoal/80 list-disc ps-5">
           <li>{isAr ? 'عند اكتمال المتابعة يتم إنشاء تقييم تلقائي.' : 'When a follow-up completes, a review is created automatically.'}</li>
@@ -142,6 +214,54 @@ export default function SettingsPage() {
             : 'This automation runs server-side so no follow-up is ever missed, and it does not appear as a visible flow in the Workflows page.'}</p>
         </div>
       </SectionCard>
+
+      {confirm && (
+        <BackfillConfirm isAr={isAr} count={confirm.count} includeFlags={confirm.includeFlags} busy={backfilling}
+          onCancel={() => setConfirm(null)} onConfirm={runBackfill} />
+      )}
+    </div>
+  );
+}
+
+function BackfillConfirm({ isAr, count, includeFlags, busy, onCancel, onConfirm }: {
+  isAr: boolean; count: number; includeFlags: boolean; busy: boolean; onCancel: () => void; onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }} dir={isAr ? 'rtl' : 'ltr'}>
+      <div className="w-full max-w-md rounded-2xl bg-cream shadow-xl">
+        <header className="flex items-center justify-between border-b border-sand/40 px-5 py-3">
+          <h3 className="text-base font-bold text-charcoal">{isAr ? 'تطبيق على المتابعات السابقة' : 'Apply to previous follow-ups'}</h3>
+          <button type="button" onClick={onCancel} className="text-charcoal/50 hover:text-charcoal"><X size={20} /></button>
+        </header>
+        <div className="p-5 space-y-4">
+          {count > 0 ? (
+            <>
+              <div className="flex items-start gap-3 rounded-xl bg-copper/10 px-4 py-3 text-sm text-chocolate">
+                <AlertTriangle size={18} className="mt-0.5 flex-shrink-0" />
+                <p>{isAr
+                  ? <>سيتم إنشاء <span className="font-extrabold">{count}</span> مراجعة للمتابعات المكتملة السابقة المطابقة {includeFlags ? 'للمعايير الحالية وإشارات النظام' : 'للمعايير الحالية'}. لن تتكرر المراجعات الموجودة. هل تريد المتابعة؟</>
+                  : <>This will create <span className="font-extrabold">{count}</span> review(s) for previous completed follow-ups matching {includeFlags ? 'the current criteria and system flags' : 'the current criteria'}. Existing reviews won’t be duplicated. Continue?</>}</p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={onCancel} disabled={busy}>{isAr ? 'إلغاء' : 'Cancel'}</Button>
+                <Button onClick={onConfirm} disabled={busy}>
+                  {busy ? (isAr ? 'جارٍ الإنشاء…' : 'Creating…') : (isAr ? `إنشاء ${count} مراجعة` : `Create ${count}`)}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-charcoal/70">{isAr
+                ? 'لا توجد متابعات سابقة مطابقة للمعايير الحالية بحاجة إلى مراجعة جديدة.'
+                : 'No previous follow-ups match the current criteria that need a new review.'}</p>
+              <div className="flex justify-end">
+                <Button variant="secondary" onClick={onCancel}>{isAr ? 'حسناً' : 'OK'}</Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

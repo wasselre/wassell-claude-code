@@ -1,7 +1,7 @@
 # PRD: Sales Valuation (تقييم المبيعات) — Sales Quality & Coaching
 
 **Status:** Live (data + automation layer + dedicated custom operational UI for all 5 pages in the تقييم المبيعات group)
-**Last updated:** 2026-06-28
+**Last updated:** 2026-06-29
 **Related PRDs:** [sales-process.md](sales-process.md), [followups-workspace.md](followups-workspace.md), [dashboards.md](dashboards.md), [access-control.md](access-control.md), [record-management.md](record-management.md)
 
 ## What it is (in plain English)
@@ -23,11 +23,13 @@ Managers need a structured, repeatable way to review how reps handle follow-ups,
 - **Daily summary** is one record per rep per day, maintained by a trigger that recomputes total reviewed / correct / mistakes / average score / main category / open tasks while **preserving the manager's written summary, improvement points, and the rep's acknowledgement/notes**. An empty draft is not created for a day with nothing reviewed yet.
 - **The review screen shows the real source, not just the system read:** beyond the snapshots/flags, the review form mirrors the **live** follow-up (rep's actual notes, scheduled vs actual time, next-step), a read-only **تفضيلات العميل** (client preferences) section mirrored from the client, and a **سجل المكالمات** (call history) section listing the client's Hatif calls — each expandable to its **recording (audio), AI summary, and transcript** so the manager can listen and read. The client's phone is snapshotted onto the review so call history resolves.
 - **Manager queue** = saved views on the reviews model: `قائمة المراجعة — بانتظار` (default), `أولوية مرتفعة`, `معترض عليها`, `تتطلب تصحيح`, `كل التقييمات`.
+- **Review-to-review navigation (playlist).** Opening a review from the queue **freezes the current filtered+sorted list of review ids** into a sessionStorage "playlist" (`sv_review_queue`). The review screen then shows **السابق / التالي** (Previous / Next) buttons with a position counter (`3 / 20`) in the header, and **saving a review auto-advances to the next one in the playlist** instead of returning to the queue (falls back to the queue on the last item). The playlist is frozen at open time, so a review dropping out of its filter after being saved never shifts the walk. Direct-URL loads (no playlist) hide the buttons and keep the old back-to-queue-on-save behavior. The screen is keyed on `recordId` in the router, so each Prev/Next re-seeds the decision draft cleanly.
 - **Two dashboards**: a manager board (pending, reviewed-today, mistakes-today, critical-today, avg score by rep, mistakes by category, overdue corrections, disputed) and a rep board (my score today, open corrections, repeated mistakes, my summaries) — the rep board auto-scopes to the viewer via RLS.
 - **Operation toggle:** `sales_valuation_settings.is_enabled` (default true). Setting it false pauses all review creation. The settings record also holds the per-criterion toggles, the selectable `review_call_results` list, sample percentages, daily-summary time, and the default sales manager.
+- **Retroactive criteria backfill.** Review creation is normally going-forward only, but the Settings page has an **"تطبيق على المتابعات السابقة" (Apply to previous follow-ups)** action: it saves the current criteria, **previews how many reviews would be created** (a dry-run count), asks for confirmation, then creates reviews for already-completed follow-ups that match. By default the backfill applies **only the manager-configured mandatory criteria** (toggles + `review_call_results` + missing-next-step) — NOT the always-on automatic flags or the random sample — so it produces exactly "the criteria I chose, applied to history" (e.g. set "only interested" → reviews appear only for past *interested* follow-ups). A **"تضمين المتابعات ذات الإشارات التلقائية" (Include auto-flagged follow-ups)** toggle optionally widens it to also pull in follow-ups caught by the system flags (weak notes, late, mismatch, unregistered visit, missing-next-step-as-flag); the random sample is never retroactive either way. The preview count reflects the toggle (criteria-only vs criteria+flags). It **never duplicates** an existing review, and backfilled reviews carry `created_at` = the follow-up's completion time (so they sit on their real timeline, not "today"). Backfill respects the operation toggle (paused = no-op) and is gated to users with review-create permission. The eligibility+insert logic is shared with the going-forward trigger via one `svr_eval_review_for_followup(fu, p_backfill, p_dry_run)` function so the two paths can never drift; the trigger is now a thin transition-guard wrapper around it.
 
 ## User flows
-1. **Manager happy path:** open المبيعات → تقييمات المتابعات (default = pending queue) → open a review (context section on top, evaluation section below, rep-response/closure last) → pick an outcome (+ category/details/correct action/coaching note) → save. Score/status auto-fill; a correction task and the rep's daily summary update automatically.
+1. **Manager happy path:** open المبيعات → تقييمات المتابعات (default = pending queue) → open a review (context section on top, evaluation section below, rep-response/closure last) → pick an outcome (+ category/details/correct action/coaching note) → save. Score/status auto-fill; a correction task and the rep's daily summary update automatically. **Saving advances straight to the next review in the queue** (no trip back to the list); السابق / التالي buttons let the manager move between reviews manually, and a `N / total` counter shows their position.
 2. **Correction:** review with "يتطلب تصحيح" → a task appears in مهام تصحيح المبيعات for the rep; the rep adds a note and moves it to قيد التنفيذ / مكتملة; manager approves.
 3. **Rep coaching / dispute:** rep opens التوجيه اليومي للمبيعات (own records only) → reads the day's summary and feedback → acknowledges, or sets a review's dispute to "معترض عليه" with a response → it lands in the manager's "معترض عليها" view → manager sets a final decision → review closes.
 4. **Empty state:** with no pending reviews the default queue shows "لا توجد سجلات بعد"; the operation populates as real follow-ups are completed going forward.
@@ -42,16 +44,21 @@ Managers need a structured, repeatable way to review how reps handle follow-ups,
 | File | What it does |
 |---|---|
 | `supabase/migrations/2026-06-23_sales_valuation_operation.sql` | Consolidated migration: automation engine (functions + triggers), permissions, notes |
-| `public.svr_create_review_on_followup_complete()` | Review creation trigger (eligibility, flags, dedup, snapshots) |
+| `supabase/migrations/2026-06-29_sales_valuation_retroactive_backfill.sql` | Extracts eligibility into a shared helper + adds the callable backfill (`svr_backfill_reviews`) and dry-run preview |
+| `supabase/migrations/2026-06-29_sales_valuation_backfill_flags_option.sql` | Adds the optional `p_include_flags` switch to the helper + backfill (criteria-only vs criteria+flags) |
+| `public.svr_eval_review_for_followup(fu, p_backfill, p_dry_run)` | Shared eligibility + insert (one impl for both trigger and backfill; dry-run returns a "would-create" sentinel without writing) |
+| `public.svr_backfill_reviews(p_dry_run)` | Loops completed follow-ups, applies configured criteria, creates (or counts) reviews; permission-gated |
+| `public.svr_create_review_on_followup_complete()` | Going-forward trigger — now a transition-guard wrapper that delegates to `svr_eval_review_for_followup` |
 | `public.svr_fill_review_computed()` | Score + status derivation on review save (preserves manager score) |
 | `public.svr_create_correction_task()` | Correction-task creation + back-link |
 | `public.svr_recompute_daily_summary()` | Per-rep/day rollup (preserves manager/rep text) |
 | `public.svr_sweep_overdue_tasks()` | Flips past-due open tasks to overdue |
 | `src/pages/SalesValuation/QueuePage.tsx` | Manager review queue — KPI cards, filter tabs, table + row actions |
-| `src/pages/SalesValuation/ReviewDetailPage.tsx` | Single-review decision screen (summary card, evidence modals, progressive decision panel) |
+| `src/pages/SalesValuation/ReviewDetailPage.tsx` | Single-review decision screen (summary card, evidence modals, progressive decision panel, Prev/Next playlist nav + auto-advance on save) |
+| `src/pages/SalesValuation/reviewQueue.ts` | sessionStorage helper that freezes the queue's ordered review-id playlist for Prev/Next + auto-advance |
 | `src/pages/SalesValuation/CorrectionBoardPage.tsx` / `CorrectionDetailPage.tsx` | Correction kanban board + task detail |
 | `src/pages/SalesValuation/CoachingPage.tsx` | Rep daily coaching dashboard |
-| `src/pages/SalesValuation/CategoriesPage.tsx` / `SettingsPage.tsx` | Mistake-category settings table + operation settings |
+| `src/pages/SalesValuation/CategoriesPage.tsx` / `SettingsPage.tsx` | Mistake-category settings table + operation settings (incl. the retroactive backfill action + confirm modal) |
 | `src/pages/SalesValuation/components/shared.tsx` | Shared primitives (cards, pills, label resolution from model options, evidence modals) |
 | `src/App.tsx` | `RecordListDispatcher`/`RecordDetailDispatcher` route the 5 models to the custom pages (generic form via `?generic=1`) |
 

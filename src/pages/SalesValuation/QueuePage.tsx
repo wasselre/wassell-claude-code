@@ -6,6 +6,7 @@ import {
   useSv, optOf, fmtDateTime, clientNameOf, KpiCard, Pill, PageHeader,
   useEvidence, EvidenceModals,
 } from './components/shared';
+import { setReviewQueue } from './reviewQueue';
 
 type Tab = 'pending' | 'today' | 'high' | 'correction' | 'disputed' | 'all';
 
@@ -61,6 +62,13 @@ export default function QueuePage() {
     return out.sort((a, b) => b.created_at.localeCompare(a.created_at));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviews, tab, rep]);
+
+  // Freeze the current ordered queue as a playlist, then open the review — so the
+  // review screen can offer Prev / Next and auto-advance on save.
+  const openReview = (id: string) => {
+    setReviewQueue(filtered.map((r) => r.id));
+    navigate(`/model/sales_valuation_reviews/${id}`);
+  };
 
   const repUsers = useMemo(() => {
     const ids = new Set(reviews.map((r) => r.data.sales_rep).filter((x): x is string => typeof x === 'string'));
@@ -134,7 +142,7 @@ export default function QueuePage() {
               const status = optOf(m.reviews, 'review_status', d.review_status, isAr);
               return (
                 <tr key={r.id} className="border-b border-sand/20 hover:bg-cream/50 cursor-pointer"
-                  onClick={() => navigate(`/model/sales_valuation_reviews/${r.id}`)}>
+                  onClick={() => openReview(r.id)}>
                   <Td className="font-semibold text-charcoal">{clientNameOf(r, clientRows)}</Td>
                   <Td>{resolveUser(d.sales_rep)}</Td>
                   <Td>{optOf(m.reviews, 'followup_type', d.followup_type, isAr).label}</Td>
@@ -145,7 +153,7 @@ export default function QueuePage() {
                   <Td><Pill label={status.label} color={status.color} /></Td>
                   <Td onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-1">
-                      <IconBtn title={isAr ? 'فتح التقييم' : 'Open'} onClick={() => navigate(`/model/sales_valuation_reviews/${r.id}`)}><Eye size={15} /></IconBtn>
+                      <IconBtn title={isAr ? 'فتح التقييم' : 'Open'} onClick={() => openReview(r.id)}><Eye size={15} /></IconBtn>
                       <IconBtn title={isAr ? 'عرض العميل' : 'Client'} onClick={() => clientId && ev.openClient(clientId)}><User size={15} /></IconBtn>
                       <IconBtn title={isAr ? 'الاستماع للمكالمة' : 'Call'} onClick={() => ev.openCall(clientId, phone)}><Phone size={15} /></IconBtn>
                       <IconBtn title={isAr ? 'فتح واتساب' : 'WhatsApp'} onClick={() => clientId && ev.openWhatsApp(clientId)}><MessageCircle size={15} style={{ color: '#25D366' }} /></IconBtn>

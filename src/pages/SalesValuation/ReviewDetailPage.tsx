@@ -3,8 +3,10 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft, SlidersHorizontal, User, Phone, MessageCircle, X,
   CheckCircle2, AlertTriangle, AlertOctagon, Flame, ChevronDown, ChevronUp,
+  ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { getReviewQueue } from './reviewQueue';
 import { useCanEditRecord, useCanViewRecord } from '@/hooks/usePermission';
 import Button from '@/components/ui/Button';
 import RecordFormModal from '@/pages/Records/components/RecordFormModal';
@@ -72,6 +74,18 @@ export default function ReviewDetailPage() {
   if (review && versionRef.current?.id !== review.id) {
     versionRef.current = { id: review.id, version: review.version ?? null };
   }
+
+  // Frozen review playlist captured when the manager opened this from the queue.
+  // The page is keyed on recordId in the router, so it remounts on each Prev/Next
+  // and re-reads the playlist fresh. Empty when opened via a direct URL.
+  const queueIds = useMemo(() => getReviewQueue(), []);
+  const queueIdx = recordId ? queueIds.indexOf(recordId) : -1;
+  const prevId = queueIdx > 0 ? queueIds[queueIdx - 1] : null;
+  const nextId = queueIdx >= 0 && queueIdx < queueIds.length - 1 ? queueIds[queueIdx + 1] : null;
+  const goReview = (id: string) => navigate(`/model/sales_valuation_reviews/${id}`);
+  // On save, walk to the next review in the playlist; fall back to the queue when
+  // there's no next (last item, or opened via direct URL with no playlist).
+  const advanceAfterSave = () => (nextId ? goReview(nextId) : navigate('/model/sales_valuation_reviews'));
 
   const resolveUser = (id: unknown): string => {
     if (typeof id !== 'string' || !id) return '—';
@@ -150,7 +164,7 @@ export default function ReviewDetailPage() {
       return;
     }
     addToast(isAr ? 'تم حفظ التقييم' : 'Review saved', 'success');
-    navigate('/model/sales_valuation_reviews');
+    advanceAfterSave();
   }
 
   const statusOpt = opt('review_status', d.review_status);
@@ -158,10 +172,34 @@ export default function ReviewDetailPage() {
 
   return (
     <div className="mx-auto max-w-[1100px] p-4 sm:p-6 space-y-5">
-      <button type="button" onClick={() => navigate('/model/sales_valuation_reviews')}
-        className="inline-flex items-center gap-1 text-sm font-semibold text-terracotta hover:underline">
-        <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} /> {isAr ? 'رجوع للقائمة' : 'Back to queue'}
-      </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button type="button" onClick={() => navigate('/model/sales_valuation_reviews')}
+          className="inline-flex items-center gap-1 text-sm font-semibold text-terracotta hover:underline">
+          <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} /> {isAr ? 'رجوع للقائمة' : 'Back to queue'}
+        </button>
+
+        {/* Prev / Next within the frozen queue playlist (hidden on direct URL loads) */}
+        {queueIdx >= 0 && queueIds.length > 1 && (
+          <div className="inline-flex items-center gap-2">
+            <QueueNavButton
+              disabled={!prevId}
+              onClick={() => prevId && goReview(prevId)}
+              label={isAr ? 'السابق' : 'Previous'}
+              icon={isAr ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+            />
+            <span className="text-xs font-bold text-charcoal/60 tabular-nums px-1" dir="ltr">
+              {queueIdx + 1} / {queueIds.length}
+            </span>
+            <QueueNavButton
+              disabled={!nextId}
+              onClick={() => nextId && goReview(nextId)}
+              label={isAr ? 'التالي' : 'Next'}
+              icon={isAr ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+              iconAfter
+            />
+          </div>
+        )}
+      </div>
 
       {/* ── 1. Header summary card ─────────────────────────────────── */}
       <section className="card p-5">
@@ -338,6 +376,17 @@ export default function ReviewDetailPage() {
 
 function Empty({ children }: { children: ReactNode }) {
   return <div className="p-6 text-[#8E4E3A]">{children}</div>;
+}
+
+function QueueNavButton({ disabled, onClick, label, icon, iconAfter }: {
+  disabled?: boolean; onClick: () => void; label: string; icon: ReactNode; iconAfter?: boolean;
+}) {
+  return (
+    <button type="button" disabled={disabled} onClick={onClick}
+      className="inline-flex items-center gap-1 rounded-lg border border-sand/50 bg-white px-3 py-1.5 text-xs font-bold text-charcoal/70 transition-colors hover:bg-cream hover:text-copper disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white disabled:hover:text-charcoal/70">
+      {!iconAfter && icon}{label}{iconAfter && icon}
+    </button>
+  );
 }
 
 function Fact({ label, value }: { label: string; value: string }) {
