@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, Globe, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -77,11 +77,11 @@ export default function OurProjectsPortfolioPage() {
   if (searchParams.get('generic') === '1') return <RecordListPage />;
   if (!ourModel) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
 
-  const active = items.filter((i) => i.status?.value === 'active').length;
   const availableUnits = items.reduce((n, i) => n + (i.linked?.availableUnits ?? 0), 0);
   const unitCount = items.reduce((n, i) => n + (i.linked?.unitCount ?? 0), 0);
-  const publicCount = items.filter((i) => i.showOnWebsite).length;
-  const unlinked = items.filter((i) => !i.linked).length;
+  const withoutOurBrochure = items.filter((i) => !i.linked?.brochureOurs).length;
+  const withoutDevBrochure = items.filter((i) => !i.linked?.brochureDeveloper).length;
+  const withoutLocation = items.filter((i) => !(i.linked?.hasGeo || i.linked?.locationLink)).length;
 
   return (
     <div className="p-4 md:p-6 space-y-4">
@@ -101,11 +101,11 @@ export default function OurProjectsPortfolioPage() {
       {/* KPI summary */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <PortfolioKpi icon={<Building2 size={18} />} label={isAr ? 'إجمالي المحفظة' : 'Portfolio total'} value={items.length} tone="#B8734F" />
-        <PortfolioKpi icon={<CheckCircle2 size={18} />} label={isAr ? 'نشطة' : 'Active'} value={active} tone="#10B981" />
-        <PortfolioKpi icon={<LayoutGrid size={18} />} label={isAr ? 'الوحدات المتاحة' : 'Available units'} value={availableUnits.toLocaleString()} tone="#8E4E3A" />
         <PortfolioKpi icon={<Building2 size={18} />} label={isAr ? 'إجمالي الوحدات' : 'Total units'} value={unitCount.toLocaleString()} tone="#C09B5F" />
-        <PortfolioKpi icon={<Globe size={18} />} label={isAr ? 'منشورة على الموقع' : 'Public on website'} value={publicCount} tone="#3B82F6" />
-        <PortfolioKpi icon={<AlertTriangle size={18} />} label={isAr ? 'بدون مشروع مرتبط' : 'Unlinked'} value={unlinked} tone="#EF4444" />
+        <PortfolioKpi icon={<LayoutGrid size={18} />} label={isAr ? 'الوحدات المتاحة' : 'Available units'} value={availableUnits.toLocaleString()} tone="#8E4E3A" />
+        <PortfolioKpi icon={<FileText size={18} />} label={isAr ? 'بدون بروشورنا' : 'Without our brochure'} value={withoutOurBrochure} tone="#EF4444" />
+        <PortfolioKpi icon={<FileText size={18} />} label={isAr ? 'بدون بروشور المطور' : 'Without developer brochure'} value={withoutDevBrochure} tone="#F59E0B" />
+        <PortfolioKpi icon={<MapPin size={18} />} label={isAr ? 'بدون موقع' : 'Without location'} value={withoutLocation} tone="#EF4444" />
       </div>
 
       {items.length === 0 ? (
