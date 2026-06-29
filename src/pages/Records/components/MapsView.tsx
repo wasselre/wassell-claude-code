@@ -856,11 +856,28 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
       const id = (props as SummaryPointProps).id;
       const rec = mappedRef.current.get(id);
       const color = model.color || PILL_DEFAULT_COLOR;
-      const icon = buildPillIcon('•', color);
+      // Render the configured pin-label field (e.g. price) on the pill, like the
+      // legacy map. Resolving happens ONLY for individual pins actually in view
+      // (bounded by PIN_CAP), so it stays cheap. Falls back to a dot when no
+      // label field is configured or the value is empty.
+      let pillLabel = '•';
+      if (labelEf && rec) {
+        const value = readExpandedValue(labelEf, rec, allRecords, model, models);
+        const text = formatFieldValue(labelEf.field, value, {
+          isAr,
+          t,
+          allRecords,
+          models,
+          users,
+          recordData: rec.data,
+        });
+        if (text && text !== '—') pillLabel = text;
+      }
+      const icon = buildPillIcon(pillLabel, color);
       const marker = new google.maps.Marker({
         position: { lat, lng },
         icon: icon as google.maps.Icon | undefined,
-        title: id.slice(0, 8),
+        title: pillLabel !== '•' ? pillLabel : id.slice(0, 8),
       });
       marker.addListener('click', () => {
         const cur = mappedRef.current.get(id) ?? rec;
@@ -882,7 +899,7 @@ function SummaryMapsView({ model, records, onCardClick }: MapsViewProps) {
     setPinCapHit(capExceeded);
     if (MAP_DEBUG) console.debug('[map] rendered %o markers, removed %o old', newMarkers.length, prevMarkers.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapInstance, isLoaded, index, indexReady, viewportVersion, cfg.click_action, model.color, points.length]);
+  }, [mapInstance, isLoaded, index, indexReady, viewportVersion, cfg.click_action, model.color, points.length, labelEf]);
 
   // Clear markers ONLY on unmount — never on a dependency change. Clearing on
   // every re-run (the old effect cleanup) is what wiped clusters on each `idle`.
