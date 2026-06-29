@@ -47,6 +47,8 @@ import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
 import ProjectsListPage from '@/pages/Projects/ProjectsListPage';
 import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
+import ClientsListPage from '@/pages/Clients/ClientsListPage';
+import ClientDetailPage from '@/pages/Clients/ClientDetailPage';
 import OurProjectsPortfolioPage from '@/pages/Projects/OurProjectsPortfolioPage';
 import SalesValuationReviewPage from '@/pages/SalesValuation/ReviewDetailPage';
 import SalesValuationQueuePage from '@/pages/SalesValuation/QueuePage';
@@ -118,6 +120,12 @@ function RecordDetailDispatcher() {
     // generic form stays reachable for advanced editing via ?generic=1 (the
     // workspace's "Advanced Fields" / "Edit Full Preferences" escape hatch).
     return <FollowUpWorkspacePage key={recordId ?? 'new'} />;
+  }
+  if (modelName === 'clients' && recordId !== 'new' && searchParams.get('generic') !== '1') {
+    // Custom Client 360 cockpit replaces the generic form. The generic form
+    // stays reachable for advanced/admin editing via ?generic=1. New-record
+    // create stays on the generic form (handled by RecordNewDispatcher).
+    return <ClientDetailPage key={recordId ?? 'new'} />;
   }
   if (modelName === 'sales_valuation_reviews' && searchParams.get('generic') !== '1') {
     // Custom manager review screen replaces the generic form — a clean
@@ -225,6 +233,11 @@ function RecordListDispatcher() {
   }
   if (modelName === 'image_chats') {
     return <ImageChatsPage />;
+  }
+  if (modelName === 'clients') {
+    // Custom Clients cockpit (KPIs + filters + sales-prioritized list). Falls
+    // back to the generic table/export view when ?generic=1.
+    return <ClientsListPage />;
   }
   if (modelName === 'all_projects') {
     // Custom Projects experience (KPIs + filters + cards/list/map). The page
