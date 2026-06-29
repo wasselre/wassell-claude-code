@@ -175,11 +175,12 @@ function RecordDetailDispatcher() {
     // templates cleanly resets the form's local state.
     return <ChatTemplateFormPage key={recordId ?? 'new'} />;
   }
-  if (modelName === 'all_projects' && recordId !== 'new') {
-    // Custom Project detail (hero + KPIs + 7 tabs). The page itself falls back
-    // to the generic form when ?generic=1 (its "Edit" action). New-record create
-    // stays on the generic form.
-    return <ProjectDetailPage key={recordId} />;
+  if ((modelName === 'all_projects' || modelName === 'our_projects') && recordId !== 'new') {
+    // Custom Project detail (hero + KPIs + 7 tabs). Drives from the all_projects
+    // master directly, or — for our_projects — from the linked master plus the
+    // portfolio sales layer. Falls back to the generic form when ?generic=1
+    // (its "Edit" action). New-record create stays on the generic form.
+    return <ProjectDetailPage key={`${modelName}:${recordId}`} />;
   }
   return <RecordFormPageRoute />;
 }

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Building2, MapPin, Pencil, Search, ExternalLink, FileText, Sparkles, AlertTriangle,
-  CheckCircle2, Target,
+  CheckCircle2, Target, Eye, EyeOff,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
@@ -10,8 +10,8 @@ import Badge from '@/components/ui/Badge';
 import MapsView from '@/pages/Records/components/MapsView';
 import RecordFormPage from '@/pages/Records/RecordFormPage';
 import {
-  resolveProjectView, modelByName, fieldByCandidates, optionsFor,
-  formatPriceRange, formatRange, asString, type ProjectView,
+  resolveProjectView, modelByName, fieldByCandidates, optionsFor, optionFor,
+  formatPriceRange, formatRange, asString, asFiniteNumber, type ProjectView,
 } from '@/lib/projects/projectView';
 import {
   callProjectAi, auditProject, detectIssues, projectFacts,
@@ -54,17 +54,34 @@ function AiAction({ label, run, isAr }: { label: string; run: () => Promise<stri
 }
 
 export default function ProjectDetailPage() {
-  const { recordId } = useParams();
+  const { modelName, recordId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { models, records, language, saveRecord, addToast } = useAppStore();
   const isAr = language === 'ar';
 
-  const model = modelByName(models, 'all_projects');
-  const record = useMemo(
-    () => (model ? (records[model.id] ?? []).find((r) => r.id === recordId) : undefined),
-    [model, records, recordId],
+  // Two surfaces share this page: the All Projects master detail and the Our
+  // Projects PORTFOLIO detail. In portfolio mode every project FACT comes from
+  // the linked all_projects master; the our_projects record adds the sales layer.
+  const isPortfolio = modelName === 'our_projects';
+  const apModel = modelByName(models, 'all_projects');
+  const ourModel = modelByName(models, 'our_projects');
+
+  const portfolioRecord = useMemo(
+    () => (isPortfolio && ourModel ? (records[ourModel.id] ?? []).find((r) => r.id === recordId) : undefined),
+    [isPortfolio, ourModel, records, recordId],
   );
+
+  // The all_projects record that drives every project fact: the routed record
+  // (master mode) or the master linked via our_projects.project (portfolio mode).
+  const record = useMemo(() => {
+    if (!apModel) return undefined;
+    if (!isPortfolio) return (records[apModel.id] ?? []).find((r) => r.id === recordId);
+    const raw = portfolioRecord?.data?.project;
+    const linkedId = Array.isArray(raw) ? (typeof raw[0] === 'string' ? raw[0] : null) : (typeof raw === 'string' ? raw : null);
+    return linkedId ? (records[apModel.id] ?? []).find((r) => r.id === linkedId) : undefined;
+  }, [apModel, isPortfolio, records, recordId, portfolioRecord]);
+
   const view: ProjectView | null = useMemo(
     () => (record ? resolveProjectView({ models, records }, record) : null),
     [record, models, records],
@@ -74,8 +91,18 @@ export default function ProjectDetailPage() {
   const [matchOpen, setMatchOpen] = useState(false);
 
   if (searchParams.get('generic') === '1') return <RecordFormPage />;
-  if (!model) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
-  if (!record || !view) {
+  if (!apModel || (isPortfolio && !ourModel)) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
+  // Portfolio mode: the our_projects record must exist (its master may be unlinked).
+  if (isPortfolio && !portfolioRecord) {
+    return (
+      <div className="p-8 text-charcoal/50">
+        {isAr ? 'السجل غير موجود.' : 'Record not found.'}{' '}
+        <button className="text-copper underline" onClick={() => navigate('/model/our_projects')}>{isAr ? 'العودة' : 'Back'}</button>
+      </div>
+    );
+  }
+  // Master mode: the project must exist.
+  if (!isPortfolio && (!record || !view)) {
     return (
       <div className="p-8 text-charcoal/50">
         {isAr ? 'المشروع غير موجود.' : 'Project not found.'}{' '}
@@ -84,7 +111,19 @@ export default function ProjectDetailPage() {
     );
   }
 
+  const model = apModel; // narrowed to AppModel after the guard above
   const dash = isAr ? 'غير متوفر' : 'N/A';
+  const editHref = `/model/${isPortfolio ? 'our_projects' : 'all_projects'}/${recordId}?generic=1`;
+  const heroName = view?.name ?? asString(portfolioRecord?.data?.project_name) ?? `#${recordId?.slice(0, 8) ?? ''}`;
+  const heroOverride = isPortfolio ? (() => { const h = portfolioRecord?.data?.hero_image_override; return typeof h === 'string' && /^https?:\/\//i.test(h) ? h : null; })() : null;
+  const heroImage = heroOverride ?? view?.imageUrl ?? null;
+  const portfolioStatus = isPortfolio ? optionFor(fieldByCandidates(ourModel, ['portfolio_status']), portfolioRecord?.data?.portfolio_status) : null;
+  const NoMaster = () => (
+    <div className="card p-10 text-center text-charcoal/50 text-sm">
+      {isAr ? 'هذا السجل غير مرتبط بمشروع رئيسي في «جميع المشاريع».' : 'This record is not linked to a master project in All Projects.'}{' '}
+      <button className="text-copper underline" onClick={() => navigate(editHref)}>{isAr ? 'اربط مشروعاً' : 'Link a project'}</button>
+    </div>
+  );
   const TABS: { key: TabKey; ar: string; en: string }[] = [
     { key: 'overview', ar: 'نظرة عامة', en: 'Overview' },
     { key: 'units', ar: 'الوحدات', en: 'Units' },
@@ -100,31 +139,38 @@ export default function ProjectDetailPage() {
       {/* Hero */}
       <div className="card overflow-hidden">
         <div className="h-40 bg-gradient-to-br from-copper/25 to-terracotta/20 relative flex items-center justify-center">
-          {view.imageUrl ? (
-            <img src={view.imageUrl} alt={view.name ?? ''} className="w-full h-full object-cover" />
+          {heroImage ? (
+            <img src={heroImage} alt={heroName} className="w-full h-full object-cover" />
           ) : <Building2 size={48} className="text-copper/40" />}
         </div>
         <div className="p-4 flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-2xl font-bold text-charcoal">{view.name ?? `#${view.id.slice(0, 8)}`}</h1>
-              {view.status && <Badge label={isAr ? view.status.label_ar : view.status.label_en} color={view.status.color ?? undefined} />}
-              {view.construction && <Badge label={isAr ? view.construction.label_ar : view.construction.label_en} color={view.construction.color ?? '#C09B5F'} />}
-              {view.isTargeted && <Badge label={isAr ? 'مستهدف' : 'Targeted'} color="#8E4E3A" />}
+              {isPortfolio && <Badge label={isAr ? 'محفظتنا' : 'Portfolio'} color="#B8734F" />}
+              <h1 className="text-2xl font-bold text-charcoal">{heroName}</h1>
+              {portfolioStatus && <Badge label={isAr ? portfolioStatus.label_ar : portfolioStatus.label_en} color={portfolioStatus.color ?? undefined} />}
+              {view?.status && <Badge label={isAr ? view.status.label_ar : view.status.label_en} color={view.status.color ?? undefined} />}
+              {view?.construction && <Badge label={isAr ? view.construction.label_ar : view.construction.label_en} color={view.construction.color ?? '#C09B5F'} />}
+              {view?.isTargeted && <Badge label={isAr ? 'مستهدف' : 'Targeted'} color="#8E4E3A" />}
             </div>
             <div className="text-sm text-charcoal/60 mt-1 flex items-center gap-1">
-              <MapPin size={14} /> {[view.district, view.city].filter(Boolean).join('، ') || dash}
+              <MapPin size={14} /> {[view?.district, view?.city].filter(Boolean).join('، ') || dash}
             </div>
-            {view.developer && <div className="text-sm text-charcoal/40 mt-0.5">{view.developer}</div>}
+            {view?.developer && <div className="text-sm text-charcoal/40 mt-0.5">{view.developer}</div>}
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="ghost" onClick={() => navigate(`/model/all_projects/${view.id}?generic=1`)}>
+            {isPortfolio && view && (
+              <Button variant="ghost" onClick={() => navigate(`/model/all_projects/${view.id}`)}>
+                <Building2 size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'المشروع الرئيسي' : 'Master project'}
+              </Button>
+            )}
+            <Button variant="ghost" onClick={() => navigate(editHref)}>
               <Pencil size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'تحرير' : 'Edit'}
             </Button>
             <Button variant="secondary" onClick={() => setMatchOpen(true)}>
               <Search size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'مطابقة عميل' : 'Match client'}
             </Button>
-            <Button variant="primary" onClick={() => setTab('ai')}>
+            <Button variant="primary" onClick={() => setTab('ai')} disabled={!view}>
               <Sparkles size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'ملخص بيع' : 'Sales brief'}
             </Button>
           </div>
@@ -132,15 +178,17 @@ export default function ProjectDetailPage() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2">
-        <Kpi label={isAr ? 'الوحدات' : 'Units'} value={view.unitCount?.toLocaleString() ?? '—'} />
-        <Kpi label={isAr ? 'متاحة' : 'Available'} value={view.availableUnits?.toLocaleString() ?? '—'} tone="#10B981" />
-        <Kpi label={isAr ? 'مباعة' : 'Sold'} value={view.soldUnits?.toLocaleString() ?? '—'} tone="#8B5CF6" />
-        <Kpi label={isAr ? 'محجوزة' : 'Reserved'} value={view.reservedUnits?.toLocaleString() ?? '—'} tone="#3B82F6" />
-        <Kpi label={isAr ? 'نطاق السعر' : 'Price range'} value={formatPriceRange(view.priceRange, isAr) ?? '—'} />
-        <Kpi label={isAr ? 'نطاق المساحة' : 'Area range'} value={formatRange(view.areaRange, 'm²') ?? '—'} />
-        <Kpi label={isAr ? 'متوسط سعر المتر' : 'Avg /m²'} value={avgPerM2(view, isAr)} />
-      </div>
+      {view && (
+        <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-2">
+          <Kpi label={isAr ? 'الوحدات' : 'Units'} value={view.unitCount?.toLocaleString() ?? '—'} />
+          <Kpi label={isAr ? 'متاحة' : 'Available'} value={view.availableUnits?.toLocaleString() ?? '—'} tone="#10B981" />
+          <Kpi label={isAr ? 'مباعة' : 'Sold'} value={view.soldUnits?.toLocaleString() ?? '—'} tone="#8B5CF6" />
+          <Kpi label={isAr ? 'محجوزة' : 'Reserved'} value={view.reservedUnits?.toLocaleString() ?? '—'} tone="#3B82F6" />
+          <Kpi label={isAr ? 'نطاق السعر' : 'Price range'} value={formatPriceRange(view.priceRange, isAr) ?? '—'} />
+          <Kpi label={isAr ? 'نطاق المساحة' : 'Area range'} value={formatRange(view.areaRange, 'm²') ?? '—'} />
+          <Kpi label={isAr ? 'متوسط سعر المتر' : 'Avg /m²'} value={avgPerM2(view, isAr)} />
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-sand/50 overflow-x-auto">
@@ -157,25 +205,38 @@ export default function ProjectDetailPage() {
 
       {/* Tab content */}
       <div>
-        {tab === 'overview' && <OverviewTab view={view} record={record} model={model} isAr={isAr} />}
-        {tab === 'units' && <UnitsInventory projectId={view.id} projectName={view.name} isAr={isAr} />}
-        {tab === 'location' && <LocationTab view={view} record={record} model={model} isAr={isAr} />}
-        {tab === 'media' && <MediaTab view={view} record={record} model={model} isAr={isAr} />}
+        {tab === 'overview' && (view && record ? <OverviewTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'units' && (view ? <UnitsInventory projectId={view.id} projectName={view.name} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'location' && (view && record ? <LocationTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'media' && (view && record ? <MediaTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
         {tab === 'sales' && (
-          <SalesNotesTab
-            record={record} model={model} isAr={isAr}
-            onSave={async (data) => {
-              const res = await saveRecord({ ...record, data: { ...record.data, ...data } });
-              addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
-            }}
-          />
+          isPortfolio && portfolioRecord && ourModel ? (
+            <PortfolioNotesTab
+              record={portfolioRecord} model={ourModel} isAr={isAr}
+              onSave={async (data) => {
+                const res = await saveRecord({ ...portfolioRecord, data: { ...portfolioRecord.data, ...data } });
+                addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
+              }}
+            />
+          ) : record ? (
+            <SalesNotesTab
+              record={record} model={model} isAr={isAr}
+              onSave={async (data) => {
+                const res = await saveRecord({ ...record, data: { ...record.data, ...data } });
+                addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
+              }}
+            />
+          ) : <NoMaster />
         )}
         {tab === 'ai' && (
+          view ? (
           <div className="grid md:grid-cols-2 gap-3">
             <AiAction isAr={isAr} label={isAr ? 'تنظيف هذا المشروع' : 'Clean this project'} run={() =>
               callProjectAi('clean', { facts: projectFacts(view, isAr), detected_issues: detectIssues(view, isAr) }, isAr ? 'ar' : 'en')} />
             <AiAction isAr={isAr} label={isAr ? 'إنشاء ملخص بيع' : 'Generate sales brief'} run={() =>
-              callProjectAi('brief', projectFacts(view, isAr), isAr ? 'ar' : 'en')} />
+              callProjectAi('brief', isPortfolio
+                ? { project: projectFacts(view, isAr), existing_pitch: asString(portfolioRecord?.data?.sales_pitch), objection_handling: asString(portfolioRecord?.data?.objection_handling_notes) }
+                : projectFacts(view, isAr), isAr ? 'ar' : 'en')} />
             <AiAction isAr={isAr} label={isAr ? 'رسالة واتساب للمشروع' : 'WhatsApp message'} run={() =>
               callProjectAi('whatsapp', { project: projectFacts(view, isAr) }, isAr ? 'ar' : 'en')} />
             <AiAction isAr={isAr} label={isAr ? 'تدقيق جودة البيانات' : 'Data quality audit'} run={() => {
@@ -187,15 +248,16 @@ export default function ProjectDetailPage() {
                 <Search size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'مطابقة طلب عميل (محرك حتمي)' : 'Match client request (deterministic engine)'}
               </Button>
             </div>
-            {asString(record.data.ai_audit_notes) && (
+            {record && asString(record.data.ai_audit_notes) && (
               <div className="md:col-span-2 card p-3">
                 <div className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'ملاحظات تدقيق سابقة' : 'Previous AI audit notes'}</div>
                 <p className="text-sm text-charcoal/80 whitespace-pre-wrap">{asString(record.data.ai_audit_notes)}</p>
               </div>
             )}
           </div>
+          ) : <NoMaster />
         )}
-        {tab === 'quality' && <DataQualityTab view={view} record={record} isAr={isAr} />}
+        {tab === 'quality' && (view && record ? <DataQualityTab view={view} record={record} isAr={isAr} /> : <NoMaster />)}
       </div>
 
       <MatchClientModal open={matchOpen} onClose={() => setMatchOpen(false)} isAr={isAr} />
@@ -368,6 +430,76 @@ function SalesNotesTab({ record, model, isAr, onSave }: { record: import('@/type
       <label className="text-sm block"><span className="text-charcoal/60 block mb-1">{isAr ? 'التعامل مع الاعتراضات' : 'Objection handling'}</span>
         <textarea className={sel} rows={3} value={objection} onChange={(e) => setObjection(e.target.value)} />
       </label>
+      <Button variant="primary" onClick={save} disabled={busy}>{busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ' : 'Save')}</Button>
+    </div>
+  );
+}
+
+function PortfolioNotesTab({ record, model, isAr, onSave }: { record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean; onSave: (data: Record<string, unknown>) => Promise<void> }) {
+  const statusField = fieldByCandidates(model, ['portfolio_status']);
+  const priorityField = fieldByCandidates(model, ['sales_priority']);
+  const exclusiveField = fieldByCandidates(model, ['exclusive_status']);
+  const [status, setStatus] = useState(asString(record.data.portfolio_status) ?? '');
+  const [priority, setPriority] = useState(asString(record.data.sales_priority) ?? '');
+  const [exclusive, setExclusive] = useState(asString(record.data.exclusive_status) ?? '');
+  const [order, setOrder] = useState(asFiniteNumber(record.data.website_display_order)?.toString() ?? '');
+  const [showOnWebsite, setShowOnWebsite] = useState(record.data.show_on_website === true);
+  const [pitch, setPitch] = useState(asString(record.data.sales_pitch) ?? '');
+  const [objection, setObjection] = useState(asString(record.data.objection_handling_notes) ?? '');
+  const [commission, setCommission] = useState(asString(record.data.commission_notes) ?? '');
+  const [notes, setNotes] = useState(asString(record.data.portfolio_notes) ?? '');
+  const [busy, setBusy] = useState(false);
+  const sel = 'form-input text-sm';
+  const save = async () => {
+    setBusy(true);
+    try {
+      await onSave({
+        portfolio_status: status || null,
+        sales_priority: priority || null,
+        exclusive_status: exclusive || null,
+        website_display_order: order === '' ? null : Number(order),
+        show_on_website: showOnWebsite,
+        sales_pitch: pitch || null,
+        objection_handling_notes: objection || null,
+        commission_notes: commission || null,
+        portfolio_notes: notes || null,
+      });
+    } finally { setBusy(false); }
+  };
+  const drop = (label: string, val: string, set: (v: string) => void, f: import('@/types').ModelField | undefined) => (
+    <label className="text-sm"><span className="text-charcoal/60 block mb-1">{label}</span>
+      <select className={sel} value={val} onChange={(e) => set(e.target.value)}>
+        <option value="">—</option>
+        {(f?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
+      </select>
+    </label>
+  );
+  const area = (label: string, val: string, set: (v: string) => void) => (
+    <label className="text-sm block"><span className="text-charcoal/60 block mb-1">{label}</span>
+      <textarea className={sel} rows={3} value={val} onChange={(e) => set(e.target.value)} />
+    </label>
+  );
+  return (
+    <div className="card p-4 max-w-2xl space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        {drop(isAr ? 'حالة المحفظة' : 'Portfolio status', status, setStatus, statusField)}
+        {drop(isAr ? 'أولوية المبيعات' : 'Sales priority', priority, setPriority, priorityField)}
+        {drop(isAr ? 'حالة الحصرية' : 'Exclusive status', exclusive, setExclusive, exclusiveField)}
+      </div>
+      <div className="grid grid-cols-2 gap-3 items-end">
+        <label className="text-sm"><span className="text-charcoal/60 block mb-1">{isAr ? 'ترتيب العرض على الموقع' : 'Website display order'}</span>
+          <input className={sel} type="number" value={order} onChange={(e) => setOrder(e.target.value)} />
+        </label>
+        <label className="flex items-center gap-2 text-sm text-charcoal/70 pb-2">
+          <input type="checkbox" checked={showOnWebsite} onChange={(e) => setShowOnWebsite(e.target.checked)} className="rounded border-sand text-copper focus:ring-copper/30" />
+          {showOnWebsite ? <Eye size={14} /> : <EyeOff size={14} />} {isAr ? 'عرض على الموقع' : 'Show on website'}
+        </label>
+      </div>
+      {area(isAr ? 'عرض البيع' : 'Sales pitch', pitch, setPitch)}
+      {area(isAr ? 'التعامل مع الاعتراضات' : 'Objection handling', objection, setObjection)}
+      {area(isAr ? 'ملاحظات العمولة' : 'Commission notes', commission, setCommission)}
+      {area(isAr ? 'ملاحظات المحفظة' : 'Portfolio notes', notes, setNotes)}
+      <p className="text-xs text-charcoal/40">{isAr ? 'صورة الغلاف البديلة تُحرَّر من النموذج الكامل.' : 'Hero image override is edited in the full form.'}</p>
       <Button variant="primary" onClick={save} disabled={busy}>{busy ? (isAr ? 'جارٍ الحفظ…' : 'Saving…') : (isAr ? 'حفظ' : 'Save')}</Button>
     </div>
   );

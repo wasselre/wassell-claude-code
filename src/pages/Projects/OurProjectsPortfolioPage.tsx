@@ -99,14 +99,14 @@ export default function OurProjectsPortfolioPage() {
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع في المحفظة بعد.' : 'No portfolio projects yet.'}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {items.map((item) => <PortfolioCard key={item.ourId} item={item} isAr={isAr} onOpenLinked={() => item.linkedId && navigate(`/model/all_projects/${item.linkedId}`)} onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)} />)}
+          {items.map((item) => <PortfolioCard key={item.ourId} item={item} isAr={isAr} onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`)} onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)} />)}
         </div>
       )}
     </div>
   );
 }
 
-function PortfolioCard({ item, isAr, onOpenLinked, onEdit }: { item: PortfolioItem; isAr: boolean; onOpenLinked: () => void; onEdit: () => void }) {
+function PortfolioCard({ item, isAr, onOpenDetail, onEdit }: { item: PortfolioItem; isAr: boolean; onOpenDetail: () => void; onEdit: () => void }) {
   const [pitchBusy, setPitchBusy] = useState(false);
   const [pitch, setPitch] = useState<string | null>(null);
   const [pitchErr, setPitchErr] = useState<string | null>(null);
@@ -133,7 +133,7 @@ function PortfolioCard({ item, isAr, onOpenLinked, onEdit }: { item: PortfolioIt
 
   return (
     <div className="card overflow-hidden flex flex-col">
-      <div className="h-32 bg-gradient-to-br from-copper/25 to-terracotta/20 relative flex items-center justify-center">
+      <div className="h-32 bg-gradient-to-br from-copper/25 to-terracotta/20 relative flex items-center justify-center cursor-pointer" onClick={onOpenDetail} title={isAr ? 'فتح التفاصيل' : 'Open details'}>
         {heroUrl ? <img src={heroUrl} alt={name} className="w-full h-full object-cover" loading="lazy" /> : <Building2 size={32} className="text-copper/40" />}
         <div className="absolute top-2 start-2 flex gap-1.5">
           {item.status && <Badge label={isAr ? item.status.label_ar : item.status.label_en} color={item.status.color ?? undefined} />}
@@ -146,7 +146,7 @@ function PortfolioCard({ item, isAr, onOpenLinked, onEdit }: { item: PortfolioIt
         )}
       </div>
       <div className="p-3 flex-1 flex flex-col">
-        <div className="font-bold text-charcoal truncate">{name}</div>
+        <div className="font-bold text-charcoal truncate cursor-pointer hover:text-copper" onClick={onOpenDetail}>{name}</div>
         <div className="text-sm text-charcoal/50 flex items-center gap-1 mt-0.5">
           <MapPin size={13} /> <span className="truncate">{[linked?.district, linked?.city].filter(Boolean).join('، ') || dash}</span>
         </div>
@@ -163,8 +163,8 @@ function PortfolioCard({ item, isAr, onOpenLinked, onEdit }: { item: PortfolioIt
         {pitch && <div className="mt-2 bg-cream rounded-lg p-2 text-xs text-charcoal whitespace-pre-wrap border border-sand/50 max-h-40 overflow-y-auto">{pitch}</div>}
 
         <div className="mt-3 pt-2 border-t border-sand/40 flex gap-2">
-          <Button variant="secondary" className="flex-1 !py-1.5 text-sm" onClick={onOpenLinked} disabled={!item.linkedId}>
-            <ExternalLink size={13} className="inline -mt-0.5 me-1" /> {isAr ? 'المشروع' : 'Project'}
+          <Button variant="secondary" className="flex-1 !py-1.5 text-sm" onClick={onOpenDetail}>
+            <ExternalLink size={13} className="inline -mt-0.5 me-1" /> {isAr ? 'التفاصيل' : 'Details'}
           </Button>
           <Button variant="primary" className="flex-1 !py-1.5 text-sm" onClick={genPitch} disabled={pitchBusy || !linked}>
             <Sparkles size={13} className="inline -mt-0.5 me-1" /> {pitchBusy ? '…' : (isAr ? 'عرض بيع' : 'Pitch')}
