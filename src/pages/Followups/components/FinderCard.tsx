@@ -160,21 +160,19 @@ export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, a
           </div>
         )}
 
-        {/* Actions — Details always; Add-to-client only for catalog projects.
-            A market listing is an external ad (not an all_projects record), so it
-            can't be added to the client's preferred_projects lookup → Details only. */}
+        {/* Actions — Details + Add-to-client for every source. The modal routes the
+            add by source: a market listing → clients.preferred_market_listings; a
+            project → clients.preferred_projects (so no cross-model broken lookup). */}
         <div className="flex flex-wrap gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
-          {item.source !== 'market_listings' && (
-            <ActionBtn
-              icon={addState === 'added' ? <Check size={12} /> : <Plus size={12} />}
-              label={addState === 'added' ? L('أُضيف', 'Added') : addState === 'saving' ? L('…', '…') : L('أضف للعميل', 'Add to client')}
-              onClick={() => addState === 'idle' && onAddToClient(item)}
-              active={addState === 'added'}
-              disabled={addState !== 'idle'}
-              primary
-            />
-          )}
+          <ActionBtn
+            icon={addState === 'added' ? <Check size={12} /> : <Plus size={12} />}
+            label={addState === 'added' ? L('أُضيف', 'Added') : addState === 'saving' ? L('…', '…') : L('أضف للعميل', 'Add to client')}
+            onClick={() => addState === 'idle' && onAddToClient(item)}
+            active={addState === 'added'}
+            disabled={addState !== 'idle'}
+            primary
+          />
         </div>
       </div>
     </div>
