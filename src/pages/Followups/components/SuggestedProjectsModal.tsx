@@ -22,9 +22,11 @@ import FinderCard from './FinderCard';
  *   Top:  current preferences + missing-preference warnings
  *   Body: 4 group tabs → ranked, boundary-verified cards
  *
- * Default sources are our_projects + all_projects only — market_listings is NOT
- * used here (opt-in only; its area scan is slow for dense districts). No chat
- * pane, no compare, no WhatsApp, no next-action, no task creation.
+ * Sources: our_projects + all_projects + market_listings (all three) so the
+ * salesperson sees the full picture; each card is source-labelled and non-portfolio
+ * sources carry a "verify before offering" banner. The deterministic per-card
+ * explanation is localized (locale = current UI language). No chat pane, no
+ * compare, no WhatsApp, no next-action, no task creation.
  */
 
 interface Props {
@@ -102,7 +104,16 @@ export default function SuggestedProjectsModal({
     setLoading(true);
     setError(null);
     fetchProjectFinder(
-      { requirements, clientId: clientRec?.id ?? null, followupId, perGroup: 8 },
+      {
+        requirements,
+        clientId: clientRec?.id ?? null,
+        followupId,
+        perGroup: 8,
+        // Show the full picture: our portfolio + the broad catalog + market ads.
+        // Non-portfolio sources are labelled + carry a "verify before offering" banner.
+        sources: ['our_projects', 'all_projects', 'market_listings'],
+        locale: isAr ? 'ar' : 'en',
+      },
       controller.signal,
     )
       .then((r) => {
@@ -126,7 +137,10 @@ export default function SuggestedProjectsModal({
   }, [onClose]);
 
   function onOpenDetails(item: FinderMatch) {
-    window.open(`/model/all_projects/${item.project_id}`, '_blank', 'noopener');
+    // our_projects + all_projects ids are all_projects record ids; market_listings
+    // items carry a market_listings record id.
+    const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
+    window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
   }
   async function onAddToClient(item: FinderMatch) {
     if (!clientRec?.id) { addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error'); return; }

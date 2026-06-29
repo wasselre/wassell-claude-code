@@ -47,6 +47,7 @@ interface FinderBody {
   parse?: boolean;
   explain?: boolean;
   sources?: string[];
+  locale?: string;
   client_id?: string;
   followup_id?: string;
   perGroup?: number;
@@ -136,6 +137,10 @@ export default async function handler(req: Request): Promise<Response> {
     const sources = (strArr(body.sources)?.filter((s): s is MatchSource => (VALID_SOURCES as string[]).includes(s)) ??
       DEFAULT_FINDER_SOURCES) as MatchSource[];
 
+    // Language for the deterministic per-card explanation string (default Arabic —
+    // this is an Arabic-first app; the caller passes 'en' for the English UI).
+    const locale: 'ar' | 'en' = body.locale === 'en' ? 'en' : 'ar';
+
     // Short-circuit: no matchable preference → ask for preferences (no misleading
     // "everything is a strong match"). No audit row — nothing was recommended.
     if (!hasAnyCriteria(requirements)) {
@@ -158,6 +163,7 @@ export default async function handler(req: Request): Promise<Response> {
     const finder = await findMatchingProjects(supabase, requirements, {
       perGroup: num(body.perGroup) ?? 8,
       sources,
+      locale,
     });
     if (!finder.ok) {
       console.error('[project-finder] engine failed:', finder.error);

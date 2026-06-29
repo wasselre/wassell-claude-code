@@ -303,6 +303,20 @@ describe('finder grouping helpers', () => {
     expect(e).toMatch(/4.2 km/);
     expect(e).toMatch(/12 unit/);
   });
+
+  it('buildExplanation localizes to Arabic when locale="ar"', () => {
+    const e = buildExplanation({
+      match_type: 'nearby', match_band: 'good', source: 'market_listings', distance_km: 4.7,
+      geo_confidence: 'high', facts: { district: 'الندى', available_units: 161, price_range: { min: 819000, max: 2179000 } },
+      data_gaps: [], mismatch_warnings: [],
+    }, 'ar');
+    expect(e).toContain('يبعد حوالي 4.7 كم');   // distance phrase in Arabic
+    expect(e).toContain('الندى');                // grounded district
+    expect(e).toContain('161 وحدة متاحة');       // availability in Arabic
+    expect(e).toContain('السعر 819,000–2,179,000 ر.س'); // price with western digits
+    expect(e).toContain('إعلانات السوق الخارجية'); // Arabic source label
+    expect(e).not.toMatch(/[A-Za-z]/);            // no English leaked through
+  });
 });
 
 describe('coerceParsedRequirements (LLM parse output is sanitised)', () => {

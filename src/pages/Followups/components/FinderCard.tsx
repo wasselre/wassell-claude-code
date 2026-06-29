@@ -72,7 +72,11 @@ export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, a
       {requiresVerify && (
         <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-          <span>{L('من قاعدة «كل المشاريع» (غير موثّقة) — تحقّق قبل العرض.', 'From the All Projects database (unverified) — verify before offering.')}</span>
+          <span>
+            {item.source === 'market_listings'
+              ? L('من إعلانات السوق الخارجية (غير موثّقة) — تحقّق قبل العرض.', 'From external market listings (unverified) — verify before offering.')
+              : L('من قاعدة «كل المشاريع» (غير موثّقة) — تحقّق قبل العرض.', 'From the All Projects database (unverified) — verify before offering.')}
+          </span>
         </div>
       )}
 
@@ -156,17 +160,21 @@ export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, a
           </div>
         )}
 
-        {/* Actions — Details + Add-to-client ONLY */}
+        {/* Actions — Details always; Add-to-client only for catalog projects.
+            A market listing is an external ad (not an all_projects record), so it
+            can't be added to the client's preferred_projects lookup → Details only. */}
         <div className="flex flex-wrap gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
-          <ActionBtn
-            icon={addState === 'added' ? <Check size={12} /> : <Plus size={12} />}
-            label={addState === 'added' ? L('أُضيف', 'Added') : addState === 'saving' ? L('…', '…') : L('أضف للعميل', 'Add to client')}
-            onClick={() => addState === 'idle' && onAddToClient(item)}
-            active={addState === 'added'}
-            disabled={addState !== 'idle'}
-            primary
-          />
+          {item.source !== 'market_listings' && (
+            <ActionBtn
+              icon={addState === 'added' ? <Check size={12} /> : <Plus size={12} />}
+              label={addState === 'added' ? L('أُضيف', 'Added') : addState === 'saving' ? L('…', '…') : L('أضف للعميل', 'Add to client')}
+              onClick={() => addState === 'idle' && onAddToClient(item)}
+              active={addState === 'added'}
+              disabled={addState !== 'idle'}
+              primary
+            />
+          )}
         </div>
       </div>
     </div>

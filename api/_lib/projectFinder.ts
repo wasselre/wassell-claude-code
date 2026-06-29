@@ -90,6 +90,8 @@ export interface FinderOptions {
    *  boundary-verified catalog). `market_listings` is OPT-IN — it's external/
    *  unverified and its area scan can be slow for ultra-dense districts. */
   sources?: MatchSource[];
+  /** Language for the deterministic explanation string. Default 'en'. */
+  locale?: 'ar' | 'en';
 }
 
 /** Default finder sources — the verified project catalog, market opt-in. */
@@ -147,69 +149,104 @@ export function finderGroupFor(
   }
 }
 
-const SOURCE_LABEL: Record<MatchSource, string> = {
-  our_projects: 'our portfolio',
-  all_projects: 'the broad projects database (verify before offering)',
-  market_listings: 'external market listings (verify before offering)',
+const SOURCE_LABEL: Record<'ar' | 'en', Record<MatchSource, string>> = {
+  en: {
+    our_projects: 'our portfolio',
+    all_projects: 'the broad projects database (verify before offering)',
+    market_listings: 'external market listings (verify before offering)',
+  },
+  ar: {
+    our_projects: 'مشاريعنا',
+    all_projects: 'قاعدة كل المشاريع (تحقّق قبل العرض)',
+    market_listings: 'إعلانات السوق الخارجية (تحقّق قبل العرض)',
+  },
 };
 
+/** Western-digit number formatting, used for both locales (matches FinderCard). */
+const fmtN = (n: number) => Math.round(n).toLocaleString('en-US');
+
 /** Deterministic, fact-grounded explanation. NO invention — only what the scorer
- *  verified. The LLM may later REPLACE this string, but never the ranking. */
-export function buildExplanation(m: {
-  match_type: FinderMatchType;
-  match_band: FinderBand;
-  source: MatchSource;
-  distance_km: number | null;
-  geo_confidence: string | null;
-  facts: Record<string, unknown>;
-  data_gaps: string[];
-  mismatch_warnings: string[];
-}): string {
+ *  verified. The LLM may later REPLACE this string, but never the ranking.
+ *  Bilingual: `locale` defaults to 'en' so existing callers/tests are unchanged. */
+export function buildExplanation(
+  m: {
+    match_type: FinderMatchType;
+    match_band: FinderBand;
+    source: MatchSource;
+    distance_km: number | null;
+    geo_confidence: string | null;
+    facts: Record<string, unknown>;
+    data_gaps: string[];
+    mismatch_warnings: string[];
+  },
+  locale: 'ar' | 'en' = 'en',
+): string {
+  const ar = locale === 'ar';
   const parts: string[] = [];
   const district = typeof m.facts.district === 'string' ? m.facts.district : null;
   const city = typeof m.facts.city === 'string' ? m.facts.city : null;
 
   switch (m.match_type) {
     case 'exact':
-      parts.push(
-        district
-          ? `In the requested district (${district})${m.geo_confidence === 'high' ? ', coordinate-verified' : ''}.`
-          : 'In the requested location.',
-      );
+      if (ar) {
+        parts.push(
+          district
+            ? `في الحي المطلوب (${district})${m.geo_confidence === 'high' ? ' — موثّق بالإحداثيات' : ''}.`
+            : 'في الموقع المطلوب.',
+        );
+      } else {
+        parts.push(
+          district
+            ? `In the requested district (${district})${m.geo_confidence === 'high' ? ', coordinate-verified' : ''}.`
+            : 'In the requested location.',
+        );
+      }
       break;
     case 'nearby':
-      parts.push(
-        m.distance_km != null
-          ? `About ${m.distance_km} km from the requested district${district ? ` (in ${district})` : ''}.`
-          : 'A nearby alternative.',
-      );
+      if (ar) {
+        parts.push(
+          m.distance_km != null
+            ? `يبعد حوالي ${m.distance_km} كم عن الحي المطلوب${district ? ` (في ${district})` : ''}.`
+            : 'بديل قريب.',
+        );
+      } else {
+        parts.push(
+          m.distance_km != null
+            ? `About ${m.distance_km} km from the requested district${district ? ` (in ${district})` : ''}.`
+            : 'A nearby alternative.',
+        );
+      }
       break;
     case 'same_city':
-      parts.push(city ? `In the same city (${city}), different district.` : 'In the same city.');
+      if (ar) parts.push(city ? `في نفس المدينة (${city})، حي مختلف.` : 'في نفس المدينة.');
+      else parts.push(city ? `In the same city (${city}), different district.` : 'In the same city.');
       break;
     default:
-      parts.push('Broader-search result — outside the requested area.');
+      parts.push(ar ? 'نتيجة بحث موسّع — خارج المنطقة المطلوبة.' : 'Broader-search result — outside the requested area.');
   }
 
   const price = m.facts.price_range as { min?: number; max?: number } | undefined;
   if (price && (asNum(price.min) != null || asNum(price.max) != null)) {
     const lo = asNum(price.min);
     const hi = asNum(price.max);
-    if (lo != null && hi != null && lo !== hi) parts.push(`Price ${Math.round(lo).toLocaleString()}–${Math.round(hi).toLocaleString()} SAR.`);
-    else parts.push(`Price ~${Math.round((lo ?? hi)!).toLocaleString()} SAR.`);
+    const cur = ar ? 'ر.س' : 'SAR';
+    if (lo != null && hi != null && lo !== hi) parts.push(ar ? `السعر ${fmtN(lo)}–${fmtN(hi)} ${cur}.` : `Price ${fmtN(lo)}–${fmtN(hi)} ${cur}.`);
+    else parts.push(ar ? `السعر ~${fmtN((lo ?? hi)!)} ${cur}.` : `Price ~${fmtN((lo ?? hi)!)} ${cur}.`);
   }
   const avail = asNum(m.facts.available_units);
-  if (avail != null && avail > 0) parts.push(`${avail} unit(s) available.`);
+  if (avail != null && avail > 0) parts.push(ar ? `${avail} وحدة متاحة.` : `${avail} unit(s) available.`);
 
-  if (m.match_band === 'weak') parts.push('Weak fit — review carefully.');
-  if (m.source !== 'our_projects') parts.push(`Source: ${SOURCE_LABEL[m.source]}.`);
+  if (m.match_band === 'weak') parts.push(ar ? 'ملاءمة ضعيفة — يرجى المراجعة بعناية.' : 'Weak fit — review carefully.');
+  if (m.source !== 'our_projects') parts.push(ar ? `المصدر: ${SOURCE_LABEL.ar[m.source]}.` : `Source: ${SOURCE_LABEL.en[m.source]}.`);
   if (m.mismatch_warnings.length) parts.push(m.mismatch_warnings[0]!);
-  if (m.data_gaps.includes('missing_project_coordinates')) parts.push('No map pin — district not coordinate-verified.');
+  if (m.data_gaps.includes('missing_project_coordinates')) {
+    parts.push(ar ? 'لا يوجد موقع على الخريطة — الحي غير موثّق بالإحداثيات.' : 'No map pin — district not coordinate-verified.');
+  }
 
   return parts.join(' ');
 }
 
-function toFinderMatch(item: MatchResultItem, districtRequested: boolean): FinderMatch {
+function toFinderMatch(item: MatchResultItem, districtRequested: boolean, locale: 'ar' | 'en'): FinderMatch {
   const { group, match_type } = finderGroupFor(item, districtRequested);
   const band = finderBand(item);
   const mismatch = item.mismatch_warnings ?? [];
@@ -223,7 +260,7 @@ function toFinderMatch(item: MatchResultItem, districtRequested: boolean): Finde
     facts: item.facts,
     data_gaps: item.data_gaps,
     mismatch_warnings: mismatch,
-  });
+  }, locale);
   return {
     project_id: item.project_id,
     project_name: item.project_name,
@@ -255,6 +292,7 @@ export function groupForFinder(
 ): FinderResult {
   const perGroup = opts.perGroup ?? 8;
   const sources = opts.sources ?? DEFAULT_FINDER_SOURCES;
+  const locale = opts.locale ?? 'en';
   const districtRequested = !!(req.district || (req.districts && req.districts.length));
 
   const pool: MatchResultItem[] = [];
@@ -270,7 +308,7 @@ export function groupForFinder(
   };
 
   for (const item of pool) {
-    const m = toFinderMatch(item, districtRequested);
+    const m = toFinderMatch(item, districtRequested, locale);
     groups[m.group].push(m);
   }
 

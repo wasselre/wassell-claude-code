@@ -5,9 +5,9 @@
  * sends explain:false + parse:false, so selection, scoring, ranking, AND the
  * per-card explanation are all deterministic server code.
  *
- * Defaults: our_projects + all_projects only (the boundary-verified catalog).
- * market_listings is intentionally NOT included (opt-in only; its area scan is
- * slow for dense districts — a separate, deferred phase).
+ * The Follow-up flow opts into all three sources (our_projects + all_projects +
+ * market_listings) so salespeople see the full picture; each card is labelled by
+ * source and unverified sources carry a "verify before offering" banner.
  *
  * Types MIRROR api/_lib/projectFinder.ts — keep them in sync.
  */
@@ -82,8 +82,10 @@ export interface FetchFinderArgs {
   followupId?: string | null;
   perGroup?: number;
   /** Source set. Omit for the default (our_projects + all_projects). market_listings
-   *  is opt-in only and intentionally NOT used by the Follow-up flow. */
+   *  is opt-in (external/unverified). The Follow-up flow now opts into all three. */
   sources?: FinderSource[];
+  /** Language for the deterministic per-card explanation string. */
+  locale?: 'ar' | 'en';
 }
 
 async function authHeader(): Promise<Record<string, string>> {
@@ -106,6 +108,7 @@ export async function fetchProjectFinder(
       followup_id: args.followupId ?? undefined,
       perGroup: args.perGroup,
       ...(args.sources ? { sources: args.sources } : {}),
+      ...(args.locale ? { locale: args.locale } : {}),
       // Deterministic-only from the Follow-up flow: no LLM parse, no LLM explanation.
       parse: false,
       explain: false,
