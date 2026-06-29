@@ -20,7 +20,11 @@ import type { AppModel } from '@/types';
 /** Mirror of api/_lib/matchAgent.MatchRequirements (the fields the SPA fills). */
 export interface MatchRequirementsInput {
   city?: string;
+  /** Primary district name (= districts[0]); kept for single-district code paths. */
   district?: string;
+  /** ALL requested district names — the engine resolves each and treats a project
+   *  in ANY of them as an exact match (our_projects + all_projects + market). */
+  districts?: string[];
   property_type?: string;
   budget_min?: number;
   budget_max?: number;
@@ -58,6 +62,13 @@ const firstString = (v: unknown): string | undefined => {
   return undefined;
 };
 
+/** Every non-empty string id in a value (single string or array of ids). */
+const allStrings = (v: unknown): string[] => {
+  if (typeof v === 'string') return v.trim() ? [v.trim()] : [];
+  if (Array.isArray(v)) return v.filter((x): x is string => typeof x === 'string' && x.trim() !== '').map((x) => x.trim());
+  return [];
+};
+
 const rangeBounds = (v: unknown): { min?: number; max?: number } => {
   if (!v || typeof v !== 'object') return {};
   const o = v as Record<string, unknown>;
@@ -82,13 +93,23 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
   const out: MatchRequirementsInput = {};
 
   // ── Geography: the `location` cascade compound { region:[], city:[], district:[] }.
-  //    Take the first district/city id and resolve it to a name. ──
+  //    Collect ALL requested district ids — from the location cascade's district
+  //    array AND the separate `preferred_districts` multi-lookup — resolve each to a
+  //    name, dedupe, and send them all. The engine treats a project in ANY of them as
+  //    an exact match. `district` stays = districts[0] for single-district paths. ──
   const locVal = pick('location');
   const loc = locVal && typeof locVal === 'object' && !Array.isArray(locVal)
     ? (locVal as Record<string, unknown>) : {};
-  const districtLookupId = firstString(loc.district);
-  const districtName = districtLookupId ? resolveLookupName?.(districtLookupId, 'districts') ?? undefined : undefined;
-  if (districtName) out.district = districtName;
+  const districtIds = [...new Set([...allStrings(loc.district), ...allStrings(pick('preferred_districts'))])];
+  const districtNames = [...new Set(
+    districtIds
+      .map((id) => resolveLookupName?.(id, 'districts') ?? undefined)
+      .filter((n): n is string => !!n),
+  )];
+  if (districtNames.length) {
+    out.districts = districtNames;
+    out.district = districtNames[0];
+  }
 
   const cityLookupId = firstString(loc.city);
   const cityName = cityLookupId ? resolveLookupName?.(cityLookupId, 'cities') ?? undefined : undefined;
