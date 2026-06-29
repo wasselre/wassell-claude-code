@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, FileText, Search } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -74,14 +74,42 @@ export default function OurProjectsPortfolioPage() {
     });
   }, [ourModel, allModel, records, models, projectField, statusField, priorityField, exclusiveField]);
 
+  // ── simple filters ──────────────────────────────────────────────────────────
+  const [search, setSearch] = useState('');
+  const [city, setCity] = useState('');
+  const [developer, setDeveloper] = useState('');
+  const [pstatus, setPstatus] = useState('');
+  const [gap, setGap] = useState<'all' | 'our_brochure' | 'dev_brochure' | 'location'>('all');
+
+  const cities = useMemo(() => [...new Set(items.map((i) => i.linked?.city).filter((x): x is string => !!x))].sort(), [items]);
+  const developers = useMemo(() => [...new Set(items.map((i) => i.linked?.developer).filter((x): x is string => !!x))].sort(), [items]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return items.filter((i) => {
+      if (q) {
+        const hay = `${i.linked?.name ?? ''} ${i.linked?.developer ?? ''} ${i.linked?.city ?? ''} ${i.linked?.district ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      if (city && i.linked?.city !== city) return false;
+      if (developer && i.linked?.developer !== developer) return false;
+      if (pstatus && i.status?.value !== pstatus) return false;
+      if (gap === 'our_brochure' && i.linked?.brochureOurs) return false;
+      if (gap === 'dev_brochure' && i.linked?.brochureDeveloper) return false;
+      if (gap === 'location' && (i.linked?.hasGeo || i.linked?.locationLink)) return false;
+      return true;
+    });
+  }, [items, search, city, developer, pstatus, gap]);
+
   if (searchParams.get('generic') === '1') return <RecordListPage />;
   if (!ourModel) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
 
-  const availableUnits = items.reduce((n, i) => n + (i.linked?.availableUnits ?? 0), 0);
-  const unitCount = items.reduce((n, i) => n + (i.linked?.unitCount ?? 0), 0);
-  const withoutOurBrochure = items.filter((i) => !i.linked?.brochureOurs).length;
-  const withoutDevBrochure = items.filter((i) => !i.linked?.brochureDeveloper).length;
-  const withoutLocation = items.filter((i) => !(i.linked?.hasGeo || i.linked?.locationLink)).length;
+  const availableUnits = filtered.reduce((n, i) => n + (i.linked?.availableUnits ?? 0), 0);
+  const unitCount = filtered.reduce((n, i) => n + (i.linked?.unitCount ?? 0), 0);
+  const withoutOurBrochure = filtered.filter((i) => !i.linked?.brochureOurs).length;
+  const withoutDevBrochure = filtered.filter((i) => !i.linked?.brochureDeveloper).length;
+  const withoutLocation = filtered.filter((i) => !(i.linked?.hasGeo || i.linked?.locationLink)).length;
+  const selectCls = 'form-input text-sm py-1.5';
 
   return (
     <div className="p-4 md:p-6 space-y-4">
@@ -98,9 +126,9 @@ export default function OurProjectsPortfolioPage() {
         </div>
       </div>
 
-      {/* KPI summary */}
+      {/* KPI summary (reflects the current filter) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <PortfolioKpi icon={<Building2 size={18} />} label={isAr ? 'إجمالي المحفظة' : 'Portfolio total'} value={items.length} tone="#B8734F" />
+        <PortfolioKpi icon={<Building2 size={18} />} label={isAr ? 'إجمالي المحفظة' : 'Portfolio total'} value={filtered.length} tone="#B8734F" />
         <PortfolioKpi icon={<Building2 size={18} />} label={isAr ? 'إجمالي الوحدات' : 'Total units'} value={unitCount.toLocaleString()} tone="#C09B5F" />
         <PortfolioKpi icon={<LayoutGrid size={18} />} label={isAr ? 'الوحدات المتاحة' : 'Available units'} value={availableUnits.toLocaleString()} tone="#8E4E3A" />
         <PortfolioKpi icon={<FileText size={18} />} label={isAr ? 'بدون بروشورنا' : 'Without our brochure'} value={withoutOurBrochure} tone="#EF4444" />
@@ -108,11 +136,42 @@ export default function OurProjectsPortfolioPage() {
         <PortfolioKpi icon={<MapPin size={18} />} label={isAr ? 'بدون موقع' : 'Without location'} value={withoutLocation} tone="#EF4444" />
       </div>
 
+      {/* Filter bar */}
+      <div className="card p-4 space-y-3">
+        <div className="relative">
+          <Search size={16} className="absolute top-1/2 -translate-y-1/2 start-3 text-charcoal/40" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={isAr ? 'ابحث بالاسم أو المطور أو المدينة…' : 'Search by name, developer, city…'} className="form-input w-full ps-9" />
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <select className={selectCls} value={city} onChange={(e) => setCity(e.target.value)}>
+            <option value="">{isAr ? 'كل المدن' : 'All cities'}</option>
+            {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+          <select className={selectCls} value={developer} onChange={(e) => setDeveloper(e.target.value)}>
+            <option value="">{isAr ? 'كل المطورين' : 'All developers'}</option>
+            {developers.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <select className={selectCls} value={pstatus} onChange={(e) => setPstatus(e.target.value)}>
+            <option value="">{isAr ? 'كل حالات المحفظة' : 'All portfolio statuses'}</option>
+            {(statusField?.options ?? []).map((o) => <option key={o.id} value={o.value}>{isAr ? o.label_ar : o.label_en}</option>)}
+          </select>
+          <select className={selectCls} value={gap} onChange={(e) => setGap(e.target.value as typeof gap)}>
+            <option value="all">{isAr ? 'كل المشاريع' : 'All projects'}</option>
+            <option value="our_brochure">{isAr ? 'بدون بروشورنا' : 'Without our brochure'}</option>
+            <option value="dev_brochure">{isAr ? 'بدون بروشور المطور' : 'Without developer brochure'}</option>
+            <option value="location">{isAr ? 'بدون موقع' : 'Without location'}</option>
+          </select>
+        </div>
+        <div className="text-xs text-charcoal/50">{isAr ? `عرض ${filtered.length} من ${items.length} مشروع` : `Showing ${filtered.length} of ${items.length} projects`}</div>
+      </div>
+
       {items.length === 0 ? (
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع في المحفظة بعد.' : 'No portfolio projects yet.'}</div>
+      ) : filtered.length === 0 ? (
+        <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع مطابقة.' : 'No matching projects.'}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {items.map((item) => <PortfolioCard key={item.ourId} item={item} isAr={isAr} onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`)} onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)} />)}
+          {filtered.map((item) => <PortfolioCard key={item.ourId} item={item} isAr={isAr} onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`)} onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)} />)}
         </div>
       )}
     </div>
