@@ -169,6 +169,8 @@ export default function SuggestedProjectsModal({
   const missing = resp?.metadata.missing_required_preferences ?? [];
   const needsPreferences = resp?.metadata.needs_preferences === true;
   const activeItems = resp?.groups[activeTab] ?? [];
+  const market = resp?.metadata.market;
+  const suggestLabel = (code: string) => (MISSING_LABELS[code] ? (isAr ? MISSING_LABELS[code].ar : MISSING_LABELS[code].en) : code);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-3 sm:p-6" onMouseDown={onClose}>
@@ -213,6 +215,33 @@ export default function SuggestedProjectsModal({
             </div>
           )}
         </div>
+
+        {/* Market-source honesty notice — we NEVER silently drop listings; when the
+            area is too dense to scan in full we ask for more criteria instead. */}
+        {market?.status === 'too_many' && (
+          <div className="flex flex-wrap items-center gap-1.5 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] text-amber-800">
+            <AlertTriangle size={13} className="shrink-0" />
+            <span className="font-semibold">
+              {market.count != null
+                ? L(`إعلانات السوق غير معروضة: يوجد ${market.count.toLocaleString('en-US')} إعلان في هذا الحي.`,
+                    `Market listings hidden: ${market.count.toLocaleString('en-US')} ads in this district.`)
+                : L('إعلانات السوق غير معروضة: عددها كبير جداً في هذا الحي.', 'Market listings hidden: too many ads in this district.')}
+            </span>
+            <span>{L('أضف', 'Add')}</span>
+            {(market.suggest ?? []).map((s) => (
+              <span key={s} className="inline-flex items-center rounded-full border border-amber-300 bg-white px-2 py-0.5 font-semibold">
+                {suggestLabel(s)}
+              </span>
+            ))}
+            <span>{L('لعرضها (لا يتم حذف أي إعلان).', 'to show them (nothing is dropped).')}</span>
+          </div>
+        )}
+        {market?.status === 'needs_district' && (
+          <div className="flex items-center gap-1.5 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] text-amber-800">
+            <AlertTriangle size={13} className="shrink-0" />
+            <span>{L('حدّد الحي لعرض إعلانات السوق.', 'Set a district to include market listings.')}</span>
+          </div>
+        )}
 
         {/* Group tabs */}
         <div className="flex flex-wrap gap-1 border-b border-sand/30 bg-white/40 px-3 py-2">

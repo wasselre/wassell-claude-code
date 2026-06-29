@@ -63,33 +63,18 @@ const TOP_N = 5; // max results returned per tier
 // within NEARBY_MAX_KM of that district's centroid is a "nearby" alternative.
 const NEARBY_MAX_KM = 12;
 
-// Market-listings area pre-filter (2026-06-27). When pulling the ~46k external
-// market_listings, we don't scan them all — we pre-filter server-side to the set
-// of districts whose CENTROID is within NEARBY_DISTRICT_KM of the requested
-// district's centroid, then let scoreProject tier them in-memory. This radius is
-// DELIBERATELY WIDER than the scorer's NEARBY_MAX_KM (12 km): the scorer measures
-// each listing's OWN lat/lng against the requested centroid, but a district is an
-// AREA — a listing physically within 12 km of the requested centre can sit in a
-// neighbouring district whose CENTROID is farther than 12 km. A 20 km centroid
-// buffer captures essentially every listing the scorer would still call "nearby"
-// (measured on live Riyadh data: ≈96.6% of scorer-relevant listings, vs ≈94.2%
-// at 12 km, with the district-id set staying small — ~61 ids — well within the
-// PostgREST `.in(...)` limit). See the report / git history for the measurement.
-const NEARBY_DISTRICT_KM = 20;
-
-// Hard cap for the area-less fallback scan of market_listings (no district AND no
-// city to filter on). We can't afford to scan all 46k, so we take the newest N in
-// a STABLE order (created_at desc) — never an arbitrary slice — and log loudly.
-const MARKET_FALLBACK_CAP = 4000;
-
-// Hard cap for the AREA-filtered market scan too. A dense Riyadh district (e.g.
-// النرجس ≈ 17k in-area listings) is too many to load AND score in-memory inside the
-// edge budget — measured live 2026-06-29: scanning them all took ~25s and hit a
-// 504 FUNCTION_INVOCATION_TIMEOUT. We cap to the newest N in-area (STABLE
-// created_at-desc order — never an arbitrary slice) so the market source returns
-// fast and reliably. Sparse districts are unaffected (they have far fewer than the
-// cap). Logged when the cap actually truncates so the truncation is never silent.
-const MARKET_AREA_CAP = 2000;
+// Market-listings scan ceiling. We scan the REQUESTED district(s) only (the old
+// 20km-neighbour expansion pulled ≈17k listings for a dense Riyadh district and
+// 504'd the edge function — measured live 2026-06-29: ~25s). DB-side
+// budget/bedrooms/type filters (wassell_market_candidates) shrink the set so we
+// can score it IN FULL. We NEVER truncate by recency — when the filtered
+// exact-district set still exceeds this many rows, the engine returns a 'too_many'
+// signal so the UI asks the salesperson for more criteria (budget/type/bedrooms)
+// instead of dropping listings. Distribution (measured 2026-06-29): 167/170
+// districts ≤ 2,500 listings, max 5,866 — so the common case scans fully and only
+// the densest districts need extra criteria. ~4,000 rows score in ~6s, safe under
+// the edge timeout.
+const MARKET_SCAN_LIMIT = 4000;
 
 /** Great-circle distance in km between two lat/lng points (haversine). */
 function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
@@ -540,6 +525,27 @@ function expandPropertyType(needle: string): string[] {
     if (group.some((s) => normalizeForSearch(s) === lower)) return group.map((s) => normalizeForSearch(s));
   }
   return [lower];
+}
+
+/** RAW property-type synonyms (Arabic + English) for the market-listings ILIKE
+ *  filter (wassell_market_candidates). Unlike expandPropertyType these are NOT
+ *  normalized — they're matched against the listing's stored type text. */
+function propertyTypeTerms(needle: string): string[] {
+  const lower = normalizeForSearch(needle);
+  for (const group of PROPERTY_TYPE_SYNONYMS) {
+    if (group.some((s) => normalizeForSearch(s) === lower)) return [...group];
+  }
+  return [needle];
+}
+
+/** Which extra criteria would narrow a too-dense market search — the MISSING ones,
+ *  surfaced so the UI can ask the salesperson for them instead of truncating. */
+function marketSuggestions(req: MatchRequirements): string[] {
+  const s: string[] = [];
+  if (req.budget_min == null && req.budget_max == null) s.push('budget');
+  if (!req.property_type) s.push('unit_type');
+  if (req.bedrooms == null) s.push('bedrooms');
+  return s;
 }
 
 async function getModelByName(
@@ -1132,111 +1138,6 @@ async function resolveRequestedCity(
   return pick ? pick.id : null;
 }
 
-/** All `districts` record ids whose centroid is within NEARBY_DISTRICT_KM of the
- *  requested district's centroid (always INCLUDING the requested district itself).
- *  This is the geographic pre-filter for market_listings: a listing in any of
- *  these districts is at least a candidate for the scorer's exact/nearby tiers.
- *  Returns null when the centroid is missing (caller falls back to city/region). */
-async function nearbyDistrictIds(
-  supabase: SupabaseClient,
-  reqDistrictId: string,
-  reqLat: number,
-  reqLng: number,
-): Promise<string[] | null> {
-  const dm = await getModelByName(supabase, 'districts');
-  if (!dm) return null;
-  let rows: RecordRow[];
-  try {
-    rows = await pageRecords(supabase, dm.id, 10); // ~3.7k districts → 4 pages
-  } catch (err) {
-    console.error(
-      '[matchProjectsCore] districts load for area pre-filter failed:',
-      err instanceof Error ? err.message : String(err),
-    );
-    return null;
-  }
-  const ids = new Set<string>([reqDistrictId]); // always keep the exact district
-  for (const r of rows) {
-    const lat = asNum(r.data.centroid_lat);
-    const lng = asNum(r.data.centroid_lng);
-    if (lat == null || lng == null) continue;
-    if (haversineKm(reqLat, reqLng, lat, lng) <= NEARBY_DISTRICT_KM) ids.add(r.id);
-  }
-  return [...ids];
-}
-
-/** Load market_listings rows for the area pre-filter — paginated, filtered
- *  server-side by a JSONB-text equality set (`data->>filterKey` IN values), in a
- *  STABLE order so paging is deterministic. Used to pull only the listings in the
- *  requested district + its geographic neighbours (or, on fallback, its city)
- *  instead of scanning all ~46k. Non-throwing pagination matches pageRecords. */
-async function loadMarketByFilter(
-  supabase: SupabaseClient,
-  modelId: string,
-  filterKey: 'district' | 'city',
-  values: string[],
-  cap = MARKET_AREA_CAP,
-): Promise<RecordRow[]> {
-  if (values.length === 0) return [];
-  const pageSize = 1000;
-  const rows: RecordRow[] = [];
-  const maxPages = Math.ceil(cap / pageSize);
-  let truncated = false;
-  for (let page = 0; page < maxPages; page++) {
-    const from = page * pageSize;
-    const { data, error } = await supabase
-      .from('unified_records')
-      .select('id, data')
-      .eq('model_id', modelId)
-      // Geography now lives in the `location` cascade compound: location->>district / city.
-      .in(`data->location->>${filterKey}`, values)
-      .order('created_at', { ascending: false })
-      .range(from, from + pageSize - 1);
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []) as RecordRow[];
-    rows.push(...batch);
-    if (rows.length >= cap) { truncated = batch.length === pageSize; break; }
-    if (batch.length < pageSize) break;
-  }
-  if (rows.length > cap) {
-    truncated = true;
-    rows.length = cap;
-  }
-  if (truncated) {
-    console.warn(
-      `[matchProjectsCore] market_listings: more than ${cap} listings in the requested ${filterKey} set — scored the newest ${cap} (stable created_at-desc). Some listings not scored.`,
-    );
-  }
-  return rows;
-}
-
-/** Fallback load when the request has no usable area signal: the newest N
- *  market_listings (STABLE created_at-desc order — never an arbitrary slice). */
-async function loadMarketNewestCapped(
-  supabase: SupabaseClient,
-  modelId: string,
-  cap: number,
-): Promise<RecordRow[]> {
-  const pageSize = 1000;
-  const rows: RecordRow[] = [];
-  const maxPages = Math.ceil(cap / pageSize);
-  for (let page = 0; page < maxPages; page++) {
-    const from = page * pageSize;
-    const to = Math.min(from + pageSize, cap) - 1;
-    const { data, error } = await supabase
-      .from('unified_records')
-      .select('id, data')
-      .eq('model_id', modelId)
-      .order('created_at', { ascending: false })
-      .range(from, to);
-    if (error) throw new Error(error.message);
-    const batch = (data ?? []) as RecordRow[];
-    rows.push(...batch);
-    if (batch.length < pageSize || rows.length >= cap) break;
-  }
-  return rows;
-}
-
 /** Resolve an array of lookup record ids (districts/cities) to their display names. */
 async function resolveLookupNames(supabase: SupabaseClient, modelName: string, ids: unknown): Promise<string[]> {
   const arr = Array.isArray(ids) ? ids.filter((x): x is string => typeof x === 'string' && x !== '') : [];
@@ -1305,6 +1206,19 @@ export interface MatchCoreSuccess {
    *  Populated only when opts.includeMarket is set (the grouped endpoint); the
    *  LLM tool wrapper leaves it empty so its output stays unchanged. */
   market: MatchResultItem[];
+  /** Why the market source looks the way it does — so the UI can be HONEST when
+   *  market wasn't fully scanned (we never silently truncate). 'ok' = the complete
+   *  filtered set was scored; 'needs_district' = no district to scope to; 'too_many'
+   *  = the filtered exact-district set exceeds MARKET_SCAN_LIMIT, so the UI should
+   *  ask for the `suggest`ed extra criteria instead of dropping listings. */
+  marketInfo: MarketInfo;
+}
+export interface MarketInfo {
+  status: 'ok' | 'needs_district' | 'too_many';
+  /** Total matching market listings (only on 'too_many', best-effort for the message). */
+  count?: number;
+  /** Missing criteria that would narrow the search: 'budget' | 'unit_type' | 'bedrooms'. */
+  suggest?: string[];
 }
 export type MatchCoreResult = MatchCoreSuccess | { ok: false; error: string };
 
@@ -1552,102 +1466,112 @@ export async function matchProjectsCore(
   // PASS 3 — market_listings (external scraped ads), scored as a third source via
   // the same deterministic scorer (each listing adapted to the project shape).
   // Only the grouped endpoint requests it (opts.includeMarket).
+  //
+  // Scope is the REQUESTED district(s) ONLY — the old 20km-neighbour expansion
+  // pulled ≈17k listings for a dense Riyadh district and 504'd the edge function.
+  // DB-side budget/bedrooms/type filters (wassell_market_candidates) shrink the set
+  // so we score it IN FULL. We NEVER truncate by recency: if the filtered
+  // exact-district set still exceeds MARKET_SCAN_LIMIT we return a 'too_many' signal
+  // (with the missing criteria to ask for) instead of dropping listings.
   let market: MatchResultItem[] = [];
+  let marketInfo: MarketInfo = { status: 'ok' };
   if (opts.includeMarket) {
     const mModel = await getModelByName(supabase, 'market_listings');
     if (mModel) {
-      // Pre-filter the ~46k listings to the client's relevant AREA server-side so
-      // we never scan the whole model (the old `pageRecords(20)` only saw the first
-      // ~20k in an arbitrary, order-less slice). Budget/type/etc. are still applied
-      // in-memory by scoreProject below — only the geographic narrowing happens here.
-      //   1. Requested district resolved (with centroid) → all listings in that
-      //      district + its geographic neighbours (district-centroid ≤ NEARBY_DISTRICT_KM).
-      //   2. Else a city resolved → all listings in that city (city_lookup equality).
-      //   3. Else no area signal → newest MARKET_FALLBACK_CAP listings (stable order),
-      //      logged as a capped scan.
-      let listingRows: RecordRow[] = [];
-      try {
-        if (reqDistrictId && reqLat != null && reqLng != null) {
-          const ids = await nearbyDistrictIds(supabase, reqDistrictId, reqLat, reqLng);
-          if (ids && ids.length) {
-            listingRows = await loadMarketByFilter(supabase, mModel.id, 'district', ids);
-          } else if (reqCityId) {
-            listingRows = await loadMarketByFilter(supabase, mModel.id, 'city', [reqCityId]);
-          } else {
-            console.warn(
-              `[matchProjectsCore] market_listings: district "${req.district}" resolved but no neighbour set — capped scan of newest ${MARKET_FALLBACK_CAP}.`,
-            );
-            listingRows = await loadMarketNewestCapped(supabase, mModel.id, MARKET_FALLBACK_CAP);
-          }
-        } else if (reqCityId) {
-          listingRows = await loadMarketByFilter(supabase, mModel.id, 'city', [reqCityId]);
-        } else {
-          console.warn(
-            `[matchProjectsCore] market_listings: no usable area signal (district/city) — capped scan of newest ${MARKET_FALLBACK_CAP}.`,
-          );
-          listingRows = await loadMarketNewestCapped(supabase, mModel.id, MARKET_FALLBACK_CAP);
-        }
-      } catch (err) {
-        // Non-fatal: a market-listings read failure must not sink the whole
-        // recommendation (our_projects + all_projects still return). Log loudly.
-        console.error('[matchProjectsCore] market_listings load failed:', err instanceof Error ? err.message : String(err));
-      }
-      // Market listings are EXTERNAL / unverified by design (already flagged
-      // "verify before offering"), and a busy district can pull thousands of nearby
-      // listings — boundary-verifying every one (point-in-polygon + name resolution)
-      // blew past the edge function timeout. Boundary verification is for OUR project
-      // catalog; market listings keep their stored district + own coords (doVerify=false).
-      const noMarketVerify = new Map<string, string | null>();
-      for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
-      for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
-      for (const r of listingRows) {
-        const adapted = adaptListingToScorable(r.data);
-        const name = asStr(adapted.project_name);
-        if (!name) continue;
-        const loc = recordLocationIds(r.data);
-        const g = geoFor(r, loc, noMarketVerify, false);
-        const s = scoreProject(adapted, req, {
-          projLat: g.projLat,
-          projLng: g.projLng,
-          reqLat,
-          reqLng,
-          reqDistrictId,
-          reqCityId,
-          reqDistrictIds,
-          reqCityIds,
-          reqCentroids,
-          // A listing's own pin is high-confidence when present (market listings
-          // are not boundary-verified — see above).
-          geoConfidence: (g.projLat != null && g.projLng != null) ? 'high' : null,
-          projDistrictId: g.projDistrictId,
-          projCityId: loc.city || null,
-          projDistrictName: g.projDistrictName,
-          projCityName: cityNameById.get(loc.city) ?? null,
-        });
-        if (s.score < MIN_RETURN) continue;
-        if (s.available_units_zero && !includeSoldOut) continue;
-        const item: MatchResultItem = {
-          project_id: r.id,
-          project_name: name,
-          data_source: 'market_listings',
-          requires_verification: true,
-          verification_warning: MARKET_WARNING,
-          score: s.score,
-          match_band: s.band,
-          match_type: s.match_type,
-          district_match_basis: s.district_match_basis,
-          score_breakdown: s.breakdown,
-          facts: s.facts,
-          data_gaps: s.data_gaps,
-          missing_info: s.missing_info,
-          location_tier: s.location_tier,
-          distance_km: s.distance_km,
-          geo_confidence: s.geo_confidence,
+      const districtIds = reqDistrictIds.length ? reqDistrictIds : reqDistrictId ? [reqDistrictId] : [];
+      if (districtIds.length === 0) {
+        // A city/region is far too broad to scan in full — market needs a district.
+        marketInfo = { status: 'needs_district' };
+      } else {
+        const typeTerms = req.property_type ? propertyTypeTerms(req.property_type) : null;
+        const rpcArgs = {
+          p_model_id: mModel.id,
+          p_district_ids: districtIds,
+          p_budget_min: req.budget_min ?? null,
+          p_budget_max: req.budget_max ?? null,
+          p_bedrooms: req.bedrooms ?? null,
+          p_type_terms: typeTerms,
         };
-        g.annotate(item);
-        market.push(item);
+        try {
+          // Fetch up to LIMIT+1 as a tripwire: LIMIT+1 rows means "more than we can
+          // scan in full" → we discard them (never show a truncated set) and signal.
+          const { data: rpcRows, error: rpcErr } = await supabase.rpc('wassell_market_candidates', {
+            ...rpcArgs,
+            p_limit: MARKET_SCAN_LIMIT + 1,
+          });
+          if (rpcErr) throw new Error(rpcErr.message);
+          const listingRows = (rpcRows ?? []) as RecordRow[];
+          if (listingRows.length > MARKET_SCAN_LIMIT) {
+            let count: number | undefined;
+            try {
+              const { data: c } = await supabase.rpc('wassell_market_candidate_count', rpcArgs);
+              count = c == null ? undefined : Number(c);
+            } catch (e) {
+              // count is best-effort for the UI message; the 'too_many' signal stands.
+              console.error('[matchProjectsCore] market count failed:', e instanceof Error ? e.message : String(e));
+            }
+            marketInfo = { status: 'too_many', count, suggest: marketSuggestions(req) };
+          } else {
+            // Score the COMPLETE filtered set — nothing dropped, no recency cap.
+            const noMarketVerify = new Map<string, string | null>();
+            for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
+            for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
+            for (const r of listingRows) {
+              const adapted = adaptListingToScorable(r.data);
+              const name = asStr(adapted.project_name);
+              if (!name) continue;
+              const loc = recordLocationIds(r.data);
+              // Market listings are EXTERNAL / unverified by design (flagged "verify
+              // before offering") and keep their stored district + own coords
+              // (doVerify=false — boundary verification is for OUR project catalog).
+              const g = geoFor(r, loc, noMarketVerify, false);
+              const s = scoreProject(adapted, req, {
+                projLat: g.projLat,
+                projLng: g.projLng,
+                reqLat,
+                reqLng,
+                reqDistrictId,
+                reqCityId,
+                reqDistrictIds,
+                reqCityIds,
+                reqCentroids,
+                geoConfidence: g.projLat != null && g.projLng != null ? 'high' : null,
+                projDistrictId: g.projDistrictId,
+                projCityId: loc.city || null,
+                projDistrictName: g.projDistrictName,
+                projCityName: cityNameById.get(loc.city) ?? null,
+              });
+              if (s.score < MIN_RETURN) continue;
+              if (s.available_units_zero && !includeSoldOut) continue;
+              const item: MatchResultItem = {
+                project_id: r.id,
+                project_name: name,
+                data_source: 'market_listings',
+                requires_verification: true,
+                verification_warning: MARKET_WARNING,
+                score: s.score,
+                match_band: s.band,
+                match_type: s.match_type,
+                district_match_basis: s.district_match_basis,
+                score_breakdown: s.breakdown,
+                facts: s.facts,
+                data_gaps: s.data_gaps,
+                missing_info: s.missing_info,
+                location_tier: s.location_tier,
+                distance_km: s.distance_km,
+                geo_confidence: s.geo_confidence,
+              };
+              g.annotate(item);
+              market.push(item);
+            }
+            market = market.sort(byBandThenScore);
+          }
+        } catch (err) {
+          // Non-fatal: a market read failure must not sink the recommendation
+          // (our_projects + all_projects still return). Log loudly.
+          console.error('[matchProjectsCore] market_listings RPC failed:', err instanceof Error ? err.message : String(err));
+        }
       }
-      market = market.sort(byBandThenScore);
     }
   }
 
@@ -1676,6 +1600,7 @@ export async function matchProjectsCore(
     our: tier1,
     all: tier2,
     market,
+    marketInfo,
   };
 }
 

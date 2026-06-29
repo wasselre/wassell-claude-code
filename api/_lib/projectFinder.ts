@@ -25,6 +25,7 @@ import {
   type MatchRequirements,
   type MatchResultItem,
   type MatchSource,
+  type MarketInfo,
 } from './matchAgent.js';
 import type { GeoStatus } from './geoVerify.js';
 
@@ -81,6 +82,9 @@ export interface FinderResult {
     geo_counts: Record<GeoStatus | 'unknown', number>;
     missing_required_preferences: string[];
     notes: string[];
+    /** Market-source status — lets the UI be honest when market wasn't fully scanned
+     *  (too dense → ask for more criteria) instead of silently showing a subset. */
+    market: MarketInfo;
   };
 }
 
@@ -353,6 +357,7 @@ export function groupForFinder(
       geo_counts,
       missing_required_preferences: missingPreferences(req),
       notes: core.notes,
+      market: core.marketInfo,
     },
   };
 }

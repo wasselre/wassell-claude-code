@@ -346,5 +346,6 @@ function makeCore(parts: { our?: MatchResultItem[]; all?: MatchResultItem[]; mar
     our: parts.our ?? [],
     all: parts.all ?? [],
     market: parts.market ?? [],
+    marketInfo: { status: 'ok' },
   };
 }
