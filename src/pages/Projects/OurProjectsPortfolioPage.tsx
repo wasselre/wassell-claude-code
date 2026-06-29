@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Sparkles, Plus } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Sparkles, Plus, LayoutGrid, Globe, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -79,13 +79,17 @@ export default function OurProjectsPortfolioPage() {
   if (!ourModel) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
 
   const active = items.filter((i) => i.status?.value === 'active').length;
+  const availableUnits = items.reduce((n, i) => n + (i.linked?.availableUnits ?? 0), 0);
+  const unitCount = items.reduce((n, i) => n + (i.linked?.unitCount ?? 0), 0);
+  const publicCount = items.filter((i) => i.showOnWebsite).length;
+  const unlinked = items.filter((i) => !i.linked).length;
 
   return (
     <div className="p-4 md:p-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-charcoal">{isAr ? ourModel.label_ar : ourModel.label_en}</h1>
-          <p className="text-sm text-charcoal/50">{isAr ? `محفظة المبيعات — ${active} نشطة من ${items.length}` : `Sales portfolio — ${active} active of ${items.length}`}</p>
+          <p className="text-sm text-charcoal/50">{isAr ? 'محفظة المبيعات المختارة فوق قاعدة المشاريع' : 'Curated sales portfolio over the project database'}</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => navigate('/model/our_projects?generic=1')}>{isAr ? 'العرض الكلاسيكي' : 'Classic view'}</Button>
@@ -95,6 +99,16 @@ export default function OurProjectsPortfolioPage() {
         </div>
       </div>
 
+      {/* KPI summary */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <PortfolioKpi icon={<Building2 size={18} />} label={isAr ? 'إجمالي المحفظة' : 'Portfolio total'} value={items.length} tone="#B8734F" />
+        <PortfolioKpi icon={<CheckCircle2 size={18} />} label={isAr ? 'نشطة' : 'Active'} value={active} tone="#10B981" />
+        <PortfolioKpi icon={<LayoutGrid size={18} />} label={isAr ? 'الوحدات المتاحة' : 'Available units'} value={availableUnits.toLocaleString()} tone="#8E4E3A" />
+        <PortfolioKpi icon={<Building2 size={18} />} label={isAr ? 'إجمالي الوحدات' : 'Total units'} value={unitCount.toLocaleString()} tone="#C09B5F" />
+        <PortfolioKpi icon={<Globe size={18} />} label={isAr ? 'منشورة على الموقع' : 'Public on website'} value={publicCount} tone="#3B82F6" />
+        <PortfolioKpi icon={<AlertTriangle size={18} />} label={isAr ? 'بدون مشروع مرتبط' : 'Unlinked'} value={unlinked} tone="#EF4444" />
+      </div>
+
       {items.length === 0 ? (
         <div className="card p-16 text-center text-charcoal/40">{isAr ? 'لا توجد مشاريع في المحفظة بعد.' : 'No portfolio projects yet.'}</div>
       ) : (
@@ -102,6 +116,20 @@ export default function OurProjectsPortfolioPage() {
           {items.map((item) => <PortfolioCard key={item.ourId} item={item} isAr={isAr} onOpenDetail={() => navigate(`/model/our_projects/${item.ourId}`)} onEdit={() => navigate(`/model/our_projects/${item.ourId}?generic=1`)} />)}
         </div>
       )}
+    </div>
+  );
+}
+
+function PortfolioKpi({ icon, label, value, tone }: { icon: React.ReactNode; label: string; value: string | number; tone?: string }) {
+  return (
+    <div className="card p-4 flex items-center gap-3">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ backgroundColor: (tone ?? '#B8734F') + '1A', color: tone ?? '#B8734F' }}>
+        {icon}
+      </div>
+      <div className="min-w-0">
+        <div className="text-xl font-bold text-charcoal leading-none">{value}</div>
+        <div className="text-xs text-charcoal/50 mt-1 truncate">{label}</div>
+      </div>
     </div>
   );
 }

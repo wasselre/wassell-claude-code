@@ -291,6 +291,49 @@ function Chips({ items }: { items: { value: string; label: string }[] }) {
   );
 }
 
+/** Render a `table` field (features / guarantees / services / landmarks) as a small table. */
+function ProjectTable({ field, rows, isAr }: { field: import('@/types').ModelField; rows: Record<string, unknown>[]; isAr: boolean }) {
+  const cols = field.table_columns ?? [];
+  if (!rows.length || !cols.length) return null;
+  return (
+    <div className="card p-4 md:col-span-2">
+      <h3 className="font-bold text-charcoal mb-2">{isAr ? field.label_ar : field.label_en}</h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-charcoal/40 text-xs border-b border-sand/50">
+              {cols.map((c) => <th key={c.id} className="text-start p-2 font-medium">{(isAr ? c.label_ar : c.label_en) || c.label_ar || c.name}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row, i) => (
+              <tr key={i} className="border-b border-sand/30">
+                {cols.map((c) => {
+                  const v = row[c.name];
+                  return <td key={c.id} className="p-2 text-charcoal/80">{v != null && v !== '' ? String(v) : '—'}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** The table fields shown on the Overview tab (read from the all_projects record). */
+function ProjectTables({ record, model, isAr }: { record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean }) {
+  return (
+    <>
+      {['features', 'guarantees', 'services'].map((slug) => {
+        const f = fieldByCandidates(model, [slug]);
+        const rows = Array.isArray(record.data[slug]) ? (record.data[slug] as Record<string, unknown>[]) : [];
+        return f && rows.length ? <ProjectTable key={slug} field={f} rows={rows} isAr={isAr} /> : null;
+      })}
+    </>
+  );
+}
+
 function OverviewTab({ view, record, model, isAr }: { view: ProjectView; record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean }) {
   const dash = isAr ? 'غير متوفر' : 'N/A';
   const amenitiesField = fieldByCandidates(model, ['preferred_amenities']);
@@ -321,6 +364,7 @@ function OverviewTab({ view, record, model, isAr }: { view: ProjectView; record:
           {!view.brochureOurs && !view.brochureDeveloper && !view.locationLink && <span className="text-charcoal/40">{dash}</span>}
         </div>
       </div>
+      <ProjectTables record={record} model={model} isAr={isAr} />
     </div>
   );
 }
