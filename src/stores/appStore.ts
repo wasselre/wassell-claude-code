@@ -125,6 +125,27 @@ function loadLocal<T>(key: string): T | null {
 // don't toast on every keystroke once the cliff hits.
 const localStorageWarned = new Set<string>();
 
+// Cap on the serialized size of a SINGLE localStorage value. The offline
+// mirror is best-effort — every persisted slice is re-fetched from Supabase on
+// load and also lives in the in-memory store — so no one slice is worth letting
+// it starve the browser's ~10MB localStorage quota. Measured live 2026-06-29 on
+// app.wassel.re: `wassell_whiteboards` held ~4.82MB (one image-heavy board at
+// ~4.5MB), leaving only ~3.3MB headroom and tripping QuotaExceededError on the
+// next routine write — the "تجاوز الذاكرة المؤقتة" toast users saw on heavy
+// pages like /model/market_listings. When a value exceeds this cap we SKIP
+// mirroring it (and drop any already-stored oversized copy so returning users
+// reclaim the space immediately) rather than let it blow the quota. This is a
+// documented, logged skip of a network-backed blob — NOT a silenced error: the
+// data is safe in Supabase + memory, only the OFFLINE cache of that one slice
+// is forgone. Same tradeoff the team already made when records-mirroring was
+// retired (2026-06-08). Set well above the largest legitimately-cached slice
+// (`wassell_models` ~0.96MB) so normal slices keep their offline cache.
+const MAX_LOCAL_VALUE_BYTES = 2 * 1024 * 1024; // ~2MB (UTF-16 ≈ chars × 2)
+
+// Keys we've already warned about skipping (oversized) this session, so the
+// console.warn fires once per key, not on every save.
+const localStorageOversizeWarned = new Set<string>();
+
 // Audit fix M9: keys we'll evict (in this order) when we hit a quota error,
 // before the saveLocal call gives up. Ordered by "lowest user impact when
 // dropped" first. The active record/model state is excluded — losing those
@@ -149,8 +170,41 @@ function isQuotaError(err: unknown): boolean {
 }
 
 function saveLocal<T>(key: string, data: T): void {
+  let serialized: string;
   try {
-    localStorage.setItem(key, JSON.stringify(data));
+    serialized = JSON.stringify(data);
+  } catch (err) {
+    // Non-serializable payload — a programming error, not a quota condition.
+    // Surface it loudly; never silently drop (see "Silent Failures" in CLAUDE.md).
+    // eslint-disable-next-line no-console
+    console.error(`[localStorage] could not serialize "${key}":`, err);
+    return;
+  }
+
+  // Skip oversized network-backed blobs BEFORE they can starve the quota
+  // (see MAX_LOCAL_VALUE_BYTES). Drop any previously-stored oversized copy so
+  // returning users (whose cache already holds e.g. a ~4.5MB whiteboard)
+  // reclaim the space on the next save rather than carrying it forever.
+  if (serialized.length * 2 > MAX_LOCAL_VALUE_BYTES) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // best-effort cleanup; the in-memory store + Supabase copy are unaffected
+    }
+    if (!localStorageOversizeWarned.has(key)) {
+      localStorageOversizeWarned.add(key);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[localStorage] "${key}" is ${(serialized.length * 2 / 1024 / 1024).toFixed(1)}MB ` +
+          `(> ${MAX_LOCAL_VALUE_BYTES / 1024 / 1024}MB cap) — not mirrored offline to protect the ` +
+          `quota; it is re-fetched from Supabase on load.`,
+      );
+    }
+    return;
+  }
+
+  try {
+    localStorage.setItem(key, serialized);
     return;
   } catch (err) {
     // Audit M9: on QuotaExceededError, evict less-critical buckets and
@@ -171,7 +225,7 @@ function saveLocal<T>(key: string, data: T): void {
       }
       if (evicted > 0) {
         try {
-          localStorage.setItem(key, JSON.stringify(data));
+          localStorage.setItem(key, serialized);
           // eslint-disable-next-line no-console
           console.warn(
             `[localStorage] quota recovered after evicting ${evicted} non-critical bucket(s); "${key}" saved`,
