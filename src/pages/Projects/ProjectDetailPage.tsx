@@ -1,54 +1,28 @@
 import { useMemo, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  Building2, MapPin, Pencil, Search, ExternalLink, FileText, Sparkles, AlertTriangle,
+  Building2, MapPin, Pencil, Search, ExternalLink, FileText, AlertTriangle,
   CheckCircle2, Target, Eye, EyeOff,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
-import MapsView from '@/pages/Records/components/MapsView';
 import RecordFormPage from '@/pages/Records/RecordFormPage';
 import {
   resolveProjectView, modelByName, fieldByCandidates, optionsFor, optionFor,
   formatPriceRange, formatRange, asString, asFiniteNumber, type ProjectView,
 } from '@/lib/projects/projectView';
-import {
-  callProjectAi, auditProject, detectIssues, projectFacts,
-} from '@/lib/projects/projectAi';
+import { auditProject } from '@/lib/projects/projectAi';
 import UnitsInventory from './components/UnitsInventory';
 import MatchClientModal from './components/MatchClientModal';
 
-type TabKey = 'overview' | 'units' | 'location' | 'media' | 'sales' | 'ai' | 'quality';
+type TabKey = 'overview' | 'units' | 'location' | 'media' | 'sales' | 'quality';
 
 function Kpi({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="card p-3 text-center">
       <div className="text-lg font-bold" style={{ color: tone ?? '#4A2C2A' }}>{value}</div>
       <div className="text-[11px] text-charcoal/50 mt-0.5">{label}</div>
-    </div>
-  );
-}
-
-/** Inline AI action: button → async producer → result/error panel. Grounded. */
-function AiAction({ label, run, isAr }: { label: string; run: () => Promise<string>; isAr: boolean }) {
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<string | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const go = async () => {
-    setBusy(true); setErr(null); setResult(null);
-    try { setResult(await run()); }
-    catch (e) { setErr(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
-  };
-  return (
-    <div className="card p-4">
-      <Button variant="secondary" onClick={go} disabled={busy}>
-        <Sparkles size={14} className="inline -mt-0.5 me-1" />
-        {busy ? (isAr ? 'جارٍ المعالجة…' : 'Working…') : label}
-      </Button>
-      {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
-      {result && <div className="mt-3 bg-cream rounded-lg p-3 text-sm text-charcoal whitespace-pre-wrap border border-sand/50">{result}</div>}
     </div>
   );
 }
@@ -130,7 +104,6 @@ export default function ProjectDetailPage() {
     { key: 'location', ar: 'الموقع', en: 'Location' },
     { key: 'media', ar: 'الوسائط', en: 'Media' },
     { key: 'sales', ar: 'ملاحظات المبيعات', en: 'Sales Notes' },
-    { key: 'ai', ar: 'مراجعة الذكاء', en: 'AI Review' },
     { key: 'quality', ar: 'جودة البيانات', en: 'Data Quality' },
   ];
 
@@ -170,9 +143,6 @@ export default function ProjectDetailPage() {
             <Button variant="secondary" onClick={() => setMatchOpen(true)}>
               <Search size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'مطابقة عميل' : 'Match client'}
             </Button>
-            <Button variant="primary" onClick={() => setTab('ai')} disabled={!view}>
-              <Sparkles size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'ملخص بيع' : 'Sales brief'}
-            </Button>
           </div>
         </div>
       </div>
@@ -207,7 +177,7 @@ export default function ProjectDetailPage() {
       <div>
         {tab === 'overview' && (view && record ? <OverviewTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
         {tab === 'units' && (view ? <UnitsInventory projectId={view.id} projectName={view.name} isAr={isAr} /> : <NoMaster />)}
-        {tab === 'location' && (view && record ? <LocationTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
+        {tab === 'location' && (view && record ? <LocationTab view={view} record={record} isAr={isAr} /> : <NoMaster />)}
         {tab === 'media' && (view && record ? <MediaTab view={view} record={record} model={model} isAr={isAr} /> : <NoMaster />)}
         {tab === 'sales' && (
           isPortfolio && portfolioRecord && ourModel ? (
@@ -226,35 +196,6 @@ export default function ProjectDetailPage() {
                 addToast(res.status === 'conflict' ? (isAr ? 'تم تعديل السجل في مكان آخر — أعد التحميل' : 'Record changed elsewhere — reload') : (isAr ? 'تم الحفظ' : 'Saved'), res.status === 'conflict' ? 'error' : 'success');
               }}
             />
-          ) : <NoMaster />
-        )}
-        {tab === 'ai' && (
-          view ? (
-          <div className="grid md:grid-cols-2 gap-3">
-            <AiAction isAr={isAr} label={isAr ? 'تنظيف هذا المشروع' : 'Clean this project'} run={() =>
-              callProjectAi('clean', { facts: projectFacts(view, isAr), detected_issues: detectIssues(view, isAr) }, isAr ? 'ar' : 'en')} />
-            <AiAction isAr={isAr} label={isAr ? 'إنشاء ملخص بيع' : 'Generate sales brief'} run={() =>
-              callProjectAi('brief', isPortfolio
-                ? { project: projectFacts(view, isAr), existing_pitch: asString(portfolioRecord?.data?.sales_pitch), objection_handling: asString(portfolioRecord?.data?.objection_handling_notes) }
-                : projectFacts(view, isAr), isAr ? 'ar' : 'en')} />
-            <AiAction isAr={isAr} label={isAr ? 'رسالة واتساب للمشروع' : 'WhatsApp message'} run={() =>
-              callProjectAi('whatsapp', { project: projectFacts(view, isAr) }, isAr ? 'ar' : 'en')} />
-            <AiAction isAr={isAr} label={isAr ? 'تدقيق جودة البيانات' : 'Data quality audit'} run={() => {
-              const a = auditProject(view, isAr);
-              return callProjectAi('audit', { facts: projectFacts(view, isAr), score: a.score, required_missing: a.requiredMissing, optional_missing: a.optionalMissing, blocking: [...a.blockingWebsite, ...a.blockingMatching] }, isAr ? 'ar' : 'en');
-            }} />
-            <div className="md:col-span-2">
-              <Button variant="ghost" onClick={() => setMatchOpen(true)}>
-                <Search size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'مطابقة طلب عميل (محرك حتمي)' : 'Match client request (deterministic engine)'}
-              </Button>
-            </div>
-            {record && asString(record.data.ai_audit_notes) && (
-              <div className="md:col-span-2 card p-3">
-                <div className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'ملاحظات تدقيق سابقة' : 'Previous AI audit notes'}</div>
-                <p className="text-sm text-charcoal/80 whitespace-pre-wrap">{asString(record.data.ai_audit_notes)}</p>
-              </div>
-            )}
-          </div>
           ) : <NoMaster />
         )}
         {tab === 'quality' && (view && record ? <DataQualityTab view={view} record={record} isAr={isAr} /> : <NoMaster />)}
@@ -369,18 +310,20 @@ function OverviewTab({ view, record, model, isAr }: { view: ProjectView; record:
   );
 }
 
-function LocationTab({ view, record, model, isAr }: { view: ProjectView; record: import('@/types').AppRecord; model: import('@/types').AppModel; isAr: boolean }) {
+function LocationTab({ view, record, isAr }: { view: ProjectView; record: import('@/types').AppRecord; isAr: boolean }) {
   const dash = isAr ? 'غير متوفر' : 'N/A';
   const landmarks = Array.isArray(record.data.nearby_landmarks) ? (record.data.nearby_landmarks as Record<string, unknown>[]) : [];
+  const lat = asFiniteNumber(record.data.latitude);
+  const lng = asFiniteNumber(record.data.longitude);
+  // Google Maps embed (no API key needed) centered on the project with a marker.
+  const embedSrc = lat !== null && lng !== null ? `https://maps.google.com/maps?q=${lat},${lng}&z=15&hl=${isAr ? 'ar' : 'en'}&output=embed` : null;
   return (
     <div className="grid md:grid-cols-2 gap-4">
       <div className="card p-4">
         <h3 className="font-bold text-charcoal mb-2">{isAr ? 'الموقع' : 'Location'}</h3>
         <Fact label={isAr ? 'المدينة' : 'City'} value={view.city ?? dash} />
         <Fact label={isAr ? 'الحي' : 'District'} value={view.district ?? dash} />
-        <Fact label={isAr ? 'خط العرض' : 'Latitude'} value={record.data.latitude != null ? String(record.data.latitude) : dash} />
-        <Fact label={isAr ? 'خط الطول' : 'Longitude'} value={record.data.longitude != null ? String(record.data.longitude) : dash} />
-        {view.locationLink && <a href={view.locationLink} target="_blank" rel="noreferrer" className="text-copper hover:underline text-sm inline-flex items-center gap-1 mt-2"><ExternalLink size={13} /> {isAr ? 'فتح في الخرائط' : 'Open in Maps'}</a>}
+        {view.locationLink && <a href={view.locationLink} target="_blank" rel="noreferrer" className="text-copper hover:underline text-sm inline-flex items-center gap-1 mt-2"><ExternalLink size={13} /> {isAr ? 'فتح في خرائط Google' : 'Open in Google Maps'}</a>}
         {landmarks.length > 0 && (
           <div className="mt-3">
             <div className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'المعالم القريبة' : 'Nearby landmarks'}</div>
@@ -390,8 +333,16 @@ function LocationTab({ view, record, model, isAr }: { view: ProjectView; record:
           </div>
         )}
       </div>
-      <div className="card p-2 h-80">
-        <MapsView model={model} records={[record]} onCardClick={() => {}} />
+      <div className="card p-1 h-80 overflow-hidden">
+        {embedSrc ? (
+          <iframe title="map" src={embedSrc} className="w-full h-full rounded-lg border-0" loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
+        ) : (
+          <div className="w-full h-full flex flex-col items-center justify-center text-charcoal/40 text-sm gap-2">
+            <MapPin size={28} />
+            {isAr ? 'لا توجد إحداثيات لعرض الخريطة' : 'No coordinates to show the map'}
+            {view.locationLink && <a href={view.locationLink} target="_blank" rel="noreferrer" className="text-copper hover:underline">{isAr ? 'فتح في الخرائط' : 'Open in Maps'}</a>}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -405,7 +356,8 @@ function MediaTab({ view, record, model, isAr }: { view: ProjectView; record: im
   const videos = Array.isArray(record.data.project_videos)
     ? (record.data.project_videos as unknown[]).filter((x): x is string => typeof x === 'string' && /^https?:\/\//i.test(x))
     : [];
-  const hasAny = view.imageUrl || gallery.length > 0 || videos.length > 0 || view.brochureOurs || view.brochureDeveloper;
+  const projectPage = asString(record.data.project_page_url);
+  const hasAny = view.imageUrl || gallery.length > 0 || videos.length > 0 || view.brochureOurs || view.brochureDeveloper || projectPage || view.locationLink;
   return (
     <div className="space-y-4">
       {view.imageUrl && <img src={view.imageUrl} alt="" className="rounded-xl border border-sand/50 max-h-80 object-cover" />}
@@ -420,6 +372,8 @@ function MediaTab({ view, record, model, isAr }: { view: ProjectView; record: im
         </div>
       )}
       <div className="flex flex-wrap gap-3 text-sm">
+        {projectPage && <a className="text-copper hover:underline inline-flex items-center gap-1" href={projectPage} target="_blank" rel="noreferrer"><ExternalLink size={13} /> {isAr ? 'صفحة المشروع' : 'Project page'}</a>}
+        {view.locationLink && <a className="text-copper hover:underline inline-flex items-center gap-1" href={view.locationLink} target="_blank" rel="noreferrer"><MapPin size={13} /> {isAr ? 'موقع Google Maps' : 'Google Maps'}</a>}
         {view.brochureOurs && <a className="text-copper hover:underline inline-flex items-center gap-1" href={view.brochureOurs} target="_blank" rel="noreferrer"><FileText size={13} /> {isAr ? 'بروشورنا' : 'Our brochure'}</a>}
         {view.brochureDeveloper && <a className="text-copper hover:underline inline-flex items-center gap-1" href={view.brochureDeveloper} target="_blank" rel="noreferrer"><FileText size={13} /> {isAr ? 'بروشور المطور' : 'Developer brochure'}</a>}
       </div>

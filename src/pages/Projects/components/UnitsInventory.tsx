@@ -1,12 +1,10 @@
 import { useMemo, useState } from 'react';
-import { GitCompare, MessageCircle, X } from 'lucide-react';
+import { GitCompare, X } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
-import Modal from '@/components/ui/Modal';
 import { modelByName, fieldByCandidates } from '@/lib/projects/projectView';
 import { resolveUnitView, unitsForProject, sortUnits, type UnitView, type UnitSortKey } from '@/lib/projects/unitView';
-import { callProjectAi, unitFacts } from '@/lib/projects/projectAi';
 import UnitDrawer from './UnitDrawer';
 import UnitCompareModal from './UnitCompareModal';
 
@@ -44,10 +42,6 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drawerUnit, setDrawerUnit] = useState<UnitView | null>(null);
   const [compareOpen, setCompareOpen] = useState(false);
-  const [waOpen, setWaOpen] = useState(false);
-  const [waBusy, setWaBusy] = useState(false);
-  const [waMsg, setWaMsg] = useState<string | null>(null);
-  const [waErr, setWaErr] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const pMin = priceMin ? Number(priceMin) : null;
@@ -77,22 +71,6 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  };
-
-  const genWhatsapp = async () => {
-    setWaOpen(true);
-    setWaBusy(true);
-    setWaErr(null);
-    setWaMsg(null);
-    try {
-      const facts = { project: projectName ?? null, units: selectedUnits.map((u) => unitFacts(u, isAr)) };
-      const result = await callProjectAi('whatsapp', facts, isAr ? 'ar' : 'en');
-      setWaMsg(result);
-    } catch (e) {
-      setWaErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setWaBusy(false);
-    }
   };
 
   if (!unitsModel) return <p className="text-sm text-charcoal/50">{isAr ? 'نموذج الوحدات غير موجود.' : 'Units model not found.'}</p>;
@@ -134,9 +112,6 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
           <span className="text-sm text-charcoal/70">{isAr ? `${selected.size} محددة` : `${selected.size} selected`}</span>
           <Button variant="secondary" className="text-sm !py-1" onClick={() => setCompareOpen(true)} disabled={selected.size < 2}>
             <GitCompare size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'مقارنة' : 'Compare'}
-          </Button>
-          <Button variant="secondary" className="text-sm !py-1" onClick={genWhatsapp}>
-            <MessageCircle size={14} className="inline -mt-0.5 me-1" /> {isAr ? 'رسالة واتساب' : 'WhatsApp'}
           </Button>
           <button onClick={() => setSelected(new Set())} className="text-charcoal/40 hover:text-charcoal ms-auto" aria-label="clear"><X size={16} /></button>
         </div>
@@ -187,16 +162,6 @@ export default function UnitsInventory({ projectId, projectName, isAr }: UnitsIn
 
       <UnitDrawer unit={drawerUnit} projectName={projectName} isAr={isAr} onClose={() => setDrawerUnit(null)} />
       <UnitCompareModal open={compareOpen} onClose={() => setCompareOpen(false)} units={selectedUnits} projectName={projectName} isAr={isAr} />
-
-      <Modal open={waOpen} onClose={() => setWaOpen(false)} title={isAr ? 'رسالة واتساب' : 'WhatsApp message'}>
-        {waBusy ? (
-          <p className="text-charcoal/60 text-sm">{isAr ? 'جارٍ الإنشاء…' : 'Generating…'}</p>
-        ) : waErr ? (
-          <p className="text-red-600 text-sm">{waErr}</p>
-        ) : (
-          <div className="bg-cream rounded-lg p-3 text-sm text-charcoal whitespace-pre-wrap border border-sand/50">{waMsg}</div>
-        )}
-      </Modal>
     </div>
   );
 }

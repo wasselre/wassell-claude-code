@@ -1,9 +1,5 @@
-import { useState } from 'react';
-import { Sparkles } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
-import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
-import { callProjectAi, unitFacts } from '@/lib/projects/projectAi';
 import { bestUnitBy, type UnitView } from '@/lib/projects/unitView';
 
 interface UnitCompareModalProps {
@@ -16,30 +12,11 @@ interface UnitCompareModalProps {
 
 const SAR = (n: number | null, isAr: boolean) => (n === null ? null : `${n.toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`);
 
-export default function UnitCompareModal({ open, onClose, units, projectName, isAr }: UnitCompareModalProps) {
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiResult, setAiResult] = useState<string | null>(null);
-  const [aiErr, setAiErr] = useState<string | null>(null);
-
-  const dash = isAr ? 'غير متوفر' : 'N/A';
+export default function UnitCompareModal({ open, onClose, units, isAr }: UnitCompareModalProps) {
+  const dash = '—';
   const cheapestId = bestUnitBy(units, (u) => u.totalPrice, 'min');
   const largestId = bestUnitBy(units, (u) => u.area, 'max');
   const bestPerM2Id = bestUnitBy(units, (u) => u.pricePerM2, 'min');
-
-  const runRecommend = async () => {
-    setAiBusy(true);
-    setAiErr(null);
-    setAiResult(null);
-    try {
-      const facts = { project: projectName ?? null, units: units.map((u) => unitFacts(u, isAr)) };
-      const result = await callProjectAi('compare_units', facts, isAr ? 'ar' : 'en');
-      setAiResult(result);
-    } catch (e) {
-      setAiErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setAiBusy(false);
-    }
-  };
 
   const rows: { label: string; render: (u: UnitView) => React.ReactNode; bestId?: string | null }[] = [
     { label: isAr ? 'النوع' : 'Type', render: (u) => (u.type ? (isAr ? u.type.label_ar : u.type.label_en) : dash) },
@@ -85,15 +62,6 @@ export default function UnitCompareModal({ open, onClose, units, projectName, is
           <p className="text-xs text-charcoal/40">
             {isAr ? 'القيم المميزة = الأفضل حسابياً (الأرخص، الأكبر، أفضل سعر متر).' : 'Highlighted = deterministically best (cheapest, largest, best price/m²).'}
           </p>
-
-          <div className="pt-2 border-t border-sand/40">
-            <Button variant="primary" onClick={runRecommend} disabled={aiBusy}>
-              <Sparkles size={14} className="inline -mt-0.5 me-1" />
-              {aiBusy ? (isAr ? 'جارٍ التحليل…' : 'Analyzing…') : (isAr ? 'توصية الذكاء الاصطناعي' : 'AI recommendation')}
-            </Button>
-            {aiErr && <p className="mt-2 text-sm text-red-600">{aiErr}</p>}
-            {aiResult && <div className="mt-2 bg-cream rounded-lg p-3 text-sm text-charcoal whitespace-pre-wrap border border-sand/50">{aiResult}</div>}
-          </div>
         </div>
       )}
     </Modal>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Sparkles } from 'lucide-react';
+import { Search } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -10,7 +10,6 @@ import {
   type FinderResponse,
   type FinderGroupKey,
 } from '@/lib/matching/projectFinder';
-import { callProjectAi, finderCandidatesForNarration } from '@/lib/projects/projectAi';
 
 interface MatchClientModalProps {
   open: boolean;
@@ -44,14 +43,11 @@ export default function MatchClientModal({ open, onClose, isAr }: MatchClientMod
   const [busy, setBusy] = useState(false);
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiText, setAiText] = useState<string | null>(null);
 
   const run = async () => {
     setBusy(true);
     setErr(null);
     setResp(null);
-    setAiText(null);
     try {
       const r = await fetchProjectFinder({
         requirements: {
@@ -68,22 +64,6 @@ export default function MatchClientModal({ open, onClose, isAr }: MatchClientMod
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const narrate = async () => {
-    if (!resp) return;
-    setAiBusy(true);
-    setAiText(null);
-    try {
-      // Pass ONLY the deterministic results — the AI explains, never re-ranks.
-      const candidates = finderCandidatesForNarration(resp);
-      const text = await callProjectAi('match_explain', { requirements: resp.requirements, candidates }, isAr ? 'ar' : 'en');
-      setAiText(text);
-    } catch (e) {
-      setAiText(e instanceof Error ? e.message : String(e));
-    } finally {
-      setAiBusy(false);
     }
   };
 
@@ -137,13 +117,6 @@ export default function MatchClientModal({ open, onClose, isAr }: MatchClientMod
                     </div>
                   ),
                 )}
-                <div className="pt-1">
-                  <Button variant="secondary" className="text-sm" onClick={narrate} disabled={aiBusy}>
-                    <Sparkles size={14} className="inline -mt-0.5 me-1" />
-                    {aiBusy ? (isAr ? 'جارٍ الشرح…' : 'Explaining…') : (isAr ? 'شرح الذكاء الاصطناعي' : 'AI explanation')}
-                  </Button>
-                  {aiText && <div className="mt-2 bg-white rounded-lg p-3 text-sm text-charcoal whitespace-pre-wrap border border-sand/50">{aiText}</div>}
-                </div>
               </>
             )}
           </div>

@@ -94,7 +94,6 @@ export function resolveUnitView(store: ProjectStoreSlices, record: AppRecord): U
   const pid = projectField ? (data[projectField.name] as unknown) : null;
   const projectId = Array.isArray(pid) ? (typeof pid[0] === 'string' ? pid[0] : null) : (typeof pid === 'string' ? pid : null);
 
-  const planRaw = data.unit_plan;
 
   return {
     id: record.id,
@@ -123,7 +122,7 @@ export function resolveUnitView(store: ProjectStoreSlices, record: AppRecord): U
     building: asString(data.building_number),
     block: asString(data.block),
     streetWidth: asString(data.street_width),
-    planImage: typeof planRaw === 'string' && /^https?:\/\//i.test(planRaw) ? planRaw : null,
+    planImage: asString(data.unit_plan), // raw value: a files.id UUID or a legacy http URL; resolved at render
     unitBrochure: asString(data.unit_brochure),
     projectBrochure: asString(data.project_brochure),
     locationLink: asString(data.location_url) ?? asString(data.project_location),

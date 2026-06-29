@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Building2, MapPin, Eye, EyeOff, ExternalLink, Sparkles, Plus, LayoutGrid, Globe, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { Building2, MapPin, Eye, EyeOff, ExternalLink, Plus, LayoutGrid, Globe, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -9,7 +9,6 @@ import {
   resolveProjectView, modelByName, fieldByCandidates, optionFor, formatPriceRange,
   asString, asFiniteNumber, type ProjectView, type OptionView,
 } from '@/lib/projects/projectView';
-import { callProjectAi, projectFacts } from '@/lib/projects/projectAi';
 
 interface PortfolioItem {
   ourId: string;
@@ -135,29 +134,10 @@ function PortfolioKpi({ icon, label, value, tone }: { icon: React.ReactNode; lab
 }
 
 function PortfolioCard({ item, isAr, onOpenDetail, onEdit }: { item: PortfolioItem; isAr: boolean; onOpenDetail: () => void; onEdit: () => void }) {
-  const [pitchBusy, setPitchBusy] = useState(false);
-  const [pitch, setPitch] = useState<string | null>(null);
-  const [pitchErr, setPitchErr] = useState<string | null>(null);
-
   const linked = item.linked;
   const heroUrl = item.heroOverride ?? linked?.imageUrl ?? null;
   const name = linked?.name ?? asString(item.ourData.project_name) ?? `#${item.ourId.slice(0, 8)}`;
   const dash = isAr ? 'غير متوفر' : 'N/A';
-
-  const genPitch = async () => {
-    setPitchBusy(true); setPitchErr(null); setPitch(null);
-    try {
-      // Grounded ONLY in the linked project's real facts + the curated pitch note.
-      const facts = {
-        project: linked ? projectFacts(linked, isAr) : null,
-        existing_pitch: asString(item.ourData.sales_pitch),
-        objection_handling: asString(item.ourData.objection_handling_notes),
-      };
-      setPitch(await callProjectAi('brief', facts, isAr ? 'ar' : 'en'));
-    } catch (e) {
-      setPitchErr(e instanceof Error ? e.message : String(e));
-    } finally { setPitchBusy(false); }
-  };
 
   return (
     <div className="card overflow-hidden flex flex-col">
@@ -187,15 +167,9 @@ function PortfolioCard({ item, isAr, onOpenDetail, onEdit }: { item: PortfolioIt
           <span className="font-semibold text-charcoal">{formatPriceRange(linked?.priceRange ?? null, isAr) ?? dash}</span>
         </div>
 
-        {pitchErr && <p className="mt-2 text-sm text-red-600">{pitchErr}</p>}
-        {pitch && <div className="mt-2 bg-cream rounded-lg p-2 text-xs text-charcoal whitespace-pre-wrap border border-sand/50 max-h-40 overflow-y-auto">{pitch}</div>}
-
-        <div className="mt-3 pt-2 border-t border-sand/40 flex gap-2">
-          <Button variant="secondary" className="flex-1 !py-1.5 text-sm" onClick={onOpenDetail}>
+        <div className="mt-3 pt-2 border-t border-sand/40">
+          <Button variant="primary" className="w-full !py-1.5 text-sm" onClick={onOpenDetail}>
             <ExternalLink size={13} className="inline -mt-0.5 me-1" /> {isAr ? 'التفاصيل' : 'Details'}
-          </Button>
-          <Button variant="primary" className="flex-1 !py-1.5 text-sm" onClick={genPitch} disabled={pitchBusy || !linked}>
-            <Sparkles size={13} className="inline -mt-0.5 me-1" /> {pitchBusy ? '…' : (isAr ? 'عرض بيع' : 'Pitch')}
           </Button>
         </div>
         <button onClick={onEdit} className="mt-1 text-[11px] text-charcoal/40 hover:text-copper">{isAr ? 'تحرير إعدادات المحفظة' : 'Edit portfolio settings'}</button>

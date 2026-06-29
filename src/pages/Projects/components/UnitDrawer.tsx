@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { X, ExternalLink, FileText, MessageCircle, Copy, Check } from 'lucide-react';
-import Button from '@/components/ui/Button';
+import { useEffect, useState } from 'react';
+import { X, ExternalLink, FileText } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
-import { callProjectAi, unitFacts } from '@/lib/projects/projectAi';
+import { signViewUrls } from '@/lib/files/client';
+import { isFileIdValue } from '@/pages/Records/components/useFileRowMap';
 import type { UnitView } from '@/lib/projects/unitView';
 
 interface UnitDrawerProps {
@@ -13,7 +13,7 @@ interface UnitDrawerProps {
 }
 
 const SAR = (n: number, isAr: boolean) => `${n.toLocaleString(isAr ? 'ar-SA' : 'en-US')} ${isAr ? 'ر.س' : 'SAR'}`;
-const NA = (isAr: boolean) => (isAr ? 'غير متوفر' : 'N/A');
+const DASH = '—';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -25,37 +25,26 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDrawerProps) {
-  const [aiBusy, setAiBusy] = useState(false);
-  const [aiMsg, setAiMsg] = useState<string | null>(null);
-  const [aiErr, setAiErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  // Resolve the plan image: it's a files.id UUID (private wassel-files bucket) →
+  // batch-sign a view URL; legacy http values are used directly.
+  const [planUrl, setPlanUrl] = useState<string | null>(null);
+  const planValue = unit?.planImage ?? null;
+  useEffect(() => {
+    let alive = true;
+    setPlanUrl(null);
+    if (!planValue) return;
+    if (/^https?:\/\//i.test(planValue)) { setPlanUrl(planValue); return; }
+    if (isFileIdValue(planValue)) {
+      signViewUrls([planValue])
+        .then((m) => { if (alive) setPlanUrl(m[planValue] ?? null); })
+        .catch((e) => { console.error('[UnitDrawer] failed to sign plan image url', e); });
+    }
+    return () => { alive = false; };
+  }, [planValue]);
 
   if (!unit) return null;
 
-  const dash = NA(isAr);
-  const lab = (o: { label_ar: string; label_en: string } | null) => (o ? (isAr ? o.label_ar : o.label_en) : dash);
-
-  const genWhatsapp = async () => {
-    setAiBusy(true);
-    setAiErr(null);
-    setAiMsg(null);
-    try {
-      const facts = { project: projectName ?? null, unit: unitFacts(unit, isAr) };
-      const result = await callProjectAi('whatsapp', facts, isAr ? 'ar' : 'en');
-      setAiMsg(result);
-    } catch (e) {
-      setAiErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setAiBusy(false);
-    }
-  };
-
-  const copy = async () => {
-    if (!aiMsg) return;
-    await navigator.clipboard.writeText(aiMsg);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
+  const lab = (o: { label_ar: string; label_en: string } | null) => (o ? (isAr ? o.label_ar : o.label_en) : DASH);
 
   return (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true">
@@ -78,15 +67,15 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
           {/* Status & price */}
           <section>
             <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'السعر' : 'Price'}</h3>
-            <Row label={isAr ? 'السعر الإجمالي' : 'Total price'} value={unit.totalPrice !== null ? SAR(unit.totalPrice, isAr) : dash} />
-            <Row label={isAr ? 'سعر المتر' : 'Price / m²'} value={unit.pricePerM2 !== null ? SAR(unit.pricePerM2, isAr) : dash} />
+            <Row label={isAr ? 'السعر الإجمالي' : 'Total price'} value={unit.totalPrice !== null ? SAR(unit.totalPrice, isAr) : DASH} />
+            <Row label={isAr ? 'سعر المتر' : 'Price / m²'} value={unit.pricePerM2 !== null ? SAR(unit.pricePerM2, isAr) : DASH} />
           </section>
 
           {/* Layout */}
           <section>
             <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'التصميم' : 'Layout'}</h3>
-            <Row label={isAr ? 'غرف النوم' : 'Bedrooms'} value={unit.bedrooms ?? dash} />
-            <Row label={isAr ? 'دورات المياه' : 'Bathrooms'} value={unit.bathrooms ?? dash} />
+            <Row label={isAr ? 'غرف النوم' : 'Bedrooms'} value={unit.bedrooms ?? DASH} />
+            <Row label={isAr ? 'دورات المياه' : 'Bathrooms'} value={unit.bathrooms ?? DASH} />
             <Row label={isAr ? 'الطابق' : 'Floor'} value={lab(unit.floor)} />
             <Row label={isAr ? 'المصعد' : 'Elevator'} value={lab(unit.elevator)} />
           </section>
@@ -94,17 +83,19 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
           {/* Areas */}
           <section>
             <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'المساحات' : 'Areas'}</h3>
-            <Row label={isAr ? 'مساحة الوحدة' : 'Unit area'} value={unit.area !== null ? `${unit.area} m²` : dash} />
-            <Row label={isAr ? 'المساحة الخاصة' : 'Private area'} value={unit.privateArea !== null ? `${unit.privateArea} m²` : dash} />
-            <Row label={isAr ? 'إجمالي المساحة' : 'Total area'} value={unit.totalArea !== null ? `${unit.totalArea} m²` : dash} />
-            <Row label={isAr ? 'مساحة الصك' : 'Deed area'} value={unit.deedArea !== null ? `${unit.deedArea} m²` : dash} />
+            <Row label={isAr ? 'مساحة الوحدة' : 'Unit area'} value={unit.area !== null ? `${unit.area} m²` : DASH} />
+            <Row label={isAr ? 'المساحة الخاصة' : 'Private area'} value={unit.privateArea !== null ? `${unit.privateArea} m²` : DASH} />
+            <Row label={isAr ? 'إجمالي المساحة' : 'Total area'} value={unit.totalArea !== null ? `${unit.totalArea} m²` : DASH} />
+            <Row label={isAr ? 'مساحة الصك' : 'Deed area'} value={unit.deedArea !== null ? `${unit.deedArea} m²` : DASH} />
           </section>
 
           {/* Plan image */}
-          {unit.planImage && (
+          {planUrl && (
             <section>
               <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'المخطط' : 'Plan'}</h3>
-              <img src={unit.planImage} alt="plan" className="w-full rounded-lg border border-sand/50" loading="lazy" />
+              <a href={planUrl} target="_blank" rel="noreferrer">
+                <img src={planUrl} alt={isAr ? 'مخطط الوحدة' : 'Unit plan'} className="w-full rounded-lg border border-sand/50" loading="lazy" />
+              </a>
             </section>
           )}
 
@@ -123,9 +114,9 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
           {/* Location / building */}
           <section>
             <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-1">{isAr ? 'الموقع والمبنى' : 'Location & Building'}</h3>
-            <Row label={isAr ? 'رقم العمارة' : 'Building'} value={unit.building ?? dash} />
-            <Row label={isAr ? 'البلك' : 'Block'} value={unit.block ?? dash} />
-            <Row label={isAr ? 'عرض الشارع' : 'Street width'} value={unit.streetWidth ?? dash} />
+            <Row label={isAr ? 'رقم العمارة' : 'Building'} value={unit.building ?? DASH} />
+            <Row label={isAr ? 'البلك' : 'Block'} value={unit.block ?? DASH} />
+            <Row label={isAr ? 'عرض الشارع' : 'Street width'} value={unit.streetWidth ?? DASH} />
             {unit.locationLink && (
               <a href={unit.locationLink} target="_blank" rel="noreferrer" className="text-copper hover:underline text-sm inline-flex items-center gap-1 mt-1">
                 <ExternalLink size={13} /> {isAr ? 'فتح الموقع' : 'Open location'}
@@ -159,24 +150,6 @@ export default function UnitDrawer({ unit, projectName, isAr, onClose }: UnitDra
               <p className="text-sm text-charcoal/80 whitespace-pre-wrap">{unit.notes}</p>
             </section>
           )}
-
-          {/* AI actions */}
-          <section className="pt-2 border-t border-sand/40">
-            <h3 className="text-xs font-bold uppercase tracking-wide text-copper mb-2">{isAr ? 'إجراءات الذكاء الاصطناعي' : 'AI Actions'}</h3>
-            <Button variant="secondary" onClick={genWhatsapp} disabled={aiBusy} className="text-sm">
-              <MessageCircle size={14} className="inline -mt-0.5 me-1" />
-              {aiBusy ? (isAr ? 'جارٍ الإنشاء…' : 'Generating…') : (isAr ? 'رسالة واتساب' : 'WhatsApp message')}
-            </Button>
-            {aiErr && <p className="mt-2 text-sm text-red-600">{aiErr}</p>}
-            {aiMsg && (
-              <div className="mt-2">
-                <div className="bg-cream rounded-lg p-3 text-sm text-charcoal whitespace-pre-wrap border border-sand/50">{aiMsg}</div>
-                <button onClick={copy} className="mt-1 text-xs text-copper hover:underline inline-flex items-center gap-1">
-                  {copied ? <><Check size={12} /> {isAr ? 'تم النسخ' : 'Copied'}</> : <><Copy size={12} /> {isAr ? 'نسخ' : 'Copy'}</>}
-                </button>
-              </div>
-            )}
-          </section>
         </div>
       </div>
     </div>
