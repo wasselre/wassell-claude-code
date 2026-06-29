@@ -82,6 +82,15 @@ const NEARBY_DISTRICT_KM = 20;
 // a STABLE order (created_at desc) — never an arbitrary slice — and log loudly.
 const MARKET_FALLBACK_CAP = 4000;
 
+// Hard cap for the AREA-filtered market scan too. A dense Riyadh district (e.g.
+// النرجس ≈ 17k in-area listings) is too many to load AND score in-memory inside the
+// edge budget — measured live 2026-06-29: scanning them all took ~25s and hit a
+// 504 FUNCTION_INVOCATION_TIMEOUT. We cap to the newest N in-area (STABLE
+// created_at-desc order — never an arbitrary slice) so the market source returns
+// fast and reliably. Sparse districts are unaffected (they have far fewer than the
+// cap). Logged when the cap actually truncates so the truncation is never silent.
+const MARKET_AREA_CAP = 2000;
+
 /** Great-circle distance in km between two lat/lng points (haversine). */
 function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371;
@@ -1166,11 +1175,13 @@ async function loadMarketByFilter(
   modelId: string,
   filterKey: 'district' | 'city',
   values: string[],
-  maxPages = 30,
+  cap = MARKET_AREA_CAP,
 ): Promise<RecordRow[]> {
   if (values.length === 0) return [];
   const pageSize = 1000;
   const rows: RecordRow[] = [];
+  const maxPages = Math.ceil(cap / pageSize);
+  let truncated = false;
   for (let page = 0; page < maxPages; page++) {
     const from = page * pageSize;
     const { data, error } = await supabase
@@ -1184,7 +1195,17 @@ async function loadMarketByFilter(
     if (error) throw new Error(error.message);
     const batch = (data ?? []) as RecordRow[];
     rows.push(...batch);
+    if (rows.length >= cap) { truncated = batch.length === pageSize; break; }
     if (batch.length < pageSize) break;
+  }
+  if (rows.length > cap) {
+    truncated = true;
+    rows.length = cap;
+  }
+  if (truncated) {
+    console.warn(
+      `[matchProjectsCore] market_listings: more than ${cap} listings in the requested ${filterKey} set — scored the newest ${cap} (stable created_at-desc). Some listings not scored.`,
+    );
   }
   return rows;
 }
