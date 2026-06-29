@@ -16,6 +16,7 @@ import {
   nonEmptyString,
   type ClientViewCtx,
 } from './lib/clientView';
+import { useClientWhatsApp } from './lib/useClientWhatsApp';
 import DetailHeader from './components/DetailHeader';
 import DetailKpiRow from './components/DetailKpiRow';
 import OverviewTab from './components/tabs/OverviewTab';
@@ -73,6 +74,7 @@ export default function ClientDetailPage() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
   const [showFollowupModal, setShowFollowupModal] = useState(false);
   const [showApptModal, setShowApptModal] = useState(false);
+  const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
 
   if (generic) return <RecordFormPage />;
   if (!clientsModel) return <div className="p-6 text-terracotta">{isAr ? 'نموذج العملاء غير موجود' : 'Clients model not found'}</div>;
@@ -94,11 +96,13 @@ export default function ClientDetailPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] space-y-4 p-4 sm:p-6">
+      {whatsAppModals}
+
       <DetailHeader
         view={view}
         isAr={isAr}
         returnTo={listReturnTo}
-        onWhatsApp={() => setActiveTab('whatsapp')}
+        onWhatsApp={() => openWhatsApp(client.id, view.phone)}
         onCreateFollowup={() => setShowFollowupModal(true)}
         onCreateAppointment={() => setShowApptModal(true)}
       />

@@ -1,14 +1,21 @@
 import { useNavigate } from 'react-router-dom';
-import { Phone, ExternalLink, ListChecks, MessageCircle, User as UserIcon } from 'lucide-react';
-import { waMeUrl, telUrl } from '../lib/phoneLinks';
+import { Phone, ListChecks, MessageCircle, User as UserIcon } from 'lucide-react';
+import { telUrl } from '../lib/phoneLinks';
 
 interface QuickActionsProps {
   clientId: string;
   phone: string | null;
   nextFollowupId: string | null;
+  isAr: boolean;
   /** Compact icon-only buttons (list rows) vs labeled buttons (detail header). */
   variant?: 'row' | 'header';
-  /** Detail header passes these to jump to the in-app tab instead of leaving. */
+  /**
+   * WhatsApp handler. When supplied (detail header AND list rows), clicking
+   * WhatsApp opens the in-app chat popup (existing conversation thread, or the
+   * new-chat composer) — the SAME flow the Follow-up Workspace uses. The page
+   * owns the modal state so the existing chat components are reused, not
+   * duplicated.
+   */
   onWhatsApp?: () => void;
   /** Where "Open next follow-up" should return to after completion. */
   returnTo?: string;
@@ -16,16 +23,23 @@ interface QuickActionsProps {
   hideOpenClient?: boolean;
 }
 
+const L = {
+  open: { ar: 'فتح', en: 'Open' },
+  nextFollowup: { ar: 'المتابعة التالية', en: 'Next follow-up' },
+  whatsapp: { ar: 'واتساب', en: 'WhatsApp' },
+  call: { ar: 'اتصال', en: 'Call' },
+} as const;
+
 /**
- * Shared quick actions. On the list (`row`) WhatsApp opens wa.me in a new tab
- * and the open-client button navigates to the cockpit. On the detail header,
- * `onWhatsApp` switches to the in-app WhatsApp tab so the existing panel (and
- * its realtime behavior) is reused rather than duplicated.
+ * Shared quick actions for the Clients list rows and the Client 360 header.
+ * Labels/tooltips are bilingual. WhatsApp + Call resolve in-app: WhatsApp opens
+ * the chat popup via `onWhatsApp`; Call uses a tel: link.
  */
 export default function ClientQuickActions({
   clientId,
   phone,
   nextFollowupId,
+  isAr,
   variant = 'row',
   onWhatsApp,
   returnTo,
@@ -33,8 +47,8 @@ export default function ClientQuickActions({
 }: QuickActionsProps) {
   const navigate = useNavigate();
   const isHeader = variant === 'header';
-  const wa = waMeUrl(phone);
   const tel = telUrl(phone);
+  const t = (k: keyof typeof L) => (isAr ? L[k].ar : L[k].en);
 
   const btn = isHeader
     ? 'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-bold transition disabled:opacity-40 disabled:cursor-not-allowed'
@@ -51,63 +65,44 @@ export default function ClientQuickActions({
       {!hideOpenClient && (
         <button
           type="button"
-          title="Open client"
-          aria-label="Open client"
+          title={t('open')}
+          aria-label={t('open')}
           onClick={() => navigate(`/model/clients/${clientId}`)}
           className={`${btn} ${isHeader ? 'bg-copper text-white hover:bg-terracotta' : 'text-copper hover:bg-copper/10'}`}
         >
           <UserIcon size={16} />
-          {isHeader && <span>Open</span>}
+          {isHeader && <span>{t('open')}</span>}
         </button>
       )}
 
       <button
         type="button"
-        title="Open next follow-up"
-        aria-label="Open next follow-up"
+        title={t('nextFollowup')}
+        aria-label={t('nextFollowup')}
         disabled={!nextFollowupId}
         onClick={openNextFollowup}
         className={`${btn} ${isHeader ? 'bg-chocolate text-white hover:opacity-90' : 'text-chocolate hover:bg-chocolate/10'}`}
       >
         <ListChecks size={16} />
-        {isHeader && <span>Next follow-up</span>}
+        {isHeader && <span>{t('nextFollowup')}</span>}
       </button>
 
-      {onWhatsApp ? (
-        <button
-          type="button"
-          title="WhatsApp"
-          aria-label="WhatsApp"
-          disabled={!phone}
-          onClick={onWhatsApp}
-          className={`${btn} ${isHeader ? 'bg-[#25D366]/15 text-[#128C7E] hover:bg-[#25D366]/25' : 'text-[#128C7E] hover:bg-[#25D366]/15'}`}
-        >
-          <MessageCircle size={16} />
-          {isHeader && <span>WhatsApp</span>}
-        </button>
-      ) : (
-        <a
-          href={wa ?? undefined}
-          target="_blank"
-          rel="noreferrer"
-          title="WhatsApp"
-          aria-label="WhatsApp"
-          aria-disabled={!wa}
-          onClick={(e) => {
-            e.stopPropagation();
-            if (!wa) e.preventDefault();
-          }}
-          className={`${btn} ${isHeader ? 'bg-[#25D366]/15 text-[#128C7E] hover:bg-[#25D366]/25' : 'text-[#128C7E] hover:bg-[#25D366]/15'} ${!wa ? 'pointer-events-none opacity-30' : ''}`}
-        >
-          <MessageCircle size={16} />
-          {isHeader && <span>WhatsApp</span>}
-        </a>
-      )}
+      <button
+        type="button"
+        title={t('whatsapp')}
+        aria-label={t('whatsapp')}
+        disabled={!phone || !onWhatsApp}
+        onClick={() => onWhatsApp?.()}
+        className={`${btn} ${isHeader ? 'bg-[#25D366]/15 text-[#128C7E] hover:bg-[#25D366]/25' : 'text-[#128C7E] hover:bg-[#25D366]/15'}`}
+      >
+        <MessageCircle size={16} />
+        {isHeader && <span>{t('whatsapp')}</span>}
+      </button>
 
       <a
         href={tel ?? undefined}
-        title="Call"
-        aria-label="Call"
+        title={t('call')}
+        aria-label={t('call')}
         aria-disabled={!tel}
         onClick={(e) => {
           e.stopPropagation();
@@ -116,22 +111,8 @@ export default function ClientQuickActions({
         className={`${btn} ${isHeader ? 'bg-charcoal/10 text-charcoal hover:bg-charcoal/20' : 'text-charcoal/70 hover:bg-charcoal/10'} ${!tel ? 'pointer-events-none opacity-30' : ''}`}
       >
         <Phone size={16} />
-        {isHeader && <span>Call</span>}
+        {isHeader && <span>{t('call')}</span>}
       </a>
-
-      {isHeader && wa && (
-        <a
-          href={wa}
-          target="_blank"
-          rel="noreferrer"
-          title="Open WhatsApp Web"
-          aria-label="Open WhatsApp Web"
-          onClick={(e) => e.stopPropagation()}
-          className={`${btn} bg-charcoal/5 text-charcoal/60 hover:bg-charcoal/10`}
-        >
-          <ExternalLink size={16} />
-        </a>
-      )}
     </div>
   );
 }

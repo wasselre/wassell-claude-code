@@ -74,6 +74,7 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
             clientId={view.id}
             phone={view.phone}
             nextFollowupId={view.nextFollowupId}
+            isAr={isAr}
             variant="header"
             onWhatsApp={onWhatsApp}
             returnTo={returnTo}

@@ -3,6 +3,7 @@ import { Clock, Activity, MapPin } from 'lucide-react';
 import type { ClientView } from '../lib/clientView';
 import { isAtRisk, isClosedWon, isLostOrUnqualified, isOverdue, hasNoNextAction } from '../lib/clientView';
 import { formatRelative, formatBudget } from '../lib/lifecycleDisplay';
+import { useClientWhatsApp } from '../lib/useClientWhatsApp';
 import { HealthBadge, MetaChip, NextActionChip, VisitRatingStars, Chip, Dash } from './clientChips';
 import ClientQuickActions from './ClientQuickActions';
 
@@ -42,6 +43,7 @@ function PreferenceSummary({ v, isAr }: { v: ClientView; isAr: boolean }) {
 
 export default function ClientsTable({ views, isAr, returnTo, now = Date.now() }: ClientsTableProps) {
   const navigate = useNavigate();
+  const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
 
   if (views.length === 0) {
     return (
@@ -53,6 +55,7 @@ export default function ClientsTable({ views, isAr, returnTo, now = Date.now() }
 
   return (
     <div className="space-y-2">
+      {whatsAppModals}
       {views.map((v) => {
         const accent = accentColor(v, now);
         const overdue = isOverdue(v, now);
@@ -107,7 +110,16 @@ export default function ClientsTable({ views, isAr, returnTo, now = Date.now() }
 
               {/* Quick actions */}
               <div className="flex items-center justify-end lg:w-auto">
-                <ClientQuickActions clientId={v.id} phone={v.phone} nextFollowupId={v.nextFollowupId} variant="row" returnTo={returnTo} hideOpenClient />
+                <ClientQuickActions
+                  clientId={v.id}
+                  phone={v.phone}
+                  nextFollowupId={v.nextFollowupId}
+                  isAr={isAr}
+                  variant="row"
+                  returnTo={returnTo}
+                  onWhatsApp={() => openWhatsApp(v.id, v.phone)}
+                  hideOpenClient
+                />
               </div>
             </div>
           </div>
