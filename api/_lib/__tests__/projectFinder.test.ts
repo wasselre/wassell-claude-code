@@ -319,6 +319,51 @@ describe('finder grouping helpers', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// A requested dimension the project has NO data for must NOT be renormalized away —
+// it earns 0 at full weight, so a no-price listing can never score 100 when the
+// client gave a budget.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('requested-but-missing data penalizes the score (no free 100%)', () => {
+  const noPriceProject = {
+    project_name: 'No Price Listing',
+    unit_types: ['apartments'],
+    project_status: 'available',
+    area_range: { min: 90, max: 300 },
+    available_units: 5,
+    // NB: no price_range at all
+  };
+  const geo = {
+    projLat: A_CENTROID.lat, projLng: A_CENTROID.lng,
+    reqLat: A_CENTROID.lat, reqLng: A_CENTROID.lng,
+    reqDistrictId: DIST_A, reqCityId: CITY,
+    projDistrictId: DIST_A, projCityId: CITY, geoConfidence: 'high' as const,
+  };
+
+  it('no price + client has a budget → budget subscore 0, score well below 100', () => {
+    const r = scoreProject(noPriceProject, { city: 'الرياض', district: 'الفاروق', budget_max: 1_000_000, property_type: 'شقة', area_min: 90, area_max: 300 }, geo);
+    expect(r.breakdown.budget).toBe(0);          // unconfirmable → 0, not null
+    expect(r.data_gaps).toContain('no price data');
+    expect(r.score).toBeLessThan(100);
+    expect(r.score).toBeLessThan(75); // below the STRONG threshold — not a perfect match
+  });
+
+  it('SAME project with a price IN budget scores higher (data-complete wins)', () => {
+    const withPrice = { ...noPriceProject, price_range: { min: 700_000, max: 950_000 } };
+    const a = scoreProject(noPriceProject, { city: 'الرياض', district: 'الفاروق', budget_max: 1_000_000, property_type: 'شقة' }, geo);
+    const b = scoreProject(withPrice, { city: 'الرياض', district: 'الفاروق', budget_max: 1_000_000, property_type: 'شقة' }, geo);
+    expect(b.score).toBeGreaterThan(a.score);
+    expect(b.breakdown.budget).toBe(1);
+  });
+
+  it('a dimension the client did NOT ask about is still dropped (no penalty)', () => {
+    // No budget requested → a missing price must not penalize.
+    const r = scoreProject(noPriceProject, { city: 'الرياض', district: 'الفاروق', property_type: 'شقة' }, geo);
+    expect(r.breakdown.budget).toBeNull();
+    expect(r.score).toBe(100); // location + type + availability all perfect, budget excluded
+  });
+});
+
 describe('coerceParsedRequirements (LLM parse output is sanitised)', () => {
   it('keeps valid fields and drops junk', () => {
     const out = coerceParsedRequirements({

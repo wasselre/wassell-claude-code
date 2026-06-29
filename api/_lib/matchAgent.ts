@@ -648,6 +648,12 @@ interface ScoredProject {
 function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo?: GeoContext): ScoredProject {
   const gaps: string[] = [];
   const missing: string[] = [];
+  // Dimensions the CUSTOMER asked about but the project has NO data for. These must
+  // NOT be silently renormalized away — a listing whose price is unknown can't be a
+  // perfect match when the client gave a budget. They keep their full weight in the
+  // score and earn ZERO (unconfirmable → no points), so a data-complete listing
+  // always outranks a data-poor one and a no-price listing can never read as 100%.
+  const requestedMissing = new Set<keyof typeof WEIGHTS>();
   const dims: Record<keyof typeof WEIGHTS, DimScore> = {
     location: { value: null },
     budget: { value: null },
@@ -732,6 +738,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     if (!range || (range.min == null && range.max == null)) {
       gaps.push('no price data');
       missing.push('Confirm the project pricing');
+      requestedMissing.add('budget');
     } else {
       const pmin = range.min ?? range.max ?? 0;
       const pmax = range.max ?? range.min ?? pmin;
@@ -761,6 +768,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     if (types.length === 0) {
       gaps.push('no unit type data');
       missing.push('Confirm the available unit types');
+      requestedMissing.add('type');
     } else {
       const needles = expandPropertyType(req.property_type);
       const hit = types.some((t) => needles.some((n) => t.includes(n) || n.includes(t)));
@@ -773,6 +781,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     const range = pickRange(data, 'area_range');
     if (!range || (range.min == null && range.max == null)) {
       gaps.push('no area data');
+      requestedMissing.add('area');
     } else {
       const amin = range.min ?? range.max ?? 0;
       const amax = range.max ?? range.min ?? amin;
@@ -792,6 +801,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     const range = pickRange(data, 'bedroom_range');
     if (!range || (range.min == null && range.max == null)) {
       gaps.push('no bedroom data');
+      requestedMissing.add('bedrooms');
     } else {
       const bmin = range.min ?? range.max ?? 0;
       const bmax = range.max ?? range.min ?? bmin;
@@ -806,6 +816,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     const range = pickRange(data, 'bathroom_range');
     if (!range || (range.min == null && range.max == null)) {
       gaps.push('no bathroom data');
+      requestedMissing.add('bathrooms');
     } else {
       const btmin = range.min ?? range.max ?? 0;
       const btmax = range.max ?? range.min ?? btmin;
@@ -838,15 +849,25 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   }
 
   // ── Weighted, renormalized average ──
+  // A dimension counts when it was EVALUATED (value set) OR when the customer asked
+  // about it but the project has no data (requestedMissing) — the latter keeps its
+  // full weight and earns 0, so an unconfirmable requirement (e.g. a listing with no
+  // price when a budget was given) drags the score down instead of being ignored.
+  // A dimension the customer DIDN'T ask about is dropped entirely (no penalty).
   let num = 0;
   let den = 0;
   const breakdown: Record<string, number | null> = {};
   (Object.keys(WEIGHTS) as Array<keyof typeof WEIGHTS>).forEach((k) => {
     const sub = dims[k].value;
-    breakdown[k] = sub;
     if (sub != null) {
+      breakdown[k] = sub;
       num += WEIGHTS[k] * sub;
       den += WEIGHTS[k];
+    } else if (requestedMissing.has(k)) {
+      breakdown[k] = 0; // requested but unconfirmable → 0 credit, full weight
+      den += WEIGHTS[k];
+    } else {
+      breakdown[k] = null; // not requested → excluded from the average
     }
   });
   const score = den > 0 ? Math.round((num / den) * 100) : 0;
