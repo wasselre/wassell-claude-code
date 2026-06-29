@@ -45,6 +45,9 @@ import AssistantInsightsPage from '@/pages/Matching/AssistantInsightsPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
+import ProjectsListPage from '@/pages/Projects/ProjectsListPage';
+import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
+import OurProjectsPortfolioPage from '@/pages/Projects/OurProjectsPortfolioPage';
 import SalesValuationReviewPage from '@/pages/SalesValuation/ReviewDetailPage';
 import SalesValuationQueuePage from '@/pages/SalesValuation/QueuePage';
 import SalesValuationBoardPage from '@/pages/SalesValuation/CorrectionBoardPage';
@@ -172,6 +175,12 @@ function RecordDetailDispatcher() {
     // templates cleanly resets the form's local state.
     return <ChatTemplateFormPage key={recordId ?? 'new'} />;
   }
+  if (modelName === 'all_projects' && recordId !== 'new') {
+    // Custom Project detail (hero + KPIs + 7 tabs). The page itself falls back
+    // to the generic form when ?generic=1 (its "Edit" action). New-record create
+    // stays on the generic form.
+    return <ProjectDetailPage key={recordId} />;
+  }
   return <RecordFormPageRoute />;
 }
 
@@ -215,6 +224,16 @@ function RecordListDispatcher() {
   }
   if (modelName === 'image_chats') {
     return <ImageChatsPage />;
+  }
+  if (modelName === 'all_projects') {
+    // Custom Projects experience (KPIs + filters + cards/list/map). The page
+    // itself falls back to the generic table/export view when ?generic=1.
+    return <ProjectsListPage />;
+  }
+  if (modelName === 'our_projects') {
+    // Curated sales portfolio dashboard over all_projects. Falls back to the
+    // generic list when ?generic=1.
+    return <OurProjectsPortfolioPage />;
   }
   if (modelName === 'design_templates') {
     // Card-grid library instead of the generic record-list table — each
