@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus } from '@/lib/matching/projectFinder';
+import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
 
 /**
  * One project in the deterministic Project Finder modal (Phase 2). Renders ONLY
@@ -47,6 +48,29 @@ const UNIT_TYPE_AR: Record<string, string> = {
   floor: 'دور', floors: 'أدوار', land: 'أرض', lands: 'أرض', plot: 'أرض', plots: 'أرض',
 };
 const localizeUnitType = (v: string, isAr: boolean) => (isAr ? UNIT_TYPE_AR[v.trim().toLowerCase()] ?? v : v);
+
+/** Deal-quality badge (Market Intelligence). Decision-support only — never ranking.
+ *  'no_benchmark' is rendered silently (no segment) to avoid clutter; data gaps are
+ *  already surfaced elsewhere on the card. */
+function DealPill({ deal, isAr }: { deal: DealBadge; isAr: boolean }) {
+  if (deal.kind === 'no_benchmark') return null;
+  const tone = dealBadgeTone(deal.kind);
+  const cls: Record<string, string> = {
+    good: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    high: 'border-rose-200 bg-rose-50 text-rose-700',
+    warn: 'border-amber-200 bg-amber-50 text-amber-700',
+    neutral: 'border-sand/60 bg-cream/60 text-charcoal/70',
+    unknown: 'border-sand/50 bg-white text-charcoal/50',
+  };
+  const pct = deal.vs_median_pct != null ? ` (${deal.vs_median_pct > 0 ? '+' : ''}${deal.vs_median_pct}%)` : '';
+  const showPct = deal.kind === 'strong_value' || deal.kind === 'premium_price' || deal.kind === 'fair_market' || deal.kind === 'potential_value';
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold ${cls[tone]}`}
+      title={isAr ? (deal.asking_only ? 'مبني على الأسعار المعروضة' : '') : (deal.asking_only ? 'Based on asking prices' : '')}>
+      {dealBadgeLabel(deal.kind, isAr)}{showPct ? pct : ''}
+    </span>
+  );
+}
 
 export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, addState }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
@@ -106,6 +130,7 @@ export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, a
               {L(`~${item.distance_km} كم`, `~${item.distance_km} km`)}
             </span>
           )}
+          {item.deal && <DealPill deal={item.deal} isAr={isAr} />}
         </div>
 
         {/* Deterministic explanation */}

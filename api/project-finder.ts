@@ -38,6 +38,7 @@ import {
   type MatchSource,
 } from './_lib/projectFinder.js';
 import { parseRequirements, explainMatches, applyLlmExplanations } from './_lib/projectFinderAI.js';
+import { enrichWithDealBadges } from './_lib/marketBadge.js';
 
 export const config = { runtime: 'edge' };
 
@@ -180,6 +181,14 @@ export default async function handler(req: Request): Promise<Response> {
         result = applyLlmExplanations(result, explanations); // throws if ranking changed
         usedAiExplain = true;
       }
+    }
+
+    // (4) Deal-quality badges (Market Intelligence) — PURELY ADDITIVE + post-ranking.
+    //     Attaches the non-ranking `deal` field; cannot change score/band/order.
+    try {
+      await enrichWithDealBadges(supabase, result);
+    } catch (e) {
+      console.error('[project-finder] deal-badge enrichment failed (non-fatal):', e instanceof Error ? e.message : e);
     }
 
     // Audit (best-effort; never fails the recommendation).

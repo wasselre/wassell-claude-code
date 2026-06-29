@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -25,7 +25,7 @@ import { ClipboardList, Activity, BarChart3, Layers } from 'lucide-react';
  * custom surface per-profile gateable (Sidebar + PermissionMatrix + the
  * route guard all read this list).
  */
-export type CustomPageId = 'sales_tasks' | 'sales_process' | 'sales_manager' | 'sales_studio';
+export type CustomPageId = 'sales_tasks' | 'sales_process' | 'sales_manager' | 'sales_studio' | 'market_intelligence';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -68,6 +68,14 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_ar: 'مدير المبيعات',
     label_en: 'Sales Manager',
     icon: BarChart3,
+    default_access: 'admin',
+  },
+  {
+    id: 'market_intelligence',
+    route: '/market-intelligence',
+    label_ar: 'ذكاء السوق',
+    label_en: 'Market Intelligence',
+    icon: LineChart,
     default_access: 'admin',
   },
 ];

@@ -14,6 +14,7 @@
 
 import { supabase } from '@/lib/supabase';
 import type { MatchRequirementsInput } from './requirements';
+import type { DealBadge } from '@/lib/market/dealBadge';
 
 export type FinderGroupKey =
   | 'exact_district_matches'
@@ -55,6 +56,9 @@ export interface FinderMatch {
   facts: Record<string, unknown>;
   score_breakdown: Record<string, number | null>;
   explanation: string;
+  /** Decision-support deal-quality badge (Market Intelligence). Set by the endpoint
+   *  AFTER ranking — never affects score/band/order. Absent if no benchmark applies. */
+  deal?: DealBadge;
 }
 
 export interface FinderResponse {

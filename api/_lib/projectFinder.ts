@@ -67,6 +67,10 @@ export interface FinderMatch {
   /** Short sales-friendly explanation. Deterministic by default; the endpoint may
    *  REPLACE the text with an LLM-written one (never the ranking fields). */
   explanation: string;
+  /** Decision-support deal-quality badge (Market Intelligence). NON-ranking — attached
+   *  by the endpoint AFTER ranking + the assertRankingUnchanged guard, so it can never
+   *  influence score/band/source/match_type/order. */
+  deal?: import('../../src/lib/market/dealBadge.js').DealBadge;
 }
 
 export interface FinderResult {
