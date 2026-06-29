@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Info, History, X, AlertTriangle } from 'lucide-react';
+import { Check, Info, History, X, AlertTriangle, Trash2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import Button from '@/components/ui/Button';
@@ -16,6 +16,8 @@ export default function SettingsPage() {
   const [backfilling, setBackfilling] = useState(false);
   const [includeFlags, setIncludeFlags] = useState(false);
   const [confirm, setConfirm] = useState<{ count: number; includeFlags: boolean } | null>(null);
+  const [pruning, setPruning] = useState(false);
+  const [pruneConfirm, setPruneConfirm] = useState<{ count: number; includeFlags: boolean } | null>(null);
   const seededRef = useRef<string | null>(null);
   useEffect(() => {
     if (record && seededRef.current !== record.id) { seededRef.current = record.id; setD({ ...record.data }); }
@@ -91,6 +93,41 @@ export default function SettingsPage() {
       n > 0
         ? (isAr ? `تم إنشاء ${n} مراجعة للمتابعات السابقة` : `Created ${n} review(s) for previous follow-ups`)
         : (isAr ? 'لا توجد متابعات سابقة جديدة مطابقة' : 'No new matching previous follow-ups'),
+      'success',
+    );
+  }
+
+  // Prune: delete reviews whose follow-up no longer matches the current criteria.
+  // Only UNTOUCHED (still-pending, no manager work) reviews are removed —
+  // already-evaluated reviews are always kept. Deleted rows are backed up
+  // server-side. Saves the criteria first so the prune matches what's on screen.
+  async function startPrune() {
+    if (!isSupabaseConfigured() || !supabase) {
+      addToast(isAr ? 'غير متاح بدون اتصال' : 'Unavailable offline', 'error');
+      return;
+    }
+    setPruning(true);
+    const saved = await persist();
+    if (!saved) { setPruning(false); return; }
+    const { data: count, error } = await supabase.rpc('svr_prune_unmatched_reviews', { p_dry_run: true, p_include_flags: includeFlags });
+    setPruning(false);
+    if (error) { addToast(isAr ? `تعذّر حساب المراجعات: ${error.message}` : `Preview failed: ${error.message}`, 'error'); return; }
+    setPruneConfirm({ count: Number(count) || 0, includeFlags });
+  }
+
+  async function runPrune() {
+    if (!supabase || !pruneConfirm) return;
+    const flags = pruneConfirm.includeFlags;
+    setPruneConfirm(null);
+    setPruning(true);
+    const { data: count, error } = await supabase.rpc('svr_prune_unmatched_reviews', { p_dry_run: false, p_include_flags: flags });
+    setPruning(false);
+    if (error) { addToast(isAr ? `تعذّر حذف المراجعات: ${error.message}` : `Prune failed: ${error.message}`, 'error'); return; }
+    const n = Number(count) || 0;
+    addToast(
+      n > 0
+        ? (isAr ? `تم حذف ${n} مراجعة غير مطابقة` : `Deleted ${n} non-matching review(s)`)
+        : (isAr ? 'لا توجد مراجعات غير مطابقة للحذف' : 'No non-matching reviews to delete'),
       'success',
     );
   }
@@ -182,20 +219,26 @@ export default function SettingsPage() {
         <div className="rounded-xl border border-sand/40 bg-cream/40 px-4 py-2">
           <Toggle
             label={isAr ? 'تضمين المتابعات ذات الإشارات التلقائية' : 'Include auto-flagged follow-ups'}
-            hint={isAr ? 'مثل: ملاحظات ضعيفة، تأخّر في المتابعة، نتيجة غير متطابقة، زيارة غير مسجلة' : 'e.g. weak notes, late follow-up, result mismatch, unregistered visit'}
+            hint={isAr ? 'يعتبرها مطابقة أيضًا — فتُنشأ لها مراجعات، ولا تُحذف. (مثل: ملاحظات ضعيفة، تأخّر، نتيجة غير متطابقة، زيارة غير مسجلة)' : 'Treats them as matching too — so they get reviews and are NOT deleted. (e.g. weak notes, late, result mismatch, unregistered visit)'}
             checked={includeFlags} onChange={setIncludeFlags} />
         </div>
-        <div className="flex items-center gap-3 pt-1">
-          <Button variant="secondary" onClick={startBackfill} disabled={backfilling || saving}>
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <Button variant="secondary" onClick={startBackfill} disabled={backfilling || pruning || saving}>
             <History size={16} /> {backfilling
               ? (isAr ? 'جارٍ الحساب…' : 'Calculating…')
-              : (isAr ? 'تطبيق على المتابعات السابقة' : 'Apply to previous follow-ups')}
+              : (isAr ? 'إنشاء مراجعات للمتابعات المطابقة' : 'Create reviews for matching')}
+          </Button>
+          <Button variant="secondary" onClick={startPrune} disabled={pruning || backfilling || saving}
+            className="!text-terracotta !border-terracotta/40 hover:!bg-terracotta/10">
+            <Trash2 size={16} /> {pruning
+              ? (isAr ? 'جارٍ الحساب…' : 'Calculating…')
+              : (isAr ? 'حذف المراجعات غير المطابقة' : 'Delete non-matching reviews')}
           </Button>
         </div>
         <p className="text-xs text-charcoal/50">
           {isAr
-            ? 'سيتم حفظ المعايير الحالية أولًا، ثم عرض عدد المراجعات قبل الإنشاء.'
-            : 'The current criteria are saved first, then the number of reviews is shown before anything is created.'}
+            ? 'تُحفظ المعايير الحالية أولًا ثم يُعرض العدد قبل التنفيذ. الحذف يطال المراجعات غير المطابقة التي لم تُقيَّم بعد فقط — المراجعات المُقيَّمة تبقى دائمًا، والمحذوفة يُحتفظ بنسخة منها.'
+            : 'The current criteria are saved first, then a count is shown before anything happens. Delete only removes non-matching reviews that haven’t been evaluated yet — evaluated reviews are always kept, and deleted rows are backed up.'}
         </p>
       </SectionCard>
 
@@ -219,6 +262,54 @@ export default function SettingsPage() {
         <BackfillConfirm isAr={isAr} count={confirm.count} includeFlags={confirm.includeFlags} busy={backfilling}
           onCancel={() => setConfirm(null)} onConfirm={runBackfill} />
       )}
+      {pruneConfirm && (
+        <PruneConfirm isAr={isAr} count={pruneConfirm.count} busy={pruning}
+          onCancel={() => setPruneConfirm(null)} onConfirm={runPrune} />
+      )}
+    </div>
+  );
+}
+
+function PruneConfirm({ isAr, count, busy, onCancel, onConfirm }: {
+  isAr: boolean; count: number; busy: boolean; onCancel: () => void; onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onCancel(); }} dir={isAr ? 'rtl' : 'ltr'}>
+      <div className="w-full max-w-md rounded-2xl bg-cream shadow-xl">
+        <header className="flex items-center justify-between border-b border-sand/40 px-5 py-3">
+          <h3 className="text-base font-bold text-charcoal">{isAr ? 'حذف المراجعات غير المطابقة' : 'Delete non-matching reviews'}</h3>
+          <button type="button" onClick={onCancel} className="text-charcoal/50 hover:text-charcoal"><X size={20} /></button>
+        </header>
+        <div className="p-5 space-y-4">
+          {count > 0 ? (
+            <>
+              <div className="flex items-start gap-3 rounded-xl bg-terracotta/10 px-4 py-3 text-sm text-terracotta">
+                <AlertTriangle size={18} className="mt-0.5 flex-shrink-0" />
+                <p>{isAr
+                  ? <>سيتم حذف <span className="font-extrabold">{count}</span> مراجعة غير مطابقة للمعايير الحالية ولم تُقيَّم بعد. المراجعات التي قُيِّمت تبقى. يُحتفظ بنسخة من المحذوف. لا يمكن التراجع من الواجهة. هل تريد المتابعة؟</>
+                  : <>This will permanently delete <span className="font-extrabold">{count}</span> non-matching review(s) that haven’t been evaluated yet. Evaluated reviews are kept. Deleted rows are backed up. This can’t be undone from the UI. Continue?</>}</p>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="secondary" onClick={onCancel} disabled={busy}>{isAr ? 'إلغاء' : 'Cancel'}</Button>
+                <Button onClick={onConfirm} disabled={busy}
+                  className="!bg-terracotta hover:!bg-terracotta/90">
+                  {busy ? (isAr ? 'جارٍ الحذف…' : 'Deleting…') : (isAr ? `حذف ${count} مراجعة` : `Delete ${count}`)}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="text-sm text-charcoal/70">{isAr
+                ? 'لا توجد مراجعات غير مطابقة وغير مُقيَّمة لحذفها.'
+                : 'There are no non-matching, un-evaluated reviews to delete.'}</p>
+              <div className="flex justify-end">
+                <Button variant="secondary" onClick={onCancel}>{isAr ? 'حسناً' : 'OK'}</Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
