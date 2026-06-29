@@ -1,12 +1,17 @@
 /**
- * Add a recommended project to a client's `preferred_projects` — the controlled,
- * USER-TRIGGERED "Add to client" action behind the Suggested Projects cards.
+ * Add a recommended record to one of a client's multi-lookup preference fields —
+ * the controlled, USER-TRIGGERED "Add to client" action behind the Project Finder
+ * cards. Routed by SOURCE so each id lands in the field that targets the right
+ * model:
+ *   - our_projects / all_projects → `preferred_projects` (lookup → all_projects)
+ *   - market_listings             → `preferred_market_listings` (lookup → market_listings)
+ * This keeps a market-listing id out of `preferred_projects` (an all_projects
+ * lookup), which would otherwise be an invalid cross-model reference.
  *
  * Goes through the store's `saveRecord` (version-aware, RLS-correct, surfaces +
  * persists failures per the silent-failure rules). NEVER writes from AI text —
- * only when the salesperson presses the button. Reuses the EXISTING
- * `clients.preferred_projects` lookup field (multi → all_projects); no schema
- * change. Append-dedup, so pressing twice is a no-op.
+ * only when the salesperson presses the button. Append-dedup, so pressing twice
+ * is a no-op.
  */
 
 import { useAppStore } from '@/stores/appStore';
@@ -21,10 +26,9 @@ export interface AddToClientResult {
   reason?: string;
 }
 
-const FIELD = 'preferred_projects';
-
-export async function addProjectToClient(clientId: string, projectId: string): Promise<AddToClientResult> {
-  if (!clientId || !projectId) return { ok: false, status: 'error', reason: 'missing ids' };
+/** Append `recordId` to the client's `field` (a multi-value lookup), dedup + version-aware. */
+async function addToClientLookup(clientId: string, recordId: string, field: string): Promise<AddToClientResult> {
+  if (!clientId || !recordId) return { ok: false, status: 'error', reason: 'missing ids' };
 
   const state = useAppStore.getState();
   const clientsModel = state.models.find((m) => m.name === 'clients');
@@ -33,17 +37,17 @@ export async function addProjectToClient(clientId: string, projectId: string): P
   const record = (state.records[clientsModel.id] ?? []).find((r) => r.id === clientId);
   if (!record) return { ok: false, status: 'error', reason: 'client not found' };
 
-  const raw = record.data[FIELD];
+  const raw = record.data[field];
   const current: string[] = Array.isArray(raw)
     ? raw.filter((x): x is string => typeof x === 'string')
     : typeof raw === 'string' && raw
       ? [raw]
       : [];
-  if (current.includes(projectId)) return { ok: true, status: 'already' };
+  if (current.includes(recordId)) return { ok: true, status: 'already' };
 
   const updated: AppRecord = {
     ...record,
-    data: { ...record.data, [FIELD]: [...current, projectId] },
+    data: { ...record.data, [field]: [...current, recordId] },
     updated_at: new Date().toISOString(),
   };
 
@@ -52,4 +56,14 @@ export async function addProjectToClient(clientId: string, projectId: string): P
   if (res.status === 'queued') return { ok: true, status: 'queued', reason: res.reason };
   // conflict — a concurrent edit bumped the version; the user should reload.
   return { ok: false, status: 'conflict', reason: 'version_mismatch' };
+}
+
+/** Add an all_projects record to `clients.preferred_projects`. */
+export function addProjectToClient(clientId: string, projectId: string): Promise<AddToClientResult> {
+  return addToClientLookup(clientId, projectId, 'preferred_projects');
+}
+
+/** Add a market_listings record to `clients.preferred_market_listings`. */
+export function addMarketListingToClient(clientId: string, listingId: string): Promise<AddToClientResult> {
+  return addToClientLookup(clientId, listingId, 'preferred_market_listings');
 }

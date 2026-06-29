@@ -8,7 +8,7 @@ import {
   fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
   type FinderResponse, type FinderGroupKey, type FinderMatch,
 } from '@/lib/matching/projectFinder';
-import { addProjectToClient } from '@/lib/matching/addToClient';
+import { addProjectToClient, addMarketListingToClient } from '@/lib/matching/addToClient';
 import FinderCard from './FinderCard';
 
 /**
@@ -145,15 +145,23 @@ export default function SuggestedProjectsModal({
   async function onAddToClient(item: FinderMatch) {
     if (!clientRec?.id) { addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error'); return; }
     setAddStates((s) => ({ ...s, [item.project_id]: 'saving' }));
-    const res = await addProjectToClient(clientRec.id, item.project_id);
+    // Route by source so the id lands in the field that targets the right model:
+    // a market listing → preferred_market_listings; a project → preferred_projects.
+    const isMarket = item.source === 'market_listings';
+    const noun = isMarket ? L('الإعلان', 'listing') : L('المشروع', 'project');
+    const res = isMarket
+      ? await addMarketListingToClient(clientRec.id, item.project_id)
+      : await addProjectToClient(clientRec.id, item.project_id);
     if (res.ok) {
       setAddStates((s) => ({ ...s, [item.project_id]: 'added' }));
-      addToast(res.status === 'already' ? L('المشروع مضاف مسبقاً لتفضيلات العميل.', 'Already in the client preferences.') : L('تمت إضافة المشروع لتفضيلات العميل.', 'Added to client preferences.'), 'success');
+      addToast(res.status === 'already'
+        ? L(`${noun} مضاف مسبقاً لتفضيلات العميل.`, `Already in the client preferences.`)
+        : L(`تمت إضافة ${noun} لتفضيلات العميل.`, `Added to client preferences.`), 'success');
     } else {
       setAddStates((s) => ({ ...s, [item.project_id]: 'idle' }));
       addToast(res.status === 'conflict'
         ? L('تم تعديل العميل من مستخدم آخر — حدّث الصفحة وأعد المحاولة.', 'Client was edited elsewhere — reload and retry.')
-        : L('تعذّرت إضافة المشروع.', 'Could not add the project.'), 'error');
+        : L(`تعذّرت إضافة ${noun}.`, 'Could not add it.'), 'error');
     }
   }
 

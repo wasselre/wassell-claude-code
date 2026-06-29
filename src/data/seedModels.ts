@@ -713,6 +713,28 @@ const clientsModel: AppModel = {
             is_multi: true,
           },
           {
+            // Lookup → the live market_listings model. We use the STABLE live model
+            // id literal (NOT a per-load uuid) so a seed re-apply / heal can never
+            // write a stale lookup_model_id (the "seed-backfill broken lookups"
+            // hazard). market_listings is created out-of-band (Aqar import), not
+            // seeded here, so there is no constant to reference. Mirrors the live
+            // migration 2026-06-29_clients_preferred_market_listings.sql.
+            id: uuid(),
+            name: 'preferred_market_listings',
+            label_ar: 'إعلانات السوق المفضلة',
+            label_en: 'Preferred Market Listings',
+            type: 'lookup',
+            required: false,
+            order: 60,
+            section_id: clientsPrefsSectionId,
+            width: 'half',
+            show_in_table: false,
+            lookup_model_id: '8f06bc39-4bee-42e9-9fab-77023fb89ede',
+            lookup_display_field: 'title',
+            is_multi: true,
+            lookup_max_records: 1000,
+          },
+          {
             id: uuid(),
             name: 'preferred_direction',
             label_ar: 'الإتجاه المفضل',
