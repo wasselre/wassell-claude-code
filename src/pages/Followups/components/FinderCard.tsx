@@ -7,6 +7,7 @@ import { useState } from 'react';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus } from '@/lib/matching/projectFinder';
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
 import { CLIENT_OPTION_STATUS_META, type ClientOptionStatus } from '@/lib/matching/clientOptions';
+import { useSignedImage } from '@/lib/projects/useSignedImage';
 
 /**
  * One project in the deterministic Project Finder modal (Phase 2). Renders ONLY
@@ -95,7 +96,11 @@ export default function FinderCard({
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const f = item.facts;
+  // Main image: raw URL (market listings) or files.id (projects) → resolved to a
+  // renderable URL by useSignedImage (passthrough / short-lived signed view URL).
+  const imgUrl = useSignedImage(typeof f.image === 'string' && f.image ? f.image : null);
   const isEliminated = existingStatus === 'eliminated';
   const isSaved = existingStatus != null && !isEliminated;
 
@@ -115,6 +120,18 @@ export default function FinderCard({
 
   return (
     <div className="overflow-hidden rounded-xl border border-sand/50 bg-white shadow-sm">
+      {/* Main image (listing photo / project hero). Hidden if none or load fails. */}
+      {imgUrl && !imgError && (
+        <div className="h-40 w-full overflow-hidden bg-cream">
+          <img
+            src={imgUrl}
+            alt={item.project_name}
+            loading="lazy"
+            onError={() => setImgError(true)}
+            className="h-full w-full object-cover"
+          />
+        </div>
+      )}
       {requiresVerify && (
         <div className="flex items-start gap-2 border-b border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <AlertTriangle size={14} className="mt-0.5 shrink-0" />

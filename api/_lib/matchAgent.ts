@@ -916,6 +916,12 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   put('available_units', avail);
   put('preferred_amenities', asArr(data.preferred_amenities));
   if (distanceKm != null) put('distance_km', distanceKm);
+  // Main image for the result card. Market listings carry a raw URL (`image`, set by
+  // the adapter); projects carry a files.id (`main_image`, else first `project_images`).
+  // The client resolves either via useSignedImage (URL passthrough / files.id → signed).
+  const firstImageRef = (v: unknown): string | undefined =>
+    (Array.isArray(v) ? (v.find((x) => typeof x === 'string' && x) as string | undefined) : undefined);
+  put('image', asStr(data.image) || asStr(data.main_image) || firstImageRef(data.project_images));
 
   return {
     score,
@@ -981,11 +987,16 @@ function adaptListingToScorable(d: Record<string, unknown>): Record<string, unkn
   const baths = asNum(d.bathrooms);
   const active = d.is_active === true && !asStr(d.sold_at);
   const types = [asStr(d.property_type), asStr(d.listing_type), asStr(d.category)].filter((s) => s !== '');
+  // Listing photo: a raw (public) image URL — main_image_url, else the first image_urls[].
+  const photo = asStr(d.main_image_url)
+    || (Array.isArray(d.image_urls) ? (d.image_urls.find((x) => typeof x === 'string' && x) as string | undefined) : undefined)
+    || undefined;
   return {
     project_name: asStr(d.title) || asStr(d.advertiser_name) || asStr(d.external_id) || 'إعلان سوق',
     // Geography is no longer carried on the adapted shape — the caller extracts the
     // listing's location.{district,city} ids from the raw record and passes them
     // (plus resolved names) through the GeoContext, same as projects.
+    image: photo,
     unit_types: types,
     price_range: price != null ? { min: price, max: price } : undefined,
     area_range: area != null ? { min: area, max: area } : undefined,
