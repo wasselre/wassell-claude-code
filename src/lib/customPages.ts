@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -26,6 +26,7 @@ import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListC
  * route guard all read this list).
  */
 export type CustomPageId =
+  | 'project_finder'
   | 'my_clients'
   | 'my_tasks'
   | 'sales_tasks'
@@ -45,6 +46,16 @@ export interface CustomPageDef {
 }
 
 export const CUSTOM_PAGES: CustomPageDef[] = [
+  {
+    id: 'project_finder',
+    route: '/project-finder',
+    label_ar: 'الباحث عن المشاريع',
+    label_en: 'Project Finder',
+    icon: Compass,
+    // A standalone discovery tool — useful for the whole sales team. Visible to
+    // every non-admin profile unless explicitly revoked in Settings → Profiles.
+    default_access: 'all',
+  },
   {
     id: 'my_clients',
     route: '/sales/my-clients',

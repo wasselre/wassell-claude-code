@@ -1,0 +1,399 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle } from 'lucide-react';
+import { useAppStore } from '@/stores/appStore';
+import DynamicField from '@/pages/Records/components/DynamicField';
+import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
+import {
+  fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
+  type FinderResponse, type FinderGroupKey, type FinderMatch, type FinderSource,
+} from '@/lib/matching/projectFinder';
+import FinderCard from '@/pages/Followups/components/FinderCard';
+import type { AppModel, ModelField } from '@/types';
+
+/**
+ * Standalone Project Finder — a self-service discovery tool reachable from the
+ * sidebar, usable WITHOUT a client. The salesperson fills structured pickers
+ * (location cascade, unit type, budget/area ranges, amenities — all sourced from
+ * the live `clients` model's own field definitions, so there's NO free text and
+ * NO AI), then runs the SAME deterministic, geography-verified /api/project-finder
+ * the Follow-up "Suggested Projects" modal uses (parse:false, explain:false).
+ *
+ * Difference from the modal: there is no client to attach options to, so the
+ * result cards show "Details" only (hideClientActions) — no save / eliminate.
+ */
+
+const TAB_LABELS: Record<FinderGroupKey, { ar: string; en: string }> = {
+  exact_district_matches: { ar: 'في الحي المطلوب', en: 'Exact district' },
+  nearby_district_matches: { ar: 'أحياء قريبة', en: 'Nearby' },
+  same_city_matches: { ar: 'نفس المدينة', en: 'Same city' },
+  broader_fallback: { ar: 'بدائل أوسع', en: 'Broader' },
+};
+
+// The clients-model field slugs the finder reads (mirrors the Follow-up draft
+// shape consumed by draftToMatchRequirements). Rendered if present on the live model.
+const FILTER_SLUGS = ['location', 'preferred_districts', 'preferred_unit_type', 'budget', 'preferred_area', 'preferred_amenities'] as const;
+
+const SOURCE_LABELS: Record<FinderSource, { ar: string; en: string }> = {
+  our_projects: { ar: 'مشاريعنا', en: 'Our Projects' },
+  all_projects: { ar: 'كل المشاريع', en: 'All Projects' },
+  market_listings: { ar: 'إعلانات السوق', en: 'Market listings' },
+};
+
+const PAGE = 24;
+
+export default function ProjectFinderPage() {
+  const language = useAppStore((s) => s.language);
+  const models = useAppStore((s) => s.models);
+  const records = useAppStore((s) => s.records);
+  const isAr = language === 'ar';
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+
+  const clientsModel = useMemo<AppModel | null>(
+    () => models.find((m) => m.name === 'clients') ?? null,
+    [models],
+  );
+
+  // The filter fields we render, pulled from the LIVE clients model by slug (the
+  // live model can drift from seedModels — only render what actually exists).
+  const filterFields = useMemo<ModelField[]>(() => {
+    if (!clientsModel) return [];
+    const bySlug = new Map<string, ModelField>();
+    for (const sec of clientsModel.schema.sections) {
+      for (const f of sec.fields) bySlug.set(f.name, f);
+    }
+    return FILTER_SLUGS.map((slug) => bySlug.get(slug)).filter((f): f is ModelField => !!f);
+  }, [clientsModel]);
+
+  // The structured preference buffer (same slug shape as the Follow-up draft).
+  const [draft, setDraft] = useState<Record<string, unknown>>({});
+  const [bedrooms, setBedrooms] = useState<number | ''>('');
+  const [sources, setSources] = useState<Record<FinderSource, boolean>>({
+    our_projects: true, all_projects: true, market_listings: false,
+  });
+  const [minScore, setMinScore] = useState<number>(60);
+
+  const [resp, setResp] = useState<FinderResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasSearched, setHasSearched] = useState(false);
+  const [activeTab, setActiveTab] = useState<FinderGroupKey>('exact_district_matches');
+  const [visibleCount, setVisibleCount] = useState(PAGE);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  // id → display name for districts + cities, for resolving the location cascade's
+  // record ids into the names the matcher expects (identical to the modal).
+  const geoNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const name of ['districts', 'cities']) {
+      const m = models.find((mm) => mm.name === name);
+      if (!m) continue;
+      for (const r of records[m.id] ?? []) {
+        const dn = (r.data?.display_name ?? r.data?.name_ar ?? r.data?.name_en) as unknown;
+        if (typeof dn === 'string' && dn.trim()) map[r.id] = dn.trim();
+      }
+    }
+    return map;
+  }, [models, records]);
+  const resolveLookupName = useMemo(
+    () => (id: string, _target: 'districts' | 'cities'): string | null => geoNames[id] ?? null,
+    [geoNames],
+  );
+
+  const setField = (slug: string, value: unknown) =>
+    setDraft((d) => ({ ...d, [slug]: value }));
+
+  function buildRequirements(): MatchRequirementsInput {
+    const reqs = draftToMatchRequirements({
+      clientsModel, prefDraft: draft, savedClientData: null, resolveLookupName,
+    });
+    if (typeof bedrooms === 'number' && bedrooms > 0) reqs.bedrooms = bedrooms;
+    return reqs;
+  }
+
+  const hasAnyCriteria = useMemo(() => {
+    const r = buildRequirements();
+    return Object.keys(r).length > 0;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, bedrooms, resolveLookupName]);
+
+  const controllerRef = useRef<AbortController | null>(null);
+
+  async function runSearch() {
+    const chosenSources = (Object.keys(sources) as FinderSource[]).filter((s) => sources[s]);
+    if (chosenSources.length === 0) {
+      setError(L('اختر مصدراً واحداً على الأقل.', 'Pick at least one source.'));
+      return;
+    }
+    controllerRef.current?.abort();
+    const controller = new AbortController();
+    controllerRef.current = controller;
+    setLoading(true);
+    setError(null);
+    setHasSearched(true);
+    try {
+      const r = await fetchProjectFinder(
+        {
+          requirements: buildRequirements(),
+          // Standalone: no client → no geo-preference gate, no options to attach.
+          perGroup: 0,
+          minScore,
+          sources: chosenSources,
+          locale: isAr ? 'ar' : 'en',
+        },
+        controller.signal,
+      );
+      setResp(r);
+      const firstFilled = FINDER_GROUP_KEYS.find((k) => (r.groups[k]?.length ?? 0) > 0);
+      setActiveTab(firstFilled ?? 'exact_district_matches');
+    } catch (e) {
+      if ((e as { name?: string })?.name !== 'AbortError') {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  }
+
+  function resetFilters() {
+    controllerRef.current?.abort();
+    setDraft({});
+    setBedrooms('');
+    setSources({ our_projects: true, all_projects: true, market_listings: false });
+    setMinScore(60);
+    setResp(null);
+    setError(null);
+    setHasSearched(false);
+  }
+
+  useEffect(() => () => controllerRef.current?.abort(), []);
+
+  function onOpenDetails(item: FinderMatch) {
+    const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
+    window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
+  }
+
+  const total = totalFinderMatches(resp);
+  const activeItems = resp?.groups[activeTab] ?? [];
+  const shown = activeItems.slice(0, visibleCount);
+
+  // Reset the render window on tab switch / new results.
+  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, resp]);
+  // Grow the window as the sentinel scrolls into view (infinite scroll).
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const root = scrollRef.current;
+    if (!sentinel || !root) return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) setVisibleCount((c) => Math.min(c + PAGE, activeItems.length)); },
+      { root, rootMargin: '800px' },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [activeItems.length, activeTab, visibleCount]);
+
+  const BEDROOM_OPTS = [1, 2, 3, 4, 5, 6];
+
+  return (
+    <div className="flex h-full flex-col" dir={isAr ? 'rtl' : 'ltr'}>
+      {/* Header */}
+      <div className="flex items-center gap-3 border-b border-sand/40 bg-white px-5 py-4">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-copper/10">
+          <Compass size={20} className="text-copper" />
+        </div>
+        <div className="min-w-0">
+          <h1 className="text-lg font-bold text-chocolate">{L('الباحث عن المشاريع', 'Project Finder')}</h1>
+          <p className="text-xs text-charcoal/60">
+            {L('ابحث عن المشاريع المطابقة بالحقول والخيارات — بدون عميل، وبدون نص حر أو ذكاء اصطناعي.',
+               'Find matching projects by structured fields — no client, no free text, no AI.')}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 lg:flex-row lg:overflow-hidden">
+        {/* ── Filters ── */}
+        <div className="w-full shrink-0 lg:w-[340px] lg:overflow-y-auto">
+          <div className="card p-5">
+            {!clientsModel ? (
+              <div className="text-sm text-charcoal/60">{L('نموذج العملاء غير محمّل.', 'Clients model not loaded.')}</div>
+            ) : (
+              <div className="space-y-4">
+                {filterFields.map((field) => (
+                  <div key={field.id}>
+                    <label className="mb-1 block text-xs font-bold text-charcoal/70">
+                      {isAr ? field.label_ar : field.label_en}
+                    </label>
+                    <DynamicField
+                      field={field}
+                      value={draft[field.name]}
+                      onChange={(v) => setField(field.name, v)}
+                      recordData={draft}
+                      compact
+                    />
+                  </div>
+                ))}
+
+                {/* Bedrooms — not a clients field; an extra structured filter. */}
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-charcoal/70">{L('عدد الغرف', 'Bedrooms')}</label>
+                  <select
+                    value={bedrooms}
+                    onChange={(e) => setBedrooms(e.target.value === '' ? '' : Number(e.target.value))}
+                    className="form-input w-full"
+                  >
+                    <option value="">{L('أي عدد', 'Any')}</option>
+                    {BEDROOM_OPTS.map((n) => (
+                      <option key={n} value={n}>{n}{n === 6 ? '+' : ''}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Sources */}
+                <div>
+                  <label className="mb-1.5 block text-xs font-bold text-charcoal/70">{L('المصادر', 'Sources')}</label>
+                  <div className="space-y-1.5">
+                    {(Object.keys(SOURCE_LABELS) as FinderSource[]).map((s) => (
+                      <label key={s} className="flex items-center gap-2 text-sm text-charcoal/80">
+                        <input
+                          type="checkbox"
+                          checked={sources[s]}
+                          onChange={(e) => setSources((prev) => ({ ...prev, [s]: e.target.checked }))}
+                          className="accent-copper"
+                        />
+                        {isAr ? SOURCE_LABELS[s].ar : SOURCE_LABELS[s].en}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Min score */}
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-charcoal/70">{L('الحد الأدنى للتطابق', 'Minimum match')}</label>
+                  <select
+                    value={minScore}
+                    onChange={(e) => setMinScore(Number(e.target.value))}
+                    className="form-input w-full"
+                  >
+                    <option value={40}>{L('40% — واسع', '40% — broad')}</option>
+                    <option value={60}>{L('60% — متوازن', '60% — balanced')}</option>
+                    <option value={70}>{L('70% — قوي', '70% — strong')}</option>
+                    <option value={80}>{L('80% — صارم', '80% — strict')}</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={runSearch}
+                    disabled={loading || !hasAnyCriteria}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-copper px-3.5 py-2.5 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+                  >
+                    {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                    {L('بحث', 'Find projects')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetFilters}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3 py-2.5 text-sm font-bold text-charcoal/70 transition hover:bg-cream/60"
+                    title={L('إعادة تعيين', 'Reset')}
+                  >
+                    <RotateCcw size={15} />
+                  </button>
+                </div>
+                {!hasAnyCriteria && (
+                  <p className="text-[11px] text-charcoal/45">
+                    {L('حدّد معياراً واحداً على الأقل (الموقع، النوع، الميزانية…).', 'Set at least one criterion (location, type, budget…).')}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ── Results ── */}
+        <div className="flex min-h-0 flex-1 flex-col">
+          {/* Group tabs */}
+          {hasSearched && !loading && !error && total > 0 && (
+            <div className="mb-3 flex flex-wrap gap-1">
+              {FINDER_GROUP_KEYS.map((k) => {
+                const count = resp?.groups[k]?.length ?? 0;
+                const on = activeTab === k;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setActiveTab(k)}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${on ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream/70'} ${count === 0 ? 'opacity-50' : ''}`}
+                  >
+                    {isAr ? TAB_LABELS[k].ar : TAB_LABELS[k].en}
+                    <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+            {loading && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 text-charcoal/55">
+                <Loader2 size={22} className="animate-spin text-copper" />
+                <span className="text-sm">{L('جارٍ ترشيح المشاريع…', 'Finding the best-fit projects…')}</span>
+              </div>
+            )}
+            {!loading && error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+            )}
+            {!loading && !error && !hasSearched && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+                <Compass size={26} className="text-copper/60" />
+                <p className="text-sm">{L('حدّد التفضيلات واضغط «بحث» لعرض المشاريع المطابقة.', 'Set your preferences and press “Find projects” to see matches.')}</p>
+              </div>
+            )}
+            {!loading && !error && hasSearched && total === 0 && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+                <Info size={22} className="text-copper" />
+                <p className="text-sm">{L('لا توجد مشاريع مطابقة. جرّب توسيع الموقع أو الميزانية أو خفض الحد الأدنى للتطابق.', 'No matching projects. Try widening the location/budget or lowering the minimum match.')}</p>
+              </div>
+            )}
+            {!loading && !error && hasSearched && total > 0 && activeItems.length === 0 && (
+              <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
+            )}
+
+            {/* Market-source honesty notice (we never silently drop listings). */}
+            {!loading && !error && resp?.metadata.market?.status === 'too_many' && (
+              <div className="flex items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                <AlertTriangle size={13} className="shrink-0" />
+                <span>{L('إعلانات السوق غير معروضة: عددها كبير في هذا الحي — أضف معايير أدق.', 'Market listings hidden: too many ads in this district — add finer criteria.')}</span>
+              </div>
+            )}
+
+            {!loading && !error && shown.map((item) => (
+              <FinderCard
+                key={item.project_id}
+                item={item}
+                isAr={isAr}
+                onOpenDetails={onOpenDetails}
+                selected={false}
+                onToggleSelect={() => {}}
+                onSaveOption={() => {}}
+                onEliminate={() => {}}
+                onReactivate={() => {}}
+                saveState="idle"
+                existingStatus={null}
+                hideClientActions
+              />
+            ))}
+            {!loading && !error && activeItems.length > 0 && (
+              <>
+                {visibleCount < activeItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
+                <div className="py-2 text-center text-[11px] text-charcoal/45">
+                  {L(`عرض ${shown.length} من ${activeItems.length}`, `Showing ${shown.length} of ${activeItems.length}`)}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

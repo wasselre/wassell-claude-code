@@ -63,6 +63,7 @@ import MyTasksPage from '@/pages/Sales/MyTasksPage';
 import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
 import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
+import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
 import SalesStudioHomePage from '@/pages/SalesStudio/SalesStudioHomePage';
 import ProcessJourneyPage from '@/pages/SalesStudio/ProcessJourneyPage';
 import ExperimentsPage from '@/pages/SalesStudio/ExperimentsPage';
@@ -359,6 +360,8 @@ export default function App() {
           <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
+          {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
+          <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
           <Route path="/sales/assistant-insights" element={<RequireAdmin><AssistantInsightsPage /></RequireAdmin>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />

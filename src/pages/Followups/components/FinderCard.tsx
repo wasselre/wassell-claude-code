@@ -32,6 +32,12 @@ interface Props {
   saveState: 'idle' | 'saving' | 'saved';
   /** Status of an already-saved option for this source, or null if not saved yet. */
   existingStatus: ClientOptionStatus | null;
+  /**
+   * Standalone Project Finder (no client context): hide the select checkbox and
+   * the save / eliminate / reactivate actions, leaving only "Details". Saving an
+   * option requires a client to attach it to, which the standalone tool doesn't have.
+   */
+  hideClientActions?: boolean;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -85,6 +91,7 @@ function DealPill({ deal, isAr }: { deal: DealBadge; isAr: boolean }) {
 
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, onSaveOption, onEliminate, onReactivate, saveState, existingStatus,
+  hideClientActions,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -121,16 +128,18 @@ export default function FinderCard({
 
       {/* Title row */}
       <div className="flex items-center gap-2 border-b border-sand/30 px-3 py-2">
-        <button
-          type="button"
-          onClick={() => onToggleSelect(item)}
-          className={`shrink-0 transition ${selected ? 'text-copper' : 'text-charcoal/35 hover:text-charcoal/60'}`}
-          aria-label={L('تحديد للحفظ', 'Select to save')}
-          aria-pressed={selected}
-          title={L('تحديد للحفظ ضمن خيارات العميل', 'Select to save into client options')}
-        >
-          {selected ? <CheckSquare size={17} /> : <Square size={17} />}
-        </button>
+        {!hideClientActions && (
+          <button
+            type="button"
+            onClick={() => onToggleSelect(item)}
+            className={`shrink-0 transition ${selected ? 'text-copper' : 'text-charcoal/35 hover:text-charcoal/60'}`}
+            aria-label={L('تحديد للحفظ', 'Select to save')}
+            aria-pressed={selected}
+            title={L('تحديد للحفظ ضمن خيارات العميل', 'Select to save into client options')}
+          >
+            {selected ? <CheckSquare size={17} /> : <Square size={17} />}
+          </button>
+        )}
         <Building2 size={15} className="shrink-0 text-charcoal/50" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-charcoal">{item.project_name}</div>
@@ -217,7 +226,7 @@ export default function FinderCard({
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
 
-          {isEliminated ? (
+          {hideClientActions ? null : isEliminated ? (
             <>
               <span className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700">
                 <XCircle size={12} /> {L('مستبعدة', 'Eliminated')}
