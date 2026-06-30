@@ -185,11 +185,7 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
         <p className="mb-3 text-xs text-charcoal/40">{isAr ? 'لا توجد تفضيلات موقع بعد.' : 'No location preferences yet.'}</p>
       )}
 
-      {disabled ? null : !cityId ? (
-        <p className="text-xs font-semibold text-charcoal/50">
-          {isAr ? 'اختر المدينة في حقل الموقع أعلاه أولاً.' : 'Select a city in the location field above first.'}
-        </p>
-      ) : mode === null ? (
+      {disabled ? null : mode === null ? (
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
@@ -221,6 +217,11 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
           </div>
 
           {mode === 'district' ? (
+            !cityId ? (
+              <p className="px-1 py-2 text-xs font-semibold text-charcoal/50">
+                {isAr ? 'اختر المدينة في حقل الموقع أعلاه أولاً لاختيار حي.' : 'Select a city in the location field above first to pick a district.'}
+              </p>
+            ) : (
             <>
               <div className="relative mb-2">
                 <Search size={14} className="pointer-events-none absolute top-2.5 ltr:left-2.5 rtl:right-2.5 text-charcoal/30" />
@@ -250,6 +251,7 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
                 )}
               </div>
             </>
+            )
           ) : picked ? (
             <div>
               <div className="mb-3 flex items-center justify-between rounded-lg bg-cream/60 px-3 py-2">
