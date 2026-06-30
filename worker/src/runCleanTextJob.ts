@@ -60,6 +60,14 @@ const BUCKET = 'marketing-assets';
 const POLL_TIMEOUT_MS = 10 * 60_000;
 const POLL_INTERVAL_MS = 2500;
 
+// Larger retry budget than the default (3 attempts / 5s). Up to ~5 clean-text
+// jobs write the SAME draft row concurrently (one per worker machine), so the
+// loser of a version race re-reads + re-applies several times. The default
+// budget timed out under a transient Supabase slowdown and stranded an entry at
+// 'queued' (live 2026-06-30). 6 attempts / 20s rides it out — safe because each
+// job now writes the draft exactly ONCE (its terminal status).
+const CLEAN_RETRY_OPTS = { maxAttempts: 6, budgetMs: 20_000, capMs: 3_000 } as const;
+
 interface RunArgs {
   supabase: SupabaseClient;
   env: WorkerEnv;
@@ -98,7 +106,7 @@ export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Recor
         }
         return { ...data, cleaning: next };
       },
-    });
+    }, CLEAN_RETRY_OPTS);
   };
 
   const isCancelled = async (): Promise<boolean> => {
@@ -110,10 +118,14 @@ export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Recor
     return (data?.status as string | undefined) === 'cancelled';
   };
 
-  // ── Stamp cleaning ───────────────────────────────────────────────────
-  await patchEntry({ status: 'cleaning' });
+  // No "cleaning" start-stamp: the endpoint already seeded the entry as 'queued'
+  // (the UI shows a spinner for queued too), and writing it here just DOUBLES the
+  // per-job writes to the SHARED draft row. Under the ~5-way concurrency (one per
+  // worker machine) that extra write is what exhausted the record_save retry
+  // budget and stranded an entry at 'queued' (live 2026-06-30). Each job now
+  // writes the draft exactly ONCE — its terminal status (completed/failed).
   console.log(
-    `[run-clean] cleaning job=${job.id} record=${job.recordId} entry=${job.entryId} idx=${imageIndex}`,
+    `[run-clean] start job=${job.id} record=${job.recordId} entry=${job.entryId} idx=${imageIndex}`,
   );
 
   // ── Cancel pre-check ─────────────────────────────────────────────────
