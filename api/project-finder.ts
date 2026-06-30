@@ -199,13 +199,18 @@ export default async function handler(req: Request): Promise<Response> {
         const includes = Number((compiled as { includes?: number } | null)?.includes ?? 0);
         const needsReview = Number((compiled as { needs_review?: number } | null)?.needs_review ?? 0);
         if (includes > 0) {
-          const { data: matchRows, error: matchErr } = await supabase.rpc('wassell_geo_match', {
+          // Get the FULL in-area record-id set in ONE call. The row-returning
+          // wassell_geo_match is capped at PostgREST's ~1000-row response (the area can
+          // be thousands — north-of-King-Salman-Rd = 8046), which silently truncated the
+          // gate. wassell_geo_match_ids returns a single uuid[] (one row → no cap), and
+          // the underlying scan runs exactly once.
+          const { data: idArr, error: matchErr } = await supabase.rpc('wassell_geo_match_ids', {
             p_client_id: clientId,
           });
           if (matchErr) {
             console.error('[project-finder] geo match failed:', matchErr.message);
           } else {
-            geoMatchIds = new Set((matchRows ?? []).map((r: { record_id: string }) => r.record_id).filter(Boolean));
+            geoMatchIds = new Set(((idArr as string[] | null) ?? []).filter(Boolean));
             geoFilter = { applied: true, match_count: geoMatchIds.size, needs_review: needsReview };
           }
         } else if (needsReview > 0) {
