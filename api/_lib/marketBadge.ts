@@ -41,9 +41,15 @@ function canonForMatch(facts: Record<string, unknown>, reqType: string | undefin
   return 'أخرى';
 }
 
+/** Normalize a district name for matching: strip the leading "حي " prefix that the
+ *  benchmark stores (name_ar = "حي النرجس") but the match facts don't ("النرجس"). */
+function normDistrict(name: string): string {
+  return name.replace(/^\s*حي\s+/, '').trim();
+}
+
 function districtName(facts: Record<string, unknown>): string | null {
   const d = facts.district;
-  return typeof d === 'string' && d.trim() !== '' ? d.trim() : null;
+  return typeof d === 'string' && d.trim() !== '' ? normDistrict(d) : null;
 }
 
 export async function enrichWithDealBadges(
@@ -62,16 +68,15 @@ export async function enrichWithDealBadges(
   const snap = (snapRow.data?.snapshot_date as string) ?? null;
   if (!snap) return;
 
-  // Benchmarks for those districts (match by AR or EN name). 'all' bedrooms, asking.
-  const list = [...names];
+  // All asking 'all'-bedroom benchmarks for the snapshot (~hundreds of rows — light).
+  // We index by NORMALIZED district name (حي-stripped) since the benchmark stores
+  // "حي النرجس" while the match facts carry "النرجس".
   const { data, error } = await supabase
     .from('market_benchmarks')
     .select('district_name, district_name_en, property_type, p25_price_per_sqm, p75_price_per_sqm, median_price_per_sqm, deduped_count, duplicate_ratio, confidence_grade, transaction_count')
-    .eq('snapshot_date', snap).eq('source_type', 'asking').eq('bedrooms_bucket', 'all')
-    .or(list.map((n) => `district_name.eq.${n},district_name_en.eq.${n}`).join(','));
+    .eq('snapshot_date', snap).eq('source_type', 'asking').eq('bedrooms_bucket', 'all');
   if (error || !data) return;
 
-  // index by `${name}|${canon_type}` for both AR and EN names.
   const idx = new Map<string, BenchmarkSlice>();
   for (const r of data as Array<Record<string, unknown>>) {
     const slice: BenchmarkSlice = {
@@ -84,8 +89,8 @@ export async function enrichWithDealBadges(
       has_transaction: (asNum(r.transaction_count) ?? 0) > 0,
     };
     const pt = String(r.property_type);
-    if (r.district_name) idx.set(`${r.district_name}|${pt}`, slice);
-    if (r.district_name_en) idx.set(`${r.district_name_en}|${pt}`, slice);
+    if (r.district_name) idx.set(`${normDistrict(String(r.district_name))}|${pt}`, slice);
+    if (r.district_name_en) idx.set(`${String(r.district_name_en).trim()}|${pt}`, slice);
   }
 
   const reqType = (result.requirements.property_type as string | undefined) ?? undefined;
