@@ -29,23 +29,29 @@ export async function sendProjectImageMessages(
   const { sendChatMessage, addToast, language } = useAppStore.getState();
   const isAr = language === 'ar';
 
-  // Batch-sign all view URLs in one request. Ids the caller can't view (or that
-  // fail to sign) are simply absent from the map → counted as failures below.
-  let urls: Record<string, string> = {};
-  try {
-    urls = await signViewUrls(ids);
-  } catch {
-    addToast(
-      isAr ? 'تعذّر تجهيز صور المشروع للإرسال' : 'Could not prepare the project images for sending',
-      'error',
-    );
-    return { sent: 0, failed: ids.length };
+  // Most ids are CRM `files` ids needing a signed view URL; a few projects store
+  // a raw public image URL (e.g. a `main_image` that holds a marketing-assets
+  // URL instead of a file id) — those are used as-is. Batch-sign only the file
+  // ids; URL entries pass straight through to the fetch below.
+  const isUrl = (s: string) => /^https?:\/\//i.test(s);
+  const fileIdsToSign = ids.filter((id) => !isUrl(id));
+  let signed: Record<string, string> = {};
+  if (fileIdsToSign.length > 0) {
+    try {
+      signed = await signViewUrls(fileIdsToSign);
+    } catch {
+      addToast(
+        isAr ? 'تعذّر تجهيز صور المشروع للإرسال' : 'Could not prepare the project images for sending',
+        'error',
+      );
+      return { sent: 0, failed: ids.length };
+    }
   }
 
   let sent = 0;
   let failed = 0;
   for (const id of ids) {
-    const url = urls[id];
+    const url = isUrl(id) ? id : signed[id];
     if (!url) {
       failed++;
       continue;
