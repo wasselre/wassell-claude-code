@@ -601,6 +601,13 @@ export interface MatchRequirements {
    *  ANY of these is an exact match. `district` (the first) is kept for the nearby
    *  centroid + market pre-filter. */
   districts?: string[];
+  /** Pre-resolved district record ids (e.g. from a directional zone like "north of
+   *  Riyadh"). When present, the engine uses them DIRECTLY as the exact-match set —
+   *  skipping the per-name district lookup (avoids dozens of queries for a zone). */
+  district_ids?: string[];
+  /** Directional zone the request was expanded from (audit/UI only; `district_ids`
+   *  is what the engine actually matches on). 'north'|'south'|'east'|'west'|... */
+  zone?: string;
   property_type?: string;
   budget_min?: number;
   budget_max?: number;
@@ -1319,8 +1326,31 @@ export async function matchProjectsCore(
   const reqDistrictIds: string[] = [];
   const reqCityIds: string[] = [];
   const reqCentroids: Array<{ lat: number; lng: number }> = [];
-  const districtNames =
-    req.districts && req.districts.length ? req.districts : req.district ? [req.district] : [];
+
+  // FAST PATH: pre-resolved district ids (e.g. a directional zone "north of Riyadh"
+  // expanded to ~30 districts). Batch-load their centroids/city in ONE query instead
+  // of a per-name lookup each. `req.districts` (names) still drives districtRequested.
+  if (req.district_ids && req.district_ids.length) {
+    const dm = await getModelByName(supabase, 'districts');
+    if (dm) {
+      const { data } = await supabase
+        .from('unified_records').select('id, data').eq('model_id', dm.id).in('id', req.district_ids);
+      for (const r of data ?? []) {
+        if (!reqDistrictIds.includes(r.id)) reqDistrictIds.push(r.id);
+        const cid = asStr(r.data.city_lookup) || null;
+        if (cid && !reqCityIds.includes(cid)) reqCityIds.push(cid);
+        const lat = asNum(r.data.centroid_lat);
+        const lng = asNum(r.data.centroid_lng);
+        if (lat != null && lng != null) reqCentroids.push({ lat, lng });
+        if (reqDistrictId == null) { reqDistrictId = r.id; reqCityId = cid; reqLat = lat; reqLng = lng; }
+      }
+    }
+  }
+
+  // Per-name resolution (skipped when district_ids already populated the set).
+  const districtNames = (req.district_ids && req.district_ids.length)
+    ? []
+    : (req.districts && req.districts.length ? req.districts : req.district ? [req.district] : []);
   for (const dn of districtNames) {
     const token = (dn ?? '').trim();
     if (!token) continue;

@@ -27,8 +27,6 @@ import { makeServiceClient } from './_lib/serviceClient.js';
 export const config = { runtime: 'edge' };
 
 const MARKET_MODEL_ID = '8f06bc39-4bee-42e9-9fab-77023fb89ede';
-const ALL_PROJ_MODEL_ID = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
-const OUR_PROJ_MODEL_ID = '6609286a-f95a-45db-94e6-48cfa915ccbd';
 
 // canon type → raw Arabic ILIKE terms for wassell_market_candidates (mirror of the
 // matcher's property-type synonyms; the benchmark canon function is the inverse).
@@ -108,7 +106,7 @@ export default async function handler(req: Request): Promise<Response> {
         case 'opportunities': return await opportunities(sb);
         case 'best_value': return await bestValue(sb, body);
         case 'client_report': return await clientReport(sb, body);
-        case 'pricing_report': return await pricingReport(sb, body);
+        case 'pricing_report': return await pricingReport(sb);
         case 'recompute': return await recompute(user.userId);
         default: return jsonError(400, `unknown action: ${action}`);
       }
@@ -398,7 +396,7 @@ async function clientReport(sb: SupabaseClient, body: Body): Promise<Response> {
 }
 
 // ── our-project pricing report ───────────────────────────────────────────────
-async function pricingReport(sb: SupabaseClient, body: Body): Promise<Response> {
+async function pricingReport(sb: SupabaseClient): Promise<Response> {
   const snap = await latestSnapshot(sb);
   if (!snap) return jsonOk({ snapshot_date: null, rows: [] });
   // our_verified benchmark rows joined to the asking benchmark for the same segment.

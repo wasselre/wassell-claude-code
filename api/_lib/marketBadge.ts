@@ -104,7 +104,7 @@ function applyBadge(m: FinderMatch, idx: Map<string, BenchmarkSlice>, reqType: s
     pricePerSqm: ppm2,
     hasPrice,
     hasArea,
-    geoVerified: m.geo_status === 'exact',
+    geoVerified: m.geo_status === 'verified_match' || m.geo_status === 'verified_derived',
     typeMatchesBenchmark: benchmark != null,
     benchmark,
   });

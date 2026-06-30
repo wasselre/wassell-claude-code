@@ -75,6 +75,8 @@ function normalizeRequirements(raw: Partial<MatchRequirements> | undefined): Mat
   const city = str(r.city); if (city) out.city = city;
   const district = str(r.district); if (district) out.district = district;
   const districts = strArr(r.districts); if (districts?.length) { out.districts = districts; if (!out.district) out.district = districts[0]; }
+  const districtIds = strArr(r.district_ids); if (districtIds?.length) out.district_ids = districtIds;
+  const zone = str(r.zone); if (zone) out.zone = zone;
   const pt = str(r.property_type); if (pt) out.property_type = pt;
   const bmin = num(r.budget_min); if (bmin != null) out.budget_min = bmin;
   const bmax = num(r.budget_max); if (bmax != null) out.budget_max = bmax;
@@ -131,6 +133,22 @@ export default async function handler(req: Request): Promise<Response> {
       usedAiParse = Object.keys(parsed).length > 0;
     }
     const requirements = mergeRequirements(parsed, explicit);
+
+    // Directional zone ("north of Riyadh" / "شمال الرياض") → concrete district ids,
+    // DETERMINISTICALLY (curated override wins, else geometric centroid bands). The
+    // LLM only supplied the words {city, zone}; this expansion is pure SQL. Only when
+    // no explicit district was given (an explicit district always wins over a zone).
+    if (requirements.zone && requirements.city &&
+        !requirements.district_ids?.length && !requirements.districts?.length && !requirements.district) {
+      const { data: zoneRows, error: zoneErr } = await supabase.rpc('wassell_city_zone_districts', {
+        p_city: requirements.city, p_zone: requirements.zone,
+      });
+      if (!zoneErr && Array.isArray(zoneRows) && zoneRows.length) {
+        requirements.district_ids = zoneRows.map((r: { district_id: string }) => r.district_id).filter(Boolean);
+        requirements.districts = zoneRows.map((r: { district_name: string }) => r.district_name).filter(Boolean);
+        if (requirements.districts.length) requirements.district = requirements.districts[0];
+      }
+    }
 
     // Default to the boundary-verified catalog (our_projects + all_projects).
     // market_listings is OPT-IN via an explicit `sources` (external/unverified +
