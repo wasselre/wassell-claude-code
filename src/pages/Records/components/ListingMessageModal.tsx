@@ -11,6 +11,7 @@ import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import {
+  applyCleanedToListing,
   fetchDraftData,
   generateListingMessageText,
   isCleaningInFlight,
@@ -178,6 +179,20 @@ export default function ListingMessageModal({
       if (result.status !== 'saved') {
         setSaving(false);
         return; // store already toasted the conflict / failure
+      }
+      // Replace the LISTING's photos with the cleaned (text-removed) versions
+      // (server-side; backs up the originals). Non-blocking: a failure here still
+      // keeps the saved message — surface it but continue.
+      if (completed.length > 0) {
+        try {
+          await applyCleanedToListing(recordId, listingId);
+        } catch (err) {
+          addToast(
+            tr('تعذّر تحديث صور الإعلان: ', 'Could not update the listing photos: ') +
+              (err instanceof Error ? err.message : String(err)),
+            'error',
+          );
+        }
       }
       // One current message per listing: drop any OTHER template (old 'ready' or
       // stray draft) for this same listing.

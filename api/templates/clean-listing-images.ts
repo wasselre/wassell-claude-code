@@ -43,7 +43,7 @@ import {
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
 interface RequestBody {
-  mode?: 'start' | 'redo';
+  mode?: 'start' | 'redo' | 'apply-to-listing';
   listing_id?: string;
   record_id?: string;
   entry_ids?: string[];
@@ -139,7 +139,86 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     if (auErr || !appUser?.id) return jsonError(500, 'app user lookup failed');
     const appUserId = appUser.id as string;
 
-    const mode = body.mode === 'redo' ? 'redo' : 'start';
+    const mode =
+      body.mode === 'redo' ? 'redo' : body.mode === 'apply-to-listing' ? 'apply-to-listing' : 'start';
+
+    // ════════════════════════════════════════════════════════════════════
+    // APPLY-TO-LISTING — on approve, replace the market listing's photos with
+    // the cleaned (text-removed) versions. Per-index: cleaned where available,
+    // original kept for any photo whose cleaning failed. Backs up the TRUE
+    // originals to original_image_urls / original_main_image_url (once) so it's
+    // reversible AND so future cleans re-source from the originals (never clean
+    // an already-cleaned image). Service-role: bypasses RLS + reads full data.
+    // ════════════════════════════════════════════════════════════════════
+    if (mode === 'apply-to-listing') {
+      const recordId = body.record_id?.trim();
+      const listingId = body.listing_id?.trim();
+      if (!recordId || !listingId) return jsonError(400, 'record_id and listing_id are required');
+
+      // Read the draft (owner-gated) for its cleaned outputs.
+      const { data: draftRow, error: draftErr } = await svc
+        .from('records')
+        .select('data, created_by_user_id')
+        .eq('id', recordId)
+        .single();
+      if (draftErr || !draftRow) return jsonError(404, `draft not found: ${draftErr?.message ?? recordId}`);
+      if ((draftRow.created_by_user_id as string | null) !== appUserId) {
+        return jsonError(404, 'draft not found');
+      }
+      const cleaning = Array.isArray((draftRow.data as Record<string, unknown>)?.cleaning)
+        ? ((draftRow.data as Record<string, unknown>).cleaning as CleaningEntry[])
+        : [];
+      const cleanedByIndex = new Map<number, string>();
+      for (const c of cleaning) {
+        if (c.status === 'completed' && typeof c.output_url === 'string' && c.output_url) {
+          cleanedByIndex.set(c.image_index, c.output_url);
+        }
+      }
+      if (cleanedByIndex.size === 0) return jsonError(400, 'no cleaned images to apply');
+
+      // Read the listing (full data + model_id).
+      const { data: listingRow, error: listingErr } = await svc
+        .from('records')
+        .select('data, model_id')
+        .eq('id', listingId)
+        .single();
+      if (listingErr || !listingRow) return jsonError(404, `listing not found: ${listingErr?.message ?? listingId}`);
+      const ld = (listingRow.data ?? {}) as Record<string, unknown>;
+
+      // The TRUE originals — from the backup if a prior approve already set it,
+      // else the current image_urls.
+      const origUrls =
+        Array.isArray(ld.original_image_urls) && (ld.original_image_urls as unknown[]).length > 0
+          ? (ld.original_image_urls as string[])
+          : Array.isArray(ld.image_urls)
+            ? (ld.image_urls as string[])
+            : [];
+      const newUrls = origUrls.map((u, i) => cleanedByIndex.get(i) ?? u);
+
+      const newData: Record<string, unknown> = {
+        ...ld,
+        image_urls: newUrls,
+        main_image_url: newUrls[0] ?? ld.main_image_url ?? null,
+      };
+      // Back up the originals ONCE (never overwrite an existing backup).
+      if (!Array.isArray(ld.original_image_urls)) newData.original_image_urls = origUrls;
+      if (ld.original_main_image_url == null) {
+        newData.original_main_image_url = (ld.main_image_url as string | null) ?? null;
+      }
+
+      const { error: saveErr } = await svc.rpc('record_save', {
+        p_model_id: listingRow.model_id,
+        p_id: listingId,
+        p_data: newData,
+        p_created_by: null, // COALESCE-preserves the listing's existing owner
+        p_expected_version: null,
+      });
+      if (saveErr) return jsonError(500, `failed to update listing images: ${saveErr.message}`);
+      console.log(
+        `[clean-listing-images] applied ${cleanedByIndex.size} cleaned photo(s) to listing=${listingId}`,
+      );
+      return jsonOk({ listing_id: listingId, replaced: cleanedByIndex.size, image_count: newUrls.length }, 200);
+    }
 
     // ════════════════════════════════════════════════════════════════════
     // REDO — re-enqueue specific cleaning entries on an existing draft.
@@ -238,12 +317,25 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     if (listingErr || !listingRow) return jsonError(404, `listing not found: ${listingErr?.message ?? listingId}`);
     const ld = (listingRow.data ?? {}) as Record<string, unknown>;
 
-    const imageUrls = Array.isArray(ld.image_urls)
-      ? (ld.image_urls as unknown[]).filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u))
-      : [];
-    // Fall back to the single main_image_url if the heavy array is absent.
-    if (imageUrls.length === 0 && typeof ld.main_image_url === 'string' && /^https?:\/\//i.test(ld.main_image_url)) {
-      imageUrls.push(ld.main_image_url);
+    // Always clean from the TRUE originals: if a prior approve replaced
+    // image_urls with cleaned versions, original_image_urls holds the source —
+    // re-source from it so we never clean an already-cleaned image.
+    const sourceList =
+      Array.isArray(ld.original_image_urls) && (ld.original_image_urls as unknown[]).length > 0
+        ? (ld.original_image_urls as unknown[])
+        : Array.isArray(ld.image_urls)
+          ? (ld.image_urls as unknown[])
+          : [];
+    const imageUrls = sourceList.filter(
+      (u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u),
+    );
+    // Fall back to the single (original) main_image_url if the heavy array is absent.
+    if (imageUrls.length === 0) {
+      const mainUrl =
+        (typeof ld.original_main_image_url === 'string' && ld.original_main_image_url) ||
+        (typeof ld.main_image_url === 'string' && ld.main_image_url) ||
+        '';
+      if (/^https?:\/\//i.test(mainUrl)) imageUrls.push(mainUrl);
     }
     if (imageUrls.length === 0) return jsonError(400, 'this listing has no images to clean');
 

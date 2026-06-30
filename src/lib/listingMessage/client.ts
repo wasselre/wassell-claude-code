@@ -66,6 +66,23 @@ export async function redoListingClean(recordId: string, entryIds: string[]): Pr
   }
 }
 
+/**
+ * On approve: replace the market listing's photos with the cleaned (text-removed)
+ * versions from the draft. Server-side (service role); backs up the originals to
+ * original_image_urls so it's reversible and future cleans re-source from them.
+ */
+export async function applyCleanedToListing(recordId: string, listingId: string): Promise<void> {
+  const res = await fetch('/api/templates/clean-listing-images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ mode: 'apply-to-listing', record_id: recordId, listing_id: listingId }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(b?.error ?? `apply-to-listing failed (${res.status})`);
+  }
+}
+
 export interface ListingMessageText {
   body_ar: string;
   body_en: string;
