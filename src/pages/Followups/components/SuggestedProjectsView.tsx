@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Loader2, Sparkles, AlertTriangle, Info, Bookmark, XCircle } from 'lucide-react';
+import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle } from 'lucide-react';
 import type { AppModel, AppRecord } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
@@ -21,21 +21,15 @@ import FinderCard from './FinderCard';
 import FinderRefinementBar from './FinderRefinementBar';
 
 /**
- * The "Suggested Projects" modal — the Follow-up completion-phase centerpiece.
- * Phase 2: powered by the DETERMINISTIC, geography boundary-verified
- * /api/project-finder (NO LLM — parse:false, explain:false). Shows the four
- * location-centric groups (exact_district / nearby_district / same_city /
- * broader_fallback) ranked by code, reading the UNSAVED follow-up preferences
- * captured when the modal opened.
+ * The "Suggested Projects" finder rendered as a FULL PAGE (was a cramped modal).
+ * Reached at /model/followups/:id/projects — stays connected to the follow-up via
+ * its id (audit log + saves into THAT client's options) and matches against the
+ * preference draft handed off from the workspace (unsaved edits included). The
+ * DETERMINISTIC, geography boundary-verified /api/project-finder powers it (NO LLM
+ * — parse:false, explain:false); four location-centric groups, the shared
+ * refinement toolbar, and bulk-save into client_property_options.
  *
- *   Top:  current preferences + missing-preference warnings
- *   Body: 4 group tabs → ranked, boundary-verified cards
- *
- * Sources: our_projects + all_projects + market_listings (all three) so the
- * salesperson sees the full picture; each card is source-labelled and non-portfolio
- * sources carry a "verify before offering" banner. The deterministic per-card
- * explanation is localized (locale = current UI language). No chat pane, no
- * compare, no WhatsApp, no next-action, no task creation.
+ * A prominent "Done" button (onDone) returns the rep to the follow-up record.
  */
 
 interface Props {
@@ -46,7 +40,10 @@ interface Props {
   followupDraft: Record<string, unknown>;
   followupId: string | null;
   projectName?: string | null;
-  onClose: () => void;
+  /** Display name of the linked client (header subtitle) — purely cosmetic. */
+  clientName?: string | null;
+  /** Called by the "Done" button + Esc — returns to the follow-up record. */
+  onDone: () => void;
 }
 
 const TAB_LABELS: Record<FinderGroupKey, { ar: string; en: string }> = {
@@ -63,8 +60,10 @@ const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
   bedrooms: { ar: 'عدد الغرف', en: 'Bedrooms' },
 };
 
-export default function SuggestedProjectsModal({
-  isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, onClose,
+const PAGE = 24;
+
+export default function SuggestedProjectsView({
+  isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName, onDone,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -75,15 +74,9 @@ export default function SuggestedProjectsModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<FinderGroupKey>('exact_district_matches');
-  // Incremental render: the result set is uncapped (every match ≥ 70), which can be
-  // hundreds of cards. Render a window and grow it as the user scrolls (keeps the DOM
-  // light without a virtualization dep; handles variable card heights natively).
-  const PAGE = 24;
   const [visibleCount, setVisibleCount] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  // Bulk-selection (auto-checks only score===100), per-card single-save state, and
-  // the eliminate-with-notes prompt. All persistence routes through clientOptions.ts.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [saveStates, setSaveStates] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -91,15 +84,13 @@ export default function SuggestedProjectsModal({
   const [eliminateNotes, setEliminateNotes] = useState('');
   const [eliminating, setEliminating] = useState(false);
 
-  // Results-refinement (shared with the standalone Project Finder page) — score
-  // slider + sort + hard filters, all client-side over the fetched ≥70 set.
+  // Results-refinement (shared with the standalone Project Finder page).
   const [scoreThreshold, setScoreThreshold] = useState<number>(FETCH_FLOOR);
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [showRefine, setShowRefine] = useState(false);
   const [refine, setRefine] = useState<Refine>(REFINE_DEFAULT);
 
-  // Cross-reference the client's already-saved options so each card shows its
-  // current status (and an eliminated one never silently reactivates).
+  // Cross-reference the client's already-saved options so each card shows its status.
   const clientOptionsModelId = useMemo(
     () => models.find((m) => m.name === 'client_property_options')?.id ?? null,
     [models],
@@ -134,8 +125,7 @@ export default function SuggestedProjectsModal({
     [geoNames],
   );
 
-  // Snapshot the draft-first context + requirements when the modal opens (the
-  // underlying form can't be edited while the modal is up).
+  // Snapshot the draft-first context + requirements on mount.
   const ctx = useMemo(
     () => buildAssistantContext({ clientsModel, prefDraft, savedClientData: clientRec?.data ?? null, followupDraft, projectName, geoNames, isAr }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -147,8 +137,6 @@ export default function SuggestedProjectsModal({
     [],
   );
 
-  // Score threshold + refine post-filters + sort, applied client-side per group
-  // (shared engine with the standalone Project Finder page).
   const refinedGroups = useMemo(
     () => refineGroups(resp?.groups, scoreThreshold, refine, sortKey),
     [resp, scoreThreshold, refine, sortKey],
@@ -163,11 +151,8 @@ export default function SuggestedProjectsModal({
         requirements,
         clientId: clientRec?.id ?? null,
         followupId,
-        // Show EVERY option that scores ≥ 70 — no per-group cap (perGroup:0 = unlimited).
         perGroup: 0,
-        minScore: 70,
-        // Show the full picture: our portfolio + the broad catalog + market ads.
-        // Non-portfolio sources are labelled + carry a "verify before offering" banner.
+        minScore: FETCH_FLOOR,
         sources: ['our_projects', 'all_projects', 'market_listings'],
         locale: isAr ? 'ar' : 'en',
       },
@@ -177,8 +162,6 @@ export default function SuggestedProjectsModal({
         setResp(r);
         const firstFilled = FINDER_GROUP_KEYS.find((k) => (r.groups[k]?.length ?? 0) > 0);
         if (firstFilled) setActiveTab(firstFilled);
-        // Auto-select ONLY perfect (100%) matches; everything below 100 stays
-        // visible but unchecked until the rep selects it.
         const all = FINDER_GROUP_KEYS.flatMap((k) => r.groups[k] ?? []);
         setSelected(new Set(all.filter((i) => i.score === 100).map((i) => i.project_id)));
       })
@@ -190,23 +173,20 @@ export default function SuggestedProjectsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Esc closes.
+  // Esc returns to the follow-up.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onDone(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [onDone]);
 
   function onOpenDetails(item: FinderMatch) {
-    // our_projects + all_projects ids are all_projects record ids; market_listings
-    // items carry a market_listings record id.
     const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
     window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
   }
   const noClient = () =>
     addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error');
 
-  /** Map a finder match → an option upsert payload (snapshots the display facts). */
   function matchToInput(item: FinderMatch): Omit<SaveOptionInput, 'clientId'> {
     return {
       sourceType: finderSourceToOptionType(item.source),
@@ -252,8 +232,7 @@ export default function SuggestedProjectsModal({
   async function onBulkSave() {
     if (!clientRec?.id) return noClient();
     if (selected.size === 0) return;
-    // Only save selected cards that are CURRENTLY VISIBLE under the active
-    // refinement (don't silently save matches the slider/refine has hidden).
+    // Only save selected cards still VISIBLE under the active refinement.
     const all = FINDER_GROUP_KEYS.flatMap((k) => refinedGroups[k]);
     const chosen = all.filter((i) => selected.has(i.project_id));
     setBulkSaving(true);
@@ -270,9 +249,6 @@ export default function SuggestedProjectsModal({
   async function confirmEliminate() {
     if (!eliminateTarget || !clientRec?.id) { setEliminateTarget(null); return; }
     setEliminating(true);
-    // Ensure the option exists, then eliminate it with the reason notes. A
-    // freshly-found match is created (suitable) then flipped to eliminated; an
-    // existing one is updated in place.
     const ensured = await saveClientOption({ clientId: clientRec.id, ...matchToInput(eliminateTarget), addedFrom: 'project_finder' });
     let ok = ensured.ok;
     if (ensured.optionId) {
@@ -304,15 +280,11 @@ export default function SuggestedProjectsModal({
   const activeItems = refinedGroups[activeTab] ?? [];
   const market = resp?.metadata.market;
   const suggestLabel = (code: string) => (MISSING_LABELS[code] ? (isAr ? MISSING_LABELS[code].ar : MISSING_LABELS[code].en) : code);
-  // How many of the user's selected cards are still visible under the refinement
-  // (the footer count + bulk-save act on this set, never the hidden ones).
   const selectedVisible = FINDER_GROUP_KEYS.reduce(
     (n, k) => n + refinedGroups[k].filter((i) => selected.has(i.project_id)).length, 0,
   );
 
-  // Reset the render window when the visible list changes (tab / refine / sort / new results).
   useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, refinedGroups]);
-  // If refining empties the active tab, hop to the first tab that still has matches.
   useEffect(() => {
     if (!resp) return;
     if (refinedGroups[activeTab].length === 0) {
@@ -321,7 +293,6 @@ export default function SuggestedProjectsModal({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refinedGroups]);
-  // Grow the window as the sentinel scrolls into view (infinite scroll).
   useEffect(() => {
     const sentinel = sentinelRef.current;
     const root = scrollRef.current;
@@ -335,27 +306,36 @@ export default function SuggestedProjectsModal({
   }, [activeItems.length, activeTab, visibleCount]);
   const shown = activeItems.slice(0, visibleCount);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-3 sm:p-6" onMouseDown={onClose}>
-      <div
-        className="flex h-full max-h-[92vh] w-full max-w-[860px] flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl"
-        onMouseDown={(e) => e.stopPropagation()}
-        dir={isAr ? 'rtl' : 'ltr'}
-      >
-        {/* Header */}
-        <div className="flex items-center gap-2 border-b border-sand/40 bg-white px-4 py-3">
-          <Sparkles size={18} className="text-copper" />
-          <div className="min-w-0 flex-1">
-            <div className="text-base font-bold text-chocolate">{L('الباحث عن المشاريع', 'Project Finder')}</div>
-            <div className="text-[11px] text-charcoal/60">{L('ترتيب دقيق موثّق بالإحداثيات — مبني على تفضيلات العميل الحالية (تشمل تعديلات لم تُحفظ).', 'Coordinate-verified ranking — based on the current follow-up preferences (including unsaved edits).')}</div>
-          </div>
-          <button type="button" onClick={onClose} className="rounded-lg p-2 text-charcoal/50 transition hover:bg-cream hover:text-charcoal" aria-label={L('إغلاق', 'Close')}>
-            <X size={18} />
-          </button>
-        </div>
+  const headerSubtitle = [clientName, projectName].filter(Boolean).join(' · ');
 
-        {/* Preferences + missing warnings */}
-        <div className="border-b border-sand/30 bg-white/60 px-4 py-2.5">
+  return (
+    <div className="flex h-full flex-col bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
+      {/* Header with the Done button (returns to the follow-up record) */}
+      <div className="flex items-center gap-3 border-b border-sand/40 bg-white px-4 py-3 sm:px-6">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-copper/10">
+          <Compass size={20} className="text-copper" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h1 className="truncate text-base font-bold text-chocolate sm:text-lg">{L('الباحث عن المشاريع', 'Project Finder')}</h1>
+          <p className="truncate text-[11px] text-charcoal/60">
+            {headerSubtitle
+              ? L(`لـ ${headerSubtitle} — ترتيب موثّق بالإحداثيات`, `For ${headerSubtitle} — coordinate-verified ranking`)
+              : L('ترتيب دقيق موثّق بالإحداثيات — مبني على تفضيلات هذه المتابعة.', 'Coordinate-verified ranking — based on this follow-up’s preferences.')}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onDone}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
+        >
+          <Check size={16} />
+          {L('تم', 'Done')}
+        </button>
+      </div>
+
+      {/* Preferences + missing warnings */}
+      <div className="border-b border-sand/30 bg-white/60">
+        <div className="mx-auto w-full max-w-6xl px-4 py-2.5 sm:px-6">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[10px] font-bold uppercase tracking-wider text-charcoal/45">{L('التفضيلات', 'Preferences')}</span>
             {ctx.used.length === 0 && <span className="text-xs text-charcoal/55">{L('لا توجد تفضيلات محددة', 'None set')}</span>}
@@ -378,44 +358,48 @@ export default function SuggestedProjectsModal({
             </div>
           )}
         </div>
+      </div>
 
-        {/* Market-source honesty notice — we NEVER silently drop listings; when the
-            area is too dense to scan in full we ask for more criteria instead. */}
-        {market?.status === 'too_many' && (
-          <div className="flex flex-wrap items-center gap-1.5 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] text-amber-800">
-            <AlertTriangle size={13} className="shrink-0" />
-            <span className="font-semibold">
-              {market.count != null
-                ? L(`إعلانات السوق غير معروضة: يوجد ${market.count.toLocaleString('en-US')} إعلان في هذا الحي.`,
-                    `Market listings hidden: ${market.count.toLocaleString('en-US')} ads in this district.`)
-                : L('إعلانات السوق غير معروضة: عددها كبير جداً في هذا الحي.', 'Market listings hidden: too many ads in this district.')}
-            </span>
-            <span>{L('أضف', 'Add')}</span>
-            {(market.suggest ?? []).map((s) => (
-              <span key={s} className="inline-flex items-center rounded-full border border-amber-300 bg-white px-2 py-0.5 font-semibold">
-                {suggestLabel(s)}
-              </span>
-            ))}
-            <span>{L('لعرضها (لا يتم حذف أي إعلان).', 'to show them (nothing is dropped).')}</span>
+      {/* Market-source honesty notices */}
+      {(market?.status === 'too_many' || market?.status === 'needs_district' || market?.status === 'unavailable') && (
+        <div className="border-b border-amber-200 bg-amber-50">
+          <div className="mx-auto w-full max-w-6xl px-4 py-2 sm:px-6">
+            {market?.status === 'too_many' && (
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-800">
+                <AlertTriangle size={13} className="shrink-0" />
+                <span className="font-semibold">
+                  {market.count != null
+                    ? L(`إعلانات السوق غير معروضة: يوجد ${market.count.toLocaleString('en-US')} إعلان في هذا الحي.`,
+                        `Market listings hidden: ${market.count.toLocaleString('en-US')} ads in this district.`)
+                    : L('إعلانات السوق غير معروضة: عددها كبير جداً في هذا الحي.', 'Market listings hidden: too many ads in this district.')}
+                </span>
+                <span>{L('أضف', 'Add')}</span>
+                {(market.suggest ?? []).map((s) => (
+                  <span key={s} className="inline-flex items-center rounded-full border border-amber-300 bg-white px-2 py-0.5 font-semibold">{suggestLabel(s)}</span>
+                ))}
+                <span>{L('لعرضها (لا يتم حذف أي إعلان).', 'to show them (nothing is dropped).')}</span>
+              </div>
+            )}
+            {market?.status === 'needs_district' && (
+              <div className="flex items-center gap-1.5 text-[11px] text-amber-800">
+                <AlertTriangle size={13} className="shrink-0" />
+                <span>{L('حدّد الحي لعرض إعلانات السوق.', 'Set a district to include market listings.')}</span>
+              </div>
+            )}
+            {market?.status === 'unavailable' && (
+              <div className="flex items-center gap-1.5 text-[11px] text-amber-800">
+                <AlertTriangle size={13} className="shrink-0" />
+                <span>{L('تعذّر تحميل إعلانات السوق — أعد المحاولة.', 'Couldn’t load market listings — please retry.')}</span>
+              </div>
+            )}
           </div>
-        )}
-        {market?.status === 'needs_district' && (
-          <div className="flex items-center gap-1.5 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] text-amber-800">
-            <AlertTriangle size={13} className="shrink-0" />
-            <span>{L('حدّد الحي لعرض إعلانات السوق.', 'Set a district to include market listings.')}</span>
-          </div>
-        )}
-        {market?.status === 'unavailable' && (
-          <div className="flex items-center gap-1.5 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] text-amber-800">
-            <AlertTriangle size={13} className="shrink-0" />
-            <span>{L('تعذّر تحميل إعلانات السوق — أعد المحاولة.', 'Couldn’t load market listings — please retry.')}</span>
-          </div>
-        )}
+        </div>
+      )}
 
-        {/* Refinement toolbar — score slider + sort + hard filters (shared with the
-            standalone Project Finder page). Operates client-side over the ≥70 set. */}
-        {!loading && !error && !needsPreferences && fetchedTotal > 0 && (
-          <div className="border-b border-sand/30 bg-white/40 px-3 pt-3">
+      {/* Refinement toolbar + group tabs */}
+      {!loading && !error && !needsPreferences && fetchedTotal > 0 && (
+        <div className="border-b border-sand/30 bg-white/40">
+          <div className="mx-auto w-full max-w-6xl px-4 pt-3 sm:px-6">
             <FinderRefinementBar
               isAr={isAr}
               floor={FETCH_FLOOR}
@@ -430,33 +414,33 @@ export default function SuggestedProjectsModal({
               refinedTotal={refinedTotal}
               fetchedTotal={fetchedTotal}
             />
+            <div className="flex flex-wrap gap-1 pb-2">
+              {FINDER_GROUP_KEYS.map((k) => {
+                const count = refinedGroups[k].length;
+                const on = activeTab === k;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setActiveTab(k)}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${on ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream/70'} ${count === 0 ? 'opacity-50' : ''}`}
+                  >
+                    {isAr ? TAB_LABELS[k].ar : TAB_LABELS[k].en}
+                    <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
-        )}
-
-        {/* Group tabs */}
-        <div className="flex flex-wrap gap-1 border-b border-sand/30 bg-white/40 px-3 py-2">
-          {FINDER_GROUP_KEYS.map((k) => {
-            const count = refinedGroups[k].length;
-            const on = activeTab === k;
-            return (
-              <button
-                key={k}
-                type="button"
-                onClick={() => setActiveTab(k)}
-                className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${on ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream/70'} ${count === 0 ? 'opacity-50' : ''}`}
-              >
-                {isAr ? TAB_LABELS[k].ar : TAB_LABELS[k].en}
-                <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
-              </button>
-            );
-          })}
         </div>
+      )}
 
-        {/* Cards */}
-        <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+      {/* Cards */}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6">
           {loading && (
-            <div className="flex h-full flex-col items-center justify-center gap-2 text-charcoal/55">
-              <Loader2 size={22} className="animate-spin text-copper" />
+            <div className="flex h-[50vh] flex-col items-center justify-center gap-2 text-charcoal/55">
+              <Loader2 size={24} className="animate-spin text-copper" />
               <span className="text-sm">{L('جارٍ ترشيح المشاريع…', 'Finding the best-fit projects…')}</span>
             </div>
           )}
@@ -464,73 +448,87 @@ export default function SuggestedProjectsModal({
             <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
           )}
           {!loading && !error && needsPreferences && (
-            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
-              <Info size={22} className="text-copper" />
+            <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+              <Info size={24} className="text-copper" />
               <p className="text-sm">{L('لم تُحدَّد أي تفضيلات لهذا العميل. حدِّد الحي أو الميزانية أو نوع العقار (أو اسأل العميل) للحصول على ترشيح دقيق.', 'No preferences are set for this client. Set a district, budget, or unit type (or ask the client) for a precise match.')}</p>
             </div>
           )}
           {!loading && !error && !needsPreferences && fetchedTotal === 0 && (
-            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
-              <Info size={22} className="text-copper" />
+            <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+              <Info size={24} className="text-copper" />
               <p className="text-sm">{L('لا توجد مشاريع مطابقة بالتفضيلات الحالية. جرّب توسيع الميزانية أو الموقع، أو اسأل العميل عن تفاصيل أكثر.', 'No matching projects for the current preferences. Try widening the budget or location, or gather more details from the client.')}</p>
             </div>
           )}
           {!loading && !error && !needsPreferences && fetchedTotal > 0 && refinedTotal === 0 && (
-            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
-              <Info size={22} className="text-copper" />
+            <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+              <Info size={24} className="text-copper" />
               <p className="text-sm">{L('لا نتائج بهذه التصفية. اخفض نسبة التطابق أو وسّع التصفية الدقيقة.', 'Nothing matches this refinement. Lower the score or relax the refine filters.')}</p>
             </div>
           )}
           {!loading && !error && refinedTotal > 0 && activeItems.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
           )}
-          {!loading && !error && shown.map((item) => (
-            <FinderCard
-              key={item.project_id}
-              item={item}
-              isAr={isAr}
-              onOpenDetails={onOpenDetails}
-              selected={selected.has(item.project_id)}
-              onToggleSelect={toggleSelect}
-              onSaveOption={onSaveOption}
-              onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
-              onReactivate={onReactivate}
-              saveState={saveStates[item.project_id] ?? 'idle'}
-              existingStatus={existingStatusFor(item)}
-            />
-          ))}
+
+          {!loading && !error && shown.length > 0 && (
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {shown.map((item) => (
+                <FinderCard
+                  key={item.project_id}
+                  item={item}
+                  isAr={isAr}
+                  onOpenDetails={onOpenDetails}
+                  selected={selected.has(item.project_id)}
+                  onToggleSelect={toggleSelect}
+                  onSaveOption={onSaveOption}
+                  onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
+                  onReactivate={onReactivate}
+                  saveState={saveStates[item.project_id] ?? 'idle'}
+                  existingStatus={existingStatusFor(item)}
+                />
+              ))}
+            </div>
+          )}
           {!loading && !error && activeItems.length > 0 && (
             <>
               {visibleCount < activeItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
-              <div className="py-2 text-center text-[11px] text-charcoal/45">
+              <div className="py-3 text-center text-[11px] text-charcoal/45">
                 {L(`عرض ${shown.length} من ${activeItems.length}`, `Showing ${shown.length} of ${activeItems.length}`)}
               </div>
             </>
           )}
         </div>
+      </div>
 
-        {/* Footer — bulk-save the SELECTED options into the client's unified list.
-            Only score===100 matches are pre-checked; the rep can select more. */}
-        {!loading && !error && fetchedTotal > 0 && (
-          <div className="flex items-center justify-between gap-3 border-t border-sand/40 bg-white px-4 py-3">
+      {/* Footer — bulk-save the SELECTED options into the client's unified list. */}
+      {!loading && !error && fetchedTotal > 0 && (
+        <div className="border-t border-sand/40 bg-white">
+          <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <span className="text-xs text-charcoal/60">
               {L(`${selectedVisible} محدّد`, `${selectedVisible} selected`)}
             </span>
-            <button
-              type="button"
-              onClick={onBulkSave}
-              disabled={bulkSaving || selectedVisible === 0}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
-            >
-              {bulkSaving ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
-              {L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onBulkSave}
+                disabled={bulkSaving || selectedVisible === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+              >
+                {bulkSaving ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
+                {L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
+              </button>
+              <button
+                type="button"
+                onClick={onDone}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
+              >
+                <Check size={15} /> {L('تم', 'Done')}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Eliminate-with-notes prompt — the reason is a free-text notes field (no
-          structured reason codes yet, by design). */}
+      {/* Eliminate-with-notes prompt */}
       {eliminateTarget && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/40 p-4" onMouseDown={() => !eliminating && setEliminateTarget(null)}>
           <div className="w-full max-w-md rounded-2xl bg-cream p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()} dir={isAr ? 'rtl' : 'ltr'}>

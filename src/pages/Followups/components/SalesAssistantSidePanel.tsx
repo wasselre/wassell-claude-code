@@ -16,10 +16,11 @@ import ProjectMatchCard from '@/pages/Matching/components/ProjectMatchCard';
 import ComparisonCard from '@/pages/Matching/components/ComparisonCard';
 import NextActionCard from '@/pages/Matching/components/NextActionCard';
 import MessageCard from '@/pages/Matching/components/MessageCard';
+import { useNavigate } from 'react-router-dom';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import { useAppStore } from '@/stores/appStore';
 import { useFeatureFlag, PROJECT_FINDER_ONLY } from '@/lib/featureFlags';
-import SuggestedProjectsModal from './SuggestedProjectsModal';
+import { setFinderHandoff } from '@/lib/matching/finderHandoff';
 
 /** A structured card rendered inline in the panel transcript. */
 type PanelCard =
@@ -66,9 +67,9 @@ export default function SalesAssistantSidePanel({
   isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
+  const navigate = useNavigate();
 
   const assistantEnabled = useFeatureFlag('sales_assistant_enabled');
-  const [showSuggested, setShowSuggested] = useState(false);
   const [messages, setMessages] = useState<PanelMessage[]>([]);
   const [input, setInput] = useState('');
   const [streamingText, setStreamingText] = useState('');
@@ -88,6 +89,7 @@ export default function SalesAssistantSidePanel({
   // ids (city/district) resolve to readable names for the assistant context.
   const records = useAppStore((s) => s.records);
   const models = useAppStore((s) => s.models);
+  const addToast = useAppStore((s) => s.addToast);
   const geoNames = useMemo(() => {
     const map: Record<string, string> = {};
     for (const name of ['districts', 'cities']) {
@@ -231,9 +233,15 @@ export default function SalesAssistantSidePanel({
   }
 
   function onSuggestProjects() {
-    // Open the grouped, deterministic Suggested Projects modal (reads the current
-    // unsaved preference draft). The in-panel chat remains for free-form questions.
-    setShowSuggested(true);
+    // Open the FULL-PAGE deterministic Suggested Projects finder in the same tab.
+    // Stash the current unsaved preference draft so the page matches against what
+    // the rep is looking at (even before Save); the page's "Done" returns here.
+    if (!followupId) {
+      addToast(L('احفظ المتابعة أولاً لفتح الباحث عن المشاريع.', 'Save the follow-up first to open Project Finder.'), 'info');
+      return;
+    }
+    setFinderHandoff({ followupId, prefDraft, followupDraft, projectName: projectName ?? null });
+    navigate(`/model/followups/${followupId}/projects`);
   }
 
   function onProjectInfo() {
@@ -274,31 +282,18 @@ export default function SalesAssistantSidePanel({
     }
   }
 
-  // Feature-flag kill switch — hides the panel + Suggested Projects + modal.
+  // Feature-flag kill switch — hides the panel + Suggested Projects launcher.
   // Rollback for the whole feature = flip feature_flags.sales_assistant_enabled.
   if (!assistantEnabled) return null;
 
-  const suggestedModal = showSuggested ? (
-    <SuggestedProjectsModal
-      isAr={isAr}
-      clientsModel={clientsModel}
-      clientRec={clientRec}
-      prefDraft={prefDraft}
-      followupDraft={followupDraft}
-      followupId={followupId ?? null}
-      projectName={projectName}
-      onClose={() => setShowSuggested(false)}
-    />
-  ) : null;
-
   // Project-Finder-only direction: the conversational co-pilot is unwired. The
   // side panel becomes a focused launcher for the DETERMINISTIC Suggested Projects
-  // finder (geography boundary-verified). No free-text chat, no next-best-action,
+  // finder (geography boundary-verified) — which now opens as a FULL PAGE in the
+  // same tab (see onSuggestProjects). No free-text chat, no next-best-action,
   // no message drafting, no task creation.
   if (PROJECT_FINDER_ONLY) {
     return (
       <div className="w-full xl:w-[340px] xl:shrink-0 xl:sticky xl:top-4">
-        {suggestedModal}
         <div className="rounded-2xl border border-copper/30 bg-white p-4 shadow-sm">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-copper/15">
@@ -342,14 +337,12 @@ export default function SalesAssistantSidePanel({
             <span className="xl:[writing-mode:vertical-rl] xl:rotate-180">{L('مساعد المبيعات', 'Sales Assistant')}</span>
           </button>
         </div>
-        {suggestedModal}
       </>
     );
   }
 
   return (
     <div className="w-full xl:w-[400px] xl:shrink-0 xl:sticky xl:top-4">
-      {suggestedModal}
       <div className="flex h-[600px] flex-col overflow-hidden rounded-2xl border border-copper/30 bg-white shadow-sm xl:h-[calc(100vh-6rem)]">
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-sand/30 bg-copper/10 px-3 py-2.5">

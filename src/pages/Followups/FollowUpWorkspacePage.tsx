@@ -8,6 +8,7 @@ import RecordFormModal from '@/pages/Records/components/RecordFormModal';
 import { applyOverridesToConfig, buildFieldLabels, getFollowUpTypeConfig, validateFollowUpCompletion } from '@/lib/salesProcess';
 import type { AppRecord } from '@/types';
 import { resolveFollowupContext } from './lib/followupContext';
+import { getFinderHandoff, clearFinderHandoff } from '@/lib/matching/finderHandoff';
 import MissionHeader from './components/MissionHeader';
 import PrimaryAction from './components/PrimaryAction';
 import RegisterVisitAction from './components/RegisterVisitAction';
@@ -161,9 +162,14 @@ export default function FollowUpWorkspacePage() {
   useEffect(() => {
     if (clientRec && prefSeededRef.current !== ctx.clientId) {
       prefSeededRef.current = ctx.clientId;
-      setPrefDraft({ ...clientRec.data });
+      // Returning from the full-page Suggested Projects finder: restore the exact
+      // (unsaved-included) draft the rep had when they opened it, then clear the
+      // hand-off so a later legitimate re-seed reads the saved client data.
+      const handoff = record ? getFinderHandoff(record.id) : null;
+      setPrefDraft(handoff ? { ...handoff.prefDraft } : { ...clientRec.data });
+      if (handoff) clearFinderHandoff();
     }
-  }, [ctx.clientId, clientRec]);
+  }, [ctx.clientId, clientRec, record]);
   const setPrefField = (slug: string, value: unknown) => setPrefDraft((d) => ({ ...d, [slug]: value }));
 
   if (!model) return <div className="p-6 text-[#8E4E3A]">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;

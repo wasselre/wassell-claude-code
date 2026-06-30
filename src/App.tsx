@@ -46,6 +46,7 @@ import AssistantInsightsPage from '@/pages/Matching/AssistantInsightsPage';
 import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
+import SuggestedProjectsPage from '@/pages/Followups/SuggestedProjectsPage';
 import ProjectsListPage from '@/pages/Projects/ProjectsListPage';
 import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
 import ClientsListPage from '@/pages/Clients/ClientsListPage';
@@ -366,6 +367,10 @@ export default function App() {
           <Route path="/sales/assistant-insights" element={<RequireAdmin><AssistantInsightsPage /></RequireAdmin>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
+          {/* Full-page Suggested Projects finder, scoped to a follow-up (same tab;
+              "Done" returns to the follow-up record). Must precede the generic
+              :recordId detail route. */}
+          <Route path="/model/followups/:recordId/projects" element={<SuggestedProjectsPage />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/builder/agent" element={<RequireAdmin><BuilderAgentPage /></RequireAdmin>} />
