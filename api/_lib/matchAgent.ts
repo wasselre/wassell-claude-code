@@ -1266,6 +1266,14 @@ export interface MatchCoreOptions {
    *  polygon-derived district (not the stored one) for the exact tier. Default OFF
    *  so the legacy match_projects tool output stays byte-identical. */
   verifyGeo?: boolean;
+  /** Client location-preference GATE. When provided (non-null), ONLY candidates
+   *  whose record id is in this set are scored — the deterministic OR-union /
+   *  exclusion result of the client's `location_items`, computed upstream by the
+   *  PostGIS `wassell_geo_match` RPC. Applied BEFORE scoreProject, so it narrows the
+   *  candidate pool without touching any scoring weight. `null`/undefined ⇒ no gate
+   *  (unchanged behavior for clients without location_items). An EMPTY set is an
+   *  honest "nothing in the preferred areas" — it returns no matches, by design. */
+  geoMatchIds?: Set<string> | null;
 }
 
 /** Resolve each row's containing district via the PostGIS `districts_for_points`
@@ -1313,6 +1321,11 @@ export async function matchProjectsCore(
   }
 
   const includeSoldOut = req.include_sold_out === true;
+  // Client location-preference gate (deterministic OR-union / exclusion of
+  // location_items, resolved upstream by wassell_geo_match). When set, a candidate
+  // is only eligible if its record id is in the set — applied BEFORE scoreProject.
+  const geoGate = opts.geoMatchIds ?? null;
+  const passesGeoGate = (id: string) => geoGate === null || geoGate.has(id);
 
   // ── Location intelligence (relational, no legacy text): resolve the requested
   //    district to its authoritative `districts` record → record id (for exact match),
@@ -1450,6 +1463,7 @@ export async function matchProjectsCore(
     for (const r of sourceRows) {
       const name = asStr(r.data.project_name);
       if (!name) continue;
+      if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
       const loc = recordLocationIds(r.data);
       const g = geoFor(r, loc, polyMap, verifyGeo);
       const s = scoreProject(r.data, req, {
@@ -1583,6 +1597,7 @@ export async function matchProjectsCore(
               const adapted = adaptListingToScorable(r.data);
               const name = asStr(adapted.project_name);
               if (!name) continue;
+              if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
               const loc = recordLocationIds(r.data);
               // Market listings are EXTERNAL / unverified by design (flagged "verify
               // before offering") and keep their stored district + own coords

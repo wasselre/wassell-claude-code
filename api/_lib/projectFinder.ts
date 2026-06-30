@@ -103,6 +103,10 @@ export interface FinderOptions {
   sources?: MatchSource[];
   /** Language for the deterministic explanation string. Default 'en'. */
   locale?: 'ar' | 'en';
+  /** Client location-preference gate (resolved `location_items` → eligible record
+   *  ids via wassell_geo_match). Passed straight to the core; narrows candidates
+   *  BEFORE scoring. Omit/null ⇒ no gate. */
+  geoMatchIds?: Set<string> | null;
 }
 
 /** Default finder sources — the verified project catalog, market opt-in. */
@@ -437,6 +441,7 @@ export async function findMatchingProjects(
     alwaysScoreAll: true,
     includeMarket: (opts.sources ?? DEFAULT_FINDER_SOURCES).includes('market_listings'),
     verifyGeo: true,
+    geoMatchIds: opts.geoMatchIds ?? null,
   });
   if (!core.ok) return { ok: false, error: core.error };
   return { ok: true, result: groupForFinder(core, req, opts) };

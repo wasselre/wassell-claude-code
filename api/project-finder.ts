@@ -179,6 +179,43 @@ export default async function handler(req: Request): Promise<Response> {
       });
     }
 
+    // (1b) Client LOCATION-PREFERENCE gate (deterministic, PostGIS, no AI). When the
+    //      client has `location_items` (include/exclude district, within_radius of a
+    //      point landmark), compile them and resolve the eligible record ids. The
+    //      finder then scores ONLY those candidates (OR-union of items, excludes
+    //      subtracted) — it never alters scoreProject's weights. Best-effort: a
+    //      compile/match failure is logged and falls back to NO gate (the legacy
+    //      requirements-only behavior) rather than silently returning nothing.
+    let geoMatchIds: Set<string> | null = null;
+    let geoFilter: { applied: boolean; match_count: number; needs_review: number } | null = null;
+    const clientId = str(body.client_id);
+    if (clientId) {
+      const { data: compiled, error: compileErr } = await supabase.rpc('wassell_compile_client_geo', {
+        p_client_id: clientId,
+      });
+      if (compileErr) {
+        console.error('[project-finder] geo compile failed:', compileErr.message);
+      } else {
+        const includes = Number((compiled as { includes?: number } | null)?.includes ?? 0);
+        const needsReview = Number((compiled as { needs_review?: number } | null)?.needs_review ?? 0);
+        if (includes > 0) {
+          const { data: matchRows, error: matchErr } = await supabase.rpc('wassell_geo_match', {
+            p_client_id: clientId,
+          });
+          if (matchErr) {
+            console.error('[project-finder] geo match failed:', matchErr.message);
+          } else {
+            geoMatchIds = new Set((matchRows ?? []).map((r: { record_id: string }) => r.record_id).filter(Boolean));
+            geoFilter = { applied: true, match_count: geoMatchIds.size, needs_review: needsReview };
+          }
+        } else if (needsReview > 0) {
+          // Includes exist but none are usable yet (e.g. unresolved element). Surface
+          // it — do NOT gate (would return nothing and read as "no results").
+          geoFilter = { applied: false, match_count: 0, needs_review: needsReview };
+        }
+      }
+    }
+
     // (2) DETERMINISTIC engine — selection, scoring, ranking. No AI.
     // perGroup: 0 = UNLIMITED (show every match). Otherwise default 8.
     const reqPerGroup = num(body.perGroup);
@@ -187,6 +224,7 @@ export default async function handler(req: Request): Promise<Response> {
       minScore: num(body.minScore),
       sources,
       locale,
+      geoMatchIds,
     });
     if (!finder.ok) {
       console.error('[project-finder] engine failed:', finder.error);
@@ -234,6 +272,7 @@ export default async function handler(req: Request): Promise<Response> {
         ...result.metadata,
         used_ai_parse: usedAiParse,
         used_ai_explain: usedAiExplain,
+        geo_filter: geoFilter,
         generated_at: new Date().toISOString(),
       },
     });
