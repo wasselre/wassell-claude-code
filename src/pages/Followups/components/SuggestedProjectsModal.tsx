@@ -13,7 +13,12 @@ import {
   finderSourceToOptionType, findClientOption,
   type ClientOptionStatus, type SaveOptionInput,
 } from '@/lib/matching/clientOptions';
+import {
+  refineGroups, totalInGroups, REFINE_DEFAULT, FETCH_FLOOR,
+  type SortKey, type Refine,
+} from '@/lib/matching/finderRefine';
 import FinderCard from './FinderCard';
+import FinderRefinementBar from './FinderRefinementBar';
 
 /**
  * The "Suggested Projects" modal — the Follow-up completion-phase centerpiece.
@@ -86,6 +91,13 @@ export default function SuggestedProjectsModal({
   const [eliminateNotes, setEliminateNotes] = useState('');
   const [eliminating, setEliminating] = useState(false);
 
+  // Results-refinement (shared with the standalone Project Finder page) — score
+  // slider + sort + hard filters, all client-side over the fetched ≥70 set.
+  const [scoreThreshold, setScoreThreshold] = useState<number>(FETCH_FLOOR);
+  const [sortKey, setSortKey] = useState<SortKey>('score');
+  const [showRefine, setShowRefine] = useState(false);
+  const [refine, setRefine] = useState<Refine>(REFINE_DEFAULT);
+
   // Cross-reference the client's already-saved options so each card shows its
   // current status (and an eliminated one never silently reactivates).
   const clientOptionsModelId = useMemo(
@@ -133,6 +145,13 @@ export default function SuggestedProjectsModal({
     () => draftToMatchRequirements({ clientsModel, prefDraft, savedClientData: clientRec?.data ?? null, resolveLookupName }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
+  );
+
+  // Score threshold + refine post-filters + sort, applied client-side per group
+  // (shared engine with the standalone Project Finder page).
+  const refinedGroups = useMemo(
+    () => refineGroups(resp?.groups, scoreThreshold, refine, sortKey),
+    [resp, scoreThreshold, refine, sortKey],
   );
 
   useEffect(() => {
@@ -233,7 +252,9 @@ export default function SuggestedProjectsModal({
   async function onBulkSave() {
     if (!clientRec?.id) return noClient();
     if (selected.size === 0) return;
-    const all = FINDER_GROUP_KEYS.flatMap((k) => resp?.groups[k] ?? []);
+    // Only save selected cards that are CURRENTLY VISIBLE under the active
+    // refinement (don't silently save matches the slider/refine has hidden).
+    const all = FINDER_GROUP_KEYS.flatMap((k) => refinedGroups[k]);
     const chosen = all.filter((i) => selected.has(i.project_id));
     setBulkSaving(true);
     const summary = await bulkSaveOptions(clientRec.id, chosen.map(matchToInput), 'project_finder');
@@ -276,15 +297,30 @@ export default function SuggestedProjectsModal({
     addToast(res.ok ? L('تمت إعادة تفعيل الخيار.', 'Option reactivated.') : L('تعذّرت إعادة التفعيل.', 'Could not reactivate.'), res.ok ? 'success' : 'error');
   }
 
-  const total = totalFinderMatches(resp);
+  const fetchedTotal = totalFinderMatches(resp);
+  const refinedTotal = totalInGroups(refinedGroups);
   const missing = resp?.metadata.missing_required_preferences ?? [];
   const needsPreferences = resp?.metadata.needs_preferences === true;
-  const activeItems = resp?.groups[activeTab] ?? [];
+  const activeItems = refinedGroups[activeTab] ?? [];
   const market = resp?.metadata.market;
   const suggestLabel = (code: string) => (MISSING_LABELS[code] ? (isAr ? MISSING_LABELS[code].ar : MISSING_LABELS[code].en) : code);
+  // How many of the user's selected cards are still visible under the refinement
+  // (the footer count + bulk-save act on this set, never the hidden ones).
+  const selectedVisible = FINDER_GROUP_KEYS.reduce(
+    (n, k) => n + refinedGroups[k].filter((i) => selected.has(i.project_id)).length, 0,
+  );
 
-  // Reset the render window when the visible list changes (tab switch / new results).
-  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, resp]);
+  // Reset the render window when the visible list changes (tab / refine / sort / new results).
+  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, refinedGroups]);
+  // If refining empties the active tab, hop to the first tab that still has matches.
+  useEffect(() => {
+    if (!resp) return;
+    if (refinedGroups[activeTab].length === 0) {
+      const first = FINDER_GROUP_KEYS.find((k) => refinedGroups[k].length > 0);
+      if (first && first !== activeTab) setActiveTab(first);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refinedGroups]);
   // Grow the window as the sentinel scrolls into view (infinite scroll).
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -376,10 +412,31 @@ export default function SuggestedProjectsModal({
           </div>
         )}
 
+        {/* Refinement toolbar — score slider + sort + hard filters (shared with the
+            standalone Project Finder page). Operates client-side over the ≥70 set. */}
+        {!loading && !error && !needsPreferences && fetchedTotal > 0 && (
+          <div className="border-b border-sand/30 bg-white/40 px-3 pt-3">
+            <FinderRefinementBar
+              isAr={isAr}
+              floor={FETCH_FLOOR}
+              scoreThreshold={scoreThreshold}
+              onScore={setScoreThreshold}
+              sortKey={sortKey}
+              onSort={setSortKey}
+              refine={refine}
+              onRefine={setRefine}
+              showRefine={showRefine}
+              onToggleRefine={() => setShowRefine((v) => !v)}
+              refinedTotal={refinedTotal}
+              fetchedTotal={fetchedTotal}
+            />
+          </div>
+        )}
+
         {/* Group tabs */}
         <div className="flex flex-wrap gap-1 border-b border-sand/30 bg-white/40 px-3 py-2">
           {FINDER_GROUP_KEYS.map((k) => {
-            const count = resp?.groups[k]?.length ?? 0;
+            const count = refinedGroups[k].length;
             const on = activeTab === k;
             return (
               <button
@@ -412,13 +469,19 @@ export default function SuggestedProjectsModal({
               <p className="text-sm">{L('لم تُحدَّد أي تفضيلات لهذا العميل. حدِّد الحي أو الميزانية أو نوع العقار (أو اسأل العميل) للحصول على ترشيح دقيق.', 'No preferences are set for this client. Set a district, budget, or unit type (or ask the client) for a precise match.')}</p>
             </div>
           )}
-          {!loading && !error && !needsPreferences && total === 0 && (
+          {!loading && !error && !needsPreferences && fetchedTotal === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
               <Info size={22} className="text-copper" />
               <p className="text-sm">{L('لا توجد مشاريع مطابقة بالتفضيلات الحالية. جرّب توسيع الميزانية أو الموقع، أو اسأل العميل عن تفاصيل أكثر.', 'No matching projects for the current preferences. Try widening the budget or location, or gather more details from the client.')}</p>
             </div>
           )}
-          {!loading && !error && total > 0 && activeItems.length === 0 && (
+          {!loading && !error && !needsPreferences && fetchedTotal > 0 && refinedTotal === 0 && (
+            <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+              <Info size={22} className="text-copper" />
+              <p className="text-sm">{L('لا نتائج بهذه التصفية. اخفض نسبة التطابق أو وسّع التصفية الدقيقة.', 'Nothing matches this refinement. Lower the score or relax the refine filters.')}</p>
+            </div>
+          )}
+          {!loading && !error && refinedTotal > 0 && activeItems.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
           )}
           {!loading && !error && shown.map((item) => (
@@ -448,15 +511,15 @@ export default function SuggestedProjectsModal({
 
         {/* Footer — bulk-save the SELECTED options into the client's unified list.
             Only score===100 matches are pre-checked; the rep can select more. */}
-        {!loading && !error && total > 0 && (
+        {!loading && !error && fetchedTotal > 0 && (
           <div className="flex items-center justify-between gap-3 border-t border-sand/40 bg-white px-4 py-3">
             <span className="text-xs text-charcoal/60">
-              {L(`${selected.size} محدّد`, `${selected.size} selected`)}
+              {L(`${selectedVisible} محدّد`, `${selectedVisible} selected`)}
             </span>
             <button
               type="button"
               onClick={onBulkSave}
-              disabled={bulkSaving || selected.size === 0}
+              disabled={bulkSaving || selectedVisible === 0}
               className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
             >
               {bulkSaving ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
