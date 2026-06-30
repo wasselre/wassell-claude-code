@@ -24,6 +24,9 @@ export default function TemplatePickerModal({
     mediaSize: number | null;
     mediaFilename: string | null;
     mediaKind: string | null;
+    /** CRM file ids of the linked project's gallery, sent as their own image
+     *  messages after the text (project templates only). */
+    imageFileIds: string[];
   }) => void;
   onClose: () => void;
   /** Current UI language — used to pick which body (ar/en) to insert. */
@@ -85,6 +88,9 @@ export default function TemplatePickerModal({
       mediaSize: typeof d.media_size === 'number' ? (d.media_size as number) : null,
       mediaFilename: (d.media_filename as string | null) || null,
       mediaKind: (d.media_kind as string | null) || null,
+      imageFileIds: Array.isArray(d.project_image_file_ids)
+        ? (d.project_image_file_ids as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : [],
     });
   };
 

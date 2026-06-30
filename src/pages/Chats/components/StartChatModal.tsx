@@ -4,6 +4,7 @@ import { X, Send, Loader2, User, UserCheck, Phone as PhoneIcon, MessageSquare, P
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizePhone } from '@/lib/phone';
+import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import { resolveClientLink, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import PhoneInput from '@/pages/Records/components/PhoneInput';
 import Button from '@/components/ui/Button';
@@ -31,6 +32,7 @@ export default function StartChatModal({
   initialClient,
   initialPhone,
   initialBody,
+  initialImageFileIds,
   onSent,
 }: {
   onClose: () => void;
@@ -44,6 +46,12 @@ export default function StartChatModal({
    * truth — the user can still edit before sending.
    */
   initialBody?: string;
+  /**
+   * CRM file ids of a linked project's gallery (project message templates).
+   * After the first text message creates the conversation, each image is sent
+   * as its own WhatsApp image message into it.
+   */
+  initialImageFileIds?: string[];
   /**
    * Called after the first message is sent with the new chat's record id. When
    * provided, the modal hands the conversation back to the caller INSTEAD of
@@ -154,6 +162,13 @@ export default function StartChatModal({
         // entry leaves linking to the phone-match heuristic in startNewChat.
         clientRecordId: mode === 'client' ? client?.recordId : undefined,
       });
+      // Send the project gallery (if any) into the just-created conversation —
+      // each image as its own WhatsApp message after the first text message.
+      // chatWid mirrors startNewChat's derivation from the canonical E.164.
+      if (initialImageFileIds && initialImageFileIds.length > 0) {
+        const chatWid = `${normalizedRecipient.slice(1)}@c.us`;
+        await sendProjectImageMessages(chatWid, initialImageFileIds);
+      }
       if (onSent) {
         // Caller (e.g. the Follow-up Workspace) takes over — it closes this
         // modal and shows the thread in a popup, no navigation.

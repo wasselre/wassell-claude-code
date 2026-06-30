@@ -43,6 +43,8 @@ const allProjects = model('all_projects', AP_ID, [
   field({ name: 'min_price', type: 'currency' }),
   field({ name: 'brochure_link', type: 'url' }),
   field({ name: 'project_location', type: 'url' }), // the maps URL (distinct from the geography `location`)
+  field({ name: 'main_image', type: 'image' }),
+  field({ name: 'project_images', type: 'multi_image' }),
 ]);
 
 const ourProjects = model('our_projects', OP_ID, [
@@ -85,6 +87,8 @@ describe('resolveProjectFacts', () => {
         min_price: 900000,
         brochure_link: 'https://wassel.re/brochure.pdf',
         project_location: '24.7,46.6',
+        main_image: 'img-hero',
+        project_images: ['img-hero', 'img-2', 'img-3'], // main_image already in the gallery → deduped
       })],
       [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1', price_range: { min: 500000, max: 750000 }, bedroom_range: { min: 2, max: 5 }, bathroom_range: { min: 2, max: 4 } })],
       [UN_ID]: [
@@ -109,6 +113,8 @@ describe('resolveProjectFacts', () => {
     expect(f.minPrice).toEqual({ ar: '500,000 ر.س', en: 'SAR 500,000' }); // computed floor wins
     expect(f.brochureLink).toBe('https://wassel.re/brochure.pdf');
     expect(f.locationLink).toBe('https://www.google.com/maps?q=24.7,46.6'); // lat,lng → maps URL
+    expect(f.websiteUnitsLink).toBe('https://wassel.re/project?id=ap1#units'); // → units grid
+    expect(f.imageFileIds).toEqual(['img-hero', 'img-2', 'img-3']);            // main_image deduped, order kept
     expect(f.missing).toEqual([]);                            // nothing missing
   });
 
@@ -127,8 +133,11 @@ describe('resolveProjectFacts', () => {
     expect(f.unitTypes).toEqual([]);
     expect(f.bedrooms).toBeNull();
     expect(f.minPrice).toBeNull();
-    // name is present (our_projects), so it's NOT in missing; the other 8 are.
-    expect(f.missing).toEqual(['city', 'district', 'unit_types', 'bedrooms', 'bathrooms', 'min_price', 'brochure', 'location']);
+    expect(f.websiteUnitsLink).toBeNull();                    // no master → no link
+    expect(f.imageFileIds).toEqual([]);
+    // name is present (our_projects), so it's NOT in missing; the link is missing
+    // because there's no master id to point at (location/brochure are no longer tracked).
+    expect(f.missing).toEqual(['city', 'district', 'unit_types', 'bedrooms', 'bathrooms', 'min_price', 'link']);
   });
 
   it('uses a full http(s) location value as the link verbatim, and falls back to master min_price', () => {
@@ -146,9 +155,11 @@ describe('resolveProjectFacts', () => {
 
     expect(f.locationLink).toBe('https://maps.app.goo.gl/abc123'); // http URL used as-is
     expect(f.minPrice).toEqual({ ar: '1,200,000 ر.س', en: 'SAR 1,200,000' }); // master fallback
-    expect(f.missing).toContain('brochure');                  // empty string → missing
+    expect(f.websiteUnitsLink).toBe('https://wassel.re/project?id=ap3#units'); // master present → link
     expect(f.missing).toContain('unit_types');                // no units
-    expect(f.missing).not.toContain('location');
+    expect(f.missing).not.toContain('link');                  // master present
+    expect(f.missing).not.toContain('brochure');              // brochure no longer tracked
+    expect(f.missing).not.toContain('location');              // location no longer tracked
     expect(f.missing).not.toContain('min_price');
   });
 
@@ -220,21 +231,27 @@ describe('composeProjectMessage', () => {
     unitTypes: [{ ar: 'شقة', en: 'Apartment' }],
     bedrooms: { min: 2, max: 3 }, bathrooms: { min: 2, max: 3 },
     minPrice: { ar: '1,200,000 ر.س', en: 'SAR 1,200,000' },
-    brochureLink: null,                                   // genuinely missing
-    locationLink: 'https://maps.app.goo.gl/x',
-    missing: ['brochure'],
+    brochureLink: null,                                   // no longer rendered
+    locationLink: 'https://maps.app.goo.gl/x',            // no longer rendered (location dropped)
+    websiteUnitsLink: 'https://wassel.re/project?id=a#units',
+    imageFileIds: [],
+    missing: [],
   };
 
-  it('no greeting/closing, omits missing fields, exact price label', () => {
+  it('no greeting/closing, drops location, renders the website link as الرابط/Link', () => {
     const { body_ar, body_en } = composeProjectMessage(base);
     // no greeting or closing fluff in either language
     expect(body_ar).not.toMatch(/مرحب|تتردد|تواصل معنا/);
     expect(body_en).not.toMatch(/welcome|feel free|reach out/i);
-    // missing brochure is OMITTED entirely — no label, no "not available"
+    // brochure is gone — replaced by the website link line
     expect(body_ar).not.toContain('البروشور');
-    expect(body_ar).not.toContain('غير متوفر');
     expect(body_en).not.toContain('Brochure');
-    expect(body_en).not.toContain('Not available');
+    // location line is dropped entirely
+    expect(body_ar).not.toContain('الموقع');
+    expect(body_en).not.toContain('Location');
+    // the website unit-details link is labeled الرابط / Link
+    expect(body_ar).toContain('الرابط: https://wassel.re/project?id=a#units');
+    expect(body_en).toContain('Link: https://wassel.re/project?id=a#units');
     // exact price label (الأسعار تبدأ من / Prices start from)
     expect(body_ar).toContain('الأسعار تبدأ من: 1,200,000 ر.س');
     expect(body_en).toContain('Prices start from: SAR 1,200,000');
@@ -242,7 +259,6 @@ describe('composeProjectMessage', () => {
     expect(body_ar.split('\n')[0]).toBe('مينا 52');
     expect(body_ar).toContain('المدينة: الرياض');
     expect(body_ar).toContain('غرف النوم: 2 - 3');
-    expect(body_ar).toContain('الموقع: https://maps.app.goo.gl/x');
     expect(body_en).toContain('City: Riyadh');
   });
 

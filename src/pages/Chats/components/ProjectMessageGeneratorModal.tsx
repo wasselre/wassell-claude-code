@@ -47,8 +47,7 @@ const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
   bedrooms: { ar: 'غرف النوم', en: 'Bedrooms' },
   bathrooms: { ar: 'دورات المياه', en: 'Bathrooms' },
   min_price: { ar: 'السعر', en: 'Price' },
-  brochure: { ar: 'البروشور', en: 'Brochure' },
-  location: { ar: 'الموقع', en: 'Location' },
+  link: { ar: 'رابط المشروع', en: 'Project link' },
 };
 
 export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () => void }) {
@@ -182,6 +181,9 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
         media_filename: null,
         // Link the template to the master all_projects record (per spec).
         project_id: it.allProjectId,
+        // Every image saved on the project — sent as its own WhatsApp image
+        // message after the text when this template is used.
+        project_image_file_ids: it.facts.imageFileIds,
       },
       created_at: now,
       updated_at: now,

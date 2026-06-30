@@ -48,8 +48,33 @@ export interface ProjectMessageFacts {
   minPrice: Bilingual | null;
   brochureLink: string | null;
   locationLink: string | null;
+  /**
+   * Public-website link to the project's unit details (the units grid on
+   * project.html). Replaces the brochure in the WhatsApp message — labeled
+   * "الرابط / Link". Present whenever the our_projects record links to an
+   * all_projects master (so we have an id to point the URL at).
+   */
+  websiteUnitsLink: string | null;
+  /**
+   * CRM `files` ids of every image saved on the project (the all_projects
+   * `project_images` multi-image field, falling back to `main_image`). These
+   * are sent as their own WhatsApp image messages alongside the text.
+   */
+  imageFileIds: string[];
   /** Human-readable keys of the required fields that came back empty. */
   missing: string[];
+}
+
+/**
+ * Public marketing website base. The project unit-details link points at
+ * `/project?id=<all_projects id>#units` — `cleanUrls` rewrites `/project` →
+ * `project.html`, and the `#units` anchor jumps straight to the units grid.
+ */
+const WEBSITE_BASE = 'https://wassel.re';
+
+function websiteUnitsLinkFor(allProjectId: string | null): string | null {
+  if (!allProjectId) return null;
+  return `${WEBSITE_BASE}/project?id=${encodeURIComponent(allProjectId)}#units`;
 }
 
 function asString(v: unknown): string | null {
@@ -236,6 +261,27 @@ export function resolveProjectFacts(
 
   const brochureLink = brochureSlug ? asString(ap[brochureSlug]) : null;
   const locationLink = resolveLocationLink(locationSlug ? asString(ap[locationSlug]) : null);
+  const websiteUnitsLink = websiteUnitsLinkFor(allProjectId);
+
+  // Every image saved on the project — the all_projects `project_images`
+  // multi-image field (an array of CRM `files` ids), falling back to the single
+  // `main_image`. main_image is prepended if it isn't already in the gallery so
+  // the hero photo leads. Deduped, order-preserving.
+  const imagesSlug = slugByCandidates(allProjectsModel, ['project_images', 'images']);
+  const mainImageSlug = slugByCandidates(allProjectsModel, ['main_image', 'image']);
+  const imageFileIds: string[] = [];
+  const seenImages = new Set<string>();
+  const pushImage = (v: unknown) => {
+    const id = asString(v);
+    if (!id || seenImages.has(id)) return;
+    seenImages.add(id);
+    imageFileIds.push(id);
+  };
+  const mainImageId = mainImageSlug ? asString(ap[mainImageSlug]) : null;
+  if (mainImageId) pushImage(mainImageId);
+  const galleryRaw = imagesSlug ? ap[imagesSlug] : null;
+  if (Array.isArray(galleryRaw)) for (const v of galleryRaw) pushImage(v);
+  else if (galleryRaw != null && galleryRaw !== '') pushImage(galleryRaw);
 
   // Which required fields are genuinely empty → drives the preview warnings +
   // the "not available" placeholder in the message.
@@ -247,8 +293,9 @@ export function resolveProjectFacts(
   if (!bedrooms) missing.push('bedrooms');
   if (!bathrooms) missing.push('bathrooms');
   if (!minPrice) missing.push('min_price');
-  if (!brochureLink) missing.push('brochure');
-  if (!locationLink) missing.push('location');
+  // The website link replaces the brochure; flag it missing only when the
+  // project has no master to point at (location is no longer part of the message).
+  if (!websiteUnitsLink) missing.push('link');
 
   return {
     ourProjectId: ourProject.id,
@@ -262,6 +309,8 @@ export function resolveProjectFacts(
     minPrice,
     brochureLink,
     locationLink,
+    websiteUnitsLink,
+    imageFileIds,
     missing,
   };
 }
@@ -295,8 +344,9 @@ export function composeProjectMessage(
   if (facts.bedrooms) { ar.push(`غرف النوم: ${rangeText(facts.bedrooms)}`); en.push(`Bedrooms: ${rangeText(facts.bedrooms)}`); }
   if (facts.bathrooms) { ar.push(`دورات المياه: ${rangeText(facts.bathrooms)}`); en.push(`Bathrooms: ${rangeText(facts.bathrooms)}`); }
   if (facts.minPrice) { ar.push(`الأسعار تبدأ من: ${facts.minPrice.ar}`); en.push(`Prices start from: ${facts.minPrice.en}`); }
-  if (facts.brochureLink) { ar.push(`البروشور: ${facts.brochureLink}`); en.push(`Brochure: ${facts.brochureLink}`); }
-  if (facts.locationLink) { ar.push(`الموقع: ${facts.locationLink}`); en.push(`Location: ${facts.locationLink}`); }
+  // The public-website unit-details link replaces the brochure (labeled
+  // "الرابط / Link"). The map/location line was dropped per the 2026-06-30 spec.
+  if (facts.websiteUnitsLink) { ar.push(`الرابط: ${facts.websiteUnitsLink}`); en.push(`Link: ${facts.websiteUnitsLink}`); }
   // The project name is a single (Arabic) text field with no stored English
   // form, so the English body uses a translated/transliterated name when one
   // is supplied (e.g. "مينا 52" → "Mena 52"); falls back to the Arabic name.

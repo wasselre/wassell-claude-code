@@ -50,6 +50,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
   const [bodyAr, setBodyAr] = useState('');
   const [bodyEn, setBodyEn] = useState('');
   const [chatBody, setChatBody] = useState(''); // the body fed to the composer (current language)
+  const [imageFileIds, setImageFileIds] = useState<string[]>([]); // project gallery to ride along
   const [missing, setMissing] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -77,6 +78,11 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       setBodyAr(ar);
       setBodyEn(en);
       setChatBody((isAr ? ar : en) || ar || en);
+      setImageFileIds(
+        Array.isArray(t.project_image_file_ids)
+          ? (t.project_image_file_ids as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0)
+          : [],
+      );
       setPhase('chat');
     } else {
       setPhase('ask');
@@ -105,6 +111,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       setBodyAr(body_ar);
       setBodyEn(body_en);
       setChatBody((isAr ? body_ar : body_en) || body_ar || body_en);
+      setImageFileIds(facts.imageFileIds);
       setMissing(facts.missing);
       setPhase('preview');
     } catch (e) {
@@ -141,6 +148,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
         media_size: null,
         media_filename: null,
         project_id: projectId,
+        project_image_file_ids: imageFileIds,
       },
       created_at: now,
       updated_at: now,
@@ -163,6 +171,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       <StartChatModal
         initialClient={pickedClient}
         initialBody={chatBody}
+        initialImageFileIds={imageFileIds}
         onClose={onClose}
         onSent={() => {
           addToast(L('تم إرسال الرسالة', 'Message sent'), 'success');

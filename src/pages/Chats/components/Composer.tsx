@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type KeyboardEvent } from 'react';
 import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile } from '@/lib/haberchat/client';
+import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import TemplatePickerModal from './TemplatePickerModal';
 import type { ChatMessage } from '@/types';
 
@@ -38,6 +39,10 @@ export default function Composer({
 
   const [text, setText] = useState('');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
+  // Project templates carry a gallery of CRM image file ids that ride along as
+  // their own image messages after the text/single-media send. Set when a
+  // project template is picked; cleared on send or when a local file replaces it.
+  const [projectImageFileIds, setProjectImageFileIds] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -51,7 +56,8 @@ export default function Composer({
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   }, [text]);
 
-  const canSend = (text.trim().length > 0 || attachment !== null) && !sending && !disabled;
+  const canSend =
+    (text.trim().length > 0 || attachment !== null || projectImageFileIds.length > 0) && !sending && !disabled;
 
   const kindForLocalFile = (file: File): ChatMessage['kind'] => {
     if (file.type.startsWith('image/')) return 'image';
@@ -64,9 +70,11 @@ export default function Composer({
     if (!canSend) return;
     const body = text.trim();
     const att = attachment;
+    const projectImages = projectImageFileIds;
     setSending(true);
     setText('');
     setAttachment(null);
+    setProjectImageFileIds([]);
     try {
       if (att?.kind === 'local') {
         // Upload first, then send. Spinner on the send button covers the wait.
@@ -90,8 +98,12 @@ export default function Composer({
           mediaMime: att.mime,
           mediaSize: att.size,
         });
-      } else {
+      } else if (body) {
         await sendChatMessage(chatWid, { body });
+      }
+      // Project gallery rides along as its own image messages after the text.
+      if (projectImages.length > 0) {
+        await sendProjectImageMessages(chatWid, projectImages);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -119,6 +131,7 @@ export default function Composer({
       return;
     }
     setAttachment({ kind: 'local', file: f });
+    setProjectImageFileIds([]); // a manually attached file replaces a template gallery
     textareaRef.current?.focus();
   };
 
@@ -129,6 +142,7 @@ export default function Composer({
     mediaSize: number | null;
     mediaFilename: string | null;
     mediaKind: string | null;
+    imageFileIds: string[];
   }) => {
     // Fill the textarea with the template body; user can edit before
     // sending. If the user already had text, replace — the picker is an
@@ -146,6 +160,8 @@ export default function Composer({
     } else {
       setAttachment(null);
     }
+    // Project gallery (if any) sends as separate image messages on Send.
+    setProjectImageFileIds(picked.imageFileIds ?? []);
     setShowPicker(false);
     textareaRef.current?.focus();
   };
@@ -162,6 +178,27 @@ export default function Composer({
 
       <div className="card p-3 mt-3 flex flex-col gap-2">
         {attachment && <AttachmentChip attachment={attachment} isAr={isAr} onRemove={() => setAttachment(null)} />}
+
+        {projectImageFileIds.length > 0 && (
+          <div className="flex items-center gap-2 bg-copper/5 border border-copper/20 rounded-lg px-2 py-1.5">
+            <div className="w-7 h-7 rounded-lg bg-copper/10 flex items-center justify-center shrink-0">
+              <ImageIcon size={14} className="text-copper" />
+            </div>
+            <div className="flex-1 min-w-0 text-xs text-charcoal/70">
+              {isAr
+                ? `سترسل ${projectImageFileIds.length} صورة للمشروع بعد الرسالة`
+                : `${projectImageFileIds.length} project image${projectImageFileIds.length === 1 ? '' : 's'} will be sent after the message`}
+            </div>
+            <button
+              onClick={() => setProjectImageFileIds([])}
+              className="p-1 rounded text-charcoal/50 hover:text-red-600 hover:bg-red-50 transition-colors"
+              aria-label={isAr ? 'إزالة الصور' : 'Remove images'}
+              type="button"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
 
         <div className="flex items-end gap-2">
           {/* Attach file */}
