@@ -87,7 +87,12 @@ export interface FetchFinderArgs {
   requirements: MatchRequirementsInput;
   clientId?: string | null;
   followupId?: string | null;
+  /** Max results per group. Omit for the default (8). Pass 0 for UNLIMITED — show
+   *  every match (paired with minScore so "unlimited" stays meaningful). */
   perGroup?: number;
+  /** Only return matches scoring at or above this (0–100). Omit for the engine
+   *  floor (40). The Follow-up flow sends 70 — "show all options scoring ≥ 70". */
+  minScore?: number;
   /** Source set. Omit for the default (our_projects + all_projects). market_listings
    *  is opt-in (external/unverified). The Follow-up flow now opts into all three. */
   sources?: FinderSource[];
@@ -114,6 +119,7 @@ export async function fetchProjectFinder(
       client_id: args.clientId ?? undefined,
       followup_id: args.followupId ?? undefined,
       perGroup: args.perGroup,
+      ...(args.minScore != null ? { minScore: args.minScore } : {}),
       ...(args.sources ? { sources: args.sources } : {}),
       ...(args.locale ? { locale: args.locale } : {}),
       // Deterministic-only from the Follow-up flow: no LLM parse, no LLM explanation.

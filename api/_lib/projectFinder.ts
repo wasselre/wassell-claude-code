@@ -93,7 +93,10 @@ export interface FinderResult {
 }
 
 export interface FinderOptions {
+  /** Max results per group. Default 8. Pass 0 (or negative) for UNLIMITED — no cap. */
   perGroup?: number;
+  /** Only keep matches scoring >= this (0–100). Omit for the engine floor (MIN_RETURN). */
+  minScore?: number;
   /** Which sources to include. Default: our_projects + all_projects (the
    *  boundary-verified catalog). `market_listings` is OPT-IN — it's external/
    *  unverified and its area scan can be slow for ultra-dense districts. */
@@ -299,6 +302,7 @@ export function groupForFinder(
   opts: FinderOptions = {},
 ): FinderResult {
   const perGroup = opts.perGroup ?? 8;
+  const minScore = opts.minScore ?? null;
   const sources = opts.sources ?? DEFAULT_FINDER_SOURCES;
   const locale = opts.locale ?? 'en';
   const districtRequested = !!(req.district || (req.districts && req.districts.length));
@@ -316,6 +320,9 @@ export function groupForFinder(
   };
 
   for (const item of pool) {
+    // Score floor (e.g. "show all options ≥ 70"). The engine already drops < MIN_RETURN;
+    // this is an optional stricter, caller-set threshold.
+    if (minScore != null && item.score < minScore) continue;
     const m = toFinderMatch(item, districtRequested, locale);
     groups[m.group].push(m);
   }
@@ -336,7 +343,8 @@ export function groupForFinder(
   const counts = {} as Record<FinderGroupKey, number>;
   for (const k of FINDER_GROUP_KEYS) {
     counts[k] = groups[k].length;
-    groups[k] = groups[k].slice(0, perGroup);
+    // perGroup <= 0 → UNLIMITED (return every match in the group).
+    if (perGroup > 0) groups[k] = groups[k].slice(0, perGroup);
   }
 
   const source_counts: Record<MatchSource, number> = { our_projects: 0, all_projects: 0, market_listings: 0 };

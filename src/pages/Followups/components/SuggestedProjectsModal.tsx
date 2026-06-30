@@ -108,7 +108,9 @@ export default function SuggestedProjectsModal({
         requirements,
         clientId: clientRec?.id ?? null,
         followupId,
-        perGroup: 8,
+        // Show EVERY option that scores ≥ 70 — no per-group cap (perGroup:0 = unlimited).
+        perGroup: 0,
+        minScore: 70,
         // Show the full picture: our portfolio + the broad catalog + market ads.
         // Non-portfolio sources are labelled + carry a "verify before offering" banner.
         sources: ['our_projects', 'all_projects', 'market_listings'],

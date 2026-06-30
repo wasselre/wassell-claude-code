@@ -52,6 +52,7 @@ interface FinderBody {
   client_id?: string;
   followup_id?: string;
   perGroup?: number;
+  minScore?: number;
 }
 
 const num = (v: unknown): number | undefined => {
@@ -179,8 +180,11 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     // (2) DETERMINISTIC engine — selection, scoring, ranking. No AI.
+    // perGroup: 0 = UNLIMITED (show every match). Otherwise default 8.
+    const reqPerGroup = num(body.perGroup);
     const finder = await findMatchingProjects(supabase, requirements, {
-      perGroup: num(body.perGroup) ?? 8,
+      perGroup: reqPerGroup != null ? reqPerGroup : 8,
+      minScore: num(body.minScore),
       sources,
       locale,
     });
