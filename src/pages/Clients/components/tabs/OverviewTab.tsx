@@ -72,7 +72,7 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
       <Card title={isAr ? 'هوية العميل' : 'Client identity'}>
         <Row label={isAr ? 'الاسم' : 'Name'}>{view.name ?? <Dash />}</Row>
         <Row label={isAr ? 'الجوال' : 'Phone'}><span dir="ltr">{view.phone ?? '—'}</span></Row>
-        <Row label={isAr ? 'المالك' : 'Owner'}>{view.ownerName ?? <Dash />}</Row>
+        <Row label={isAr ? 'مستشار المبيعات' : 'Sales Consultant'}>{view.ownerName ?? <Dash />}</Row>
         <Row label={isAr ? 'المرحلة' : 'Stage'}>{view.stage ?? <Dash />}</Row>
         <Row label={isAr ? 'الحالة' : 'Status'}>{view.status ?? <Dash />}</Row>
       </Card>

@@ -46,7 +46,7 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-charcoal/60">
             <span dir="ltr">{view.phone ?? '—'}</span>
             <span className="text-charcoal/30">•</span>
-            <span>{view.ownerName ?? (isAr ? 'بدون مالك' : 'No owner')}</span>
+            <span>{view.ownerName ?? (isAr ? 'بدون مستشار' : 'No consultant')}</span>
           </div>
 
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">

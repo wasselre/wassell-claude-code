@@ -85,7 +85,7 @@ export default function ClientsTable({ views, isAr, returnTo, now = Date.now() }
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-charcoal/60">
                   <span dir="ltr">{v.phone ?? '—'}</span>
                   <span className="text-charcoal/30">•</span>
-                  <span>{v.ownerName ?? (isAr ? 'بدون مالك' : 'No owner')}</span>
+                  <span>{v.ownerName ?? (isAr ? 'بدون مستشار' : 'No consultant')}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   <MetaChip label={v.stage} />
