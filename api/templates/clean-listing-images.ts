@@ -128,6 +128,17 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     });
     const svc = getServiceClient();
 
+    // withAuth.userId is the auth.uid(); records.created_by_user_id FKs to
+    // public.users.id — resolve the app-user id (same pattern as
+    // generate-document.ts). Used as the draft owner + the job's user_id.
+    const { data: appUser, error: auErr } = await jwtClient
+      .from('users')
+      .select('id')
+      .eq('auth_uid', user.userId)
+      .maybeSingle();
+    if (auErr || !appUser?.id) return jsonError(500, 'app user lookup failed');
+    const appUserId = appUser.id as string;
+
     const mode = body.mode === 'redo' ? 'redo' : 'start';
 
     // ════════════════════════════════════════════════════════════════════
@@ -149,7 +160,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         .single();
       if (draftErr || !draftRow) return jsonError(404, `draft not found: ${draftErr?.message ?? recordId}`);
       // Owner gate — only the draft's creator may redo its photos.
-      if ((draftRow.created_by_user_id as string | null) !== user.userId) {
+      if ((draftRow.created_by_user_id as string | null) !== appUserId) {
         return jsonError(404, 'draft not found');
       }
       const cleaning = Array.isArray((draftRow.data as Record<string, unknown>)?.cleaning)
@@ -188,7 +199,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         record_id: recordId,
         message_id: t.id,
         generation_id: null,
-        user_id: user.userId,
+        user_id: appUserId,
         kind: 'clean-text',
         status: 'queued',
         prompt: null,
@@ -266,7 +277,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       p_model_id: chatTemplatesModelId,
       p_id: draftId,
       p_data: draftData,
-      p_created_by: user.userId,
+      p_created_by: appUserId,
       p_expected_version: null,
     });
     if (saveErr) return jsonError(500, `failed to create draft: ${saveErr.message}`);
