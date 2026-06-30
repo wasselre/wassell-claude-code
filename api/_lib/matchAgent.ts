@@ -1558,19 +1558,29 @@ export async function matchProjectsCore(
     const mModel = await getModelByName(supabase, 'market_listings');
     if (mModel) {
       const districtIds = reqDistrictIds.length ? reqDistrictIds : reqDistrictId ? [reqDistrictId] : [];
-      if (districtIds.length === 0) {
-        // A city/region is far too broad to scan in full — market needs a district.
-        marketInfo = { status: 'needs_district' };
+      const typeTerms = req.property_type ? propertyTypeTerms(req.property_type) : null;
+      const baseArgs = {
+        p_model_id: mModel.id,
+        p_budget_min: req.budget_min ?? null,
+        p_budget_max: req.budget_max ?? null,
+        p_bedrooms: req.bedrooms ?? null,
+        p_type_terms: typeTerms,
+      };
+      // Market SCOPE: the requested district(s) when set; ELSE the client's
+      // location_items AREA (geoGate = geo-matched record ids, which include the
+      // in-area listing ids), so an element/district preference alone scopes market
+      // WITHOUT forcing the rep to also pick a district. Neither → a whole city is
+      // too broad to scan in full (needs_district). DB-side budget/bed/type filters +
+      // the count-then-paginate too_many guard apply identically to both scopes.
+      let rpcArgs: Record<string, unknown> | null = null;
+      if (districtIds.length > 0) {
+        rpcArgs = { ...baseArgs, p_district_ids: districtIds };
+      } else if (geoGate && geoGate.size > 0) {
+        rpcArgs = { ...baseArgs, p_district_ids: null, p_record_ids: [...geoGate] };
       } else {
-        const typeTerms = req.property_type ? propertyTypeTerms(req.property_type) : null;
-        const rpcArgs = {
-          p_model_id: mModel.id,
-          p_district_ids: districtIds,
-          p_budget_min: req.budget_min ?? null,
-          p_budget_max: req.budget_max ?? null,
-          p_bedrooms: req.bedrooms ?? null,
-          p_type_terms: typeTerms,
-        };
+        marketInfo = { status: 'needs_district' };
+      }
+      if (rpcArgs) {
         try {
           // PostgREST caps a single RPC response at ~1000 rows, so a LIMIT+1 fetch
           // can NOT be the tripwire (it would never exceed the cap → silent
