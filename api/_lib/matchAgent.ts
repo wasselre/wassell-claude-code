@@ -1544,26 +1544,35 @@ export async function matchProjectsCore(
           p_type_terms: typeTerms,
         };
         try {
-          // Fetch up to LIMIT+1 as a tripwire: LIMIT+1 rows means "more than we can
-          // scan in full" → we discard them (never show a truncated set) and signal.
-          const { data: rpcRows, error: rpcErr } = await supabase.rpc('wassell_market_candidates', {
-            ...rpcArgs,
-            p_limit: MARKET_SCAN_LIMIT + 1,
-          });
-          if (rpcErr) throw new Error(rpcErr.message);
-          const listingRows = (rpcRows ?? []) as RecordRow[];
-          if (listingRows.length > MARKET_SCAN_LIMIT) {
-            let count: number | undefined;
-            try {
-              const { data: c } = await supabase.rpc('wassell_market_candidate_count', rpcArgs);
-              count = c == null ? undefined : Number(c);
-            } catch (e) {
-              // count is best-effort for the UI message; the 'too_many' signal stands.
-              console.error('[matchProjectsCore] market count failed:', e instanceof Error ? e.message : String(e));
-            }
-            marketInfo = { status: 'too_many', count, suggest: marketSuggestions(req) };
+          // PostgREST caps a single RPC response at ~1000 rows, so a LIMIT+1 fetch
+          // can NOT be the tripwire (it would never exceed the cap → silent
+          // truncation of dense districts). COUNT first (exact, cheap); if the
+          // filtered exact-district set exceeds MARKET_SCAN_LIMIT, signal 'too_many'
+          // (ask for more criteria) and drop nothing.
+          let total: number | null = null;
+          try {
+            const { data: c } = await supabase.rpc('wassell_market_candidate_count', rpcArgs);
+            total = c == null ? null : Number(c);
+          } catch (e) {
+            console.error('[matchProjectsCore] market count failed:', e instanceof Error ? e.message : String(e));
+          }
+          if (total != null && total > MARKET_SCAN_LIMIT) {
+            marketInfo = { status: 'too_many', count: total, suggest: marketSuggestions(req) };
           } else {
-            // Score the COMPLETE filtered set — nothing dropped, no recency cap.
+            // Fetch the COMPLETE filtered set, PAGING past PostgREST's per-response
+            // row cap (deterministic via the function's ORDER BY id). Nothing dropped,
+            // no recency cap.
+            const listingRows: RecordRow[] = [];
+            const PAGE = 1000;
+            for (let from = 0; from <= MARKET_SCAN_LIMIT; from += PAGE) {
+              const { data: pageRows, error: pErr } = await supabase
+                .rpc('wassell_market_candidates', { ...rpcArgs, p_limit: MARKET_SCAN_LIMIT + 1 })
+                .range(from, from + PAGE - 1);
+              if (pErr) throw new Error(pErr.message);
+              const batch = (pageRows ?? []) as RecordRow[];
+              listingRows.push(...batch);
+              if (batch.length < PAGE) break;
+            }
             const noMarketVerify = new Map<string, string | null>();
             for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
             for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
