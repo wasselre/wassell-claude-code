@@ -4,7 +4,7 @@ import { useAppStore } from '@/stores/appStore';
 import { useRecordDraft } from '@/hooks/useRecordDraft';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import DynamicCell from '@/pages/Records/components/DynamicCell';
-import LocationItemsEditor from '../LocationItemsEditor';
+import LocationItemsEditor from '@/components/LocationItemsEditor';
 import { parseLocationItems } from '@/lib/geo/locationItems';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { PREFERENCE_EDIT_SLUGS, isDerivedReadOnly, allFields } from '../../lib/clientView';
