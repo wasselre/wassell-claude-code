@@ -68,7 +68,11 @@ export default function PreferenceSummary({ clientId, onEditFull, draft: draftPr
   if (!clientsModel || !clientId || !clientRec) return null;
 
   const eq = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  const dirty = PREF_SLUGS.some((slug) => !eq(draft[slug], clientRec.data[slug]));
+  // location_items (district + geo-element preferences) rides inside the unified
+  // location field (ClientLocationField) but isn't a PREF_SLUG, so track + persist
+  // it explicitly here too.
+  const itemsDirty = !eq(draft.location_items, clientRec.data.location_items);
+  const dirty = PREF_SLUGS.some((slug) => !eq(draft[slug], clientRec.data[slug])) || itemsDirty;
 
   const setField = (slug: string, value: unknown) =>
     controlled ? onFieldChange!(slug, value) : setInternalDraft((d) => ({ ...d, [slug]: value }));
@@ -77,6 +81,7 @@ export default function PreferenceSummary({ clientId, onEditFull, draft: draftPr
     const base = clientRec; // freshest copy from the store
     const patch: Record<string, unknown> = {};
     PREF_SLUGS.forEach((slug) => { patch[slug] = draft[slug]; });
+    if (itemsDirty) patch.location_items = draft.location_items ?? [];
     setSaving(true);
     const next: AppRecord = { ...base, data: { ...base.data, ...patch }, updated_at: new Date().toISOString() };
     const res = await saveRecord(next, { expectedVersion: base.version ?? null });
@@ -110,6 +115,7 @@ export default function PreferenceSummary({ clientId, onEditFull, draft: draftPr
               compact
               modelId={clientsModel.id}
               recordId={clientId}
+              onPatch={(patch) => Object.entries(patch).forEach(([k, v]) => setField(k, v))}
             />
           </div>
         ))}
