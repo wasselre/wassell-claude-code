@@ -26,6 +26,8 @@ interface ClientsFilterBarProps {
   options: FilterOptionSources;
   isAr: boolean;
   hasActiveFilters: boolean;
+  /** Hide the Owner / Sales-rep dropdown (e.g. a rep's self-scoped list). */
+  hideOwner?: boolean;
 }
 
 function Select({
@@ -56,7 +58,7 @@ function Select({
 }
 
 /** The Clients list filter row. Selects are populated from the live schema. */
-export default function ClientsFilterBar({ filters, onChange, onReset, options, isAr, hasActiveFilters }: ClientsFilterBarProps) {
+export default function ClientsFilterBar({ filters, onChange, onReset, options, isAr, hasActiveFilters, hideOwner }: ClientsFilterBarProps) {
   const segments: { value: LifecycleSegment; label: string }[] = [
     { value: 'all', label: isAr ? 'الكل' : 'All' },
     { value: 'open', label: isAr ? 'مفتوح' : 'Open' },
@@ -106,7 +108,9 @@ export default function ClientsFilterBar({ filters, onChange, onReset, options, 
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-        <Select value={filters.ownerId} onChange={(v) => onChange({ ownerId: v })} placeholder={isAr ? 'مستشار المبيعات' : 'Sales Consultant'} options={options.owners} />
+        {!hideOwner && (
+          <Select value={filters.ownerId} onChange={(v) => onChange({ ownerId: v })} placeholder={isAr ? 'مستشار المبيعات' : 'Sales Consultant'} options={options.owners} />
+        )}
         <Select value={filters.lifecycleHealth} onChange={(v) => onChange({ lifecycleHealth: v })} placeholder={isAr ? 'صحة الدورة' : 'Health'} options={options.lifecycles} />
         <Select value={filters.stage} onChange={(v) => onChange({ stage: v })} placeholder={isAr ? 'المرحلة' : 'Stage'} options={options.stages} />
         <Select value={filters.status} onChange={(v) => onChange({ status: v })} placeholder={isAr ? 'الحالة' : 'Status'} options={options.statuses} />

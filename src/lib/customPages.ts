@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -25,7 +25,14 @@ import { ClipboardList, Activity, BarChart3, Layers, LineChart } from 'lucide-re
  * custom surface per-profile gateable (Sidebar + PermissionMatrix + the
  * route guard all read this list).
  */
-export type CustomPageId = 'sales_tasks' | 'sales_process' | 'sales_manager' | 'sales_studio' | 'market_intelligence';
+export type CustomPageId =
+  | 'my_clients'
+  | 'my_tasks'
+  | 'sales_tasks'
+  | 'sales_process'
+  | 'sales_manager'
+  | 'sales_studio'
+  | 'market_intelligence';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -38,6 +45,23 @@ export interface CustomPageDef {
 }
 
 export const CUSTOM_PAGES: CustomPageDef[] = [
+  {
+    id: 'my_clients',
+    route: '/sales/my-clients',
+    label_ar: 'عملائي',
+    label_en: 'My Clients',
+    icon: UserCheck,
+    // Opt-in: hidden until an admin assigns it to a sales profile.
+    default_access: 'admin',
+  },
+  {
+    id: 'my_tasks',
+    route: '/sales/my-tasks',
+    label_ar: 'مهامي',
+    label_en: 'My Tasks',
+    icon: ListChecks,
+    default_access: 'admin',
+  },
   {
     id: 'sales_tasks',
     route: '/sales/tasks',

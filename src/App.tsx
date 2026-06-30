@@ -58,6 +58,8 @@ import SalesValuationCoachingPage from '@/pages/SalesValuation/CoachingPage';
 import SalesValuationCategoriesPage from '@/pages/SalesValuation/CategoriesPage';
 import SalesValuationSettingsPage from '@/pages/SalesValuation/SettingsPage';
 import SalesTasksPage from '@/pages/Sales/SalesTasksPage';
+import MyClientsPage from '@/pages/Sales/MyClientsPage';
+import MyTasksPage from '@/pages/Sales/MyTasksPage';
 import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
 import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
@@ -343,6 +345,10 @@ export default function App() {
               (see src/lib/customPages.ts). Defaults preserve prior behavior:
               tasks = open to all, process + manager = admin-only by default,
               but each is now grantable/revocable per profile in Settings. */}
+          {/* Sales Rep workspace — profile-assignable simplified surfaces
+              (my_clients / my_tasks). Opt-in via Settings → Profiles. */}
+          <Route path="/sales/my-clients" element={<RequirePageAccess pageId="my_clients"><MyClientsPage /></RequirePageAccess>} />
+          <Route path="/sales/my-tasks" element={<RequirePageAccess pageId="my_tasks"><MyTasksPage /></RequirePageAccess>} />
           <Route path="/sales/tasks" element={<RequirePageAccess pageId="sales_tasks"><SalesTasksPage /></RequirePageAccess>} />
           {/* Sales Studio 2.0 — strategy layer (process library → journey, experiments).
               Sub-routes share the sales_studio page-access gate. */}
