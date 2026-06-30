@@ -60,6 +60,16 @@ export default function OutcomePanel(props: OutcomePanelProps) {
   // schedules escalation (whatsapp_state stays unset).
   const [recordMode, setRecordMode] = useState(false);
 
+  // Hoisted ABOVE the early `!typeConfig` return below: hooks must run on every
+  // render. On a direct deep-link load the follow-up's draft (and thus typeKey)
+  // seeds AFTER first paint, so typeConfig flips falsy→truthy across renders —
+  // if this useMemo lived below the early return, the second render would call
+  // one more hook than the first and crash the page with React error #310.
+  const fieldLabels = useMemo(
+    () => buildFieldLabels(followupModel.schema.sections.flatMap((s) => s.fields)),
+    [followupModel],
+  );
+
   const typeConfig = getFollowUpTypeConfig(typeKey);
   if (!typeConfig) {
     return (
@@ -81,11 +91,6 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     if (!draft.actual_datetime) patch.actual_datetime = new Date().toISOString();
     patchDraft(patch);
   };
-
-  const fieldLabels = useMemo(
-    () => buildFieldLabels(followupModel.schema.sections.flatMap((s) => s.fields)),
-    [followupModel],
-  );
 
   const revealed = outcomeKey ? revealedFieldSlugs(typeKey ?? '', outcomeKey) : [];
   const outcomeCfg = outcomeKey ? getOutcomeConfig(typeKey, outcomeKey) : undefined;

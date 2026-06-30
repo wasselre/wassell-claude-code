@@ -77,6 +77,36 @@ export default function RegisterVisitAction({
   const [formOpen, setFormOpen] = useState(false);
   const [editVisitId, setEditVisitId] = useState<string | null>(null);
 
+  // Prefill for a NEW visit (ignored when editing an existing one). Hoisted
+  // ABOVE the `!visitsModel` early return below: on a fresh deep-link load the
+  // store's `models` is empty on first paint, so visitsModel flips
+  // undefined→defined across renders — a hook below the return would change the
+  // hook count between renders and crash with React error #310.
+  const prefill = useMemo<Record<string, unknown>>(() => {
+    const p: Record<string, unknown> = {
+      // RecordFormModal does not resolve `default_dynamic`, so seed the date + rep explicitly.
+      scheduled_datetime: new Date().toISOString(),
+      sales_representative: salesRep ?? currentUserId ?? undefined,
+      source_followup_id: followupId,
+      // `visit_notes` is a `notes` field — seed a proper NoteEntry so it renders.
+      visit_notes: [
+        {
+          id: uuid(),
+          text: isAr
+            ? 'سُجّلت الزيارة من المتابعة بعد إفادة العميل بأنه زار المشروع.'
+            : 'Visit was registered from follow-up after client reported they visited.',
+          author_id: currentUserId ?? null,
+          created_at: new Date().toISOString(),
+        } as NoteEntry,
+      ],
+    };
+    if (clientId) p.client_id = clientId;
+    if (clientName) p.name = clientName;
+    if (phone) p.phone = phone;
+    if (projectCandidateId) p.project_id = projectCandidateId;
+    return p;
+  }, [clientId, clientName, phone, salesRep, currentUserId, followupId, projectCandidateId, isAr]);
+
   if (!visitsModel) return null;
 
   const resolveUserName = (val: unknown): string | null => {
@@ -136,32 +166,6 @@ export default function RegisterVisitAction({
     }
     openNewForm();
   };
-
-  // Prefill for a NEW visit (ignored when editing an existing one).
-  const prefill = useMemo<Record<string, unknown>>(() => {
-    const p: Record<string, unknown> = {
-      // RecordFormModal does not resolve `default_dynamic`, so seed the date + rep explicitly.
-      scheduled_datetime: new Date().toISOString(),
-      sales_representative: salesRep ?? currentUserId ?? undefined,
-      source_followup_id: followupId,
-      // `visit_notes` is a `notes` field — seed a proper NoteEntry so it renders.
-      visit_notes: [
-        {
-          id: uuid(),
-          text: isAr
-            ? 'سُجّلت الزيارة من المتابعة بعد إفادة العميل بأنه زار المشروع.'
-            : 'Visit was registered from follow-up after client reported they visited.',
-          author_id: currentUserId ?? null,
-          created_at: new Date().toISOString(),
-        } as NoteEntry,
-      ],
-    };
-    if (clientId) p.client_id = clientId;
-    if (clientName) p.name = clientName;
-    if (phone) p.phone = phone;
-    if (projectCandidateId) p.project_id = projectCandidateId;
-    return p;
-  }, [clientId, clientName, phone, salesRep, currentUserId, followupId, projectCandidateId, isAr]);
 
   const alreadyRegistered = !!linkedVisit;
 
