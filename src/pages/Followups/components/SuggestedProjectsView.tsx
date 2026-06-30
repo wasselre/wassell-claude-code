@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle } from 'lucide-react';
-import type { AppModel, AppRecord } from '@/types';
+import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save } from 'lucide-react';
+import type { AppModel, AppRecord, ModelField } from '@/types';
 import { useAppStore } from '@/stores/appStore';
+import DynamicField from '@/pages/Records/components/DynamicField';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
-import { draftToMatchRequirements } from '@/lib/matching/requirements';
+import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
 import {
   fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
   type FinderResponse, type FinderGroupKey, type FinderMatch,
@@ -17,6 +18,7 @@ import {
   refineGroups, totalInGroups, REFINE_DEFAULT, FETCH_FLOOR,
   type SortKey, type Refine,
 } from '@/lib/matching/finderRefine';
+import { setFinderHandoff } from '@/lib/matching/finderHandoff';
 import FinderCard from './FinderCard';
 import FinderRefinementBar from './FinderRefinementBar';
 
@@ -24,10 +26,13 @@ import FinderRefinementBar from './FinderRefinementBar';
  * The "Suggested Projects" finder rendered as a FULL PAGE (was a cramped modal).
  * Reached at /model/followups/:id/projects — stays connected to the follow-up via
  * its id (audit log + saves into THAT client's options) and matches against the
- * preference draft handed off from the workspace (unsaved edits included). The
- * DETERMINISTIC, geography boundary-verified /api/project-finder powers it (NO LLM
- * — parse:false, explain:false); four location-centric groups, the shared
- * refinement toolbar, and bulk-save into client_property_options.
+ * preference draft handed off from the workspace (unsaved edits included).
+ *
+ * In addition to the client-side refinement toolbar (slider / sort / hard
+ * filters), the rep can EDIT the client's preferences here (location, unit type,
+ * budget, area, bedrooms, amenities) and press "Search" to RE-RUN the server-side
+ * deterministic match — a genuinely more-detailed search. The edits also carry
+ * back to the workspace (hand-off), and an explicit "Save to client" persists them.
  *
  * A prominent "Done" button (onDone) returns the rep to the follow-up record.
  */
@@ -40,9 +45,7 @@ interface Props {
   followupDraft: Record<string, unknown>;
   followupId: string | null;
   projectName?: string | null;
-  /** Display name of the linked client (header subtitle) — purely cosmetic. */
   clientName?: string | null;
-  /** Called by the "Done" button + Esc — returns to the follow-up record. */
   onDone: () => void;
 }
 
@@ -60,6 +63,10 @@ const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
   bedrooms: { ar: 'عدد الغرف', en: 'Bedrooms' },
 };
 
+// Client preference fields the rep can edit here to refine the search, in order.
+// Only those present on the live clients model are rendered.
+const EDIT_SLUGS = ['location', 'preferred_districts', 'preferred_unit_type', 'budget', 'preferred_area', 'preferred_bedrooms', 'preferred_amenities'] as const;
+
 const PAGE = 24;
 
 export default function SuggestedProjectsView({
@@ -69,6 +76,7 @@ export default function SuggestedProjectsView({
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
   const addToast = useAppStore((s) => s.addToast);
+  const saveRecord = useAppStore((s) => s.saveRecord);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -89,6 +97,12 @@ export default function SuggestedProjectsView({
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [showRefine, setShowRefine] = useState(false);
   const [refine, setRefine] = useState<Refine>(REFINE_DEFAULT);
+
+  // Editable preference draft + the draft the CURRENT results were searched with.
+  const [editDraft, setEditDraft] = useState<Record<string, unknown>>(() => ({ ...prefDraft }));
+  const [searchedDraft, setSearchedDraft] = useState<Record<string, unknown>>(() => ({ ...prefDraft }));
+  const [showEdit, setShowEdit] = useState(false);
+  const [savingPrefs, setSavingPrefs] = useState(false);
 
   // Cross-reference the client's already-saved options so each card shows its status.
   const clientOptionsModelId = useMemo(
@@ -125,30 +139,52 @@ export default function SuggestedProjectsView({
     [geoNames],
   );
 
-  // Snapshot the draft-first context + requirements on mount.
+  // Preference chips reflect the LAST SEARCHED draft (so they match the results).
   const ctx = useMemo(
-    () => buildAssistantContext({ clientsModel, prefDraft, savedClientData: clientRec?.data ?? null, followupDraft, projectName, geoNames, isAr }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
+    () => buildAssistantContext({ clientsModel, prefDraft: searchedDraft, savedClientData: clientRec?.data ?? null, followupDraft, projectName, geoNames, isAr }),
+    [clientsModel, searchedDraft, clientRec, followupDraft, projectName, geoNames, isAr],
   );
-  const requirements = useMemo(
-    () => draftToMatchRequirements({ clientsModel, prefDraft, savedClientData: clientRec?.data ?? null, resolveLookupName }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [],
-  );
+
+  // The editable preference fields present on the live clients model.
+  const editFields = useMemo<ModelField[]>(() => {
+    if (!clientsModel) return [];
+    const bySlug = new Map<string, ModelField>();
+    for (const sec of clientsModel.schema.sections) for (const f of sec.fields) bySlug.set(f.name, f);
+    return EDIT_SLUGS.map((slug) => bySlug.get(slug)).filter((f): f is ModelField => !!f);
+  }, [clientsModel]);
+
+  // Build the server-side requirements from a preference draft. preferred_bedrooms
+  // (a range on the client) maps to the matcher's single `bedrooms` (its minimum).
+  function buildReqs(d: Record<string, unknown>): MatchRequirementsInput {
+    const reqs = draftToMatchRequirements({ clientsModel, prefDraft: d, savedClientData: clientRec?.data ?? null, resolveLookupName });
+    const pb = d.preferred_bedrooms;
+    if (pb && typeof pb === 'object' && !Array.isArray(pb)) {
+      const mn = Number((pb as Record<string, unknown>).min);
+      if (Number.isFinite(mn) && mn > 0) reqs.bedrooms = mn;
+    } else if (typeof pb === 'number' && pb > 0) {
+      reqs.bedrooms = pb;
+    }
+    return reqs;
+  }
 
   const refinedGroups = useMemo(
     () => refineGroups(resp?.groups, scoreThreshold, refine, sortKey),
     [resp, scoreThreshold, refine, sortKey],
   );
 
-  useEffect(() => {
+  const controllerRef = useRef<AbortController | null>(null);
+  // Re-run the deterministic match for a preference draft and reset the view.
+  function runSearch(d: Record<string, unknown>) {
+    controllerRef.current?.abort();
     const controller = new AbortController();
+    controllerRef.current = controller;
     setLoading(true);
     setError(null);
+    setScoreThreshold(FETCH_FLOOR);
+    setRefine(REFINE_DEFAULT);
     fetchProjectFinder(
       {
-        requirements,
+        requirements: buildReqs(d),
         clientId: clientRec?.id ?? null,
         followupId,
         perGroup: 0,
@@ -159,17 +195,28 @@ export default function SuggestedProjectsView({
       controller.signal,
     )
       .then((r) => {
+        if (controller.signal.aborted) return;
         setResp(r);
+        setSearchedDraft({ ...d });
         const firstFilled = FINDER_GROUP_KEYS.find((k) => (r.groups[k]?.length ?? 0) > 0);
-        if (firstFilled) setActiveTab(firstFilled);
+        setActiveTab(firstFilled ?? 'exact_district_matches');
         const all = FINDER_GROUP_KEYS.flatMap((k) => r.groups[k] ?? []);
         setSelected(new Set(all.filter((i) => i.score === 100).map((i) => i.project_id)));
+        // Carry the searched draft back to the workspace (so returning shows the edits).
+        if (followupId) setFinderHandoff({ followupId, prefDraft: { ...d }, followupDraft, projectName: projectName ?? null });
       })
       .catch((e) => {
         if (e?.name !== 'AbortError') setError(e instanceof Error ? e.message : String(e));
       })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+  }
+
+  // Initial fetch on mount.
+  useEffect(() => {
+    runSearch(prefDraft);
+    return () => controllerRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -232,7 +279,6 @@ export default function SuggestedProjectsView({
   async function onBulkSave() {
     if (!clientRec?.id) return noClient();
     if (selected.size === 0) return;
-    // Only save selected cards still VISIBLE under the active refinement.
     const all = FINDER_GROUP_KEYS.flatMap((k) => refinedGroups[k]);
     const chosen = all.filter((i) => selected.has(i.project_id));
     setBulkSaving(true);
@@ -273,6 +319,28 @@ export default function SuggestedProjectsView({
     addToast(res.ok ? L('تمت إعادة تفعيل الخيار.', 'Option reactivated.') : L('تعذّرت إعادة التفعيل.', 'Could not reactivate.'), res.ok ? 'success' : 'error');
   }
 
+  // Persist the edited preferences to the client record (version-safe). The
+  // matched results aren't re-run by this — use "Search" for that.
+  async function onSavePrefsToClient() {
+    if (!clientRec) return noClient();
+    setSavingPrefs(true);
+    const patch: Record<string, unknown> = {};
+    for (const slug of EDIT_SLUGS) patch[slug] = editDraft[slug];
+    const next: AppRecord = { ...clientRec, data: { ...clientRec.data, ...patch }, updated_at: new Date().toISOString() };
+    const res = await saveRecord(next, { expectedVersion: clientRec.version ?? null });
+    setSavingPrefs(false);
+    if (res?.status === 'conflict') {
+      addToast(L('تم تعديل بيانات العميل في مكان آخر — حدّث الصفحة.', 'Client was edited elsewhere — reload before saving.'), 'error');
+      return;
+    }
+    addToast(L('تم حفظ التفضيلات للعميل.', 'Preferences saved to the client.'), 'success');
+  }
+
+  const editDirty = useMemo(
+    () => EDIT_SLUGS.some((slug) => JSON.stringify(editDraft[slug] ?? null) !== JSON.stringify(searchedDraft[slug] ?? null)),
+    [editDraft, searchedDraft],
+  );
+
   const fetchedTotal = totalFinderMatches(resp);
   const refinedTotal = totalInGroups(refinedGroups);
   const missing = resp?.metadata.missing_required_preferences ?? [];
@@ -310,7 +378,7 @@ export default function SuggestedProjectsView({
 
   return (
     <div className="flex h-full flex-col bg-cream" dir={isAr ? 'rtl' : 'ltr'}>
-      {/* Header with the Done button (returns to the follow-up record) */}
+      {/* Header with Edit-preferences toggle + Done button */}
       <div className="flex items-center gap-3 border-b border-sand/40 bg-white px-4 py-3 sm:px-6">
         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-copper/10">
           <Compass size={20} className="text-copper" />
@@ -323,6 +391,18 @@ export default function SuggestedProjectsView({
               : L('ترتيب دقيق موثّق بالإحداثيات — مبني على تفضيلات هذه المتابعة.', 'Coordinate-verified ranking — based on this follow-up’s preferences.')}
           </p>
         </div>
+        {editFields.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowEdit((v) => !v)}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-bold transition ${
+              showEdit ? 'border-copper/40 bg-copper/10 text-copper' : 'border-sand/60 bg-white text-charcoal/75 hover:bg-cream/60'
+            }`}
+          >
+            <SlidersHorizontal size={15} />
+            <span className="hidden sm:inline">{L('تعديل التفضيلات', 'Edit preferences')}</span>
+          </button>
+        )}
         <button
           type="button"
           onClick={onDone}
@@ -333,7 +413,62 @@ export default function SuggestedProjectsView({
         </button>
       </div>
 
-      {/* Preferences + missing warnings */}
+      {/* Editable preferences panel — refine the SERVER-SIDE search. */}
+      {showEdit && editFields.length > 0 && (
+        <div className="border-b border-sand/40 bg-white/70">
+          <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6">
+            <div className="mb-2 flex items-center gap-2">
+              <SlidersHorizontal size={14} className="text-copper" />
+              <span className="text-xs font-bold text-charcoal/75">{L('تعديل تفضيلات العميل وإعادة البحث', 'Edit client preferences & search again')}</span>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {editFields.map((field) => (
+                <div key={field.id}>
+                  <label className="mb-1 block text-[11px] font-bold text-charcoal/70">
+                    {isAr ? field.label_ar : field.label_en}
+                  </label>
+                  <DynamicField
+                    field={field}
+                    value={editDraft[field.name]}
+                    onChange={(v) => setEditDraft((d) => ({ ...d, [field.name]: v }))}
+                    recordData={editDraft}
+                    compact
+                  />
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => runSearch(editDraft)}
+                disabled={loading}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+              >
+                {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                {L('بحث بالتفضيلات الجديدة', 'Search with new preferences')}
+              </button>
+              {clientRec && (
+                <button
+                  type="button"
+                  onClick={onSavePrefsToClient}
+                  disabled={savingPrefs}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60 disabled:opacity-50"
+                >
+                  {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
+                  {L('حفظ التفضيلات للعميل', 'Save to client')}
+                </button>
+              )}
+              {editDirty && (
+                <span className="text-[11px] font-semibold text-amber-700">
+                  {L('لديك تعديلات غير مطبّقة — اضغط «بحث».', 'Unapplied edits — press “Search”.')}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preferences chips + missing warnings (reflect the last searched draft) */}
       <div className="border-b border-sand/30 bg-white/60">
         <div className="mx-auto w-full max-w-6xl px-4 py-2.5 sm:px-6">
           <div className="flex flex-wrap items-center gap-1.5">
@@ -451,6 +586,11 @@ export default function SuggestedProjectsView({
             <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
               <Info size={24} className="text-copper" />
               <p className="text-sm">{L('لم تُحدَّد أي تفضيلات لهذا العميل. حدِّد الحي أو الميزانية أو نوع العقار (أو اسأل العميل) للحصول على ترشيح دقيق.', 'No preferences are set for this client. Set a district, budget, or unit type (or ask the client) for a precise match.')}</p>
+              {editFields.length > 0 && (
+                <button type="button" onClick={() => setShowEdit(true)} className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta">
+                  <SlidersHorizontal size={15} /> {L('تعديل التفضيلات', 'Edit preferences')}
+                </button>
+              )}
             </div>
           )}
           {!loading && !error && !needsPreferences && fetchedTotal === 0 && (
