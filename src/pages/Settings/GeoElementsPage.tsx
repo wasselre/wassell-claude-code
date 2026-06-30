@@ -169,7 +169,7 @@ export default function GeoElementsPage() {
 
       {/* Results — list table or map */}
       {view === 'map' ? (
-        <GeoElementsMap filters={filters} isAr={isAr} onSelect={(id) => setSelected(id)} />
+        <GeoElementsMap filters={filters} isAr={isAr} selected={selected} onSelect={(id) => setSelected(id)} />
       ) : (
       <div className="card overflow-hidden">
         <div className="flex items-center justify-between px-3 py-2 border-b border-sand/30 text-xs text-charcoal/60">
