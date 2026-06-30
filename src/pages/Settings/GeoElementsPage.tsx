@@ -4,7 +4,8 @@ import { useIsAdmin } from '@/hooks/usePermission';
 import Button from '@/components/ui/Button';
 import Modal from '@/components/ui/Modal';
 import BackToSettings from './components/BackToSettings';
-import { MapPin, Search, Loader2, ExternalLink, BadgeCheck, TriangleAlert, X, Check, ChevronLeft, ChevronRight } from 'lucide-react';
+import GeoElementsMap from './components/GeoElementsMap';
+import { MapPin, Search, Loader2, ExternalLink, BadgeCheck, TriangleAlert, X, Check, ChevronLeft, ChevronRight, Map as MapIcon, List as ListIcon } from 'lucide-react';
 import {
   adminListGeoElements, adminGeoFacets, adminGetGeoElement, adminUpdateGeoElement,
   adminAddGeoAlias, adminRemoveGeoAlias,
@@ -41,6 +42,7 @@ export default function GeoElementsPage() {
   const [loading, setLoading] = useState(false);
   const [offset, setOffset] = useState(0);
   const [selected, setSelected] = useState<string | null>(null);
+  const [view, setView] = useState<'list' | 'map'>('list');
 
   // filters
   const [q, setQ] = useState('');
@@ -112,10 +114,22 @@ export default function GeoElementsPage() {
   return (
     <div className="space-y-4">
       <BackToSettings className="!mb-0" />
-      <div className="flex items-center gap-2">
-        <MapPin size={20} className="text-copper" />
-        <h1 className="text-lg font-bold text-chocolate">{isAr ? 'عناصر الجغرافيا' : 'Geo Elements'}</h1>
-        {facets && <span className="text-xs text-charcoal/40">({facets.total} {isAr ? 'عنصر' : 'anchors'})</span>}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <MapPin size={20} className="text-copper" />
+          <h1 className="text-lg font-bold text-chocolate">{isAr ? 'عناصر الجغرافيا' : 'Geo Elements'}</h1>
+          {facets && <span className="text-xs text-charcoal/40">({facets.total} {isAr ? 'عنصر' : 'anchors'})</span>}
+        </div>
+        <div className="inline-flex overflow-hidden rounded-lg border border-sand/50 text-xs font-bold">
+          <button type="button" onClick={() => setView('list')}
+            className={`inline-flex items-center gap-1 px-3 py-1.5 transition ${view === 'list' ? 'bg-copper text-white' : 'bg-white text-charcoal/60 hover:bg-cream'}`}>
+            <ListIcon size={14} /> {isAr ? 'قائمة' : 'List'}
+          </button>
+          <button type="button" onClick={() => setView('map')}
+            className={`inline-flex items-center gap-1 px-3 py-1.5 transition ${view === 'map' ? 'bg-copper text-white' : 'bg-white text-charcoal/60 hover:bg-cream'}`}>
+            <MapIcon size={14} /> {isAr ? 'خريطة' : 'Map'}
+          </button>
+        </div>
       </div>
       <p className="text-xs text-charcoal/50 -mt-2">
         {isAr
@@ -153,7 +167,10 @@ export default function GeoElementsPage() {
         </div>
       </div>
 
-      {/* Results */}
+      {/* Results — list table or map */}
+      {view === 'map' ? (
+        <GeoElementsMap filters={filters} isAr={isAr} onSelect={(id) => setSelected(id)} />
+      ) : (
       <div className="card overflow-hidden">
         <div className="flex items-center justify-between px-3 py-2 border-b border-sand/30 text-xs text-charcoal/60">
           <span>{loading ? (isAr ? 'جارٍ التحميل…' : 'Loading…') : `${total} ${isAr ? 'نتيجة' : 'results'}`}</span>
@@ -198,6 +215,7 @@ export default function GeoElementsPage() {
           </table>
         </div>
       </div>
+      )}
 
       {selected && (
         <GeoElementDrawer

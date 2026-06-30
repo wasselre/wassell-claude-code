@@ -76,7 +76,20 @@ async function call<T>(action: string, payload: Record<string, unknown> = {}): P
   return (await res.json()) as T;
 }
 
+export interface GeoFeature {
+  type: 'Feature';
+  geometry: { type: string; coordinates: unknown };
+  properties: {
+    external_id: string; name_ar: string | null; name_en: string | null;
+    category: string | null; type: string | null; geometry_type: string | null;
+    review_status: string; is_active: boolean; is_searchable: boolean;
+    is_verified: boolean; confidence_score: number | null; lat: number | null; lng: number | null;
+  };
+}
+export interface GeoFeatureCollection { type: 'FeatureCollection'; count: number; features: GeoFeature[] }
+
 export const adminListGeoElements = (f: GeoListFilters) => call<{ total: number; rows: GeoAdminRow[] }>('list', { ...f });
+export const adminGeoGeoJSON = (f: GeoListFilters) => call<GeoFeatureCollection>('map', { ...f });
 export const adminGeoFacets = () => call<GeoFacets>('facets');
 export const adminGetGeoElement = (external_id: string) => call<{ element: GeoAdminDetail }>('get', { external_id });
 export const adminUpdateGeoElement = (external_id: string, patch: GeoUpdatePatch) => call<{ element: GeoAdminDetail }>('update', { external_id, patch });

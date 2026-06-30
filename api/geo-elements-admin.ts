@@ -91,6 +91,20 @@ export default async function handler(req: Request): Promise<Response> {
         if (error) return jsonError(502, `facets failed: ${error.message}`);
         return jsonOk(data ?? {});
       }
+      case 'map': {
+        // Filtered GeoJSON FeatureCollection for the map view (simplified geometry).
+        const { data, error } = await svc.rpc('wassell_admin_geo_geojson', {
+          p_q: str(body.q), p_category: str(body.category), p_type: str(body.type), p_city: str(body.city),
+          p_geom_kind: str(body.geometry_type), p_review_status: str(body.review_status),
+          p_is_verified: boolOrNull(body.is_verified), p_is_approximate: boolOrNull(body.is_approximate),
+          p_is_active: boolOrNull(body.is_active), p_is_searchable: boolOrNull(body.is_searchable),
+          p_conf_min: numOrNull(body.conf_min), p_conf_max: numOrNull(body.conf_max),
+          p_low_confidence: boolOrNull(body.low_confidence),
+          p_limit: Math.min(Math.max(intOr(body.limit, 3000), 1), 5000),
+        });
+        if (error) return jsonError(502, `map failed: ${error.message}`);
+        return jsonOk(data ?? { type: 'FeatureCollection', count: 0, features: [] });
+      }
       case 'get': {
         const id = str(body.external_id);
         if (!id) return jsonError(400, 'external_id is required');
