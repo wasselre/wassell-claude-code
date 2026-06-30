@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { X, Loader2, Sparkles, AlertTriangle, Info } from 'lucide-react';
+import { X, Loader2, Sparkles, AlertTriangle, Info, Bookmark, XCircle } from 'lucide-react';
 import type { AppModel, AppRecord } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
@@ -8,7 +8,11 @@ import {
   fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
   type FinderResponse, type FinderGroupKey, type FinderMatch,
 } from '@/lib/matching/projectFinder';
-import { addProjectToClient, addMarketListingToClient } from '@/lib/matching/addToClient';
+import {
+  saveClientOption, eliminateOption, reactivateOption, bulkSaveOptions,
+  finderSourceToOptionType, findClientOption,
+  type ClientOptionStatus, type SaveOptionInput,
+} from '@/lib/matching/clientOptions';
 import FinderCard from './FinderCard';
 
 /**
@@ -66,7 +70,6 @@ export default function SuggestedProjectsModal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<FinderGroupKey>('exact_district_matches');
-  const [addStates, setAddStates] = useState<Record<string, 'idle' | 'saving' | 'added'>>({});
   // Incremental render: the result set is uncapped (every match ≥ 70), which can be
   // hundreds of cards. Render a window and grow it as the user scrolls (keeps the DOM
   // light without a virtualization dep; handles variable card heights natively).
@@ -74,6 +77,32 @@ export default function SuggestedProjectsModal({
   const [visibleCount, setVisibleCount] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+  // Bulk-selection (auto-checks only score===100), per-card single-save state, and
+  // the eliminate-with-notes prompt. All persistence routes through clientOptions.ts.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saveStates, setSaveStates] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [eliminateTarget, setEliminateTarget] = useState<FinderMatch | null>(null);
+  const [eliminateNotes, setEliminateNotes] = useState('');
+  const [eliminating, setEliminating] = useState(false);
+
+  // Cross-reference the client's already-saved options so each card shows its
+  // current status (and an eliminated one never silently reactivates).
+  const clientOptionsModelId = useMemo(
+    () => models.find((m) => m.name === 'client_property_options')?.id ?? null,
+    [models],
+  );
+  const existingByKey = useMemo(() => {
+    const map: Record<string, ClientOptionStatus> = {};
+    if (!clientOptionsModelId || !clientRec?.id) return map;
+    for (const r of records[clientOptionsModelId] ?? []) {
+      if (r.data.client_id !== clientRec.id) continue;
+      map[`${r.data.source_type}:${r.data.source_id}`] = r.data.status as ClientOptionStatus;
+    }
+    return map;
+  }, [records, clientOptionsModelId, clientRec]);
+  const existingStatusFor = (item: FinderMatch): ClientOptionStatus | null =>
+    existingByKey[`${finderSourceToOptionType(item.source)}:${item.project_id}`] ?? null;
 
   // id → display name for districts + cities, from the loaded geography records.
   const geoNames = useMemo(() => {
@@ -129,6 +158,10 @@ export default function SuggestedProjectsModal({
         setResp(r);
         const firstFilled = FINDER_GROUP_KEYS.find((k) => (r.groups[k]?.length ?? 0) > 0);
         if (firstFilled) setActiveTab(firstFilled);
+        // Auto-select ONLY perfect (100%) matches; everything below 100 stays
+        // visible but unchecked until the rep selects it.
+        const all = FINDER_GROUP_KEYS.flatMap((k) => r.groups[k] ?? []);
+        setSelected(new Set(all.filter((i) => i.score === 100).map((i) => i.project_id)));
       })
       .catch((e) => {
         if (e?.name !== 'AbortError') setError(e instanceof Error ? e.message : String(e));
@@ -151,27 +184,96 @@ export default function SuggestedProjectsModal({
     const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
     window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
   }
-  async function onAddToClient(item: FinderMatch) {
-    if (!clientRec?.id) { addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error'); return; }
-    setAddStates((s) => ({ ...s, [item.project_id]: 'saving' }));
-    // Route by source so the id lands in the field that targets the right model:
-    // a market listing → preferred_market_listings; a project → preferred_projects.
-    const isMarket = item.source === 'market_listings';
-    const noun = isMarket ? L('الإعلان', 'listing') : L('المشروع', 'project');
-    const res = isMarket
-      ? await addMarketListingToClient(clientRec.id, item.project_id)
-      : await addProjectToClient(clientRec.id, item.project_id);
+  const noClient = () =>
+    addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error');
+
+  /** Map a finder match → an option upsert payload (snapshots the display facts). */
+  function matchToInput(item: FinderMatch): Omit<SaveOptionInput, 'clientId'> {
+    return {
+      sourceType: finderSourceToOptionType(item.source),
+      sourceId: item.project_id,
+      sourceName: item.project_name,
+      matchScore: item.score,
+      matchRunId: resp?.metadata.generated_at ?? null,
+      facts: item.facts,
+      status: 'suitable',
+    };
+  }
+
+  function toggleSelect(item: FinderMatch) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(item.project_id)) next.delete(item.project_id);
+      else next.add(item.project_id);
+      return next;
+    });
+  }
+
+  async function onSaveOption(item: FinderMatch) {
+    if (!clientRec?.id) return noClient();
+    setSaveStates((s) => ({ ...s, [item.project_id]: 'saving' }));
+    const res = await saveClientOption({ clientId: clientRec.id, ...matchToInput(item), addedFrom: 'project_finder' });
     if (res.ok) {
-      setAddStates((s) => ({ ...s, [item.project_id]: 'added' }));
-      addToast(res.status === 'already'
-        ? L(`${noun} مضاف مسبقاً لتفضيلات العميل.`, `Already in the client preferences.`)
-        : L(`تمت إضافة ${noun} لتفضيلات العميل.`, `Added to client preferences.`), 'success');
+      setSaveStates((s) => ({ ...s, [item.project_id]: 'saved' }));
+      if (res.outcome === 'eliminated_exists') {
+        addToast(L('هذا الخيار مستبعد مسبقاً — أعد تفعيله يدوياً.', 'This option is already eliminated — reactivate it manually.'), 'info');
+      } else {
+        addToast(res.outcome === 'updated'
+          ? L('تم تحديث الخيار المحفوظ.', 'Saved option refreshed.')
+          : L('تمت إضافة الخيار لقائمة خيارات العميل.', 'Saved to client options.'), 'success');
+      }
     } else {
-      setAddStates((s) => ({ ...s, [item.project_id]: 'idle' }));
-      addToast(res.status === 'conflict'
-        ? L('تم تعديل العميل من مستخدم آخر — حدّث الصفحة وأعد المحاولة.', 'Client was edited elsewhere — reload and retry.')
-        : L(`تعذّرت إضافة ${noun}.`, 'Could not add it.'), 'error');
+      setSaveStates((s) => ({ ...s, [item.project_id]: 'idle' }));
+      addToast(res.outcome === 'conflict'
+        ? L('تم تعديل البيانات من مستخدم آخر — حدّث الصفحة وأعد المحاولة.', 'Edited elsewhere — reload and retry.')
+        : L('تعذّر حفظ الخيار.', 'Could not save the option.'), 'error');
     }
+  }
+
+  async function onBulkSave() {
+    if (!clientRec?.id) return noClient();
+    if (selected.size === 0) return;
+    const all = FINDER_GROUP_KEYS.flatMap((k) => resp?.groups[k] ?? []);
+    const chosen = all.filter((i) => selected.has(i.project_id));
+    setBulkSaving(true);
+    const summary = await bulkSaveOptions(clientRec.id, chosen.map(matchToInput), 'project_finder');
+    setBulkSaving(false);
+    const saved = summary.created + summary.updated;
+    const parts: string[] = [];
+    if (saved > 0) parts.push(L(`حُفظ ${saved}`, `${saved} saved`));
+    if (summary.skippedEliminated > 0) parts.push(L(`${summary.skippedEliminated} مستبعد (تجاهل)`, `${summary.skippedEliminated} eliminated (skipped)`));
+    if (summary.failed > 0) parts.push(L(`${summary.failed} فشل`, `${summary.failed} failed`));
+    addToast(parts.join(' · ') || L('لا تغييرات', 'No changes'), summary.failed > 0 ? 'error' : 'success');
+  }
+
+  async function confirmEliminate() {
+    if (!eliminateTarget || !clientRec?.id) { setEliminateTarget(null); return; }
+    setEliminating(true);
+    // Ensure the option exists, then eliminate it with the reason notes. A
+    // freshly-found match is created (suitable) then flipped to eliminated; an
+    // existing one is updated in place.
+    const ensured = await saveClientOption({ clientId: clientRec.id, ...matchToInput(eliminateTarget), addedFrom: 'project_finder' });
+    let ok = ensured.ok;
+    if (ensured.optionId) {
+      const res = await eliminateOption(ensured.optionId, eliminateNotes.trim());
+      ok = res.ok;
+    }
+    setEliminating(false);
+    if (ok) {
+      addToast(L('تم استبعاد الخيار.', 'Option eliminated.'), 'success');
+      setEliminateTarget(null);
+      setEliminateNotes('');
+    } else {
+      addToast(L('تعذّر استبعاد الخيار.', 'Could not eliminate the option.'), 'error');
+    }
+  }
+
+  async function onReactivate(item: FinderMatch) {
+    if (!clientRec?.id) return noClient();
+    const existing = findClientOption(clientRec.id, finderSourceToOptionType(item.source), item.project_id);
+    if (!existing) return;
+    const res = await reactivateOption(existing.id);
+    addToast(res.ok ? L('تمت إعادة تفعيل الخيار.', 'Option reactivated.') : L('تعذّرت إعادة التفعيل.', 'Could not reactivate.'), res.ok ? 'success' : 'error');
   }
 
   const total = totalFinderMatches(resp);
@@ -325,8 +427,13 @@ export default function SuggestedProjectsModal({
               item={item}
               isAr={isAr}
               onOpenDetails={onOpenDetails}
-              onAddToClient={onAddToClient}
-              addState={addStates[item.project_id] ?? 'idle'}
+              selected={selected.has(item.project_id)}
+              onToggleSelect={toggleSelect}
+              onSaveOption={onSaveOption}
+              onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
+              onReactivate={onReactivate}
+              saveState={saveStates[item.project_id] ?? 'idle'}
+              existingStatus={existingStatusFor(item)}
             />
           ))}
           {!loading && !error && activeItems.length > 0 && (
@@ -338,7 +445,58 @@ export default function SuggestedProjectsModal({
             </>
           )}
         </div>
+
+        {/* Footer — bulk-save the SELECTED options into the client's unified list.
+            Only score===100 matches are pre-checked; the rep can select more. */}
+        {!loading && !error && total > 0 && (
+          <div className="flex items-center justify-between gap-3 border-t border-sand/40 bg-white px-4 py-3">
+            <span className="text-xs text-charcoal/60">
+              {L(`${selected.size} محدّد`, `${selected.size} selected`)}
+            </span>
+            <button
+              type="button"
+              onClick={onBulkSave}
+              disabled={bulkSaving || selected.size === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+            >
+              {bulkSaving ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
+              {L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Eliminate-with-notes prompt — the reason is a free-text notes field (no
+          structured reason codes yet, by design). */}
+      {eliminateTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/40 p-4" onMouseDown={() => !eliminating && setEliminateTarget(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-cream p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()} dir={isAr ? 'rtl' : 'ltr'}>
+            <div className="mb-2 flex items-center gap-2 text-chocolate">
+              <XCircle size={18} className="text-red-600" />
+              <h3 className="text-base font-bold">{L('استبعاد الخيار', 'Eliminate option')}</h3>
+            </div>
+            <p className="mb-3 text-sm text-charcoal/70">{eliminateTarget.project_name}</p>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">{L('سبب الاستبعاد', 'Elimination reason')}</label>
+            <textarea
+              value={eliminateNotes}
+              onChange={(e) => setEliminateNotes(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder={L('مثال: خارج الميزانية، الموقع بعيد…', 'e.g. over budget, location too far…')}
+              className="form-input w-full resize-none"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => !eliminating && setEliminateTarget(null)} className="rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60">
+                {L('إلغاء', 'Cancel')}
+              </button>
+              <button type="button" onClick={confirmEliminate} disabled={eliminating} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50">
+                {eliminating ? <Loader2 size={15} className="animate-spin" /> : <XCircle size={15} />}
+                {L('استبعاد', 'Eliminate')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

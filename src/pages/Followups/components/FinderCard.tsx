@@ -1,26 +1,37 @@
 import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
-  ExternalLink, Plus, Check, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
+  ExternalLink, Bookmark, Check, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
+  CheckSquare, Square, XCircle, RotateCcw,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus } from '@/lib/matching/projectFinder';
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
+import { CLIENT_OPTION_STATUS_META, type ClientOptionStatus } from '@/lib/matching/clientOptions';
 
 /**
  * One project in the deterministic Project Finder modal (Phase 2). Renders ONLY
  * what /api/project-finder decided — score, band, match type, geography
  * verification (geo_status + geo_confidence), distance, key facts, data gaps,
  * mismatch warnings, and the deterministic explanation. The card NEVER scores.
- * Actions are limited to Details + Add-to-client (no chat / pitch / WhatsApp /
- * compare / next-action).
+ * Actions: bulk-select checkbox + Details + Save-to-options + Eliminate (or, if
+ * the option is already saved, a status chip; if eliminated, Reactivate). The
+ * card writes nothing itself — the parent modal owns all persistence.
  */
 
 interface Props {
   item: FinderMatch;
   isAr: boolean;
   onOpenDetails: (item: FinderMatch) => void;
-  onAddToClient: (item: FinderMatch) => void;
-  addState: 'idle' | 'saving' | 'added';
+  /** Bulk-selection state for "Save selected to client options". */
+  selected: boolean;
+  onToggleSelect: (item: FinderMatch) => void;
+  /** Single save of THIS card into the client's options. */
+  onSaveOption: (item: FinderMatch) => void;
+  onEliminate: (item: FinderMatch) => void;
+  onReactivate: (item: FinderMatch) => void;
+  saveState: 'idle' | 'saving' | 'saved';
+  /** Status of an already-saved option for this source, or null if not saved yet. */
+  existingStatus: ClientOptionStatus | null;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -72,10 +83,14 @@ function DealPill({ deal, isAr }: { deal: DealBadge; isAr: boolean }) {
   );
 }
 
-export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, addState }: Props) {
+export default function FinderCard({
+  item, isAr, onOpenDetails, selected, onToggleSelect, onSaveOption, onEliminate, onReactivate, saveState, existingStatus,
+}: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
   const f = item.facts;
+  const isEliminated = existingStatus === 'eliminated';
+  const isSaved = existingStatus != null && !isEliminated;
 
   const city = typeof f.city === 'string' ? f.city : '';
   const district = typeof f.district === 'string' ? f.district : '';
@@ -106,6 +121,16 @@ export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, a
 
       {/* Title row */}
       <div className="flex items-center gap-2 border-b border-sand/30 px-3 py-2">
+        <button
+          type="button"
+          onClick={() => onToggleSelect(item)}
+          className={`shrink-0 transition ${selected ? 'text-copper' : 'text-charcoal/35 hover:text-charcoal/60'}`}
+          aria-label={L('تحديد للحفظ', 'Select to save')}
+          aria-pressed={selected}
+          title={L('تحديد للحفظ ضمن خيارات العميل', 'Select to save into client options')}
+        >
+          {selected ? <CheckSquare size={17} /> : <Square size={17} />}
+        </button>
         <Building2 size={15} className="shrink-0 text-charcoal/50" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-bold text-charcoal">{item.project_name}</div>
@@ -185,19 +210,47 @@ export default function FinderCard({ item, isAr, onOpenDetails, onAddToClient, a
           </div>
         )}
 
-        {/* Actions — Details + Add-to-client for every source. The modal routes the
-            add by source: a market listing → clients.preferred_market_listings; a
-            project → clients.preferred_projects (so no cross-model broken lookup). */}
-        <div className="flex flex-wrap gap-1.5 pt-1">
+        {/* Actions — Details + save/eliminate into the client's unified options.
+            If the option already exists we show its current status instead of a
+            second "save", and an eliminated option offers Reactivate (never a
+            silent re-activate). The modal owns all persistence. */}
+        <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
-          <ActionBtn
-            icon={addState === 'added' ? <Check size={12} /> : <Plus size={12} />}
-            label={addState === 'added' ? L('أُضيف', 'Added') : addState === 'saving' ? L('…', '…') : L('أضف للعميل', 'Add to client')}
-            onClick={() => addState === 'idle' && onAddToClient(item)}
-            active={addState === 'added'}
-            disabled={addState !== 'idle'}
-            primary
-          />
+
+          {isEliminated ? (
+            <>
+              <span className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700">
+                <XCircle size={12} /> {L('مستبعدة', 'Eliminated')}
+              </span>
+              <ActionBtn icon={<RotateCcw size={12} />} label={L('إعادة تفعيل', 'Reactivate')} onClick={() => onReactivate(item)} />
+            </>
+          ) : isSaved ? (
+            <>
+              <span
+                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold"
+                style={{
+                  color: CLIENT_OPTION_STATUS_META[existingStatus!].color,
+                  borderColor: `${CLIENT_OPTION_STATUS_META[existingStatus!].color}55`,
+                  backgroundColor: `${CLIENT_OPTION_STATUS_META[existingStatus!].color}12`,
+                }}
+              >
+                <Check size={12} /> {L('محفوظة', 'Saved')} · {isAr ? CLIENT_OPTION_STATUS_META[existingStatus!].ar : CLIENT_OPTION_STATUS_META[existingStatus!].en}
+              </span>
+              <ActionBtn icon={<XCircle size={12} />} label={L('استبعاد', 'Eliminate')} onClick={() => onEliminate(item)} />
+            </>
+          ) : (
+            <>
+              <ActionBtn
+                icon={saveState === 'saved' ? <Check size={12} /> : <Bookmark size={12} />}
+                label={saveState === 'saved' ? L('محفوظة', 'Saved') : saveState === 'saving' ? L('…', '…') : L('حفظ كخيار', 'Save as option')}
+                onClick={() => saveState === 'idle' && onSaveOption(item)}
+                active={saveState === 'saved'}
+                disabled={saveState !== 'idle'}
+                primary
+              />
+              <ActionBtn icon={<XCircle size={12} />} label={L('استبعاد', 'Eliminate')} onClick={() => onEliminate(item)} />
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -4697,10 +4697,252 @@ const dataMigrationModel: AppModel = {
 };
 
 // ============================================================
+// CLIENT PROPERTY OPTIONS MODEL (added 2026-06-30)
+// ============================================================
+// Unified, client-level store of the property OPTIONS found for a client —
+// projects, units, and market listings in ONE place. This is the OUTPUT of the
+// matching work (Project Finder), not the client's preference INPUTS (budget,
+// location, etc. stay on clients.Preferences). Each option carries its own
+// client-specific status, main-focus flag, match score, and notes so the sales
+// team can see every suitable option, its status, the main focus, and why some
+// were eliminated — without re-running the finder every time.
+//
+// Uniqueness (client_id + source_type + source_id) is enforced at SAVE time in
+// src/lib/matching/clientOptions.ts (read-check-merge), which is required anyway
+// for the "update don't duplicate / don't silently reactivate eliminated" rules.
+// Display facts (price/area/beds/etc.) are snapshotted onto data.facts at save
+// time so the Client Options view renders without re-resolving 46k listings.
+const clientOptionsId = uuid();
+const cpoBaseSectionId = uuid();
+const cpoClientFieldId = uuid();
+const cpoSourceNameFieldId = uuid();
+const cpoStatusFieldId = uuid();
+
+const CPO_SOURCE_TYPE_OPTIONS: FieldOption[] = [
+  { id: uuid(), label_ar: 'مشروع', label_en: 'Project', value: 'project', color: '#B8734F' },
+  { id: uuid(), label_ar: 'وحدة', label_en: 'Unit', value: 'unit', color: '#8E4E3A' },
+  { id: uuid(), label_ar: 'إعلان سوق', label_en: 'Market Listing', value: 'market_listing', color: '#4A2C2A' },
+];
+
+const CPO_STATUS_OPTIONS: FieldOption[] = [
+  { id: uuid(), label_ar: 'مناسبة', label_en: 'Suitable', value: 'suitable', color: '#C09B5F' },
+  { id: uuid(), label_ar: 'التركيز الرئيسي', label_en: 'Main Focus', value: 'main_focus', color: '#B8734F' },
+  { id: uuid(), label_ar: 'تم العرض', label_en: 'Presented', value: 'presented', color: '#3B82F6' },
+  { id: uuid(), label_ar: 'مهتم', label_en: 'Interested', value: 'interested', color: '#16A34A' },
+  { id: uuid(), label_ar: 'غير مهتم', label_en: 'Not Interested', value: 'not_interested', color: '#6B7280' },
+  { id: uuid(), label_ar: 'مستبعدة', label_en: 'Eliminated', value: 'eliminated', color: '#DC2626' },
+  { id: uuid(), label_ar: 'محجوزة', label_en: 'Reserved', value: 'reserved', color: '#D97706' },
+  { id: uuid(), label_ar: 'مغلقة', label_en: 'Closed', value: 'closed', color: '#4A2C2A' },
+];
+
+const CPO_ADDED_FROM_OPTIONS: FieldOption[] = [
+  { id: uuid(), label_ar: 'الباحث عن المشاريع', label_en: 'Project Finder', value: 'project_finder', color: '#B8734F' },
+  { id: uuid(), label_ar: 'يدوي', label_en: 'Manual', value: 'manual', color: '#6B7280' },
+  { id: uuid(), label_ar: 'متابعة', label_en: 'Follow-up', value: 'follow_up', color: '#3B82F6' },
+];
+
+const clientPropertyOptionsModel: AppModel = {
+  id: clientOptionsId,
+  name: 'client_property_options',
+  label_ar: 'خيارات العميل العقارية',
+  label_en: 'Client Property Options',
+  icon: 'list-checks',
+  color: '#B8734F',
+  group_id: null,
+  is_system: true,
+  created_at: now(),
+  updated_at: now(),
+  card_config: {
+    title_field_id: cpoSourceNameFieldId,
+    subtitle_field_id: null,
+    badge_field_id: cpoStatusFieldId,
+    shown_field_ids: [],
+  },
+  maps_config: { ...MAPS_CONFIG_DEFAULT },
+  schema: {
+    sections: [
+      {
+        id: cpoBaseSectionId,
+        label_ar: 'الخيار',
+        label_en: 'Option',
+        order: 0,
+        is_base: true,
+        color: '#B8734F',
+        fields: [
+          {
+            id: cpoClientFieldId,
+            name: 'client_id',
+            label_ar: 'العميل',
+            label_en: 'Client',
+            type: 'lookup',
+            required: true,
+            order: 0,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            lookup_model_id: clientsId,
+            lookup_display_field: 'client_name',
+          },
+          {
+            id: cpoSourceNameFieldId,
+            name: 'source_name',
+            label_ar: 'الاسم',
+            label_en: 'Name',
+            type: 'text',
+            required: false,
+            order: 1,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'source_type',
+            label_ar: 'نوع المصدر',
+            label_en: 'Source Type',
+            type: 'dropdown',
+            required: true,
+            order: 2,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            options: CPO_SOURCE_TYPE_OPTIONS,
+          },
+          {
+            id: uuid(),
+            name: 'source_id',
+            label_ar: 'معرّف المصدر',
+            label_en: 'Source ID',
+            type: 'text',
+            required: true,
+            order: 3,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: cpoStatusFieldId,
+            name: 'status',
+            label_ar: 'الحالة',
+            label_en: 'Status',
+            type: 'dropdown',
+            required: true,
+            order: 4,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            options: CPO_STATUS_OPTIONS,
+          },
+          {
+            id: uuid(),
+            name: 'is_main',
+            label_ar: 'الخيار الرئيسي',
+            label_en: 'Main Option',
+            type: 'checkbox',
+            required: false,
+            order: 5,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'match_score',
+            label_ar: 'نقاط التطابق',
+            label_en: 'Match Score',
+            type: 'number',
+            required: false,
+            order: 6,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+          },
+          {
+            id: uuid(),
+            name: 'priority_rank',
+            label_ar: 'ترتيب الأولوية',
+            label_en: 'Priority Rank',
+            type: 'number',
+            required: false,
+            order: 7,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'match_run_id',
+            label_ar: 'معرّف جولة المطابقة',
+            label_en: 'Match Run ID',
+            type: 'text',
+            required: false,
+            order: 8,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'added_from',
+            label_ar: 'أُضيف من',
+            label_en: 'Added From',
+            type: 'dropdown',
+            required: false,
+            order: 9,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+            options: CPO_ADDED_FROM_OPTIONS,
+          },
+          {
+            id: uuid(),
+            name: 'added_by',
+            label_ar: 'أُضيف بواسطة',
+            label_en: 'Added By',
+            type: 'assignee',
+            required: false,
+            order: 10,
+            section_id: cpoBaseSectionId,
+            width: 'half',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'sales_notes',
+            label_ar: 'ملاحظات المبيعات',
+            label_en: 'Sales Notes',
+            type: 'textarea',
+            required: false,
+            order: 11,
+            section_id: cpoBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+          {
+            id: uuid(),
+            name: 'elimination_notes',
+            label_ar: 'ملاحظات الاستبعاد',
+            label_en: 'Elimination Notes',
+            type: 'textarea',
+            required: false,
+            order: 12,
+            section_id: cpoBaseSectionId,
+            width: 'full',
+            show_in_table: false,
+          },
+        ],
+      },
+    ],
+    section_selector_field_id: null,
+  },
+};
+
+// ============================================================
 // EXPORTS
 // ============================================================
 export const SEED_MODELS: AppModel[] = [
   clientsModel,
+  clientPropertyOptionsModel,
   followupsModel,
   appointmentsModel,
   visitsModel,

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, useLocation } from 'react-router-dom';
-import { LayoutGrid, SlidersHorizontal, Clock, MessageCircle, Phone, Link2, FileText } from 'lucide-react';
+import { LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanViewRecord, useCanEditRecord } from '@/hooks/usePermission';
 import { phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -21,14 +21,16 @@ import DetailHeader from './components/DetailHeader';
 import DetailKpiRow from './components/DetailKpiRow';
 import OverviewTab from './components/tabs/OverviewTab';
 import PreferencesTab from './components/tabs/PreferencesTab';
+import ClientOptionsTab from './components/tabs/ClientOptionsTab';
 import TimelineTab from './components/tabs/TimelineTab';
 import SalesNotesTab from './components/tabs/SalesNotesTab';
 
-type TabKey = 'overview' | 'preferences' | 'timeline' | 'whatsapp' | 'calls' | 'related' | 'notes';
+type TabKey = 'overview' | 'preferences' | 'options' | 'timeline' | 'whatsapp' | 'calls' | 'related' | 'notes';
 
 const TABS: { key: TabKey; label_ar: string; label_en: string; icon: typeof LayoutGrid }[] = [
   { key: 'overview', label_ar: 'نظرة عامة', label_en: 'Overview', icon: LayoutGrid },
   { key: 'preferences', label_ar: 'التفضيلات', label_en: 'Preferences', icon: SlidersHorizontal },
+  { key: 'options', label_ar: 'الخيارات', label_en: 'Options', icon: ListChecks },
   { key: 'timeline', label_ar: 'الجدول الزمني', label_en: 'Timeline', icon: Clock },
   { key: 'whatsapp', label_ar: 'واتساب', label_en: 'WhatsApp', icon: MessageCircle },
   { key: 'calls', label_ar: 'المكالمات', label_en: 'Calls', icon: Phone },
@@ -141,6 +143,7 @@ export default function ClientDetailPage() {
           />
         )}
         {activeTab === 'preferences' && <PreferencesTab client={client} clientsModel={clientsModel} isAr={isAr} canEdit={canEdit} />}
+        {activeTab === 'options' && <ClientOptionsTab client={client} isAr={isAr} canEdit={canEdit} />}
         {activeTab === 'timeline' && <TimelineTab view={view} ctx={ctx} isAr={isAr} />}
         {activeTab === 'whatsapp' && <WhatsAppHistoryPanel clientId={client.id} chrome="card" />}
         {activeTab === 'calls' && <CallHistoryPanel phones={phones} chrome="card" />}
