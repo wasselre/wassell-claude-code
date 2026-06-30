@@ -214,3 +214,85 @@ describe('applyAdhocFilters — plain fields still work', () => {
     expect(result.map((r) => r.id)).toEqual(['f1']);
   });
 });
+
+// A model with a `location` cascade field (region → city → district). The level
+// model_ids don't need real records for applyAdhocFilters — matching reads the
+// compound value stored on the record itself, not the geography models.
+function makeLocationModel(): AppModel {
+  return model({
+    id: 'm_listings',
+    name: 'market_listings',
+    sections: [section({
+      id: 'm_listings_s0',
+      fields: [
+        field({ name: 'title' }),
+        field({
+          id: 'ml_loc',
+          name: 'location',
+          type: 'location',
+          location_levels: [
+            { key: 'region', model_id: 'm_regions', display_field: 'name_ar' },
+            { key: 'city', model_id: 'm_cities', display_field: 'name_ar', parent_link_field: 'region_lookup' },
+            { key: 'district', model_id: 'm_districts', display_field: 'name_ar', parent_link_field: 'city_lookup' },
+          ],
+        }),
+      ],
+    })],
+  });
+}
+
+describe('location filter', () => {
+  it('exposes a location field as filterable', () => {
+    const m = makeLocationModel();
+    const entry = getAdhocFilterableFields(m, [m]).find((e) => e.field.id === 'ml_loc');
+    expect(entry).toBeDefined();
+    expect(entry!.field.type).toBe('location');
+  });
+
+  it('matches by district on single-shape (scalar) location values', () => {
+    const m = makeLocationModel();
+    const records = [
+      rec('l1', 'm_listings', { location: { region: 'r1', city: 'c1', district: 'd1' } }),
+      rec('l2', 'm_listings', { location: { region: 'r1', city: 'c1', district: 'd2' } }),
+      rec('l3', 'm_listings', {}), // no location → never matches an active filter
+    ];
+    const state: AdhocFilterState = { ml_loc: { kind: 'location', levels: { district: ['d1'] } } };
+    const result = applyAdhocFilters(records, state, m, [m], { m_listings: records });
+    expect(result.map((r) => r.id)).toEqual(['l1']);
+  });
+
+  it('OR within a level, AND across levels', () => {
+    const m = makeLocationModel();
+    const records = [
+      rec('l1', 'm_listings', { location: { region: 'r1', city: 'c1', district: 'd1' } }),
+      rec('l2', 'm_listings', { location: { region: 'r2', city: 'c9', district: 'd2' } }),
+      rec('l3', 'm_listings', { location: { region: 'r1', city: 'c1', district: 'd3' } }),
+    ];
+    // district in {d1, d2} (OR) AND region = r1 → only l1 (l2 is r2, l3 district not picked).
+    const state: AdhocFilterState = { ml_loc: { kind: 'location', levels: { district: ['d1', 'd2'], region: ['r1'] } } };
+    const result = applyAdhocFilters(records, state, m, [m], { m_listings: records });
+    expect(result.map((r) => r.id)).toEqual(['l1']);
+  });
+
+  it('matches multi-shape (array) location values', () => {
+    const m = makeLocationModel();
+    const records = [
+      rec('l1', 'm_listings', { location: { region: ['r1'], city: ['c1'], district: ['d1', 'd2'] } }),
+      rec('l2', 'm_listings', { location: { region: ['r1'], city: ['c1'], district: ['d3'] } }),
+    ];
+    const state: AdhocFilterState = { ml_loc: { kind: 'location', levels: { district: ['d2'] } } };
+    const result = applyAdhocFilters(records, state, m, [m], { m_listings: records });
+    expect(result.map((r) => r.id)).toEqual(['l1']);
+  });
+
+  it('an empty location selection is inactive (no filtering)', () => {
+    const m = makeLocationModel();
+    const records = [
+      rec('l1', 'm_listings', { location: { district: 'd1' } }),
+      rec('l2', 'm_listings', {}),
+    ];
+    const state: AdhocFilterState = { ml_loc: { kind: 'location', levels: { district: [] } } };
+    const result = applyAdhocFilters(records, state, m, [m], { m_listings: records });
+    expect(result.map((r) => r.id)).toEqual(['l1', 'l2']);
+  });
+});

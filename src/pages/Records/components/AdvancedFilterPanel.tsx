@@ -196,6 +196,7 @@ const FieldChip = forwardRef<HTMLButtonElement, FieldChipProps>(function FieldCh
               }
             : undefined,
           users,
+          field.type === 'location' ? { recordsByModel, models: allModels } : undefined,
         )
       : '';
 

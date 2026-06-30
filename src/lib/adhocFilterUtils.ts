@@ -22,7 +22,12 @@ export type AdhocFieldFilter =
   | { kind: 'checkbox'; value: 'true' | 'false' }
   | { kind: 'date_range'; from?: string; to?: string }
   | { kind: 'number_range'; min?: number; max?: number }
-  | { kind: 'contains'; query: string };
+  | { kind: 'contains'; query: string }
+  // location cascade — selections keyed by level key ('region' | 'city' | 'district').
+  // Within a level: OR (any picked id). Across levels: AND (region X AND district Y).
+  // A record's location value is the compound { region, city, district } object
+  // (scalar in single mode, id[] in multi mode); both shapes are matched.
+  | { kind: 'location'; levels: Record<string, string[]> };
 
 /** Full ad-hoc state for one (user, model, view) scope: keyed by field ID. */
 export type AdhocFilterState = Record<string, AdhocFieldFilter>;
@@ -50,6 +55,8 @@ export function adhocKindFor(fieldType: ModelField['type']): AdhocFieldFilter['k
     case 'phone':
     case 'url':
       return 'contains';
+    case 'location':
+      return 'location';
     // notes and range are structured — not exposed in the simple ad-hoc panel.
     case 'notes':
     case 'range':
@@ -89,6 +96,10 @@ function effectiveMirrorFilterField(field: ModelField, target: MirrorTarget): Mo
     options: target.targetField.options,
     lookup_model_id: target.targetField.lookup_model_id ?? null,
     lookup_display_field: target.targetField.lookup_display_field ?? null,
+    // Carry the cascade config so a mirrored `location` field renders + matches like the original.
+    location_levels: target.targetField.location_levels,
+    location_multi: target.targetField.location_multi,
+    location_default: target.targetField.location_default,
     // A multi sibling lookup yields an array of mirrored values; so does a multi target field.
     is_multi: !!(target.sibling.is_multi || target.targetField.is_multi),
   };
@@ -213,6 +224,8 @@ export function isAdhocActive(filter: AdhocFieldFilter | undefined): boolean {
       return filter.min != null || filter.max != null;
     case 'contains':
       return filter.query.trim().length > 0;
+    case 'location':
+      return Object.values(filter.levels).some((ids) => ids.length > 0);
   }
 }
 
@@ -259,6 +272,23 @@ function evaluateAdhoc(recordValue: unknown, filter: AdhocFieldFilter): boolean 
     case 'contains': {
       if (!filter.query.trim()) return true;
       return String(recordValue ?? '').toLowerCase().includes(filter.query.toLowerCase());
+    }
+    case 'location': {
+      const activeKeys = Object.keys(filter.levels).filter((k) => filter.levels[k]!.length > 0);
+      if (activeKeys.length === 0) return true;
+      if (!recordValue || typeof recordValue !== 'object' || Array.isArray(recordValue)) return false;
+      const compound = recordValue as Record<string, unknown>;
+      // AND across levels; within a level, the record's id(s) must intersect the picked ids.
+      return activeKeys.every((key) => {
+        const want = filter.levels[key]!;
+        const stored = compound[key];
+        const haveIds = Array.isArray(stored)
+          ? stored.map(String)
+          : stored === undefined || stored === null || stored === ''
+            ? []
+            : [String(stored)];
+        return haveIds.some((id) => want.includes(id));
+      });
     }
   }
 }
@@ -364,6 +394,8 @@ export function summarizeAdhoc(
     allRecords?: Record<string, AppRecord[]>;
   },
   users?: { id: string; name_ar: string; name_en: string }[],
+  // Supplied for `location` filters so level ids can be resolved to names.
+  locationCtx?: { recordsByModel: Record<string, AppRecord[]>; models: AppModel[] },
 ): string {
   switch (filter.kind) {
     case 'values': {
@@ -411,5 +443,31 @@ export function summarizeAdhoc(
     }
     case 'contains':
       return filter.query;
+    case 'location': {
+      const levels = field.location_levels ?? [];
+      // Summarize the deepest active level (most specific — usually district).
+      for (let i = levels.length - 1; i >= 0; i--) {
+        const lv = levels[i]!;
+        const ids = filter.levels[lv.key] ?? [];
+        if (!ids.length) continue;
+        if (!locationCtx) return `${ids.length}`;
+        const recs = locationCtx.recordsByModel[lv.model_id] ?? [];
+        const m = locationCtx.models.find((mm) => mm.id === lv.model_id) ?? null;
+        const names = ids.map((id) => {
+          const rec = recs.find((r) => r.id === id);
+          if (!rec) return id.slice(0, 8);
+          const dv = resolveLookupDisplayValue(rec, lv.display_field, {
+            targetModel: m,
+            allModels: locationCtx.models,
+            allRecords: locationCtx.recordsByModel,
+          });
+          return dv !== null && dv !== undefined && typeof dv !== 'object' ? String(dv) : id.slice(0, 8);
+        });
+        return names.length <= 2
+          ? names.join(isAr ? '، ' : ', ')
+          : `${names.slice(0, 2).join(isAr ? '، ' : ', ')} +${names.length - 2}`;
+      }
+      return '';
+    }
   }
 }
