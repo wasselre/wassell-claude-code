@@ -10,7 +10,7 @@ function makeView(over: Partial<ProjectView> = {}): ProjectView {
     name: null, developer: null, projectId: null, city: null, district: null,
     status: null, construction: null, projectType: null, unitTypes: [],
     unitCount: null, availableUnits: null, soldUnits: null, reservedUnits: null,
-    priceRange: null, areaRange: null, imageUrl: null,
+    priceRange: null, areaRange: null, imageRef: null,
     brochureDeveloper: null, brochureOurs: null, locationLink: null,
     hasGeo: false, isTargeted: false, isPublic: false, dataConfidence: null, createdAt: '',
     ...over,
@@ -33,7 +33,7 @@ describe('auditProject (deterministic scoring)', () => {
       construction: { value: 'ready', label_ar: '', label_en: 'Ready', color: null },
       projectType: { value: 't', label_ar: '', label_en: 'T', color: null },
       priceRange: { min: 1, max: 2 }, areaRange: { min: 1, max: 2 },
-      unitCount: 10, imageUrl: 'http://x/y.jpg', brochureDeveloper: 'http://b',
+      unitCount: 10, imageRef: 'http://x/y.jpg', brochureDeveloper: 'http://b',
       unitTypes: [{ value: 'apartment', label_ar: '', label_en: 'Apt', color: null }],
       hasGeo: true,
     }), false);

@@ -13,6 +13,7 @@ import {
   formatPriceRange,
   type ProjectView,
 } from '@/lib/projects/projectView';
+import { useSignedImage } from '@/lib/projects/useSignedImage';
 
 type ViewMode = 'grid' | 'list' | 'map';
 type QualityFilter = 'all' | 'missing_geo' | 'has_geo' | 'missing_image';
@@ -89,7 +90,7 @@ export default function ProjectsListPage() {
       if (targetedOnly && !v.isTargeted) return false;
       if (quality === 'missing_geo' && v.hasGeo) return false;
       if (quality === 'has_geo' && !v.hasGeo) return false;
-      if (quality === 'missing_image' && v.imageUrl) return false;
+      if (quality === 'missing_image' && v.imageRef) return false;
       if (pMin !== null && (v.priceRange?.max ?? Infinity) < pMin) return false;
       if (pMax !== null && (v.priceRange?.min ?? 0) > pMax) return false;
       return true;
@@ -243,12 +244,13 @@ export default function ProjectsListPage() {
 
 function ProjectCard({ v, isAr, onOpen }: { v: ProjectView; isAr: boolean; onOpen: () => void }) {
   const price = formatPriceRange(v.priceRange, isAr);
+  const img = useSignedImage(v.imageRef);
   return (
     <div className="card overflow-hidden flex flex-col group cursor-pointer" onClick={onOpen}>
       {/* Image / placeholder */}
       <div className="h-36 bg-gradient-to-br from-copper/20 to-terracotta/20 relative flex items-center justify-center">
-        {v.imageUrl ? (
-          <img src={v.imageUrl} alt={v.name ?? ''} className="w-full h-full object-cover" loading="lazy" />
+        {img ? (
+          <img src={img} alt={v.name ?? ''} className="w-full h-full object-cover" loading="lazy" />
         ) : (
           <Building2 size={36} className="text-copper/40" />
         )}

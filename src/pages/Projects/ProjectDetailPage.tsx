@@ -13,6 +13,7 @@ import {
   formatPriceRange, formatRange, asString, asFiniteNumber, type ProjectView,
 } from '@/lib/projects/projectView';
 import { auditProject } from '@/lib/projects/projectAi';
+import { useSignedImage } from '@/lib/projects/useSignedImage';
 import UnitsInventory from './components/UnitsInventory';
 import MatchClientModal from './components/MatchClientModal';
 
@@ -63,6 +64,10 @@ export default function ProjectDetailPage() {
 
   const [tab, setTab] = useState<TabKey>('overview');
   const [matchOpen, setMatchOpen] = useState(false);
+  // Hook must run before any early return: resolve the hero image (main_image,
+  // or the portfolio's hero_image_override) from a files.id to a signed URL.
+  const heroRef = (isPortfolio ? asString(portfolioRecord?.data?.hero_image_override) : null) ?? view?.imageRef ?? null;
+  const heroImage = useSignedImage(heroRef);
 
   if (searchParams.get('generic') === '1') return <RecordFormPage />;
   if (!apModel || (isPortfolio && !ourModel)) return <div className="p-8 text-charcoal/50">{isAr ? 'النموذج غير موجود' : 'Model not found'}</div>;
@@ -89,8 +94,6 @@ export default function ProjectDetailPage() {
   const dash = isAr ? 'غير متوفر' : 'N/A';
   const editHref = `/model/${isPortfolio ? 'our_projects' : 'all_projects'}/${recordId}?generic=1`;
   const heroName = view?.name ?? asString(portfolioRecord?.data?.project_name) ?? `#${recordId?.slice(0, 8) ?? ''}`;
-  const heroOverride = isPortfolio ? (() => { const h = portfolioRecord?.data?.hero_image_override; return typeof h === 'string' && /^https?:\/\//i.test(h) ? h : null; })() : null;
-  const heroImage = heroOverride ?? view?.imageUrl ?? null;
   const portfolioStatus = isPortfolio ? optionFor(fieldByCandidates(ourModel, ['portfolio_status']), portfolioRecord?.data?.portfolio_status) : null;
   const NoMaster = () => (
     <div className="card p-10 text-center text-charcoal/50 text-sm">
@@ -357,10 +360,11 @@ function MediaTab({ view, record, model, isAr }: { view: ProjectView; record: im
     ? (record.data.project_videos as unknown[]).filter((x): x is string => typeof x === 'string' && /^https?:\/\//i.test(x))
     : [];
   const projectPage = asString(record.data.project_page_url);
-  const hasAny = view.imageUrl || gallery.length > 0 || videos.length > 0 || view.brochureOurs || view.brochureDeveloper || projectPage || view.locationLink;
+  const heroImg = useSignedImage(view.imageRef);
+  const hasAny = heroImg || gallery.length > 0 || videos.length > 0 || view.brochureOurs || view.brochureDeveloper || projectPage || view.locationLink;
   return (
     <div className="space-y-4">
-      {view.imageUrl && <img src={view.imageUrl} alt="" className="rounded-xl border border-sand/50 max-h-80 object-cover" />}
+      {heroImg && <img src={heroImg} alt="" className="rounded-xl border border-sand/50 max-h-80 object-cover" />}
       {gallery.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {gallery.map((u, i) => <img key={i} src={u} alt="" className="rounded-lg border border-sand/50 h-32 w-full object-cover" loading="lazy" />)}

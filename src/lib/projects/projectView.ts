@@ -52,8 +52,9 @@ export interface ProjectView {
   reservedUnits: number | null;
   priceRange: NumericRange | null;
   areaRange: NumericRange | null;
-  // Media / links.
-  imageUrl: string | null;
+  // Media / links. imageRef is the raw value of `main_image` — a files.id UUID
+  // (resolved to a signed URL at render) or a legacy http URL.
+  imageRef: string | null;
   brochureDeveloper: string | null;
   brochureOurs: string | null;
   locationLink: string | null;
@@ -186,10 +187,7 @@ export function resolveProjectView(store: ProjectStoreSlices, record: AppRecord)
   const unitTypesField = fieldByCandidates(ap, ['unit_types', 'unit_type']);
   const developerField = fieldByCandidates(ap, ['developer']);
   const projectIdField = fieldByCandidates(ap, ['project_id']);
-  const imageField = fieldByCandidates(ap, ['image_url', 'main_image']);
   const confidenceField = fieldByCandidates(ap, ['data_confidence_score']);
-
-  const imageRaw = imageField ? data[imageField.name] : null;
 
   return {
     id: record.id,
@@ -209,7 +207,7 @@ export function resolveProjectView(store: ProjectStoreSlices, record: AppRecord)
     reservedUnits: asFiniteNumber(rollupByKind(ap, data, 'units_reserved_count')),
     priceRange: asRange(rollupByKind(ap, data, 'price_range')),
     areaRange: asRange(rollupByKind(ap, data, 'area_range')),
-    imageUrl: typeof imageRaw === 'string' && /^https?:\/\//i.test(imageRaw) ? imageRaw : null,
+    imageRef: asString(data.main_image) ?? asString(data.image_url),
     brochureDeveloper: asString(data.broucher_developer),
     brochureOurs: asString(data.brochure_link),
     locationLink: asString(data.project_location),

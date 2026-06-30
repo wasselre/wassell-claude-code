@@ -9,6 +9,7 @@ import {
   resolveProjectView, modelByName, fieldByCandidates, optionFor, formatPriceRange,
   asString, asFiniteNumber, type ProjectView, type OptionView,
 } from '@/lib/projects/projectView';
+import { useSignedImage } from '@/lib/projects/useSignedImage';
 
 interface PortfolioItem {
   ourId: string;
@@ -59,7 +60,7 @@ export default function OurProjectsPortfolioPage() {
         priority: optionFor(priorityField, data.sales_priority),
         exclusive: optionFor(exclusiveField, data.exclusive_status),
         displayOrder: asFiniteNumber(data.website_display_order),
-        heroOverride: typeof heroRaw === 'string' && /^https?:\/\//i.test(heroRaw) ? heroRaw : null,
+        heroOverride: asString(heroRaw), // files.id or http URL; resolved at render
         showOnWebsite: data.show_on_website === true,
       };
     });
@@ -194,7 +195,7 @@ function PortfolioKpi({ icon, label, value, tone }: { icon: React.ReactNode; lab
 
 function PortfolioCard({ item, isAr, onOpenDetail, onEdit }: { item: PortfolioItem; isAr: boolean; onOpenDetail: () => void; onEdit: () => void }) {
   const linked = item.linked;
-  const heroUrl = item.heroOverride ?? linked?.imageUrl ?? null;
+  const heroUrl = useSignedImage(item.heroOverride ?? linked?.imageRef ?? null);
   const name = linked?.name ?? asString(item.ourData.project_name) ?? `#${item.ourId.slice(0, 8)}`;
   const dash = isAr ? 'غير متوفر' : 'N/A';
 

@@ -63,7 +63,7 @@ const REQUIRED: { key: keyof ProjectView; ar: string; en: string }[] = [
 const OPTIONAL: { key: keyof ProjectView; ar: string; en: string }[] = [
   { key: 'construction', ar: 'حالة الإنشاء', en: 'Construction status' },
   { key: 'areaRange', ar: 'نطاق المساحة', en: 'Area range' },
-  { key: 'imageUrl', ar: 'صورة المشروع', en: 'Project image' },
+  { key: 'imageRef', ar: 'صورة المشروع', en: 'Project image' },
   { key: 'brochureDeveloper', ar: 'بروشور المطور', en: 'Developer brochure' },
   { key: 'projectType', ar: 'نوع المشروع', en: 'Project type' },
 ];
@@ -82,7 +82,7 @@ export function auditProject(view: ProjectView, isAr: boolean): ProjectAudit {
   // Website publish blockers: must have a name, image and price to look credible.
   const blockingWebsite: string[] = [];
   if (isMissing(view.name)) blockingWebsite.push(isAr ? 'اسم المشروع' : 'Project name');
-  if (isMissing(view.imageUrl)) blockingWebsite.push(isAr ? 'صورة الموقع' : 'Website image');
+  if (isMissing(view.imageRef)) blockingWebsite.push(isAr ? 'صورة المشروع' : 'Project image');
   if (isMissing(view.priceRange)) blockingWebsite.push(isAr ? 'نطاق السعر' : 'Price range');
 
   // Matching blockers: deterministic matcher needs geo + price + unit types.
@@ -105,7 +105,7 @@ export function detectIssues(view: ProjectView, isAr: boolean): string[] {
   const audit = auditProject(view, isAr);
   for (const m of audit.requiredMissing) out.push(isAr ? `حقل مطلوب ناقص: ${m}` : `Missing required field: ${m}`);
   if (!view.hasGeo) out.push(isAr ? 'لا يوجد موقع جغرافي محقق' : 'No verified geo location');
-  if (isMissing(view.imageUrl) && view.unitTypes.length === 0) {
+  if (isMissing(view.imageRef) && view.unitTypes.length === 0) {
     out.push(isAr ? 'لا توجد وسائط (صورة/أنواع وحدات)' : 'No media (image / unit types)');
   }
   // Invalid ranges: min > max.
