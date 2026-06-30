@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle } from 'lucide-react';
+import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, SlidersHorizontal, ArrowUpDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
@@ -18,8 +18,16 @@ import type { AppModel, ModelField } from '@/types';
  * NO AI), then runs the SAME deterministic, geography-verified /api/project-finder
  * the Follow-up "Suggested Projects" modal uses (parse:false, explain:false).
  *
- * Difference from the modal: there is no client to attach options to, so the
- * result cards show "Details" only (hideClientActions) — no save / eliminate.
+ * The search always pulls EVERYTHING scoring ≥ 70 (FETCH_FLOOR). Above the
+ * results sits a refinement toolbar that operates 100% client-side on that set
+ * (no re-fetch, instant):
+ *   • a score slider (70→100) — drag right to raise the bar, fewer cards;
+ *   • a sort dropdown (best match / price / area / nearest / availability / name);
+ *   • a "Refine" panel of HARD post-filters (max price, area window, min beds,
+ *     available-only, coordinate-verified-only) to focus a large result set.
+ *
+ * Difference from the Follow-up modal: there's no client to attach options to, so
+ * the cards show "Details" only (hideClientActions) — no save / eliminate.
  */
 
 const TAB_LABELS: Record<FinderGroupKey, { ar: string; en: string }> = {
@@ -39,7 +47,89 @@ const SOURCE_LABELS: Record<FinderSource, { ar: string; en: string }> = {
   market_listings: { ar: 'إعلانات السوق', en: 'Market listings' },
 };
 
+// The engine always returns everything ≥ this; the score slider refines upward client-side.
+const FETCH_FLOOR = 70;
 const PAGE = 24;
+
+type SortKey = 'score' | 'price_asc' | 'price_desc' | 'area_desc' | 'area_asc' | 'distance' | 'available_desc' | 'name';
+
+const SORT_LABELS: Record<SortKey, { ar: string; en: string }> = {
+  score: { ar: 'الأفضل تطابقاً', en: 'Best match' },
+  price_asc: { ar: 'السعر: الأقل أولاً', en: 'Price: low → high' },
+  price_desc: { ar: 'السعر: الأعلى أولاً', en: 'Price: high → low' },
+  area_desc: { ar: 'المساحة: الأكبر أولاً', en: 'Area: large → small' },
+  area_asc: { ar: 'المساحة: الأصغر أولاً', en: 'Area: small → large' },
+  distance: { ar: 'الأقرب مسافةً', en: 'Nearest' },
+  available_desc: { ar: 'الأكثر وحدات متاحة', en: 'Most available units' },
+  name: { ar: 'الاسم (أ → ي)', en: 'Name (A → Z)' },
+};
+
+interface Refine {
+  priceMax: number | '';
+  areaMin: number | '';
+  areaMax: number | '';
+  bedroomsMin: number | '';
+  availableOnly: boolean;
+  verifiedOnly: boolean;
+}
+const REFINE_DEFAULT: Refine = {
+  priceMax: '', areaMin: '', areaMax: '', bedroomsMin: '', availableOnly: false, verifiedOnly: false,
+};
+const refineIsActive = (r: Refine): boolean =>
+  r.priceMax !== '' || r.areaMin !== '' || r.areaMax !== '' || r.bedroomsMin !== '' || r.availableOnly || r.verifiedOnly;
+
+/** A fact value that's either a scalar number or a { min, max } range → {min,max}. */
+function factRange(facts: Record<string, unknown>, key: string): { min: number | null; max: number | null } {
+  const v = facts?.[key];
+  if (v == null) return { min: null, max: null };
+  if (typeof v === 'number' && Number.isFinite(v)) return { min: v, max: v };
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    const mn = typeof o.min === 'number' ? o.min : Number(o.min);
+    const mx = typeof o.max === 'number' ? o.max : Number(o.max);
+    return { min: Number.isFinite(mn) ? mn : null, max: Number.isFinite(mx) ? mx : null };
+  }
+  return { min: null, max: null };
+}
+const availOf = (item: FinderMatch): number | null =>
+  typeof item.facts?.available_units === 'number' ? (item.facts.available_units as number) : null;
+
+/** HARD post-filters over the already-scored set — focus a large result list. */
+function passesRefine(item: FinderMatch, r: Refine): boolean {
+  const price = factRange(item.facts, 'price_range');
+  const area = factRange(item.facts, 'area_range');
+  const beds = factRange(item.facts, 'bedroom_range');
+  if (r.priceMax !== '' && (price.min == null || price.min > r.priceMax)) return false;
+  if (r.areaMin !== '' && (area.max == null || area.max < r.areaMin)) return false;
+  if (r.areaMax !== '' && (area.min == null || area.min > r.areaMax)) return false;
+  if (r.bedroomsMin !== '' && (beds.max == null || beds.max < r.bedroomsMin)) return false;
+  if (r.availableOnly) { const a = availOf(item); if (a == null || a <= 0) return false; }
+  if (r.verifiedOnly && item.geo_status !== 'verified_match' && item.geo_status !== 'verified_derived') return false;
+  return true;
+}
+
+/** Compare two nullable numbers; nulls always sort last regardless of direction. */
+function cmpNum(a: number | null, b: number | null, asc: boolean): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return asc ? a - b : b - a;
+}
+
+function sortItems(items: FinderMatch[], key: SortKey): FinderMatch[] {
+  const arr = [...items];
+  switch (key) {
+    case 'price_asc': return arr.sort((a, b) => cmpNum(factRange(a.facts, 'price_range').min, factRange(b.facts, 'price_range').min, true));
+    case 'price_desc': return arr.sort((a, b) => cmpNum(factRange(a.facts, 'price_range').max, factRange(b.facts, 'price_range').max, false));
+    case 'area_desc': return arr.sort((a, b) => cmpNum(factRange(a.facts, 'area_range').max, factRange(b.facts, 'area_range').max, false));
+    case 'area_asc': return arr.sort((a, b) => cmpNum(factRange(a.facts, 'area_range').min, factRange(b.facts, 'area_range').min, true));
+    case 'distance': return arr.sort((a, b) => cmpNum(a.distance_km, b.distance_km, true));
+    case 'available_desc': return arr.sort((a, b) => cmpNum(availOf(a), availOf(b), false));
+    case 'name': return arr.sort((a, b) => a.project_name.localeCompare(b.project_name, 'ar'));
+    case 'score':
+    default: return arr.sort((a, b) => b.score - a.score);
+  }
+}
 
 export default function ProjectFinderPage() {
   const language = useAppStore((s) => s.language);
@@ -70,7 +160,12 @@ export default function ProjectFinderPage() {
   const [sources, setSources] = useState<Record<FinderSource, boolean>>({
     our_projects: true, all_projects: true, market_listings: false,
   });
-  const [minScore, setMinScore] = useState<number>(60);
+
+  // Results-refinement state (all client-side over the ≥ FETCH_FLOOR set).
+  const [scoreThreshold, setScoreThreshold] = useState<number>(FETCH_FLOOR);
+  const [sortKey, setSortKey] = useState<SortKey>('score');
+  const [showRefine, setShowRefine] = useState(false);
+  const [refine, setRefine] = useState<Refine>(REFINE_DEFAULT);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -131,13 +226,17 @@ export default function ProjectFinderPage() {
     setLoading(true);
     setError(null);
     setHasSearched(true);
+    // A fresh search resets the refinement controls so the full ≥70 set is shown.
+    setScoreThreshold(FETCH_FLOOR);
+    setRefine(REFINE_DEFAULT);
     try {
       const r = await fetchProjectFinder(
         {
           requirements: buildRequirements(),
           // Standalone: no client → no geo-preference gate, no options to attach.
+          // Pull EVERYTHING ≥ 70; the score slider refines upward client-side.
           perGroup: 0,
-          minScore,
+          minScore: FETCH_FLOOR,
           sources: chosenSources,
           locale: isAr ? 'ar' : 'en',
         },
@@ -160,7 +259,10 @@ export default function ProjectFinderPage() {
     setDraft({});
     setBedrooms('');
     setSources({ our_projects: true, all_projects: true, market_listings: false });
-    setMinScore(60);
+    setScoreThreshold(FETCH_FLOOR);
+    setSortKey('score');
+    setRefine(REFINE_DEFAULT);
+    setShowRefine(false);
     setResp(null);
     setError(null);
     setHasSearched(false);
@@ -173,12 +275,37 @@ export default function ProjectFinderPage() {
     window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
   }
 
-  const total = totalFinderMatches(resp);
-  const activeItems = resp?.groups[activeTab] ?? [];
+  // Apply the score threshold + refine post-filters, then sort — per group.
+  const refinedGroups = useMemo(() => {
+    const out = {} as Record<FinderGroupKey, FinderMatch[]>;
+    for (const k of FINDER_GROUP_KEYS) {
+      const base = (resp?.groups[k] ?? []).filter((it) => it.score >= scoreThreshold && passesRefine(it, refine));
+      out[k] = sortItems(base, sortKey);
+    }
+    return out;
+  }, [resp, scoreThreshold, refine, sortKey]);
+
+  const fetchedTotal = totalFinderMatches(resp);
+  const refinedTotal = useMemo(
+    () => FINDER_GROUP_KEYS.reduce((n, k) => n + refinedGroups[k].length, 0),
+    [refinedGroups],
+  );
+  const activeItems = refinedGroups[activeTab] ?? [];
   const shown = activeItems.slice(0, visibleCount);
 
-  // Reset the render window on tab switch / new results.
-  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, resp]);
+  // Reset the render window whenever the visible list changes (tab / refine / sort / new results).
+  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, refinedGroups]);
+
+  // If refining empties the active tab, hop to the first tab that still has matches.
+  useEffect(() => {
+    if (!resp) return;
+    if (refinedGroups[activeTab].length === 0) {
+      const first = FINDER_GROUP_KEYS.find((k) => refinedGroups[k].length > 0);
+      if (first && first !== activeTab) setActiveTab(first);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refinedGroups]);
+
   // Grow the window as the sentinel scrolls into view (infinite scroll).
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -193,6 +320,7 @@ export default function ProjectFinderPage() {
   }, [activeItems.length, activeTab, visibleCount]);
 
   const BEDROOM_OPTS = [1, 2, 3, 4, 5, 6];
+  const numOrEmpty = (s: string): number | '' => (s === '' ? '' : Number(s));
 
   return (
     <div className="flex h-full flex-col" dir={isAr ? 'rtl' : 'ltr'}>
@@ -266,21 +394,6 @@ export default function ProjectFinderPage() {
                   </div>
                 </div>
 
-                {/* Min score */}
-                <div>
-                  <label className="mb-1 block text-xs font-bold text-charcoal/70">{L('الحد الأدنى للتطابق', 'Minimum match')}</label>
-                  <select
-                    value={minScore}
-                    onChange={(e) => setMinScore(Number(e.target.value))}
-                    className="form-input w-full"
-                  >
-                    <option value={40}>{L('40% — واسع', '40% — broad')}</option>
-                    <option value={60}>{L('60% — متوازن', '60% — balanced')}</option>
-                    <option value={70}>{L('70% — قوي', '70% — strong')}</option>
-                    <option value={80}>{L('80% — صارم', '80% — strict')}</option>
-                  </select>
-                </div>
-
                 <div className="flex items-center gap-2 pt-1">
                   <button
                     type="button"
@@ -312,11 +425,121 @@ export default function ProjectFinderPage() {
 
         {/* ── Results ── */}
         <div className="flex min-h-0 flex-1 flex-col">
-          {/* Group tabs */}
-          {hasSearched && !loading && !error && total > 0 && (
+          {/* Refinement toolbar — score slider + sort + refine, all client-side. */}
+          {hasSearched && !loading && !error && fetchedTotal > 0 && (
+            <div className="card mb-3 space-y-3 p-3">
+              {/* Score slider */}
+              <div>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-xs font-bold text-charcoal/70">{L('الحد الأدنى لنسبة التطابق', 'Minimum match score')}</span>
+                  <span className="rounded-md bg-copper/10 px-2 py-0.5 text-sm font-bold text-copper">{scoreThreshold}%+</span>
+                </div>
+                <input
+                  type="range"
+                  min={FETCH_FLOOR}
+                  max={100}
+                  step={5}
+                  value={scoreThreshold}
+                  onChange={(e) => setScoreThreshold(Number(e.target.value))}
+                  className="w-full accent-copper"
+                  aria-label={L('الحد الأدنى لنسبة التطابق', 'Minimum match score')}
+                />
+                <div className="mt-0.5 flex justify-between px-0.5 text-[10px] text-charcoal/40">
+                  {[70, 75, 80, 85, 90, 95, 100].map((n) => <span key={n}>{n}</span>)}
+                </div>
+              </div>
+
+              {/* Count + sort + refine toggle */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-semibold text-charcoal/60">
+                  {L(`عرض ${refinedTotal} من ${fetchedTotal}`, `Showing ${refinedTotal} of ${fetchedTotal}`)}
+                </span>
+                <div className="ms-auto flex items-center gap-2">
+                  <ArrowUpDown size={13} className="text-charcoal/40" />
+                  <select
+                    value={sortKey}
+                    onChange={(e) => setSortKey(e.target.value as SortKey)}
+                    className="form-input !w-auto !py-1 text-xs"
+                    aria-label={L('ترتيب', 'Sort')}
+                  >
+                    {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                      <option key={k} value={k}>{isAr ? SORT_LABELS[k].ar : SORT_LABELS[k].en}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setShowRefine((v) => !v)}
+                    className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-bold transition ${
+                      showRefine || refineIsActive(refine)
+                        ? 'border-copper/40 bg-copper/10 text-copper'
+                        : 'border-sand/60 bg-white text-charcoal/70 hover:bg-cream/60'
+                    }`}
+                  >
+                    <SlidersHorizontal size={13} />
+                    {L('تصفية دقيقة', 'Refine')}
+                    {refineIsActive(refine) && <span className="h-1.5 w-1.5 rounded-full bg-copper" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* Refine panel — HARD post-filters to focus a large set. */}
+              {showRefine && (
+                <div className="grid grid-cols-2 gap-2.5 rounded-lg border border-sand/40 bg-cream/30 p-3 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-bold text-charcoal/60">{L('أعلى سعر (ر.س)', 'Max price (SAR)')}</label>
+                    <input type="number" min={0} value={refine.priceMax}
+                      onChange={(e) => setRefine((r) => ({ ...r, priceMax: numOrEmpty(e.target.value) }))}
+                      placeholder={L('أي', 'Any')} className="form-input w-full !py-1 text-xs" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-bold text-charcoal/60">{L('أقل مساحة (م²)', 'Min area (m²)')}</label>
+                    <input type="number" min={0} value={refine.areaMin}
+                      onChange={(e) => setRefine((r) => ({ ...r, areaMin: numOrEmpty(e.target.value) }))}
+                      placeholder={L('أي', 'Any')} className="form-input w-full !py-1 text-xs" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-bold text-charcoal/60">{L('أعلى مساحة (م²)', 'Max area (m²)')}</label>
+                    <input type="number" min={0} value={refine.areaMax}
+                      onChange={(e) => setRefine((r) => ({ ...r, areaMax: numOrEmpty(e.target.value) }))}
+                      placeholder={L('أي', 'Any')} className="form-input w-full !py-1 text-xs" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-bold text-charcoal/60">{L('أقل عدد غرف', 'Min bedrooms')}</label>
+                    <select value={refine.bedroomsMin}
+                      onChange={(e) => setRefine((r) => ({ ...r, bedroomsMin: numOrEmpty(e.target.value) }))}
+                      className="form-input w-full !py-1 text-xs">
+                      <option value="">{L('أي', 'Any')}</option>
+                      {BEDROOM_OPTS.map((n) => <option key={n} value={n}>{n}+</option>)}
+                    </select>
+                  </div>
+                  <label className="col-span-2 flex items-center gap-2 self-end pb-1 text-xs text-charcoal/80 sm:col-span-1">
+                    <input type="checkbox" checked={refine.availableOnly}
+                      onChange={(e) => setRefine((r) => ({ ...r, availableOnly: e.target.checked }))}
+                      className="accent-copper" />
+                    {L('وحدات متاحة فقط', 'Available only')}
+                  </label>
+                  <label className="col-span-2 flex items-center gap-2 self-end pb-1 text-xs text-charcoal/80 sm:col-span-1">
+                    <input type="checkbox" checked={refine.verifiedOnly}
+                      onChange={(e) => setRefine((r) => ({ ...r, verifiedOnly: e.target.checked }))}
+                      className="accent-copper" />
+                    {L('موثّق بالإحداثيات فقط', 'Coordinate-verified only')}
+                  </label>
+                  {refineIsActive(refine) && (
+                    <button type="button" onClick={() => setRefine(REFINE_DEFAULT)}
+                      className="col-span-2 inline-flex items-center justify-center gap-1 rounded-lg border border-sand/60 bg-white px-2 py-1 text-[11px] font-bold text-charcoal/70 transition hover:bg-cream/60 sm:col-span-3">
+                      <RotateCcw size={12} /> {L('مسح التصفية الدقيقة', 'Clear refine')}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Group tabs (counts reflect the refined set) */}
+          {hasSearched && !loading && !error && fetchedTotal > 0 && (
             <div className="mb-3 flex flex-wrap gap-1">
               {FINDER_GROUP_KEYS.map((k) => {
-                const count = resp?.groups[k]?.length ?? 0;
+                const count = refinedGroups[k].length;
                 const on = activeTab === k;
                 return (
                   <button
@@ -349,13 +572,19 @@ export default function ProjectFinderPage() {
                 <p className="text-sm">{L('حدّد التفضيلات واضغط «بحث» لعرض المشاريع المطابقة.', 'Set your preferences and press “Find projects” to see matches.')}</p>
               </div>
             )}
-            {!loading && !error && hasSearched && total === 0 && (
+            {!loading && !error && hasSearched && fetchedTotal === 0 && (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
                 <Info size={22} className="text-copper" />
-                <p className="text-sm">{L('لا توجد مشاريع مطابقة. جرّب توسيع الموقع أو الميزانية أو خفض الحد الأدنى للتطابق.', 'No matching projects. Try widening the location/budget or lowering the minimum match.')}</p>
+                <p className="text-sm">{L('لا توجد مشاريع مطابقة. جرّب توسيع الموقع أو الميزانية.', 'No matching projects. Try widening the location or budget.')}</p>
               </div>
             )}
-            {!loading && !error && hasSearched && total > 0 && activeItems.length === 0 && (
+            {!loading && !error && hasSearched && fetchedTotal > 0 && refinedTotal === 0 && (
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
+                <Info size={22} className="text-copper" />
+                <p className="text-sm">{L('لا نتائج بهذه التصفية. اخفض نسبة التطابق أو وسّع التصفية الدقيقة.', 'Nothing matches this refinement. Lower the score or relax the refine filters.')}</p>
+              </div>
+            )}
+            {!loading && !error && refinedTotal > 0 && activeItems.length === 0 && (
               <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
             )}
 
