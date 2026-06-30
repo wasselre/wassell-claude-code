@@ -7,6 +7,7 @@ import DropdownSelect from './DropdownSelect';
 import MultiSelect from './MultiSelect';
 import LookupCombobox from './LookupCombobox';
 import LocationCascadeField from './LocationCascadeField';
+import ClientLocationField from './ClientLocationField';
 import UnitPickerField from './UnitPickerField';
 import PhoneInput from './PhoneInput';
 import DynamicCell from './DynamicCell';
@@ -61,6 +62,14 @@ interface DynamicFieldProps {
    */
   modelId?: string;
   recordId?: string;
+  /**
+   * Sibling-field writer. Lets a field renderer write OTHER keys on the same
+   * record (not just its own value). Used by the clients `location` field to
+   * persist `location_items` (district + geo-element preferences) alongside the
+   * base cascade. Surfaces that render the clients location section as a unified
+   * box must thread this; everywhere else it's optional and unused.
+   */
+  onPatch?: (patch: Record<string, unknown>) => void;
 }
 
 /** True when a URL points at a playable audio file (used to render a player). */
@@ -74,7 +83,7 @@ function isAudioUrl(url: string): boolean {
 }
 
 export default function DynamicField({
-  field, value, onChange, recordData, compact, modelId, recordId,
+  field, value, onChange, recordData, compact, modelId, recordId, onPatch,
 }: DynamicFieldProps) {
   const { t } = useTranslation();
   const { language, models, records, saveModel } = useAppStore();
@@ -366,8 +375,26 @@ export default function DynamicField({
           />
         );
 
-      case 'location':
+      case 'location': {
+        // The clients location section is unified: cascade capped at city + the
+        // district/geo-element preference chips (location_items), all in one box.
+        // Needs `onPatch` to write the sibling `location_items` key — surfaces that
+        // don't thread it fall back to the plain cascade.
+        const owner = modelId ? models.find((m) => m.id === modelId) : undefined;
+        if (owner?.name === 'clients' && onPatch) {
+          return (
+            <ClientLocationField
+              field={field}
+              value={value}
+              onChange={onChange}
+              itemsValue={recordData?.location_items}
+              onItemsChange={(next) => onPatch({ location_items: next })}
+              isAr={isAr}
+            />
+          );
+        }
         return <LocationCascadeField field={field} value={value} onChange={onChange} />;
+      }
 
       case 'unit_picker':
         return <UnitPickerField field={field} value={value} onChange={onChange} />;

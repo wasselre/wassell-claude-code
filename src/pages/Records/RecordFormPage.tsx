@@ -34,8 +34,6 @@ import Modal from '@/components/ui/Modal';
 import BackToSettings from '@/pages/Settings/components/BackToSettings';
 import SectionBlock from './components/SectionBlock';
 import RecordFormModal from './components/RecordFormModal';
-import LocationItemsEditor from '@/components/LocationItemsEditor';
-import { parseLocationItems } from '@/lib/geo/locationItems';
 import LinkedDocumentsPanel from './components/LinkedDocumentsPanel';
 import RecordDocumentsPanel from './components/RecordDocumentsPanel';
 import ListingMessagePanel from './components/ListingMessagePanel';
@@ -1505,20 +1503,6 @@ export default function RecordFormPage() {
           />
         ))}
       </div>
-      )}
-
-      {/* Detailed location preferences (clients.data.location_items) — the SAME
-        * shared editor as the Client 360 Preferences tab + the Edit-Full-Prefs
-        * modal, so it's available on the generic full-page client form too. */}
-      {model && model.name === 'clients' && (
-        <LocationItemsEditor
-          items={parseLocationItems(formData.location_items)}
-          onChange={(next) => handleFieldChange('location_items', next)}
-          locationField={model.schema.sections.flatMap((s) => s.fields).find((f) => f.type === 'location')}
-          locationValue={formData.location}
-          isAr={isAr}
-          disabled={readOnly}
-        />
       )}
 
       {/* Documents linked to this record via document↔record relationships.

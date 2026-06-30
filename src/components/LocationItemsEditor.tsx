@@ -20,6 +20,13 @@ interface Props {
   locationValue: unknown;
   isAr: boolean;
   disabled?: boolean;
+  /**
+   * When true, render bare (no outer bordered box, no "Detailed location
+   * preferences" header, no explanatory paragraph) — just the chips + add
+   * controls. Used when embedded inside the unified location section
+   * (`ClientLocationField`), which already provides the box, label, and subtext.
+   */
+  embedded?: boolean;
 }
 
 const flatFields = (m: AppModel | undefined): ModelField[] =>
@@ -34,7 +41,7 @@ const EXCLUDE_COLOR = '#B91C1C'; // red
  * geo-intelligence anchor (searched live via /api/geo-elements). Multiple items
  * are an OR-union; excludes subtract — the deterministic Project Finder gate.
  */
-export default function LocationItemsEditor({ items, onChange, locationField, locationValue, isAr, disabled }: Props) {
+export default function LocationItemsEditor({ items, onChange, locationField, locationValue, isAr, disabled, embedded }: Props) {
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
 
@@ -148,17 +155,21 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     </div>
   );
 
-  return (
-    <div className="sm:col-span-2 rounded-xl border border-sand/40 bg-cream/30 p-4">
-      <div className="mb-2 flex items-center gap-2">
-        <MapPin size={15} className="text-copper" />
-        <h4 className="text-xs font-bold text-chocolate">{isAr ? 'تفضيلات الموقع التفصيلية' : 'Detailed location preferences'}</h4>
-      </div>
-      <p className="mb-3 text-[11px] leading-5 text-charcoal/50">
-        {isAr
-          ? 'أحياء أو عناصر (مثل: ضمن ٥ كم من معلم). كل عنصر بديل مستقل — تُجمع النتائج (أو)، وتُطرح الاستثناءات.'
-          : 'Districts or elements (e.g. within 5 km of a landmark). Each is an independent option — results are unioned (OR); excludes subtract.'}
-      </p>
+  const inner = (
+    <>
+      {!embedded && (
+        <>
+          <div className="mb-2 flex items-center gap-2">
+            <MapPin size={15} className="text-copper" />
+            <h4 className="text-xs font-bold text-chocolate">{isAr ? 'تفضيلات الموقع التفصيلية' : 'Detailed location preferences'}</h4>
+          </div>
+          <p className="mb-3 text-[11px] leading-5 text-charcoal/50">
+            {isAr
+              ? 'أحياء أو عناصر (مثل: ضمن ٥ كم من معلم). كل عنصر بديل مستقل — تُجمع النتائج (أو)، وتُطرح الاستثناءات.'
+              : 'Districts or elements (e.g. within 5 km of a landmark). Each is an independent option — results are unioned (OR); excludes subtract.'}
+          </p>
+        </>
+      )}
 
       {/* Saved items as chips */}
       {items.length > 0 ? (
@@ -336,6 +347,12 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
           )}
         </div>
       )}
-    </div>
+    </>
+  );
+
+  return embedded ? (
+    <div className="space-y-2">{inner}</div>
+  ) : (
+    <div className="sm:col-span-2 rounded-xl border border-sand/40 bg-cream/30 p-4">{inner}</div>
   );
 }

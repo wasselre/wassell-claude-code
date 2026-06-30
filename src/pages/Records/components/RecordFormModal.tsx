@@ -8,8 +8,6 @@ import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import SectionBlock from './SectionBlock';
 import DuplicateWarningModal from './DuplicateWarningModal';
-import LocationItemsEditor from '@/components/LocationItemsEditor';
-import { parseLocationItems } from '@/lib/geo/locationItems';
 import { useAutoLink } from '../hooks/useAutoLink';
 import { useAutoFill } from '../hooks/useAutoFill';
 import { applyFollowupAutoStamp } from '../utils/followupAutoStamp';
@@ -99,14 +97,6 @@ export default function RecordFormModal({
   }, [model, formData]);
 
   if (!model) return null;
-
-  // The clients model carries detailed location preferences (location_items)
-  // alongside the location cascade. Surface the SAME shared editor here so the
-  // Follow-up Workspace "Edit Full Preferences" + SalesValuation client edit (both
-  // use this modal) can author them — not just the Client 360 Preferences tab.
-  const clientsLocationField = model.name === 'clients'
-    ? model.schema.sections.flatMap((s) => s.fields).find((f) => f.type === 'location')
-    : undefined;
 
   const title = isNew
     ? `${t('records.new_record')} — ${isAr ? model.label_ar : model.label_en}`
@@ -235,16 +225,6 @@ export default function RecordFormModal({
             }}
           />
         ))}
-
-        {model.name === 'clients' && (
-          <LocationItemsEditor
-            items={parseLocationItems(formData.location_items)}
-            onChange={(next) => handleFieldChange('location_items', next)}
-            locationField={clientsLocationField}
-            locationValue={formData.location}
-            isAr={isAr}
-          />
-        )}
       </div>
 
       {/* Duplicate-check warning — stacks above this modal (z-[60] > Modal's z-50). */}

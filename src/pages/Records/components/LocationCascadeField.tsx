@@ -8,6 +8,15 @@ interface LocationCascadeFieldProps {
   field: ModelField;
   value: unknown; // compound: single { key: id } | multi { key: id[] }
   onChange: (value: unknown) => void;
+  /**
+   * Cap the cascade's NAVIGATION + DISPLAY at this level key (e.g. 'city'). The
+   * real last level is still used for the multi/shape logic, so capped levels stay
+   * single-select + array-shaped — no data-shape change. Used by the clients
+   * location section, where district preferences live in `location_items` (chips)
+   * instead of the cascade. Omit (default) → full cascade, unchanged for every
+   * other model.
+   */
+  maxLevelKey?: string;
 }
 
 const LEVEL_LABELS: Record<string, { ar: string; en: string }> = {
@@ -33,13 +42,22 @@ const isStr = (v: unknown): v is string => typeof v === 'string' && v !== '';
  * Multi mode (clients) keeps region/city single (1-element arrays) and lets the
  * deepest level (district) hold many — stored as { region:[id], city:[id], district:[ids] }.
  */
-export default function LocationCascadeField({ field, value, onChange }: LocationCascadeFieldProps) {
+export default function LocationCascadeField({ field, value, onChange, maxLevelKey }: LocationCascadeFieldProps) {
   const { models, records, language } = useAppStore();
   const isAr = language === 'ar';
   const multi = !!field.location_multi;
   const levels = field.location_levels ?? [];
   const def = field.location_default ?? {};
   const lastIdx = levels.length - 1;
+  // The deepest level the cascade NAVIGATES + DISPLAYS. Defaults to the real last
+  // level; when `maxLevelKey` is set we stop there (e.g. 'city') while `lastIdx`
+  // still drives the multi/shape logic — so capped levels stay single-select +
+  // array-shaped and nothing about the stored value changes.
+  const navLastIdx = (() => {
+    if (!maxLevelKey) return lastIdx;
+    const i = levels.findIndex((l) => l.key === maxLevelKey);
+    return i >= 0 ? i : lastIdx;
+  })();
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -68,7 +86,7 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
     if (!lv) return [];
     const real = idsOf(lv.key);
     if (real.length) return real;
-    if (isEmpty && idx < lastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
+    if (isEmpty && idx < navLastIdx && isStr(def[lv.key])) return [def[lv.key] as string];
     return [];
   };
 
@@ -173,14 +191,14 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
     for (let d = idx + 1; d < levels.length; d++) nextIds[d] = []; // prune deeper
     commit(nextIds);
     setQuery('');
-    if (idx < lastIdx) setStep(idx + 1); else setOpen(false);
+    if (idx < navLastIdx) setStep(idx + 1); else setOpen(false);
   };
 
   const openAt = () => {
     // Start at the first level the user still needs to pick (region/city are
     // satisfied by the default, so an empty field opens straight to the district).
     let s = levels.findIndex((_, i) => effIds(i).length === 0);
-    if (s < 0) s = lastIdx; // all filled → let them edit the deepest
+    if (s < 0 || s > navLastIdx) s = navLastIdx; // all filled (or beyond cap) → edit the deepest shown
     setStep(s);
     setQuery('');
     setOpen(true);
@@ -192,18 +210,18 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
 
   // ── Collapsed box: the path of chosen (or defaulted) levels ──
   const pathParts: Array<{ idx: number; text: string; isReal: boolean }> = [];
-  levels.forEach((lv, idx) => {
+  levels.slice(0, navLastIdx + 1).forEach((lv, idx) => {
     const real = idsOf(lv.key);
     if (real.length) {
       const text = idx === lastIdx && multi && real.length > 1
         ? `${real.length} ${isAr ? 'أحياء' : 'districts'}`
         : nameOf(idx, real[0]!);
       pathParts.push({ idx, text, isReal: true });
-    } else if (idx < lastIdx && isStr(def[lv.key])) {
+    } else if (idx < navLastIdx && isStr(def[lv.key])) {
       pathParts.push({ idx, text: nameOf(idx, def[lv.key] as string), isReal: false });
     }
   });
-  const districtChosen = idsOf(levels[lastIdx]!.key).length > 0;
+  const deepestChosen = idsOf(levels[navLastIdx]!.key).length > 0;
 
   return (
     <div ref={wrapRef} className="relative">
@@ -223,10 +241,10 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
                 <span className={p.isReal ? 'text-charcoal font-semibold' : 'text-charcoal/45'}>{p.text}</span>
               </span>
             ))}
-            {!districtChosen && (
+            {!deepestChosen && (
               <span className="flex items-center gap-1 text-copper">
                 <ChevronLeft size={12} className="text-charcoal/30" />
-                {isAr ? `اختر ${levelLabel(lastIdx)}` : `pick ${levelLabel(lastIdx).toLowerCase()}`}
+                {isAr ? `اختر ${levelLabel(navLastIdx)}` : `pick ${levelLabel(navLastIdx).toLowerCase()}`}
               </span>
             )}
           </span>
@@ -237,7 +255,7 @@ export default function LocationCascadeField({ field, value, onChange }: Locatio
         <div className="absolute z-30 mt-1 w-full bg-white rounded-xl border border-sand shadow-xl overflow-hidden animate-[fadeIn_0.1s_ease]">
           {/* Breadcrumb steps — click any to (re)pick that level */}
           <div className="flex items-center flex-wrap gap-1 px-3 pt-2.5 pb-2 border-b border-sand/40">
-            {levels.map((lv, idx) => {
+            {levels.slice(0, navLastIdx + 1).map((lv, idx) => {
               const sel = idsOf(lv.key);
               const eff = effIds(idx);
               const label = levelLabel(idx);

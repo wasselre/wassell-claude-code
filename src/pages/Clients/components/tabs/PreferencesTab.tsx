@@ -4,8 +4,6 @@ import { useAppStore } from '@/stores/appStore';
 import { useRecordDraft } from '@/hooks/useRecordDraft';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import DynamicCell from '@/pages/Records/components/DynamicCell';
-import LocationItemsEditor from '@/components/LocationItemsEditor';
-import { parseLocationItems } from '@/lib/geo/locationItems';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { PREFERENCE_EDIT_SLUGS, isDerivedReadOnly, allFields } from '../../lib/clientView';
 
@@ -46,11 +44,10 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
     .map((slug) => allFields(clientsModel).find((f) => f.name === slug))
     .filter((f): f is ModelField => !!f);
 
-  // The detailed location preferences (clients.data.location_items) — not a model
-  // field, so it rides alongside the field patch on the same versioned save.
-  const locationField = allFields(clientsModel).find((f) => f.type === 'location');
-  const locationItems = parseLocationItems(draft.location_items);
-
+  // The detailed location preferences (clients.data.location_items) live INSIDE the
+  // unified location field (ClientLocationField, rendered by DynamicField for the
+  // clients model) — written via the onPatch sibling-writer below. They still ride
+  // alongside the field patch on the same versioned save.
   const eq = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   const itemsDirty = !eq(draft.location_items ?? [], client.data.location_items ?? []);
   const dirty = fields.some((f) => !eq(draft[f.name], client.data[f.name])) || itemsDirty;
@@ -107,6 +104,7 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
                 recordData={draft}
                 modelId={clientsModel.id}
                 recordId={client.id}
+                onPatch={patchDraft}
               />
             ) : (
               <div className="form-input min-h-[2.5rem] bg-cream/40">
@@ -115,17 +113,6 @@ export default function PreferencesTab({ client, clientsModel, isAr, canEdit }: 
             )}
           </div>
         ))}
-      </div>
-
-      <div className="mt-4">
-        <LocationItemsEditor
-          items={locationItems}
-          onChange={(next) => patchDraft({ location_items: next })}
-          locationField={locationField}
-          locationValue={draft.location}
-          isAr={isAr}
-          disabled={!canEdit}
-        />
       </div>
 
       {canEdit && dirty && (

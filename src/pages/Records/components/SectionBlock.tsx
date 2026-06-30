@@ -349,6 +349,7 @@ export default function SectionBlock({
                     recordData={formData}
                     modelId={currentModel.id}
                     recordId={recordId}
+                    onPatch={(patch) => Object.entries(patch).forEach(([k, v]) => onChange(k, v))}
                   />
                 )}
               </div>
