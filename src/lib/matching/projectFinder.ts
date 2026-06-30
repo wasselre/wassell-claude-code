@@ -74,7 +74,7 @@ export interface FinderResponse {
     missing_required_preferences: string[];
     /** Market-source status. 'ok' = full filtered set scored; 'needs_district' = pick a
      *  district; 'too_many' = too dense, ask for `suggest`ed criteria (never truncated). */
-    market?: { status: 'ok' | 'needs_district' | 'too_many'; count?: number; suggest?: string[] };
+    market?: { status: 'ok' | 'needs_district' | 'too_many' | 'unavailable'; count?: number; suggest?: string[] };
     /** True on the no-criteria short-circuit (the UI asks for preferences). */
     needs_preferences?: boolean;
     used_ai_parse?: boolean;

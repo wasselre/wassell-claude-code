@@ -121,6 +121,19 @@ function asNum(v: unknown): number | null {
   return null;
 }
 
+/** Entry price per m² (from the match's facts) — used as a BEST-VALUE tiebreaker
+ *  (lower = better value) when many matches tie on band+score. null when unknown
+ *  (sorted last). Within a district this equals "most below the benchmark median". */
+function matchPpm2(m: FinderMatch): number | null {
+  const pr = m.facts.price_range as { min?: unknown } | undefined;
+  const ar = m.facts.area_range as { min?: unknown } | undefined;
+  const price = pr ? asNum(pr.min) : null;
+  const area = ar ? asNum(ar.min) : null;
+  return price != null && price > 0 && area != null && area > 0 ? price / area : null;
+}
+const ppm2Asc = (a: FinderMatch, b: FinderMatch) =>
+  (matchPpm2(a) ?? Number.POSITIVE_INFINITY) - (matchPpm2(b) ?? Number.POSITIVE_INFINITY);
+
 /** Map the engine's band + geo signals to the finder's 4-band scale. A 'partial'
  *  match with low/no geo confidence or that needs verification is the weakest. */
 export function finderBand(item: MatchResultItem): FinderBand {
@@ -329,12 +342,15 @@ export function groupForFinder(
 
   // Rank within each group (deterministic). Nearby is ranked by REAL distance
   // (closest first), nulls last; everything else by band then score.
+  // Band → score → BEST VALUE (cheapest price/m² first) → name. The ppm2 tiebreaker
+  // makes a large "all ≥ N" list usefully ordered when many candidates tie on score.
   const byBandScore = (a: FinderMatch, b: FinderMatch) =>
-    BAND_RANK[a.match_band] - BAND_RANK[b.match_band] || b.score - a.score || a.project_name.localeCompare(b.project_name);
+    BAND_RANK[a.match_band] - BAND_RANK[b.match_band] || b.score - a.score ||
+    ppm2Asc(a, b) || a.project_name.localeCompare(b.project_name);
   groups.nearby_district_matches.sort(
     (a, b) =>
       (a.distance_km ?? Number.POSITIVE_INFINITY) - (b.distance_km ?? Number.POSITIVE_INFINITY) ||
-      b.score - a.score,
+      b.score - a.score || ppm2Asc(a, b),
   );
   groups.exact_district_matches.sort(byBandScore);
   groups.same_city_matches.sort(byBandScore);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X, Loader2, Sparkles, AlertTriangle, Info } from 'lucide-react';
 import type { AppModel, AppRecord } from '@/types';
 import { useAppStore } from '@/stores/appStore';
@@ -67,6 +67,13 @@ export default function SuggestedProjectsModal({
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<FinderGroupKey>('exact_district_matches');
   const [addStates, setAddStates] = useState<Record<string, 'idle' | 'saving' | 'added'>>({});
+  // Incremental render: the result set is uncapped (every match ≥ 70), which can be
+  // hundreds of cards. Render a window and grow it as the user scrolls (keeps the DOM
+  // light without a virtualization dep; handles variable card heights natively).
+  const PAGE = 24;
+  const [visibleCount, setVisibleCount] = useState(PAGE);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
   // id → display name for districts + cities, from the loaded geography records.
   const geoNames = useMemo(() => {
@@ -174,6 +181,22 @@ export default function SuggestedProjectsModal({
   const market = resp?.metadata.market;
   const suggestLabel = (code: string) => (MISSING_LABELS[code] ? (isAr ? MISSING_LABELS[code].ar : MISSING_LABELS[code].en) : code);
 
+  // Reset the render window when the visible list changes (tab switch / new results).
+  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, resp]);
+  // Grow the window as the sentinel scrolls into view (infinite scroll).
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const root = scrollRef.current;
+    if (!sentinel || !root) return;
+    const io = new IntersectionObserver(
+      (entries) => { if (entries.some((e) => e.isIntersecting)) setVisibleCount((c) => Math.min(c + PAGE, activeItems.length)); },
+      { root, rootMargin: '800px' },
+    );
+    io.observe(sentinel);
+    return () => io.disconnect();
+  }, [activeItems.length, activeTab, visibleCount]);
+  const shown = activeItems.slice(0, visibleCount);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-charcoal/40 p-3 sm:p-6" onMouseDown={onClose}>
       <div
@@ -244,6 +267,12 @@ export default function SuggestedProjectsModal({
             <span>{L('حدّد الحي لعرض إعلانات السوق.', 'Set a district to include market listings.')}</span>
           </div>
         )}
+        {market?.status === 'unavailable' && (
+          <div className="flex items-center gap-1.5 border-b border-amber-200 bg-amber-50 px-4 py-2 text-[11px] text-amber-800">
+            <AlertTriangle size={13} className="shrink-0" />
+            <span>{L('تعذّر تحميل إعلانات السوق — أعد المحاولة.', 'Couldn’t load market listings — please retry.')}</span>
+          </div>
+        )}
 
         {/* Group tabs */}
         <div className="flex flex-wrap gap-1 border-b border-sand/30 bg-white/40 px-3 py-2">
@@ -265,7 +294,7 @@ export default function SuggestedProjectsModal({
         </div>
 
         {/* Cards */}
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+        <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
           {loading && (
             <div className="flex h-full flex-col items-center justify-center gap-2 text-charcoal/55">
               <Loader2 size={22} className="animate-spin text-copper" />
@@ -290,7 +319,7 @@ export default function SuggestedProjectsModal({
           {!loading && !error && total > 0 && activeItems.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
           )}
-          {!loading && !error && activeItems.map((item) => (
+          {!loading && !error && shown.map((item) => (
             <FinderCard
               key={item.project_id}
               item={item}
@@ -300,6 +329,14 @@ export default function SuggestedProjectsModal({
               addState={addStates[item.project_id] ?? 'idle'}
             />
           ))}
+          {!loading && !error && activeItems.length > 0 && (
+            <>
+              {visibleCount < activeItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
+              <div className="py-2 text-center text-[11px] text-charcoal/45">
+                {L(`عرض ${shown.length} من ${activeItems.length}`, `Showing ${shown.length} of ${activeItems.length}`)}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

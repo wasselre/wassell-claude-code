@@ -1242,7 +1242,10 @@ export interface MatchCoreSuccess {
   marketInfo: MarketInfo;
 }
 export interface MarketInfo {
-  status: 'ok' | 'needs_district' | 'too_many';
+  /** 'ok' = scored in full; 'needs_district' = too broad; 'too_many' = exceeds the
+   *  scan limit (ask for criteria); 'unavailable' = the market read FAILED (don't
+   *  silently report 0 — tell the user to retry). */
+  status: 'ok' | 'needs_district' | 'too_many' | 'unavailable';
   /** Total matching market listings (only on 'too_many', best-effort for the message). */
   count?: number;
   /** Missing criteria that would narrow the search: 'budget' | 'unit_type' | 'bedrooms'. */
@@ -1628,8 +1631,11 @@ export async function matchProjectsCore(
           }
         } catch (err) {
           // Non-fatal: a market read failure must not sink the recommendation
-          // (our_projects + all_projects still return). Log loudly.
+          // (our_projects + all_projects still return). Log loudly AND signal
+          // 'unavailable' so the UI shows "couldn't load market — retry" instead of
+          // a misleading "0 market matches" (only if we hadn't already classified it).
           console.error('[matchProjectsCore] market_listings RPC failed:', err instanceof Error ? err.message : String(err));
+          if (marketInfo.status === 'ok') marketInfo = { status: 'unavailable' };
         }
       }
     }
