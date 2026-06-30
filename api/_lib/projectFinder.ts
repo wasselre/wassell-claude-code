@@ -123,13 +123,19 @@ function asNum(v: unknown): number | null {
 
 /** Entry price per m² (from the match's facts) — used as a BEST-VALUE tiebreaker
  *  (lower = better value) when many matches tie on band+score. null when unknown
- *  (sorted last). Within a district this equals "most below the benchmark median". */
+ *  (sorted last). Within a district this equals "most below the benchmark median".
+ *  A DATA-SANITY FLOOR (PPM2_FLOOR) treats implausibly low values as unknown so
+ *  corrupt listings (e.g. a price/area typo → 457 ر.س/m²) don't top the list as
+ *  fake "best value" — no urban-Saudi property is genuinely below this. */
+const PPM2_FLOOR = 1500;
 function matchPpm2(m: FinderMatch): number | null {
   const pr = m.facts.price_range as { min?: unknown } | undefined;
   const ar = m.facts.area_range as { min?: unknown } | undefined;
   const price = pr ? asNum(pr.min) : null;
   const area = ar ? asNum(ar.min) : null;
-  return price != null && price > 0 && area != null && area > 0 ? price / area : null;
+  if (price == null || price <= 0 || area == null || area <= 0) return null;
+  const ppm2 = price / area;
+  return ppm2 >= PPM2_FLOOR ? ppm2 : null;
 }
 const ppm2Asc = (a: FinderMatch, b: FinderMatch) =>
   (matchPpm2(a) ?? Number.POSITIVE_INFINITY) - (matchPpm2(b) ?? Number.POSITIVE_INFINITY);
