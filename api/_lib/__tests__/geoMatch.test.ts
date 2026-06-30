@@ -198,3 +198,89 @@ describe('point-less candidates', () => {
     expect(matches).toHaveLength(0); // no pin → radius is unprovable → not a false match
   });
 });
+
+// ── geometry-aware element rules: roads (line) + zones (polygon) ─────────────
+describe('line + polygon element rules', () => {
+  // Horizontal road (east-west) at lat 24.65; vertical road at lng 46.65.
+  const ROAD_H: GeoJsonGeometry = { type: 'LineString', coordinates: [[46.60, 24.65], [46.70, 24.65]] };
+  const ROAD_V: GeoJsonGeometry = { type: 'LineString', coordinates: [[46.65, 24.60], [46.65, 24.70]] };
+  // Zone polygon = the DISTRICT_A square (46.60–46.70, 24.60–24.70).
+  const ZONE: GeoJsonGeometry = DISTRICT_A;
+
+  const geoEl = (lat: number, lng: number, geometry: GeoJsonGeometry, geomKind: 'point' | 'linestring' | 'polygon') =>
+    ({ lat, lng, isActive: true, reviewStatus: 'approved', confidenceScore: 0.9, geometry, geomKind });
+  const gctx: CompileCtx = {
+    districtBoundary: () => null,
+    resolveElement: (id) =>
+      id === 'road_h' ? geoEl(24.65, 46.65, ROAD_H, 'linestring')
+        : id === 'road_v' ? geoEl(24.65, 46.65, ROAD_V, 'linestring')
+          : id === 'zone' ? geoEl(24.65, 46.65, ZONE, 'polygon')
+            : id === 'kafd_pt' ? { lat: KAFD.lat, lng: KAFD.lng, isActive: true, reviewStatus: 'approved', confidenceScore: 0.9, geometry: { type: 'Point', coordinates: [KAFD.lng, KAFD.lat] } as GeoJsonGeometry, geomKind: 'point' as const }
+              : null,
+  };
+  const rule = (r: string, element_id: string, extra: Record<string, unknown> = {}, polarity: 'include' | 'exclude' = 'include'): LocationItem =>
+    ({ id: `li-${r}`, kind: 'element_rule', polarity, conditions: [{ rule: r, element_id, ...extra }] as never });
+
+  it('north_of / south_of a horizontal road', () => {
+    const north = compileItem(rule('north_of', 'road_h'), gctx);
+    expect(north.validationStatus).toBe('ok');
+    expect(north.contains(46.65, 24.66)).toBe(true);  // north of the road
+    expect(north.contains(46.65, 24.64)).toBe(false); // south of the road
+    const south = compileItem(rule('south_of', 'road_h'), gctx);
+    expect(south.contains(46.65, 24.64)).toBe(true);
+    expect(south.contains(46.65, 24.66)).toBe(false);
+  });
+
+  it('east_of / west_of a vertical road', () => {
+    const east = compileItem(rule('east_of', 'road_v'), gctx);
+    expect(east.contains(46.66, 24.65)).toBe(true);   // east of the road
+    expect(east.contains(46.64, 24.65)).toBe(false);  // west of the road
+    const west = compileItem(rule('west_of', 'road_v'), gctx);
+    expect(west.contains(46.64, 24.65)).toBe(true);
+    expect(west.contains(46.66, 24.65)).toBe(false);
+  });
+
+  it('within_distance of a road uses the full line, not a centroid', () => {
+    const near = compileItem(rule('within_distance', 'road_h', { distance_m: 1000 }), gctx);
+    expect(near.validationStatus).toBe('ok');
+    // ~0.5 km north of the road (still 1 km even though far from the road's midpoint).
+    expect(near.contains(46.61, 24.6545)).toBe(true);
+    // ~5.5 km north of the road → outside 1 km.
+    expect(near.contains(46.65, 24.70)).toBe(false);
+  });
+
+  it('inside_area of a zone polygon (include + exclude)', () => {
+    const inside = compileItem(rule('inside_area', 'zone'), gctx);
+    expect(inside.contains(46.65, 24.65)).toBe(true);  // inside the zone
+    expect(inside.contains(47.05, 24.65)).toBe(false); // outside the zone
+    // exclude inside_area removes a candidate inside the zone.
+    const cIn: GeoCandidate = { id: 'p_in', lng: 46.65, lat: 24.65 };
+    const cOut: GeoCandidate = { id: 'p_out', lng: 47.05, lat: 24.65 };
+    const { matches } = compileAndMatch(
+      [includeDistrictB, rule('inside_area', 'zone', {}, 'exclude')], gctx2WithB(gctx), [cIn, cOut],
+    );
+    // include = district B (contains p_out's 47.05/24.65), exclude = inside zone (drops nothing in B).
+    expect(matches.map((m) => m.id)).toEqual(['p_out']);
+  });
+
+  it('within_distance of a zone polygon (edge collar, inside = 0 distance)', () => {
+    const near = compileItem(rule('within_distance', 'zone', { distance_m: 1000 }), gctx);
+    expect(near.contains(46.65, 24.65)).toBe(true);    // inside → distance 0
+    expect(near.contains(46.705, 24.65)).toBe(true);   // ~0.5 km east of the edge
+    expect(near.contains(46.80, 24.65)).toBe(false);   // ~10 km east of the edge
+  });
+
+  it('geometry/kind mismatch → needs_review (never a silent wrong match)', () => {
+    expect(compileItem(rule('inside_area', 'road_h'), gctx).validationStatus).toBe('needs_review'); // line, not polygon
+    expect(compileItem(rule('north_of', 'zone'), gctx).validationStatus).toBe('needs_review');      // polygon, not line
+    expect(compileItem(rule('north_of', 'kafd_pt'), gctx).validationStatus).toBe('needs_review');   // point, not line
+  });
+});
+
+// District B as an include, reusing the top-level fixture via a merged ctx.
+function gctx2WithB(base: CompileCtx): CompileCtx {
+  return {
+    resolveElement: base.resolveElement,
+    districtBoundary: (id) => (id === 'dist-B' ? DISTRICT_B : null),
+  };
+}

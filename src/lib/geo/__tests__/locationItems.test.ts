@@ -56,4 +56,25 @@ describe('describeLocationItem (bilingual)', () => {
     expect(describeLocationItem(rInc, true)).toBe('ضمن 5 كم من KAFD');
     expect(describeLocationItem(rExc, false)).toBe('Outside 3 km of KAFD');
   });
+
+  const mk = (rule: string, label: string, extra: Record<string, unknown> = {}): LocationItem => ({
+    id: 'x', kind: 'element_rule', polarity: 'include',
+    conditions: [{ rule, element_id: 'e', ...extra }] as never, element_label: label,
+  });
+
+  it('within_distance (line/polygon) reads like within km (ar/en)', () => {
+    expect(describeLocationItem(mk('within_distance', 'طريق الملك سلمان', { distance_m: 3000 }), true)).toBe('ضمن 3 كم من طريق الملك سلمان');
+    expect(describeLocationItem(mk('within_distance', 'King Salman Road', { distance_m: 3000 }), false)).toBe('Within 3 km of King Salman Road');
+  });
+  it('inside_area include vs exclude (ar/en)', () => {
+    expect(describeLocationItem(mk('inside_area', 'واجهة الرياض'), true)).toBe('داخل واجهة الرياض');
+    expect(describeLocationItem({ ...mk('inside_area', 'Riyadh Front'), polarity: 'exclude' }, false)).toBe('Outside Riyadh Front');
+  });
+  it('directional N/S/E/W (ar/en) and exclude negation', () => {
+    expect(describeLocationItem(mk('north_of', 'طريق الملك سلمان'), true)).toBe('شمال طريق الملك سلمان');
+    expect(describeLocationItem(mk('south_of', 'King Salman Road'), false)).toBe('South of King Salman Road');
+    expect(describeLocationItem(mk('east_of', 'طريق الملك فهد'), true)).toBe('شرق طريق الملك فهد');
+    expect(describeLocationItem(mk('west_of', 'King Fahd Road'), false)).toBe('West of King Fahd Road');
+    expect(describeLocationItem({ ...mk('north_of', 'الطريق الدائري'), polarity: 'exclude' }, true)).toBe('ليس شمال الطريق الدائري');
+  });
 });

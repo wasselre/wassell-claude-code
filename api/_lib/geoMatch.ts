@@ -11,15 +11,20 @@
  * way. The same dual-implementation pattern as geoVerify.ts ↔ v_all_projects_geo_integrity.
  *
  * ── MUST stay semantically identical to the SQL functions. ──
- * v1 supports exactly: include district, exclude district, within_radius of a
- * POINT geo_element. Road-directional / polygon / between / compound-AND beyond
- * within_radius are deliberately out of scope and are NOT implemented here.
+ * Supported element_rule conditions (geometry-aware):
+ *   • within_radius   — within X m of a POINT element's centroid (disc).
+ *   • within_distance — within X m of a LINE/POLYGON element's full geometry.
+ *   • inside_area     — inside a POLYGON element.
+ *   • north_of/south_of/east_of/west_of — cardinal side of a LINE element,
+ *     relative to ST_ClosestPoint(line, candidate) (per-candidate, not a static area).
+ * Plus include/exclude district. Conditions inside one item AND together.
  */
 
-// ── GeoJSON (subset we accept for district boundaries) ──────────────────────
+// ── GeoJSON (subset we accept: district/zone polygons + roads) ──────────────
 export interface GeoJsonGeometry {
-  type: 'Polygon' | 'MultiPolygon' | string;
-  // Polygon: number[][][]  |  MultiPolygon: number[][][][]  — always [lng, lat].
+  type: 'Polygon' | 'MultiPolygon' | 'LineString' | 'MultiLineString' | 'Point' | string;
+  // Polygon: number[][][] | MultiPolygon: number[][][][] | LineString: number[][]
+  // | MultiLineString: number[][][] | Point: number[]  — always [lng, lat].
   coordinates: unknown;
 }
 
@@ -33,21 +38,25 @@ export interface DistrictItem {
   district_id: string;
 }
 
-export interface WithinRadiusCondition {
-  rule: 'within_radius';
-  /** The anchor's STABLE external_id (geo_elements.external_id) — NOT the uuid. */
-  element_id: string;
-  distance_m: number;
-}
+export type DirectionRule = 'north_of' | 'south_of' | 'east_of' | 'west_of';
 
-/** v1 supports only within_radius conditions. */
-export type ElementCondition = WithinRadiusCondition;
+/** Anchor's STABLE external_id (geo_elements.external_id) — NOT the uuid. */
+export interface WithinRadiusCondition { rule: 'within_radius'; element_id: string; distance_m: number; }
+export interface WithinDistanceCondition { rule: 'within_distance'; element_id: string; distance_m: number; }
+export interface InsideAreaCondition { rule: 'inside_area'; element_id: string; }
+export interface DirectionalCondition { rule: DirectionRule; element_id: string; }
+
+export type ElementCondition =
+  | WithinRadiusCondition
+  | WithinDistanceCondition
+  | InsideAreaCondition
+  | DirectionalCondition;
 
 export interface ElementRuleItem {
   id: string;
   kind: 'element_rule';
   polarity: GeoPolarity;
-  /** Conditions inside ONE item are AND/intersection (v1: a single within_radius). */
+  /** Conditions inside ONE item AND/intersect (in practice the UI adds one). */
   logic?: 'AND';
   conditions: ElementCondition[];
 }
@@ -60,6 +69,7 @@ export type LocationItem = DistrictItem | ElementRuleItem;
  *  canonical matching point is (lat,lng) = the element's centroid_geog. The
  *  curation flags drive the usability gate below. */
 export interface ResolvedGeoElement {
+  /** Centroid (the within_radius point). */
   lat: number;
   lng: number;
   isActive: boolean;
@@ -67,6 +77,11 @@ export interface ResolvedGeoElement {
   reviewStatus: string;
   /** 0..1, or null when unknown (unknown is allowed). */
   confidenceScore: number | null;
+  /** Full geometry (GeoJSON, [lng,lat]) — required for within_distance / inside_area
+   *  / directional rules. within_radius needs only the centroid above. */
+  geometry?: GeoJsonGeometry | null;
+  /** Normalized kind: 'point' | 'linestring' | 'polygon'. Drives rule validity. */
+  geomKind?: 'point' | 'linestring' | 'polygon' | null;
 }
 
 export interface CompileCtx {
@@ -179,6 +194,75 @@ export function pointInPolygon(lng: number, lat: number, geometry: GeoJsonGeomet
 
 const isFiniteNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
+export const isPolygonal = (g: GeoJsonGeometry): boolean => g.type === 'Polygon' || g.type === 'MultiPolygon';
+export const isLineal = (g: GeoJsonGeometry): boolean => g.type === 'LineString' || g.type === 'MultiLineString';
+
+/** Visit every segment [ax,ay]→[bx,by] of a line/polygon geometry ([lng,lat]). */
+function eachSegment(geom: GeoJsonGeometry, cb: (ax: number, ay: number, bx: number, by: number) => void): void {
+  const line = (pts: number[][]) => {
+    for (let i = 1; i < pts.length; i++) cb(pts[i - 1]![0]!, pts[i - 1]![1]!, pts[i]![0]!, pts[i]![1]!);
+  };
+  switch (geom.type) {
+    case 'LineString': line(geom.coordinates as number[][]); break;
+    case 'MultiLineString': for (const l of geom.coordinates as number[][][]) line(l); break;
+    case 'Polygon': for (const ring of geom.coordinates as number[][][]) line(ring); break;
+    case 'MultiPolygon': for (const poly of geom.coordinates as number[][][][]) for (const ring of poly) line(ring); break;
+    default: break;
+  }
+}
+
+/** Closest point on segment a→b to p, in planar [lng,lat] (mirrors PostGIS
+ *  ST_ClosestPoint, which is planar on geometry). */
+function closestOnSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number): [number, number] {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return [ax, ay];
+  let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  return [ax + t * dx, ay + t * dy];
+}
+
+/** Closest point on a line/polygon geometry to (lng,lat), ranked by planar
+ *  distance (matches ST_ClosestPoint). Returns [lng,lat] or null when empty. */
+export function closestPointOnGeometry(lng: number, lat: number, geom: GeoJsonGeometry): [number, number] | null {
+  let best: [number, number] | null = null;
+  let bestD2 = Infinity;
+  eachSegment(geom, (ax, ay, bx, by) => {
+    const [qx, qy] = closestOnSegment(lng, lat, ax, ay, bx, by);
+    const d2 = (qx - lng) ** 2 + (qy - lat) ** 2;
+    if (d2 < bestD2) { bestD2 = d2; best = [qx, qy]; }
+  });
+  return best;
+}
+
+/** Great-circle distance (km) from (lng,lat) to a line/polygon geometry. A point
+ *  inside a polygon has distance 0 (mirrors ST_Distance/ST_DWithin on the full geom). */
+export function distanceToGeometryKm(lng: number, lat: number, geom: GeoJsonGeometry): number {
+  if (isPolygonal(geom) && pointInPolygon(lng, lat, geom)) return 0;
+  let best = Infinity;
+  eachSegment(geom, (ax, ay, bx, by) => {
+    const [qx, qy] = closestOnSegment(lng, lat, ax, ay, bx, by);
+    const d = haversineKm(lat, lng, qy, qx);
+    if (d < best) best = d;
+  });
+  return best;
+}
+
+/** Cardinal-direction predicate: candidate vs ST_ClosestPoint(line, candidate).
+ *  north: lat greater; south: lat less; east: lng greater; west: lng less. */
+export function directionalMatch(lng: number, lat: number, geom: GeoJsonGeometry, rule: DirectionRule): boolean {
+  const q = closestPointOnGeometry(lng, lat, geom);
+  if (!q) return false;
+  const [qx, qy] = q;
+  switch (rule) {
+    case 'north_of': return lat > qy;
+    case 'south_of': return lat < qy;
+    case 'east_of': return lng > qx;
+    case 'west_of': return lng < qx;
+    default: return false;
+  }
+}
+
 // ── Compile: one preference item → one CompiledItem ─────────────────────────
 
 /** Mirrors the per-item branch of wassell_compile_client_geo. */
@@ -202,39 +286,49 @@ export function compileItem(item: LocationItem, ctx: CompileCtx): CompiledItem {
     };
   }
 
-  // element_rule — v1: AND of within_radius discs (one disc in practice).
-  const discs: Array<{ lat: number; lng: number; km: number }> = [];
+  // element_rule — AND of geometry predicates (in practice one per item).
+  const preds: Array<(lng: number, lat: number) => boolean> = [];
   let validation: ValidationStatus = 'ok';
   const conditions = Array.isArray(item.conditions) ? item.conditions : [];
   if (!conditions.length) validation = 'needs_review';
   for (const cond of conditions) {
-    if (cond.rule !== 'within_radius') {
-      validation = 'needs_review'; // unsupported rule in v1
-      continue;
-    }
-    const dist = Number(cond.distance_m);
-    if (!isFiniteNum(dist) || dist <= 0) {
-      validation = 'needs_review';
-      continue;
-    }
     // Resolve the anchor by external_id and apply the shared usability gate
     // (missing | inactive | rejected | low_confidence | invalid → needs_review).
     const el = ctx.resolveElement(cond.element_id);
-    if (elementUsability(el) !== 'usable') {
-      validation = 'needs_review';
-      continue;
+    if (elementUsability(el) !== 'usable') { validation = 'needs_review'; continue; }
+    const geom = el!.geometry ?? null;
+
+    if (cond.rule === 'within_radius') {
+      const dist = Number(cond.distance_m);
+      if (!isFiniteNum(dist) || dist <= 0) { validation = 'needs_review'; continue; }
+      const { lat: clat, lng: clng } = el!;
+      const km = dist / 1000;
+      preds.push((lng, lat) => haversineKm(lat, lng, clat, clng) <= km);
+    } else if (cond.rule === 'within_distance') {
+      const dist = Number(cond.distance_m);
+      if (!isFiniteNum(dist) || dist <= 0 || !geom) { validation = 'needs_review'; continue; }
+      const km = dist / 1000;
+      preds.push((lng, lat) => distanceToGeometryKm(lng, lat, geom) <= km);
+    } else if (cond.rule === 'inside_area') {
+      if (!geom || !isPolygonal(geom)) { validation = 'needs_review'; continue; }
+      preds.push((lng, lat) => pointInPolygon(lng, lat, geom));
+    } else if (cond.rule === 'north_of' || cond.rule === 'south_of' || cond.rule === 'east_of' || cond.rule === 'west_of') {
+      if (!geom || !isLineal(geom)) { validation = 'needs_review'; continue; }
+      const dir = cond.rule;
+      preds.push((lng, lat) => directionalMatch(lng, lat, geom, dir));
+    } else {
+      validation = 'needs_review'; // unknown rule
     }
-    discs.push({ lat: el!.lat, lng: el!.lng, km: dist / 1000 });
   }
-  const hasArea = discs.length > 0;
+  const hasArea = preds.length > 0;
   return {
     itemId: item.id,
     polarity,
     kind: 'element_rule',
     districtIds: [],
     hasArea,
-    // AND across conditions: the point must be within EVERY disc.
-    contains: hasArea ? (lng, lat) => discs.every((d) => haversineKm(lat, lng, d.lat, d.lng) <= d.km) : () => false,
+    // AND across conditions: the point must satisfy EVERY predicate.
+    contains: hasArea ? (lng, lat) => preds.every((p) => p(lng, lat)) : () => false,
     validationStatus: validation,
   };
 }

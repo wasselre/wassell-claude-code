@@ -13,6 +13,8 @@ export interface GeoElementHit {
   display_name: string | null;
   category: string | null;
   type: string | null;
+  /** Normalized geometry kind — drives the rule UI: 'point' | 'linestring' | 'polygon'. */
+  geom_kind: 'point' | 'linestring' | 'polygon' | null;
   city: string | null;
   latitude: number | null;
   longitude: number | null;

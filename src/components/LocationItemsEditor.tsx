@@ -5,11 +5,50 @@ import type { AppModel, ModelField } from '@/types';
 import {
   type LocationItem,
   type GeoPolarity,
+  type ElementCondition,
+  type ConditionRule,
   describeLocationItem,
   newDistrictItem,
-  newRadiusItem,
+  newElementRuleItem,
 } from '@/lib/geo/locationItems';
 import { searchGeoElements, type GeoElementHit } from '@/lib/geo/client';
+
+type GeomKind = 'point' | 'linestring' | 'polygon';
+
+/** Whether a rule needs a distance input (within X). */
+const RULE_NEEDS_DISTANCE = (r: ConditionRule): boolean => r === 'within_radius' || r === 'within_distance';
+
+/**
+ * Which rules a chosen element supports, by its geometry kind. Point anchors take
+ * a radius; roads (lines) take a cardinal side or a distance; zones (polygons) take
+ * inside-area or a distance. Include/exclude is the separate polarity toggle.
+ */
+const RULE_OPTIONS = (kind: GeomKind, isAr: boolean): Array<{ rule: ConditionRule; label: string }> => {
+  if (kind === 'linestring') {
+    return [
+      { rule: 'north_of', label: isAr ? 'شمال الطريق' : 'North of road' },
+      { rule: 'south_of', label: isAr ? 'جنوب الطريق' : 'South of road' },
+      { rule: 'east_of', label: isAr ? 'شرق الطريق' : 'East of road' },
+      { rule: 'west_of', label: isAr ? 'غرب الطريق' : 'West of road' },
+      { rule: 'within_distance', label: isAr ? 'قريب من الطريق بمسافة' : 'Within distance of road' },
+    ];
+  }
+  if (kind === 'polygon') {
+    return [
+      { rule: 'inside_area', label: isAr ? 'داخل المنطقة' : 'Inside area' },
+      { rule: 'within_distance', label: isAr ? 'قريب من المنطقة بمسافة' : 'Within distance of area' },
+    ];
+  }
+  return [{ rule: 'within_radius', label: isAr ? 'ضمن مسافة' : 'Within distance' }];
+};
+
+/** Normalize a hit's geom_kind to one of the three buckets (default point). */
+const kindOf = (hit: GeoElementHit | null): GeomKind =>
+  hit?.geom_kind === 'linestring' || hit?.geom_kind === 'polygon' ? hit.geom_kind : 'point';
+
+/** Default rule when an element is first picked. */
+const defaultRule = (kind: GeomKind): ConditionRule =>
+  kind === 'linestring' ? 'north_of' : kind === 'polygon' ? 'inside_area' : 'within_radius';
 
 interface Props {
   items: LocationItem[];
@@ -90,6 +129,14 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
   const [elemError, setElemError] = useState<string | null>(null);
   const [picked, setPicked] = useState<GeoElementHit | null>(null);
   const [distKm, setDistKm] = useState(5);
+  // The condition rule chosen for the picked element (set from its geometry kind).
+  const [ruleSel, setRuleSel] = useState<ConditionRule>('within_radius');
+
+  // Pick an element and default its rule to the geometry-appropriate one.
+  const pickElement = (hit: GeoElementHit) => {
+    setPicked(hit);
+    setRuleSel(defaultRule(kindOf(hit)));
+  };
 
   // Debounced live search of geo anchors when the element panel is open.
   useEffect(() => {
@@ -121,6 +168,7 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     setElemResults([]);
     setPicked(null);
     setDistKm(5);
+    setRuleSel('within_radius');
   };
 
   const addDistrict = (opt: { id: string; label: string }) => {
@@ -130,7 +178,14 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
   const addElement = () => {
     if (!picked) return;
     const label = (isAr ? picked.name_ar || picked.name_en : picked.name_en || picked.name_ar) || picked.display_name || picked.external_id;
-    onChange([...items, newRadiusItem(picked.external_id, label, Math.round(distKm * 1000), polarity)]);
+    const element_id = picked.external_id;
+    const dist = Math.round(distKm * 1000);
+    let cond: ElementCondition;
+    if (ruleSel === 'within_radius') cond = { rule: 'within_radius', element_id, distance_m: dist };
+    else if (ruleSel === 'within_distance') cond = { rule: 'within_distance', element_id, distance_m: dist };
+    else if (ruleSel === 'inside_area') cond = { rule: 'inside_area', element_id };
+    else cond = { rule: ruleSel, element_id }; // north_of | south_of | east_of | west_of
+    onChange([...items, newElementRuleItem(label, cond, polarity)]);
     resetAdd();
   };
   const removeItem = (id: string) => onChange(items.filter((i) => i.id !== id));
@@ -273,16 +328,38 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
                   {isAr ? 'تغيير' : 'Change'}
                 </button>
               </div>
-              <label className="mb-1 block text-[11px] font-semibold text-charcoal/60">{isAr ? 'المسافة (كم)' : 'Distance (km)'}</label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min={0.1}
-                  step={0.5}
-                  value={distKm}
-                  onChange={(e) => setDistKm(Math.max(0.1, Number(e.target.value) || 0))}
-                  className="form-input w-28"
-                />
+              {/* Rule options adapt to the element's geometry: point → distance;
+                  road (line) → cardinal side or distance; zone (polygon) →
+                  inside-area or distance. Include/exclude is the polarity toggle above. */}
+              <label className="mb-1 block text-[11px] font-semibold text-charcoal/60">{isAr ? 'القاعدة' : 'Rule'}</label>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {RULE_OPTIONS(kindOf(picked), isAr).map((o) => (
+                  <button
+                    key={o.rule}
+                    type="button"
+                    onClick={() => setRuleSel(o.rule)}
+                    className={`rounded-lg border px-2.5 py-1 text-[11px] font-bold transition ${
+                      ruleSel === o.rule ? 'border-copper bg-copper text-white' : 'border-sand/50 bg-white text-charcoal/70 hover:bg-cream'
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <div className="flex items-end gap-2">
+                {RULE_NEEDS_DISTANCE(ruleSel) && (
+                  <div>
+                    <label className="mb-1 block text-[11px] font-semibold text-charcoal/60">{isAr ? 'المسافة (كم)' : 'Distance (km)'}</label>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.5}
+                      value={distKm}
+                      onChange={(e) => setDistKm(Math.max(0.1, Number(e.target.value) || 0))}
+                      className="form-input w-28"
+                    />
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={addElement}
@@ -325,7 +402,7 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
                     <button
                       key={g.external_id}
                       type="button"
-                      onClick={() => setPicked(g)}
+                      onClick={() => pickElement(g)}
                       className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-start transition hover:bg-cream"
                     >
                       <span className="min-w-0">
