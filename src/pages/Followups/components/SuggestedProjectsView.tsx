@@ -319,25 +319,47 @@ export default function SuggestedProjectsView({
     addToast(res.ok ? L('تمت إعادة تفعيل الخيار.', 'Option reactivated.') : L('تعذّرت إعادة التفعيل.', 'Could not reactivate.'), res.ok ? 'success' : 'error');
   }
 
-  // Persist the edited preferences to the client record (version-safe). The
-  // matched results aren't re-run by this — use "Search" for that.
-  async function onSavePrefsToClient() {
-    if (!clientRec) return noClient();
+  // Persist the edited preferences (incl. location_items) to the client record,
+  // version-safe. REQUIRED before a re-search when location_items changed: the
+  // server geo-gate compiles from the SAVED client (wassell_compile_client_geo by
+  // id), so an unsaved district/element rule wouldn't affect the results.
+  async function persistPrefs(): Promise<boolean> {
+    if (!clientRec) return true;
     setSavingPrefs(true);
     const patch: Record<string, unknown> = {};
     for (const slug of EDIT_SLUGS) patch[slug] = editDraft[slug];
+    patch.location_items = editDraft.location_items ?? [];
     const next: AppRecord = { ...clientRec, data: { ...clientRec.data, ...patch }, updated_at: new Date().toISOString() };
     const res = await saveRecord(next, { expectedVersion: clientRec.version ?? null });
     setSavingPrefs(false);
     if (res?.status === 'conflict') {
       addToast(L('تم تعديل بيانات العميل في مكان آخر — حدّث الصفحة.', 'Client was edited elsewhere — reload before saving.'), 'error');
-      return;
+      return false;
     }
-    addToast(L('تم حفظ التفضيلات للعميل.', 'Preferences saved to the client.'), 'success');
+    return true;
+  }
+
+  // The edited prefs differ from what's SAVED on the client (so a save is needed).
+  const clientPrefsDirty = useMemo(() => {
+    if (!clientRec) return false;
+    const base = clientRec.data as Record<string, unknown>;
+    if (EDIT_SLUGS.some((s) => JSON.stringify(editDraft[s] ?? null) !== JSON.stringify(base[s] ?? null))) return true;
+    return JSON.stringify(editDraft.location_items ?? null) !== JSON.stringify(base.location_items ?? null);
+  }, [editDraft, clientRec]);
+
+  // Save the edited prefs to the client (if changed) THEN re-run the match — so
+  // district/element rules in location_items actually narrow the results.
+  async function onSearchWithPrefs() {
+    if (clientRec && clientPrefsDirty) {
+      const ok = await persistPrefs();
+      if (!ok) return;
+    }
+    runSearch(editDraft);
   }
 
   const editDirty = useMemo(
-    () => EDIT_SLUGS.some((slug) => JSON.stringify(editDraft[slug] ?? null) !== JSON.stringify(searchedDraft[slug] ?? null)),
+    () => EDIT_SLUGS.some((slug) => JSON.stringify(editDraft[slug] ?? null) !== JSON.stringify(searchedDraft[slug] ?? null))
+      || JSON.stringify(editDraft.location_items ?? null) !== JSON.stringify(searchedDraft.location_items ?? null),
     [editDraft, searchedDraft],
   );
 
@@ -423,7 +445,7 @@ export default function SuggestedProjectsView({
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {editFields.map((field) => (
-                <div key={field.id}>
+                <div key={field.id} className={field.name === 'location' ? 'sm:col-span-2 lg:col-span-3' : ''}>
                   <label className="mb-1 block text-[11px] font-bold text-charcoal/70">
                     {isAr ? field.label_ar : field.label_en}
                   </label>
@@ -433,6 +455,9 @@ export default function SuggestedProjectsView({
                     onChange={(v) => setEditDraft((d) => ({ ...d, [field.name]: v }))}
                     recordData={editDraft}
                     compact
+                    modelId={clientsModel?.id}
+                    recordId={clientRec?.id ?? undefined}
+                    onPatch={(patch) => setEditDraft((d) => ({ ...d, ...patch }))}
                   />
                 </div>
               ))}
@@ -440,24 +465,16 @@ export default function SuggestedProjectsView({
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => runSearch(editDraft)}
-                disabled={loading}
+                onClick={onSearchWithPrefs}
+                disabled={loading || savingPrefs}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
               >
-                {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                {(loading || savingPrefs) ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
                 {L('بحث بالتفضيلات الجديدة', 'Search with new preferences')}
               </button>
-              {clientRec && (
-                <button
-                  type="button"
-                  onClick={onSavePrefsToClient}
-                  disabled={savingPrefs}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60 disabled:opacity-50"
-                >
-                  {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />}
-                  {L('حفظ التفضيلات للعميل', 'Save to client')}
-                </button>
-              )}
+              <span className="inline-flex items-center gap-1 text-[11px] text-charcoal/50">
+                <Save size={12} /> {L('تُحفظ التفضيلات للعميل عند البحث.', 'Preferences are saved to the client on search.')}
+              </span>
               {editDirty && (
                 <span className="text-[11px] font-semibold text-amber-700">
                   {L('لديك تعديلات غير مطبّقة — اضغط «بحث».', 'Unapplied edits — press “Search”.')}
