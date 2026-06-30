@@ -53,6 +53,7 @@ const ourProjects = model('our_projects', OP_ID, [
   field({ name: 'price_range', type: 'range', is_rollup: true, rollup_kind:'price_range' }),
   field({ name: 'bedroom_range', type: 'range', is_rollup: true, rollup_kind:'bedroom_range' }),
   field({ name: 'bathroom_range', type: 'range', is_rollup: true, rollup_kind:'bathroom_range' }),
+  field({ name: 'area_range', type: 'range', is_rollup: true, rollup_kind:'area_range' }),
 ]);
 
 const units = model('units', UN_ID, [
@@ -90,7 +91,7 @@ describe('resolveProjectFacts', () => {
         main_image: 'img-hero',
         project_images: ['img-hero', 'img-2', 'img-3'], // main_image already in the gallery → deduped
       })],
-      [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1', price_range: { min: 500000, max: 750000 }, bedroom_range: { min: 2, max: 5 }, bathroom_range: { min: 2, max: 4 } })],
+      [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1', price_range: { min: 500000, max: 750000 }, bedroom_range: { min: 2, max: 5 }, bathroom_range: { min: 2, max: 4 }, area_range: { min: 114.28, max: 186.07 } })],
       [UN_ID]: [
         rec('u1', UN_ID, { project_id: 'ap1', unit_type: 'apartment', bedrooms: 2, bathrooms: 2, total_price: 500000 }),
         rec('u2', UN_ID, { project_id: 'ap1', unit_type: 'villa', bedrooms: 5, bathrooms: 4, total_price: 750000 }),
@@ -110,6 +111,7 @@ describe('resolveProjectFacts', () => {
     ]);
     expect(f.bedrooms).toEqual({ min: 2, max: 5 });            // rollup from units
     expect(f.bathrooms).toEqual({ min: 2, max: 4 });
+    expect(f.areaRange).toEqual({ min: 114.28, max: 186.07 }); // area rollup (raw)
     expect(f.minPrice).toEqual({ ar: '500,000 ر.س', en: 'SAR 500,000' }); // computed floor wins
     expect(f.brochureLink).toBe('https://wassel.re/brochure.pdf');
     expect(f.locationLink).toBe('https://www.google.com/maps?q=24.7,46.6'); // lat,lng → maps URL
@@ -137,7 +139,7 @@ describe('resolveProjectFacts', () => {
     expect(f.imageFileIds).toEqual([]);
     // name is present (our_projects), so it's NOT in missing; the link is missing
     // because there's no master id to point at (location/brochure are no longer tracked).
-    expect(f.missing).toEqual(['city', 'district', 'unit_types', 'bedrooms', 'bathrooms', 'min_price', 'link']);
+    expect(f.missing).toEqual(['city', 'district', 'unit_types', 'bedrooms', 'area', 'bathrooms', 'min_price', 'link']);
   });
 
   it('uses a full http(s) location value as the link verbatim, and falls back to master min_price', () => {
@@ -179,6 +181,7 @@ describe('resolveProjectFacts', () => {
       field({ name: 'price_range', type: 'range', is_rollup: true, rollup_kind:'price_range' }),
       field({ name: 'bedroom_range', type: 'range', is_rollup: true, rollup_kind:'bedroom_range' }),
       field({ name: 'bathroom_range', type: 'range', is_rollup: true, rollup_kind:'bathroom_range' }),
+      field({ name: 'area_range', type: 'range', is_rollup: true, rollup_kind:'area_range' }),
     ]);
     // Live our_projects is a thin sidecar: just the lookup, no rollup fields.
     const ourLive = model('our_projects', OP, [
@@ -202,6 +205,7 @@ describe('resolveProjectFacts', () => {
         price_range: { min: 1200000, max: 1700000 },
         bedroom_range: { min: 2, max: 3 },
         bathroom_range: { min: 2, max: 3 },
+        area_range: { min: 120, max: 180 },
       })],
       [OP]: [rec('op', OP, { project: 'ap' })],
       [UN]: [
@@ -230,6 +234,7 @@ describe('composeProjectMessage', () => {
     district: { ar: 'النرجس', en: 'An-Narjis' },
     unitTypes: [{ ar: 'شقة', en: 'Apartment' }],
     bedrooms: { min: 2, max: 3 }, bathrooms: { min: 2, max: 3 },
+    areaRange: { min: 114.28, max: 186.07 },
     minPrice: { ar: '1,200,000 ر.س', en: 'SAR 1,200,000' },
     brochureLink: null,                                   // no longer rendered
     locationLink: 'https://maps.app.goo.gl/x',            // no longer rendered (location dropped)
@@ -259,6 +264,11 @@ describe('composeProjectMessage', () => {
     expect(body_ar.split('\n')[0]).toBe('مينا 52');
     expect(body_ar).toContain('المدينة: الرياض');
     expect(body_ar).toContain('غرف النوم: 2 - 3');
+    // area line, rounded to whole m², placed right after bedrooms
+    expect(body_ar).toContain('المساحة: 114 - 186 م²');
+    expect(body_en).toContain('Area: 114 - 186 m²');
+    expect(body_ar.indexOf('المساحة')).toBeGreaterThan(body_ar.indexOf('غرف النوم'));
+    expect(body_ar.indexOf('المساحة')).toBeLessThan(body_ar.indexOf('دورات المياه'));
     expect(body_en).toContain('City: Riyadh');
   });
 

@@ -45,6 +45,7 @@ const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
   district: { ar: 'الحي', en: 'District' },
   unit_types: { ar: 'أنواع الوحدات', en: 'Unit types' },
   bedrooms: { ar: 'غرف النوم', en: 'Bedrooms' },
+  area: { ar: 'المساحة', en: 'Area' },
   bathrooms: { ar: 'دورات المياه', en: 'Bathrooms' },
   min_price: { ar: 'السعر', en: 'Price' },
   link: { ar: 'رابط المشروع', en: 'Project link' },

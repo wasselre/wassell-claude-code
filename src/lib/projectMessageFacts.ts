@@ -44,6 +44,8 @@ export interface ProjectMessageFacts {
   unitTypes: Bilingual[];
   bedrooms: NumericRange | null;
   bathrooms: NumericRange | null;
+  /** Unit area range in m² (the all_projects `area_range` rollup). */
+  areaRange: NumericRange | null;
   /** Pre-formatted starting price per language (e.g. "1,200,000 ر.س" / "SAR 1,200,000"). */
   minPrice: Bilingual | null;
   brochureLink: string | null;
@@ -248,6 +250,7 @@ export function resolveProjectFacts(
 
   const bedrooms = (readRollup('bedroom_range') as NumericRange | null) ?? null;
   const bathrooms = (readRollup('bathroom_range') as NumericRange | null) ?? null;
+  const areaRange = (readRollup('area_range') as NumericRange | null) ?? null;
   const priceRange = readRollup('price_range') as NumericRange | null;
 
   // Minimum price — the calculated floor from real units. Fall back to a plain
@@ -291,6 +294,7 @@ export function resolveProjectFacts(
   if (!district) missing.push('district');
   if (unitTypes.length === 0) missing.push('unit_types');
   if (!bedrooms) missing.push('bedrooms');
+  if (!areaRange) missing.push('area');
   if (!bathrooms) missing.push('bathrooms');
   if (!minPrice) missing.push('min_price');
   // The website link replaces the brochure; flag it missing only when the
@@ -306,6 +310,7 @@ export function resolveProjectFacts(
     unitTypes,
     bedrooms: bedrooms ?? null,
     bathrooms: bathrooms ?? null,
+    areaRange,
     minPrice,
     brochureLink,
     locationLink,
@@ -317,6 +322,13 @@ export function resolveProjectFacts(
 
 function rangeText(r: NumericRange): string {
   return r.min === r.max ? String(r.min) : `${r.min} - ${r.max}`;
+}
+
+/** Area range, rounded to whole m² (unit areas come as decimals like 114.28). */
+function areaRangeText(r: NumericRange): string {
+  const lo = Math.round(r.min);
+  const hi = Math.round(r.max);
+  return lo === hi ? String(lo) : `${lo} - ${hi}`;
 }
 
 /**
@@ -342,6 +354,7 @@ export function composeProjectMessage(
     en.push(`Unit Types: ${facts.unitTypes.map((u) => u.en).join(', ')}`);
   }
   if (facts.bedrooms) { ar.push(`غرف النوم: ${rangeText(facts.bedrooms)}`); en.push(`Bedrooms: ${rangeText(facts.bedrooms)}`); }
+  if (facts.areaRange) { ar.push(`المساحة: ${areaRangeText(facts.areaRange)} م²`); en.push(`Area: ${areaRangeText(facts.areaRange)} m²`); }
   if (facts.bathrooms) { ar.push(`دورات المياه: ${rangeText(facts.bathrooms)}`); en.push(`Bathrooms: ${rangeText(facts.bathrooms)}`); }
   if (facts.minPrice) { ar.push(`الأسعار تبدأ من: ${facts.minPrice.ar}`); en.push(`Prices start from: ${facts.minPrice.en}`); }
   // The public-website unit-details link replaces the brochure (labeled
