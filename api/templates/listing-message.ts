@@ -91,8 +91,9 @@ Rules:
 2. The message MUST mention, where present: the unit type, the district, the area (m²), the number of bedrooms, and the number of bathrooms.
 3. Extract the features / amenities ONLY from the DESCRIPTION (e.g. private pool, elevator, maid's room, parking, finishing quality, near a mosque/school) and weave the real ones in. Do NOT invent amenities, prices, areas, or any fact not given.
 4. Use Saudi Riyal (ر.س / SAR) if a price is provided; never invent a price.
-5. Keep it concise and WhatsApp-friendly (a short intro line + the key facts + a brief call to action like "للتواصل والاستفسار"). A few tasteful emojis are fine; do not overuse them.
-6. Natural marketing tone — not a dry field list. NEVER write prose outside the tool; ALWAYS call write_listing_message.`;
+5. Keep it concise and WhatsApp-friendly (a short intro line + the key facts). A few tasteful emojis are fine; do not overuse them.
+6. END the message after the key facts — the LAST line is the price (or the last available fact if there is no price). Do NOT add any closing line: NO call to action, NO "للتواصل والاستفسار", NO contact/inquiry line, NO agency name or sign-off (e.g. «وصل العقارية» / «لقطة وصل» / «Wassel»). Nothing after the facts.
+7. Natural marketing tone — not a dry field list. NEVER write prose outside the tool; ALWAYS call write_listing_message.`;
 
 const TOOL_SCHEMA = {
   name: 'write_listing_message',
