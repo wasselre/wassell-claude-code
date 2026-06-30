@@ -123,10 +123,26 @@ export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Recor
     return { cancelled: true };
   }
 
+  // ── Re-host the source into our public bucket BEFORE calling fal ──────
+  // fal pulls the input bytes from the URL server-side, and the Aqar CDN
+  // (images.aqar.fm) blocks fal's fetcher (file_download_error / IP rate-limit
+  // — see CLAUDE.md memory on Aqar). So we fetch the photo ourselves (with a
+  // browser-like UA) and upload it to marketing-assets, which fal CAN fetch
+  // (every other fal flow sources images from this bucket), then hand fal that
+  // URL. Verified live 2026-06-30: passing the raw Aqar URL 422'd here.
+  let falInputUrl: string;
+  try {
+    falInputUrl = await rehostSource(supabase, sourceUrl, job.userId, job.recordId);
+  } catch (err) {
+    const msg = `source re-host failed: ${err instanceof Error ? err.message : String(err)}`;
+    await patchEntry({ status: 'failed', error: msg }).catch(() => undefined);
+    throw new Error(msg);
+  }
+
   // ── fal text-removal ─────────────────────────────────────────────────
   let outputUrl: string;
   try {
-    const start = await imageGenTextRemoval({ imageUrl: sourceUrl });
+    const start = await imageGenTextRemoval({ imageUrl: falInputUrl });
     const result = await pollImageGen(start, {
       intervalMs: POLL_INTERVAL_MS,
       timeoutMs: POLL_TIMEOUT_MS,
@@ -210,6 +226,46 @@ export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Recor
   await patchEntry({ status: 'completed', output_url: publicUrl, asset_id: assetId, error: null });
   console.log(`[run-clean] completed job=${job.id} entry=${job.entryId} asset=${assetId}`);
   return { asset_id: assetId, output_url: publicUrl };
+}
+
+/**
+ * Fetch a source photo (e.g. an Aqar CDN URL the listing carries) and re-host it
+ * to the public marketing-assets bucket so fal can fetch it. Sends a browser-like
+ * User-Agent + Referer because some CDNs (Aqar) hotlink-block datacenter/bot
+ * fetchers. Throws loudly on any failure (CLAUDE.md — never silent).
+ */
+async function rehostSource(
+  supabase: SupabaseClient,
+  sourceUrl: string,
+  userId: string,
+  recordId: string,
+): Promise<string> {
+  const res = await fetch(sourceUrl, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      Referer: 'https://sa.aqar.fm/',
+      Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+    },
+  });
+  if (!res.ok) throw new Error(`source fetch ${res.status}`);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const contentType = res.headers.get('content-type') ?? 'image/jpeg';
+  const ext = contentType.includes('png')
+    ? 'png'
+    : contentType.includes('webp')
+      ? 'webp'
+      : contentType.includes('jpeg') || contentType.includes('jpg')
+        ? 'jpg'
+        : 'jpg';
+  const path = `listing-clean/sources/${userId}/${recordId}/${crypto.randomUUID()}.${ext}`;
+  const { error: upErr } = await supabase.storage
+    .from(BUCKET)
+    .upload(path, bytes, { contentType, upsert: false });
+  if (upErr) throw new Error(`source upload failed: ${upErr.message}`);
+  const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+  if (!pub?.publicUrl) throw new Error('source uploaded but public URL not resolved');
+  return pub.publicUrl;
 }
 
 /** Translate raw fal.ai / network errors into plain text for the per-photo error box. */
