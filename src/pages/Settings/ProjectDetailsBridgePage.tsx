@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Loader2, AlertCircle, Sparkles, FileText, ArrowLeft } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { draftProjectDetails } from '@/lib/projectDetailsAi';
+import { draftProjectDetails, projectImagesToDetailFields } from '@/lib/projectDetailsAi';
 import type { AppRecord } from '@/types';
 
 /**
@@ -93,6 +93,11 @@ export default function ProjectDetailsBridgePage() {
     if (!detailsModel || !projectId) return;
     handledRef.current = true;
     const template = templateOverridesFromSiteSettings();
+    // Carry the project's existing images (main_image + project_images on the
+    // all_projects record) onto the detail page's hero + gallery slots, so a
+    // newly-created page opens with the real photos already in place — whether
+    // it was started empty or drafted with AI.
+    const images = project ? projectImagesToDetailFields(project.data as Record<string, unknown>) : {};
     const blank: AppRecord = {
       id: crypto.randomUUID(),
       model_id: detailsModel.id,
@@ -106,6 +111,8 @@ export default function ProjectDetailsBridgePage() {
         show_units: true,
         show_form: true,
         show_agent: true,
+        // Project images pulled from the all_projects record.
+        ...images,
         // Template text values from site_settings — admin can edit any of
         // these per-project in the new "نصوص الصفحة" section.
         ...template,

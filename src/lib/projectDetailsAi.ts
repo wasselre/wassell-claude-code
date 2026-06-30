@@ -64,6 +64,49 @@ function resolveOrWarnSlug(value: unknown, kind: 'feature' | 'landmark'): string
   return '';
 }
 
+/**
+ * Map the project's existing images (on its all_projects record) onto the
+ * project_details image fields so an AI-drafted (or empty) detail page opens
+ * with the real project photos already in place — no manual re-upload.
+ *
+ * The all_projects record carries:
+ *   • `main_image`    — a single file-ID, THE project hero image
+ *   • `project_images`— an array of file-IDs, the project's image library
+ * The project_details sidecar exposes `hero_image_url` + `gallery_image_1..8`,
+ * each holding ONE file-ID. We copy the file-IDs verbatim (NEVER invent one):
+ *   • hero_image_url ← main_image (falls back to the first library image)
+ *   • gallery_image_1..8 ← the remaining library images, hero filtered out so
+ *     it isn't shown twice, capped at the 8 available slots.
+ *
+ * The public-website resolver (wassell_file_is_public_marketing) already
+ * whitelists these project_details fields for public projects, so the copied
+ * file-IDs render on the website with no extra grant.
+ */
+export function projectImagesToDetailFields(projectData: Record<string, unknown>): Record<string, string> {
+  const main = typeof projectData.main_image === 'string' ? projectData.main_image.trim() : '';
+  const library = Array.isArray(projectData.project_images)
+    ? projectData.project_images.filter((x): x is string => typeof x === 'string' && x.trim() !== '')
+    : [];
+
+  const hero = main || library[0] || '';
+  const seen = new Set<string>();
+  if (hero) seen.add(hero);
+
+  const gallery: string[] = [];
+  for (const id of library) {
+    if (seen.has(id)) continue;
+    seen.add(id);
+    gallery.push(id);
+  }
+
+  const out: Record<string, string> = {};
+  if (hero) out.hero_image_url = hero;
+  gallery.slice(0, 8).forEach((id, i) => {
+    out[`gallery_image_${i + 1}`] = id;
+  });
+  return out;
+}
+
 export async function draftProjectDetails(projectId: string): Promise<DraftResult | DraftError> {
   if (!supabase) return { ok: false, error: 'Supabase not configured' };
   if (!projectId) return { ok: false, error: 'projectId is required' };
