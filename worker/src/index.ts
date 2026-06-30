@@ -27,6 +27,7 @@ import http from 'node:http';
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
 import { makeServiceClient } from './lib/serviceClient.js';
+import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
@@ -49,6 +50,13 @@ let wakeRequested = false;
 // vice-versa). Both loops share this one process + Supabase client.
 let imageBusy = false;
 let imageWakeRequested = false;
+// Listing-photo text removal (generation_jobs kind='clean-text') gets its OWN
+// independent loop too: a listing fans out N per-photo clean jobs in parallel and
+// they should drain at full speed without head-of-line-blocking behind image-chat
+// turns (and vice-versa). Shares the generation_jobs queue + RPCs; the image
+// loop's generation_jobs_watchdog() already sweeps stale jobs of ALL kinds.
+let cleanBusy = false;
+let cleanWakeRequested = false;
 // Office-preview conversions (file_preview_jobs) get a THIRD independent loop
 // for the same reason — a 2-10s soffice run should never wait behind a deck.
 let previewBusy = false;
@@ -259,6 +267,115 @@ async function runImageWatchdog(): Promise<void> {
     }
   } catch (err) {
     console.error(`[worker] image watchdog threw:`, err);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Listing-photo text removal — generation_jobs (kind='clean-text') queue.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued clean-text job (if any) and run it to completion. Mirrors
+ * claimAndRunOneImage but against kind='clean-text' and the per-photo
+ * runCleanTextJob pipeline. The claimed row's message_id carries the cleaning
+ * entry id this job fills. Returns true if a job was claimed.
+ */
+async function claimAndRunOneCleanText(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('generation_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+    p_kind: 'clean-text',
+  });
+  if (error) {
+    console.error(`[worker] clean-text claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    record_id: string;
+    message_id: string | null;
+    user_id: string;
+    kind: string;
+    prompt: string | null;
+    params: Record<string, unknown>;
+    attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  if (!row.message_id) {
+    console.error(`[worker] clean-text job=${row.job_id} has no message_id (cleaning entry id) — failing`);
+    await supabase.rpc('generation_job_fail', { p_job_id: row.job_id, p_error: 'missing cleaning entry id' });
+    return true;
+  }
+  const job: CleanTextJob = {
+    id: row.job_id,
+    recordId: row.record_id,
+    entryId: row.message_id,
+    userId: row.user_id,
+    params: row.params ?? {},
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed clean-text job=${job.id} record=${job.recordId} entry=${job.entryId} attempts=${job.attempts}`,
+  );
+
+  try {
+    const result = await runCleanTextJob({ supabase, env, job });
+    // generation_job_complete only touches status='running' rows — a cancel or
+    // watchdog-fail makes this a harmless no-op.
+    const { error: doneErr } = await supabase.rpc('generation_job_complete', {
+      p_job_id: job.id,
+      p_result: result ?? {},
+    });
+    if (doneErr) {
+      console.error(`[worker] generation_job_complete (clean-text) RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed clean-text job=${job.id}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] clean-text job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('generation_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] generation_job_fail (clean-text) RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(
+        `[worker] could not mark clean-text job failed: ${(innerErr as Error).message}`,
+      );
+    }
+  }
+  return true;
+}
+
+/**
+ * Clean-text twin of imagePollLoop. Runs concurrently with its own busy/wake
+ * flags. Does NOT tick a watchdog — generation_jobs_watchdog() (run by the image
+ * loop) already sweeps stale jobs of ALL kinds, including clean-text.
+ */
+async function cleanTextPollLoop(): Promise<void> {
+  while (!shuttingDown) {
+    cleanBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneCleanText();
+    } catch (err) {
+      console.error('[worker] clean-text poll iteration error:', err);
+    }
+    cleanBusy = false;
+
+    if (didClaim || cleanWakeRequested) {
+      cleanWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !cleanWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
   }
 }
 
@@ -1197,6 +1314,7 @@ const server = http.createServer((req, res) => {
         ok: true,
         busy,
         image_busy: imageBusy,
+        clean_busy: cleanBusy,
         preview_busy: previewBusy,
         compress_busy: compressBusy,
         document_busy: documentBusy,
@@ -1219,6 +1337,7 @@ const server = http.createServer((req, res) => {
     // of job it enqueued, and an extra poll on the idle loops is cheap.
     wakeRequested = true;
     imageWakeRequested = true;
+    cleanWakeRequested = true;
     previewWakeRequested = true;
     compressWakeRequested = true;
     documentWakeRequested = true;
@@ -1245,7 +1364,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -1267,6 +1386,7 @@ if (env.WORKFLOW_PROOF_ONLY) {
   loops = [
     pollLoop(),
     imagePollLoop(),
+    cleanTextPollLoop(),
     previewPollLoop(),
     compressPollLoop(),
     documentPollLoop(),

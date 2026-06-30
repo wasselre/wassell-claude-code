@@ -4025,6 +4025,24 @@ const chatTemplatesModel: AppModel = {
             lookup_model_id: allProjectsId,
             lookup_display_field: 'project_name',
           },
+          // Set by the Listing Message generator — links a generated template
+          // back to the market_listings record it was built from. Market
+          // listings are created out-of-band (Aqar import) with the stable id
+          // below; the same literal is used by clients.preferred_market_listings.
+          {
+            id: uuid(),
+            name: 'listing_id',
+            label_ar: 'إعلان السوق',
+            label_en: 'Market Listing',
+            type: 'lookup',
+            required: false,
+            order: 11,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            lookup_model_id: '8f06bc39-4bee-42e9-9fab-77023fb89ede',
+            lookup_display_field: 'title',
+          },
         ],
       },
     ],

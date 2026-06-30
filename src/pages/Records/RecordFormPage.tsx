@@ -36,6 +36,7 @@ import SectionBlock from './components/SectionBlock';
 import RecordFormModal from './components/RecordFormModal';
 import LinkedDocumentsPanel from './components/LinkedDocumentsPanel';
 import RecordDocumentsPanel from './components/RecordDocumentsPanel';
+import ListingMessagePanel from './components/ListingMessagePanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
 import UnitsTabPane from './components/UnitsTabPane';
@@ -1515,6 +1516,12 @@ export default function RecordFormPage() {
         * offers, …). Renders nothing when the model has no templates. */}
       {model && existingRecord?.id && (
         <RecordDocumentsPanel modelId={model.id} recordId={existingRecord.id} />
+      )}
+
+      {/* Generate a reusable WhatsApp message (AI text + text-removed photos)
+        * for a market listing. Renders nothing on every other model. */}
+      {model && existingRecord?.id && (
+        <ListingMessagePanel modelId={model.id} recordId={existingRecord.id} />
       )}
 
       {/* Call history is no longer a bottom-of-form fallback on every model

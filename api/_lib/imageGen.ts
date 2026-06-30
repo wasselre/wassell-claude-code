@@ -508,6 +508,97 @@ async function startGeneration(
   return { requestId, statusUrl, responseUrl };
 }
 
+/**
+ * Read env for the listing-photo text-removal flow. Reuses FAL_KEY / FAL_BASE_URL
+ * but a DEDICATED model id so it doesn't fight the marketing/chat flows. Defaults
+ * to fal's purpose-built text-removal model (EasyOCR text detection + LaMa
+ * inpaint) which removes all text while PRESERVING the rest of the photo —
+ * unlike the generative nano-banana / gpt-image-2 editors which re-render the
+ * whole frame. Swap FAL_CLEAN_TEXT_MODEL_ID if a stricter pipeline is needed.
+ */
+function readCleanTextEnv(): FalEnv {
+  const apiKey = process.env.FAL_KEY;
+  if (!apiKey) {
+    throw new Error('FAL_KEY is not set');
+  }
+  return {
+    apiKey,
+    baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
+    modelId: process.env.FAL_CLEAN_TEXT_MODEL_ID ?? 'fal-ai/image-editing/text-removal',
+  };
+}
+
+interface TextRemovalOpts {
+  /** Publicly-fetchable URL of the source photo (fal pulls the bytes). */
+  imageUrl: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Remove all text/writing from ONE photo while preserving the rest of the image.
+ * Used by the Listing Message flow (worker/src/runCleanTextJob.ts) to clean each
+ * market-listing photo before it becomes a reusable template. One job = one
+ * photo; the caller fans out across all of a listing's photos.
+ *
+ * Pair with `pollImageGen` — the model follows the same fal queue shape and
+ * returns `images: [{ url }]`, so the existing poller reads the result
+ * unchanged. NOTE this model takes a SINGULAR `image_url` (not the `image_urls`
+ * array the nano-banana/edit models use).
+ */
+export async function imageGenTextRemoval(opts: TextRemovalOpts): Promise<ImageGenStartResult> {
+  const env = readCleanTextEnv();
+  if (env.apiKey === STUB_KEY) {
+    return stubStart('clean-text');
+  }
+  if (!opts.imageUrl) {
+    throw new Error('imageGenTextRemoval requires an imageUrl');
+  }
+  return startTextRemoval(env, opts.imageUrl, opts.signal);
+}
+
+/**
+ * Submit a text-removal request to fal.ai's queue. Body shape differs from the
+ * other start* helpers: a singular `image_url` string (the model rejects the
+ * `image_urls` array). Returns the standard queue tracking URLs.
+ */
+async function startTextRemoval(
+  env: FalEnv,
+  imageUrl: string,
+  signal?: AbortSignal,
+): Promise<ImageGenStartResult> {
+  const modelPath = env.modelId.startsWith('/') ? env.modelId.slice(1) : env.modelId;
+  const url = `${env.baseUrl.replace(/\/$/, '')}/${modelPath}`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: authHeader(env),
+    },
+    body: JSON.stringify({ image_url: imageUrl, output_format: 'png' }),
+    signal,
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    throw new Error(`Image-gen clean-text start failed (${res.status}): ${errBody.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as {
+    request_id?: string;
+    status_url?: string;
+    response_url?: string;
+  };
+  const requestId = json.request_id ?? '';
+  const statusUrl = json.status_url ?? '';
+  const responseUrl = json.response_url ?? '';
+  if (!requestId || !statusUrl || !responseUrl) {
+    throw new Error(
+      `Image-gen clean-text response missing request_id/status_url/response_url: ${JSON.stringify(json).slice(0, 200)}`,
+    );
+  }
+  return { requestId, statusUrl, responseUrl };
+}
+
 interface PollOpts {
   intervalMs?: number;
   timeoutMs?: number;
@@ -541,6 +632,7 @@ export async function pollImageGen(
       design: STUB_FINAL_URL,
       icon: STUB_ICON_URL,
       chat: STUB_FINAL_URL,
+      'clean-text': STUB_CLEANED_URL,
     };
     return {
       status: 'completed',
@@ -601,7 +693,7 @@ export async function pollImageGen(
   throw new Error('Image-gen poll timed out');
 }
 
-function stubStart(phase: 'cleanup' | 'editing' | 'design' | 'icon' | 'chat'): ImageGenStartResult {
+function stubStart(phase: 'cleanup' | 'editing' | 'design' | 'icon' | 'chat' | 'clean-text'): ImageGenStartResult {
   const id = `stub-${phase}-${crypto.randomUUID()}`;
   return {
     requestId: id,

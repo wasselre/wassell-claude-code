@@ -159,6 +159,10 @@ export default function ChatTemplateFormPage() {
         id: existing?.id ?? uuid(),
         model_id: model.id,
         data: {
+          // Preserve listing-message keys (listing_id, images, status, cleaning,
+          // project_id, …) that this generic editor doesn't expose — otherwise
+          // saving here would wipe a listing template's cleaned photos + link.
+          ...((existing?.data as Record<string, unknown>) ?? {}),
           name: name.trim(),
           language,
           tags,
@@ -375,6 +379,30 @@ export default function ChatTemplateFormPage() {
               : 'File is uploaded to Haberchat once and reused every time the template is sent.'}
           </p>
         </div>
+
+        {/* Cleaned listing photos — read-only, set by the Listing Message
+          * generator (text removed via fal.ai). Shown only when present. */}
+        {Array.isArray((existing?.data as Record<string, unknown> | undefined)?.images) &&
+          ((existing!.data as Record<string, unknown>).images as unknown[]).length > 0 && (
+            <div>
+              <label className="block text-xs font-bold text-charcoal/40 mb-2">
+                {isAr ? 'صور الإعلان (بعد إزالة النص)' : 'Listing photos (text removed)'}
+              </label>
+              <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                {((existing!.data as Record<string, unknown>).images as Array<{ public_url?: string }>).map(
+                  (im, i) =>
+                    im.public_url ? (
+                      <img
+                        key={i}
+                        src={im.public_url}
+                        alt=""
+                        className="w-full aspect-square object-cover rounded-lg border border-sand/30"
+                      />
+                    ) : null,
+                )}
+              </div>
+            </div>
+          )}
       </div>
 
       {/* Footer actions */}
