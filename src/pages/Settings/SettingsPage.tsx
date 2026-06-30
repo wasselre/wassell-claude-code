@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText,
+  Globe, LayoutTemplate, FileText, MapPin,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -185,6 +185,17 @@ const CARDS: SettingsCard[] = [
     color: '#C4754A',
     bg: '#C4754A14',
     route: '/settings/project-details',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'عناصر الجغرافيا',
+    titleEn: 'Geo Elements',
+    descAr: 'إدارة معالم الرياض (طرق، مترو، مولات…) المستخدمة في تفضيلات الموقع وإيجاد المشاريع',
+    descEn: 'Manage Riyadh anchors (roads, metro, malls…) used by location preferences + Project Finder',
+    icon: MapPin,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/settings/geo-elements',
     adminOnly: true,
   },
 ];
