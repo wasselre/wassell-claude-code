@@ -524,9 +524,28 @@ function readCleanTextEnv(): FalEnv {
   return {
     apiKey,
     baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
-    modelId: process.env.FAL_CLEAN_TEXT_MODEL_ID ?? 'fal-ai/image-editing/text-removal',
+    // Prompt-driven generative EDIT model (OpenAI GPT Image 2 edit). Model
+    // history (all verified live 2026-06-30 on real Aqar photos):
+    //   1. `image-editing/text-removal` — auto-detect, preserved the photo but
+    //      INCONSISTENTLY left large stylized banner text (the Aqar title banners).
+    //   2. `nano-banana-pro/edit` (Gemini 3 Pro Image) — REFUSES ("unsafe content")
+    //      because it treats watermark/logo removal as policy-restricted.
+    //   3. `gpt-image-2/edit` — reliably removes ALL overlays (banners, logos,
+    //      aqar.fm watermark, handles) per the prompt while keeping the building,
+    //      angle, lighting, and aspect. Slower (~3 min/photo) but it actually works.
+    // Env-swappable via FAL_CLEAN_TEXT_MODEL_ID.
+    modelId: process.env.FAL_CLEAN_TEXT_MODEL_ID ?? 'openai/gpt-image-2/edit',
   };
 }
+
+/**
+ * The removal instruction handed to the edit model. Env-overridable
+ * (FAL_CLEAN_TEXT_PROMPT) so it can be tuned without a redeploy. Deliberately
+ * exhaustive about the overlay TYPES (banners, logos, watermarks, handles) and
+ * emphatic about preserving the underlying photograph.
+ */
+const CLEAN_TEXT_PROMPT =
+  'Remove every piece of text, writing, numbers, Arabic and English letters, logos, watermarks, captions, stickers, and graphic title banners from this image — including any colored header or footer banners, the real-estate agency logo at the top, the aqar.fm / sa.aqar.fm watermark, phone numbers, and social-media handles. Do NOT change the actual property photograph itself: keep the exact same building, rooms, composition, perspective, colors, and lighting. Cleanly fill the areas where text or graphics were removed so the result looks like the original photo with zero text or overlay graphics. Output only the clean photo, nothing else.';
 
 interface TextRemovalOpts {
   /** Publicly-fetchable URL of the source photo (fal pulls the bytes). */
@@ -535,15 +554,12 @@ interface TextRemovalOpts {
 }
 
 /**
- * Remove all text/writing from ONE photo while preserving the rest of the image.
- * Used by the Listing Message flow (worker/src/runCleanTextJob.ts) to clean each
- * market-listing photo before it becomes a reusable template. One job = one
- * photo; the caller fans out across all of a listing's photos.
+ * Remove all text/writing/overlays from ONE photo while preserving the
+ * underlying photograph. Used by the Listing Message flow
+ * (worker/src/runCleanTextJob.ts) to clean each market-listing photo. One job =
+ * one photo; the caller fans out across all of a listing's photos.
  *
- * Pair with `pollImageGen` — the model follows the same fal queue shape and
- * returns `images: [{ url }]`, so the existing poller reads the result
- * unchanged. NOTE this model takes a SINGULAR `image_url` (not the `image_urls`
- * array the nano-banana/edit models use).
+ * Pair with `pollImageGen` — same fal queue shape, returns `images: [{ url }]`.
  */
 export async function imageGenTextRemoval(opts: TextRemovalOpts): Promise<ImageGenStartResult> {
   const env = readCleanTextEnv();
@@ -557,9 +573,10 @@ export async function imageGenTextRemoval(opts: TextRemovalOpts): Promise<ImageG
 }
 
 /**
- * Submit a text-removal request to fal.ai's queue. Body shape differs from the
- * other start* helpers: a singular `image_url` string (the model rejects the
- * `image_urls` array). Returns the standard queue tracking URLs.
+ * Submit a text-removal EDIT to fal.ai's queue. Prompt-driven: `image_urls:[url]`
+ * + the removal prompt. `aspect_ratio` is intentionally OMITTED so the edit keeps
+ * the source framing instead of reframing to a fixed bucket. Returns the standard
+ * queue tracking URLs.
  */
 async function startTextRemoval(
   env: FalEnv,
@@ -576,7 +593,12 @@ async function startTextRemoval(
       Accept: 'application/json',
       Authorization: authHeader(env),
     },
-    body: JSON.stringify({ image_url: imageUrl, output_format: 'png' }),
+    body: JSON.stringify({
+      prompt: process.env.FAL_CLEAN_TEXT_PROMPT ?? CLEAN_TEXT_PROMPT,
+      image_urls: [imageUrl],
+      num_images: 1,
+      output_format: 'png',
+    }),
     signal,
   });
   if (!res.ok) {
