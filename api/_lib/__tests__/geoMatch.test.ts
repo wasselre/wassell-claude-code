@@ -24,9 +24,11 @@ const DISTRICT_B: GeoJsonGeometry = {
 
 const KAFD = { lat: 24.7625, lng: 46.6406 }; // a point landmark NORTH of district A
 
+// A usable, approved, high-confidence anchor resolver (mirrors geo_elements rows).
+const okEl = (lat: number, lng: number) => ({ lat, lng, isActive: true, reviewStatus: 'approved', confidenceScore: 0.9 });
 const ctx: CompileCtx = {
   districtBoundary: (id) => (id === 'dist-A' ? DISTRICT_A : id === 'dist-B' ? DISTRICT_B : null),
-  elementPoint: (id) => (id === 'kafd' ? KAFD : null),
+  resolveElement: (id) => (id === 'kafd' ? okEl(KAFD.lat, KAFD.lng) : null),
 };
 
 const includeDistrictA: LocationItem = { id: 'li-A', kind: 'district', polarity: 'include', district_id: 'dist-A' };
@@ -73,6 +75,37 @@ describe('within_radius containment', () => {
   });
 });
 
+// ── anchor usability gate (missing | inactive | rejected | low_confidence | invalid) ─
+describe('within_radius anchor usability gate', () => {
+  const ruleOn = (id: string): LocationItem => ({
+    id: 'li', kind: 'element_rule', polarity: 'include',
+    conditions: [{ rule: 'within_radius', element_id: id, distance_m: 5000 }],
+  });
+  const ctxFor = (el: ReturnType<CompileCtx['resolveElement']>): CompileCtx => ({
+    districtBoundary: () => null,
+    resolveElement: () => el,
+  });
+
+  it('usable: active, approved, confidence ≥ floor → ok', () => {
+    expect(compileItem(ruleOn('x'), ctxFor({ lat: 24.7, lng: 46.6, isActive: true, reviewStatus: 'approved', confidenceScore: 0.9 })).validationStatus).toBe('ok');
+  });
+  it('inactive → needs_review', () => {
+    expect(compileItem(ruleOn('x'), ctxFor({ lat: 24.7, lng: 46.6, isActive: false, reviewStatus: 'approved', confidenceScore: 0.9 })).validationStatus).toBe('needs_review');
+  });
+  it('rejected → needs_review', () => {
+    expect(compileItem(ruleOn('x'), ctxFor({ lat: 24.7, lng: 46.6, isActive: true, reviewStatus: 'rejected', confidenceScore: 0.9 })).validationStatus).toBe('needs_review');
+  });
+  it('low confidence (< 0.5) → needs_review', () => {
+    expect(compileItem(ruleOn('x'), ctxFor({ lat: 24.7, lng: 46.6, isActive: true, reviewStatus: 'approved', confidenceScore: 0.3 })).validationStatus).toBe('needs_review');
+  });
+  it('null confidence is allowed (unknown ≠ low) → ok', () => {
+    expect(compileItem(ruleOn('x'), ctxFor({ lat: 24.7, lng: 46.6, isActive: true, reviewStatus: 'pending', confidenceScore: null })).validationStatus).toBe('ok');
+  });
+  it('invalid coordinates → needs_review', () => {
+    expect(compileItem(ruleOn('x'), ctxFor({ lat: NaN, lng: 46.6, isActive: true, reviewStatus: 'approved', confidenceScore: 0.9 })).validationStatus).toBe('needs_review');
+  });
+});
+
 // ── OR union across items ───────────────────────────────────────────────────
 describe('OR union across location items', () => {
   // Candidate in A only, candidate in KAFD-radius only, candidate in B only.
@@ -106,7 +139,7 @@ describe('dedup by id', () => {
     // place a point just inside A's north edge and shrink? Simpler: use a candidate
     // that matches district A and ALSO district A again via a second include? Use
     // district A + a radius around a point INSIDE A.
-    const ctx2: CompileCtx = { ...ctx, elementPoint: (id) => (id === 'center' ? { lat: 24.65, lng: 46.65 } : ctx.elementPoint(id)) };
+    const ctx2: CompileCtx = { ...ctx, resolveElement: (id) => (id === 'center' ? okEl(24.65, 46.65) : ctx.resolveElement(id)) };
     const within2kmCenter: LocationItem = {
       id: 'li-center', kind: 'element_rule', polarity: 'include',
       conditions: [{ rule: 'within_radius', element_id: 'center', distance_m: 2000 }],

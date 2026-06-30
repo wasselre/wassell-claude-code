@@ -1,0 +1,62 @@
+{
+  "generated_at": "2026-06-30T12:24:55.397Z",
+  "source_file": "data/source/geo/riyadh-geo-intelligence.json",
+  "total": 725,
+  "upserted": 725,
+  "aliases_added": 1144,
+  "by_category": {
+    "airports_transport": 13,
+    "business_zones": 42,
+    "hospitals": 103,
+    "landmarks": 91,
+    "lifestyle": 10,
+    "malls": 58,
+    "metro_lines": 6,
+    "metro_stations": 84,
+    "parks": 98,
+    "ring_roads": 20,
+    "roads_major": 171,
+    "universities": 20,
+    "zones": 9
+  },
+  "by_type": {
+    "airport": 7,
+    "bus_station": 5,
+    "train_station": 1,
+    "commercial_zone": 36,
+    "financial_district": 6,
+    "hospital": 103,
+    "historic_site": 36,
+    "museum": 16,
+    "landmark": 30,
+    "tower": 9,
+    "lifestyle_destination": 10,
+    "mall": 58,
+    "metro_line": 6,
+    "metro_station": 84,
+    "park": 93,
+    "theme_park": 4,
+    "water_park": 1,
+    "ring_road": 20,
+    "arterial_road": 119,
+    "highway": 52,
+    "university": 20,
+    "corridor_zone": 9
+  },
+  "by_source_type": {
+    "openstreetmap": 716,
+    "manual_estimate": 9
+  },
+  "by_geometry_type": {
+    "polygon": 290,
+    "point": 232,
+    "linestring": 203
+  },
+  "missing_geometry": 0,
+  "missing_external_id": 0,
+  "missing_coords": 0,
+  "is_verified": 716,
+  "is_approximate": 206,
+  "low_confidence_below_floor": 9,
+  "confidence_floor": 0.5
+}

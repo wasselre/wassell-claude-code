@@ -35,6 +35,7 @@ export interface DistrictItem {
 
 export interface WithinRadiusCondition {
   rule: 'within_radius';
+  /** The anchor's STABLE external_id (geo_elements.external_id) — NOT the uuid. */
   element_id: string;
   distance_m: number;
 }
@@ -54,16 +55,49 @@ export interface ElementRuleItem {
 export type LocationItem = DistrictItem | ElementRuleItem;
 
 // ── Resolution context: how to turn an item's references into geometry ──────
+
+/** A within_radius anchor resolved from geo_elements (by external_id). The
+ *  canonical matching point is (lat,lng) = the element's centroid_geog. The
+ *  curation flags drive the usability gate below. */
+export interface ResolvedGeoElement {
+  lat: number;
+  lng: number;
+  isActive: boolean;
+  /** 'approved' | 'pending' | 'rejected' | … — only 'rejected' disqualifies. */
+  reviewStatus: string;
+  /** 0..1, or null when unknown (unknown is allowed). */
+  confidenceScore: number | null;
+}
+
 export interface CompileCtx {
   /** District boundary polygon (GeoJSON, [lng,lat]) or null when unknown. */
   districtBoundary(districtId: string): GeoJsonGeometry | null;
-  /** Point geo_element location, or null when the element is missing/not a point. */
-  elementPoint(elementId: string): { lat: number; lng: number } | null;
-  /** Element geometry validity. Defaults to 'ok' (point landmarks are unambiguous). */
-  elementValidationStatus?(elementId: string): 'ok' | 'needs_review';
+  /** Resolve a within_radius anchor by its STABLE external_id
+   *  (geo_elements.external_id). Return null when no row exists for that id. */
+  resolveElement(externalId: string): ResolvedGeoElement | null;
 }
 
 export type ValidationStatus = 'ok' | 'needs_review';
+
+/** Minimum import confidence for a within_radius anchor to be matchable. Below
+ *  this the compiled item is needs_review. Mirrors CONFIDENCE_FLOOR in the SQL
+ *  wassell_compile_client_geo — keep the two in sync. */
+export const CONFIDENCE_FLOOR = 0.5;
+
+export type ElementUsability = 'usable' | 'missing' | 'inactive' | 'rejected' | 'low_confidence' | 'invalid';
+
+/** The single anchor-usability rule, shared by compile. An anchor is usable iff
+ *  it exists, is active, isn't rejected, isn't below the confidence floor, and
+ *  has a finite point. Anything else → the compiled item is needs_review (never
+ *  silently dropped). MUST stay identical to the SQL gate in wassell_compile_client_geo. */
+export function elementUsability(e: ResolvedGeoElement | null): ElementUsability {
+  if (!e) return 'missing';
+  if (!e.isActive) return 'inactive';
+  if (e.reviewStatus === 'rejected') return 'rejected';
+  if (e.confidenceScore != null && e.confidenceScore < CONFIDENCE_FLOOR) return 'low_confidence';
+  if (!isFiniteNum(e.lat) || !isFiniteNum(e.lng)) return 'invalid';
+  return 'usable';
+}
 
 export interface CompiledItem {
   itemId: string;
@@ -178,14 +212,19 @@ export function compileItem(item: LocationItem, ctx: CompileCtx): CompiledItem {
       validation = 'needs_review'; // unsupported rule in v1
       continue;
     }
-    const center = ctx.elementPoint(cond.element_id);
     const dist = Number(cond.distance_m);
-    if (!center || !isFiniteNum(dist) || dist <= 0) {
+    if (!isFiniteNum(dist) || dist <= 0) {
       validation = 'needs_review';
       continue;
     }
-    if ((ctx.elementValidationStatus?.(cond.element_id) ?? 'ok') !== 'ok') validation = 'needs_review';
-    discs.push({ lat: center.lat, lng: center.lng, km: dist / 1000 });
+    // Resolve the anchor by external_id and apply the shared usability gate
+    // (missing | inactive | rejected | low_confidence | invalid → needs_review).
+    const el = ctx.resolveElement(cond.element_id);
+    if (elementUsability(el) !== 'usable') {
+      validation = 'needs_review';
+      continue;
+    }
+    discs.push({ lat: el!.lat, lng: el!.lng, km: dist / 1000 });
   }
   const hasArea = discs.length > 0;
   return {
