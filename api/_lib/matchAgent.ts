@@ -1582,35 +1582,21 @@ export async function matchProjectsCore(
       }
       if (rpcArgs) {
         try {
-          // PostgREST caps a single RPC response at ~1000 rows, so a LIMIT+1 fetch
-          // can NOT be the tripwire (it would never exceed the cap → silent
-          // truncation of dense districts). COUNT first (exact, cheap); if the
-          // filtered exact-district set exceeds MARKET_SCAN_LIMIT, signal 'too_many'
-          // (ask for more criteria) and drop nothing.
-          let total: number | null = null;
-          try {
-            const { data: c } = await supabase.rpc('wassell_market_candidate_count', rpcArgs);
-            total = c == null ? null : Number(c);
-          } catch (e) {
-            console.error('[matchProjectsCore] market count failed:', e instanceof Error ? e.message : String(e));
-          }
-          if (total != null && total > MARKET_SCAN_LIMIT) {
+          // ONE call: returns { total, rows } as a single jsonb value (NOT subject to
+          // PostgREST's ~1000-row response cap), and the expensive filter (id/district +
+          // budget/bed/type + per-row RLS) runs EXACTLY ONCE. The old count + 3-page
+          // fetch was 4 round-trips that each re-scanned + re-ran the per-row RLS — ~4×
+          // the work, which made a dense in-area set (2595 villas) take ~16s. `total`
+          // still drives the too_many guard (nothing dropped — we ask for more criteria).
+          const { data: jsonResult, error: jErr } = await supabase.rpc('wassell_market_candidates_json', {
+            ...rpcArgs, p_limit: MARKET_SCAN_LIMIT,
+          });
+          if (jErr) throw new Error(jErr.message);
+          const total = Number((jsonResult as { total?: number } | null)?.total ?? 0);
+          if (total > MARKET_SCAN_LIMIT) {
             marketInfo = { status: 'too_many', count: total, suggest: marketSuggestions(req) };
           } else {
-            // Fetch the COMPLETE filtered set, PAGING past PostgREST's per-response
-            // row cap (deterministic via the function's ORDER BY id). Nothing dropped,
-            // no recency cap.
-            const listingRows: RecordRow[] = [];
-            const PAGE = 1000;
-            for (let from = 0; from <= MARKET_SCAN_LIMIT; from += PAGE) {
-              const { data: pageRows, error: pErr } = await supabase
-                .rpc('wassell_market_candidates', { ...rpcArgs, p_limit: MARKET_SCAN_LIMIT + 1 })
-                .range(from, from + PAGE - 1);
-              if (pErr) throw new Error(pErr.message);
-              const batch = (pageRows ?? []) as RecordRow[];
-              listingRows.push(...batch);
-              if (batch.length < PAGE) break;
-            }
+            const listingRows = ((jsonResult as { rows?: RecordRow[] } | null)?.rows ?? []) as RecordRow[];
             const noMarketVerify = new Map<string, string | null>();
             for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
             for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
