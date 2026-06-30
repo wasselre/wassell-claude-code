@@ -388,7 +388,7 @@ export default function DynamicField({
               value={value}
               onChange={onChange}
               itemsValue={recordData?.location_items}
-              onItemsChange={(next) => onPatch({ location_items: next })}
+              onPatch={onPatch}
               isAr={isAr}
             />
           );
