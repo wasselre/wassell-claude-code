@@ -146,6 +146,21 @@ const MAX_LOCAL_VALUE_BYTES = 2 * 1024 * 1024; // ~2MB (UTF-16 ≈ chars × 2)
 // console.warn fires once per key, not on every save.
 const localStorageOversizeWarned = new Set<string>();
 
+// Network-backed slices that can grow without bound (full workflow-run history,
+// image-heavy whiteboards). They reliably blow past MAX_LOCAL_VALUE_BYTES, and the
+// ONLY cost of re-discovering that on every save is JSON.stringify-ing the whole
+// thing on the main thread — measured live at 114.6MB for `wassell_workflow_runs`,
+// which froze the tab for SECONDS on every save, INCLUDING every realtime
+// workflow-run update while the user was elsewhere in the app (e.g. the Project
+// Finder). They're re-fetched from Supabase on load, so the offline cache is
+// intentionally forgone: never even serialize them. (Dynamically-oversized OTHER
+// keys are still detected the slow way once, then short-circuited via
+// localStorageOversizeWarned below.)
+const NEVER_MIRROR_KEYS: ReadonlySet<string> = new Set([
+  'wassell_workflow_runs',
+  'wassell_whiteboards',
+]);
+
 // Audit fix M9: keys we'll evict (in this order) when we hit a quota error,
 // before the saveLocal call gives up. Ordered by "lowest user impact when
 // dropped" first. The active record/model state is excluded — losing those
@@ -170,6 +185,27 @@ function isQuotaError(err: unknown): boolean {
 }
 
 function saveLocal<T>(key: string, data: T): void {
+  // Fast path: keys we KNOW are too big to mirror (or already found oversized this
+  // session) are skipped BEFORE serializing — the JSON.stringify itself is the
+  // main-thread freeze we're avoiding (a 114MB workflow_runs history). Data is safe
+  // in memory + Supabase; only the offline cache of this one slice is forgone.
+  if (NEVER_MIRROR_KEYS.has(key) || localStorageOversizeWarned.has(key)) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // best-effort cleanup; the in-memory store + Supabase copy are unaffected
+    }
+    if (!localStorageOversizeWarned.has(key)) {
+      localStorageOversizeWarned.add(key);
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[localStorage] "${key}" is network-backed and not mirrored offline ` +
+          `(too large to cache; re-fetched from Supabase on load).`,
+      );
+    }
+    return;
+  }
+
   let serialized: string;
   try {
     serialized = JSON.stringify(data);
