@@ -67,7 +67,15 @@ export default function MultiSelect({ options, groups, value, onChange, placehol
     onChange(value.filter((x) => x !== v));
   };
 
-  const selectedOptions = value.map((v) => options.find((o) => o.value === v)).filter(Boolean);
+  // Map each selected value to its option definition. Values with NO matching
+  // option (e.g. imported multiselect data whose option catalog was never
+  // populated — market_listings `features` has 603 distinct scraped values and
+  // an empty `options` array) still render as a plain chip using the raw value
+  // as its label. Never silently drop a stored value: showing the raw text is
+  // always more correct than hiding data the user has.
+  const selectedItems: FieldOption[] = value.map(
+    (v) => options.find((o) => o.value === v) ?? { id: v, value: v, label_ar: v, label_en: v },
+  );
 
   // Case-insensitive match against both labels so the user can type in either language.
   const filteredOptions = useMemo(() => {
@@ -183,9 +191,9 @@ export default function MultiSelect({ options, groups, value, onChange, placehol
   return (
     <div ref={ref} className="relative">
       {/* Selected pills */}
-      {selectedOptions.length > 0 && (
+      {selectedItems.length > 0 && (
         <div className="flex flex-wrap gap-1 mb-1.5">
-          {selectedOptions.map((opt) => {
+          {selectedItems.map((opt) => {
             if (!opt) return null;
             return (
               <span
@@ -209,7 +217,7 @@ export default function MultiSelect({ options, groups, value, onChange, placehol
         className={`form-input flex items-center justify-between gap-2 text-start ${compact ? 'text-sm py-1 px-2' : ''}`}
       >
         <span className="text-charcoal/30 text-sm">
-          {selectedOptions.length === 0 ? (placeholder ?? '—') : `${selectedOptions.length} selected`}
+          {selectedItems.length === 0 ? (placeholder ?? '—') : `${selectedItems.length} selected`}
         </span>
         <ChevronDown size={16} className={`text-charcoal/30 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
