@@ -20,6 +20,7 @@ import {
 import FinderCard from '@/pages/Followups/components/FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/components/FinderRefinementBar';
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
+import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 
 /** Small labelled divider used to head a card section (our projects / other options). */
@@ -238,7 +239,11 @@ export default function ProjectFinderPage() {
 
   const controllerRef = useRef<AbortController | null>(null);
 
+  // Install the console-only freeze detector once (diagnoses main-thread hangs).
+  useEffect(() => { startFreezeDetector(); }, []);
+
   async function runSearch() {
+    markActivity('finder: search request');
     const chosenSources = (Object.keys(sources) as FinderSource[]).filter((s) => sources[s]);
     if (chosenSources.length === 0) {
       setError(L('اختر مصدراً واحداً على الأقل.', 'Pick at least one source.'));
@@ -269,6 +274,7 @@ export default function ProjectFinderPage() {
         },
         controller.signal,
       );
+      markActivity('finder: rendering results');
       setResp(r);
       // Land on the same-district tab; the auto-switch effect hops to the first
       // non-empty display tab if it has nothing (pinned our-projects aside).

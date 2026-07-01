@@ -20,6 +20,7 @@ import {
   type SortKey, type Refine, type DisplayTabKey,
 } from '@/lib/matching/finderRefine';
 import { setFinderHandoff } from '@/lib/matching/finderHandoff';
+import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
 import FinderCard from './FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
 import FinderMapView from './FinderMapView';
@@ -181,6 +182,7 @@ export default function SuggestedProjectsView({
   const controllerRef = useRef<AbortController | null>(null);
   // Re-run the deterministic match for a preference draft and reset the view.
   function runSearch(d: Record<string, unknown>) {
+    markActivity('finder: search request');
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -205,6 +207,7 @@ export default function SuggestedProjectsView({
     )
       .then((r) => {
         if (controller.signal.aborted) return;
+        markActivity('finder: rendering results');
         setResp(r);
         setSearchedDraft({ ...d });
         setActiveTab('exact_district_matches'); // auto-switch effect hops if empty
@@ -223,6 +226,8 @@ export default function SuggestedProjectsView({
 
   // Initial fetch on mount.
   useEffect(() => {
+    startFreezeDetector();
+    markActivity('finder: initial load');
     runSearch(prefDraft);
     return () => controllerRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -355,6 +360,7 @@ export default function SuggestedProjectsView({
   // id), so an unsaved district/element rule wouldn't affect the results.
   async function persistPrefs(): Promise<boolean> {
     if (!clientRec) return true;
+    markActivity('finder: saving preferences to client');
     setSavingPrefs(true);
     const patch: Record<string, unknown> = {};
     for (const slug of EDIT_SLUGS) patch[slug] = editDraft[slug];

@@ -3,6 +3,7 @@ import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
 import { MarkerClusterer, SuperClusterAlgorithm } from '@googlemaps/markerclusterer';
 import { Loader2, MapPin, X } from 'lucide-react';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
+import { markActivity } from '@/lib/perf/freezeDetector';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildColoredPinIcon, buildClusterIcon } from '@/lib/locationUtils';
 import type { FinderMatch, FinderSource } from '@/lib/matching/projectFinder';
 
@@ -100,6 +101,7 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
   // (Re)build markers + clusterer + fit bounds whenever the plotted set changes.
   useEffect(() => {
     if (!map || !isLoaded || !window.google) return;
+    markActivity(`finder: rendering ${plotted.length} map pins`);
     clustererRef.current?.clearMarkers();
     oursMarkersRef.current.forEach((m) => m.setMap(null));
     oursMarkersRef.current = [];
