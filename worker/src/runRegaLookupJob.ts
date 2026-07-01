@@ -163,24 +163,33 @@ export async function runRegaLookupJob({ supabase, env, job }: RunArgs): Promise
     const ctx = browser.contexts()[0]!;
     const page = ctx.pages()[0] ?? (await ctx.newPage());
 
-    // 1. Aqar ad page → full REGA href (keeps OfficesBroker/IndividualBroker).
-    await page.goto(`https://sa.aqar.fm/ad/${adId}/ar`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
-    const href = await page
-      .waitForFunction(
-        () => {
-          // Runs in the browser page (serialized by Playwright) — reference the
-          // DOM through a narrow typed view of globalThis so the Node-only worker
-          // tsconfig type-checks without pulling in the whole DOM lib.
-          const doc = (globalThis as unknown as {
-            document: { querySelector(s: string): { href: string } | null };
-          }).document;
-          const a = doc.querySelector('a[href*="rega.gov.sa"][href*="ElanDetails"]');
-          return a ? a.href : null;
-        },
-        { timeout: 45_000 },
-      )
-      .then((h) => h.jsonValue() as Promise<string | null>)
-      .catch(() => null);
+    // 1. Prefer the STORED REGA license link (`ad_license_url`) — every listing
+    // carries it (~92% of the set), and it already has the correct broker-type
+    // path (OfficesBroker/IndividualBroker). Using it skips the Aqar page
+    // entirely: faster, no dependency on Aqar exposing the anchor, one fewer
+    // Cloudflare-fronted site. Only when it's missing/invalid do we fall back to
+    // scraping the Aqar ad page for the link.
+    const storedLink = typeof listingData.ad_license_url === 'string' ? listingData.ad_license_url.trim() : '';
+    let href: string | null = /rega\.gov\.sa\/.*ElanDetails\//i.test(storedLink) ? storedLink : null;
+    if (!href) {
+      await page.goto(`https://sa.aqar.fm/ad/${adId}/ar`, { waitUntil: 'domcontentloaded', timeout: 90_000 });
+      href = await page
+        .waitForFunction(
+          () => {
+            // Runs in the browser page (serialized by Playwright) — reference the
+            // DOM through a narrow typed view of globalThis so the Node-only worker
+            // tsconfig type-checks without pulling in the whole DOM lib.
+            const doc = (globalThis as unknown as {
+              document: { querySelector(s: string): { href: string } | null };
+            }).document;
+            const a = doc.querySelector('a[href*="rega.gov.sa"][href*="ElanDetails"]');
+            return a ? a.href : null;
+          },
+          { timeout: 45_000 },
+        )
+        .then((h) => h.jsonValue() as Promise<string | null>)
+        .catch(() => null);
+    }
 
     if (!href) {
       // No active REGA license link — closed / withdrawn / unlicensed listing.
