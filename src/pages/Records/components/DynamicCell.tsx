@@ -15,7 +15,7 @@ import {
   AttachmentCell,
 } from './DriveCells';
 import { VideoCell, MultiVideoCell } from './VideoField';
-import type { ModelField, AppRecord, AttachmentRef, NoteEntry, LocationLevel } from '@/types';
+import type { ModelField, AppRecord, AttachmentRef, NoteEntry, LocationLevel, TableColumn } from '@/types';
 
 interface DynamicCellProps {
   field: ModelField;
@@ -110,6 +110,59 @@ export default function DynamicCell({ field, value, allRecords, recordData }: Dy
     case 'email':
     case 'number':
       return <span>{String(value)}</span>;
+
+    // Read-only display of a `table` field (rows = array of {column_slug: value}).
+    // Without this the default branch stringifies the array → "[object Object]".
+    case 'table': {
+      const cols: TableColumn[] = field.table_columns ?? [];
+      const rows = Array.isArray(value)
+        ? (value as unknown[]).filter(
+            (r): r is Record<string, unknown> => !!r && typeof r === 'object' && !Array.isArray(r),
+          )
+        : [];
+      if (cols.length === 0 || rows.length === 0) {
+        return <span className="text-charcoal/20">—</span>;
+      }
+      const renderCell = (col: TableColumn, raw: unknown) => {
+        if (raw === undefined || raw === null || raw === '') {
+          return <span className="text-charcoal/20">—</span>;
+        }
+        if (col.type === 'dropdown') {
+          const opt = col.options?.find((o) => o.value === raw);
+          if (opt) return <Badge label={isAr ? opt.label_ar : opt.label_en} color={opt.color} />;
+        }
+        return <span>{String(raw)}</span>;
+      };
+      return (
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="text-charcoal/50">
+                {cols.map((c) => (
+                  <th
+                    key={c.id}
+                    className="text-start font-bold px-2 py-1 border-b border-sand/40 whitespace-nowrap"
+                  >
+                    {isAr ? c.label_ar : c.label_en}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, ri) => (
+                <tr key={ri} className="align-top">
+                  {cols.map((c) => (
+                    <td key={c.id} className="px-2 py-1 border-b border-sand/20">
+                      {renderCell(c, row[c.name])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
 
     case 'url': {
       const href = String(value);
