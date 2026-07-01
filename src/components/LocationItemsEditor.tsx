@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MapPin, Plus, X, Search, Loader2, BadgeCheck, TriangleAlert } from 'lucide-react';
+import { MapPin, Plus, X, Search, Loader2, BadgeCheck, TriangleAlert, Check, Ban } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppModel, ModelField } from '@/types';
 import {
@@ -195,18 +195,47 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     return (q ? districtOptions.filter((o) => o.label.toLowerCase().includes(q)) : districtOptions).slice(0, 40);
   }, [districtOptions, districtQuery]);
 
-  const PolarityToggle = (
-    <div className="inline-flex overflow-hidden rounded-lg border border-sand/50 text-xs font-bold">
-      {(['include', 'exclude'] as GeoPolarity[]).map((p) => (
-        <button
-          key={p}
-          type="button"
-          onClick={() => setPolarity(p)}
-          className={`px-3 py-1.5 transition ${polarity === p ? 'bg-copper text-white' : 'bg-white text-charcoal/60 hover:bg-cream'}`}
-        >
-          {p === 'include' ? (isAr ? 'تضمين' : 'Include') : isAr ? 'استثناء' : 'Exclude'}
-        </button>
-      ))}
+  // Prominent include/exclude chooser shown at the top of the add panel — the
+  // first decision when adding a district or element: do you WANT this location
+  // (include) or do you want to HIDE projects there (exclude)? Applies to
+  // whatever district/element is added below.
+  const PolaritySelector = (
+    <div className="mb-3">
+      <label className="mb-1.5 block text-[11px] font-semibold text-charcoal/60">
+        {isAr ? 'هذا الموقع…' : 'This location…'}
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        {(['include', 'exclude'] as GeoPolarity[]).map((p) => {
+          const active = polarity === p;
+          const isInc = p === 'include';
+          const c = isInc ? INCLUDE_COLOR : EXCLUDE_COLOR;
+          return (
+            <button
+              key={p}
+              type="button"
+              onClick={() => setPolarity(p)}
+              className="flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-bold transition"
+              style={
+                active
+                  ? { backgroundColor: c, borderColor: c, color: '#fff' }
+                  : { backgroundColor: '#fff', borderColor: `${c}55`, color: c }
+              }
+            >
+              {isInc ? <Check size={14} /> : <Ban size={14} />}
+              {isInc ? (isAr ? 'أريده' : 'Include') : isAr ? 'استثناء' : 'Exclude'}
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[11px] leading-4 text-charcoal/50">
+        {polarity === 'exclude'
+          ? isAr
+            ? 'استثناء: لن تظهر المشاريع في هذا الموقع ضمن النتائج.'
+            : "Exclude: projects in this location won't appear in the results."
+          : isAr
+            ? 'تضمين: أظهر لي المشاريع في هذا الموقع.'
+            : 'Include: show me projects in this location.'}
+      </p>
     </div>
   );
 
@@ -270,17 +299,16 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
         </div>
       ) : (
         <div className="rounded-lg border border-sand/50 bg-white p-3">
-          <div className="mb-2 flex items-center justify-between">
+          <div className="mb-3 flex items-center justify-between">
             <span className="text-xs font-bold text-chocolate">
               {mode === 'district' ? (isAr ? 'إضافة حي' : 'Add district') : isAr ? 'إضافة عنصر' : 'Add element rule'}
             </span>
-            <div className="flex items-center gap-2">
-              {PolarityToggle}
-              <button type="button" onClick={resetAdd} className="text-charcoal/40 hover:text-charcoal" aria-label="close">
-                <X size={15} />
-              </button>
-            </div>
+            <button type="button" onClick={resetAdd} className="text-charcoal/40 hover:text-charcoal" aria-label="close">
+              <X size={15} />
+            </button>
           </div>
+
+          {PolaritySelector}
 
           {mode === 'district' ? (
             !cityId ? (
