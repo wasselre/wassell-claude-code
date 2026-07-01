@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { PhoneCall, Loader2, MessageCircle, AlertCircle } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { PhoneCall, Loader2, MessageCircle, AlertCircle, IdCard } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { enqueueRegaLookup } from '@/lib/regaLookup/client';
@@ -47,6 +48,7 @@ export default function ContactAdvertiserPanel({ modelId, recordId }: Props) {
   const status = typeof data.rega_lookup_status === 'string' ? data.rega_lookup_status : '';
   const regaError = typeof data.rega_lookup_error === 'string' ? data.rega_lookup_error : '';
   const regaAt = typeof data.rega_lookup_at === 'string' ? data.rega_lookup_at : null;
+  const advertiserId = typeof data.advertiser === 'string' ? data.advertiser : '';
   const sourceUrl = typeof data.source_url === 'string' ? data.source_url : '';
   const externalId = typeof data.external_id === 'string' ? data.external_id : String(data.external_id ?? '');
 
@@ -111,6 +113,15 @@ export default function ContactAdvertiserPanel({ modelId, recordId }: Props) {
           <span className="font-mono" dir="ltr">{advertiserPhone}</span>
           {' · '}
           {tr('من السجل الرسمي للهيئة العامة للعقار', 'from the official REGA registry')}
+          {advertiserId ? (
+            <>
+              {' · '}
+              <Link to={`/model/advertisers/${advertiserId}`} className="inline-flex items-center gap-1 text-copper hover:underline">
+                <IdCard size={12} />
+                {tr('عرض بطاقة المعلن', 'View advertiser record')}
+              </Link>
+            </>
+          ) : null}
         </p>
       ) : pending ? (
         <p className="text-xs text-charcoal/50 mt-2">

@@ -4,10 +4,15 @@ import RelatedModelTable from './RelatedModelTable';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 
 interface RelatedRecordsPanelProps {
-  clientId: string;
-  /** Excluded model name — usually 'clients' itself, since the client's own
-   *  record is already rendered in the parent tab pane. */
+  /** The record whose incoming links we list. */
+  recordId: string;
+  /** The model these incoming `lookup` fields must point at (e.g. 'clients',
+   *  'advertisers'). */
+  targetModelName: string;
+  /** Model name to skip (usually the target itself). Defaults to targetModelName. */
   excludeModelName?: string;
+  titleAr?: string;
+  titleEn?: string;
 }
 
 interface ModelMatch {
@@ -16,11 +21,13 @@ interface ModelMatch {
 }
 
 /**
- * Cross-model "Client 360" related-records list. For a given client record id,
- * walks every model's schema, finds every `lookup` field whose
- * `lookup_model_id` points at the clients model, and lists all records whose
- * stored value for that field references this client. Multi-value lookups are
- * matched by array `.includes`.
+ * Generic cross-model related-records list (the "Client 360" reverse-lookup,
+ * generalized to any target model). For a given record id, walks every model's
+ * schema, finds every `lookup` field whose `lookup_model_id` points at
+ * `targetModelName`, and lists all records whose stored value for that field
+ * references this record. Multi-value lookups are matched by array `.includes`.
+ * Used for clients (their follow-ups/appointments/… ) and advertisers (their
+ * linked market_listings).
  *
  * Each related model is rendered as a full table (`RelatedModelTable` wraps the
  * same `TableView` the Records list uses) with per-user adjustable columns and
@@ -28,18 +35,22 @@ interface ModelMatch {
  * record on its own page.
  *
  * Pure client-side: reads from the in-memory `models` + `records` slices.
- * No SQL, no extra fetches. Memoized on `[clientId, models, records]` —
- * Zustand returns stable references for unchanged slices, so re-renders are
- * cheap.
+ * No SQL, no extra fetches.
  */
-export default function RelatedRecordsPanel({ clientId, excludeModelName = 'clients' }: RelatedRecordsPanelProps) {
+export default function RelatedRecordsPanel({
+  recordId,
+  targetModelName,
+  excludeModelName = targetModelName,
+  titleAr = 'السجلات المرتبطة',
+  titleEn = 'Related Records',
+}: RelatedRecordsPanelProps) {
   const isAr = useAppStore((s) => s.language === 'ar');
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
 
-  const clientsModelId = useMemo(
-    () => models.find((m) => m.name === 'clients')?.id ?? null,
-    [models],
+  const targetModelId = useMemo(
+    () => models.find((m) => m.name === targetModelName)?.id ?? null,
+    [models, targetModelName],
   );
 
   // Map: target model id → fields (across all models) that lookup INTO it.
@@ -61,8 +72,8 @@ export default function RelatedRecordsPanel({ clientId, excludeModelName = 'clie
   }, [models]);
 
   const matchesByModel: ModelMatch[] = useMemo(() => {
-    if (!clientsModelId || !clientId) return [];
-    const candidates = lookupFieldsByTarget.get(clientsModelId) ?? [];
+    if (!targetModelId || !recordId) return [];
+    const candidates = lookupFieldsByTarget.get(targetModelId) ?? [];
     // Group candidates by model so we don't double-count a record matched on
     // two different lookup fields pointing at clients.
     const byModelId = new Map<string, ModelField[]>();
@@ -82,7 +93,7 @@ export default function RelatedRecordsPanel({ clientId, excludeModelName = 'clie
       for (const r of list) {
         for (const f of fields) {
           const v = (r.data as Record<string, unknown>)[f.name];
-          const hit = Array.isArray(v) ? v.includes(clientId) : v === clientId;
+          const hit = Array.isArray(v) ? v.includes(recordId) : v === recordId;
           if (hit && !seen.has(r.id)) {
             seen.add(r.id);
             matches.push(r);
@@ -99,16 +110,16 @@ export default function RelatedRecordsPanel({ clientId, excludeModelName = 'clie
       return al.localeCompare(bl);
     });
     return out;
-  }, [clientId, clientsModelId, models, records, lookupFieldsByTarget, excludeModelName, isAr]);
+  }, [recordId, targetModelId, models, records, lookupFieldsByTarget, excludeModelName, isAr]);
 
   if (matchesByModel.length === 0) {
     return (
       <section className="card">
         <h3 className="text-base font-semibold text-charcoal mb-2">
-          {isAr ? 'السجلات المرتبطة' : 'Related Records'}
+          {isAr ? titleAr : titleEn}
         </h3>
         <p className="text-sm text-charcoal/50">
-          {isAr ? 'لا توجد سجلات في النماذج الأخرى مرتبطة بهذا العميل.' : 'No records in other models reference this client yet.'}
+          {isAr ? 'لا توجد سجلات في النماذج الأخرى مرتبطة بهذا السجل.' : 'No records in other models reference this record yet.'}
         </p>
       </section>
     );
@@ -117,7 +128,7 @@ export default function RelatedRecordsPanel({ clientId, excludeModelName = 'clie
   return (
     <section>
       <h3 className="text-base font-semibold text-charcoal mb-3">
-        {isAr ? 'السجلات المرتبطة' : 'Related Records'}
+        {isAr ? titleAr : titleEn}
       </h3>
       <div className="space-y-6">
         {matchesByModel.map(({ model, matches }) => (

@@ -89,7 +89,7 @@ export default function ClientDetailsTabPane({ clientId }: ClientDetailsTabPaneP
         ))}
       </div>
 
-      <RelatedRecordsPanel clientId={clientRecord.id} excludeModelName="clients" />
+      <RelatedRecordsPanel recordId={clientRecord.id} targetModelName="clients" />
     </div>
   );
 }

@@ -38,6 +38,7 @@ import LinkedDocumentsPanel from './components/LinkedDocumentsPanel';
 import RecordDocumentsPanel from './components/RecordDocumentsPanel';
 import ListingMessagePanel from './components/ListingMessagePanel';
 import ContactAdvertiserPanel from './components/ContactAdvertiserPanel';
+import RelatedRecordsPanel from './components/RelatedRecordsPanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
 import UnitsTabPane from './components/UnitsTabPane';
@@ -1529,6 +1530,19 @@ export default function RecordFormPage() {
         * and open an in-app WhatsApp chat. Renders nothing on every other model. */}
       {model && existingRecord?.id && (
         <ContactAdvertiserPanel modelId={model.id} recordId={existingRecord.id} />
+      )}
+
+      {/* On an advertiser record, list every market listing linked to it
+        * (reverse lookup on the `advertiser` field). */}
+      {model?.name === 'advertisers' && existingRecord?.id && (
+        <div className="mt-6">
+          <RelatedRecordsPanel
+            recordId={existingRecord.id}
+            targetModelName="advertisers"
+            titleAr="الإعلانات المرتبطة"
+            titleEn="Linked listings"
+          />
+        </div>
       )}
 
       {/* Call history is no longer a bottom-of-form fallback on every model

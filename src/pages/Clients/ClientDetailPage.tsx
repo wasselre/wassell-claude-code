@@ -147,7 +147,7 @@ export default function ClientDetailPage() {
         {activeTab === 'timeline' && <TimelineTab view={view} ctx={ctx} isAr={isAr} />}
         {activeTab === 'whatsapp' && <WhatsAppHistoryPanel clientId={client.id} chrome="card" />}
         {activeTab === 'calls' && <CallHistoryPanel phones={phones} chrome="card" />}
-        {activeTab === 'related' && <RelatedRecordsPanel clientId={client.id} excludeModelName="clients" />}
+        {activeTab === 'related' && <RelatedRecordsPanel recordId={client.id} targetModelName="clients" />}
         {activeTab === 'notes' && (
           <SalesNotesTab view={view} client={client} clientsModel={clientsModel} ctx={ctx} isAr={isAr} canEdit={canEdit} />
         )}
