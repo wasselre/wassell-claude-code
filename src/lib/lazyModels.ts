@@ -67,6 +67,11 @@ export const SUMMARY_DATA_KEYS: Readonly<Record<string, readonly string[]>> = {
     // district_lookup / city_lookup / region_lookup keys were stripped.
     'location', 'latitude', 'longitude',
     'is_active', 'main_image_url', 'advertiser_name', 'image_count', 'video_count',
+    // Advertiser-contact enrichment (REGA lookup, 2026-07-01): the phone + the
+    // lookup lifecycle must ride in the slim store so the ContactAdvertiserPanel
+    // sees a cached phone on load AND the worker's write via Realtime. Small
+    // (null for ~all rows). Keep in sync with the market_listings_summary view.
+    'advertiser_phone', 'rega_lookup_status', 'rega_lookup_error', 'rega_lookup_at',
   ],
 };
 
