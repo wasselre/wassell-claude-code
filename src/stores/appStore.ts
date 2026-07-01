@@ -1333,6 +1333,7 @@ interface DbChatMessageRow {
   device_id: string;
   flow: 'in' | 'out';
   kind: string;
+  subtype: string | null;
   body: string | null;
   from_phone: string | null;
   to_phone: string | null;
@@ -1356,6 +1357,7 @@ function applyRealtimeRow(row: DbChatMessageRow): void {
     chat_wid: row.chat_wid,
     flow: row.flow,
     kind: row.kind,
+    subtype: row.subtype ?? null,
     body: row.body,
     from_phone: row.from_phone,
     to_phone: row.to_phone,

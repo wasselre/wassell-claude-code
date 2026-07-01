@@ -960,7 +960,8 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   conversation_record_id UUID NOT NULL,                    -- uuidv5(chat_wid); matches records.id
   device_id              TEXT NOT NULL,                    -- Haberchat device id (24-hex)
   flow                   TEXT NOT NULL CHECK (flow IN ('in', 'out')),
-  kind                   TEXT NOT NULL,                    -- text | image | video | audio | document | sticker | location | template | ...
+  kind                   TEXT NOT NULL,                    -- text | image | video | audio | document | sticker | location | template | interactive | notification_template | call_log | ...
+  subtype                TEXT,                             -- Haberchat message subtype; discriminates system events (e.g. biz_privacy_mode_init_fb on notification_template)
   body                   TEXT,                             -- text body or caption
   from_phone             TEXT,
   to_phone               TEXT,

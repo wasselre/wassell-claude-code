@@ -2355,6 +2355,10 @@ export interface ChatMessage {
   chat_wid: string;
   flow: 'in' | 'out';
   kind: 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'location' | 'template' | 'contact' | 'poll' | 'interactive' | string;
+  /** Haberchat message subtype — discriminates system events (e.g.
+   *  `biz_privacy_mode_init_fb` on a `notification_template`). Drives the
+   *  localized system-notice rendering for body-less system messages. */
+  subtype?: string | null;
   body: string | null;
   from_phone: string | null;
   to_phone: string | null;

@@ -173,6 +173,7 @@ async function handleNewMessage(event: WebhookEvent, deviceId: string, flow: 'in
       device_id: msg.device_id,
       flow: msg.flow,
       kind: msg.kind,
+      subtype: msg.subtype,
       body: msg.body,
       from_phone: msg.from_phone,
       to_phone: msg.to_phone,
@@ -337,6 +338,7 @@ interface NormalizedWebhookMessage {
   device_id: string;
   flow: 'in' | 'out';
   kind: string;
+  subtype: string | null;
   body: string | null;
   from_phone: string | null;
   to_phone: string | null;
@@ -388,6 +390,9 @@ function normalizeWebhookMessage(
     rawKind === 'file' || rawKind === 'doc' ? 'document' :
     rawKind;
 
+  const rawSubtype = raw.subtype;
+  const subtype = typeof rawSubtype === 'string' && rawSubtype ? rawSubtype.toLowerCase() : null;
+
   const body = (raw.body as string | null | undefined) ?? (raw.text as string | null | undefined) ?? (raw.message as string | null | undefined) ?? (raw.caption as string | null | undefined) ?? null;
 
   const fromPhone = pickPhone(raw.from) ?? pickPhone(raw.sender) ?? null;
@@ -420,6 +425,7 @@ function normalizeWebhookMessage(
     device_id: resolvedDevice,
     flow,
     kind,
+    subtype,
     body,
     from_phone: fromPhone,
     to_phone: toPhone,

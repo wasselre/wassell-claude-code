@@ -78,6 +78,10 @@ export interface HaberchatMessage {
   chatWid: string;            // parent conversation id
   flow: 'in' | 'out';
   kind: 'text' | 'image' | 'video' | 'audio' | 'document' | 'sticker' | 'location' | 'template' | 'contact' | 'poll' | 'interactive' | string;
+  // Haberchat's message subtype — discriminates system events (e.g.
+  // `biz_privacy_mode_init_fb` on a `notification_template`). Used by the UI
+  // to render a localized system notice for body-less system messages.
+  subtype: string | null;
   body: string | null;
   fromPhone: string | null;
   toPhone: string | null;
@@ -323,6 +327,7 @@ interface HaberchatMessageRaw {
   // kind
   kind?: string;
   type?: string;
+  subtype?: string | null;
   // parties
   from?: string | null;
   to?: string | null;
@@ -382,6 +387,7 @@ function normalizeMessage(raw: HaberchatMessageRaw, fallbackChatWid: string): Ha
     rawKind;
 
   const body = raw.body ?? raw.text ?? raw.message ?? raw.caption ?? null;
+  const subtype = typeof raw.subtype === 'string' && raw.subtype ? raw.subtype.toLowerCase() : null;
 
   const fromPhone = raw.from ?? raw.sender ?? null;
   const toPhone = raw.to ?? raw.recipient ?? null;
@@ -433,6 +439,7 @@ function normalizeMessage(raw: HaberchatMessageRaw, fallbackChatWid: string): Ha
     chatWid,
     flow,
     kind,
+    subtype,
     body,
     fromPhone,
     toPhone,

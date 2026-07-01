@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle } from 'lucide-react';
+import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import { fetchFileBlob } from '@/lib/haberchat/client';
 import { useAppStore } from '@/stores/appStore';
@@ -22,6 +22,24 @@ export default function MessageBubble({
   isAr: boolean;
 }) {
   const isOut = message.flow === 'out';
+
+  // WhatsApp system events (privacy notices, call logs, E2E notices, deleted
+  // messages…) aren't conversational messages — Haberchat delivers them
+  // without a text body. Render a centered, muted notice instead of an empty
+  // left/right bubble that would otherwise show a bare `[kind]` placeholder.
+  const notice = systemNoticeText(message, isAr);
+  if (notice) {
+    return (
+      <div className="flex justify-center w-full">
+        <span
+          dir={isAr ? 'rtl' : 'ltr'}
+          className="max-w-[85%] text-center text-[11px] text-charcoal/55 bg-charcoal/5 rounded-full px-3 py-1"
+        >
+          {notice}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex ${isOut ? 'justify-end' : 'justify-start'} w-full`}>
@@ -296,8 +314,65 @@ function iconFor(kind: string): { Icon: typeof FileText; labelAr: string; labelE
     case 'document': return { Icon: FileText, labelAr: 'مستند', labelEn: 'Document' };
     case 'sticker': return { Icon: Sticker, labelAr: 'ملصق', labelEn: 'Sticker' };
     case 'location': return { Icon: MapPin, labelAr: 'موقع', labelEn: 'Location' };
-    default: return { Icon: FileText, labelAr: `[${kind}]`, labelEn: `[${kind}]` };
+    // Conversational kinds WhatsApp delivers without a plain-text body — show
+    // a friendly label instead of a raw `[kind]` token.
+    case 'interactive': return { Icon: MessageSquare, labelAr: 'رسالة تفاعلية', labelEn: 'Interactive message' };
+    case 'template': return { Icon: FileText, labelAr: 'رسالة قالب', labelEn: 'Template message' };
+    case 'poll': return { Icon: ListChecks, labelAr: 'استطلاع', labelEn: 'Poll' };
+    case 'contact':
+    case 'vcard': return { Icon: User, labelAr: 'جهة اتصال', labelEn: 'Contact' };
+    default: return { Icon: MessageSquare, labelAr: 'رسالة', labelEn: 'Message' };
   }
+}
+
+// WhatsApp / Haberchat system-event kinds — delivered without a text body.
+// Rendered as a centered notice, not a conversation bubble. Verified against
+// the live Haberchat API: e.g. a `notification_template` with subtype
+// `biz_privacy_mode_init_fb` is WhatsApp's "another company manages this chat"
+// privacy notice; `call_log` rows carry no body either.
+const SYSTEM_KINDS = new Set([
+  'notification_template',
+  'call_log',
+  'e2e_notification',
+  'notification',
+  'gp2',
+  'protocol',
+  'ciphertext',
+  'revoked',
+]);
+
+function systemNoticeText(message: ChatMessage, isAr: boolean): string | null {
+  if (!SYSTEM_KINDS.has(message.kind)) return null;
+  // If a system message unexpectedly carries a real body, prefer showing it.
+  if (message.body && message.body.trim()) return message.body;
+
+  const sub = (message.subtype ?? '').toLowerCase();
+
+  if (message.kind === 'call_log') {
+    const video = sub.includes('video');
+    if (isAr) return video ? '📹 مكالمة فيديو' : '📞 مكالمة صوتية';
+    return video ? '📹 Video call' : '📞 Voice call';
+  }
+
+  // Business "another company manages this chat" privacy notices.
+  if (sub.startsWith('biz_privacy_mode')) {
+    return isAr
+      ? '🔒 يعمل هذا النشاط التجاري مع شركة أخرى لإدارة هذه المحادثة.'
+      : '🔒 This business works with another company to manage this chat.';
+  }
+
+  if (message.kind === 'e2e_notification' || sub.includes('e2e') || sub.includes('encrypt')) {
+    return isAr
+      ? '🔒 الرسائل مشفّرة تمامًا من طرف إلى طرف.'
+      : '🔒 Messages are end-to-end encrypted.';
+  }
+
+  if (message.kind === 'revoked') {
+    return isAr ? '🚫 تم حذف هذه الرسالة' : '🚫 This message was deleted';
+  }
+
+  // Generic WhatsApp system notification (unknown subtype).
+  return isAr ? 'إشعار من واتساب' : 'WhatsApp notification';
 }
 
 function deriveFilename(message: ChatMessage): string | null {

@@ -72,6 +72,7 @@ export async function listMessages(
       chatWid: string;
       flow: 'in' | 'out';
       kind: string;
+      subtype: string | null;
       body: string | null;
       fromPhone: string | null;
       toPhone: string | null;
@@ -91,6 +92,7 @@ export async function listMessages(
     chat_wid: m.chatWid,
     flow: m.flow,
     kind: m.kind,
+    subtype: m.subtype ?? null,
     body: m.body,
     from_phone: m.fromPhone,
     to_phone: m.toPhone,
