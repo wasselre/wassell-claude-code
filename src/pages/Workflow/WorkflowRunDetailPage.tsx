@@ -1,21 +1,42 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin } from '@/hooks/usePermission';
-import { ArrowLeft, CheckCircle2, XCircle, SkipForward, AlertCircle, Clock, User as UserIcon, Database, Hash, ChevronDown, ChevronRight, Trash2, Copy, GitBranch } from 'lucide-react';
-import type { WorkflowRunStatus, WorkflowActionTrace, WorkflowConditionTrace, WorkflowBranchTrace, FieldMappingTrace, AppModel } from '@/types';
+import { ArrowLeft, CheckCircle2, XCircle, SkipForward, AlertCircle, Clock, User as UserIcon, Database, Hash, ChevronDown, ChevronRight, Trash2, Copy, GitBranch, Loader2 } from 'lucide-react';
+import type { WorkflowRun, WorkflowRunStatus, WorkflowActionTrace, WorkflowConditionTrace, WorkflowBranchTrace, FieldMappingTrace, AppModel } from '@/types';
 
 export default function WorkflowRunDetailPage() {
   const { runId } = useParams<{ runId: string }>();
   const navigate = useNavigate();
-  const { workflowRuns, workflows, models, users, language, deleteWorkflowRun, addToast } = useAppStore();
+  const { workflowRuns, workflows, models, users, language, deleteWorkflowRun, fetchWorkflowRun, addToast } = useAppStore();
   const isAr = language === 'ar';
   // Read-only for workflow-view profiles; deleting a run stays admin-only.
   const isAdmin = useIsAdmin();
 
-  const run = workflowRuns.find((r) => r.id === runId);
+  const storeRun = workflowRuns.find((r) => r.id === runId);
+  // Only the recent runs live in memory; a deep-link to an older run fetches it.
+  const [fetchedRun, setFetchedRun] = useState<WorkflowRun | null>(null);
+  const [fetching, setFetching] = useState(false);
+  useEffect(() => {
+    if (storeRun || !runId) return;
+    let cancelled = false;
+    setFetching(true);
+    fetchWorkflowRun(runId)
+      .then((r) => { if (!cancelled) setFetchedRun(r); })
+      .finally(() => { if (!cancelled) setFetching(false); });
+    return () => { cancelled = true; };
+  }, [storeRun, runId, fetchWorkflowRun]);
+
+  const run = storeRun ?? fetchedRun;
 
   if (!run) {
+    if (fetching) {
+      return (
+        <div className="flex items-center justify-center py-20 text-charcoal/40">
+          <Loader2 size={22} className="animate-spin text-copper" />
+        </div>
+      );
+    }
     return (
       <div className="py-20 text-center text-charcoal/40">
         <p>{isAr ? 'السجل غير موجود' : 'Run not found'}</p>

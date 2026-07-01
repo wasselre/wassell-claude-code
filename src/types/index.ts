@@ -2684,6 +2684,9 @@ export interface AppState {
   appendWorkflowRun: (run: WorkflowRun) => void;
   deleteWorkflowRun: (runId: string) => void;
   clearWorkflowRuns: (workflowId?: string) => void;
+  // Fetch a single run by id from Supabase — for the detail page to open a run
+  // older than the recent-runs boot window (only the newest ~500 are in memory).
+  fetchWorkflowRun: (runId: string) => Promise<WorkflowRun | null>;
 
   // Unified activity log
   /** Append one entry to the in-memory + localStorage cap (200 most recent)

@@ -1239,9 +1239,16 @@ function workflowToSupabaseRow(w: Workflow): Record<string, unknown> {
 
 async function supabaseLoad<T>(
   table: string,
-  opts?: { excludeModelIds?: string[] },
+  opts?: { excludeModelIds?: string[]; idColumn?: string },
 ): Promise<T[] | null> {
   if (!supabase) return null;
+  // The keyset cursor column. Defaults to `id` (every models-owned table has a
+  // uuid PK). Small non-`id`-keyed tables (e.g. whatsapp_numbers, PK device_id)
+  // pass their PK here so the `.gt(<key>, cursor)` filter targets a real column —
+  // otherwise PostgREST errors "column <table>.id does not exist". Such tables are
+  // tiny (they finish in the single head page, never reaching the uuid-bound
+  // shard walk, which assumes a uuid key).
+  const idCol = opts?.idColumn ?? 'id';
   // Lazy models (e.g. market_listings) are excluded from the bulk boot
   // load via `.not('model_id','in',(…))` so their (potentially huge) row
   // sets never enter the in-memory `records` slice. They're paged in on
@@ -1272,7 +1279,7 @@ async function supabaseLoad<T>(
   const pageSize = 1000;
   const MIN_ID = '00000000-0000-0000-0000-000000000000';
   const MAX_ID = 'ffffffff-ffff-ffff-ffff-ffffffffffff';
-  const idOf = (row: T): string => (row as unknown as { id: string }).id;
+  const idOf = (row: T): string => (row as unknown as Record<string, string>)[idCol] ?? '';
 
   // Keyset-walk one (loExclusive, hiInclusive] id-range into `out`. Returns an
   // error string on failure (caller surfaces + aborts), else null.
@@ -1282,9 +1289,9 @@ async function supabaseLoad<T>(
       let q = supabase!
         .from(table)
         .select('*')
-        .gt('id', cursor)
-        .lte('id', hiInclusive)
-        .order('id', { ascending: true })
+        .gt(idCol, cursor)
+        .lte(idCol, hiInclusive)
+        .order(idCol, { ascending: true })
         .limit(pageSize);
       if (excludeInList) q = q.not('model_id', 'in', excludeInList);
       const { data, error } = await q;
@@ -1303,8 +1310,8 @@ async function supabaseLoad<T>(
     let headQ = supabase
       .from(table)
       .select('*')
-      .gt('id', MIN_ID)
-      .order('id', { ascending: true })
+      .gt(idCol, MIN_ID)
+      .order(idCol, { ascending: true })
       .limit(pageSize);
     if (excludeInList) headQ = headQ.not('model_id', 'in', excludeInList);
     const { data: headData, error: headError } = await headQ;
@@ -1663,7 +1670,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       try { return await supabaseLoad<WorkflowGroup>('workflow_groups'); }
       catch { return null; }
     })();
-    const workflowRunsP      = supabaseLoad<WorkflowRun>('workflow_runs');
+    // Only the most-recent runs are loaded into memory — the full history grew to
+    // 114 MB and every consumer (the Logs list) only needs recent ones; an older
+    // deep-linked run is fetched on demand by WorkflowRunDetailPage. Mirrors the
+    // activity_log cap below. (Newest-first + limit is a server-side top-N, so the
+    // heavy older rows never travel to the browser.)
+    const WORKFLOW_RUNS_BOOT_LIMIT = 500;
+    const workflowRunsP      = (async () => {
+      if (!supabase) return null;
+      const { data, error } = await supabase
+        .from('workflow_runs')
+        .select('*')
+        .order('started_at', { ascending: false })
+        .limit(WORKFLOW_RUNS_BOOT_LIMIT);
+      if (error) { reportSupabaseError('workflow_runs', 'load', error.message ?? String(error)); return null; }
+      return (data as WorkflowRun[] | null);
+    })();
     const activityLogP       = (async () => {
       if (!supabase) return null;
       const { data, error } = await supabase
@@ -3631,6 +3653,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { workflowRuns: next };
     });
   },
+  fetchWorkflowRun: async (runId: string): Promise<WorkflowRun | null> => {
+    // The detail page can be deep-linked to a run older than the recent-runs
+    // boot window (only the newest ~500 are held in memory). Fetch that one row
+    // on demand rather than loading the whole 100MB+ history.
+    const cached = get().workflowRuns.find((r) => r.id === runId);
+    if (cached) return cached;
+    if (!supabase) return null;
+    const { data, error } = await supabase.from('workflow_runs').select('*').eq('id', runId).maybeSingle();
+    if (error) {
+      reportSupabaseError('workflow_runs', 'load', error.message ?? String(error));
+      return null;
+    }
+    return (data as WorkflowRun | null) ?? null;
+  },
 
   // --- Unified activity log ---
   appendActivityLog: (input) => {
@@ -4594,7 +4630,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   // through our proxy. The Settings page merges them at render time.
   loadWhatsAppNumbers: async () => {
     // Local overlay first — survives if Haberchat proxy is unreachable.
-    let overlay = await supabaseLoad<WhatsAppNumber>('whatsapp_numbers');
+    // whatsapp_numbers has no `id` column (PK = device_id) → key the loader on it.
+    let overlay = await supabaseLoad<WhatsAppNumber>('whatsapp_numbers', { idColumn: 'device_id' });
     if (!overlay) overlay = loadLocal<WhatsAppNumber[]>('wassell_wa_numbers') ?? [];
     saveLocal('wassell_wa_numbers', overlay);
     set({ waDevices: overlay });
