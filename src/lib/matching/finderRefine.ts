@@ -114,3 +114,57 @@ export function refineGroups(
 
 export const totalInGroups = (groups: Record<FinderGroupKey, FinderMatch[]> | undefined): number =>
   FINDER_GROUP_KEYS.reduce((n, k) => n + (groups?.[k]?.length ?? 0), 0);
+
+// ── Display tabs (what the salesperson sees) ─────────────────────────────────
+// The engine returns four LOCATION tiers (exact_district / nearby_district /
+// same_city / broader_fallback). The UI collapses them to THREE tabs — "same city"
+// is dropped (the whole result set is already the same city) and its items fold into
+// Alternatives — AND lifts OUR portfolio (source 'our_projects') out of the tiers into
+// a pinned list shown at the TOP of every tab, best-first, so the rep always sees our
+// closest matching projects regardless of which tab they're on.
+export type DisplayTabKey = 'exact_district_matches' | 'nearby_district_matches' | 'alternatives';
+
+export const DISPLAY_TAB_KEYS: DisplayTabKey[] = ['exact_district_matches', 'nearby_district_matches', 'alternatives'];
+
+export const DISPLAY_TAB_LABELS: Record<DisplayTabKey, { ar: string; en: string }> = {
+  exact_district_matches: { ar: 'في نفس الحي', en: 'Same district' },
+  nearby_district_matches: { ar: 'أحياء قريبة', en: 'Nearby district' },
+  alternatives: { ar: 'بدائل', en: 'Alternatives' },
+};
+
+export interface FinderTabView {
+  /** Our portfolio matches, best-first — pinned to the TOP of every tab. */
+  ourProjects: FinderMatch[];
+  /** Non-portfolio matches (all_projects + market_listings) per display tab. */
+  tabs: Record<DisplayTabKey, FinderMatch[]>;
+}
+
+/** Split the (already refined + sorted) groups into the pinned our-projects list +
+ *  the three display tabs' non-portfolio matches (same_city folded into Alternatives). */
+export function buildFinderTabs(groups: Record<FinderGroupKey, FinderMatch[]>): FinderTabView {
+  const isOurs = (m: FinderMatch) => m.source === 'our_projects';
+  const others = (arr: FinderMatch[] | undefined) => (arr ?? []).filter((m) => !isOurs(m));
+
+  // Every our-projects match across the tiers, sorted best (highest score, then
+  // closest) first. Each project appears in exactly one tier, so no dedup needed.
+  const ourProjects = FINDER_GROUP_KEYS
+    .flatMap((k) => groups[k] ?? [])
+    .filter(isOurs)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      const da = a.distance_km, db = b.distance_km;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return da - db;
+    });
+
+  return {
+    ourProjects,
+    tabs: {
+      exact_district_matches: others(groups.exact_district_matches),
+      nearby_district_matches: others(groups.nearby_district_matches),
+      alternatives: [...others(groups.same_city_matches), ...others(groups.broader_fallback)],
+    },
+  };
+}

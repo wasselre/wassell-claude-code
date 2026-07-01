@@ -7,7 +7,7 @@ import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
 import {
   fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
-  type FinderResponse, type FinderGroupKey, type FinderMatch,
+  type FinderResponse, type FinderMatch,
 } from '@/lib/matching/projectFinder';
 import {
   saveClientOption, eliminateOption, reactivateOption, bulkSaveOptions,
@@ -15,12 +15,23 @@ import {
   type ClientOptionStatus, type SaveOptionInput,
 } from '@/lib/matching/clientOptions';
 import {
-  refineGroups, totalInGroups, REFINE_DEFAULT, FETCH_FLOOR,
-  type SortKey, type Refine,
+  refineGroups, totalInGroups, buildFinderTabs, DISPLAY_TAB_KEYS, DISPLAY_TAB_LABELS,
+  REFINE_DEFAULT, FETCH_FLOOR,
+  type SortKey, type Refine, type DisplayTabKey,
 } from '@/lib/matching/finderRefine';
 import { setFinderHandoff } from '@/lib/matching/finderHandoff';
 import FinderCard from './FinderCard';
 import FinderRefinementBar from './FinderRefinementBar';
+
+/** Small labelled divider heading a card section (our projects / other options). */
+function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${tone === 'ours' ? 'bg-green-600 text-white' : 'bg-sand/40 text-charcoal/60'}`}>{text}</span>
+      <span className="h-px flex-1 bg-sand/40" />
+    </div>
+  );
+}
 
 /**
  * The "Suggested Projects" finder rendered as a FULL PAGE (was a cramped modal).
@@ -49,13 +60,6 @@ interface Props {
   onDone: () => void;
 }
 
-const TAB_LABELS: Record<FinderGroupKey, { ar: string; en: string }> = {
-  exact_district_matches: { ar: 'في الحي المطلوب', en: 'Exact district' },
-  nearby_district_matches: { ar: 'أحياء قريبة', en: 'Nearby' },
-  same_city_matches: { ar: 'نفس المدينة', en: 'Same city' },
-  broader_fallback: { ar: 'بدائل أوسع', en: 'Broader' },
-};
-
 const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
   budget: { ar: 'الميزانية', en: 'Budget' },
   location: { ar: 'الحي / المدينة', en: 'District / City' },
@@ -81,7 +85,7 @@ export default function SuggestedProjectsView({
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<FinderGroupKey>('exact_district_matches');
+  const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
   const [visibleCount, setVisibleCount] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -198,8 +202,7 @@ export default function SuggestedProjectsView({
         if (controller.signal.aborted) return;
         setResp(r);
         setSearchedDraft({ ...d });
-        const firstFilled = FINDER_GROUP_KEYS.find((k) => (r.groups[k]?.length ?? 0) > 0);
-        setActiveTab(firstFilled ?? 'exact_district_matches');
+        setActiveTab('exact_district_matches'); // auto-switch effect hops if empty
         const all = FINDER_GROUP_KEYS.flatMap((k) => r.groups[k] ?? []);
         setSelected(new Set(all.filter((i) => i.score === 100).map((i) => i.project_id)));
         // Carry the searched draft back to the workspace (so returning shows the edits).
@@ -367,34 +370,40 @@ export default function SuggestedProjectsView({
   const refinedTotal = totalInGroups(refinedGroups);
   const missing = resp?.metadata.missing_required_preferences ?? [];
   const needsPreferences = resp?.metadata.needs_preferences === true;
-  const activeItems = refinedGroups[activeTab] ?? [];
   const market = resp?.metadata.market;
   const suggestLabel = (code: string) => (MISSING_LABELS[code] ? (isAr ? MISSING_LABELS[code].ar : MISSING_LABELS[code].en) : code);
   const selectedVisible = FINDER_GROUP_KEYS.reduce(
     (n, k) => n + refinedGroups[k].filter((i) => selected.has(i.project_id)).length, 0,
   );
 
-  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, refinedGroups]);
+  // Collapse to 3 display tabs + lift our-projects into a pinned top list.
+  const tabView = useMemo(() => buildFinderTabs(refinedGroups), [refinedGroups]);
+  const ourProjects = tabView.ourProjects;
+  const tierItems = tabView.tabs[activeTab] ?? [];
+  const activeCount = ourProjects.length + tierItems.length;
+  const shownTier = tierItems.slice(0, visibleCount);
+
+  useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, tabView]);
   useEffect(() => {
     if (!resp) return;
-    if (refinedGroups[activeTab].length === 0) {
-      const first = FINDER_GROUP_KEYS.find((k) => refinedGroups[k].length > 0);
+    const tabHas = (k: DisplayTabKey) => ourProjects.length > 0 || tabView.tabs[k].length > 0;
+    if (!tabHas(activeTab)) {
+      const first = DISPLAY_TAB_KEYS.find(tabHas);
       if (first && first !== activeTab) setActiveTab(first);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refinedGroups]);
+  }, [tabView]);
   useEffect(() => {
     const sentinel = sentinelRef.current;
     const root = scrollRef.current;
     if (!sentinel || !root) return;
     const io = new IntersectionObserver(
-      (entries) => { if (entries.some((e) => e.isIntersecting)) setVisibleCount((c) => Math.min(c + PAGE, activeItems.length)); },
+      (entries) => { if (entries.some((e) => e.isIntersecting)) setVisibleCount((c) => Math.min(c + PAGE, tierItems.length)); },
       { root, rootMargin: '800px' },
     );
     io.observe(sentinel);
     return () => io.disconnect();
-  }, [activeItems.length, activeTab, visibleCount]);
-  const shown = activeItems.slice(0, visibleCount);
+  }, [tierItems.length, activeTab, visibleCount]);
 
   const headerSubtitle = [clientName, projectName].filter(Boolean).join(' · ');
 
@@ -567,8 +576,8 @@ export default function SuggestedProjectsView({
               fetchedTotal={fetchedTotal}
             />
             <div className="flex flex-wrap gap-1 pb-2">
-              {FINDER_GROUP_KEYS.map((k) => {
-                const count = refinedGroups[k].length;
+              {DISPLAY_TAB_KEYS.map((k) => {
+                const count = ourProjects.length + tabView.tabs[k].length;
                 const on = activeTab === k;
                 return (
                   <button
@@ -577,7 +586,7 @@ export default function SuggestedProjectsView({
                     onClick={() => setActiveTab(k)}
                     className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${on ? 'bg-copper text-white' : 'text-charcoal/70 hover:bg-cream/70'} ${count === 0 ? 'opacity-50' : ''}`}
                   >
-                    {isAr ? TAB_LABELS[k].ar : TAB_LABELS[k].en}
+                    {isAr ? DISPLAY_TAB_LABELS[k].ar : DISPLAY_TAB_LABELS[k].en}
                     <span className={`rounded-full px-1.5 text-[10px] ${on ? 'bg-white/25' : 'bg-sand/40'}`}>{count}</span>
                   </button>
                 );
@@ -622,34 +631,62 @@ export default function SuggestedProjectsView({
               <p className="text-sm">{L('لا نتائج بهذه التصفية. اخفض نسبة التطابق أو وسّع التصفية الدقيقة.', 'Nothing matches this refinement. Lower the score or relax the refine filters.')}</p>
             </div>
           )}
-          {!loading && !error && refinedTotal > 0 && activeItems.length === 0 && (
+          {!loading && !error && refinedTotal > 0 && activeCount === 0 && (
             <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
           )}
 
-          {!loading && !error && shown.length > 0 && (
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {shown.map((item) => (
-                <FinderCard
-                  key={item.project_id}
-                  item={item}
-                  isAr={isAr}
-                  onOpenDetails={onOpenDetails}
-                  selected={selected.has(item.project_id)}
-                  onToggleSelect={toggleSelect}
-                  onSaveOption={onSaveOption}
-                  onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
-                  onReactivate={onReactivate}
-                  saveState={saveStates[item.project_id] ?? 'idle'}
-                  existingStatus={existingStatusFor(item)}
-                />
-              ))}
+          {/* Pinned OUR PROJECTS — best-first, shown at the top of every tab. */}
+          {!loading && !error && ourProjects.length > 0 && (
+            <div className="mb-3">
+              <SectionLabel text={L('مشاريعنا', 'Our Projects')} tone="ours" />
+              <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {ourProjects.map((item) => (
+                  <FinderCard
+                    key={`our-${item.project_id}`}
+                    item={item}
+                    isAr={isAr}
+                    onOpenDetails={onOpenDetails}
+                    selected={selected.has(item.project_id)}
+                    onToggleSelect={toggleSelect}
+                    onSaveOption={onSaveOption}
+                    onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
+                    onReactivate={onReactivate}
+                    saveState={saveStates[item.project_id] ?? 'idle'}
+                    existingStatus={existingStatusFor(item)}
+                  />
+                ))}
+              </div>
             </div>
           )}
-          {!loading && !error && activeItems.length > 0 && (
+
+          {/* This tab's other matches (all_projects + market_listings). */}
+          {!loading && !error && shownTier.length > 0 && (
             <>
-              {visibleCount < activeItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
+              {ourProjects.length > 0 && <SectionLabel text={L('خيارات أخرى', 'Other options')} tone="other" />}
+              <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {shownTier.map((item) => (
+                  <FinderCard
+                    key={item.project_id}
+                    item={item}
+                    isAr={isAr}
+                    onOpenDetails={onOpenDetails}
+                    selected={selected.has(item.project_id)}
+                    onToggleSelect={toggleSelect}
+                    onSaveOption={onSaveOption}
+                    onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
+                    onReactivate={onReactivate}
+                    saveState={saveStates[item.project_id] ?? 'idle'}
+                    existingStatus={existingStatusFor(item)}
+                  />
+                ))}
+              </div>
+            </>
+          )}
+          {!loading && !error && tierItems.length > 0 && (
+            <>
+              {visibleCount < tierItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
               <div className="py-3 text-center text-[11px] text-charcoal/45">
-                {L(`عرض ${shown.length} من ${activeItems.length}`, `Showing ${shown.length} of ${activeItems.length}`)}
+                {L(`عرض ${ourProjects.length + shownTier.length} من ${activeCount}`, `Showing ${ourProjects.length + shownTier.length} of ${activeCount}`)}
               </div>
             </>
           )}
