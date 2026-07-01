@@ -673,6 +673,21 @@ export default function SuggestedProjectsView({
               matches={[...ourProjects, ...tierItems]}
               isAr={isAr}
               onOpenDetails={onOpenDetails}
+              renderSelectedCard={(item) => (
+                <FinderCard
+                  item={item}
+                  isAr={isAr}
+                  onOpenDetails={onOpenDetails}
+                  selected={selected.has(item.project_id)}
+                  onToggleSelect={toggleSelect}
+                  onSaveOption={onSaveOption}
+                  onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
+                  onReactivate={onReactivate}
+                  onSetStatus={onSetStatus}
+                  saveState={saveStates[item.project_id] ?? 'idle'}
+                  existingStatus={existingStatusFor(item)}
+                />
+              )}
             />
           )}
 

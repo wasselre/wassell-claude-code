@@ -670,6 +670,7 @@ export default function ProjectFinderPage() {
                 matches={[...ourProjects, ...tierItems]}
                 isAr={isAr}
                 onOpenDetails={onOpenDetails}
+                renderSelectedCard={(m) => renderCard(m, `map-${m.project_id}`)}
               />
             </div>
           )}
