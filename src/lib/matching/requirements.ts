@@ -94,16 +94,44 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
 
   // ── Geography: the `location` cascade compound { region:[], city:[], district:[] }.
   //    Collect ALL requested district ids — from the location cascade's district
-  //    array AND the separate `preferred_districts` multi-lookup — resolve each to a
-  //    name, dedupe, and send them all. The engine treats a project in ANY of them as
-  //    an exact match. `district` stays = districts[0] for single-district paths. ──
+  //    array, the separate `preferred_districts` multi-lookup, AND the include-district
+  //    rules in `location_items` — resolve each to a name, dedupe, and send them all.
+  //    The engine treats a project in ANY of them as an exact match. `district` stays
+  //    = districts[0] for single-district paths. ──
   const locVal = pick('location');
   const loc = locVal && typeof locVal === 'object' && !Array.isArray(locVal)
     ? (locVal as Record<string, unknown>) : {};
-  const districtIds = [...new Set([...allStrings(loc.district), ...allStrings(pick('preferred_districts'))])];
+
+  // A district picked in the location box is stored as a `location_items` district
+  // include-rule (it drives the geo gate), NOT the `location` cascade. Without
+  // mirroring those ids into requirements.districts the tier scoring has no requested
+  // district, so every gated result falls to the "same city / different district" tier
+  // even though it sits inside the requested district. Pull the include-rules here.
+  const itemDistrictIds: string[] = [];
+  const itemDistrictLabels: Record<string, string> = {};
+  const itemsVal = pick('location_items');
+  if (Array.isArray(itemsVal)) {
+    for (const it of itemsVal) {
+      if (!it || typeof it !== 'object') continue;
+      const rec = it as Record<string, unknown>;
+      if (rec.kind !== 'district' || rec.polarity === 'exclude') continue;
+      const did = typeof rec.district_id === 'string' ? rec.district_id.trim() : '';
+      if (!did) continue;
+      itemDistrictIds.push(did);
+      if (typeof rec.district_label === 'string' && rec.district_label.trim()) {
+        itemDistrictLabels[did] = rec.district_label.trim();
+      }
+    }
+  }
+
+  const districtIds = [...new Set([
+    ...allStrings(loc.district), ...allStrings(pick('preferred_districts')), ...itemDistrictIds,
+  ])];
   const districtNames = [...new Set(
     districtIds
-      .map((id) => resolveLookupName?.(id, 'districts') ?? undefined)
+      // Prefer the live districts record's name; fall back to the label stashed on the
+      // location_item (so a district still resolves even if its record isn't loaded).
+      .map((id) => resolveLookupName?.(id, 'districts') ?? itemDistrictLabels[id] ?? undefined)
       .filter((n): n is string => !!n),
   )];
   if (districtNames.length) {

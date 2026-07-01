@@ -43,4 +43,42 @@ describe('draftToMatchRequirements — multi-district', () => {
     expect(none.districts).toBeUndefined();
     expect(none.district).toBeUndefined();
   });
+
+  it('mirrors an include-district from location_items into requirements.districts', () => {
+    // A district picked in the location box is a location_items district rule, NOT
+    // the cascade — so without this it would tier as "same city, different district".
+    const out = draftToMatchRequirements({
+      ...base,
+      prefDraft: {
+        location: { city: ['c-riyadh'] }, // cascade capped at city
+        location_items: [{ id: 'i1', kind: 'district', polarity: 'include', district_id: 'd-aqiq' }],
+      },
+    });
+    expect(out.districts).toEqual(['العقيق']);
+    expect(out.district).toBe('العقيق');
+    expect(out.city).toBe('الرياض');
+  });
+
+  it('resolves a location_items district via its stashed label when the record is not loaded', () => {
+    const out = draftToMatchRequirements({
+      ...base,
+      prefDraft: {
+        location_items: [{ id: 'i1', kind: 'district', polarity: 'include', district_id: 'd-unloaded', district_label: 'حي المصيف' }],
+      },
+    });
+    expect(out.districts).toEqual(['حي المصيف']);
+  });
+
+  it('ignores exclude-district and element_rule location_items', () => {
+    const out = draftToMatchRequirements({
+      ...base,
+      prefDraft: {
+        location_items: [
+          { id: 'i1', kind: 'district', polarity: 'exclude', district_id: 'd-aqiq' },
+          { id: 'i2', kind: 'element_rule', polarity: 'include', conditions: [{ rule: 'north_of', element_id: 'e1' }] },
+        ],
+      },
+    });
+    expect(out.districts).toBeUndefined();
+  });
 });

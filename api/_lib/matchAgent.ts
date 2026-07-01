@@ -922,6 +922,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   const firstImageRef = (v: unknown): string | undefined =>
     (Array.isArray(v) ? (v.find((x) => typeof x === 'string' && x) as string | undefined) : undefined);
   put('image', asStr(data.image) || asStr(data.main_image) || firstImageRef(data.project_images));
+  // Market-listing ad id (the external Aqar ad number) — shown as a small chip on
+  // the card so the rep can look the ad up. Only market listings carry `external_id`.
+  put('external_id', asStr(data.external_id));
 
   return {
     score,
@@ -993,6 +996,7 @@ function adaptListingToScorable(d: Record<string, unknown>): Record<string, unkn
     || undefined;
   return {
     project_name: asStr(d.title) || asStr(d.advertiser_name) || asStr(d.external_id) || 'إعلان سوق',
+    external_id: asStr(d.external_id) || undefined,
     // Geography is no longer carried on the adapted shape — the caller extracts the
     // listing's location.{district,city} ids from the raw record and passes them
     // (plus resolved names) through the GeoContext, same as projects.

@@ -1,12 +1,12 @@
 import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
-  ExternalLink, Bookmark, Check, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
-  CheckSquare, Square, XCircle, RotateCcw,
+  ExternalLink, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
+  CheckSquare, Square,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus } from '@/lib/matching/projectFinder';
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
-import { CLIENT_OPTION_STATUS_META, type ClientOptionStatus } from '@/lib/matching/clientOptions';
+import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptionStatus } from '@/lib/matching/clientOptions';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 
 /**
@@ -33,6 +33,9 @@ interface Props {
   saveState: 'idle' | 'saving' | 'saved';
   /** Status of an already-saved option for this source, or null if not saved yet. */
   existingStatus: ClientOptionStatus | null;
+  /** Set/change this card's client-option status inline (main / presented / not
+   *  interested / …). Ensures the option exists first. Omit → no status control. */
+  onSetStatus?: (item: FinderMatch, status: ClientOptionStatus) => void;
   /**
    * Standalone Project Finder (no client context): hide the select checkbox and
    * the save / eliminate / reactivate actions, leaving only "Details". Saving an
@@ -91,8 +94,8 @@ function DealPill({ deal, isAr }: { deal: DealBadge; isAr: boolean }) {
 }
 
 export default function FinderCard({
-  item, isAr, onOpenDetails, selected, onToggleSelect, onSaveOption, onEliminate, onReactivate, saveState, existingStatus,
-  hideClientActions,
+  item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
+  onSetStatus, hideClientActions,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -101,8 +104,6 @@ export default function FinderCard({
   // Main image: raw URL (market listings) or files.id (projects) → resolved to a
   // renderable URL by useSignedImage (passthrough / short-lived signed view URL).
   const imgUrl = useSignedImage(typeof f.image === 'string' && f.image ? f.image : null);
-  const isEliminated = existingStatus === 'eliminated';
-  const isSaved = existingStatus != null && !isEliminated;
 
   const city = typeof f.city === 'string' ? f.city : '';
   const district = typeof f.district === 'string' ? f.district : '';
@@ -115,6 +116,8 @@ export default function FinderCard({
   const beds = fmtRange(f.bedroom_range, '');
   const baths = fmtRange(f.bathroom_range, '');
   const avail = typeof f.available_units === 'number' ? f.available_units : null;
+  // Aqar ad id — only market listings carry it; shown as a small "#id" chip.
+  const adId = item.source === 'market_listings' && typeof f.external_id === 'string' && f.external_id ? f.external_id : null;
 
   const requiresVerify = item.source !== 'our_projects';
 
@@ -173,6 +176,14 @@ export default function FinderCard({
         <div className="flex flex-wrap items-center gap-1.5">
           <MatchTypePill type={item.match_type} isAr={isAr} />
           <SourcePill source={item.source} isAr={isAr} />
+          {adId && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-chocolate/25 bg-chocolate/5 px-2 py-0.5 text-[11px] font-bold text-chocolate"
+              title={L('رقم الإعلان', 'Ad ID')}
+            >
+              {L('إعلان', 'Ad')} #{adId}
+            </span>
+          )}
           {item.geo_status && <GeoStatusPill status={item.geo_status} isAr={isAr} />}
           {item.geo_confidence && <GeoConfidencePill confidence={item.geo_confidence} isAr={isAr} />}
           {item.distance_km != null && (
@@ -236,46 +247,20 @@ export default function FinderCard({
           </div>
         )}
 
-        {/* Actions — Details + save/eliminate into the client's unified options.
-            If the option already exists we show its current status instead of a
-            second "save", and an eliminated option offers Reactivate (never a
-            silent re-activate). The modal owns all persistence. */}
+        {/* Actions — Details + an inline STATUS selector that saves the option into
+            the client's unified list AND sets its status (main / presented / not
+            interested / …) in one step. Picking "Eliminated" routes to the
+            reason-notes prompt. Hidden on the standalone finder (no client). */}
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
 
-          {hideClientActions ? null : isEliminated ? (
-            <>
-              <span className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700">
-                <XCircle size={12} /> {L('مستبعدة', 'Eliminated')}
-              </span>
-              <ActionBtn icon={<RotateCcw size={12} />} label={L('إعادة تفعيل', 'Reactivate')} onClick={() => onReactivate(item)} />
-            </>
-          ) : isSaved ? (
-            <>
-              <span
-                className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-bold"
-                style={{
-                  color: CLIENT_OPTION_STATUS_META[existingStatus!].color,
-                  borderColor: `${CLIENT_OPTION_STATUS_META[existingStatus!].color}55`,
-                  backgroundColor: `${CLIENT_OPTION_STATUS_META[existingStatus!].color}12`,
-                }}
-              >
-                <Check size={12} /> {L('محفوظة', 'Saved')} · {isAr ? CLIENT_OPTION_STATUS_META[existingStatus!].ar : CLIENT_OPTION_STATUS_META[existingStatus!].en}
-              </span>
-              <ActionBtn icon={<XCircle size={12} />} label={L('استبعاد', 'Eliminate')} onClick={() => onEliminate(item)} />
-            </>
-          ) : (
-            <>
-              <ActionBtn
-                icon={saveState === 'saved' ? <Check size={12} /> : <Bookmark size={12} />}
-                label={saveState === 'saved' ? L('محفوظة', 'Saved') : saveState === 'saving' ? L('…', '…') : L('حفظ كخيار', 'Save as option')}
-                onClick={() => saveState === 'idle' && onSaveOption(item)}
-                active={saveState === 'saved'}
-                disabled={saveState !== 'idle'}
-                primary
-              />
-              <ActionBtn icon={<XCircle size={12} />} label={L('استبعاد', 'Eliminate')} onClick={() => onEliminate(item)} />
-            </>
+          {!hideClientActions && onSetStatus && (
+            <StatusSelect
+              value={existingStatus}
+              saving={saveState === 'saving'}
+              isAr={isAr}
+              onChange={(s) => onSetStatus(item, s)}
+            />
           )}
         </div>
       </div>
@@ -289,6 +274,48 @@ function ActionBtn({ icon, label, onClick, active, disabled, primary }: { icon: 
     ? (active ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-copper text-white hover:bg-terracotta')
     : 'border border-sand/60 bg-white text-charcoal/75 hover:bg-cream/60';
   return <button type="button" onClick={onClick} disabled={disabled} className={`${base} ${cls}`}>{icon}{label}</button>;
+}
+
+/**
+ * Inline client-option STATUS selector. Picking a status ensures the option
+ * exists (creating it if needed) AND sets the chosen status in one step — so a
+ * rep can mark a card as the Main Focus, Presented, Not Interested, etc. right
+ * from the results. When nothing is saved yet it shows an "Add as option…"
+ * placeholder; once saved it shows the current status colored to match its badge.
+ * A native <select> keeps this RTL-safe (no custom-positioned chevron).
+ */
+function StatusSelect({
+  value, saving, isAr, onChange,
+}: {
+  value: ClientOptionStatus | null;
+  saving: boolean;
+  isAr: boolean;
+  onChange: (status: ClientOptionStatus) => void;
+}) {
+  const L = (ar: string, en: string) => (isAr ? ar : en);
+  const meta = value ? CLIENT_OPTION_STATUS_META[value] : null;
+  return (
+    <select
+      value={value ?? ''}
+      disabled={saving}
+      onChange={(e) => { const v = e.target.value; if (v) onChange(v as ClientOptionStatus); }}
+      className="rounded-lg border px-2 py-1 text-[11px] font-bold transition disabled:opacity-60 focus:outline-none focus:ring-1 focus:ring-copper/40"
+      style={meta
+        ? { color: meta.color, borderColor: `${meta.color}66`, backgroundColor: `${meta.color}12` }
+        : { color: '#8E6E52', borderColor: 'rgba(212,184,150,0.6)', backgroundColor: '#fff' }}
+      title={L('حالة الخيار لدى العميل', 'Client option status')}
+      aria-label={L('حالة الخيار', 'Option status')}
+    >
+      <option value="" disabled>
+        {saving ? L('…', '…') : L('أضِف كخيار…', 'Add as option…')}
+      </option>
+      {CLIENT_OPTION_STATUS_ORDER.map((s) => (
+        <option key={s} value={s}>
+          {isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}
+        </option>
+      ))}
+    </select>
+  );
 }
 
 function Spec({ icon, label, value, isAr }: { icon: React.ReactNode; label: string; value: string | null; isAr: boolean }) {

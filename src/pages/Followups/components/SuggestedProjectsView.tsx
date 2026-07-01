@@ -10,8 +10,8 @@ import {
   type FinderResponse, type FinderMatch,
 } from '@/lib/matching/projectFinder';
 import {
-  saveClientOption, eliminateOption, reactivateOption, bulkSaveOptions,
-  finderSourceToOptionType, findClientOption,
+  saveClientOption, eliminateOption, reactivateOption, bulkSaveOptions, updateOptionStatus,
+  finderSourceToOptionType, findClientOption, CLIENT_OPTION_STATUS_META,
   type ClientOptionStatus, type SaveOptionInput,
 } from '@/lib/matching/clientOptions';
 import {
@@ -323,6 +323,28 @@ export default function SuggestedProjectsView({
     if (!existing) return;
     const res = await reactivateOption(existing.id);
     addToast(res.ok ? L('تمت إعادة تفعيل الخيار.', 'Option reactivated.') : L('تعذّرت إعادة التفعيل.', 'Could not reactivate.'), res.ok ? 'success' : 'error');
+  }
+
+  // Inline status pick from a card. 'eliminated' routes through the reason modal
+  // (so a note is captured); every other status ensures the option exists (creating
+  // it if new) then applies the status — updateOptionStatus routes 'main_focus'
+  // through setMainOption (single active main) and reactivates an eliminated option.
+  async function onSetStatus(item: FinderMatch, status: ClientOptionStatus) {
+    if (!clientRec?.id) return noClient();
+    if (status === 'eliminated') { setEliminateNotes(''); setEliminateTarget(item); return; }
+    setSaveStates((s) => ({ ...s, [item.project_id]: 'saving' }));
+    const ensured = await saveClientOption({ clientId: clientRec.id, ...matchToInput(item), addedFrom: 'follow_up', status });
+    let ok = ensured.ok;
+    if (ensured.optionId) {
+      const res = await updateOptionStatus(ensured.optionId, status);
+      ok = res.ok;
+    }
+    setSaveStates((s) => ({ ...s, [item.project_id]: 'idle' }));
+    const label = isAr ? CLIENT_OPTION_STATUS_META[status].ar : CLIENT_OPTION_STATUS_META[status].en;
+    addToast(
+      ok ? L(`تم ضبط الحالة: ${label}`, `Status set: ${label}`) : L('تعذّر ضبط الحالة.', 'Could not set status.'),
+      ok ? 'success' : 'error',
+    );
   }
 
   // Persist the edited preferences (incl. location_items) to the client record,
@@ -655,6 +677,7 @@ export default function SuggestedProjectsView({
                     onSaveOption={onSaveOption}
                     onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
                     onReactivate={onReactivate}
+                    onSetStatus={onSetStatus}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                   />
@@ -679,6 +702,7 @@ export default function SuggestedProjectsView({
                     onSaveOption={onSaveOption}
                     onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
                     onReactivate={onReactivate}
+                    onSetStatus={onSetStatus}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                   />
