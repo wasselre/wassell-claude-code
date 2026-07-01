@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, Activity, CalendarPlus, ListPlus } from 'lucide-react';
+import { ArrowLeft, Clock, Activity, CalendarPlus, ListPlus, Compass } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { ClientView } from '../lib/clientView';
 import { isOverdue } from '../lib/clientView';
@@ -80,6 +80,13 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
             returnTo={returnTo}
             hideOpenClient
           />
+          <button
+            type="button"
+            onClick={() => navigate(`/model/clients/${view.id}/projects`)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
+          >
+            <Compass size={16} /> {isAr ? 'الباحث عن المشاريع' : 'Find projects'}
+          </button>
           <button
             type="button"
             onClick={onCreateFollowup}

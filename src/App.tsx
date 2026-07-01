@@ -47,6 +47,7 @@ import DecksPage from '@/pages/Decks/DecksPage';
 import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
 import SuggestedProjectsPage from '@/pages/Followups/SuggestedProjectsPage';
+import ClientProjectsPage from '@/pages/Clients/ClientProjectsPage';
 import ProjectsListPage from '@/pages/Projects/ProjectsListPage';
 import ProjectDetailPage from '@/pages/Projects/ProjectDetailPage';
 import ClientsListPage from '@/pages/Clients/ClientsListPage';
@@ -371,6 +372,9 @@ export default function App() {
               "Done" returns to the follow-up record). Must precede the generic
               :recordId detail route. */}
           <Route path="/model/followups/:recordId/projects" element={<SuggestedProjectsPage />} />
+          {/* Same finder, scoped to a CLIENT directly (from the Client 360 header;
+              "Done" returns to the client profile). Also precedes the generic route. */}
+          <Route path="/model/clients/:recordId/projects" element={<ClientProjectsPage />} />
           <Route path="/model/:modelName/:recordId" element={<RecordDetailDispatcher />} />
           <Route path="/builder" element={<RequireAdmin><ModelBuilderPage /></RequireAdmin>} />
           <Route path="/builder/agent" element={<RequireAdmin><BuilderAgentPage /></RequireAdmin>} />
