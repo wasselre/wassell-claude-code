@@ -21,7 +21,8 @@ import {
 } from '@/lib/matching/finderRefine';
 import { setFinderHandoff } from '@/lib/matching/finderHandoff';
 import FinderCard from './FinderCard';
-import FinderRefinementBar from './FinderRefinementBar';
+import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
+import FinderMapView from './FinderMapView';
 
 /** Small labelled divider heading a card section (our projects / other options). */
 function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) {
@@ -86,6 +87,7 @@ export default function SuggestedProjectsView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
+  const [viewMode, setViewMode] = useState<FinderViewMode>('list');
   const [visibleCount, setVisibleCount] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -600,6 +602,8 @@ export default function SuggestedProjectsView({
               onToggleRefine={() => setShowRefine((v) => !v)}
               refinedTotal={refinedTotal}
               fetchedTotal={fetchedTotal}
+              viewMode={viewMode}
+              onViewMode={setViewMode}
             />
             <div className="flex flex-wrap gap-1 pb-2">
               {DISPLAY_TAB_KEYS.map((k) => {
@@ -661,8 +665,19 @@ export default function SuggestedProjectsView({
             <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
           )}
 
+          {/* MAP view — plots the active tab's pinned our-projects + other matches.
+              Click a pin → Details (same as a card). Client-option actions stay on
+              the list; the map is a presentation surface. */}
+          {viewMode === 'map' && !loading && !error && activeCount > 0 && (
+            <FinderMapView
+              matches={[...ourProjects, ...tierItems]}
+              isAr={isAr}
+              onOpenDetails={onOpenDetails}
+            />
+          )}
+
           {/* Pinned OUR PROJECTS — best-first, shown at the top of every tab. */}
-          {!loading && !error && ourProjects.length > 0 && (
+          {viewMode === 'list' && !loading && !error && ourProjects.length > 0 && (
             <div className="mb-3">
               <SectionLabel text={L('مشاريعنا', 'Our Projects')} tone="ours" />
               <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -687,7 +702,7 @@ export default function SuggestedProjectsView({
           )}
 
           {/* This tab's other matches (all_projects + market_listings). */}
-          {!loading && !error && shownTier.length > 0 && (
+          {viewMode === 'list' && !loading && !error && shownTier.length > 0 && (
             <>
               {ourProjects.length > 0 && <SectionLabel text={L('خيارات أخرى', 'Other options')} tone="other" />}
               <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -710,7 +725,7 @@ export default function SuggestedProjectsView({
               </div>
             </>
           )}
-          {!loading && !error && tierItems.length > 0 && (
+          {viewMode === 'list' && !loading && !error && tierItems.length > 0 && (
             <>
               {visibleCount < tierItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
               <div className="py-3 text-center text-[11px] text-charcoal/45">

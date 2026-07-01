@@ -1,8 +1,10 @@
-import { SlidersHorizontal, ArrowUpDown, RotateCcw } from 'lucide-react';
+import { SlidersHorizontal, ArrowUpDown, RotateCcw, List, Map as MapIcon } from 'lucide-react';
 import {
   SORT_LABELS, BEDROOM_OPTS, REFINE_DEFAULT, refineIsActive,
   type SortKey, type Refine,
 } from '@/lib/matching/finderRefine';
+
+export type FinderViewMode = 'list' | 'map';
 
 /**
  * Results-refinement toolbar shared by the standalone Project Finder page and the
@@ -23,11 +25,14 @@ interface Props {
   onToggleRefine: () => void;
   refinedTotal: number;
   fetchedTotal: number;
+  /** List/map results-view toggle. Omit both to hide the toggle entirely. */
+  viewMode?: FinderViewMode;
+  onViewMode?: (m: FinderViewMode) => void;
 }
 
 export default function FinderRefinementBar({
   isAr, floor, scoreThreshold, onScore, sortKey, onSort, refine, onRefine, showRefine, onToggleRefine,
-  refinedTotal, fetchedTotal,
+  refinedTotal, fetchedTotal, viewMode, onViewMode,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const numOrEmpty = (s: string): number | '' => (s === '' ? '' : Number(s));
@@ -63,6 +68,32 @@ export default function FinderRefinementBar({
           {L(`عرض ${refinedTotal} من ${fetchedTotal}`, `Showing ${refinedTotal} of ${fetchedTotal}`)}
         </span>
         <div className="ms-auto flex items-center gap-2">
+          {viewMode && onViewMode && (
+            <div className="flex items-center rounded-lg border border-sand/60 bg-white p-0.5">
+              <button
+                type="button"
+                onClick={() => onViewMode('list')}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold transition ${
+                  viewMode === 'list' ? 'bg-copper text-white' : 'text-charcoal/60 hover:bg-cream/60'
+                }`}
+                aria-pressed={viewMode === 'list'}
+              >
+                <List size={13} />
+                {L('قائمة', 'List')}
+              </button>
+              <button
+                type="button"
+                onClick={() => onViewMode('map')}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-bold transition ${
+                  viewMode === 'map' ? 'bg-copper text-white' : 'text-charcoal/60 hover:bg-cream/60'
+                }`}
+                aria-pressed={viewMode === 'map'}
+              >
+                <MapIcon size={13} />
+                {L('خريطة', 'Map')}
+              </button>
+            </div>
+          )}
           <ArrowUpDown size={13} className="text-charcoal/40" />
           <select
             value={sortKey}

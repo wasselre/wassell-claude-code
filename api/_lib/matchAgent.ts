@@ -925,6 +925,13 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   // Market-listing ad id (the external Aqar ad number) — shown as a small chip on
   // the card so the rep can look the ad up. Only market listings carry `external_id`.
   put('external_id', asStr(data.external_id));
+  // Coordinates for the finder's MAP view — the resolved pin (verified polygon
+  // centroid when geo verification ran, else the stored lat/lng). Absent when the
+  // record has no coordinates (that pin is simply not plotted).
+  if (geo?.projLat != null && geo?.projLng != null) {
+    put('latitude', geo.projLat);
+    put('longitude', geo.projLng);
+  }
 
   return {
     score,

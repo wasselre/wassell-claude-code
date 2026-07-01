@@ -13,7 +13,8 @@ import {
   type SortKey, type Refine, type DisplayTabKey,
 } from '@/lib/matching/finderRefine';
 import FinderCard from '@/pages/Followups/components/FinderCard';
-import FinderRefinementBar from '@/pages/Followups/components/FinderRefinementBar';
+import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/components/FinderRefinementBar';
+import FinderMapView from '@/pages/Followups/components/FinderMapView';
 import type { AppModel, ModelField } from '@/types';
 
 /** Small labelled divider used to head a card section (our projects / other options). */
@@ -96,6 +97,7 @@ export default function ProjectFinderPage() {
   const [error, setError] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
+  const [viewMode, setViewMode] = useState<FinderViewMode>('list');
   const [visibleCount, setVisibleCount] = useState(PAGE);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
@@ -361,6 +363,8 @@ export default function ProjectFinderPage() {
               onToggleRefine={() => setShowRefine((v) => !v)}
               refinedTotal={refinedTotal}
               fetchedTotal={fetchedTotal}
+              viewMode={viewMode}
+              onViewMode={setViewMode}
             />
           )}
 
@@ -386,7 +390,21 @@ export default function ProjectFinderPage() {
             </div>
           )}
 
-          <div ref={scrollRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+          {/* MAP view — plots the active tab's pinned our-projects + other matches. */}
+          {viewMode === 'map' && !loading && !error && activeCount > 0 && (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <FinderMapView
+                matches={[...ourProjects, ...tierItems]}
+                isAr={isAr}
+                onOpenDetails={onOpenDetails}
+              />
+            </div>
+          )}
+
+          <div
+            ref={scrollRef}
+            className={`min-h-0 flex-1 space-y-3 overflow-y-auto ${viewMode === 'map' && !loading && !error && activeCount > 0 ? 'hidden' : ''}`}
+          >
             {loading && (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-charcoal/55">
                 <Loader2 size={22} className="animate-spin text-copper" />
