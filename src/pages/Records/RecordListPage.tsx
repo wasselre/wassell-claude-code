@@ -23,6 +23,7 @@ import {
   adhocStorageKey,
   applyAdhocFilters,
   loadAdhocFilters,
+  pruneAdhocFilters,
   saveAdhocFilters,
   type AdhocFilterState,
 } from '@/lib/adhocFilterUtils';
@@ -176,11 +177,18 @@ export default function RecordListPage() {
     : null;
   const [adhocFilters, setAdhocFilters] = useState<AdhocFilterState>({});
 
-  // Rehydrate when scope changes (model / user / active view).
+  // Rehydrate when scope changes (model / user / active view). Prune any keys
+  // that no longer map to a live filterable field (field deleted in the Builder
+  // or the model rebuilt with new ids) so stale filters can't inflate the badge
+  // or silently affect the view; re-persist the cleaned state to drop them from
+  // localStorage for good.
   useEffect(() => {
-    if (!adhocKey) { setAdhocFilters({}); return; }
-    setAdhocFilters(loadAdhocFilters(adhocKey));
-  }, [adhocKey]);
+    if (!adhocKey || !model) { setAdhocFilters({}); return; }
+    const loaded = loadAdhocFilters(adhocKey);
+    const pruned = pruneAdhocFilters(loaded, model, models);
+    setAdhocFilters(pruned);
+    if (pruned !== loaded) saveAdhocFilters(adhocKey, pruned);
+  }, [adhocKey, model, models]);
 
   const updateAdhocFilters = (next: AdhocFilterState) => {
     setAdhocFilters(next);

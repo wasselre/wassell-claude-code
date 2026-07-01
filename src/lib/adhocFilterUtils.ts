@@ -351,6 +351,29 @@ export function adhocStorageKey(modelId: string, userId: string, viewId: string 
   return `wassell_adhoc_${modelId}_${userId}_${viewId ?? 'default'}`;
 }
 
+/**
+ * Drop filter entries whose key no longer maps to a live filterable field — a field deleted in the
+ * Builder, or a model rebuilt with new field ids. Such keys can't be created or cleared through the
+ * panel (no chip is rendered for them), so without this they linger in localStorage forever: they
+ * inflate the active-filter badge and confuse the user even though `applyAdhocFilters` already skips
+ * them when computing results. Returns the same object when nothing was stale (so callers can cheaply
+ * detect a no-op).
+ */
+export function pruneAdhocFilters(
+  state: AdhocFilterState,
+  model: AppModel,
+  allModels: AppModel[],
+): AdhocFilterState {
+  const liveKeys = new Set(getAdhocFilterableFields(model, allModels).map((d) => d.field.id));
+  const keys = Object.keys(state);
+  if (keys.every((k) => liveKeys.has(k))) return state;
+  const pruned: AdhocFilterState = {};
+  for (const k of keys) {
+    if (liveKeys.has(k)) pruned[k] = state[k]!;
+  }
+  return pruned;
+}
+
 export function loadAdhocFilters(key: string): AdhocFilterState {
   try {
     const raw = localStorage.getItem(key);

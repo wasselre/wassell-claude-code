@@ -75,10 +75,13 @@ export default function AdvancedFilterPanel({
     [model, models],
   );
 
-  const activeCount = useMemo(
-    () => Object.values(state).filter(isAdhocActive).length,
-    [state],
-  );
+  // Count only active filters that still map to a live filterable field. A filter
+  // keyed on a deleted field (or a mirror whose hop broke) has no chip to clear
+  // it and is ignored by applyAdhocFilters, so it must not inflate the badge.
+  const activeCount = useMemo(() => {
+    const liveKeys = new Set(filterableFields.map((e) => e.field.id));
+    return Object.entries(state).filter(([id, f]) => liveKeys.has(id) && isAdhocActive(f)).length;
+  }, [state, filterableFields]);
 
   const updateFilter = (fieldId: string, next: AdhocFieldFilter | undefined) => {
     const n = { ...state };
