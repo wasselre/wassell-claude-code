@@ -191,7 +191,13 @@ export async function runRegaLookupJob({ supabase, env, job }: RunArgs): Promise
       return { outcome: 'no_license', adId };
     }
 
-    // 2. REGA page → clear Cloudflare + wait for the actual data (a 05… mobile).
+    // 2. REGA page → clear Cloudflare + wait for the actual DATA to render.
+    // Wait specifically for the agent MOBILE (a 05… number), NOT just the
+    // "اسم المعلن" label: the label list renders before the async values
+    // populate, so an early-out on the label parses an empty page → false
+    // "no_license". An active license always shows a 05 mobile (resolves in a
+    // few seconds); a genuinely empty/expired license never does → the 60s
+    // timeout elapses and the parse correctly yields no_license.
     await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 90_000 });
     await page
       .waitForFunction(
@@ -201,7 +207,7 @@ export async function runRegaLookupJob({ supabase, env, job }: RunArgs): Promise
           }).document;
           const t = doc.title || '';
           const b = doc.body ? doc.body.innerText : '';
-          return !/just a moment/i.test(t) && (/05\d{8}/.test(b) || /اسم المعلن/.test(b));
+          return !/just a moment/i.test(t) && /05\d{8}/.test(b);
         },
         { timeout: 60_000 },
       )
