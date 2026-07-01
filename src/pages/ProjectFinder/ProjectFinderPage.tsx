@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle } from 'lucide-react';
+import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
 import {
-  fetchProjectFinder, totalFinderMatches,
+  fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
   type FinderResponse, type FinderMatch, type FinderSource,
 } from '@/lib/matching/projectFinder';
+import {
+  saveClientOption, eliminateOption, bulkSaveOptions, updateOptionStatus,
+  finderSourceToOptionType, CLIENT_OPTION_STATUS_META,
+  type ClientOptionStatus, type SaveOptionInput,
+} from '@/lib/matching/clientOptions';
 import {
   refineGroups, totalInGroups, buildFinderTabs, DISPLAY_TAB_KEYS, DISPLAY_TAB_LABELS,
   REFINE_DEFAULT, FETCH_FLOOR, BEDROOM_OPTS,
@@ -15,7 +20,7 @@ import {
 import FinderCard from '@/pages/Followups/components/FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/components/FinderRefinementBar';
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
-import type { AppModel, ModelField } from '@/types';
+import type { AppModel, AppRecord, ModelField } from '@/types';
 
 /** Small labelled divider used to head a card section (our projects / other options). */
 function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) {
@@ -29,19 +34,22 @@ function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) 
 
 /**
  * Standalone Project Finder — a self-service discovery tool reachable from the
- * sidebar, usable WITHOUT a client. The salesperson fills structured pickers
- * (location cascade, unit type, budget/area ranges, amenities — all sourced from
- * the live `clients` model's own field definitions, so there's NO free text and
- * NO AI), then runs the SAME deterministic, geography-verified /api/project-finder
- * the Follow-up "Suggested Projects" modal uses (parse:false, explain:false).
+ * sidebar. The salesperson fills structured pickers (unified location editor with
+ * district include/exclude + geo-element rules, unit type, budget/area ranges,
+ * amenities — all sourced from the live `clients` model's own field definitions,
+ * so there's NO free text and NO AI), then runs the SAME deterministic,
+ * geography-verified /api/project-finder the Follow-up finder uses.
+ *
+ * It can be used WITHOUT a client (pure discovery — cards show Details only), OR
+ * a client can be SELECTED at the top: their saved preferences seed the pickers,
+ * the search is geo-gated for that client (client_id + location_items), and every
+ * result card gains the full client-option actions — inline status selector,
+ * bulk-select + save, and eliminate — writing into that client's unified options.
  *
  * The search always pulls EVERYTHING scoring ≥ FETCH_FLOOR. Above the results sits
  * the shared FinderRefinementBar (score slider + sort + hard refine filters) that
- * operates 100% client-side on that set — no re-fetch. Same bar is used in the
- * Follow-up modal so both surfaces behave identically.
- *
- * Difference from the Follow-up modal: there's no client to attach options to, so
- * the cards show "Details" only (hideClientActions) — no save / eliminate.
+ * operates 100% client-side on that set — no re-fetch. Same bar + FinderCard are
+ * used in the Follow-up finder so both surfaces behave identically.
  */
 
 // The clients-model field slugs the finder reads (mirrors the Follow-up draft
@@ -55,11 +63,20 @@ const SOURCE_LABELS: Record<FinderSource, { ar: string; en: string }> = {
 };
 
 const PAGE = 24;
+const noop = () => {};
+
+/** Best-effort human label for a client record (name → code → phone → id). */
+function clientLabel(rec: AppRecord): string {
+  const d = rec.data as Record<string, unknown>;
+  const pick = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : '');
+  return pick(d.client_name) || pick(d.client_code) || pick(d.phone_number) || rec.id.slice(0, 8);
+}
 
 export default function ProjectFinderPage() {
   const language = useAppStore((s) => s.language);
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
+  const addToast = useAppStore((s) => s.addToast);
   const isAr = language === 'ar';
   const L = (ar: string, en: string) => (isAr ? ar : en);
 
@@ -86,11 +103,62 @@ export default function ProjectFinderPage() {
     our_projects: true, all_projects: true, market_listings: false,
   });
 
+  // ── Selected client (optional). When set, the search is geo-gated for them and
+  //    result cards can save options into their unified list. ──
+  const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
+  const [clientQuery, setClientQuery] = useState('');
+  const [clientPickerOpen, setClientPickerOpen] = useState(false);
+
+  const clientRec = useMemo<AppRecord | null>(() => {
+    if (!selectedClientId || !clientsModel) return null;
+    return (records[clientsModel.id] ?? []).find((r) => r.id === selectedClientId) ?? null;
+  }, [selectedClientId, clientsModel, records]);
+
+  const filteredClients = useMemo<AppRecord[]>(() => {
+    if (!clientsModel) return [];
+    const all = records[clientsModel.id] ?? [];
+    const q = clientQuery.trim().toLowerCase();
+    if (!q) return all.slice(0, 30);
+    return all
+      .filter((r) => {
+        const d = r.data as Record<string, unknown>;
+        return [d.client_name, d.phone_number, d.client_code].some(
+          (v) => typeof v === 'string' && v.toLowerCase().includes(q),
+        );
+      })
+      .slice(0, 30);
+  }, [clientsModel, records, clientQuery]);
+
+  // Client-option cross-reference (each card shows its saved status for THIS client).
+  const clientOptionsModelId = useMemo(
+    () => models.find((m) => m.name === 'client_property_options')?.id ?? null,
+    [models],
+  );
+  const existingByKey = useMemo(() => {
+    const map: Record<string, ClientOptionStatus> = {};
+    if (!clientOptionsModelId || !selectedClientId) return map;
+    for (const r of records[clientOptionsModelId] ?? []) {
+      if (r.data.client_id !== selectedClientId) continue;
+      map[`${r.data.source_type}:${r.data.source_id}`] = r.data.status as ClientOptionStatus;
+    }
+    return map;
+  }, [records, clientOptionsModelId, selectedClientId]);
+  const existingStatusFor = (item: FinderMatch): ClientOptionStatus | null =>
+    existingByKey[`${finderSourceToOptionType(item.source)}:${item.project_id}`] ?? null;
+
   // Results-refinement state (all client-side over the ≥ FETCH_FLOOR set).
   const [scoreThreshold, setScoreThreshold] = useState<number>(FETCH_FLOOR);
   const [sortKey, setSortKey] = useState<SortKey>('score');
   const [showRefine, setShowRefine] = useState(false);
   const [refine, setRefine] = useState<Refine>(REFINE_DEFAULT);
+
+  // Client-option action state (used only when a client is selected).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [saveStates, setSaveStates] = useState<Record<string, 'idle' | 'saving' | 'saved'>>({});
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [eliminateTarget, setEliminateTarget] = useState<FinderMatch | null>(null);
+  const [eliminateNotes, setEliminateNotes] = useState('');
+  const [eliminating, setEliminating] = useState(false);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -124,9 +192,39 @@ export default function ProjectFinderPage() {
   const setField = (slug: string, value: unknown) =>
     setDraft((d) => ({ ...d, [slug]: value }));
 
+  // Seed the pickers from a client's saved preferences (location + rules, unit
+  // type, budget, area, amenities, bedrooms). Resets any in-flight results.
+  function selectClient(id: string) {
+    setSelectedClientId(id);
+    setClientPickerOpen(false);
+    setClientQuery('');
+    setSelected(new Set());
+    setSaveStates({});
+    const rec = clientsModel ? (records[clientsModel.id] ?? []).find((r) => r.id === id) : null;
+    if (rec) {
+      const d = rec.data as Record<string, unknown>;
+      const next: Record<string, unknown> = {};
+      for (const slug of FILTER_SLUGS) next[slug] = d[slug];
+      next.location_items = d.location_items ?? [];
+      setDraft(next);
+      const pb = d.preferred_bedrooms;
+      const bn = typeof pb === 'number' ? pb : pb && typeof pb === 'object' ? Number((pb as Record<string, unknown>).min) : NaN;
+      setBedrooms(Number.isFinite(bn) && bn > 0 ? bn : '');
+    }
+    setResp(null);
+    setError(null);
+    setHasSearched(false);
+  }
+
+  function clearClient() {
+    setSelectedClientId(null);
+    setSelected(new Set());
+    setSaveStates({});
+  }
+
   function buildRequirements(): MatchRequirementsInput {
     const reqs = draftToMatchRequirements({
-      clientsModel, prefDraft: draft, savedClientData: null, resolveLookupName,
+      clientsModel, prefDraft: draft, savedClientData: clientRec?.data ?? null, resolveLookupName,
     });
     if (typeof bedrooms === 'number' && bedrooms > 0) reqs.bedrooms = bedrooms;
     return reqs;
@@ -136,7 +234,7 @@ export default function ProjectFinderPage() {
     const r = buildRequirements();
     return Object.keys(r).length > 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, bedrooms, resolveLookupName]);
+  }, [draft, bedrooms, resolveLookupName, clientRec]);
 
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -159,8 +257,11 @@ export default function ProjectFinderPage() {
       const r = await fetchProjectFinder(
         {
           requirements: buildRequirements(),
-          // Standalone: no client → no geo-preference gate, no options to attach.
-          // Pull EVERYTHING ≥ floor; the score slider refines upward client-side.
+          // A selected client geo-gates the search (client_id + their current
+          // location_items) and lets us attach options; without one it's pure
+          // discovery pulling EVERYTHING ≥ floor (score slider refines upward).
+          clientId: selectedClientId ?? undefined,
+          locationItems: Array.isArray(draft.location_items) ? draft.location_items : undefined,
           perGroup: 0,
           minScore: FETCH_FLOOR,
           sources: chosenSources,
@@ -193,6 +294,8 @@ export default function ProjectFinderPage() {
     setResp(null);
     setError(null);
     setHasSearched(false);
+    setSelected(new Set());
+    setSaveStates({});
   }
 
   useEffect(() => () => controllerRef.current?.abort(), []);
@@ -200,6 +303,85 @@ export default function ProjectFinderPage() {
   function onOpenDetails(item: FinderMatch) {
     const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
     window.open(`/model/${model}/${item.project_id}`, '_blank', 'noopener');
+  }
+
+  // ── Client-option actions (mirrors the Follow-up finder). Guarded by a selected client. ──
+  function matchToInput(item: FinderMatch): Omit<SaveOptionInput, 'clientId'> {
+    return {
+      sourceType: finderSourceToOptionType(item.source),
+      sourceId: item.project_id,
+      sourceName: item.project_name,
+      matchScore: item.score,
+      matchRunId: resp?.metadata.generated_at ?? null,
+      facts: item.facts,
+      status: 'suitable',
+    };
+  }
+
+  function toggleSelect(item: FinderMatch) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(item.project_id)) next.delete(item.project_id);
+      else next.add(item.project_id);
+      return next;
+    });
+  }
+
+  const openEliminate = (item: FinderMatch) => { setEliminateNotes(''); setEliminateTarget(item); };
+
+  // Inline status pick from a card. 'eliminated' routes through the reason modal;
+  // every other status ensures the option exists then applies it (main_focus →
+  // single active main; any non-eliminated pick reactivates an eliminated option).
+  async function onSetStatus(item: FinderMatch, status: ClientOptionStatus) {
+    if (!selectedClientId) return;
+    if (status === 'eliminated') { openEliminate(item); return; }
+    setSaveStates((s) => ({ ...s, [item.project_id]: 'saving' }));
+    const ensured = await saveClientOption({ clientId: selectedClientId, ...matchToInput(item), addedFrom: 'project_finder', status });
+    let ok = ensured.ok;
+    if (ensured.optionId) {
+      const res = await updateOptionStatus(ensured.optionId, status);
+      ok = res.ok;
+    }
+    setSaveStates((s) => ({ ...s, [item.project_id]: 'idle' }));
+    const label = isAr ? CLIENT_OPTION_STATUS_META[status].ar : CLIENT_OPTION_STATUS_META[status].en;
+    addToast(
+      ok ? L(`تم ضبط الحالة: ${label}`, `Status set: ${label}`) : L('تعذّر ضبط الحالة.', 'Could not set status.'),
+      ok ? 'success' : 'error',
+    );
+  }
+
+  async function onBulkSave() {
+    if (!selectedClientId || selected.size === 0) return;
+    const all = FINDER_GROUP_KEYS.flatMap((k) => refinedGroups[k]);
+    const chosen = all.filter((i) => selected.has(i.project_id));
+    setBulkSaving(true);
+    const summary = await bulkSaveOptions(selectedClientId, chosen.map(matchToInput), 'project_finder');
+    setBulkSaving(false);
+    const saved = summary.created + summary.updated;
+    const parts: string[] = [];
+    if (saved > 0) parts.push(L(`حُفظ ${saved}`, `${saved} saved`));
+    if (summary.skippedEliminated > 0) parts.push(L(`${summary.skippedEliminated} مستبعد (تجاهل)`, `${summary.skippedEliminated} eliminated (skipped)`));
+    if (summary.failed > 0) parts.push(L(`${summary.failed} فشل`, `${summary.failed} failed`));
+    addToast(parts.join(' · ') || L('لا تغييرات', 'No changes'), summary.failed > 0 ? 'error' : 'success');
+  }
+
+  async function confirmEliminate() {
+    if (!eliminateTarget || !selectedClientId) { setEliminateTarget(null); return; }
+    setEliminating(true);
+    const ensured = await saveClientOption({ clientId: selectedClientId, ...matchToInput(eliminateTarget), addedFrom: 'project_finder' });
+    let ok = ensured.ok;
+    if (ensured.optionId) {
+      const res = await eliminateOption(ensured.optionId, eliminateNotes.trim());
+      ok = res.ok;
+    }
+    setEliminating(false);
+    if (ok) {
+      addToast(L('تم استبعاد الخيار.', 'Option eliminated.'), 'success');
+      setEliminateTarget(null);
+      setEliminateNotes('');
+    } else {
+      addToast(L('تعذّر استبعاد الخيار.', 'Could not eliminate the option.'), 'error');
+    }
   }
 
   // Apply the score threshold + refine post-filters, then sort — per group (shared engine).
@@ -216,6 +398,30 @@ export default function ProjectFinderPage() {
   const tierItems = tabView.tabs[activeTab] ?? [];
   const activeCount = ourProjects.length + tierItems.length; // total cards in the active tab
   const shownTier = tierItems.slice(0, visibleCount);
+
+  const selectedVisible = useMemo(
+    () => (selectedClientId ? FINDER_GROUP_KEYS.reduce((n, k) => n + refinedGroups[k].filter((i) => selected.has(i.project_id)).length, 0) : 0),
+    [selectedClientId, refinedGroups, selected],
+  );
+
+  // One card, wired for a selected client (full actions) or read-only discovery.
+  const renderCard = (item: FinderMatch, key: string) => (
+    <FinderCard
+      key={key}
+      item={item}
+      isAr={isAr}
+      onOpenDetails={onOpenDetails}
+      selected={selectedClientId ? selected.has(item.project_id) : false}
+      onToggleSelect={selectedClientId ? toggleSelect : noop}
+      onSaveOption={noop}
+      onEliminate={noop}
+      onReactivate={noop}
+      onSetStatus={selectedClientId ? onSetStatus : undefined}
+      saveState={selectedClientId ? saveStates[item.project_id] ?? 'idle' : 'idle'}
+      existingStatus={selectedClientId ? existingStatusFor(item) : null}
+      hideClientActions={!selectedClientId}
+    />
+  );
 
   // Reset the render window whenever the visible list changes (tab / refine / sort / new results).
   useEffect(() => { setVisibleCount(PAGE); scrollRef.current?.scrollTo({ top: 0 }); }, [activeTab, tabView]);
@@ -255,8 +461,8 @@ export default function ProjectFinderPage() {
         <div className="min-w-0">
           <h1 className="text-lg font-bold text-chocolate">{L('الباحث عن المشاريع', 'Project Finder')}</h1>
           <p className="text-xs text-charcoal/60">
-            {L('ابحث عن المشاريع المطابقة بالحقول والخيارات — بدون عميل، وبدون نص حر أو ذكاء اصطناعي.',
-               'Find matching projects by structured fields — no client, no free text, no AI.')}
+            {L('ابحث عن المشاريع المطابقة بالحقول والخيارات — مع عميل أو بدونه، وبدون نص حر أو ذكاء اصطناعي.',
+               'Find matching projects by structured fields — with or without a client, no free text, no AI.')}
           </p>
         </div>
       </div>
@@ -269,6 +475,70 @@ export default function ProjectFinderPage() {
               <div className="text-sm text-charcoal/60">{L('نموذج العملاء غير محمّل.', 'Clients model not loaded.')}</div>
             ) : (
               <div className="space-y-4">
+                {/* ── Client picker (optional) ── */}
+                <div>
+                  <label className="mb-1 block text-xs font-bold text-charcoal/70">{L('العميل (اختياري)', 'Client (optional)')}</label>
+                  {clientRec ? (
+                    <div className="flex items-center gap-2 rounded-lg border border-copper/40 bg-copper/5 px-3 py-2">
+                      <User size={15} className="shrink-0 text-copper" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-bold text-charcoal">{clientLabel(clientRec)}</div>
+                        <div className="text-[11px] text-charcoal/55">{L('البحث والخيارات مرتبطة بهذا العميل', 'Search & options are tied to this client')}</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={clearClient}
+                        className="shrink-0 rounded-md p-1 text-charcoal/45 transition hover:bg-white hover:text-red-600"
+                        title={L('إزالة العميل', 'Clear client')}
+                        aria-label={L('إزالة العميل', 'Clear client')}
+                      >
+                        <X size={15} />
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <div className="flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-2.5 py-1.5">
+                        <Search size={14} className="shrink-0 text-charcoal/40" />
+                        <input
+                          type="text"
+                          value={clientQuery}
+                          onChange={(e) => { setClientQuery(e.target.value); setClientPickerOpen(true); }}
+                          onFocus={() => setClientPickerOpen(true)}
+                          placeholder={L('ابحث بالاسم أو الجوال…', 'Search by name or phone…')}
+                          className="w-full bg-transparent text-sm text-charcoal placeholder:text-charcoal/35 focus:outline-none"
+                        />
+                      </div>
+                      {clientPickerOpen && (
+                        <div className="fixed inset-0 z-10" onClick={() => setClientPickerOpen(false)} aria-hidden />
+                      )}
+                      {clientPickerOpen && (
+                        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-sand/60 bg-white shadow-lg">
+                          {filteredClients.length === 0 ? (
+                            <div className="px-3 py-2 text-xs text-charcoal/50">{L('لا عملاء مطابقون', 'No matching clients')}</div>
+                          ) : (
+                            filteredClients.map((r) => {
+                              const d = r.data as Record<string, unknown>;
+                              const phone = typeof d.phone_number === 'string' ? d.phone_number : '';
+                              return (
+                                <button
+                                  key={r.id}
+                                  type="button"
+                                  onClick={() => selectClient(r.id)}
+                                  className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm transition hover:bg-cream/70"
+                                >
+                                  <User size={14} className="shrink-0 text-charcoal/40" />
+                                  <span className="min-w-0 flex-1 truncate font-semibold text-charcoal">{clientLabel(r)}</span>
+                                  {phone && <span className="shrink-0 text-[11px] text-charcoal/45" dir="ltr">{phone}</span>}
+                                </button>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
                 {filterFields.map((field) => (
                   <div key={field.id}>
                     <label className="mb-1 block text-xs font-bold text-charcoal/70">
@@ -280,6 +550,9 @@ export default function ProjectFinderPage() {
                       onChange={(v) => setField(field.name, v)}
                       recordData={draft}
                       compact
+                      modelId={clientsModel.id}
+                      recordId={selectedClientId ?? undefined}
+                      onPatch={(patch) => setDraft((d) => ({ ...d, ...patch }))}
                     />
                   </div>
                 ))}
@@ -448,36 +721,13 @@ export default function ProjectFinderPage() {
             {!loading && !error && ourProjects.length > 0 && (
               <>
                 <SectionLabel text={L('مشاريعنا', 'Our Projects')} tone="ours" />
-                {ourProjects.map((item) => (
-                  <FinderCard
-                    key={`our-${item.project_id}`}
-                    item={item} isAr={isAr} onOpenDetails={onOpenDetails}
-                    selected={false} onToggleSelect={() => {}} onSaveOption={() => {}}
-                    onEliminate={() => {}} onReactivate={() => {}} saveState="idle" existingStatus={null}
-                    hideClientActions
-                  />
-                ))}
+                {ourProjects.map((item) => renderCard(item, `our-${item.project_id}`))}
                 {tierItems.length > 0 && <SectionLabel text={L('خيارات أخرى', 'Other options')} tone="other" />}
               </>
             )}
 
             {/* This tab's other matches (all_projects + market_listings). */}
-            {!loading && !error && shownTier.map((item) => (
-              <FinderCard
-                key={item.project_id}
-                item={item}
-                isAr={isAr}
-                onOpenDetails={onOpenDetails}
-                selected={false}
-                onToggleSelect={() => {}}
-                onSaveOption={() => {}}
-                onEliminate={() => {}}
-                onReactivate={() => {}}
-                saveState="idle"
-                existingStatus={null}
-                hideClientActions
-              />
-            ))}
+            {!loading && !error && shownTier.map((item) => renderCard(item, item.project_id))}
             {!loading && !error && tierItems.length > 0 && (
               <>
                 {visibleCount < tierItems.length && <div ref={sentinelRef} className="h-1" aria-hidden />}
@@ -487,8 +737,55 @@ export default function ProjectFinderPage() {
               </>
             )}
           </div>
+
+          {/* Footer — bulk-save the SELECTED options into the client's unified list. */}
+          {selectedClientId && !loading && !error && fetchedTotal > 0 && (
+            <div className="mt-2 flex items-center justify-between gap-3 border-t border-sand/40 pt-3">
+              <span className="text-xs text-charcoal/60">{L(`${selectedVisible} محدّد`, `${selectedVisible} selected`)}</span>
+              <button
+                type="button"
+                onClick={onBulkSave}
+                disabled={bulkSaving || selectedVisible === 0}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+              >
+                {bulkSaving ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
+                {L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
+              </button>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Eliminate-with-notes prompt */}
+      {eliminateTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/40 p-4" onMouseDown={() => !eliminating && setEliminateTarget(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-cream p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()} dir={isAr ? 'rtl' : 'ltr'}>
+            <div className="mb-2 flex items-center gap-2 text-chocolate">
+              <XCircle size={18} className="text-red-600" />
+              <h3 className="text-base font-bold">{L('استبعاد الخيار', 'Eliminate option')}</h3>
+            </div>
+            <p className="mb-3 text-sm text-charcoal/70">{eliminateTarget.project_name}</p>
+            <label className="mb-1 block text-xs font-semibold text-charcoal/60">{L('سبب الاستبعاد', 'Elimination reason')}</label>
+            <textarea
+              value={eliminateNotes}
+              onChange={(e) => setEliminateNotes(e.target.value)}
+              rows={3}
+              autoFocus
+              placeholder={L('مثال: خارج الميزانية، الموقع بعيد…', 'e.g. over budget, location too far…')}
+              className="form-input w-full resize-none"
+            />
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" onClick={() => !eliminating && setEliminateTarget(null)} className="rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60">
+                {L('إلغاء', 'Cancel')}
+              </button>
+              <button type="button" onClick={confirmEliminate} disabled={eliminating} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50">
+                {eliminating ? <Loader2 size={15} className="animate-spin" /> : <XCircle size={15} />}
+                {L('استبعاد', 'Eliminate')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
