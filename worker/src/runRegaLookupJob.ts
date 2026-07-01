@@ -57,6 +57,7 @@ interface RegaData {
   mobile: string | null; // as printed: 05XXXXXXXX
   falLicense: string | null;
   licenseNo: string | null;
+  unified: string | null; // الرقم الموحد لمنشأة المعلن
 }
 
 /** REGA mobile (05XXXXXXXX) → KSA E.164 (+9665XXXXXXXX). Null if not a KSA mobile. */
@@ -235,6 +236,7 @@ export async function runRegaLookupJob({ supabase, env, job }: RunArgs): Promise
         mobile: v('رقم جوال مسؤول الإعلان'),
         falLicense: v('رقم رخصة فال للوساطة والتسويق العقاري'),
         licenseNo: v('رقم الترخيص'),
+        unified: v('الرقم الموحد لمنشأة المعلن'),
       };
     })) as RegaData;
 
@@ -249,18 +251,37 @@ export async function runRegaLookupJob({ supabase, env, job }: RunArgs): Promise
       return { outcome: 'no_license', adId, href };
     }
 
-    // 4. Success — write the phone + provenance.
+    // 4. Success — upsert the advertiser CONTACT (dedup by phone) into the
+    // `advertisers` module + link the listing to it, then write the phone +
+    // provenance onto the listing. broker_type is derived from the license URL
+    // (OfficesBroker = company, IndividualBroker = individual).
+    const brokerType = /OfficesBroker/i.test(href) ? 'office' : /IndividualBroker/i.test(href) ? 'individual' : null;
+    let advertiserId: string | null = null;
+    const { data: advId, error: advErr } = await supabase.rpc('rega_upsert_advertiser', {
+      p_name: parsed.advertiser ?? (listingData.advertiser_name as string | null) ?? null,
+      p_phone: e164,
+      p_agent: parsed.agentName ?? null,
+      p_fal: parsed.falLicense ?? null,
+      p_unified: parsed.unified ?? null,
+      p_broker_type: brokerType,
+      p_created_by: job.userId ?? null,
+    });
+    if (advErr) console.error(`[rega] advertiser upsert failed (ad ${adId}): ${advErr.message}`);
+    else advertiserId = (advId as string | null) ?? null;
+
     await patchRecord({
       advertiser_phone: e164,
       advertiser_name: parsed.advertiser ?? listingData.advertiser_name ?? null,
       rega_agent_name: parsed.agentName ?? null,
       rega_fal_license: parsed.falLicense ?? null,
       rega_license_no: parsed.licenseNo ?? null,
+      rega_unified_number: parsed.unified ?? null,
+      ...(advertiserId ? { advertiser: advertiserId } : {}),
       rega_lookup_status: 'done',
       rega_lookup_error: null,
       rega_lookup_at: new Date().toISOString(),
     });
-    return { outcome: 'done', adId, phone: e164, advertiser: parsed.advertiser };
+    return { outcome: 'done', adId, phone: e164, advertiser: advertiserId };
   } catch (err) {
     // Reflect the failure onto the record FIRST so the SPA spinner exits now
     // (not only via the 10-min watchdog), then rethrow so the job is marked failed.

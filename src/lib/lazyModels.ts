@@ -72,6 +72,9 @@ export const SUMMARY_DATA_KEYS: Readonly<Record<string, readonly string[]>> = {
     // sees a cached phone on load AND the worker's write via Realtime. Small
     // (null for ~all rows). Keep in sync with the market_listings_summary view.
     'advertiser_phone', 'rega_lookup_status', 'rega_lookup_error', 'rega_lookup_at',
+    // Lookup → the advertisers module record (2026-07-01). In the slim store so
+    // the list view can show/link the advertiser. Keep in sync with the view.
+    'advertiser',
   ],
 };
 
