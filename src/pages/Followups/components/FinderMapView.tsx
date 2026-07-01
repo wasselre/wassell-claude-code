@@ -104,10 +104,20 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
     oursMarkersRef.current.forEach((m) => m.setMap(null));
     oursMarkersRef.current = [];
 
+    // Build the pin icon ONCE per source color and reuse it across all markers —
+    // there are only 3 colors, so a dense tab (thousands of pins) no longer
+    // re-encodes an identical SVG data-URI per marker (that per-marker cost was the
+    // main-thread stall when opening the map on a large result set).
+    const iconBySource = {
+      our_projects: buildColoredPinIcon(SOURCE_COLOR.our_projects) as google.maps.Icon | undefined,
+      market_listings: buildColoredPinIcon(SOURCE_COLOR.market_listings) as google.maps.Icon | undefined,
+      all_projects: buildColoredPinIcon(SOURCE_COLOR.all_projects) as google.maps.Icon | undefined,
+    };
+
     const makeMarker = (p: Plotted) => {
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
-        icon: buildColoredPinIcon(SOURCE_COLOR[p.match.source]) as google.maps.Icon | undefined,
+        icon: iconBySource[p.match.source],
         title: p.match.project_name,
         // Our projects sit on top so they're never hidden under a market pin.
         zIndex: p.match.source === 'our_projects' ? 1000 : undefined,
