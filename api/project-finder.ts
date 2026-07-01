@@ -53,6 +53,14 @@ interface FinderBody {
   followup_id?: string;
   perGroup?: number;
   minScore?: number;
+  /**
+   * The client's CURRENT location_items (district + geo-element rules) as the user
+   * is editing them — may differ from the saved record. When present, the geo gate
+   * compiles from THESE (via wassell_compile_geo_items) so an unsaved "south of the
+   * road" edit filters to the south immediately. Omitted → compile from the saved
+   * record (wassell_compile_client_geo).
+   */
+  location_items?: unknown;
 }
 
 const num = (v: unknown): number | undefined => {
@@ -190,9 +198,12 @@ export default async function handler(req: Request): Promise<Response> {
     let geoFilter: { applied: boolean; match_count: number; needs_review: number } | null = null;
     const clientId = str(body.client_id);
     if (clientId) {
-      const { data: compiled, error: compileErr } = await supabase.rpc('wassell_compile_client_geo', {
-        p_client_id: clientId,
-      });
+      // Compile from the DRAFT location_items when the caller supplied them (so an
+      // unsaved "south of the road" edit filters immediately); else the saved record.
+      const draftItems = Array.isArray(body.location_items) ? body.location_items : null;
+      const { data: compiled, error: compileErr } = draftItems
+        ? await supabase.rpc('wassell_compile_geo_items', { p_client_id: clientId, p_items: draftItems })
+        : await supabase.rpc('wassell_compile_client_geo', { p_client_id: clientId });
       if (compileErr) {
         console.error('[project-finder] geo compile failed:', compileErr.message);
       } else {

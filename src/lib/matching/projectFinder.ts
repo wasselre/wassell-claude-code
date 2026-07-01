@@ -98,6 +98,10 @@ export interface FetchFinderArgs {
   sources?: FinderSource[];
   /** Language for the deterministic per-card explanation string. */
   locale?: 'ar' | 'en';
+  /** The client's CURRENT (possibly-unsaved) location_items. When present the geo
+   *  gate compiles from THESE, so a just-edited "south of the road" rule filters
+   *  immediately instead of using the saved record. */
+  locationItems?: unknown;
 }
 
 async function authHeader(): Promise<Record<string, string>> {
@@ -122,6 +126,7 @@ export async function fetchProjectFinder(
       ...(args.minScore != null ? { minScore: args.minScore } : {}),
       ...(args.sources ? { sources: args.sources } : {}),
       ...(args.locale ? { locale: args.locale } : {}),
+      ...(Array.isArray(args.locationItems) ? { location_items: args.locationItems } : {}),
       // Deterministic-only from the Follow-up flow: no LLM parse, no LLM explanation.
       parse: false,
       explain: false,

@@ -195,6 +195,9 @@ export default function SuggestedProjectsView({
         minScore: FETCH_FLOOR,
         sources: ['our_projects', 'all_projects', 'market_listings'],
         locale: isAr ? 'ar' : 'en',
+        // Compile the geo gate from the DRAFT rules the rep is looking at (so an
+        // unsaved "south of the road" filters immediately), not the saved record.
+        locationItems: Array.isArray(d.location_items) ? (d.location_items as unknown[]) : undefined,
       },
       controller.signal,
     )
@@ -331,6 +334,7 @@ export default function SuggestedProjectsView({
     setSavingPrefs(true);
     const patch: Record<string, unknown> = {};
     for (const slug of EDIT_SLUGS) patch[slug] = editDraft[slug];
+    // location_items (district + geo-element rules) isn't a plain slug — persist it too.
     patch.location_items = editDraft.location_items ?? [];
     const next: AppRecord = { ...clientRec, data: { ...clientRec.data, ...patch }, updated_at: new Date().toISOString() };
     const res = await saveRecord(next, { expectedVersion: clientRec.version ?? null });
