@@ -58,6 +58,9 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const clustererRef = useRef<MarkerClusterer | null>(null);
+  // OUR-project markers are placed on the map directly (NEVER in the clusterer) so
+  // they always show as individual pins; kept here for teardown.
+  const oursMarkersRef = useRef<google.maps.Marker[]>([]);
   const onOpenRef = useRef(onOpenDetails);
   useEffect(() => { onOpenRef.current = onOpenDetails; }, [onOpenDetails]);
   const hasCard = !!renderSelectedCard;
@@ -98,8 +101,10 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
   useEffect(() => {
     if (!map || !isLoaded || !window.google) return;
     clustererRef.current?.clearMarkers();
+    oursMarkersRef.current.forEach((m) => m.setMap(null));
+    oursMarkersRef.current = [];
 
-    const markers: google.maps.Marker[] = plotted.map((p) => {
+    const makeMarker = (p: Plotted) => {
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
         icon: buildColoredPinIcon(SOURCE_COLOR[p.match.source]) as google.maps.Icon | undefined,
@@ -116,12 +121,25 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
         }
       });
       return marker;
-    });
+    };
 
-    if (markers.length > 0) {
+    // OUR projects are placed on the map directly so they are ALWAYS individual
+    // pins (never absorbed into a cluster); every other source is clustered.
+    const clustered: google.maps.Marker[] = [];
+    for (const p of plotted) {
+      const marker = makeMarker(p);
+      if (p.match.source === 'our_projects') {
+        marker.setMap(map);
+        oursMarkersRef.current.push(marker);
+      } else {
+        clustered.push(marker);
+      }
+    }
+
+    if (clustered.length > 0) {
       clustererRef.current = new MarkerClusterer({
         map,
-        markers,
+        markers: clustered,
         algorithm: new SuperClusterAlgorithm({ radius: 70, maxZoom: 15 }),
         renderer: {
           render: ({ count, position }) =>
@@ -132,6 +150,9 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
             }),
         },
       });
+    }
+
+    if (plotted.length > 0) {
       // Fit to all pins (single pin → a comfortable zoom).
       const bounds = new google.maps.LatLngBounds();
       for (const p of plotted) bounds.extend({ lat: p.lat, lng: p.lng });
@@ -146,6 +167,8 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
     return () => {
       clustererRef.current?.clearMarkers();
       clustererRef.current = null;
+      oursMarkersRef.current.forEach((m) => m.setMap(null));
+      oursMarkersRef.current = [];
     };
   }, [map, isLoaded, plotted]);
 
