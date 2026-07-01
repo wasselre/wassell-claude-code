@@ -14,7 +14,8 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
     "@supabase/supabase-js": "^2.49.1",
-    "docx": "^9.7.1"
+    "docx": "^9.7.1",
+    "playwright-core": "^1.61.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

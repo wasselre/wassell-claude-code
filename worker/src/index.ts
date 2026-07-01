@@ -34,6 +34,7 @@ import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
 import { runImageJob, type ImageJob } from './runImageJob.js';
 import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
+import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 
 const env = loadEnv();
 
@@ -91,6 +92,11 @@ let workflowBusy = false;
 let workflowWakeRequested = false;
 let workflowAuthDisabled = false;
 let workflowAuthFailures = 0;
+// REGA advertiser-phone lookup (rega_lookup_jobs, NINTH loop). Drives a
+// Browserbase session to read the public REGA registry for a market listing.
+// Registered only when BROWSERBASE_API_KEY + BROWSERBASE_PROJECT_ID are set.
+let regaBusy = false;
+let regaWakeRequested = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -1061,6 +1067,122 @@ async function migrationPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// REGA advertiser-phone lookup — rega_lookup_jobs queue (Browserbase).
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued REGA lookup job (if any) and run it to completion. Mirrors the
+ * deck/image claim-run-complete shape against rega_lookup_jobs. runRegaLookupJob
+ * already reflects a failure onto the listing record (so the SPA button spinner
+ * exits); here we just mark the job done/failed. Returns true if a job was claimed.
+ */
+async function claimAndRunOneRega(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('rega_lookup_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+  });
+  if (error) {
+    console.error(`[worker] rega claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    listing_record_id: string;
+    user_id: string;
+    attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: RegaLookupJob = {
+    id: row.job_id,
+    recordId: row.listing_record_id,
+    userId: row.user_id,
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed rega job=${job.id} listing=${job.recordId} attempts=${job.attempts}`,
+  );
+
+  try {
+    const result = await runRegaLookupJob({ supabase, env, job });
+    // rega_lookup_job_complete only touches status='running' rows — a late finish
+    // after the watchdog already failed the job is a harmless no-op.
+    const { error: doneErr } = await supabase.rpc('rega_lookup_job_complete', {
+      p_job_id: job.id,
+      p_result: result ?? {},
+    });
+    if (doneErr) {
+      console.error(`[worker] rega_lookup_job_complete RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed rega job=${job.id} → ${(result as { outcome?: string }).outcome ?? 'ok'}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] rega job=${job.id} FAILED:`, msg);
+    if (err instanceof Error && err.stack) console.error(err.stack);
+    try {
+      const { error: failErr } = await supabase.rpc('rega_lookup_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] rega_lookup_job_fail RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(`[worker] could not mark rega job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+async function runRegaWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('rega_lookup_jobs_watchdog');
+    if (error) {
+      console.error(`[worker] rega watchdog RPC error: ${error.message}`);
+      return;
+    }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) {
+      console.warn(`[worker] rega watchdog swept ${swept} stale job(s)`);
+    }
+  } catch (err) {
+    console.error(`[worker] rega watchdog threw:`, err);
+  }
+}
+
+/**
+ * REGA-queue twin of the other poll loops. Runs concurrently with its own
+ * busy/wake flags. Ticks rega_lookup_jobs_watchdog() on the same interval.
+ */
+async function regaPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    regaBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneRega();
+    } catch (err) {
+      console.error('[worker] rega poll iteration error:', err);
+    }
+    regaBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runRegaWatchdog();
+    }
+
+    if (didClaim || regaWakeRequested) {
+      regaWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !regaWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Scheduled Reports — time-gated. scheduled_report_claim_due returns only
 // reports whose next_run_at has passed (SKIP LOCKED), so no separate scheduler
 // is needed. Each due report is run by POSTing the owner-scoped runner endpoint
@@ -1326,6 +1448,8 @@ const server = http.createServer((req, res) => {
         workflow_auth_disabled: workflowAuthDisabled,
         workflow_auth_failures: workflowAuthFailures,
         workflow_busy: workflowBusy,
+        rega_busy: regaBusy,
+        rega_enabled: !!(env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID),
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -1344,6 +1468,7 @@ const server = http.createServer((req, res) => {
     migrationWakeRequested = true;
     reportsWakeRequested = true;
     workflowWakeRequested = true;
+    regaWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -1364,7 +1489,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -1408,6 +1533,14 @@ if (env.WORKFLOW_PROOF_ONLY) {
     loops.push(workflowPollLoop());
   } else {
     console.log('[worker] workflow runner loop disabled (WORKFLOW_RUNNER_SECRET unset)');
+  }
+  // REGA advertiser-phone lookup loop — only when Browserbase creds are set
+  // (deploying this code is a no-op for the queue until both secrets exist).
+  if (env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID) {
+    console.log('[worker] rega lookup loop enabled');
+    loops.push(regaPollLoop());
+  } else {
+    console.log('[worker] rega lookup loop disabled (BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID unset)');
   }
 }
 Promise.all(loops).catch((err) => {

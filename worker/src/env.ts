@@ -68,6 +68,13 @@ export interface WorkerEnv {
    *  without claiming live jobs from the OTHER shared-prod queues. Default
    *  (absent) = all loops, unchanged. MUST NEVER be set on the prod Fly worker. */
   WORKFLOW_PROOF_ONLY: boolean;
+  /** Browserbase creds for the REGA advertiser-phone lookup (rega_lookup_jobs).
+   *  When EITHER is UNSET the worker's rega loop self-disables (boots fine before
+   *  the feature is enabled). Set BOTH via `fly secrets set` to turn it on. The
+   *  browser runs remotely on Browserbase (playwright-core is a CDP client only,
+   *  no local Chromium). */
+  BROWSERBASE_API_KEY: string | null;
+  BROWSERBASE_PROJECT_ID: string | null;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -96,5 +103,7 @@ export function loadEnv(): WorkerEnv {
     REPORTS_RUNNER_SECRET: process.env.REPORTS_RUNNER_SECRET ?? null,
     WORKFLOW_RUNNER_SECRET: process.env.WORKFLOW_RUNNER_SECRET ?? null,
     WORKFLOW_PROOF_ONLY: process.env.WORKFLOW_PROOF_ONLY === '1',
+    BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY ?? null,
+    BROWSERBASE_PROJECT_ID: process.env.BROWSERBASE_PROJECT_ID ?? null,
   };
 }

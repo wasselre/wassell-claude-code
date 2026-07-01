@@ -37,6 +37,7 @@ import RecordFormModal from './components/RecordFormModal';
 import LinkedDocumentsPanel from './components/LinkedDocumentsPanel';
 import RecordDocumentsPanel from './components/RecordDocumentsPanel';
 import ListingMessagePanel from './components/ListingMessagePanel';
+import ContactAdvertiserPanel from './components/ContactAdvertiserPanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
 import UnitsTabPane from './components/UnitsTabPane';
@@ -1522,6 +1523,12 @@ export default function RecordFormPage() {
         * for a market listing. Renders nothing on every other model. */}
       {model && existingRecord?.id && (
         <ListingMessagePanel modelId={model.id} recordId={existingRecord.id} />
+      )}
+
+      {/* Fetch the advertiser's phone from the official REGA registry (Browserbase)
+        * and open an in-app WhatsApp chat. Renders nothing on every other model. */}
+      {model && existingRecord?.id && (
+        <ContactAdvertiserPanel modelId={model.id} recordId={existingRecord.id} />
       )}
 
       {/* Call history is no longer a bottom-of-form fallback on every model
