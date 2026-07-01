@@ -90,8 +90,15 @@ DECLARE
   v_model uuid := 'a1b2c3d4-e5f6-4a7b-8c9d-000000000001';
   v_id uuid;
   v_patch jsonb;
+  v_creator uuid;
 BEGIN
   IF p_phone IS NULL OR p_phone = '' THEN RETURN NULL; END IF;
+  -- Resolve a valid public.users.id: accept a users.id OR the caller's auth uid
+  -- (the worker passes job.userId = auth.uid()). NULL when unknown (created_by is
+  -- nullable) — WITHOUT this, an auth-uid p_created_by violates
+  -- records_created_by_user_id_fkey and silently kills the INSERT path (the
+  -- UPDATE path never touches created_by, which is why it appeared to work).
+  SELECT id INTO v_creator FROM public.users WHERE id = p_created_by OR auth_uid = p_created_by LIMIT 1;
   v_patch := jsonb_strip_nulls(jsonb_build_object(
     'name', p_name, 'agent_name', p_agent, 'fal_license', p_fal,
     'unified_number', p_unified, 'broker_type', p_broker_type,
@@ -108,7 +115,7 @@ BEGIN
     v_id := gen_random_uuid();
     INSERT INTO public.records (id, model_id, data, created_by_user_id)
     VALUES (v_id, v_model,
-      v_patch || jsonb_build_object('phone', p_phone, 'first_seen', now()), p_created_by);
+      v_patch || jsonb_build_object('phone', p_phone, 'first_seen', now()), v_creator);
     RETURN v_id;
   EXCEPTION WHEN unique_violation THEN
     -- Lost a race — an advertiser with this phone was just created; merge into it.
