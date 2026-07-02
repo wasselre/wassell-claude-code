@@ -356,6 +356,7 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     // the user so they own it). Never via the browser store — echo-dedup.
     const draftData: Record<string, unknown> = {
       name: listingTitle,
+      category: 'project',
       language: 'both',
       tags: ['listing'],
       listing_id: listingId,

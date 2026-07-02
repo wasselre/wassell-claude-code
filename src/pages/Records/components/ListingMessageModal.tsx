@@ -162,6 +162,7 @@ export default function ListingMessageModal({
       model_id: chatTemplatesModelId,
       data: {
         name: name.trim() || listingTitle,
+        category: 'project',
         language: 'both',
         tags: ['listing'],
         listing_id: listingId,

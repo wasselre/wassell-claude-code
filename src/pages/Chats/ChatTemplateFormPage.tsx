@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile } from '@/lib/haberchat/client';
+import { resolveTemplateCategory, templateCategoryLabel, type TemplateCategory } from '@/lib/chatTemplates';
 import Button from '@/components/ui/Button';
 import ProjectMessageGeneratorModal from './components/ProjectMessageGeneratorModal';
 import type { AppRecord } from '@/types';
@@ -38,6 +39,9 @@ export default function ChatTemplateFormPage() {
 
   // Local form state
   const [name, setName] = useState<string>((initialData.name as string) ?? '');
+  const [category, setCategory] = useState<TemplateCategory>(
+    existing ? resolveTemplateCategory(initialData) : 'contact',
+  );
   const [language, setLanguage] = useState<string>((initialData.language as string) ?? 'ar');
   const [tagsInput, setTagsInput] = useState<string>(
     Array.isArray(initialData.tags) ? (initialData.tags as string[]).join(', ') : '',
@@ -76,6 +80,7 @@ export default function ChatTemplateFormPage() {
   useEffect(() => {
     const d = (existing?.data as Record<string, unknown> | undefined) ?? {};
     setName((d.name as string) ?? '');
+    setCategory(existing ? resolveTemplateCategory(d) : 'contact');
     setLanguage((d.language as string) ?? 'ar');
     setTagsInput(Array.isArray(d.tags) ? (d.tags as string[]).join(', ') : '');
     setBodyAr((d.body_ar as string) ?? '');
@@ -164,6 +169,7 @@ export default function ChatTemplateFormPage() {
           // saving here would wipe a listing template's cleaned photos + link.
           ...((existing?.data as Record<string, unknown>) ?? {}),
           name: name.trim(),
+          category,
           language,
           tags,
           body_ar: bodyAr,
@@ -266,6 +272,19 @@ export default function ChatTemplateFormPage() {
               <option value="ar">{isAr ? 'العربية' : 'Arabic'}</option>
               <option value="en">{isAr ? 'الإنجليزية' : 'English'}</option>
               <option value="both">{isAr ? 'الاثنان' : 'Both'}</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-bold text-charcoal/40 mb-1">
+              {isAr ? 'التصنيف' : 'Category'}
+            </label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value as TemplateCategory)}
+              className="input w-full text-sm"
+            >
+              <option value="contact">{templateCategoryLabel('contact', isAr)}</option>
+              <option value="project">{templateCategoryLabel('project', isAr)}</option>
             </select>
           </div>
         </div>

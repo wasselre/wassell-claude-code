@@ -171,6 +171,7 @@ export default function ProjectMessageGeneratorModal({ onClose }: { onClose: () 
       model_id: chatTemplatesModel.id,
       data: {
         name: it.name,
+        category: 'project',
         language: 'both',
         tags: ['project'],
         body_ar: it.bodyAr,

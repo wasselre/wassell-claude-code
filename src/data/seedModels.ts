@@ -4062,6 +4062,25 @@ const chatTemplatesModel: AppModel = {
             lookup_model_id: '8f06bc39-4bee-42e9-9fab-77023fb89ede',
             lookup_display_field: 'title',
           },
+          // Classification driving the picker's tabs. Legacy records without a
+          // value derive it from project_id/listing_id — see
+          // src/lib/chatTemplates.ts resolveTemplateCategory.
+          {
+            id: uuid(),
+            name: 'category',
+            label_ar: 'التصنيف',
+            label_en: 'Category',
+            type: 'dropdown',
+            required: false,
+            order: 12,
+            section_id: chatTemplatesBaseSectionId,
+            width: 'half',
+            show_in_table: true,
+            options: [
+              { id: uuid(), label_ar: 'رسائل المشاريع', label_en: 'Project messages', value: 'project', color: '#B8734F' },
+              { id: uuid(), label_ar: 'رسائل التواصل', label_en: 'Contact messages', value: 'contact', color: '#C09B5F' },
+            ],
+          },
         ],
       },
     ],
