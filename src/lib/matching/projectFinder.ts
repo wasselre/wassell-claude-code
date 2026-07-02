@@ -49,6 +49,9 @@ export interface FinderMatch {
   match_type: FinderMatchType;
   group: FinderGroupKey;
   distance_km: number | null;
+  /** Label of the NEAREST selected district/element the distance was measured
+   *  against — the card renders "~4 كم من X". Null when unknown. */
+  nearest_ref_name?: string | null;
   geo_confidence: string | null;
   geo_status: GeoStatus | null;
   data_gaps: string[];

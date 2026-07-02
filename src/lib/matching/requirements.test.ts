@@ -22,6 +22,9 @@ describe('draftToMatchRequirements — multi-district', () => {
     expect(out.districts).toEqual(['النرجس', 'العقيق']);
     expect(out.district).toBe('النرجس'); // primary stays = districts[0]
     expect(out.city).toBe('الرياض');
+    // The AUTHORITATIVE record ids ride along — the engine matches on these
+    // directly (no fuzzy name resolution that could hit a wrong-city namesake).
+    expect(out.district_ids).toEqual(['d-narjis', 'd-aqiq']);
   });
 
   it('unions location districts with the preferred_districts field and dedupes', () => {
@@ -58,6 +61,7 @@ describe('draftToMatchRequirements — multi-district', () => {
     expect(out.districts).toEqual(['العقيق']);
     expect(out.district).toBe('العقيق');
     expect(out.city).toBe('الرياض');
+    expect(out.district_ids).toEqual(['d-aqiq']);
   });
 
   it('resolves a location_items district via its stashed label when the record is not loaded', () => {
@@ -99,5 +103,6 @@ describe('draftToMatchRequirements — multi-district', () => {
       },
     });
     expect(out.districts).toBeUndefined();
+    expect(out.district_ids).toBeUndefined();
   });
 });

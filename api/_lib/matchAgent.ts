@@ -109,7 +109,11 @@ export interface GeoContext {
   // (distance to the NEAREST requested district centre).
   reqDistrictIds?: string[];
   reqCityIds?: string[];
-  reqCentroids?: Array<{ lat: number; lng: number }>;
+  // Reference points for the distance tiers: the requested districts' centroids
+  // PLUS any selected location elements (landmark anchors from location_items).
+  // `name` labels each reference so results can say "~4 km from X" — the
+  // distance shown is always to the NEAREST reference.
+  reqCentroids?: Array<{ lat: number; lng: number; name?: string | null }>;
   // The scored record's OWN geography, extracted from its `location` cascade field
   // ({region,city,district} ids) by the caller. The district id drives the exact
   // tier, the city id the same-city tier. Names are resolved (display_name) from the
@@ -671,6 +675,9 @@ interface ScoredProject {
   /** Location intelligence (present when coords are available). */
   location_tier: 'exact' | 'nearby' | 'same_city' | 'none';
   distance_km: number | null;
+  /** Label of the NEAREST requested reference (district / selected element) the
+   *  distance_km was measured against — "~4 km from X". Null when unknown. */
+  nearest_ref_name: string | null;
   geo_confidence: string | null;
 }
 
@@ -703,10 +710,36 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   let matchType: ScoredProject['match_type'] = 'partial';
   let locationTier: ScoredProject['location_tier'] = 'none';
   let distanceKm: number | null = null;
+  let nearestRefName: string | null = null;
   const projDistrictId = asStr(geo?.projDistrictId);
   const projCityId = asStr(geo?.projCityId);
-  const districtRequested = !!(req.district || (req.districts && req.districts.length));
+  // A district was requested when ANY of the three request shapes carries one —
+  // the primary name, the multi-district name list, or pre-resolved ids.
+  const districtRequested = !!(
+    req.district || (req.districts && req.districts.length) || (req.district_ids && req.district_ids.length)
+  );
   const cityRequested = !!(req.city || (req.cities && req.cities.length));
+  // ── Distance to the NEAREST requested reference (district centroid or selected
+  //    location element). Computed for EVERY candidate with coords — same-city and
+  //    broader results still show how far they sit from the closest requested
+  //    area, and element-only preferences (no district picked) get distances too. ──
+  const refPoints: Array<{ lat: number; lng: number; name?: string | null }> =
+    geo?.reqCentroids && geo.reqCentroids.length
+      ? geo.reqCentroids
+      : geo?.reqLat != null && geo?.reqLng != null
+        ? [{ lat: geo.reqLat, lng: geo.reqLng }]
+        : [];
+  let dist: number | null = null;
+  if (geo?.projLat != null && geo?.projLng != null) {
+    for (const c of refPoints) {
+      const d = haversineKm(geo.projLat, geo.projLng, c.lat, c.lng);
+      if (dist == null || d < dist) {
+        dist = d;
+        nearestRefName = c.name ?? null;
+      }
+    }
+  }
+  distanceKm = dist != null ? Math.round(dist * 10) / 10 : null;
   if (districtRequested || cityRequested) {
     // Lookup-ONLY (no legacy text): a match is authoritative id equality — the
     // project's verified district vs the resolved requested district(s), its city
@@ -721,17 +754,6 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     const cityMatch =
       !!projCityId &&
       (((!!geo?.reqCityId && projCityId === geo.reqCityId)) || (cityIdSet?.has(projCityId) ?? false));
-    // True distance to the NEAREST requested district centroid, when both ends have coords.
-    const centroids: Array<{ lat: number; lng: number }> =
-      geo?.reqCentroids && geo.reqCentroids.length
-        ? geo.reqCentroids
-        : geo?.reqLat != null && geo?.reqLng != null
-          ? [{ lat: geo.reqLat, lng: geo.reqLng }]
-          : [];
-    const haveDist = geo?.projLat != null && geo?.projLng != null && centroids.length > 0;
-    const dist = haveDist
-      ? Math.min(...centroids.map((c) => haversineKm(geo!.projLat!, geo!.projLng!, c.lat, c.lng)))
-      : null;
     if (districtRequested) {
       if (districtMatch) {
         dims.location.value = 1;
@@ -741,10 +763,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
         districtMatchBasis = 'lookup';
         matchType = 'exact';
         locationTier = 'exact';
-        distanceKm = dist != null ? Math.round(dist * 10) / 10 : null;
       } else if (dist != null && dist <= NEARBY_MAX_KM) {
-        // Not the requested district, but physically close → nearby alternative.
-        distanceKm = Math.round(dist * 10) / 10;
+        // Not any requested district, but physically close to one of the
+        // requested references → nearby alternative.
         dims.location.value = dist <= 3 ? 0.8 : dist <= 7 ? 0.62 : 0.45;
         matchType = 'nearby';
         locationTier = 'nearby';
@@ -976,6 +997,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     facts,
     location_tier: locationTier,
     distance_km: distanceKm,
+    nearest_ref_name: distanceKm != null ? nearestRefName : null,
     geo_confidence: geo?.geoConfidence ?? (asStr(data.geo_source) ? asStr(data.geo_confidence) : null) ?? null,
   };
 }
@@ -1000,6 +1022,9 @@ export interface MatchResultItem {
   missing_info: string[];
   location_tier: ScoredProject['location_tier'];
   distance_km: number | null;
+  /** Label of the nearest requested reference (district / selected element) the
+   *  distance was measured against. Null/absent when unknown. */
+  nearest_ref_name?: string | null;
   geo_confidence: string | null;
   /** PostGIS boundary-verification status (present when opts.verifyGeo ran). */
   geo_status?: GeoStatus;
@@ -1326,6 +1351,11 @@ export interface MatchCoreOptions {
    *  (unchanged behavior for clients without location_items). An EMPTY set is an
    *  honest "nothing in the preferred areas" — it returns no matches, by design. */
   geoMatchIds?: Set<string> | null;
+  /** Extra distance-reference points (the client's selected location ELEMENTS,
+   *  resolved upstream from location_items → geo_elements centroids). Appended to
+   *  the requested districts' centroids so every result's distance_km is measured
+   *  to the NEAREST selected district OR element, labelled by `name`. */
+  refPoints?: Array<{ lat: number; lng: number; name?: string | null }>;
 }
 
 /** Resolve each row's containing district via the PostGIS `districts_for_points`
@@ -1393,11 +1423,13 @@ export async function matchProjectsCore(
   // (ids / city ids / centroids) drive exact membership + nearest-centroid distance.
   const reqDistrictIds: string[] = [];
   const reqCityIds: string[] = [];
-  const reqCentroids: Array<{ lat: number; lng: number }> = [];
+  const reqCentroids: Array<{ lat: number; lng: number; name?: string | null }> = [];
 
-  // FAST PATH: pre-resolved district ids (e.g. a directional zone "north of Riyadh"
-  // expanded to ~30 districts). Batch-load their centroids/city in ONE query instead
-  // of a per-name lookup each. `req.districts` (names) still drives districtRequested.
+  // FAST PATH: pre-resolved district ids — the AUTHORITATIVE record ids the client
+  // actually selected (SPA preference pickers) or a directional-zone expansion.
+  // Batch-load their centroids/city in ONE query. This path is exact by id — it
+  // can never mis-resolve to a same-named district in another city, which the
+  // per-name fuzzy fallback below can.
   if (req.district_ids && req.district_ids.length) {
     const dm = await getModelByName(supabase, 'districts');
     if (dm) {
@@ -1409,14 +1441,18 @@ export async function matchProjectsCore(
         if (cid && !reqCityIds.includes(cid)) reqCityIds.push(cid);
         const lat = asNum(r.data.centroid_lat);
         const lng = asNum(r.data.centroid_lng);
-        if (lat != null && lng != null) reqCentroids.push({ lat, lng });
+        const dname = asStr(r.data.display_name) || asStr(r.data.name_ar) || null;
+        if (lat != null && lng != null) reqCentroids.push({ lat, lng, name: dname });
         if (reqDistrictId == null) { reqDistrictId = r.id; reqCityId = cid; reqLat = lat; reqLng = lng; }
       }
     }
   }
 
-  // Per-name resolution (skipped when district_ids already populated the set).
-  const districtNames = (req.district_ids && req.district_ids.length)
+  // Per-name FUZZY resolution — only when no authoritative id resolved (free-text /
+  // LLM-parsed requests). Never run on top of resolved ids: district names repeat
+  // across Saudi cities and the fuzzy pick could add a wrong-city namesake to the
+  // exact-match set.
+  const districtNames = reqDistrictIds.length
     ? []
     : (req.districts && req.districts.length ? req.districts : req.district ? [req.district] : []);
   for (const dn of districtNames) {
@@ -1426,7 +1462,7 @@ export async function matchProjectsCore(
     if (!resolved) continue;
     if (!reqDistrictIds.includes(resolved.id)) reqDistrictIds.push(resolved.id);
     if (resolved.cityId && !reqCityIds.includes(resolved.cityId)) reqCityIds.push(resolved.cityId);
-    if (resolved.lat != null && resolved.lng != null) reqCentroids.push({ lat: resolved.lat, lng: resolved.lng });
+    if (resolved.lat != null && resolved.lng != null) reqCentroids.push({ lat: resolved.lat, lng: resolved.lng, name: token });
     if (reqDistrictId == null) {
       reqDistrictId = resolved.id;
       reqCityId = resolved.cityId;
@@ -1447,6 +1483,16 @@ export async function matchProjectsCore(
       if (!token || (req.city && token === req.city.trim())) continue;
       const cid = await resolveRequestedCity(supabase, { ...req, city: token });
       if (cid && !reqCityIds.includes(cid)) reqCityIds.push(cid);
+    }
+  }
+
+  // Selected location ELEMENTS (landmark anchors) as extra distance references —
+  // every result's distance_km is to the NEAREST selected district OR element.
+  if (opts.refPoints) {
+    for (const p of opts.refPoints) {
+      if (typeof p?.lat === 'number' && Number.isFinite(p.lat) && typeof p?.lng === 'number' && Number.isFinite(p.lng)) {
+        reqCentroids.push({ lat: p.lat, lng: p.lng, name: p.name ?? null });
+      }
     }
   }
 
@@ -1563,6 +1609,7 @@ export async function matchProjectsCore(
         missing_info: s.missing_info,
         location_tier: s.location_tier,
         distance_km: s.distance_km,
+        nearest_ref_name: s.nearest_ref_name,
         geo_confidence: s.geo_confidence,
       };
       g.annotate(item);
@@ -1702,6 +1749,7 @@ export async function matchProjectsCore(
                 missing_info: s.missing_info,
                 location_tier: s.location_tier,
                 distance_km: s.distance_km,
+                nearest_ref_name: s.nearest_ref_name,
                 geo_confidence: s.geo_confidence,
               };
               g.annotate(item);

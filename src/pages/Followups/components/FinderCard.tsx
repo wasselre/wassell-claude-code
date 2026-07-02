@@ -188,9 +188,14 @@ export default function FinderCard({
           {item.geo_status && <GeoStatusPill status={item.geo_status} isAr={isAr} />}
           {item.geo_confidence && <GeoConfidencePill confidence={item.geo_confidence} isAr={isAr} />}
           {item.distance_km != null && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] text-charcoal/70">
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] text-charcoal/70"
+              title={L('المسافة من أقرب منطقة مختارة', 'Distance from the nearest selected area')}
+            >
               <MapPin size={11} className="text-copper" />
-              {L(`~${item.distance_km} كم`, `~${item.distance_km} km`)}
+              {item.nearest_ref_name
+                ? L(`~${item.distance_km} كم من ${item.nearest_ref_name}`, `~${item.distance_km} km from ${item.nearest_ref_name}`)
+                : L(`~${item.distance_km} كم`, `~${item.distance_km} km`)}
             </span>
           )}
           {item.deal && <DealPill deal={item.deal} isAr={isAr} />}

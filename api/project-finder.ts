@@ -237,6 +237,59 @@ export default async function handler(req: Request): Promise<Response> {
       }
     }
 
+    // (1c) Selected location ELEMENTS as distance references. Every card shows its
+    //      distance from the CLOSEST selected reference (district centroid OR
+    //      element), so element-based preferences (e.g. "within 5 km of KAFD") get
+    //      honest, labelled distances too. Resolve the include-rule anchors
+    //      (within_radius / within_distance / inside_area) to their centroids.
+    //      Best-effort: a failure here only costs the distance labels, never results.
+    const refPoints: Array<{ lat: number; lng: number; name: string | null }> = [];
+    try {
+      let items: unknown = Array.isArray(body.location_items) ? body.location_items : null;
+      if (!items && clientId) {
+        // No draft supplied → read the saved client's location_items (RLS-scoped).
+        const { data: crow } = await supabase.from('unified_records').select('data').eq('id', clientId).maybeSingle();
+        const d = (crow?.data ?? null) as Record<string, unknown> | null;
+        if (d && Array.isArray(d.location_items)) items = d.location_items;
+      }
+      if (Array.isArray(items)) {
+        const wanted = new Map<string, string | null>(); // external_id → stashed label
+        for (const it of items) {
+          if (!it || typeof it !== 'object') continue;
+          const rec = it as Record<string, unknown>;
+          if (rec.kind !== 'element_rule' || rec.polarity === 'exclude') continue;
+          const label = typeof rec.element_label === 'string' && rec.element_label.trim() ? rec.element_label.trim() : null;
+          const conds = Array.isArray(rec.conditions) ? rec.conditions : [];
+          for (const c of conds) {
+            if (!c || typeof c !== 'object') continue;
+            const cc = c as Record<string, unknown>;
+            // Area-ish anchors only — a directional rule's line (e.g. "north of a
+            // road") has no meaningful single distance point.
+            if (cc.rule !== 'within_radius' && cc.rule !== 'within_distance' && cc.rule !== 'inside_area') continue;
+            const eid = typeof cc.element_id === 'string' ? cc.element_id.trim() : '';
+            if (eid && !wanted.has(eid)) wanted.set(eid, label);
+          }
+        }
+        if (wanted.size) {
+          const { data: els, error: elErr } = await supabase
+            .from('geo_elements')
+            .select('external_id, display_name, name_ar, name_en, latitude, longitude')
+            .in('external_id', [...wanted.keys()]);
+          if (elErr) throw new Error(elErr.message);
+          for (const e of (els ?? []) as Array<Record<string, unknown>>) {
+            const lat = typeof e.latitude === 'number' && Number.isFinite(e.latitude) ? e.latitude : null;
+            const lng = typeof e.longitude === 'number' && Number.isFinite(e.longitude) ? e.longitude : null;
+            if (lat == null || lng == null) continue;
+            const eid = typeof e.external_id === 'string' ? e.external_id : '';
+            const dbName = [e.display_name, e.name_ar, e.name_en].find((n): n is string => typeof n === 'string' && n.trim() !== '') ?? null;
+            refPoints.push({ lat, lng, name: wanted.get(eid) ?? dbName });
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[project-finder] element ref-point resolution failed (non-fatal):', e instanceof Error ? e.message : e);
+    }
+
     // (2) DETERMINISTIC engine — selection, scoring, ranking. No AI.
     // perGroup: 0 = UNLIMITED (show every match). Otherwise default 8.
     const reqPerGroup = num(body.perGroup);
@@ -246,6 +299,7 @@ export default async function handler(req: Request): Promise<Response> {
       sources,
       locale,
       geoMatchIds,
+      refPoints: refPoints.length ? refPoints : undefined,
     });
     if (!finder.ok) {
       console.error('[project-finder] engine failed:', finder.error);

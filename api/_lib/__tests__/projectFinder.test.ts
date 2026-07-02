@@ -275,6 +275,85 @@ describe('10. LLM cannot alter ranking — only explanation text', () => {
   });
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Grouping is LOCATION-CENTRIC (2026-07-02 fix): a project inside a selected
+// district must NEVER be grouped/labelled "outside the requested area", even
+// when its overall fit is weak (wrong type / missing price → band 'partial').
+// ─────────────────────────────────────────────────────────────────────────────
+describe('location-centric grouping (in-district weak fits stay in-district)', () => {
+  it('an in-district project with a partial band stays in exact_district_matches', () => {
+    // Wrong unit type caps the band to partial — but the location is exact
+    // (in the SECOND of two selected districts: multi-district OR).
+    const villa = { ...baseProject, unit_types: ['villa'] };
+    const s = scoreProject(villa, { district: 'الفاروق', districts: ['الفاروق', 'النرجس'], property_type: 'شقة' }, {
+      reqDistrictId: DIST_A, reqDistrictIds: [DIST_A, DIST_B], reqCityId: CITY, reqCityIds: [CITY],
+      projDistrictId: DIST_B, projCityId: CITY,
+    });
+    expect(s.location_tier).toBe('exact');
+    expect(s.district_exact).toBe(true);
+    expect(s.band).toBe('partial');
+
+    const item: MatchResultItem = {
+      project_id: 'x', project_name: 'x', data_source: 'our_projects', score: s.score,
+      match_band: s.band, match_type: s.match_type, district_match_basis: s.district_match_basis,
+      score_breakdown: s.breakdown, facts: s.facts, data_gaps: s.data_gaps, missing_info: s.missing_info,
+      location_tier: s.location_tier, distance_km: s.distance_km, geo_confidence: s.geo_confidence,
+    };
+    const g = finderGroupFor(item, true);
+    expect(g.group).toBe('exact_district_matches'); // NOT broader_fallback
+    expect(g.match_type).toBe('exact');             // card never claims "outside"
+  });
+
+  it('district_ids alone (no district name) still counts as a requested district', () => {
+    const s = scoreProject(baseProject, { district_ids: ['some-district-id'] }, {
+      reqDistrictIds: [DIST_A], projDistrictId: DIST_A, projCityId: CITY,
+    });
+    expect(s.location_tier).toBe('exact');
+    expect(s.district_exact).toBe(true);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Distance is reported for EVERY tier, measured to the NEAREST selected
+// reference (district centroid or location element), with its name.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('distance from the nearest selected reference', () => {
+  it('same-city results still carry distance_km + the nearest reference name', () => {
+    const s = scoreProject(baseProject, { district: 'الفاروق' }, {
+      projLat: FAR_PIN.lat, projLng: FAR_PIN.lng,
+      reqDistrictId: DIST_A, reqCityId: CITY,
+      reqCentroids: [{ lat: A_CENTROID.lat, lng: A_CENTROID.lng, name: 'الفاروق' }],
+      projDistrictId: DIST_B, projCityId: CITY,
+    });
+    expect(s.location_tier).toBe('same_city'); // ~90 km — beyond the nearby tier
+    expect(s.distance_km).not.toBeNull();      // …but the distance is still shown
+    expect(s.nearest_ref_name).toBe('الفاروق');
+  });
+
+  it('picks the CLOSEST of several selected references and names it', () => {
+    const s = scoreProject(baseProject, { district: 'أ', districts: ['أ', 'ب'] }, {
+      projLat: NEAR_PIN.lat, projLng: NEAR_PIN.lng,
+      reqDistrictIds: [DIST_A, DIST_B],
+      reqCentroids: [
+        { lat: FAR_PIN.lat, lng: FAR_PIN.lng, name: 'بعيد' },
+        { lat: A_CENTROID.lat, lng: A_CENTROID.lng, name: 'قريب' },
+      ],
+      projDistrictId: 'district-c', projCityId: CITY,
+    });
+    expect(s.location_tier).toBe('nearby');
+    expect(s.nearest_ref_name).toBe('قريب');
+  });
+
+  it('fallback explanation names the closest selected area when distance is known', () => {
+    const e = buildExplanation({
+      match_type: 'fallback', match_band: 'partial', source: 'all_projects', distance_km: 18.4,
+      nearest_ref_name: 'النرجس', geo_confidence: null, facts: {}, data_gaps: [], mismatch_warnings: [],
+    }, 'ar');
+    expect(e).toContain('18.4');
+    expect(e).toContain('النرجس');
+  });
+});
+
 // ── extra unit coverage for the pure grouping/explanation helpers ─────────────
 describe('finder grouping helpers', () => {
   it('finderGroupFor: city-only exact lands in same_city, not exact_district', () => {

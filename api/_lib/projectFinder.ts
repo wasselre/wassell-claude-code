@@ -56,6 +56,9 @@ export interface FinderMatch {
   match_type: FinderMatchType;
   group: FinderGroupKey;
   distance_km: number | null;
+  /** Label of the NEAREST requested reference (selected district / location
+   *  element) the distance_km was measured against — "~4 km from X". */
+  nearest_ref_name: string | null;
   geo_confidence: string | null;
   geo_status: GeoStatus | null;
   data_gaps: string[];
@@ -107,6 +110,10 @@ export interface FinderOptions {
    *  ids via wassell_geo_match). Passed straight to the core; narrows candidates
    *  BEFORE scoring. Omit/null ⇒ no gate. */
   geoMatchIds?: Set<string> | null;
+  /** Extra distance-reference points — the client's selected location ELEMENTS
+   *  (landmark anchors), resolved from location_items → geo_elements. Every
+   *  result's distance_km is measured to the NEAREST selected district OR element. */
+  refPoints?: Array<{ lat: number; lng: number; name?: string | null }>;
 }
 
 /** Default finder sources — the verified project catalog, market opt-in. */
@@ -159,14 +166,18 @@ export function finderBand(item: MatchResultItem): FinderBand {
 }
 
 /** Decide which of the four groups a scored item belongs to, and its finder
- *  match_type. District-exactness only counts when a district was requested. */
+ *  match_type. District-exactness only counts when a district was requested.
+ *
+ *  Grouping is LOCATION-CENTRIC: the tier comes from the verified geography
+ *  ALONE. Overall-fit weakness (the band) already shows on the card badge and
+ *  drives the in-group ordering — it must never relabel the geography. (The old
+ *  "band 'partial' → broader_fallback" override made a wrong-unit-type or
+ *  no-price project INSIDE a requested district fall to the fallback group and
+ *  its card falsely claim "outside the requested area".) */
 export function finderGroupFor(
   item: MatchResultItem,
   districtRequested: boolean,
 ): { group: FinderGroupKey; match_type: FinderMatchType } {
-  // 'partial' band = neither a good location nor a good overall fit → fallback.
-  if (item.match_band === 'partial') return { group: 'broader_fallback', match_type: 'fallback' };
-
   switch (item.location_tier) {
     case 'exact':
       // A district-level exact only when the client actually asked for a district.
@@ -208,6 +219,9 @@ export function buildExplanation(
     match_band: FinderBand;
     source: MatchSource;
     distance_km: number | null;
+    /** Nearest requested reference (selected district/element) the distance was
+     *  measured against — names WHICH selected area the result is close to. */
+    nearest_ref_name?: string | null;
     geo_confidence: string | null;
     facts: Record<string, unknown>;
     data_gaps: string[];
@@ -219,6 +233,7 @@ export function buildExplanation(
   const parts: string[] = [];
   const district = typeof m.facts.district === 'string' ? m.facts.district : null;
   const city = typeof m.facts.city === 'string' ? m.facts.city : null;
+  const nearestRef = typeof m.nearest_ref_name === 'string' && m.nearest_ref_name ? m.nearest_ref_name : null;
 
   switch (m.match_type) {
     case 'exact':
@@ -240,23 +255,31 @@ export function buildExplanation(
       if (ar) {
         parts.push(
           m.distance_km != null
-            ? `يبعد حوالي ${m.distance_km} كم عن الحي المطلوب${district ? ` (في ${district})` : ''}.`
+            ? `يبعد حوالي ${m.distance_km} كم عن ${nearestRef ? `«${nearestRef}»` : 'أقرب منطقة مطلوبة'}${district ? ` (في ${district})` : ''}.`
             : 'بديل قريب.',
         );
       } else {
         parts.push(
           m.distance_km != null
-            ? `About ${m.distance_km} km from the requested district${district ? ` (in ${district})` : ''}.`
+            ? `About ${m.distance_km} km from ${nearestRef ? `"${nearestRef}"` : 'the nearest requested area'}${district ? ` (in ${district})` : ''}.`
             : 'A nearby alternative.',
         );
       }
       break;
-    case 'same_city':
-      if (ar) parts.push(city ? `في نفس المدينة (${city})، حي مختلف.` : 'في نفس المدينة.');
-      else parts.push(city ? `In the same city (${city}), different district.` : 'In the same city.');
+    case 'same_city': {
+      const distAr = m.distance_km != null ? ` — يبعد حوالي ${m.distance_km} كم عن ${nearestRef ? `«${nearestRef}»` : 'أقرب منطقة مطلوبة'}` : '';
+      const distEn = m.distance_km != null ? ` — about ${m.distance_km} km from ${nearestRef ? `"${nearestRef}"` : 'the nearest requested area'}` : '';
+      if (ar) parts.push(city ? `في نفس المدينة (${city})، حي مختلف${distAr}.` : `في نفس المدينة${distAr}.`);
+      else parts.push(city ? `In the same city (${city}), different district${distEn}.` : `In the same city${distEn}.`);
       break;
-    default:
-      parts.push(ar ? 'نتيجة بحث موسّع — خارج المنطقة المطلوبة.' : 'Broader-search result — outside the requested area.');
+    }
+    default: {
+      // Honest fallback: name the closest requested area + distance when known,
+      // instead of a bare "outside the requested area".
+      const distAr = m.distance_km != null ? ` (يبعد حوالي ${m.distance_km} كم عن ${nearestRef ? `«${nearestRef}»` : 'أقرب منطقة مطلوبة'})` : '';
+      const distEn = m.distance_km != null ? ` (about ${m.distance_km} km from ${nearestRef ? `"${nearestRef}"` : 'the nearest requested area'})` : '';
+      parts.push(ar ? `نتيجة بحث موسّع — خارج الأحياء المحددة${distAr}.` : `Broader-search result — outside the selected districts${distEn}.`);
+    }
   }
 
   const price = m.facts.price_range as { min?: number; max?: number } | undefined;
@@ -290,6 +313,7 @@ function toFinderMatch(item: MatchResultItem, districtRequested: boolean, locale
     match_band: band,
     source: item.data_source,
     distance_km: item.distance_km,
+    nearest_ref_name: item.nearest_ref_name ?? null,
     geo_confidence: item.geo_confidence,
     facts: item.facts,
     data_gaps: item.data_gaps,
@@ -304,6 +328,7 @@ function toFinderMatch(item: MatchResultItem, districtRequested: boolean, locale
     match_type,
     group,
     distance_km: item.distance_km,
+    nearest_ref_name: item.nearest_ref_name ?? null,
     geo_confidence: item.geo_confidence,
     geo_status,
     data_gaps: item.data_gaps,
@@ -328,7 +353,9 @@ export function groupForFinder(
   const minScore = opts.minScore ?? null;
   const sources = opts.sources ?? DEFAULT_FINDER_SOURCES;
   const locale = opts.locale ?? 'en';
-  const districtRequested = !!(req.district || (req.districts && req.districts.length));
+  const districtRequested = !!(
+    req.district || (req.districts && req.districts.length) || (req.district_ids && req.district_ids.length)
+  );
 
   const pool: MatchResultItem[] = [];
   if (sources.includes('our_projects')) pool.push(...core.our);
@@ -404,7 +431,7 @@ export function groupForFinder(
 export function missingPreferences(req: MatchRequirements): string[] {
   const missing: string[] = [];
   if (req.budget_min == null && req.budget_max == null) missing.push('budget');
-  if (!req.district && !(req.districts && req.districts.length) && !req.city && !(req.cities && req.cities.length)) missing.push('location');
+  if (!req.district && !(req.districts && req.districts.length) && !(req.district_ids && req.district_ids.length) && !req.city && !(req.cities && req.cities.length)) missing.push('location');
   if (!req.property_type && !(req.property_types && req.property_types.length)) missing.push('unit_type');
   if (req.bedrooms == null) missing.push('bedrooms');
   return missing;
@@ -416,6 +443,7 @@ export function hasAnyCriteria(req: MatchRequirements): boolean {
   return !!(
     req.district ||
     (req.districts && req.districts.length) ||
+    (req.district_ids && req.district_ids.length) ||
     req.city ||
     (req.cities && req.cities.length) ||
     req.property_type ||
@@ -444,6 +472,7 @@ export async function findMatchingProjects(
     includeMarket: (opts.sources ?? DEFAULT_FINDER_SOURCES).includes('market_listings'),
     verifyGeo: true,
     geoMatchIds: opts.geoMatchIds ?? null,
+    refPoints: opts.refPoints,
   });
   if (!core.ok) return { ok: false, error: core.error };
   return { ok: true, result: groupForFinder(core, req, opts) };

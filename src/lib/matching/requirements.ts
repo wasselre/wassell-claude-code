@@ -29,6 +29,11 @@ export interface MatchRequirementsInput {
   /** ALL requested district names — the engine resolves each and treats a project
    *  in ANY of them as an exact match (our_projects + all_projects + market). */
   districts?: string[];
+  /** The AUTHORITATIVE `districts` record ids the client actually selected. When
+   *  present the engine matches on these ids directly — no fuzzy name resolution,
+   *  which could pick a same-named district in another city. Names above stay for
+   *  display + fallback. */
+  district_ids?: string[];
   /** Primary unit type (= property_types[0]); kept for single-type code paths. */
   property_type?: string;
   /** ALL acceptable unit types — alternatives (OR); a project offering ANY of them
@@ -138,6 +143,10 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
     out.districts = districtNames;
     out.district = districtNames[0];
   }
+  // Send the record ids too: they're the districts the client ACTUALLY selected.
+  // The engine matches on ids (exact, city-safe); the names remain a fallback for
+  // any id that no longer resolves.
+  if (districtIds.length) out.district_ids = districtIds;
 
   // Multiple selected cities are alternatives (OR) — send them ALL; the engine
   // city-matches a project in ANY of them. `city` stays = cities[0] for
