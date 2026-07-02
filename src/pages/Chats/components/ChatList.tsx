@@ -4,6 +4,7 @@ import { MessageCircle, RefreshCw, Search, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import StartChatModal from './StartChatModal';
 import { buildClientPrefChips, buildGeoNameMap, isClosedChat, type ClientPrefChip } from '../lib/prefChips';
+import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import type { AppRecord } from '@/types';
 
 /**
@@ -13,13 +14,15 @@ import type { AppRecord } from '@/types';
  * the detail view.
  *
  * Tabs split the inbox by who's on the other end: All / Clients (linked to a
- * live clients record) / Other (advertisers, developers, offices…). The
- * Clients tab adds an Open / Closed filter (a chat is closed by the Done
- * button in the detail header, or archived) and each client row carries
- * preference chips (unit type · area · location).
+ * live clients record) / Advertisers (phone matches an `advertisers` record —
+ * computed live, so a fresh REGA lookup links its chat instantly) / Other
+ * (developers, offices, unknown numbers…). The Clients tab adds an Open /
+ * Closed filter (a chat is closed by the Done button in the detail header,
+ * or archived) and each client row carries preference chips
+ * (unit type · area · location).
  */
 
-type ChatTab = 'all' | 'clients' | 'other';
+type ChatTab = 'all' | 'clients' | 'advertisers' | 'other';
 type ClientFilter = 'open' | 'closed';
 
 // `/model/chats` and `/model/chats/:recordId` are separate route entries, so
@@ -46,8 +49,10 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
 
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
+  const advertisersModel = useMemo(() => models.find((m) => m.name === 'advertisers') ?? null, [models]);
   const chatRecords = chatsModel ? (records[chatsModel.id] ?? []) : [];
   const clientRecords = clientsModel ? (records[clientsModel.id] ?? []) : [];
+  const advertiserRecords = advertisersModel ? (records[advertisersModel.id] ?? []) : [];
 
   useEffect(() => {
     void (async () => {
@@ -82,6 +87,28 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     return typeof link === 'string' && link ? clientsById.get(link) ?? null : null;
   }, [clientsById]);
 
+  // chat id → matched advertiser record, computed live by phone (same
+  // digits-suffix match as the client linker). Nothing is stored on the
+  // chat, so a freshly-created advertiser (REGA lookup) links instantly
+  // and a deleted one unlinks on its own.
+  const advertiserByChatId = useMemo(() => {
+    const map = new Map<string, AppRecord>();
+    const slugs = phoneFieldSlugs(advertisersModel);
+    if (advertiserRecords.length === 0 || slugs.length === 0) return map;
+    for (const chat of chatRecords) {
+      const phone = (chat.data as Record<string, unknown>).phone as string | null | undefined;
+      const match = matchRecordByPhone(phone, advertiserRecords, slugs);
+      if (match) map.set(chat.id, match);
+    }
+    return map;
+  }, [chatRecords, advertiserRecords, advertisersModel]);
+
+  /** The advertiser whose phone matches this chat's phone (or null). */
+  const advertiserOf = useCallback(
+    (chat: AppRecord): AppRecord | null => advertiserByChatId.get(chat.id) ?? null,
+    [advertiserByChatId],
+  );
+
   // id → display name for districts + cities (location-chip resolution).
   const geoNames = useMemo(() => buildGeoNameMap(models, records), [models, records]);
 
@@ -97,11 +124,14 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           const preview = (d.last_message_preview as string | null) ?? '';
           const client = clientOf(r);
           const clientName = client ? String((client.data as Record<string, unknown>).client_name ?? '') : '';
+          const advertiser = advertiserOf(r);
+          const advertiserName = advertiser ? String((advertiser.data as Record<string, unknown>).name ?? '') : '';
           return (
             name.toLowerCase().includes(q) ||
             phone.toLowerCase().includes(q) ||
             preview.toLowerCase().includes(q) ||
-            clientName.toLowerCase().includes(q)
+            clientName.toLowerCase().includes(q) ||
+            advertiserName.toLowerCase().includes(q)
           );
         })
       : chatRecords;
@@ -113,16 +143,27 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
       if (!bAt) return -1;
       return bAt.localeCompare(aAt);
     });
-  }, [chatRecords, search, clientOf]);
+  }, [chatRecords, search, clientOf, advertiserOf]);
 
   const clientChats = useMemo(() => searched.filter((r) => clientOf(r) !== null), [searched, clientOf]);
+  const advertiserChats = useMemo(
+    () => searched.filter((r) => advertiserOf(r) !== null),
+    [searched, advertiserOf],
+  );
+  // A chat can be both a client and an advertiser, so tab counts overlap
+  // by design — "Other" is strictly neither.
+  const otherChats = useMemo(
+    () => searched.filter((r) => clientOf(r) === null && advertiserOf(r) === null),
+    [searched, clientOf, advertiserOf],
+  );
 
   const visible = useMemo(() => {
-    if (tab === 'other') return searched.filter((r) => clientOf(r) === null);
+    if (tab === 'advertisers') return advertiserChats;
+    if (tab === 'other') return otherChats;
     if (tab !== 'clients') return searched;
     const wantClosed = clientFilter === 'closed';
     return clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>) === wantClosed);
-  }, [searched, clientChats, tab, clientFilter, clientOf]);
+  }, [searched, clientChats, advertiserChats, otherChats, tab, clientFilter]);
 
   const deviceLabels = useMemo(() => {
     const map = new Map<string, string>();
@@ -136,7 +177,8 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const tabs: { id: ChatTab; label: string; count: number }[] = [
     { id: 'all', label: isAr ? 'الكل' : 'All', count: searched.length },
     { id: 'clients', label: isAr ? 'العملاء' : 'Clients', count: clientChats.length },
-    { id: 'other', label: isAr ? 'أخرى' : 'Other', count: searched.length - clientChats.length },
+    { id: 'advertisers', label: isAr ? 'المعلنون' : 'Advertisers', count: advertiserChats.length },
+    { id: 'other', label: isAr ? 'أخرى' : 'Other', count: otherChats.length },
   ];
 
   const closedCount = useMemo(
@@ -197,7 +239,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         </div>
       </div>
 
-      {/* Tabs: All / Clients / Other */}
+      {/* Tabs: All / Clients / Advertisers / Other */}
       <div className="flex items-center gap-1 px-3 py-2 shrink-0 border-b border-sand/10">
         {tabs.map((t) => (
           <button
@@ -250,12 +292,18 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         )}
         {visible.map((record) => {
           const client = clientOf(record);
+          const advertiser = advertiserOf(record);
           return (
             <ChatRow
               key={record.id}
               record={record}
               isAr={isAr}
               selected={record.id === selectedRecordId}
+              advertiserName={
+                advertiser
+                  ? ((advertiser.data as Record<string, unknown>).name as string | null) ?? null
+                  : null
+              }
               prefChips={
                 client
                   ? buildClientPrefChips(client.data as Record<string, unknown>, clientsModel, geoNames, isAr)
@@ -289,6 +337,7 @@ function ChatRow({
   isAr,
   selected,
   deviceLabel,
+  advertiserName,
   prefChips,
   onClick,
 }: {
@@ -296,6 +345,7 @@ function ChatRow({
   isAr: boolean;
   selected: boolean;
   deviceLabel: string | null;
+  advertiserName: string | null;
   prefChips: ClientPrefChip[];
   onClick: () => void;
 }) {
@@ -357,8 +407,17 @@ function ChatRow({
             </span>
           )}
         </div>
-        {(status === 'resolved' || status === 'archived' || deviceLabel || prefChips.length > 0) && (
+        {(status === 'resolved' || status === 'archived' || deviceLabel || advertiserName || prefChips.length > 0) && (
           <div className="flex items-center gap-1 mt-1 flex-wrap">
+            {advertiserName && (
+              <span
+                className="text-[9px] font-medium px-1.5 py-0.5 rounded bg-gold/20 text-chocolate truncate max-w-[180px]"
+                title={advertiserName}
+              >
+                {isAr ? 'معلن · ' : 'Advertiser · '}
+                {advertiserName}
+              </span>
+            )}
             {status === 'resolved' && (
               <span className="text-[9px] font-medium text-charcoal/50 px-1.5 py-0.5 rounded bg-charcoal/5">
                 {isAr ? 'محلول' : 'Resolved'}

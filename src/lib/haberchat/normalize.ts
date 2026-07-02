@@ -44,10 +44,23 @@ export function resolveClientLink(
   clients: AppRecord[],
   phoneSlugs: string[],
 ): string | null {
+  return matchRecordByPhone(phone, clients, phoneSlugs)?.id ?? null;
+}
+
+/**
+ * Generic phone → record matcher shared by the chat→client linker and the
+ * chat→advertiser matcher. Digits-only compare; short phones (< 6 digits)
+ * never match — too ambiguous.
+ */
+export function matchRecordByPhone(
+  phone: string | null | undefined,
+  candidates: AppRecord[],
+  phoneSlugs: string[],
+): AppRecord | null {
   const target = normalizePhoneDigits(phone);
   if (target.length < 6) return null;
   if (phoneSlugs.length === 0) return null;
-  for (const c of clients) {
+  for (const c of candidates) {
     const d = c.data as Record<string, unknown>;
     for (const slug of phoneSlugs) {
       const p = normalizePhoneDigits(d[slug] as string | null | undefined);
@@ -56,7 +69,7 @@ export function resolveClientLink(
       // the other — covers the case where one side has a country code
       // and the other doesn't ("966555…" vs local "0555…").
       if (p === target || p.endsWith(target) || target.endsWith(p)) {
-        return c.id;
+        return c;
       }
     }
   }

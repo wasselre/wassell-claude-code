@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
@@ -61,6 +62,17 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
   // Full client record in a NEW TAB (explicitly not a modal / same-tab nav).
   const clientRecordUrl = clientLinkId ? `/model/clients/${clientLinkId}` : null;
+
+  // Advertiser whose phone matches this chat — computed live (nothing is
+  // stored on the chat), so a fresh REGA lookup links instantly.
+  const matchedAdvertiser = useMemo(() => {
+    const advertisersModel = models.find((m) => m.name === 'advertisers') ?? null;
+    if (!advertisersModel || !phone) return null;
+    return matchRecordByPhone(phone, records[advertisersModel.id] ?? [], phoneFieldSlugs(advertisersModel));
+  }, [models, records, phone]);
+  const matchedAdvertiserName = matchedAdvertiser
+    ? ((matchedAdvertiser.data as Record<string, unknown>).name as string | null) ?? null
+    : null;
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
@@ -158,8 +170,23 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             )}
           </div>
           {/* Client link row — either opens the matched client's full record
-              in a new tab or offers to create a new one from this phone. */}
+              in a new tab or offers to create a new one from this phone. A
+              phone-matched advertiser (REGA lookup) gets its own link
+              alongside. */}
           <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
+            {matchedAdvertiser && (
+              <button
+                onClick={() => navigate(`/model/advertisers/${matchedAdvertiser.id}`)}
+                className="inline-flex items-center gap-1.5 rounded-full bg-gold/20 px-2 py-0.5 font-medium text-chocolate transition-colors hover:bg-gold/30"
+                title={isAr ? 'فتح بطاقة المعلن' : 'Open advertiser record'}
+              >
+                <Megaphone size={12} />
+                <span className="truncate max-w-[220px]">
+                  {isAr ? 'معلن: ' : 'Advertiser: '}
+                  {matchedAdvertiserName ?? (isAr ? 'عرض البطاقة' : 'open record')}
+                </span>
+              </button>
+            )}
             {clientRecordUrl ? (
               <>
                 <a
