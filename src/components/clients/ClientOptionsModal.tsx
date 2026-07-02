@@ -52,11 +52,11 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[55] flex items-center justify-center bg-charcoal/40 p-3 sm:p-6"
+      className="fixed inset-0 z-[55] flex items-center justify-center bg-charcoal/40 p-2 sm:p-4"
       onMouseDown={(e) => { if (e.target === e.currentTarget && mode === 'options') onClose(); }}
       dir={isAr ? 'rtl' : 'ltr'}
     >
-      <div className="flex h-full max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl">
+      <div className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl bg-cream shadow-2xl">
         {mode === 'options' ? (
           <>
             <div className="flex shrink-0 items-center gap-2.5 border-b border-sand/40 bg-white px-4 py-3">

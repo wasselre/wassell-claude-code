@@ -386,11 +386,13 @@ export default function SuggestedProjectsView({
 
   // Save the edited prefs to the client (if changed) THEN re-run the match — so
   // district/element rules in location_items actually narrow the results.
+  // Collapse the panel so the incoming results are visible immediately.
   async function onSearchWithPrefs() {
     if (clientRec && clientPrefsDirty) {
       const ok = await persistPrefs();
       if (!ok) return;
     }
+    setShowEdit(false);
     runSearch(editDraft);
   }
 
@@ -478,9 +480,11 @@ export default function SuggestedProjectsView({
         </button>
       </div>
 
-      {/* Editable preferences panel — refine the SERVER-SIDE search. */}
+      {/* Editable preferences panel — refine the SERVER-SIDE search. Height is
+          CAPPED with its own scrollbar so it can never swallow the results area
+          (critical when the finder is embedded in a popup / short viewport). */}
       {showEdit && editFields.length > 0 && (
-        <div className="border-b border-sand/40 bg-white/70">
+        <div className="max-h-[42vh] overflow-y-auto overscroll-contain border-b border-sand/40 bg-white/70">
           <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6">
             <div className="mb-2 flex items-center gap-2">
               <SlidersHorizontal size={14} className="text-copper" />
