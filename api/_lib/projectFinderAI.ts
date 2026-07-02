@@ -30,7 +30,7 @@ const PARSE_SYSTEM =
   'You convert a real-estate salesperson\'s free-text note about what a customer wants into STRUCTURED search fields. ' +
   'Extract only what is explicitly stated or unambiguous. Do NOT guess. Do NOT recommend or pick projects — you only fill fields. ' +
   'Budgets and areas are numbers (SAR / m²). District/city are plain names (Arabic or English as written). ' +
-  'unit_type is the kind of property (apartment/villa/townhouse/land/office…). ' +
+  'unit_type is the kind of property (apartment/villa/townhouse/land/office…); when the text accepts MORE THAN ONE type ("شقة أو دور") list them ALL in property_types — they are alternatives, any one is acceptable. ' +
   'If the customer gives a DIRECTION within a city instead of named districts ("north of Riyadh", "شمال الرياض", "east side"), ' +
   'set `city` to that city and `zone` to north|south|east|west|center|northeast|northwest|southeast|southwest. ' +
   'If they name actual districts, use `districts` and leave `zone` empty. Call set_requirements exactly once.';
@@ -44,7 +44,8 @@ const PARSE_TOOL: Anthropic.Tool = {
       city: { type: 'string', description: 'City name, if stated.' },
       districts: { type: 'array', items: { type: 'string' }, description: 'One or more district/neighbourhood names, if stated.' },
       zone: { type: 'string', enum: ['north', 'south', 'east', 'west', 'center', 'northeast', 'northwest', 'southeast', 'southwest'], description: 'A DIRECTION within the city (e.g. "north of Riyadh"), instead of named districts. Requires city to be set.' },
-      property_type: { type: 'string', description: 'apartment | villa | townhouse | land | office | duplex | …' },
+      property_type: { type: 'string', description: 'apartment | villa | townhouse | land | office | duplex | … (the SINGLE stated type)' },
+      property_types: { type: 'array', items: { type: 'string' }, description: 'ALL acceptable unit types when the text states alternatives (e.g. "شقة أو دور" → ["شقة","دور"]). Use INSTEAD of property_type when more than one type is acceptable.' },
       budget_min: { type: 'number' },
       budget_max: { type: 'number' },
       area_min: { type: 'number', description: 'm²' },
@@ -73,6 +74,7 @@ export function coerceParsedRequirements(raw: unknown): MatchRequirements {
   const ZONES = new Set(['north', 'south', 'east', 'west', 'center', 'northeast', 'northwest', 'southeast', 'southwest']);
   const zone = str(r.zone); if (zone && ZONES.has(zone.toLowerCase())) out.zone = zone.toLowerCase();
   const pt = str(r.property_type); if (pt) out.property_type = pt;
+  const pts = strArr(r.property_types); if (pts?.length) { out.property_types = pts; if (!out.property_type) out.property_type = pts[0]; }
   const bmin = num(r.budget_min); if (bmin != null) out.budget_min = bmin;
   const bmax = num(r.budget_max); if (bmax != null) out.budget_max = bmax;
   const amin = num(r.area_min); if (amin != null) out.area_min = amin;

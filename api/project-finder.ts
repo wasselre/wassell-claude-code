@@ -82,11 +82,13 @@ function normalizeRequirements(raw: Partial<MatchRequirements> | undefined): Mat
   const r = raw ?? {};
   const out: MatchRequirements = {};
   const city = str(r.city); if (city) out.city = city;
+  const cities = strArr(r.cities); if (cities?.length) { out.cities = cities; if (!out.city) out.city = cities[0]; }
   const district = str(r.district); if (district) out.district = district;
   const districts = strArr(r.districts); if (districts?.length) { out.districts = districts; if (!out.district) out.district = districts[0]; }
   const districtIds = strArr(r.district_ids); if (districtIds?.length) out.district_ids = districtIds;
   const zone = str(r.zone); if (zone) out.zone = zone;
   const pt = str(r.property_type); if (pt) out.property_type = pt;
+  const pts = strArr(r.property_types); if (pts?.length) { out.property_types = pts; if (!out.property_type) out.property_type = pts[0]; }
   const bmin = num(r.budget_min); if (bmin != null) out.budget_min = bmin;
   const bmax = num(r.budget_max); if (bmax != null) out.budget_max = bmax;
   const amin = num(r.area_min); if (amin != null) out.area_min = amin;
@@ -105,6 +107,9 @@ function mergeRequirements(parsed: MatchRequirements, explicit: MatchRequirement
   // districts/district stay consistent: explicit districts win; else parsed.
   if (explicit.districts?.length) merged.districts = explicit.districts;
   if (!merged.district && merged.districts?.length) merged.district = merged.districts[0];
+  // Same singular/plural consistency for the other alternative-sets.
+  if (!merged.city && merged.cities?.length) merged.city = merged.cities[0];
+  if (!merged.property_type && merged.property_types?.length) merged.property_type = merged.property_types[0];
   return merged;
 }
 

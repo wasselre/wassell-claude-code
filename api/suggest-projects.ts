@@ -57,6 +57,7 @@ function normalizeRequirements(raw: Partial<MatchRequirements> | undefined): Mat
   const city = str(r.city); if (city) out.city = city;
   const district = str(r.district); if (district) out.district = district;
   const propertyType = str(r.property_type); if (propertyType) out.property_type = propertyType;
+  const propertyTypes = strArr(r.property_types); if (propertyTypes?.length) { out.property_types = propertyTypes; if (!out.property_type) out.property_type = propertyTypes[0]; }
   const budgetMin = num(r.budget_min); if (budgetMin != null) out.budget_min = budgetMin;
   const budgetMax = num(r.budget_max); if (budgetMax != null) out.budget_max = budgetMax;
   const areaMin = num(r.area_min); if (areaMin != null) out.area_min = areaMin;
@@ -74,7 +75,7 @@ function missingPreferences(req: MatchRequirements): string[] {
   const missing: string[] = [];
   if (req.budget_min == null && req.budget_max == null) missing.push('budget');
   if (!req.district && !req.city) missing.push('location');
-  if (!req.property_type) missing.push('unit_type');
+  if (!req.property_type && !(req.property_types && req.property_types.length)) missing.push('unit_type');
   if (req.bedrooms == null) missing.push('bedrooms');
   return missing;
 }
@@ -121,6 +122,7 @@ export default async function handler(req: Request): Promise<Response> {
       requirements.district ||
       requirements.city ||
       requirements.property_type ||
+      (requirements.property_types && requirements.property_types.length) ||
       requirements.budget_min != null ||
       requirements.budget_max != null ||
       requirements.area_min != null ||

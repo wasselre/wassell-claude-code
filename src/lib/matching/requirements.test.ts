@@ -7,6 +7,7 @@ const NAMES: Record<string, string> = {
   'd-aqiq': 'العقيق',
   'd-yasmin': 'الياسمين',
   'c-riyadh': 'الرياض',
+  'c-jeddah': 'جدة',
 };
 const resolveLookupName = (id: string) => NAMES[id] ?? null;
 
@@ -67,6 +68,24 @@ describe('draftToMatchRequirements — multi-district', () => {
       },
     });
     expect(out.districts).toEqual(['حي المصيف']);
+  });
+
+  it('sends ALL selected unit types as OR alternatives (property_types), first as primary', () => {
+    const out = draftToMatchRequirements({
+      ...base,
+      prefDraft: { preferred_unit_type: ['شقة', 'دور'] },
+    });
+    expect(out.property_types).toEqual(['شقة', 'دور']);
+    expect(out.property_type).toBe('شقة'); // primary stays = property_types[0]
+  });
+
+  it('sends ALL selected cities as OR alternatives (cities), first as primary', () => {
+    const out = draftToMatchRequirements({
+      ...base,
+      prefDraft: { location: { city: ['c-riyadh', 'c-jeddah'] } },
+    });
+    expect(out.cities).toEqual(['الرياض', 'جدة']);
+    expect(out.city).toBe('الرياض');
   });
 
   it('ignores exclude-district and element_rule location_items', () => {

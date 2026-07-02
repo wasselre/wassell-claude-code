@@ -404,8 +404,8 @@ export function groupForFinder(
 export function missingPreferences(req: MatchRequirements): string[] {
   const missing: string[] = [];
   if (req.budget_min == null && req.budget_max == null) missing.push('budget');
-  if (!req.district && !(req.districts && req.districts.length) && !req.city) missing.push('location');
-  if (!req.property_type) missing.push('unit_type');
+  if (!req.district && !(req.districts && req.districts.length) && !req.city && !(req.cities && req.cities.length)) missing.push('location');
+  if (!req.property_type && !(req.property_types && req.property_types.length)) missing.push('unit_type');
   if (req.bedrooms == null) missing.push('bedrooms');
   return missing;
 }
@@ -417,7 +417,9 @@ export function hasAnyCriteria(req: MatchRequirements): boolean {
     req.district ||
     (req.districts && req.districts.length) ||
     req.city ||
+    (req.cities && req.cities.length) ||
     req.property_type ||
+    (req.property_types && req.property_types.length) ||
     req.budget_min != null ||
     req.budget_max != null ||
     req.area_min != null ||

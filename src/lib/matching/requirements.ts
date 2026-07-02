@@ -19,13 +19,21 @@ import type { AppModel } from '@/types';
 
 /** Mirror of api/_lib/matchAgent.MatchRequirements (the fields the SPA fills). */
 export interface MatchRequirementsInput {
+  /** Primary city name (= cities[0]); kept for single-city code paths. */
   city?: string;
+  /** ALL acceptable city names — alternatives (OR); the engine treats a project in
+   *  ANY of them as a city match. */
+  cities?: string[];
   /** Primary district name (= districts[0]); kept for single-district code paths. */
   district?: string;
   /** ALL requested district names — the engine resolves each and treats a project
    *  in ANY of them as an exact match (our_projects + all_projects + market). */
   districts?: string[];
+  /** Primary unit type (= property_types[0]); kept for single-type code paths. */
   property_type?: string;
+  /** ALL acceptable unit types — alternatives (OR); a project offering ANY of them
+   *  is a type match (e.g. client accepts شقة أو دور). */
+  property_types?: string[];
   budget_min?: number;
   budget_max?: number;
   area_min?: number;
@@ -52,14 +60,6 @@ const isPresent = (v: unknown): boolean => {
   // is present when any nested value is present.
   if (typeof v === 'object') return Object.values(v as Record<string, unknown>).some((x) => isPresent(x));
   return true;
-};
-
-const firstString = (v: unknown): string | undefined => {
-  if (typeof v === 'string' && v.trim() !== '') return v.trim();
-  if (Array.isArray(v)) {
-    for (const x of v) if (typeof x === 'string' && x.trim() !== '') return x.trim();
-  }
-  return undefined;
 };
 
 /** Every non-empty string id in a value (single string or array of ids). */
@@ -139,14 +139,29 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
     out.district = districtNames[0];
   }
 
-  const cityLookupId = firstString(loc.city);
-  const cityName = cityLookupId ? resolveLookupName?.(cityLookupId, 'cities') ?? undefined : undefined;
-  if (cityName) out.city = cityName;
+  // Multiple selected cities are alternatives (OR) — send them ALL; the engine
+  // city-matches a project in ANY of them. `city` stays = cities[0] for
+  // single-city paths (zone expansion, district disambiguation).
+  const cityNames = [...new Set(
+    allStrings(loc.city)
+      .map((id) => resolveLookupName?.(id, 'cities') ?? undefined)
+      .filter((n): n is string => !!n),
+  )];
+  if (cityNames.length) {
+    out.cities = cityNames;
+    out.city = cityNames[0];
+  }
 
-  // ── Property type (multiselect of Arabic labels — first is enough; the matcher
-  //    expands synonyms/Arabic↔English). ──
-  const unitType = firstString(pick('preferred_unit_type'));
-  if (unitType) out.property_type = unitType;
+  // ── Property type (multiselect of Arabic labels). Multiple selections are
+  //    alternatives (OR) — the client accepts ANY of them — so send them ALL;
+  //    the matcher expands synonyms/Arabic↔English per type and a project offering
+  //    any one gets full type credit. `property_type` stays = the first for
+  //    single-type code paths. ──
+  const unitTypes = [...new Set(allStrings(pick('preferred_unit_type')))];
+  if (unitTypes.length) {
+    out.property_types = unitTypes;
+    out.property_type = unitTypes[0];
+  }
 
   // ── Budget / area ranges ──
   const budget = rangeBounds(pick('budget'));

@@ -218,9 +218,19 @@ export const MATCH_TOOLS: ToolUnion[] = [
       properties: {
         city: { type: 'string', description: 'Requested city, e.g. "الرياض" / "Riyadh".' },
         district: { type: 'string', description: 'Requested district / neighborhood, e.g. "النرجس".' },
+        districts: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'ALL acceptable districts when the customer would take more than one (e.g. "الربيع أو العارض أو الملقا") — a project in ANY of them counts as an exact location match. Use INSTEAD of district when there are alternatives.',
+        },
         property_type: {
           type: 'string',
           description: 'Desired unit type as the customer said it: villa/townhouse/apartment/floor/duplex/studio/land or فيلا/تاون هاوس/شقة/دور/دوبلكس/استوديو/أرض. Synonyms + Arabic/English are handled.',
+        },
+        property_types: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'ALL acceptable unit types when the customer would take more than one (e.g. "شقة أو دور") — a project offering ANY of them counts as a type match. Use INSTEAD of property_type when there are alternatives.',
         },
         budget_min: { type: 'number', description: 'Minimum budget in SAR (optional).' },
         budget_max: { type: 'number', description: 'Maximum budget in SAR.' },
@@ -527,6 +537,13 @@ function expandPropertyType(needle: string): string[] {
   return [lower];
 }
 
+/** ALL acceptable unit types in a request — `property_types` (alternatives, OR)
+ *  when present, else the single `property_type`. Empty = type not requested. */
+function requestedPropertyTypes(req: MatchRequirements): string[] {
+  if (req.property_types && req.property_types.length) return req.property_types;
+  return req.property_type ? [req.property_type] : [];
+}
+
 /** RAW property-type synonyms (Arabic + English) for the market-listings ILIKE
  *  filter (wassell_market_candidates). Unlike expandPropertyType these are NOT
  *  normalized — they're matched against the listing's stored type text. */
@@ -543,7 +560,7 @@ function propertyTypeTerms(needle: string): string[] {
 function marketSuggestions(req: MatchRequirements): string[] {
   const s: string[] = [];
   if (req.budget_min == null && req.budget_max == null) s.push('budget');
-  if (!req.property_type) s.push('unit_type');
+  if (requestedPropertyTypes(req).length === 0) s.push('unit_type');
   if (req.bedrooms == null) s.push('bedrooms');
   return s;
 }
@@ -596,6 +613,10 @@ async function loadTier1ProjectIds(supabase: SupabaseClient): Promise<Set<string
 
 export interface MatchRequirements {
   city?: string;
+  /** Multiple acceptable cities (alternatives — OR). A project in ANY of them
+   *  city-matches. `city` (the first) is kept for single-city code paths
+   *  (zone expansion, district disambiguation). */
+  cities?: string[];
   district?: string;
   /** Multiple preferred districts (client preferences). When present, a project in
    *  ANY of these is an exact match. `district` (the first) is kept for the nearby
@@ -609,6 +630,10 @@ export interface MatchRequirements {
    *  is what the engine actually matches on). 'north'|'south'|'east'|'west'|... */
   zone?: string;
   property_type?: string;
+  /** Multiple acceptable unit types (alternatives — OR, e.g. شقة أو دور). A project
+   *  offering ANY of them type-matches. `property_type` (the first) is kept for
+   *  single-type code paths. */
+  property_types?: string[];
   budget_min?: number;
   budget_max?: number;
   area_min?: number;
@@ -680,7 +705,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   let distanceKm: number | null = null;
   const projDistrictId = asStr(geo?.projDistrictId);
   const projCityId = asStr(geo?.projCityId);
-  if (req.district || req.city) {
+  const districtRequested = !!(req.district || (req.districts && req.districts.length));
+  const cityRequested = !!(req.city || (req.cities && req.cities.length));
+  if (districtRequested || cityRequested) {
     // Lookup-ONLY (no legacy text): a match is authoritative id equality — the
     // project's verified district vs the resolved requested district(s), its city
     // vs the resolved requested city(ies). The caller passes the COORDINATE-VERIFIED
@@ -705,7 +732,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     const dist = haveDist
       ? Math.min(...centroids.map((c) => haversineKm(geo!.projLat!, geo!.projLng!, c.lat, c.lng)))
       : null;
-    if (req.district) {
+    if (districtRequested) {
       if (districtMatch) {
         dims.location.value = 1;
         districtExact = true;
@@ -770,14 +797,17 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   }
 
   // ── Property type ──
-  if (req.property_type) {
+  // Multiple selected types are ALTERNATIVES (OR): the client accepts any of them,
+  // so a project offering ANY requested type gets full type credit.
+  const reqTypes = requestedPropertyTypes(req);
+  if (reqTypes.length) {
     const types = asArr(data.unit_types).map((t) => normalizeForSearch(t));
     if (types.length === 0) {
       gaps.push('no unit type data');
       missing.push('Confirm the available unit types');
       requestedMissing.add('type');
     } else {
-      const needles = expandPropertyType(req.property_type);
+      const needles = [...new Set(reqTypes.flatMap((rt) => expandPropertyType(rt)))];
       const hit = types.some((t) => needles.some((n) => t.includes(n) || n.includes(t)));
       dims.type.value = hit ? 1 : 0;
     }
@@ -888,7 +918,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   // 'partial' so the UI labels it honestly AND it stops suppressing the
   // all_projects fallback (so we still go look for the real type). The numeric
   // score is left intact for transparency.
-  const typeRequestedButMissed = req.property_type != null && dims.type.value === 0;
+  const typeRequestedButMissed = reqTypes.length > 0 && dims.type.value === 0;
   if (typeRequestedButMissed && band !== 'partial') {
     band = 'partial';
     missing.push('Project unit type does not match the requested property type');
@@ -1408,6 +1438,17 @@ export async function matchProjectsCore(
     reqCityId = await resolveRequestedCity(supabase, req);
   }
   if (reqCityId && !reqCityIds.includes(reqCityId)) reqCityIds.push(reqCityId);
+  // Multiple acceptable cities (alternatives — OR): resolve EACH into the city-match
+  // set so a project in ANY of them city-matches. `req.city` (the first) stays the
+  // primary for the single-city paths above.
+  if (req.cities && req.cities.length) {
+    for (const cn of req.cities) {
+      const token = (cn ?? '').trim();
+      if (!token || (req.city && token === req.city.trim())) continue;
+      const cid = await resolveRequestedCity(supabase, { ...req, city: token });
+      if (cid && !reqCityIds.includes(cid)) reqCityIds.push(cid);
+    }
+  }
 
   const verifyGeo = opts.verifyGeo === true;
 
@@ -1569,7 +1610,13 @@ export async function matchProjectsCore(
     const mModel = await getModelByName(supabase, 'market_listings');
     if (mModel) {
       const districtIds = reqDistrictIds.length ? reqDistrictIds : reqDistrictId ? [reqDistrictId] : [];
-      const typeTerms = req.property_type ? propertyTypeTerms(req.property_type) : null;
+      // ALL acceptable types feed the DB-side ILIKE filter (OR) — pre-filtering on
+      // only the first type would drop the other acceptable types' listings before
+      // scoring ever sees them.
+      const reqTypeList = requestedPropertyTypes(req);
+      const typeTerms = reqTypeList.length
+        ? [...new Set(reqTypeList.flatMap((t) => propertyTypeTerms(t)))]
+        : null;
       const baseArgs = {
         p_model_id: mModel.id,
         p_budget_min: req.budget_min ?? null,

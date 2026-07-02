@@ -75,10 +75,13 @@ describe('scoreProject (Phase 1 text matching)', () => {
     expect(r.score).toBe(100);
   });
 
-  it('flags a data gap (and excludes the dimension) when budget is asked but price is missing', () => {
+  it('flags a data gap (requested-but-missing keeps full weight and earns 0) when budget is asked but price is missing', () => {
     const noPrice = { ...PROJECT, price_range: undefined };
     const r = scoreProject(noPrice, { budget_max: 800_000 });
-    expect(r.breakdown.budget).toBeNull();
+    // The customer asked about budget but the project has no price: the dimension is
+    // NOT renormalized away — it stays in the average at 0 credit, so an
+    // unconfirmable listing can never read as a perfect match.
+    expect(r.breakdown.budget).toBe(0);
     expect(r.data_gaps).toContain('no price data');
     expect(r.missing_info.length).toBeGreaterThan(0);
   });
@@ -97,6 +100,42 @@ describe('scoreProject (Phase 1 text matching)', () => {
     expect(r.score).toBe(75); // numeric score preserved for transparency
     expect(r.band).toBe('partial'); // …but never labelled strong/good
     expect(r.missing_info.some((m) => /unit type/i.test(m))).toBe(true);
+  });
+
+  it('treats multiple acceptable unit types as OR — any one matching earns full type credit', () => {
+    // Client accepts شقة OR دور; the project only offers apartments. That one
+    // acceptable option matching must count as a full type match (no band cap).
+    const r = scoreProject(PROJECT, {
+      city: 'الرياض',
+      district: 'الفاروق',
+      property_types: ['دور', 'شقة'],
+      budget_max: 1_000_000,
+    }, GEO);
+    expect(r.breakdown.type).toBe(1); // apartments matches شقة (any-of)
+    expect(r.band).toBe('strong');
+  });
+
+  it('still caps the band at partial when NONE of the acceptable unit types match', () => {
+    const r = scoreProject(PROJECT, {
+      city: 'الرياض',
+      district: 'الفاروق',
+      property_types: ['فيلا', 'تاون هاوس'],
+      budget_max: 1_500_000,
+    }, GEO);
+    expect(r.breakdown.type).toBe(0); // apartments is neither villa nor townhouse
+    expect(r.band).toBe('partial');
+  });
+
+  it('treats multiple acceptable cities as OR — a project in any of them city-matches', () => {
+    // Client accepts الرياض OR جدة; project is in Riyadh. reqCityIds carries both
+    // resolved ids (the core resolves req.cities); the scorer must city-match.
+    const r = scoreProject(PROJECT, { city: 'جدة', cities: ['جدة', 'الرياض'] }, {
+      reqCityId: 'city-jeddah',
+      reqCityIds: ['city-jeddah', CITY_RIYADH],
+      projCityId: CITY_RIYADH,
+    });
+    expect(r.match_type).toBe('exact');
+    expect(r.breakdown.location).toBe(1);
   });
 
   it('detects a sold-out project (zero available units)', () => {

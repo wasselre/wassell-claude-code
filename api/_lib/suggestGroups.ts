@@ -280,6 +280,9 @@ export function groupMatchResults(
   // fallback ("available inventory, not matched") so the UI can't claim a match.
   const hasAnyCriteria = !!(
     req.district || req.city || req.property_type ||
+    (req.districts && req.districts.length) ||
+    (req.cities && req.cities.length) ||
+    (req.property_types && req.property_types.length) ||
     req.budget_min != null || req.budget_max != null ||
     req.area_min != null || req.area_max != null || req.bedrooms != null
   );
