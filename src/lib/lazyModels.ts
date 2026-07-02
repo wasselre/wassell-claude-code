@@ -75,6 +75,11 @@ export const SUMMARY_DATA_KEYS: Readonly<Record<string, readonly string[]>> = {
     // Lookup → the advertisers module record (2026-07-01). In the slim store so
     // the list view can show/link the advertiser. Keep in sync with the view.
     'advertiser',
+    // Listing quality (2026-07-02): DB-computed score/grade (see
+    // market_listing_quality() in the quality-score migration). The grade is a
+    // show_in_table dropdown → the list renders it as a colored chip, so both
+    // must ride the slim store + realtime. Keep in sync with the view.
+    'quality_score', 'quality_grade',
   ],
 };
 
