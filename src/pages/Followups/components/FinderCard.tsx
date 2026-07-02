@@ -8,6 +8,7 @@ import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus 
 import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/dealBadge';
 import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptionStatus } from '@/lib/matching/clientOptions';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
+import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 
 /**
  * One project in the deterministic Project Finder modal (Phase 2). Renders ONLY
@@ -253,6 +254,14 @@ export default function FinderCard({
             reason-notes prompt. Hidden on the standalone finder (no client). */}
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
+
+          {/* Market listings only: contact the advertiser — opens the WhatsApp
+              chat if the phone is already on the listing, else runs the REGA
+              lookup and opens it when the number lands. Needs no client, so it
+              also shows on the standalone finder. */}
+          {item.source === 'market_listings' && (
+            <ContactAdvertiserButton listingId={item.project_id} isAr={isAr} />
+          )}
 
           {!hideClientActions && onSetStatus && (
             <StatusSelect

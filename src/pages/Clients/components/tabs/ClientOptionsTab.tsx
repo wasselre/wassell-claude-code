@@ -11,6 +11,7 @@ import {
   updateSalesNotes,
   type ClientOptionStatus, type ClientOptionSourceType, type ClientOptionData,
 } from '@/lib/matching/clientOptions';
+import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 
 interface Props {
   client: AppRecord;
@@ -303,6 +304,13 @@ export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
                 >
                   <ExternalLink size={12} /> {L('عرض المصدر', 'View source')}
                 </a>
+
+                {/* Market-listing options: contact the advertiser — opens the
+                    WhatsApp chat if the phone is already on the listing, else
+                    runs the REGA lookup and opens it when the number lands. */}
+                {d.source_type === 'market_listing' && (
+                  <ContactAdvertiserButton listingId={d.source_id} isAr={isAr} />
+                )}
 
                 {canEdit && (
                   <>
