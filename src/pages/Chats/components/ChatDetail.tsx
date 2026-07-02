@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus, X, Plus, Check, CheckCheck, RotateCcw, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus, X, Plus, Check, CheckCheck, RotateCcw, Loader2, ListChecks } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
 
@@ -45,6 +46,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const linkedClientName = linkedClient
     ? ((linkedClient.data as Record<string, unknown>).name as string | null) ?? null
     : null;
+
+  // Client-options popup (options list + embedded Project Finder).
+  const [showClientOptions, setShowClientOptions] = useState(false);
 
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
 
@@ -122,19 +126,29 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           </div>
           {/* Client link row — either navigates to the matched client or
               offers to create a new one from this phone. */}
-          <div className="flex items-center gap-2 mt-1.5 text-xs">
+          <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
             {clientLinkId ? (
-              <button
-                onClick={() => navigate(`/model/clients/${clientLinkId}`)}
-                className="inline-flex items-center gap-1.5 text-copper hover:text-terracotta font-medium"
-                title={isAr ? 'فتح بطاقة العميل' : 'Open client record'}
-              >
-                <User size={12} />
-                <span className="truncate max-w-[220px]">
-                  {isAr ? 'عميل مرتبط: ' : 'Linked client: '}
-                  {linkedClientName ?? (isAr ? 'عرض البطاقة' : 'open record')}
-                </span>
-              </button>
+              <>
+                <button
+                  onClick={() => navigate(`/model/clients/${clientLinkId}`)}
+                  className="inline-flex items-center gap-1.5 text-copper hover:text-terracotta font-medium"
+                  title={isAr ? 'فتح بطاقة العميل' : 'Open client record'}
+                >
+                  <User size={12} />
+                  <span className="truncate max-w-[220px]">
+                    {isAr ? 'عميل مرتبط: ' : 'Linked client: '}
+                    {linkedClientName ?? (isAr ? 'عرض البطاقة' : 'open record')}
+                  </span>
+                </button>
+                <button
+                  onClick={() => setShowClientOptions(true)}
+                  className="inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/10"
+                  title={isAr ? 'عرض خيارات العميل والبحث عن المزيد' : 'View client options & find more'}
+                >
+                  <ListChecks size={12} />
+                  {isAr ? 'خيارات العميل' : 'Client options'}
+                </button>
+              </>
             ) : (
               <button
                 onClick={() => navigate('/model/clients/new')}
@@ -173,6 +187,12 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           </p>
         )}
       </div>
+
+      {/* Client-options popup — the client's saved options with the Project
+          Finder embedded, without leaving the conversation. */}
+      {showClientOptions && clientLinkId && (
+        <ClientOptionsModal clientId={clientLinkId} onClose={() => setShowClientOptions(false)} />
+      )}
     </div>
   );
 }

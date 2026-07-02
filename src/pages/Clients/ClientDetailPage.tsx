@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams, useSearchParams, useLocation } from 'react-router-dom';
+import { useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import { LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanViewRecord, useCanEditRecord } from '@/hooks/usePermission';
@@ -49,6 +49,7 @@ function clientLookupSlug(modelId: string | undefined, models: ClientViewCtx['mo
 export default function ClientDetailPage() {
   const { recordId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const models = useAppStore((s) => s.models);
@@ -143,7 +144,14 @@ export default function ClientDetailPage() {
           />
         )}
         {activeTab === 'preferences' && <PreferencesTab client={client} clientsModel={clientsModel} isAr={isAr} canEdit={canEdit} />}
-        {activeTab === 'options' && <ClientOptionsTab client={client} isAr={isAr} canEdit={canEdit} />}
+        {activeTab === 'options' && (
+          <ClientOptionsTab
+            client={client}
+            isAr={isAr}
+            canEdit={canEdit}
+            onFindMore={() => navigate(`/model/clients/${client.id}/projects`)}
+          />
+        )}
         {activeTab === 'timeline' && <TimelineTab view={view} ctx={ctx} isAr={isAr} />}
         {activeTab === 'whatsapp' && <WhatsAppHistoryPanel clientId={client.id} chrome="card" />}
         {activeTab === 'calls' && <CallHistoryPanel phones={phones} chrome="card" />}

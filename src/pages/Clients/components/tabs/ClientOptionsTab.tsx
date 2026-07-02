@@ -19,6 +19,9 @@ interface Props {
   client: AppRecord;
   isAr: boolean;
   canEdit: boolean;
+  /** Opens the Project Finder scoped to this client ("find more options").
+   *  Rendered as a button in the toolbar + empty state when provided. */
+  onFindMore?: () => void;
 }
 
 const fmtNum = (n: number) => n.toLocaleString('en-US');
@@ -59,9 +62,12 @@ const UNIT_TYPE_AR: Record<string, string> = {
  * it: open the client-scoped Project Finder, or manually pick a specific
  * project / unit / market listing (AddOptionModal, added_from='manual').
  */
-export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
+export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const navigate = useNavigate();
+  // "Find more options": hosts like ClientOptionsModal embed the finder in
+  // place via onFindMore; otherwise fall back to the full-page client finder.
+  const findMore = onFindMore ?? (() => navigate(`/model/clients/${client.id}/projects`));
   const records = useAppStore((s) => s.records);
   const models = useAppStore((s) => s.models);
   const addToast = useAppStore((s) => s.addToast);
@@ -189,11 +195,18 @@ export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
             {showEliminated ? L('إخفاء المستبعدة', 'Hide eliminated') : L(`عرض المستبعدة (${eliminatedCount})`, `Show eliminated (${eliminatedCount})`)}
           </button>
         )}
+        <button
+          type="button"
+          onClick={findMore}
+          className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-xs font-bold text-white transition hover:bg-terracotta"
+        >
+          <Compass size={13} /> {L('البحث عن خيارات أكثر', 'Find more options')}
+        </button>
         {canEdit && (
           <button
             type="button"
             onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-xs font-bold text-white transition hover:bg-terracotta"
+            className="inline-flex items-center gap-1 rounded-lg bg-copper/10 px-2.5 py-1 text-xs font-bold text-copper transition hover:bg-copper/20"
           >
             <Plus size={13} /> {L('إضافة خيار', 'Add option')}
           </button>
@@ -208,7 +221,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
-              onClick={() => navigate(`/model/clients/${client.id}/projects`)}
+              onClick={findMore}
               className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
             >
               <Compass size={15} /> {L('الباحث عن المشاريع', 'Find projects')}
