@@ -625,15 +625,18 @@ function asNumber(v: unknown): number | null {
 
 /**
  * Patch a single chat — change status (resolved / active / archived) and /
- * or labels. Haberchat's endpoint is `PATCH /chat/{deviceId}/chats` in bulk
- * "action" form; we fan out one request per semantic change so we can
- * report on each separately. Calls are issued sequentially; on first
- * failure we stop and throw (caller's optimistic state gets reverted).
+ * or labels, via the PER-CHAT endpoints:
+ *   status → PATCH /chat/{deviceId}/chats/{chatWid}/status  body {status}
+ *            (enum: removed | archived | pending | active | resolved)
+ *   labels → PATCH /chat/{deviceId}/chats/{chatWid}/labels  body = string[]
  *
- * Status mapping:
- *   'resolved'   → { action: 'resolve',   wids: [...] }
- *   'active'     → { action: 'unresolve', wids: [...] } (+ unarchive if was archived)
- *   'archived'   → { action: 'archive',   wids: [...] }
+ * The bulk `PATCH /chat/{deviceId}/chats` endpoint expects `chats: [...]`
+ * (NOT `wids`) and has no archive action at all — the previous
+ * `{action, wids}` shape was rejected upstream with a 400 on every status
+ * change (live incident 2026-07-02, surfaced by the Done button).
+ *
+ * Calls are issued sequentially; on first failure we throw (the caller's
+ * optimistic state gets reverted).
  */
 export async function patchChat(
   deviceId: string,
@@ -642,36 +645,19 @@ export async function patchChat(
 ): Promise<void> {
   if (!deviceId) throw new HaberchatError(400, 'deviceId is required');
   if (!chatWid) throw new HaberchatError(400, 'chatWid is required');
-  const path = `/chat/${encodeURIComponent(deviceId)}/chats`;
+  const base = `/chat/${encodeURIComponent(deviceId)}/chats/${encodeURIComponent(chatWid)}`;
 
   if (patch.status) {
-    const action =
-      patch.status === 'resolved' ? 'resolve' :
-      patch.status === 'archived' ? 'archive' :
-      'unresolve';
-    await request<Record<string, unknown>>(path, {
+    await request<Record<string, unknown>>(`${base}/status`, {
       method: 'PATCH',
-      body: JSON.stringify({ action, wids: [chatWid] }),
+      body: JSON.stringify({ status: patch.status }),
     });
-    // Going from archived → active also needs an unarchive call.
-    if (patch.status === 'active') {
-      try {
-        await request<Record<string, unknown>>(path, {
-          method: 'PATCH',
-          body: JSON.stringify({ action: 'unarchive', wids: [chatWid] }),
-        });
-      } catch {
-        // Not all Haberchat plans expose unarchive as its own action —
-        // swallow a 400/405 here since the primary 'unresolve' above
-        // already succeeded.
-      }
-    }
   }
 
   if (patch.labels) {
-    await request<Record<string, unknown>>(path, {
+    await request<Record<string, unknown>>(`${base}/labels`, {
       method: 'PATCH',
-      body: JSON.stringify({ action: 'label', wids: [chatWid], labels: patch.labels }),
+      body: JSON.stringify(patch.labels),
     });
   }
 }
