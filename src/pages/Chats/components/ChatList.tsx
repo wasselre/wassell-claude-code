@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { MessageCircle, RefreshCw, Search, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import StartChatModal from './StartChatModal';
-import { buildClientPrefChips, isAwaitingReply, isInterestedClient, type ClientPrefChip } from '../lib/prefChips';
+import { buildClientPrefChips, isClosedChat, type ClientPrefChip } from '../lib/prefChips';
 import type { AppRecord } from '@/types';
 
 /**
@@ -14,12 +14,19 @@ import type { AppRecord } from '@/types';
  *
  * Tabs split the inbox by who's on the other end: All / Clients (linked to a
  * live clients record) / Other (advertisers, developers, offices…). The
- * Clients tab adds status filters (interested / awaiting my reply / unread)
- * and each client row carries preference chips (unit type · area · location).
+ * Clients tab adds an Open / Closed filter (a chat is closed by the Done
+ * button in the detail header, or archived) and each client row carries
+ * preference chips (unit type · area · location).
  */
 
 type ChatTab = 'all' | 'clients' | 'other';
-type ClientFilter = 'all' | 'interested' | 'awaiting' | 'unread';
+type ClientFilter = 'open' | 'closed';
+
+// `/model/chats` and `/model/chats/:recordId` are separate route entries, so
+// opening a chat REMOUNTS this component. Keep the last chosen tab/filter at
+// module scope so the list doesn't snap back to "All / Open" on every click.
+let lastTab: ChatTab = 'all';
+let lastClientFilter: ClientFilter = 'open';
 
 export default function ChatList({ selectedRecordId }: { selectedRecordId: string | null }) {
   const navigate = useNavigate();
@@ -32,8 +39,10 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [showStartModal, setShowStartModal] = useState(false);
-  const [tab, setTab] = useState<ChatTab>('all');
-  const [clientFilter, setClientFilter] = useState<ClientFilter>('all');
+  const [tab, setTabState] = useState<ChatTab>(lastTab);
+  const [clientFilter, setClientFilterState] = useState<ClientFilter>(lastClientFilter);
+  const setTab = (t: ChatTab) => { lastTab = t; setTabState(t); };
+  const setClientFilter = (f: ClientFilter) => { lastClientFilter = f; setClientFilterState(f); };
 
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
   const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
@@ -122,14 +131,8 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const visible = useMemo(() => {
     if (tab === 'other') return searched.filter((r) => clientOf(r) === null);
     if (tab !== 'clients') return searched;
-    if (clientFilter === 'all') return clientChats;
-    return clientChats.filter((r) => {
-      const d = r.data as Record<string, unknown>;
-      if (clientFilter === 'awaiting') return isAwaitingReply(d);
-      if (clientFilter === 'unread') return (typeof d.unread_count === 'number' ? d.unread_count : 0) > 0;
-      const client = clientOf(r);
-      return client ? isInterestedClient(client.data as Record<string, unknown>) : false;
-    });
+    const wantClosed = clientFilter === 'closed';
+    return clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>) === wantClosed);
   }, [searched, clientChats, tab, clientFilter, clientOf]);
 
   const deviceLabels = useMemo(() => {
@@ -147,11 +150,13 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     { id: 'other', label: isAr ? 'أخرى' : 'Other', count: searched.length - clientChats.length },
   ];
 
-  const clientFilters: { id: ClientFilter; label: string }[] = [
-    { id: 'all', label: isAr ? 'الكل' : 'All' },
-    { id: 'interested', label: isAr ? 'مهتم' : 'Interested' },
-    { id: 'awaiting', label: isAr ? 'بانتظار الرد' : 'Needs reply' },
-    { id: 'unread', label: isAr ? 'غير مقروء' : 'Unread' },
+  const closedCount = useMemo(
+    () => clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>)).length,
+    [clientChats],
+  );
+  const clientFilters: { id: ClientFilter; label: string; count: number }[] = [
+    { id: 'open', label: isAr ? 'مفتوحة' : 'Open', count: clientChats.length - closedCount },
+    { id: 'closed', label: isAr ? 'مغلقة' : 'Closed', count: closedCount },
   ];
 
   return (
@@ -223,9 +228,9 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         ))}
       </div>
 
-      {/* Client status filters (Clients tab only) */}
+      {/* Open / Closed filter (Clients tab only) */}
       {tab === 'clients' && (
-        <div className="flex items-center gap-1 px-3 py-1.5 shrink-0 border-b border-sand/10 overflow-x-auto">
+        <div className="flex items-center gap-1 px-3 py-1.5 shrink-0 border-b border-sand/10">
           {clientFilters.map((f) => (
             <button
               key={f.id}
@@ -237,6 +242,9 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
               }`}
             >
               {f.label}
+              <span className={`ms-1 text-[10px] font-normal ${clientFilter === f.id ? 'text-copper/70' : 'text-charcoal/40'}`}>
+                {f.count}
+              </span>
             </button>
           ))}
         </div>
@@ -246,7 +254,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
       <div className="flex-1 overflow-y-auto min-h-0">
         {visible.length === 0 && (
           <div className="p-8 text-center text-xs text-charcoal/40">
-            {search || tab !== 'all' || clientFilter !== 'all'
+            {search || tab !== 'all'
               ? (isAr ? 'لا توجد نتائج' : 'No matches')
               : (isAr ? 'لا توجد محادثات بعد' : 'No conversations yet')}
           </div>

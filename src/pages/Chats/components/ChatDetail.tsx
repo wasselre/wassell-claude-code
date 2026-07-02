@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus, X, Plus, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus, X, Plus, Check, CheckCheck, RotateCcw, Loader2 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
@@ -147,6 +147,14 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
             )}
           </div>
         </div>
+
+        {/* Done / Reopen — one click closes the finished conversation. */}
+        <DoneButton
+          chatWid={chatWid}
+          status={status}
+          isAr={isAr}
+          onChange={(next) => patchChat(chatWid ?? '', { status: next })}
+        />
       </div>
 
       {/* Thread (scrolls within its own card) */}
@@ -170,6 +178,65 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
+
+/**
+ * One-click close for a finished conversation. Sets status 'resolved'
+ * (what the list's Open/Closed filter reads); on an already-closed chat
+ * it flips to a subtle Reopen. Same optimistic patchChat path as the
+ * status pill — the store toasts + reverts on failure.
+ */
+function DoneButton({
+  chatWid,
+  status,
+  isAr,
+  onChange,
+}: {
+  chatWid: string | null;
+  status: string;
+  isAr: boolean;
+  onChange: (status: 'active' | 'resolved') => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const closed = status === 'resolved' || status === 'archived';
+
+  const act = async () => {
+    if (!chatWid || saving) return;
+    setSaving(true);
+    try {
+      await onChange(closed ? 'active' : 'resolved');
+    } catch {
+      // store toasts + reverts; nothing more to do here.
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={() => void act()}
+      disabled={!chatWid || saving}
+      className={`self-start shrink-0 inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50 ${
+        closed
+          ? 'border border-sand text-charcoal/60 hover:text-copper hover:border-copper/40 bg-white'
+          : 'bg-copper text-white hover:bg-terracotta'
+      }`}
+      title={
+        closed
+          ? (isAr ? 'إعادة فتح المحادثة' : 'Reopen this conversation')
+          : (isAr ? 'إغلاق المحادثة — تظهر ضمن «مغلقة»' : 'Close this conversation — moves to “Closed”')
+      }
+    >
+      {saving ? (
+        <Loader2 size={13} className="animate-spin" />
+      ) : closed ? (
+        <RotateCcw size={13} />
+      ) : (
+        <CheckCheck size={13} />
+      )}
+      {closed ? (isAr ? 'إعادة فتح' : 'Reopen') : (isAr ? 'إنهاء المحادثة' : 'Done')}
+    </button>
+  );
+}
 
 /** Editable status pill — click to cycle through active / resolved /
  *  archived via a small menu. Optimistic; toasts + reverts on failure. */

@@ -154,3 +154,11 @@ export function isAwaitingReply(chatData: Record<string, unknown>): boolean {
   const unread = typeof chatData.unread_count === 'number' ? chatData.unread_count : 0;
   return chatData.last_message_flow !== 'out' && unread > 0;
 }
+
+/**
+ * Closed conversation — the Done button in the chat header sets 'resolved';
+ * 'archived' (set via the status pill or Haberchat) counts as closed too.
+ */
+export function isClosedChat(chatData: Record<string, unknown>): boolean {
+  return chatData.status === 'resolved' || chatData.status === 'archived';
+}

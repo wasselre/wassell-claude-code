@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildClientPrefChips, isAwaitingReply, isInterestedClient } from '../prefChips';
+import { buildClientPrefChips, isAwaitingReply, isClosedChat, isInterestedClient } from '../prefChips';
 import type { AppModel } from '@/types';
 
 // Minimal clients model — just the option-bearing fields the chips resolve.
@@ -124,6 +124,15 @@ describe('isInterestedClient', () => {
     expect(isInterestedClient({ client_status: 'مهتم جدًا' })).toBe(true);
     expect(isInterestedClient({ client_status: 'غير مهتم' })).toBe(false);
     expect(isInterestedClient({})).toBe(false);
+  });
+});
+
+describe('isClosedChat', () => {
+  it('resolved and archived are closed; active and unset are open', () => {
+    expect(isClosedChat({ status: 'resolved' })).toBe(true);
+    expect(isClosedChat({ status: 'archived' })).toBe(true);
+    expect(isClosedChat({ status: 'active' })).toBe(false);
+    expect(isClosedChat({})).toBe(false);
   });
 });
 
