@@ -14,13 +14,53 @@
  * reply) so ChatList stays presentational.
  */
 
-import type { AppModel, ModelField } from '@/types';
-import { parseLocationItems } from '@/lib/geo/locationItems';
+import type { AppModel, AppRecord, ModelField } from '@/types';
+import { parseLocationItems, describeLocationItem } from '@/lib/geo/locationItems';
 
 export interface ClientPrefChip {
   key: string;
   kind: 'unit_type' | 'area' | 'location';
   text: string;
+}
+
+export interface ClientPrefDetailChip {
+  key: string;
+  kind:
+    | 'unit_type'
+    | 'budget'
+    | 'area'
+    | 'bedrooms'
+    | 'direction'
+    | 'amenities'
+    | 'objective'
+    | 'location'
+    | 'distance'
+    | 'setting'
+    | 'notes';
+  text: string;
+  /** Full untruncated text for the title/tooltip. */
+  title?: string;
+}
+
+/**
+ * id → display name for the geography records (districts + cities), used to
+ * resolve the location-cascade ids on a client into chip labels. Built from
+ * the already-loaded store records — no fetch.
+ */
+export function buildGeoNameMap(
+  models: AppModel[],
+  records: Record<string, AppRecord[]>,
+): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const name of ['districts', 'cities']) {
+    const m = models.find((mm) => mm.name === name);
+    if (!m) continue;
+    for (const r of records[m.id] ?? []) {
+      const dn = (r.data?.display_name ?? r.data?.name_ar ?? r.data?.name_en) as unknown;
+      if (typeof dn === 'string' && dn.trim()) map[r.id] = dn.trim();
+    }
+  }
+  return map;
 }
 
 /** Find a field by slug anywhere in the model schema. */
@@ -132,6 +172,114 @@ export function buildClientPrefChips(
       kind: 'location',
       text: parts.join(' · ') + (extra > 0 ? ` +${extra}` : ''),
     });
+  }
+
+  return chips;
+}
+
+const truncate = (s: string, n = 60): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
+/**
+ * Detailed preference chips for the conversation header — everything the
+ * client-preferences surface knows about (unit type, budget, bedrooms, area,
+ * location incl. excludes + radius rules, direction, amenities, purchase
+ * objective, max distance, priority/language settings, notes). Slugs missing
+ * from the live model or empty on the record simply produce no chip — nothing
+ * here invents fields.
+ */
+export function buildDetailedClientPrefChips(
+  clientData: Record<string, unknown>,
+  clientsModel: AppModel | null,
+  geoNames: Record<string, string>,
+  isAr: boolean,
+): ClientPrefDetailChip[] {
+  const chips: ClientPrefDetailChip[] = [];
+
+  // ── Unit type(s) — one chip each ──
+  const unitField = fieldBySlug(clientsModel, 'preferred_unit_type');
+  for (const v of stringList(clientData.preferred_unit_type)) {
+    chips.push({ key: `unit:${v}`, kind: 'unit_type', text: optionLabel(unitField, v, isAr) });
+  }
+
+  // ── Budget range ──
+  const budget = formatRange(clientData.budget, isAr ? 'ر.س' : 'SAR');
+  if (budget) chips.push({ key: 'budget', kind: 'budget', text: budget });
+
+  // ── Bedrooms range ──
+  const bedrooms = formatRange(clientData.preferred_bedrooms, isAr ? 'غرف' : 'BR');
+  if (bedrooms) chips.push({ key: 'bedrooms', kind: 'bedrooms', text: bedrooms });
+
+  // ── Area range ──
+  const area = formatRange(clientData.preferred_area, isAr ? 'م²' : 'm²');
+  if (area) chips.push({ key: 'area', kind: 'area', text: area });
+
+  // ── Location: city + every saved location item (includes, excludes, radius rules) ──
+  const loc = clientData.location && typeof clientData.location === 'object' && !Array.isArray(clientData.location)
+    ? (clientData.location as Record<string, unknown>)
+    : {};
+  const cityField = fieldBySlug(clientsModel, 'preferred_city');
+  const city =
+    stringList(loc.city).map((id) => geoNames[id]).find((n): n is string => !!n) ??
+    stringList(clientData.preferred_city).map((v) => optionLabel(cityField, v, isAr)).find((n) => !!n) ??
+    null;
+  if (city) chips.push({ key: 'loc:city', kind: 'location', text: city });
+
+  const seenLoc = new Set<string>();
+  for (const item of parseLocationItems(clientData.location_items)) {
+    const text = describeLocationItem(item, isAr);
+    if (!text || seenLoc.has(text)) continue;
+    seenLoc.add(text);
+    chips.push({ key: `loc:item:${item.id}`, kind: 'location', text });
+  }
+  // Legacy cascade district ids + legacy preferred_neighborhoods multiselect.
+  for (const id of stringList(loc.district)) {
+    const name = geoNames[id];
+    if (!name) continue;
+    const text = isAr ? `حي ${name}` : name;
+    if (seenLoc.has(text)) continue;
+    seenLoc.add(text);
+    chips.push({ key: `loc:district:${id}`, kind: 'location', text });
+  }
+  if (seenLoc.size === 0) {
+    const nbField = fieldBySlug(clientsModel, 'preferred_neighborhoods');
+    for (const v of stringList(clientData.preferred_neighborhoods)) {
+      const name = optionLabel(nbField, v, isAr);
+      const text = isAr ? `حي ${name}` : name;
+      if (seenLoc.has(text)) continue;
+      seenLoc.add(text);
+      chips.push({ key: `loc:nb:${v}`, kind: 'location', text });
+    }
+  }
+
+  // ── Max distance (km) ──
+  const dist = Number(clientData.max_distance_km);
+  if (Number.isFinite(dist) && dist > 0) {
+    chips.push({ key: 'distance', kind: 'distance', text: isAr ? `≤ ${dist} كم` : `≤ ${dist} km` });
+  }
+
+  // ── Direction / amenities / purchase objective — one joined chip each ──
+  const joined: Array<{ slug: string; kind: ClientPrefDetailChip['kind']; prefix: boolean }> = [
+    { slug: 'preferred_direction', kind: 'direction', prefix: true },
+    { slug: 'preferred_amenities', kind: 'amenities', prefix: false },
+    { slug: 'purchase_objective', kind: 'objective', prefix: true },
+    { slug: 'location_priority', kind: 'setting', prefix: true },
+    { slug: 'preferred_language', kind: 'setting', prefix: true },
+  ];
+  for (const { slug, kind, prefix } of joined) {
+    const field = fieldBySlug(clientsModel, slug);
+    const values = stringList(clientData[slug]).map((v) => optionLabel(field, v, isAr));
+    if (values.length === 0) continue;
+    const body = values.join(' · ');
+    const label = field ? (isAr ? field.label_ar : field.label_en) : '';
+    const text = prefix && label ? `${label}: ${body}` : body;
+    chips.push({ key: slug, kind, text: truncate(text), title: text });
+  }
+
+  // ── Free-text preference notes (truncated; full text in the tooltip) ──
+  for (const slug of ['preference_notes', 'preferred_location_notes']) {
+    const v = clientData[slug];
+    if (typeof v !== 'string' || !v.trim()) continue;
+    chips.push({ key: slug, kind: 'notes', text: truncate(v.trim(), 80), title: v.trim() });
   }
 
   return chips;

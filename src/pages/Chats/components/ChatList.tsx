@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { MessageCircle, RefreshCw, Search, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import StartChatModal from './StartChatModal';
-import { buildClientPrefChips, isClosedChat, type ClientPrefChip } from '../lib/prefChips';
+import { buildClientPrefChips, buildGeoNameMap, isClosedChat, type ClientPrefChip } from '../lib/prefChips';
 import type { AppRecord } from '@/types';
 
 /**
@@ -83,18 +83,7 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   }, [clientsById]);
 
   // id → display name for districts + cities (location-chip resolution).
-  const geoNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const name of ['districts', 'cities']) {
-      const m = models.find((mm) => mm.name === name);
-      if (!m) continue;
-      for (const r of records[m.id] ?? []) {
-        const dn = (r.data?.display_name ?? r.data?.name_ar ?? r.data?.name_en) as unknown;
-        if (typeof dn === 'string' && dn.trim()) map[r.id] = dn.trim();
-      }
-    }
-    return map;
-  }, [models, records]);
+  const geoNames = useMemo(() => buildGeoNameMap(models, records), [models, records]);
 
   // Search first (spans the linked client's name too), then sort — tab counts
   // are computed on this set so the numbers always match what's listed.

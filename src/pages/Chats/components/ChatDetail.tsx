@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Tag, Star, User, UserPlus, X, Plus, Check, CheckCheck, RotateCcw, Loader2, ListChecks } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
+import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 
 /**
  * Right-pane conversation detail. Embedded inside ChatsSplitPage.
@@ -32,7 +33,6 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const kind = (data?.kind as string | null | undefined) ?? 'user';
   const status = (data?.status as string | null | undefined) ?? 'active';
   const lastMessageAt = (data?.last_message_at as string | null | undefined) ?? null;
-  const labels = Array.isArray(data?.labels) ? (data?.labels as string[]) : [];
   const clientLinkId = (data?.client_link as string | null | undefined) ?? null;
 
   // Look up the linked client (if any) so we can render its name without
@@ -43,9 +43,24 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
     if (!clientsModel) return null;
     return (s.records[clientsModel.id] ?? []).find((r) => r.id === clientLinkId) ?? null;
   });
-  const linkedClientName = linkedClient
-    ? ((linkedClient.data as Record<string, unknown>).name as string | null) ?? null
-    : null;
+  const linkedClientData = linkedClient ? (linkedClient.data as Record<string, unknown>) : null;
+  const linkedClientName =
+    (linkedClientData?.client_name as string | null | undefined) ??
+    (linkedClientData?.name as string | null | undefined) ??
+    null;
+
+  // Detailed preference chips for the linked client (unit type, budget,
+  // bedrooms, area, location, direction, amenities, …). Same source data as
+  // the list-pane chips, just the full set.
+  const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
+  const geoNames = useMemo(() => buildGeoNameMap(models, records), [models, records]);
+  const prefChips = useMemo<ClientPrefDetailChip[]>(
+    () => (linkedClientData ? buildDetailedClientPrefChips(linkedClientData, clientsModel, geoNames, isAr) : []),
+    [linkedClientData, clientsModel, geoNames, isAr],
+  );
+
+  // Full client record in a NEW TAB (explicitly not a modal / same-tab nav).
+  const clientRecordUrl = clientLinkId ? `/model/clients/${clientLinkId}` : null;
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
@@ -87,12 +102,36 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
         >
           <BackIcon size={18} />
         </button>
-        <div className="w-10 h-10 rounded-full bg-copper/10 text-copper flex items-center justify-center shrink-0 font-semibold">
-          {(name.trim().charAt(0) || '#').toUpperCase()}
-        </div>
+        {clientRecordUrl ? (
+          <a
+            href={clientRecordUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-10 h-10 rounded-full bg-copper/10 text-copper flex items-center justify-center shrink-0 font-semibold hover:bg-copper/20 transition-colors"
+            title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
+          >
+            {(name.trim().charAt(0) || '#').toUpperCase()}
+          </a>
+        ) : (
+          <div className="w-10 h-10 rounded-full bg-copper/10 text-copper flex items-center justify-center shrink-0 font-semibold">
+            {(name.trim().charAt(0) || '#').toUpperCase()}
+          </div>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-base font-bold text-chocolate truncate">{name}</h1>
+            {clientRecordUrl ? (
+              <a
+                href={clientRecordUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-base font-bold text-chocolate truncate hover:text-copper transition-colors"
+                title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
+              >
+                {name}
+              </a>
+            ) : (
+              <h1 className="text-base font-bold text-chocolate truncate">{name}</h1>
+            )}
             <StatusPicker
               chatWid={chatWid}
               status={status}
@@ -117,29 +156,25 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                 {formatDateTime(lastMessageAt, isAr)}
               </span>
             )}
-            <LabelsEditor
-              chatWid={chatWid}
-              labels={labels}
-              isAr={isAr}
-              onChange={(next) => patchChat(chatWid ?? '', { labels: next })}
-            />
           </div>
-          {/* Client link row — either navigates to the matched client or
-              offers to create a new one from this phone. */}
+          {/* Client link row — either opens the matched client's full record
+              in a new tab or offers to create a new one from this phone. */}
           <div className="flex items-center gap-2 mt-1.5 text-xs flex-wrap">
-            {clientLinkId ? (
+            {clientRecordUrl ? (
               <>
-                <button
-                  onClick={() => navigate(`/model/clients/${clientLinkId}`)}
+                <a
+                  href={clientRecordUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-copper hover:text-terracotta font-medium"
-                  title={isAr ? 'فتح بطاقة العميل' : 'Open client record'}
+                  title={isAr ? 'فتح ملف العميل في تبويب جديد' : 'Open client record in a new tab'}
                 >
                   <User size={12} />
                   <span className="truncate max-w-[220px]">
                     {isAr ? 'عميل مرتبط: ' : 'Linked client: '}
                     {linkedClientName ?? (isAr ? 'عرض البطاقة' : 'open record')}
                   </span>
-                </button>
+                </a>
                 <button
                   onClick={() => setShowClientOptions(true)}
                   className="inline-flex items-center gap-1 rounded-full border border-copper/30 bg-copper/5 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/10"
@@ -160,6 +195,22 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
               </button>
             )}
           </div>
+          {/* Client preference chips — the full preference picture (unit type,
+              budget, bedrooms, area, location, direction, amenities, notes…).
+              Preferences only; chat labels/tags deliberately don't render here. */}
+          {prefChips.length > 0 && (
+            <div className="flex items-center gap-1 mt-2 flex-wrap">
+              {prefChips.map((chip) => (
+                <span
+                  key={chip.key}
+                  className={`text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-[240px] ${DETAIL_CHIP_STYLES[chip.kind]}`}
+                  title={chip.title ?? chip.text}
+                >
+                  {chip.text}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Done / Reopen — one click closes the finished conversation. */}
@@ -198,6 +249,21 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
+
+/** Chip tint per preference kind — same palette family as the list-pane chips. */
+const DETAIL_CHIP_STYLES: Record<ClientPrefDetailChip['kind'], string> = {
+  unit_type: 'bg-copper/10 text-copper',
+  budget: 'bg-gold/20 text-chocolate',
+  bedrooms: 'bg-copper/10 text-copper',
+  area: 'bg-gold/20 text-chocolate',
+  location: 'bg-charcoal/5 text-charcoal/70',
+  distance: 'bg-charcoal/5 text-charcoal/70',
+  direction: 'bg-charcoal/5 text-charcoal/70',
+  amenities: 'bg-copper/10 text-copper',
+  objective: 'bg-gold/20 text-chocolate',
+  setting: 'bg-charcoal/5 text-charcoal/70',
+  notes: 'bg-cream text-charcoal/70',
+};
 
 /**
  * One-click close for a finished conversation. Sets status 'resolved'
@@ -331,113 +397,6 @@ function StatusPicker({
         </>
       )}
     </div>
-  );
-}
-
-/** Labels chip list with inline add/remove. Shows a small `+` button at
- *  the end; clicking it reveals a tiny text input that adds a label on
- *  Enter. Removing a label uses the × on each chip. */
-function LabelsEditor({
-  chatWid,
-  labels,
-  isAr,
-  onChange,
-}: {
-  chatWid: string | null;
-  labels: string[];
-  isAr: boolean;
-  onChange: (next: string[]) => Promise<void>;
-}) {
-  const [adding, setAdding] = useState(false);
-  const [text, setText] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const commit = async (next: string[]) => {
-    if (!chatWid || saving) return;
-    setSaving(true);
-    try {
-      await onChange(next);
-    } catch {
-      // store toasts + reverts
-    } finally {
-      setSaving(false);
-      setText('');
-      setAdding(false);
-    }
-  };
-
-  const removeLabel = (label: string) => {
-    if (saving) return;
-    void commit(labels.filter((l) => l !== label));
-  };
-
-  const addLabel = () => {
-    const t = text.trim();
-    if (!t) {
-      setAdding(false);
-      return;
-    }
-    if (labels.includes(t)) {
-      setText('');
-      setAdding(false);
-      return;
-    }
-    void commit([...labels, t]);
-  };
-
-  return (
-    <span className="inline-flex items-center gap-1 flex-wrap">
-      <Tag size={10} />
-      {labels.length === 0 && !adding && (
-        <span className="text-charcoal/40">{isAr ? 'بدون تصنيفات' : 'no labels'}</span>
-      )}
-      {labels.map((label) => (
-        <span
-          key={label}
-          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-copper/10 text-copper text-[10px] font-medium"
-        >
-          {label}
-          <button
-            onClick={() => removeLabel(label)}
-            disabled={saving}
-            className="hover:text-red-600 disabled:opacity-50"
-            aria-label={isAr ? `حذف ${label}` : `Remove ${label}`}
-          >
-            <X size={9} />
-          </button>
-        </span>
-      ))}
-      {adding ? (
-        <input
-          type="text"
-          autoFocus
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              addLabel();
-            } else if (e.key === 'Escape') {
-              setText('');
-              setAdding(false);
-            }
-          }}
-          onBlur={addLabel}
-          placeholder={isAr ? 'تصنيف...' : 'label…'}
-          className="text-[10px] px-1.5 py-0.5 rounded-full border border-copper/30 bg-white text-copper focus:outline-none focus:ring-1 focus:ring-copper/40 w-24"
-          disabled={saving}
-        />
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          disabled={saving || !chatWid}
-          className="inline-flex items-center px-1 py-0.5 rounded-full text-charcoal/40 hover:text-copper disabled:opacity-50"
-          aria-label={isAr ? 'إضافة تصنيف' : 'Add label'}
-        >
-          {saving ? <Loader2 size={10} className="animate-spin" /> : <Plus size={10} />}
-        </button>
-      )}
-    </span>
   );
 }
 
