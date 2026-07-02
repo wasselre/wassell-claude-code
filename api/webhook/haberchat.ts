@@ -24,6 +24,7 @@
 
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { logWebhookReceipt } from '../_lib/activityLogger.js';
+import { patchChat } from '../_lib/haberchat.js';
 
 export const config = {
   runtime: 'edge',
@@ -293,6 +294,12 @@ async function bumpConversationRecord(args: {
 
   const prevData = (existing?.data as Record<string, unknown> | null) ?? {};
   const prevUnread = typeof prevData.unread_count === 'number' ? prevData.unread_count : 0;
+
+  // Auto-reopen: a customer message into a closed (resolved/archived)
+  // conversation reopens it — the rep must see it under "Open" again.
+  const prevStatus = typeof prevData.status === 'string' ? prevData.status : 'active';
+  const reopen = args.lastFlow === 'in' && (prevStatus === 'resolved' || prevStatus === 'archived');
+
   const nextData = {
     ...prevData,
     // Only fill wid / device_id if missing — they're set on first sync.
@@ -304,6 +311,7 @@ async function bumpConversationRecord(args: {
     // filter reads this ('in' = the customer spoke last).
     last_message_flow: args.lastFlow,
     unread_count: args.incrementUnread ? prevUnread + 1 : prevUnread,
+    ...(reopen ? { status: 'active' } : {}),
   };
 
   const { error } = await supa.from('records').upsert(
@@ -311,6 +319,19 @@ async function bumpConversationRecord(args: {
     { onConflict: 'id' },
   );
   if (error) console.error('[webhook.bumpRecord] upsert failed:', error.message);
+
+  // Push the reopen to Haberchat too — its chat status is authoritative on
+  // the next list sync (mergeChatIntoRecord takes Haberchat's status), so
+  // without this the chat would flip back to closed on the next refresh.
+  // Best-effort: a failure here must not fail the webhook (the record is
+  // already reopened; the next inbound retries).
+  if (reopen) {
+    try {
+      await patchChat(args.deviceId, args.chatWid, { status: 'active' });
+    } catch (err) {
+      console.error('[webhook.bumpRecord] auto-reopen Haberchat PATCH failed:', err instanceof Error ? err.message : String(err));
+    }
+  }
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────

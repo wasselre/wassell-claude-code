@@ -1460,6 +1460,11 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
     const curUnread = typeof data.unread_count === 'number' ? data.unread_count : 0;
     const isNewer = !curAt || row.date > curAt;
     const nextUnread = row.flow === 'in' && !wasKnown ? curUnread + 1 : curUnread;
+    // Auto-reopen: a customer message into a closed conversation reopens it
+    // locally right away. The webhook does the durable side (record write +
+    // Haberchat PATCH); this just avoids waiting for that echo.
+    const curStatus = typeof data.status === 'string' ? data.status : 'active';
+    const reopen = isNewer && row.flow === 'in' && (curStatus === 'resolved' || curStatus === 'archived');
 
     // Opportunistic client link — when the chat isn't currently attached
     // to a LIVE client. A stale `client_link` UUID pointing at a since-
@@ -1474,7 +1479,7 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
       if (link) clientLinkPatch = { client_link: link };
     }
 
-    if (!isNewer && nextUnread === curUnread && !clientLinkPatch) return s;
+    if (!isNewer && nextUnread === curUnread && !clientLinkPatch && !reopen) return s;
     const nextData = {
       ...data,
       last_message_at: isNewer ? row.date : curAt,
@@ -1483,6 +1488,7 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
       // filter reads this ('in' = the customer spoke last).
       last_message_flow: isNewer ? row.flow : (data.last_message_flow ?? null),
       unread_count: nextUnread,
+      ...(reopen ? { status: 'active' } : {}),
       ...(clientLinkPatch ?? {}),
     };
     const nextList = [...list];
