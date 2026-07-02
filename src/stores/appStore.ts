@@ -1479,6 +1479,9 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
       ...data,
       last_message_at: isNewer ? row.date : curAt,
       last_message_preview: isNewer ? (row.body ? row.body.slice(0, 120) : curPreview) : curPreview,
+      // Direction of the newest message — the Chats list's "needs reply"
+      // filter reads this ('in' = the customer spoke last).
+      last_message_flow: isNewer ? row.flow : (data.last_message_flow ?? null),
       unread_count: nextUnread,
       ...(clientLinkPatch ?? {}),
     };

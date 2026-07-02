@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MessageCircle, RefreshCw, Search, Plus } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import StartChatModal from './StartChatModal';
+import { buildClientPrefChips, isAwaitingReply, isInterestedClient, type ClientPrefChip } from '../lib/prefChips';
 import type { AppRecord } from '@/types';
 
 /**
@@ -10,7 +11,16 @@ import type { AppRecord } from '@/types';
  * Rows are sorted by last_message_at desc. Selecting a row updates the
  * URL — the split page's right pane picks up the new recordId and swaps
  * the detail view.
+ *
+ * Tabs split the inbox by who's on the other end: All / Clients (linked to a
+ * live clients record) / Other (advertisers, developers, offices…). The
+ * Clients tab adds status filters (interested / awaiting my reply / unread)
+ * and each client row carries preference chips (unit type · area · location).
  */
+
+type ChatTab = 'all' | 'clients' | 'other';
+type ClientFilter = 'all' | 'interested' | 'awaiting' | 'unread';
+
 export default function ChatList({ selectedRecordId }: { selectedRecordId: string | null }) {
   const navigate = useNavigate();
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -22,9 +32,13 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState('');
   const [showStartModal, setShowStartModal] = useState(false);
+  const [tab, setTab] = useState<ChatTab>('all');
+  const [clientFilter, setClientFilter] = useState<ClientFilter>('all');
 
   const chatsModel = useMemo(() => models.find((m) => m.name === 'chats'), [models]);
+  const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
   const chatRecords = chatsModel ? (records[chatsModel.id] ?? []) : [];
+  const clientRecords = clientsModel ? (records[clientsModel.id] ?? []) : [];
 
   useEffect(() => {
     void (async () => {
@@ -47,7 +61,35 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     }
   };
 
-  const visible = useMemo(() => {
+  const clientsById = useMemo(() => {
+    const map = new Map<string, AppRecord>();
+    for (const c of clientRecords) map.set(c.id, c);
+    return map;
+  }, [clientRecords]);
+
+  /** The linked LIVE client for a chat (a dangling client_link counts as none). */
+  const clientOf = useCallback((chat: AppRecord): AppRecord | null => {
+    const link = (chat.data as Record<string, unknown>).client_link;
+    return typeof link === 'string' && link ? clientsById.get(link) ?? null : null;
+  }, [clientsById]);
+
+  // id → display name for districts + cities (location-chip resolution).
+  const geoNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const name of ['districts', 'cities']) {
+      const m = models.find((mm) => mm.name === name);
+      if (!m) continue;
+      for (const r of records[m.id] ?? []) {
+        const dn = (r.data?.display_name ?? r.data?.name_ar ?? r.data?.name_en) as unknown;
+        if (typeof dn === 'string' && dn.trim()) map[r.id] = dn.trim();
+      }
+    }
+    return map;
+  }, [models, records]);
+
+  // Search first (spans the linked client's name too), then sort — tab counts
+  // are computed on this set so the numbers always match what's listed.
+  const searched = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = q
       ? chatRecords.filter((r) => {
@@ -55,10 +97,13 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
           const name = (d.name as string | null) ?? '';
           const phone = (d.phone as string | null) ?? '';
           const preview = (d.last_message_preview as string | null) ?? '';
+          const client = clientOf(r);
+          const clientName = client ? String((client.data as Record<string, unknown>).client_name ?? '') : '';
           return (
             name.toLowerCase().includes(q) ||
             phone.toLowerCase().includes(q) ||
-            preview.toLowerCase().includes(q)
+            preview.toLowerCase().includes(q) ||
+            clientName.toLowerCase().includes(q)
           );
         })
       : chatRecords;
@@ -70,7 +115,22 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
       if (!bAt) return -1;
       return bAt.localeCompare(aAt);
     });
-  }, [chatRecords, search]);
+  }, [chatRecords, search, clientOf]);
+
+  const clientChats = useMemo(() => searched.filter((r) => clientOf(r) !== null), [searched, clientOf]);
+
+  const visible = useMemo(() => {
+    if (tab === 'other') return searched.filter((r) => clientOf(r) === null);
+    if (tab !== 'clients') return searched;
+    if (clientFilter === 'all') return clientChats;
+    return clientChats.filter((r) => {
+      const d = r.data as Record<string, unknown>;
+      if (clientFilter === 'awaiting') return isAwaitingReply(d);
+      if (clientFilter === 'unread') return (typeof d.unread_count === 'number' ? d.unread_count : 0) > 0;
+      const client = clientOf(r);
+      return client ? isInterestedClient(client.data as Record<string, unknown>) : false;
+    });
+  }, [searched, clientChats, tab, clientFilter, clientOf]);
 
   const deviceLabels = useMemo(() => {
     const map = new Map<string, string>();
@@ -80,6 +140,19 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     return map;
   }, [waDevices, isAr]);
   const showDeviceBadges = waDevices.filter((d) => d.is_active).length > 1;
+
+  const tabs: { id: ChatTab; label: string; count: number }[] = [
+    { id: 'all', label: isAr ? 'الكل' : 'All', count: searched.length },
+    { id: 'clients', label: isAr ? 'العملاء' : 'Clients', count: clientChats.length },
+    { id: 'other', label: isAr ? 'أخرى' : 'Other', count: searched.length - clientChats.length },
+  ];
+
+  const clientFilters: { id: ClientFilter; label: string }[] = [
+    { id: 'all', label: isAr ? 'الكل' : 'All' },
+    { id: 'interested', label: isAr ? 'مهتم' : 'Interested' },
+    { id: 'awaiting', label: isAr ? 'بانتظار الرد' : 'Needs reply' },
+    { id: 'unread', label: isAr ? 'غير مقروء' : 'Unread' },
+  ];
 
   return (
     <>
@@ -130,29 +203,76 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
         </div>
       </div>
 
+      {/* Tabs: All / Clients / Other */}
+      <div className="flex items-center gap-1 px-3 py-2 shrink-0 border-b border-sand/10">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`flex-1 text-xs font-semibold rounded-lg py-1.5 px-2 transition-colors ${
+              tab === t.id
+                ? 'bg-copper text-white'
+                : 'bg-cream/60 text-charcoal/60 hover:bg-cream hover:text-charcoal'
+            }`}
+          >
+            {t.label}
+            <span className={`ms-1 text-[10px] font-normal ${tab === t.id ? 'text-white/80' : 'text-charcoal/40'}`}>
+              {t.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {/* Client status filters (Clients tab only) */}
+      {tab === 'clients' && (
+        <div className="flex items-center gap-1 px-3 py-1.5 shrink-0 border-b border-sand/10 overflow-x-auto">
+          {clientFilters.map((f) => (
+            <button
+              key={f.id}
+              onClick={() => setClientFilter(f.id)}
+              className={`text-[11px] font-medium rounded-full px-2.5 py-1 whitespace-nowrap transition-colors ${
+                clientFilter === f.id
+                  ? 'bg-copper/15 text-copper font-semibold'
+                  : 'text-charcoal/50 hover:bg-cream hover:text-charcoal'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* List (scrollable) */}
       <div className="flex-1 overflow-y-auto min-h-0">
         {visible.length === 0 && (
           <div className="p-8 text-center text-xs text-charcoal/40">
-            {search
+            {search || tab !== 'all' || clientFilter !== 'all'
               ? (isAr ? 'لا توجد نتائج' : 'No matches')
               : (isAr ? 'لا توجد محادثات بعد' : 'No conversations yet')}
           </div>
         )}
-        {visible.map((record) => (
-          <ChatRow
-            key={record.id}
-            record={record}
-            isAr={isAr}
-            selected={record.id === selectedRecordId}
-            deviceLabel={
-              showDeviceBadges
-                ? deviceLabels.get((record.data as Record<string, unknown>).device_id as string) ?? null
-                : null
-            }
-            onClick={() => navigate(`/model/chats/${record.id}`)}
-          />
-        ))}
+        {visible.map((record) => {
+          const client = clientOf(record);
+          return (
+            <ChatRow
+              key={record.id}
+              record={record}
+              isAr={isAr}
+              selected={record.id === selectedRecordId}
+              prefChips={
+                client
+                  ? buildClientPrefChips(client.data as Record<string, unknown>, clientsModel, geoNames, isAr)
+                  : []
+              }
+              deviceLabel={
+                showDeviceBadges
+                  ? deviceLabels.get((record.data as Record<string, unknown>).device_id as string) ?? null
+                  : null
+              }
+              onClick={() => navigate(`/model/chats/${record.id}`)}
+            />
+          );
+        })}
       </div>
     </div>
     </>
@@ -161,17 +281,25 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
 
 // ─── Row ───────────────────────────────────────────────────────────
 
+const CHIP_STYLES: Record<ClientPrefChip['kind'], string> = {
+  unit_type: 'bg-copper/10 text-copper',
+  area: 'bg-gold/20 text-chocolate',
+  location: 'bg-charcoal/5 text-charcoal/70',
+};
+
 function ChatRow({
   record,
   isAr,
   selected,
   deviceLabel,
+  prefChips,
   onClick,
 }: {
   record: AppRecord;
   isAr: boolean;
   selected: boolean;
   deviceLabel: string | null;
+  prefChips: ClientPrefChip[];
   onClick: () => void;
 }) {
   const data = record.data as Record<string, unknown>;
@@ -232,7 +360,7 @@ function ChatRow({
             </span>
           )}
         </div>
-        {(status === 'resolved' || status === 'archived' || deviceLabel) && (
+        {(status === 'resolved' || status === 'archived' || deviceLabel || prefChips.length > 0) && (
           <div className="flex items-center gap-1 mt-1 flex-wrap">
             {status === 'resolved' && (
               <span className="text-[9px] font-medium text-charcoal/50 px-1.5 py-0.5 rounded bg-charcoal/5">
@@ -244,6 +372,15 @@ function ChatRow({
                 {isAr ? 'مؤرشف' : 'Archived'}
               </span>
             )}
+            {prefChips.map((chip) => (
+              <span
+                key={chip.key}
+                className={`text-[9px] font-medium px-1.5 py-0.5 rounded truncate max-w-[160px] ${CHIP_STYLES[chip.kind]}`}
+                title={chip.text}
+              >
+                {chip.text}
+              </span>
+            ))}
             {deviceLabel && (
               <span className="text-[9px] font-medium text-copper/80 px-1.5 py-0.5 rounded bg-copper/10 truncate max-w-[100px]">
                 {deviceLabel}

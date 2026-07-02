@@ -2847,6 +2847,25 @@ const chatsModel: AppModel = {
             lookup_model_id: clientsId,
             lookup_display_field: 'name',
           },
+          {
+            // Direction of the newest message ('in' = customer spoke last).
+            // Stamped by the Haberchat webhook + the Realtime bump; drives
+            // the chat list's "needs reply" filter.
+            id: uuid(),
+            name: 'last_message_flow',
+            label_ar: 'اتجاه آخر رسالة',
+            label_en: 'Last Message Flow',
+            type: 'dropdown',
+            required: false,
+            order: 12,
+            section_id: chatsBaseSectionId,
+            width: 'third',
+            show_in_table: false,
+            options: [
+              { id: uuid(), label_ar: 'وارد', label_en: 'Inbound', value: 'in', color: '#10B981' },
+              { id: uuid(), label_ar: 'صادر', label_en: 'Outbound', value: 'out', color: '#B8734F' },
+            ],
+          },
         ],
       },
     ],

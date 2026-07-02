@@ -199,6 +199,7 @@ async function handleNewMessage(event: WebhookEvent, deviceId: string, flow: 'in
     deviceId: msg.device_id,
     lastBody: msg.body ?? '[media]',
     lastAt: msg.date,
+    lastFlow: flow,
     incrementUnread: flow === 'in',
   });
 }
@@ -276,6 +277,7 @@ async function bumpConversationRecord(args: {
   deviceId: string;
   lastBody: string;
   lastAt: string;
+  lastFlow: 'in' | 'out';
   incrementUnread: boolean;
 }) {
   const supa = getServiceSupabase();
@@ -298,6 +300,9 @@ async function bumpConversationRecord(args: {
     device_id: prevData.device_id ?? args.deviceId,
     last_message_at: args.lastAt,
     last_message_preview: truncate(args.lastBody, 120),
+    // Direction of the newest message — the Chats list's "needs reply"
+    // filter reads this ('in' = the customer spoke last).
+    last_message_flow: args.lastFlow,
     unread_count: args.incrementUnread ? prevUnread + 1 : prevUnread,
   };
 
