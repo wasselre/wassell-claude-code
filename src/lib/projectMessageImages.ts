@@ -1,11 +1,15 @@
 /**
- * Multi-image WhatsApp send for project message templates.
+ * Multi-image WhatsApp send for chat templates.
  *
- * A project's `chat_templates` record carries `project_image_file_ids` — the
- * CRM `files` ids of every image saved on the linked all_projects record
- * (the `project_images` gallery + `main_image`). Those files are PRIVATE
- * (Supabase Storage behind RLS), so they can't be handed to Haberchat as a
- * URL. For each one we: batch-sign a view URL → fetch the bytes as a blob →
+ * Accepts a mixed list of image references:
+ *   • CRM `files` ids — a project template's `project_image_file_ids` (the
+ *     linked all_projects gallery + `main_image`). Those files are PRIVATE
+ *     (Supabase Storage behind RLS), so they can't be handed to Haberchat as
+ *     a URL — each is batch-signed to a view URL first.
+ *   • Raw public URLs — a listing template's cleaned photos
+ *     (`images[].public_url`, hosted on the public marketing-assets bucket),
+ *     used as-is.
+ * For each entry we: resolve a fetchable URL → fetch the bytes as a blob →
  * upload to Haberchat (account-scoped file id) → send as its own `image`
  * message into the conversation.
  *
@@ -62,7 +66,12 @@ export async function sendProjectImageMessages(
       const blob = await res.blob();
       const mime = blob.type || 'image/jpeg';
       const ext = (mime.split('/')[1] ?? 'jpg').split('+')[0];
-      const file = new File([blob], `${id}.${ext}`, { type: mime });
+      // URL entries would otherwise put the whole URL in the filename; use the
+      // last path segment instead (file-id entries keep the id as the name).
+      const baseName = isUrl(id)
+        ? ((id.split('?')[0] ?? id).split('/').pop() || 'image').slice(0, 80)
+        : id;
+      const file = new File([blob], baseName.includes('.') ? baseName : `${baseName}.${ext}`, { type: mime });
       const uploaded = await uploadFile(file);
       // sendChatMessage already shows its own error toast + throws on failure;
       // our catch just keeps the loop going and tallies the failure.

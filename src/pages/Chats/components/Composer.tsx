@@ -39,9 +39,10 @@ export default function Composer({
 
   const [text, setText] = useState('');
   const [attachment, setAttachment] = useState<Attachment | null>(null);
-  // Project templates carry a gallery of CRM image file ids that ride along as
-  // their own image messages after the text/single-media send. Set when a
-  // project template is picked; cleared on send or when a local file replaces it.
+  // Templates can carry images that ride along as their own image messages
+  // after the text/single-media send: a project template's gallery (CRM file
+  // ids) or a listing template's cleaned photos (public URLs). Set when such
+  // a template is picked; cleared on send or when a local file replaces it.
   const [projectImageFileIds, setProjectImageFileIds] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
@@ -186,8 +187,8 @@ export default function Composer({
             </div>
             <div className="flex-1 min-w-0 text-xs text-charcoal/70">
               {isAr
-                ? `سترسل ${projectImageFileIds.length} صورة للمشروع بعد الرسالة`
-                : `${projectImageFileIds.length} project image${projectImageFileIds.length === 1 ? '' : 's'} will be sent after the message`}
+                ? `سترسل ${projectImageFileIds.length} صورة بعد الرسالة`
+                : `${projectImageFileIds.length} image${projectImageFileIds.length === 1 ? '' : 's'} will be sent after the message`}
             </div>
             <button
               onClick={() => setProjectImageFileIds([])}

@@ -10,6 +10,29 @@ import { resolveTemplateCategory, templateCategoryLabel, type TemplateCategory }
 import type { AppRecord } from '@/types';
 
 /**
+ * Every image a template sends as its own WhatsApp image message after the
+ * text. Two sources, merged:
+ *   • `project_image_file_ids` — CRM `files` ids of the linked project's
+ *     gallery (project templates).
+ *   • `images[].public_url` — the AI-cleaned listing photos (listing
+ *     templates; written on Approve, so drafts contribute nothing).
+ * `sendProjectImageMessages` accepts both shapes (file id or raw URL).
+ */
+function templateImageSends(d: Record<string, unknown>): string[] {
+  const projectIds = Array.isArray(d.project_image_file_ids)
+    ? (d.project_image_file_ids as unknown[]).filter(
+        (x): x is string => typeof x === 'string' && x.length > 0,
+      )
+    : [];
+  const listingUrls = Array.isArray(d.images)
+    ? (d.images as Array<{ public_url?: unknown } | null>)
+        .map((im) => im?.public_url)
+        .filter((u): u is string => typeof u === 'string' && u.length > 0)
+    : [];
+  return [...projectIds, ...listingUrls];
+}
+
+/**
  * Template picker shown from the Composer. Lists every chat template
  * the user has created, filters by classification (project / contact
  * messages) / language / tag / search, and on click calls `onPick` with
@@ -35,8 +58,9 @@ export default function TemplatePickerModal({
     mediaSize: number | null;
     mediaFilename: string | null;
     mediaKind: string | null;
-    /** CRM file ids of the linked project's gallery, sent as their own image
-     *  messages after the text (project templates only). */
+    /** Images sent as their own image messages after the text. Mixed list:
+     *  CRM file ids (project templates' gallery) and/or public URLs (listing
+     *  templates' cleaned photos) — `sendProjectImageMessages` handles both. */
     imageFileIds: string[];
   }) => void;
   onClose: () => void;
@@ -124,9 +148,7 @@ export default function TemplatePickerModal({
       mediaSize: typeof d.media_size === 'number' ? (d.media_size as number) : null,
       mediaFilename: (d.media_filename as string | null) || null,
       mediaKind: (d.media_kind as string | null) || null,
-      imageFileIds: Array.isArray(d.project_image_file_ids)
-        ? (d.project_image_file_ids as unknown[]).filter((x): x is string => typeof x === 'string' && x.length > 0)
-        : [],
+      imageFileIds: templateImageSends(d),
     });
   };
 
@@ -564,6 +586,7 @@ export default function TemplatePickerModal({
                     : (bodyEn || bodyAr);
                   const tags = Array.isArray(d.tags) ? (d.tags as string[]) : [];
                   const category = resolveTemplateCategory(d);
+                  const imageSendCount = templateImageSends(d).length;
                   const mediaKind = (d.media_kind as string | null) ?? '';
                   const hasMedia = !!d.media_file_id;
                   const MediaIcon =
@@ -644,6 +667,12 @@ export default function TemplatePickerModal({
                             <span className="inline-flex items-center gap-1 text-[10px] text-copper bg-copper/10 rounded-full px-1.5 py-0.5">
                               <Paperclip size={9} />
                               {mediaKind}
+                            </span>
+                          )}
+                          {imageSendCount > 0 && (
+                            <span className="inline-flex items-center gap-1 text-[10px] text-copper bg-copper/10 rounded-full px-1.5 py-0.5">
+                              <ImageIcon size={9} />
+                              {isAr ? `${imageSendCount} صور` : `${imageSendCount} images`}
                             </span>
                           )}
                           {tags.slice(0, 3).map((tag) => (
