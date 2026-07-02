@@ -252,8 +252,9 @@ Run them from a scratch dir; they load the keys from `.env.local`.
 - **[2026-07-02] ريفا riva.sa is a MARKETER (not a developer) — one listing, many sub-brand "developers":**
   riva.sa lists 24 projects for ~15 sub-brands (يمام، زنك، مجبب، فيورا، عزوم، آبه، أوشن، أكدال، الرمز،
   مسان، عبق، ديارا، أجذى، ديار أصيلة، زود…). The CRM models each sub-brand as its own `developers` row
-  (bulk-seeded 2026-04-18 with `website: riva.sa`). Posture: classification = **`general_project`** (the
-  2026-04-26 bulk seed set that on all riva rows — keep, don't ask); developer = the sub-brand row.
+  (bulk-seeded 2026-04-18 with `website: riva.sa`). Posture: classification = **`riva_projects`**
+  (dedicated dropdown option `مشاريع ريفا`, created 2026-07-02 at the user's request — the seed rows
+  originally carried `general_project`; all 23 were flipped); developer = the sub-brand row.
   Group projects by the page's developer-logo URL; groups containing an already-matched project inherit
   its developer; for unknown groups **read the logo image** to get the brand (create the developer with
   `website: riva.sa`). If the logo is a text-free SVG, read the brochure cover/back instead (that's how
