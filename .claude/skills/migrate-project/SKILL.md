@@ -249,7 +249,54 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   breakdowns) and DOCUMENT the per-model variation (e.g. "A/B = 4 beds, C–F = 5") in `project_analysis`.
   (Set bedrooms=5/bathrooms=5/elevator=مؤسس/parking=internal + a 16-item فيلا component set for سديم.)
 
+- **[2026-07-02] ريفا riva.sa is a MARKETER (not a developer) — one listing, many sub-brand "developers":**
+  riva.sa lists 24 projects for ~15 sub-brands (يمام، زنك، مجبب، فيورا، عزوم، آبه، أوشن، أكدال، الرمز،
+  مسان، عبق، ديارا، أجذى، ديار أصيلة، زود…). The CRM models each sub-brand as its own `developers` row
+  (bulk-seeded 2026-04-18 with `website: riva.sa`). Posture: classification = **`general_project`** (the
+  2026-04-26 bulk seed set that on all riva rows — keep, don't ask); developer = the sub-brand row.
+  Group projects by the page's developer-logo URL; groups containing an already-matched project inherit
+  its developer; for unknown groups **read the logo image** to get the brand (create the developer with
+  `website: riva.sa`). If the logo is a text-free SVG, read the brochure cover/back instead (that's how
+  زود was identified for إلوفي — élevée/الوڤي, a Jadwa Investment fund).
+- **[2026-07-02] Marketer listing counters can be STALE — the project page is authoritative:** riva's
+  listing card for مجبب هاوس said 46/2/23 (=71 units) but the project page renders 41, and the page's own
+  Livewire status filters (`case` 0/1/2) return exactly 16/2/23. Trust the per-project page inventory.
+- **[2026-07-02] Cross-marketer dedup:** a project already migrated from the DEVELOPER's own site
+  (جديل الرمال ← alramzre.com, 68 units, our_projects) also appears on riva.sa (60 units). Do NOT re-add
+  or overwrite from the marketer — the developer-source migration wins; skip the project entirely.
+- **[2026-07-02] Bare-seed rename needs developer-site proof:** يمام 8 (bare 0-unit row) = يمام فلورز 8 —
+  verified on yamam.sa's own project list (it has ONE "8" project) before renaming the row.
+- **[2026-07-02] "نماذج" sold as units:** إلوفي lists 4 نماذج with real prices/areas (incl. بنتهاوس) —
+  migrate each نموذج as a unit (`unit_model='نموذج N'` + note). Added `unit_type` option `بنتهاوس`.
+- **[2026-07-02] Multi-level units (تاون هاوس/فيلا "الأرضي - الأول", villa "3"):** the single-value
+  `floor` dropdown can't hold spans — leave `floor` unset, write 'المستويات: <text>' into notes. Single
+  floors map as usual (الملحق→الروف).
+- **[2026-07-02] Missing unit descriptions (sold units often omit them):** propagate the component
+  description from a sibling unit in the SAME project with the same bedroom count (layouts repeat per
+  bed count); tag the note '(المكونات منسوخة من وحدة مطابقة)'. Riva: 248/315 native, ~66 propagated.
+
 ## Per-developer API/source adapters (document each site as you learn it)
+- **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
+  no Browserbase needed.** Listing `/projects` renders 18 cards; page 2 (6 more) is Livewire pagination —
+  `?page=2` is IGNORED; replay it: GET `/projects` (keep cookies + `csrf-token` meta + the
+  `frontend.projects-page` `wire:snapshot`), then POST `/livewire/update` with
+  `{_token, components:[{snapshot, updates:{}, calls:[{path:'',method:'gotoPage',params:[2,'projects_page']}]}]}`
+  → `components[0].effects.html`. Project page `/project/<slug>` has EVERYTHING server-side: name+type in
+  header, `الرياض - <district>`, description rich-text, specs block (area range, beds, baths, kitchens,
+  `رخصة الاعلان`, `تاريخ النشر`, price range `X الي Y`), المميزات list, الضمانات (name+duration),
+  المعالم القريبة (name + `المسافة: N كم`), Google-maps `?q=lat,lng` link, brochure URL in the
+  `pdf-viewer` snapshot's `data.pdfUrl`, developer logo `<img src=".../developers/...">`, `og:image`
+  (hero → `main_image`). **Unit cards** = blocks split on `wire:key="<id>"` that contain `post-title`
+  (other wire:keys are feature icons — filter them): number, type badge, price `text-success">N` OR
+  `تواصل معنا` (price hidden but unit may still be متاح), area `N م²`, beds after `bed.png`, baths after
+  `bathtub-01.png`, card `<img>` = **the real per-unit floor plan** (attach to `unit_plan`), status =
+  `مباع`/`محجوز` badge text in the block else available. **Unit popup** (floor + component description +
+  images): POST `/livewire/update` on the `frontend.conponents.unit-popup` snapshot with
+  `calls:[{method:'loadUnit',params:[<id>]}]` (params = bare int; object param → 419) →
+  `effects.html` has `الدور : <floor>` + a dash-separated description; snapshot `data.unitImages` has the
+  plan URL(s). ~150ms between calls was enough for 315 popups, no rate-limiting. Status semantics on the
+  page tabs: case 0=متاح, 1=محجوز, 2=مباع. Riva run 2026-07-02: 24 projects (23 migrated + جديل الرمال
+  skipped), 255 units written, م ش2811–2817, م ط195–200, U-43814–U-44068.
 - **Almajdiah** → JSON units API `https://etmaam.almajdiah.com/api/client/v1/projects/{id}?…&page=N`
   (paginated 30/page; `units.meta.last_page`). `{id}` from the page URL `/projects/{id}`. No auth.
 - **Alajlan Invest** (`alajlaninvest.com/project/<slug>/`, e.g. `riv52`) → **WordPress (Mharty theme),
