@@ -122,7 +122,15 @@ BEGIN
            'label_ar', 'تفصيل درجة الجودة', 'label_en', 'Quality Breakdown',
            'type', 'table', 'required', false, 'order', 10,
            'section_id', v_sig_section_id,
-           'width', 'full', 'show_in_table', false, 'read_only', true));
+           'width', 'full', 'show_in_table', false, 'read_only', true,
+           -- The read-only table grid renders headers from table_columns and
+           -- looks up each row's cell by column `name` — without this the
+           -- breakdown rendered as an empty strip (found live 2026-07-02).
+           -- Column names ARE the Arabic row keys the scoring fn emits.
+           'table_columns', jsonb_build_array(
+             jsonb_build_object('id','qb_dim','name','البند','type','text','label_ar','البند','label_en','Dimension'),
+             jsonb_build_object('id','qb_pts','name','النقاط','type','number','label_ar','النقاط','label_en','Points'),
+             jsonb_build_object('id','qb_max','name','من','type','number','label_ar','من','label_en','Out of'))));
   END IF;
 
   UPDATE public.models SET schema = v_schema WHERE id = v_model_id;
