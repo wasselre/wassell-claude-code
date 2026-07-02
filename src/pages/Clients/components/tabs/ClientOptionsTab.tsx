@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
-  Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter,
+  Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
@@ -12,6 +13,7 @@ import {
   type ClientOptionStatus, type ClientOptionSourceType, type ClientOptionData,
 } from '@/lib/matching/clientOptions';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
+import AddOptionModal from '../AddOptionModal';
 
 interface Props {
   client: AppRecord;
@@ -53,10 +55,13 @@ const UNIT_TYPE_AR: Record<string, string> = {
  *
  * Default view: active options first (eliminated hidden behind a toggle / sorted
  * last). Filter by status. The preference INPUTS live on the Preferences tab and
- * are never touched here — this tab is the OUTPUT list.
+ * are never touched here — this tab is the OUTPUT list, plus two ways to ADD to
+ * it: open the client-scoped Project Finder, or manually pick a specific
+ * project / unit / market listing (AddOptionModal, added_from='manual').
  */
 export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
+  const navigate = useNavigate();
   const records = useAppStore((s) => s.records);
   const models = useAppStore((s) => s.models);
   const addToast = useAppStore((s) => s.addToast);
@@ -74,6 +79,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
   const [notesDraft, setNotesDraft] = useState('');
   const [eliminateTarget, setEliminateTarget] = useState<AppRecord | null>(null);
   const [eliminateNotes, setEliminateNotes] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: options.length };
@@ -183,13 +189,40 @@ export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
             {showEliminated ? L('إخفاء المستبعدة', 'Hide eliminated') : L(`عرض المستبعدة (${eliminatedCount})`, `Show eliminated (${eliminatedCount})`)}
           </button>
         )}
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-xs font-bold text-white transition hover:bg-terracotta"
+          >
+            <Plus size={13} /> {L('إضافة خيار', 'Add option')}
+          </button>
+        )}
       </div>
 
       {/* Empty state */}
       {options.length === 0 && (
-        <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border border-sand/30 bg-white px-6 py-12 text-center text-charcoal/55">
+        <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-sand/30 bg-white px-6 py-12 text-center text-charcoal/55">
           <ListChecks size={26} className="text-copper/60" />
-          <p className="text-sm">{L('لا توجد خيارات محفوظة لهذا العميل بعد. استخدم «الباحث عن المشاريع» داخل المتابعة لحفظ الخيارات المناسبة.', 'No saved options yet. Use Project Finder inside a follow-up to save suitable options here.')}</p>
+          <p className="text-sm">{L('لا توجد خيارات محفوظة لهذا العميل بعد. ابحث عن المشاريع المطابقة أو أضف خياراً تعرفه مباشرة.', 'No saved options yet. Find matching projects or add a specific option you already know.')}</p>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={() => navigate(`/model/clients/${client.id}/projects`)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
+            >
+              <Compass size={15} /> {L('الباحث عن المشاريع', 'Find projects')}
+            </button>
+            {canEdit && (
+              <button
+                type="button"
+                onClick={() => setAddOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-copper/10 px-3 py-2 text-sm font-bold text-copper transition hover:bg-copper/20"
+              >
+                <Plus size={15} /> {L('إضافة خيار يدوياً', 'Add option manually')}
+              </button>
+            )}
+          </div>
         </div>
       )}
       {options.length > 0 && visible.length === 0 && (
@@ -348,6 +381,9 @@ export default function ClientOptionsTab({ client, isAr, canEdit }: Props) {
           </div>
         );
       })}
+
+      {/* Manual add-option picker */}
+      {addOpen && <AddOptionModal clientId={client.id} isAr={isAr} onClose={() => setAddOpen(false)} />}
 
       {/* Eliminate-with-notes modal */}
       {eliminateTarget && (
