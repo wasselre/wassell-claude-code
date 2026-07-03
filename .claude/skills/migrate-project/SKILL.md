@@ -351,7 +351,10 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   developer publishes no page/brochure (e.g. الرمز's ريا النخيل/ستون الندى/سديم تاون aren't on
   alramzre.com at all), attach the brochure+price PDFs as `developer_content` files, point
   `project_page_url` at the developer site root, and record the absence in `source_notes` — never
-  fabricate a URL. For Almajdiah, the brochure lives in the units API field `web_site_project_brochure`.
+  fabricate a URL. Then ASK THE USER for a Drive link: the team hosts missing brochures on Google Drive
+  and supplies a `drive.google.com/file/d/…/view?usp=sharing` URL for `broucher_developer` (done
+  2026-07-02 for ريا النخيل/ستون الندى/سديم تاون). For Almajdiah, the brochure lives in the units API
+  field `web_site_project_brochure`.
 - **[2026-07-02] unit_components standard (user rule):** the field must read as the unit's COMPLETE
   space inventory (minimum مطبخ + صالة on every unit, plus everything else it has) — not just the
   marketer's "extras". The 2026-07-02 audit found 3 coexisting semantics (full inventory / extras-only /
