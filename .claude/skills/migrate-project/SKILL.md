@@ -254,7 +254,10 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   مسان، عبق، ديارا، أجذى، ديار أصيلة، زود…). The CRM models each sub-brand as its own `developers` row
   (bulk-seeded 2026-04-18 with `website: riva.sa`). Posture: classification = **`riva_projects`**
   (dedicated dropdown option `مشاريع ريفا`, created 2026-07-02 at the user's request — the seed rows
-  originally carried `general_project`; all 23 were flipped); developer = the sub-brand row.
+  originally carried `general_project`; all 23 were flipped) **AND membership in `our_projects`**
+  (user decision 2026-07-02: every riva project also gets an our_projects record `{project:<uuid>}`,
+  which auto-flips `is_public` via the our_projects-drive-website triggers → published on wassel.re;
+  verified live via the /project OG tags). Developer = the sub-brand row.
   Group projects by the page's developer-logo URL; groups containing an already-matched project inherit
   its developer; for unknown groups **read the logo image** to get the brand (create the developer with
   `website: riva.sa`). If the logo is a text-free SVG, read the brochure cover/back instead (that's how
