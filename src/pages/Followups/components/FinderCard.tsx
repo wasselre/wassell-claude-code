@@ -9,6 +9,7 @@ import { dealBadgeLabel, dealBadgeTone, type DealBadge } from '@/lib/market/deal
 import { CLIENT_OPTION_STATUS_META, CLIENT_OPTION_STATUS_ORDER, type ClientOptionStatus } from '@/lib/matching/clientOptions';
 import { useSignedImage } from '@/lib/projects/useSignedImage';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
+import QualityBadge from '@/components/market/QualityBadge';
 
 /**
  * One project in the deterministic Project Finder modal (Phase 2). Renders ONLY
@@ -184,6 +185,11 @@ export default function FinderCard({
             >
               {L('إعلان', 'Ad')} #{adId}
             </span>
+          )}
+          {/* Listing quality (market listings only) — display + tiebreak, never
+              part of the match score. Renders nothing when facts carry no grade. */}
+          {item.source === 'market_listings' && (
+            <QualityBadge grade={f.quality_grade} score={f.quality_score} isAr={isAr} />
           )}
           {item.geo_status && <GeoStatusPill status={item.geo_status} isAr={isAr} />}
           {item.geo_confidence && <GeoConfidencePill confidence={item.geo_confidence} isAr={isAr} />}

@@ -104,6 +104,10 @@ function buildFacts(
     put('available_units', data.is_active === true ? 1 : 0);
     put('image', asString(data.main_image_url));
     put('external_id', asString(data.external_id));
+    // DB-computed listing quality — rides in the slim store, snapshotted here
+    // like the finder's facts so the option card shows the same grade chip.
+    put('quality_score', asFiniteNumber(data.quality_score));
+    put('quality_grade', asString(data.quality_grade));
     return facts;
   }
 

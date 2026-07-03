@@ -976,6 +976,11 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   // Market-listing ad id (the external Aqar ad number) — shown as a small chip on
   // the card so the rep can look the ad up. Only market listings carry `external_id`.
   put('external_id', asStr(data.external_id));
+  // Market-listing quality (DB-computed, trigger-maintained). Rides in facts so
+  // the finder card renders the grade chip and saveClientOption snapshots it.
+  // Only market listings carry these keys (set by adaptListingToScorable).
+  put('quality_score', asNum(data.quality_score));
+  put('quality_grade', asStr(data.quality_grade));
   // Coordinates for the finder's MAP view — the resolved pin (verified polygon
   // centroid when geo verification ran, else the stored lat/lng). Absent when the
   // record has no coordinates (that pin is simply not plotted).
@@ -1073,6 +1078,12 @@ function adaptListingToScorable(d: Record<string, unknown>): Record<string, unkn
     latitude: asNum(d.latitude),
     longitude: asNum(d.longitude),
     project_status: active ? 'available' : 'sold_out',
+    // DB-computed listing quality (0–100 + A–D grade, maintained by the
+    // records trigger — see the market-listings quality migration). Carried
+    // through so it lands in facts (card chip + saved-option snapshot) and
+    // the equal-score sort tiebreak. Projects/units never carry these keys.
+    quality_score: asNum(d.quality_score),
+    quality_grade: asStr(d.quality_grade) || undefined,
   };
 }
 
@@ -1519,10 +1530,17 @@ export async function matchProjectsCore(
 
   // Rank by BAND first, then score — so a genuine good/strong match always
   // outranks a 'partial' one even if the partial has a higher raw score (e.g. a
-  // wrong-type project whose location+budget inflate its number).
+  // wrong-type project whose location+budget inflate its number). Listing
+  // quality (facts.quality_score, market listings only) breaks EXACT score
+  // ties only — relevance always dominates; quality never reorders different
+  // match scores. Items without a quality score tie-break as 0.
   const bandRank = (b: ScoredProject['band']) => (b === 'strong' ? 0 : b === 'good' ? 1 : 2);
+  const qualityOf = (it: MatchResultItem) => {
+    const q = it.facts?.quality_score;
+    return typeof q === 'number' && Number.isFinite(q) ? q : 0;
+  };
   const byBandThenScore = (a: MatchResultItem, b: MatchResultItem) =>
-    bandRank(a.match_band) - bandRank(b.match_band) || b.score - a.score;
+    bandRank(a.match_band) - bandRank(b.match_band) || b.score - a.score || qualityOf(b) - qualityOf(a);
 
   let anyDistrictExact = false;
   let anyNearby = false;

@@ -13,6 +13,7 @@ import {
   type ClientOptionStatus, type ClientOptionSourceType, type ClientOptionData,
 } from '@/lib/matching/clientOptions';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
+import QualityBadge from '@/components/market/QualityBadge';
 import AddOptionModal from '../AddOptionModal';
 
 interface Props {
@@ -298,6 +299,11 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
               </span>
               {typeof d.match_score === 'number' && (
                 <span className="inline-flex shrink-0 items-center rounded-full bg-charcoal/5 px-2 py-0.5 text-[11px] font-bold text-charcoal/70">{d.match_score}%</span>
+              )}
+              {/* Listing quality — snapshotted into facts at save time (market
+                  listings only). Renders nothing when the snapshot has no grade. */}
+              {d.source_type === 'market_listing' && (
+                <QualityBadge grade={f.quality_grade} score={f.quality_score} isAr={isAr} />
               )}
             </div>
 

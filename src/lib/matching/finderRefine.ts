@@ -60,6 +60,14 @@ export function factRange(facts: Record<string, unknown>, key: string): { min: n
 export const availOf = (item: FinderMatch): number | null =>
   typeof item.facts?.available_units === 'number' ? (item.facts.available_units as number) : null;
 
+/** DB-computed listing quality (market listings only; projects have none → 0).
+ *  Used ONLY as the equal-match-score tiebreak in the default sort — relevance
+ *  always dominates; quality never reorders different match scores. */
+const qualityOf = (item: FinderMatch): number => {
+  const q = item.facts?.quality_score;
+  return typeof q === 'number' && Number.isFinite(q) ? q : 0;
+};
+
 /** HARD post-filters over the already-scored set — focus a large result list. */
 export function passesRefine(item: FinderMatch, r: Refine): boolean {
   const price = factRange(item.facts, 'price_range');
@@ -93,7 +101,7 @@ export function sortItems(items: FinderMatch[], key: SortKey): FinderMatch[] {
     case 'available_desc': return arr.sort((a, b) => cmpNum(availOf(a), availOf(b), false));
     case 'name': return arr.sort((a, b) => a.project_name.localeCompare(b.project_name, 'ar'));
     case 'score':
-    default: return arr.sort((a, b) => b.score - a.score);
+    default: return arr.sort((a, b) => b.score - a.score || qualityOf(b) - qualityOf(a));
   }
 }
 
