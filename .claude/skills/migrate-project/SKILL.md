@@ -345,5 +345,17 @@ Run them from a scratch dir; they load the keys from `.env.local`.
 ## Verify & cleanup
 - Verify: `count units WHERE project_id=<uuid>` == expected; project `unit_count` populated; a sample
   `unit_plan` signed URL returns 200 image/*.
+- **[2026-07-02] Three mandatory source links on EVERY our_projects/riva_projects member** (user rule):
+  `project_location` (Google-Maps link), `broucher_developer` (developer brochure URL), and
+  `project_page_url` (developer's project page). Check all three at the end of every migration. If the
+  developer publishes no page/brochure (e.g. الرمز's ريا النخيل/ستون الندى/سديم تاون aren't on
+  alramzre.com at all), attach the brochure+price PDFs as `developer_content` files, point
+  `project_page_url` at the developer site root, and record the absence in `source_notes` — never
+  fabricate a URL. For Almajdiah, the brochure lives in the units API field `web_site_project_brochure`.
+- **[2026-07-02] unit_components standard (user rule):** the field must read as the unit's COMPLETE
+  space inventory (minimum مطبخ + صالة on every unit, plus everything else it has) — not just the
+  marketer's "extras". The 2026-07-02 audit found 3 coexisting semantics (full inventory / extras-only /
+  empty): 42% of Our-Projects units had ≤3 components and 30% lacked مطبخ. When the per-unit source is
+  thin, enrich from: notes' raw specs → attached unit plans (visual read) → brochure model layouts.
 - To roll back a run: delete files (+storage objects), delete units, delete project, revert any options
   you added. (See scripts/cleanup.mjs.)
