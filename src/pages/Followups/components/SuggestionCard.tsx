@@ -116,6 +116,14 @@ export default function SuggestionCard({
         {/* Source + category + confidence + distance */}
         <div className="flex flex-wrap items-center gap-1.5">
           <SourcePill source={item.data_source} isAr={isAr} />
+          {item.data_source === 'market_listings' && typeof f.external_id === 'string' && f.external_id && (
+            <span
+              className="inline-flex items-center rounded-full border border-chocolate/25 bg-chocolate/5 px-2 py-0.5 text-[11px] font-bold text-chocolate"
+              title={L('رقم الإعلان', 'Ad ID')}
+            >
+              @{f.external_id}
+            </span>
+          )}
           <CategoryPill group={item.group} isAr={isAr} />
           <ConfidencePill confidence={item.data_confidence} isAr={isAr} />
           {item.distance_km != null && (

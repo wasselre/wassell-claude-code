@@ -37,8 +37,16 @@ export default function ListingMessagePanel({ modelId, recordId }: Props) {
     ) ?? null;
 
   const listing = (records[modelId] ?? []).find((r) => r.id === recordId);
+  const listingData = (listing?.data as Record<string, unknown> | undefined) ?? {};
+  // The template is NAMED after the listing's Aqar ad id ("@123456") — the id
+  // is how listings are referenced everywhere. Title is display-only fallback.
+  const listingExternalId =
+    typeof listingData.external_id === 'string' && listingData.external_id.trim()
+      ? listingData.external_id.trim()
+      : '';
   const listingTitle =
-    ((listing?.data as Record<string, unknown> | undefined)?.title as string | undefined) ||
+    (listingExternalId && `@${listingExternalId}`) ||
+    (listingData.title as string | undefined) ||
     tr('رسالة الإعلان', 'Listing message');
 
   return (

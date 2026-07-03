@@ -339,9 +339,13 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     }
     if (imageUrls.length === 0) return jsonError(400, 'this listing has no images to clean');
 
+    // The template's name IS the listing's Aqar ad id ("@123456") — the id is
+    // how listings are referenced everywhere (finder cards, client options).
+    // Title is only the fallback for the rare listing without an external_id.
+    const externalId = typeof ld.external_id === 'string' ? ld.external_id.trim() : '';
     const listingTitle =
+      (externalId && `@${externalId}`) ||
       (typeof ld.title === 'string' && ld.title.trim()) ||
-      (typeof ld.external_id === 'string' && `Listing ${ld.external_id}`) ||
       'Listing message';
 
     const draftId = crypto.randomUUID();

@@ -117,10 +117,15 @@ export default function FinderMapView({ matches, isAr, onOpenDetails, renderSele
     };
 
     const makeMarker = (p: Plotted) => {
+      // Market pins carry the Aqar ad id in the hover title ("… @123456").
+      const extId =
+        p.match.source === 'market_listings' && typeof p.match.facts.external_id === 'string' && p.match.facts.external_id
+          ? ` @${p.match.facts.external_id}`
+          : '';
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng },
         icon: iconBySource[p.match.source],
-        title: p.match.project_name,
+        title: `${p.match.project_name}${extId}`,
         // Our projects sit on top so they're never hidden under a market pin.
         zIndex: p.match.source === 'our_projects' ? 1000 : undefined,
       });

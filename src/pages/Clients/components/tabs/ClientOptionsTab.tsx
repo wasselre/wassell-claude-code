@@ -79,6 +79,30 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
     [records, modelId, client.id],
   );
 
+  // Aqar ad id per market-listing option: newer saves snapshot it in
+  // facts.external_id; older options fall back to the listing record in the
+  // (slim, background-loaded) market_listings store slice.
+  const marketModelId = useMemo(() => models.find((m) => m.name === 'market_listings')?.id ?? null, [models]);
+  const externalIdBySourceId = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!marketModelId) return map;
+    const need = new Set<string>();
+    for (const r of options) {
+      const d = r.data as Record<string, unknown>;
+      if (d.source_type !== 'market_listing') continue;
+      const facts = (d.facts ?? {}) as Record<string, unknown>;
+      if (typeof facts.external_id === 'string' && facts.external_id) continue;
+      if (typeof d.source_id === 'string' && d.source_id) need.add(d.source_id);
+    }
+    if (need.size === 0) return map;
+    for (const r of records[marketModelId] ?? []) {
+      if (!need.has(r.id)) continue;
+      const e = (r.data as Record<string, unknown>).external_id;
+      if (typeof e === 'string' && e) map.set(r.id, e);
+    }
+    return map;
+  }, [options, records, marketModelId]);
+
   const [statusFilter, setStatusFilter] = useState<ClientOptionStatus | 'all'>('all');
   const [showEliminated, setShowEliminated] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -263,6 +287,12 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
         const avail = typeof f.available_units === 'number' ? f.available_units : null;
         const meta = CLIENT_OPTION_STATUS_META[d.status as ClientOptionStatus] ?? CLIENT_OPTION_STATUS_META.suitable;
         const srcMeta = CLIENT_OPTION_SOURCE_META[d.source_type as ClientOptionSourceType];
+        const adId =
+          d.source_type === 'market_listing'
+            ? (typeof f.external_id === 'string' && f.external_id
+                ? f.external_id
+                : externalIdBySourceId.get(String(d.source_id ?? '')) ?? null)
+            : null;
 
         return (
           <div key={r.id} className={`overflow-hidden rounded-xl border bg-white shadow-sm ${isMain ? 'border-copper/60 ring-1 ring-copper/30' : isEliminated ? 'border-red-200 opacity-80' : 'border-sand/50'}`}>
@@ -286,6 +316,14 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
                   {[district, city].filter(Boolean).join('، ') || L('الموقع غير محدد', 'Location not set')}
                 </div>
               </div>
+              {adId && (
+                <span
+                  className="inline-flex shrink-0 items-center rounded-full border border-chocolate/25 bg-chocolate/5 px-2 py-0.5 text-[11px] font-bold text-chocolate"
+                  title={L('رقم الإعلان', 'Ad ID')}
+                >
+                  @{adId}
+                </span>
+              )}
               {srcMeta && (
                 <span className="inline-flex shrink-0 items-center rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] font-semibold text-charcoal/70">
                   {isAr ? srcMeta.ar : srcMeta.en}

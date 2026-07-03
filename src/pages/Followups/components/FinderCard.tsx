@@ -118,7 +118,7 @@ export default function FinderCard({
   const beds = fmtRange(f.bedroom_range, '');
   const baths = fmtRange(f.bathroom_range, '');
   const avail = typeof f.available_units === 'number' ? f.available_units : null;
-  // Aqar ad id — only market listings carry it; shown as a small "#id" chip.
+  // Aqar ad id — only market listings carry it; shown as a small "@id" chip.
   const adId = item.source === 'market_listings' && typeof f.external_id === 'string' && f.external_id ? f.external_id : null;
 
   const requiresVerify = item.source !== 'our_projects';
@@ -183,7 +183,7 @@ export default function FinderCard({
               className="inline-flex items-center gap-1 rounded-full border border-chocolate/25 bg-chocolate/5 px-2 py-0.5 text-[11px] font-bold text-chocolate"
               title={L('رقم الإعلان', 'Ad ID')}
             >
-              {L('إعلان', 'Ad')} #{adId}
+              @{adId}
             </span>
           )}
           {/* Listing quality (market listings only) — display + tiebreak, never

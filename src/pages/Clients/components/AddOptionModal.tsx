@@ -205,8 +205,13 @@ export default function AddOptionModal({ clientId, isAr, onClose }: Props) {
         location = asString(d.unit_model) ?? '';
         price = fmtPrice(d.total_price, cur);
       } else {
-        name = asString(d.title) ?? asString(d.advertiser_name) ?? asString(d.external_id) ?? '';
-        searchable = `${name} ${asString(d.external_id) ?? ''} ${asString(d.advertiser_name) ?? ''}`;
+        // Market listings always lead with their Aqar ad id ("@123456 — title")
+        // so the id is visible in the picker AND lands in the saved option's
+        // source_name.
+        const extId = asString(d.external_id);
+        const base = asString(d.title) ?? asString(d.advertiser_name) ?? '';
+        name = extId ? `@${extId}${base ? ` — ${base}` : ''}` : base;
+        searchable = `${name} ${asString(d.advertiser_name) ?? ''}`;
         const loc = locOf(d);
         location = [geoName(store, 'districts', firstId(loc.district)), geoName(store, 'cities', firstId(loc.city))]
           .filter(Boolean).join('، ');
