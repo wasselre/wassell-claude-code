@@ -23,11 +23,18 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const prevScrollHeightRef = useRef<number | null>(null);
+  // Whether the user is anchored at the newest message. While pinned, any
+  // content growth (new messages, media blobs resolving from their fixed-
+  // height skeletons into taller images/videos) re-scrolls to the bottom.
+  // Scrolling up unpins so reading history is never yanked away.
+  const pinnedRef = useRef(true);
 
   // Initial load on mount / chat switch. Resets loading / error state so a
   // page reused via React key doesn't keep stale flags.
   useEffect(() => {
+    pinnedRef.current = true;
     setLoading(true);
     setError(null);
     void (async () => {
@@ -42,8 +49,9 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
     })();
   }, [chatWid, loadMessagesForChat]);
 
-  // Scroll-to-bottom on fresh load. When we append older history via
-  // "Load older", we instead preserve scroll position — see loadOlder().
+  // Scroll-to-bottom on fresh load / new messages while pinned. When we
+  // append older history via "Load older", we instead preserve scroll
+  // position — see loadOlder().
   useLayoutEffect(() => {
     if (loading || loadingOlder) return;
     const el = scrollRef.current;
@@ -53,10 +61,34 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
       // on the same message that was at the top before.
       el.scrollTop = el.scrollHeight - prevScrollHeightRef.current;
       prevScrollHeightRef.current = null;
-    } else {
+    } else if (pinnedRef.current) {
       el.scrollTop = el.scrollHeight;
     }
   }, [messages, loading, loadingOlder]);
+
+  // Media bubbles mount as fixed-height skeletons and swap in the real
+  // image/video only after the authenticated blob fetch resolves — which
+  // doesn't touch `messages`, so the effect above never re-runs and the
+  // thread ends up scrolled short of the newest message. Re-anchor to the
+  // bottom whenever the content grows, as long as the user is pinned there.
+  useEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current && prevScrollHeightRef.current == null) {
+        el.scrollTop = el.scrollHeight;
+      }
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  };
 
   const loadOlder = async () => {
     const oldest = messages[0];
@@ -78,8 +110,11 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
 
   return (
     <div className="card p-0 overflow-hidden flex flex-col" style={{ height: '60vh', minHeight: '400px' }}>
-      {/* Scrollable region */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      {/* Scrollable region. The inner div exists so the ResizeObserver can
+          watch content height — observing the scroll container itself would
+          only report its (fixed) border box. */}
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+        <div ref={contentRef} className="px-4 py-3 space-y-3">
         {/* Head: loading or load-older */}
         {loading && (
           <div className="flex items-center justify-center py-8 text-charcoal/50">
@@ -124,6 +159,7 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
             ))}
           </div>
         ))}
+        </div>
       </div>
     </div>
   );
