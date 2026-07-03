@@ -30,11 +30,13 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
   // height skeletons into taller images/videos) re-scrolls to the bottom.
   // Scrolling up unpins so reading history is never yanked away.
   const pinnedRef = useRef(true);
+  const lastScrollTopRef = useRef(0);
 
   // Initial load on mount / chat switch. Resets loading / error state so a
   // page reused via React key doesn't keep stale flags.
   useEffect(() => {
     pinnedRef.current = true;
+    lastScrollTopRef.current = 0;
     setLoading(true);
     setError(null);
     void (async () => {
@@ -66,11 +68,13 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
     }
   }, [messages, loading, loadingOlder]);
 
-  // Media bubbles mount as fixed-height skeletons and swap in the real
-  // image/video only after the authenticated blob fetch resolves — which
-  // doesn't touch `messages`, so the effect above never re-runs and the
-  // thread ends up scrolled short of the newest message. Re-anchor to the
-  // bottom whenever the content grows, as long as the user is pinned there.
+  // Content settles AFTER the initial scroll-to-bottom: media bubbles swap
+  // fixed-height skeletons for the real (taller) image/video when their
+  // authenticated blob fetch resolves, and a fresh-cache load reflows every
+  // bubble when the Amiri webfont arrives. None of that touches `messages`,
+  // so the effect above never re-runs and the thread ends up scrolled short
+  // of the newest message. Re-anchor to the bottom whenever the content OR
+  // the container resizes, as long as the user is pinned there.
   useEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
@@ -81,13 +85,30 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
       }
     });
     observer.observe(content);
+    // The container too: the card is 60vh, so a window resize changes
+    // clientHeight without any content change.
+    observer.observe(el);
     return () => observer.disconnect();
   }, []);
 
+  // Unpin ONLY on an upward scroll (the user moving away from the bottom).
+  // Judging by distance alone misfired: content growing below the viewport
+  // increases the distance without any user intent, and a scroll event from
+  // a browser-side adjustment would then read as "user scrolled up" and
+  // block the ResizeObserver from re-anchoring (live bug 2026-07-04 — a
+  // hard refresh re-downloaded Amiri, the post-pin reflow fired exactly
+  // such an event, and the newest message stayed below the fold).
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    const prev = lastScrollTopRef.current;
+    lastScrollTopRef.current = el.scrollTop;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (dist < 60) {
+      pinnedRef.current = true;
+    } else if (el.scrollTop < prev - 1) {
+      pinnedRef.current = false;
+    }
   };
 
   const loadOlder = async () => {
@@ -111,9 +132,18 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
   return (
     <div className="card p-0 overflow-hidden flex flex-col" style={{ height: '60vh', minHeight: '400px' }}>
       {/* Scrollable region. The inner div exists so the ResizeObserver can
-          watch content height — observing the scroll container itself would
-          only report its (fixed) border box. */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
+          watch content height — observing the scroll container itself only
+          reports its border box. overflow-anchor:none disables the
+          browser's native scroll anchoring: this component IS the anchoring
+          authority (pin-to-bottom + the load-older restore), and Chrome's
+          own adjustments during content reflow fired scroll events that
+          read as user scrolls and broke the pin. */}
+      <div
+        ref={scrollRef}
+        onScroll={handleScroll}
+        className="flex-1 overflow-y-auto"
+        style={{ overflowAnchor: 'none' }}
+      >
         <div ref={contentRef} className="px-4 py-3 space-y-3">
         {/* Head: loading or load-older */}
         {loading && (
