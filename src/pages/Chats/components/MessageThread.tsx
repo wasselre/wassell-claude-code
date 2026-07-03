@@ -130,7 +130,15 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
   const grouped = useMemo(() => groupByDay(messages, isAr), [messages, isAr]);
 
   return (
-    <div className="card p-0 overflow-hidden flex flex-col" style={{ height: '60vh', minHeight: '400px' }}>
+    // h-full: fill whatever the parent allocates. ChatDetail wraps this in a
+    // flex-1 min-h-0 overflow-hidden slot BELOW the conversation header — the
+    // header's height varies with the linked client's preference chips. A
+    // fixed height here (the old 60vh) overflowed that slot whenever the
+    // header was tall, and overflow-hidden CLIPPED the bottom of this card —
+    // hiding the newest message even though the thread was scrolled to the
+    // bottom (live bug 2026-07-04, root cause of "the last message doesn't
+    // show").
+    <div className="card p-0 overflow-hidden flex flex-col h-full min-h-0">
       {/* Scrollable region. The inner div exists so the ResizeObserver can
           watch content height — observing the scroll container itself only
           reports its border box. overflow-anchor:none disables the
