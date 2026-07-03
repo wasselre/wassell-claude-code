@@ -359,6 +359,12 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   space inventory (minimum مطبخ + صالة on every unit, plus everything else it has) — not just the
   marketer's "extras". The 2026-07-02 audit found 3 coexisting semantics (full inventory / extras-only /
   empty): 42% of Our-Projects units had ≤3 components and 30% lacked مطبخ. When the per-unit source is
-  thin, enrich from: notes' raw specs → attached unit plans (visual read) → brochure model layouts.
+  thin, enrich from: notes' raw specs → attached unit plans (visual read) → brochure model layouts →
+  sibling propagation (same project+type+beds majority set) → last resort baseline مطبخ+صالة جلوس with an
+  explanatory note when the developer publishes NO model info anywhere (e.g. الماجدية 163/178). Backfill
+  executed 2026-07-02 across all 49 member projects: 2,515/2,515 units now meet the minimum (avg 6.7
+  components). Gotchas: Drive brochures can be view-only (read via Drive preview in Chrome) or the stored
+  Drive id can be dead (re-fetch from the Almajdiah API field); منصة menaco.sa carries per-unit architect
+  plan sheets behind the brochure's QR pointer (مينا 52).
 - To roll back a run: delete files (+storage objects), delete units, delete project, revert any options
   you added. (See scripts/cleanup.mjs.)
