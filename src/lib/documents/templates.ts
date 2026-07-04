@@ -442,10 +442,12 @@ const projectPresentation: DocumentTemplate = {
           p(t('{{project_location}}')),
           bullets(['قريب من: ____', 'الطرق الرئيسية: ____', 'الخدمات المحيطة: ____']),
           h(2, t('الوحدات')),
+          // Customer-facing presentation → the AVAILABLE-units-only rollups
+          // (QA-003): never quote a sold unit's price/area to a customer.
           bullets([
             [b('الأنواع: '), t('____')],
-            [b('المساحات: '), t('{{area_range}}')],
-            [b('الأسعار: '), t('{{price_range}}')],
+            [b('المساحات: '), t('{{available_area_range}}')],
+            [b('الأسعار: '), t('{{available_price_range}}')],
             [b('المتاح حالياً: '), t('{{available_units}} وحدة')],
           ]),
           h(2, t('المزايا والمواصفات')),
@@ -466,8 +468,8 @@ const projectPresentation: DocumentTemplate = {
           h(2, t('Units')),
           bullets([
             [b('Types: '), t('____')],
-            [b('Areas: '), t('{{area_range}}')],
-            [b('Prices: '), t('{{price_range}}')],
+            [b('Areas: '), t('{{available_area_range}}')],
+            [b('Prices: '), t('{{available_price_range}}')],
             [b('Available now: '), t('{{available_units}} units')],
           ]),
           h(2, t('Features & Specs')),
