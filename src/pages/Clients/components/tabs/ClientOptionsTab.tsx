@@ -105,6 +105,36 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
     return map;
   }, [options, records, marketModelId]);
 
+  // Listing quality (grade + score) per market-listing option: newer saves
+  // snapshot it in facts.quality_grade (finder plumbing added 2026-07-02);
+  // options saved before then have no grade in their snapshot, so we fall back
+  // to the live listing record in the (slim) market_listings store — the DB
+  // trigger keeps quality_grade/quality_score on every row and both keys ride
+  // the slim store. Same fallback shape as the ad-id map above.
+  const qualityBySourceId = useMemo(() => {
+    const map = new Map<string, { grade: string; score: number | null }>();
+    if (!marketModelId) return map;
+    const need = new Set<string>();
+    for (const r of options) {
+      const d = r.data as Record<string, unknown>;
+      if (d.source_type !== 'market_listing') continue;
+      const facts = (d.facts ?? {}) as Record<string, unknown>;
+      if (typeof facts.quality_grade === 'string' && facts.quality_grade) continue;
+      if (typeof d.source_id === 'string' && d.source_id) need.add(d.source_id);
+    }
+    if (need.size === 0) return map;
+    for (const r of records[marketModelId] ?? []) {
+      if (!need.has(r.id)) continue;
+      const data = r.data as Record<string, unknown>;
+      const g = data.quality_grade;
+      if (typeof g === 'string' && g) {
+        const s = data.quality_score;
+        map.set(r.id, { grade: g, score: typeof s === 'number' && Number.isFinite(s) ? s : null });
+      }
+    }
+    return map;
+  }, [options, records, marketModelId]);
+
   const [statusFilter, setStatusFilter] = useState<ClientOptionStatus | 'all'>('all');
   const [showEliminated, setShowEliminated] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -342,11 +372,16 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
               {typeof d.match_score === 'number' && (
                 <span className="inline-flex shrink-0 items-center rounded-full bg-charcoal/5 px-2 py-0.5 text-[11px] font-bold text-charcoal/70">{d.match_score}%</span>
               )}
-              {/* Listing quality — snapshotted into facts at save time (market
-                  listings only). Renders nothing when the snapshot has no grade. */}
-              {d.source_type === 'market_listing' && (
-                <QualityBadge grade={f.quality_grade} score={f.quality_score} isAr={isAr} />
-              )}
+              {/* Listing quality — snapshotted into facts at save time; for
+                  options saved before the quality feature (2026-07-02) the
+                  snapshot has no grade, so fall back to the live listing record
+                  in the slim store. Renders nothing when neither has a grade. */}
+              {d.source_type === 'market_listing' && (() => {
+                const live = qualityBySourceId.get(String(d.source_id ?? ''));
+                const grade = (typeof f.quality_grade === 'string' && f.quality_grade) ? f.quality_grade : live?.grade;
+                const score = (typeof f.quality_score === 'number' && Number.isFinite(f.quality_score)) ? f.quality_score : live?.score;
+                return <QualityBadge grade={grade} score={score} isAr={isAr} />;
+              })()}
             </div>
 
             <div className="space-y-2.5 p-3">
