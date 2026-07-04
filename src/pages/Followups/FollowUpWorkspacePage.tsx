@@ -186,6 +186,12 @@ export default function FollowUpWorkspacePage() {
       call_result: outcomeKey,
       actual_datetime: draft.actual_datetime ?? new Date().toISOString(),
       followup_status: 'completed',
+      // Clear the WhatsApp waiting/replied flag on completion. A completed row
+      // must never keep `message_sent_waiting_response` — otherwise the on_due
+      // escalation (which keys off whatsapp_state) can still match it and spawn
+      // a ghost attempt-2 task. (Bug fix — the comment on handleWhatsAppSent
+      // claimed this happened; it didn't until now.)
+      whatsapp_state: null,
       completed_by_user: currentUserId ?? draft.completed_by_user ?? null,
       source_stage_snapshot: draft.source_stage_snapshot ?? (ctx.client?.client_stage as string) ?? null,
       source_status_snapshot: draft.source_status_snapshot ?? (ctx.client?.client_status as string) ?? null,
@@ -266,6 +272,12 @@ export default function FollowUpWorkspacePage() {
       sent_by_user: currentUserId ?? draft.sent_by_user ?? null,
       followup_status: 'in_progress',
       scheduled_datetime: deadline.toISOString(),
+      // Reset the on_due claim stamp: we just moved the deadline forward, so the
+      // sweep must be allowed to fire at the NEW time. Without this, a task that
+      // already came due once (fired_at set) before the rep sent would never be
+      // re-claimed (the sweep filters fired_at IS NULL) and its escalation would
+      // silently never run. (Bug fix.)
+      fired_at: null,
       // Self-reference so the on_due "WhatsApp No-Response Escalation" workflow
       // can close THIS exact waiting record (it filters update_record by id =
       // trigger.source_followup_id; the sweeper can't otherwise self-target).

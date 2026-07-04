@@ -6,6 +6,20 @@ import { CLIENT_STAGE_VALUES, CLIENT_STATUS_VALUES } from '../arabicEnums.genera
 import { checkSalesProcessEnums } from '../assertEnums';
 import { validateFollowUpCompletion, isOutcomeFieldVisible } from '../validators';
 
+describe('whatsapp_follow_up is framed as a reply checkpoint', () => {
+  const wa = getFollowUpTypeConfig('whatsapp_follow_up', DEFAULT_SALES_PROCESS)!;
+  it('objective is about the client response to the project, not sending', () => {
+    expect(wa.objective_ar).toBe('متابعة رد العميل على المشروع');
+    expect(wa.objective_en.toLowerCase()).toContain('response');
+    expect(wa.objective_en.toLowerCase()).not.toContain('send');
+  });
+  it('carries guidance covering reply / check-in', () => {
+    expect(wa.script?.ar?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(wa.script?.en?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect((wa.script?.en ?? []).join(' ').toLowerCase()).toContain('check-in');
+  });
+});
+
 describe('DEFAULT_SALES_PROCESS integrity', () => {
   const refs = collectConfigEnumRefs(DEFAULT_SALES_PROCESS);
 

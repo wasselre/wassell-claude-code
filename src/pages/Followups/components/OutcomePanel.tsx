@@ -105,7 +105,14 @@ export default function OutcomePanel(props: OutcomePanelProps) {
   const isWhatsapp = typeConfig.primary_channel === 'whatsapp';
   const isCompleted = draft.followup_status === 'completed';
   const waState = typeof draft.whatsapp_state === 'string' ? draft.whatsapp_state : undefined;
-  const sendPhase = isWhatsapp && !isCompleted && waState !== 'message_sent_waiting_response';
+  // Three WhatsApp phases (the task is a reply-checkpoint — the first project was
+  // already sent on the call, NOT from here):
+  //   sendPhase    — no state yet: check the reply; if silent, send a CHECK-IN.
+  //   repliedPhase — the client replied (set by the inbound webhook reconciler):
+  //                  continue the conversation, then record the outcome.
+  //   waitingPhase — the rep sent a check-in and is now awaiting a reply.
+  const sendPhase = isWhatsapp && !isCompleted && !waState;
+  const repliedPhase = isWhatsapp && !isCompleted && waState === 'replied';
   const waitingPhase = isWhatsapp && !isCompleted && waState === 'message_sent_waiting_response';
   const sentAtLabel = typeof draft.sent_at === 'string' && draft.sent_at
     ? new Date(draft.sent_at).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'short', timeStyle: 'short' })
@@ -130,7 +137,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
 
       {sendPhase && !recordMode ? (
         <div className="space-y-3">
-          <p className="text-sm font-bold text-chocolate">{isAr ? 'ما الذي حدث في واتساب؟' : 'What happened on WhatsApp?'}</p>
+          <p className="text-sm font-bold text-chocolate">{isAr ? 'المشروع أُرسل بعد المكالمة — هل ردّ العميل؟' : 'The project was sent after the call — did the client reply?'}</p>
           <div className="grid gap-2 sm:grid-cols-2">
             <button
               type="button"
@@ -138,7 +145,7 @@ export default function OutcomePanel(props: OutcomePanelProps) {
               onClick={() => onSendWhatsApp?.()}
               className="flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40"
             >
-              <MessageCircle size={18} /> {isAr ? 'إرسال رسالة واتساب' : 'Send WhatsApp message'}
+              <MessageCircle size={18} /> {isAr ? 'إرسال رسالة تفقّد' : 'Send a check-in message'}
             </button>
             <button
               type="button"
@@ -146,17 +153,28 @@ export default function OutcomePanel(props: OutcomePanelProps) {
               onClick={() => setRecordMode(true)}
               className="flex items-center justify-center gap-2 rounded-xl border-[1.5px] border-copper px-4 py-3 text-base font-bold text-copper transition hover:bg-copper/5 disabled:opacity-40"
             >
-              <CheckCircle2 size={18} /> {isAr ? 'تسجيل رد العميل' : 'Record customer response'}
+              <CheckCircle2 size={18} /> {isAr ? 'تسجيل نتيجة المحادثة' : 'Record the outcome'}
             </button>
           </div>
           <p className="text-xs text-charcoal/55">
             {isAr
-              ? 'الإرسال يضع المتابعة في انتظار الرد. إذا ردّ العميل مسبقاً، سجّل النتيجة مباشرةً (دون تصعيد).'
-              : 'Sending puts the follow-up into a waiting state. If the client already replied, record the outcome directly (no escalation).'}
+              ? 'إن لم يردّ العميل، أرسل رسالة تفقّد (تضع المتابعة في انتظار الرد). إن ردّ مسبقاً أو أكملت المحادثة، سجّل النتيجة مباشرةً.'
+              : 'If the client has not replied, send a check-in (puts the task into a waiting state). If they already replied or the conversation is done, record the outcome directly.'}
           </p>
         </div>
       ) : (
         <>
+          {repliedPhase && (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 rounded-xl border border-[#10B981]/40 bg-[#10B981]/10 px-3 py-2.5 text-sm text-[#0f7a52]">
+                <MessageCircle size={16} className="shrink-0" />
+                <span className="flex-1 font-semibold">{isAr ? 'ردّ العميل — أكمل المحادثة ثم سجّل النتيجة' : 'Client replied — continue the conversation, then record the outcome'}</span>
+                <button type="button" onClick={() => onSendWhatsApp?.()} className="shrink-0 text-xs font-semibold text-copper hover:underline">
+                  {isAr ? 'فتح المحادثة' : 'Open chat'}
+                </button>
+              </div>
+            </div>
+          )}
           {waitingPhase && (
             <div className="mb-3">
               <div className="flex items-center gap-2 rounded-xl border border-[#C09B5F]/40 bg-[#C09B5F]/10 px-3 py-2.5 text-sm text-[#8E4E3A]">

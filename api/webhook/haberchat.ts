@@ -332,7 +332,24 @@ async function bumpConversationRecord(args: {
       console.error('[webhook.bumpRecord] auto-reopen Haberchat PATCH failed:', err instanceof Error ? err.message : String(err));
     }
   }
+
+  // Reply reconciliation: an inbound customer message on a chat linked to a
+  // client marks that client's ACTIVE WhatsApp follow-up(s) as 'replied' — so
+  // the task surfaces now in the queue and the on_due escalation stops treating
+  // the client as silent. Best-effort: a failure here must not fail the webhook
+  // (the message + chat bump are already persisted; the next inbound retries).
+  const clientLink = typeof prevData.client_link === 'string' ? prevData.client_link : null;
+  if (args.lastFlow === 'in' && clientLink && UUID_RE.test(clientLink)) {
+    try {
+      const { error: rpcErr } = await supa.rpc('mark_whatsapp_replied', { p_client_id: clientLink });
+      if (rpcErr) console.error('[webhook.bumpRecord] mark_whatsapp_replied failed:', rpcErr.message);
+    } catch (err) {
+      console.error('[webhook.bumpRecord] mark_whatsapp_replied threw:', err instanceof Error ? err.message : String(err));
+    }
+  }
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // ─── Helpers ───────────────────────────────────────────────────────
 

@@ -29,6 +29,8 @@ export interface QueueItem {
   scheduledISO: string | null;
   actualISO: string | null;
   followupStatus: string;
+  /** WhatsApp conversation sub-state — 'replied' means the customer answered and the task needs action now. */
+  whatsappState: string | null;
   priority: string;
   attempt: number | null;
   clientStage: string;
@@ -95,6 +97,7 @@ export function buildQueueItems(
       scheduledISO,
       actualISO,
       followupStatus,
+      whatsappState: typeof d.whatsapp_state === 'string' ? d.whatsapp_state : null,
       priority: (d.priority as string) ?? '',
       attempt: typeof d.followup_number === 'number' ? d.followup_number : null,
       clientStage: (client?.client_stage as string) ?? '',
@@ -110,6 +113,13 @@ export function buildQueueItems(
 
 const isOpen = (i: QueueItem) => OPEN_STATES.has(i.followupStatus);
 
+/**
+ * A WhatsApp follow-up whose customer just replied (set by the inbound webhook
+ * reconciler). It must surface as actionable NOW even if its scheduled_datetime
+ * is still in the future — the rep should answer while the client is engaged.
+ */
+const isRepliedWhatsapp = (i: QueueItem) => i.whatsappState === 'replied';
+
 /** Bucket follow-up items into the queue views. A row may appear in several. */
 export function bucketize(items: QueueItem[], currentUserId: string | null, now: number): Record<Exclude<QueueViewId, 'no_next_action'>, QueueItem[]> {
   const today = startOfDay(now);
@@ -120,7 +130,8 @@ export function bucketize(items: QueueItem[], currentUserId: string | null, now:
   return {
     my_tasks: items.filter((i) => isOpen(i) && i.salesRep && i.salesRep === currentUserId),
     overdue: items.filter((i) => isOpen(i) && i.sla === 'overdue'),
-    due_now: items.filter((i) => isOpen(i) && i.sla === 'due_now'),
+    // A replied WhatsApp task is due-now regardless of its scheduled time.
+    due_now: items.filter((i) => isOpen(i) && (i.sla === 'due_now' || isRepliedWhatsapp(i))),
     today: items.filter((i) => isOpen(i) && dayOf(i.scheduledISO) === today),
     tomorrow: items.filter((i) => isOpen(i) && dayOf(i.scheduledISO) === tomorrow),
     waiting: items.filter((i) => isOpen(i) && WAITING_STATUSES.has(i.clientStatus)),

@@ -105,14 +105,21 @@ export default async function handler(req: Request): Promise<Response> {
   if (candidatesErr) {
     return json({ error: `candidates query failed: ${candidatesErr.message}` }, 500);
   }
-  const dueRows = (candidates ?? []) as Array<{
+  // Never fire on_due workflows for an already-closed follow-up. A completed/
+  // cancelled/skipped row is terminal — sweeping it would let the WhatsApp
+  // escalation (which keys off whatsapp_state) spawn a ghost task from a task
+  // the rep already finished. Belt-and-braces alongside the workflow's own
+  // status condition. (`followup_status` may be null/'' on legacy workflow-
+  // created rows → treated as open, which is correct.)
+  const DONE_STATES = new Set(['completed', 'cancelled', 'skipped']);
+  const dueRows = ((candidates ?? []) as Array<{
     id: string;
     model_id: string;
     data: Record<string, unknown>;
     created_by_user_id: string | null;
     created_at: string;
     updated_at: string;
-  }>;
+  }>).filter((r) => !DONE_STATES.has(String((r.data as Record<string, unknown>).followup_status ?? '').trim()));
 
   // 5. Load all workflows once (small table, simpler than per-row
   //    queries) plus all models for the engine context.

@@ -6,7 +6,15 @@ import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
+import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
+import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
+
+/** First id from a scalar or array id field. */
+function firstId(v: unknown): string | null {
+  if (Array.isArray(v)) return typeof v[0] === 'string' ? v[0] : null;
+  return typeof v === 'string' && v ? v : null;
+}
 
 /**
  * Right-pane conversation detail. Embedded inside ChatsSplitPage.
@@ -76,6 +84,40 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
+  // "Complete WhatsApp Follow-Up" popup (shown when Done/Resolve is clicked and
+  // an active WhatsApp follow-up exists for the linked client).
+  const [showCompleteFollowup, setShowCompleteFollowup] = useState(false);
+
+  // The linked client's active WhatsApp follow-up (open/in_progress). Resolving
+  // the chat should complete THIS task through the normal follow-up path rather
+  // than silently closing the conversation. Prefer the task linked to this exact
+  // chat (completed_by_chat_id); else the most recently created open one.
+  const followupsModel = useMemo(() => models.find((m) => m.name === 'followups') ?? null, [models]);
+  const activeWaFollowup = useMemo(() => {
+    if (!followupsModel || !clientLinkId) return null;
+    const rows = (records[followupsModel.id] ?? []).filter((r) => {
+      const d = r.data as Record<string, unknown>;
+      if (firstId(d.client_id) !== clientLinkId) return false;
+      if (readFollowupType(d) !== 'whatsapp_follow_up') return false;
+      const st = (typeof d.followup_status === 'string' && d.followup_status) ? d.followup_status : 'open';
+      return st === 'open' || st === 'in_progress';
+    });
+    if (rows.length === 0) return null;
+    const linked = rows.find((r) => (r.data as Record<string, unknown>).completed_by_chat_id === recordId);
+    if (linked) return linked;
+    return rows.slice().sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())[0];
+  }, [followupsModel, records, clientLinkId, recordId]);
+
+  // Resolve-or-prompt: closing a chat with an active WhatsApp follow-up opens
+  // the completion popup instead of silently resolving. Reopen / archive and
+  // chats with no active follow-up take the direct patchChat path.
+  const requestStatusChange = async (next: 'active' | 'resolved' | 'archived') => {
+    if (next === 'resolved' && activeWaFollowup) {
+      setShowCompleteFollowup(true);
+      return;
+    }
+    await patchChat(chatWid ?? '', { status: next });
+  };
 
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
 
@@ -148,7 +190,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
               chatWid={chatWid}
               status={status}
               isAr={isAr}
-              onChange={(next) => patchChat(chatWid ?? '', { status: next })}
+              onChange={requestStatusChange}
             />
           </div>
           {phone && (
@@ -240,12 +282,14 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           )}
         </div>
 
-        {/* Done / Reopen — one click closes the finished conversation. */}
+        {/* Done / Reopen — one click closes the finished conversation. When an
+            active WhatsApp follow-up exists, Done opens the completion popup
+            (records the outcome on the task) instead of silently resolving. */}
         <DoneButton
           chatWid={chatWid}
           status={status}
           isAr={isAr}
-          onChange={(next) => patchChat(chatWid ?? '', { status: next })}
+          onChange={requestStatusChange}
         />
       </div>
 
@@ -270,6 +314,23 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           Finder embedded, without leaving the conversation. */}
       {showClientOptions && clientLinkId && (
         <ClientOptionsModal clientId={clientLinkId} onClose={() => setShowClientOptions(false)} />
+      )}
+
+      {/* Complete WhatsApp Follow-Up — records the outcome on the existing
+          follow-up (workflow moves the client), then resolves the chat. */}
+      {showCompleteFollowup && activeWaFollowup && followupsModel && (
+        <CompleteWhatsAppFollowupModal
+          followup={activeWaFollowup}
+          followupModel={followupsModel}
+          chatRecordId={recordId}
+          clientId={clientLinkId}
+          clientStage={(linkedClientData?.client_stage as string | undefined) ?? null}
+          clientStatus={(linkedClientData?.client_status as string | undefined) ?? null}
+          phone={phone}
+          onResolveChat={() => patchChat(chatWid ?? '', { status: 'resolved' })}
+          onOpenChat={() => setShowCompleteFollowup(false)}
+          onClose={() => setShowCompleteFollowup(false)}
+        />
       )}
     </div>
   );

@@ -118,7 +118,11 @@ export function buildFollowupTasks(
     const status = (str(d.followup_status) ?? 'open');
     if (isDoneFollowup(status)) continue;
     const bucket = followupDayBucket(str(d.scheduled_datetime), now);
-    if (bucket !== 'late' && bucket !== 'today') continue;
+    // Surface a task when it's due today/late OR when the customer just replied
+    // to a WhatsApp follow-up — a reply needs action now, even if the task's
+    // scheduled_datetime is still in the future. (Set by the inbound reconciler.)
+    const repliedWhatsapp = str(d.whatsapp_state) === 'replied';
+    if (bucket !== 'late' && bucket !== 'today' && !repliedWhatsapp) continue;
     const clientId = firstId(d.client_id);
     const client = clientId ? clientsById.get(clientId) : undefined;
     const typeKey = readFollowupType(d);

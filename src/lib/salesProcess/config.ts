@@ -120,12 +120,29 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
     type: 'whatsapp_follow_up',
     label_ar: 'متابعة واتساب',
     label_en: 'WhatsApp Follow-up',
-    objective_ar: 'الحفاظ على التفاعل ودفع العميل نحو موعد أو عرض',
-    objective_en: 'Keep engagement and move toward an appointment or offer',
+    // This is a reply-CHECKPOINT / continuation task, NOT a "send the first
+    // project" task — the project is normally already sent during/right after
+    // the first call. The rep checks whether the client replied and continues.
+    objective_ar: 'متابعة رد العميل على المشروع',
+    objective_en: "Follow up on the client's response to the project",
     primary_channel: 'whatsapp',
     stage: 'الاتصال لحجز موعد',
     context_blocks: ['latest_whatsapp', 'suggested_template', 'preference_summary', 'next_recommended'],
     preference_summary_fields: ['budget', 'preferred_projects', 'preferred_unit_type', 'preferred_language'],
+    script: {
+      ar: [
+        'أُرسل المشروع للعميل بعد المكالمة — تحقّق أولاً إن كان قد ردّ.',
+        'إن ردّ: أكمل المحادثة وسجّل النتيجة على هذه المهمة.',
+        'إن لم يردّ: أرسل رسالة تفقّد — مثال: «السلام عليكم، وش رأيك بالمشروع؟».',
+        'إن أعطى تفضيلات جديدة: حدّث تفضيلاته، استخدم الباحث، وأرسل خياراً أنسب.',
+      ],
+      en: [
+        'The project was already sent after the call — first check whether the client replied.',
+        'If they replied: continue the conversation and record the outcome on this task.',
+        'If not: send a check-in — e.g. "Hi, what did you think of the project?".',
+        'If preferences changed: update them, use Project Finder, and send a better option.',
+      ],
+    },
     // FOLLOWUP_3: sending a WhatsApp is an ACTION (the Workspace puts the
     // follow-up into a waiting state — whatsapp_state='message_sent_waiting_response'),
     // NOT an outcome. These are the REAL customer-response outcomes the rep

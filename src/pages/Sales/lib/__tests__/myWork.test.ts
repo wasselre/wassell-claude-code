@@ -91,6 +91,25 @@ describe('buildFollowupTasks', () => {
     expect(ids).toEqual(['late1', 'today1']);
   });
 
+  it('surfaces a future WhatsApp follow-up once the customer has replied', () => {
+    // Reply-checkpoint task scheduled tomorrow, but the client just replied →
+    // must appear now (the inbound reconciler set whatsapp_state='replied').
+    const followups = [
+      followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: 'whatsapp_follow_up', whatsapp_state: 'replied' }, 'replied1'),
+      followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: 'whatsapp_follow_up' }, 'quiet1'),
+    ];
+    const ids = buildFollowupTasks(followups, clientsById, NOW).map((t) => t.followupId);
+    expect(ids).toContain('replied1'); // replied → surfaced despite future date
+    expect(ids).not.toContain('quiet1'); // no reply + future → still hidden
+  });
+
+  it('exposes whatsappState on the built task', () => {
+    const followups = [
+      followup({ client_id: 'c1', scheduled_datetime: YESTERDAY, followup_status: 'in_progress', followup_type: 'whatsapp_follow_up', whatsapp_state: 'message_sent_waiting_response' }, 'w'),
+    ];
+    expect(buildFollowupTasks(followups, clientsById, NOW)[0].whatsappState).toBe('message_sent_waiting_response');
+  });
+
   it('resolves client name/phone + channel + bucket', () => {
     const followups = [
       followup({ client_id: 'c1', scheduled_datetime: YESTERDAY, followup_status: 'open', followup_type: 'whatsapp_follow_up' }, 'late1'),
