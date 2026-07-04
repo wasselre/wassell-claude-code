@@ -98,9 +98,20 @@ describe('buildFollowupTasks', () => {
       followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: 'whatsapp_follow_up', whatsapp_state: 'replied' }, 'replied1'),
       followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: 'whatsapp_follow_up' }, 'quiet1'),
     ];
-    const ids = buildFollowupTasks(followups, clientsById, NOW).map((t) => t.followupId);
+    const tasks = buildFollowupTasks(followups, clientsById, NOW);
+    const ids = tasks.map((t) => t.followupId);
     expect(ids).toContain('replied1'); // replied → surfaced despite future date
     expect(ids).not.toContain('quiet1'); // no reply + future → still hidden
+    // Must be promoted to TODAY so the My Tasks page (renders today+late only) shows it.
+    expect(tasks.find((t) => t.followupId === 'replied1')?.bucket).toBe('today');
+  });
+
+  it('keeps a replied WhatsApp task in the LATE bucket when genuinely overdue', () => {
+    const tasks = buildFollowupTasks(
+      [followup({ client_id: 'c1', scheduled_datetime: YESTERDAY, followup_status: 'open', followup_type: 'whatsapp_follow_up', whatsapp_state: 'replied' }, 'r')],
+      clientsById, NOW,
+    );
+    expect(tasks[0].bucket).toBe('late');
   });
 
   it('exposes whatsappState on the built task', () => {
