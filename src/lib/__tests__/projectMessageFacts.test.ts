@@ -54,6 +54,9 @@ const ourProjects = model('our_projects', OP_ID, [
   field({ name: 'bedroom_range', type: 'range', is_rollup: true, rollup_kind:'bedroom_range' }),
   field({ name: 'bathroom_range', type: 'range', is_rollup: true, rollup_kind:'bathroom_range' }),
   field({ name: 'area_range', type: 'range', is_rollup: true, rollup_kind:'area_range' }),
+  // Available-units-only rollups (QA-003) — what customer messages quote.
+  field({ name: 'available_price_range', type: 'range', is_rollup: true, rollup_kind:'available_price_range' }),
+  field({ name: 'available_area_range', type: 'range', is_rollup: true, rollup_kind:'available_area_range' }),
 ]);
 
 const units = model('units', UN_ID, [
@@ -91,11 +94,13 @@ describe('resolveProjectFacts', () => {
         main_image: 'img-hero',
         project_images: ['img-hero', 'img-2', 'img-3'], // main_image already in the gallery → deduped
       })],
-      [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1', price_range: { min: 500000, max: 750000 }, bedroom_range: { min: 2, max: 5 }, bathroom_range: { min: 2, max: 4 }, area_range: { min: 114.28, max: 186.07 } })],
+      // The all-unit ranges include a SOLD 500k unit; the available-only
+      // rollups start at 550k — the message must quote the available floor.
+      [OP_ID]: [rec('op1', OP_ID, { project_name: 'مينا 52 (لنا)', project: 'ap1', price_range: { min: 500000, max: 750000 }, bedroom_range: { min: 2, max: 5 }, bathroom_range: { min: 2, max: 4 }, area_range: { min: 114.28, max: 186.07 }, available_price_range: { min: 550000, max: 750000 }, available_area_range: { min: 120.4, max: 186.07 } })],
       [UN_ID]: [
-        rec('u1', UN_ID, { project_id: 'ap1', unit_type: 'apartment', bedrooms: 2, bathrooms: 2, total_price: 500000 }),
-        rec('u2', UN_ID, { project_id: 'ap1', unit_type: 'villa', bedrooms: 5, bathrooms: 4, total_price: 750000 }),
-        rec('u3', UN_ID, { project_id: 'ap1', unit_type: 'apartment', bedrooms: 3, bathrooms: 2, total_price: 600000 }),
+        rec('u1', UN_ID, { project_id: 'ap1', unit_type: 'apartment', bedrooms: 2, bathrooms: 2, total_price: 500000, unit_status: 'sold' }),
+        rec('u2', UN_ID, { project_id: 'ap1', unit_type: 'villa', bedrooms: 5, bathrooms: 4, total_price: 750000, unit_status: 'available' }),
+        rec('u3', UN_ID, { project_id: 'ap1', unit_type: 'apartment', bedrooms: 3, bathrooms: 2, total_price: 600000, unit_status: 'available' }),
       ],
     };
 
@@ -109,10 +114,10 @@ describe('resolveProjectFacts', () => {
       { ar: 'شقة', en: 'Apartment' },
       { ar: 'فيلا', en: 'Villa' },
     ]);
-    expect(f.bedrooms).toEqual({ min: 2, max: 5 });            // rollup from units
+    expect(f.bedrooms).toEqual({ min: 2, max: 5 });            // rollup from units (all units)
     expect(f.bathrooms).toEqual({ min: 2, max: 4 });
-    expect(f.areaRange).toEqual({ min: 114.28, max: 186.07 }); // area rollup (raw)
-    expect(f.minPrice).toEqual({ ar: '500,000 ر.س', en: 'SAR 500,000' }); // computed floor wins
+    expect(f.areaRange).toEqual({ min: 120.4, max: 186.07 });  // AVAILABLE-only area rollup
+    expect(f.minPrice).toEqual({ ar: '550,000 ر.س', en: 'SAR 550,000' }); // available floor, NOT the sold 500k
     expect(f.brochureLink).toBe('https://wassel.re/brochure.pdf');
     expect(f.locationLink).toBe('https://www.google.com/maps?q=24.7,46.6'); // lat,lng → maps URL
     expect(f.websiteUnitsLink).toBe('https://wassel.re/project?id=ap1#units'); // → units grid
@@ -182,6 +187,8 @@ describe('resolveProjectFacts', () => {
       field({ name: 'bedroom_range', type: 'range', is_rollup: true, rollup_kind:'bedroom_range' }),
       field({ name: 'bathroom_range', type: 'range', is_rollup: true, rollup_kind:'bathroom_range' }),
       field({ name: 'area_range', type: 'range', is_rollup: true, rollup_kind:'area_range' }),
+      field({ name: 'available_price_range', type: 'range', is_rollup: true, rollup_kind:'available_price_range' }),
+      field({ name: 'available_area_range', type: 'range', is_rollup: true, rollup_kind:'available_area_range' }),
     ]);
     // Live our_projects is a thin sidecar: just the lookup, no rollup fields.
     const ourLive = model('our_projects', OP, [
@@ -202,10 +209,14 @@ describe('resolveProjectFacts', () => {
         unit_types: ['apartment'],
         brochure_url: 'https://wassel.re/m52.pdf',
         project_location: 'https://maps.app.goo.gl/KvrmddYBhAjiQfcNA',
+        // All-unit range starts at a sold 1.2m unit; the cheapest AVAILABLE
+        // unit is 1.45m — the quoted starting price must be the latter.
         price_range: { min: 1200000, max: 1700000 },
         bedroom_range: { min: 2, max: 3 },
         bathroom_range: { min: 2, max: 3 },
         area_range: { min: 120, max: 180 },
+        available_price_range: { min: 1450000, max: 1700000 },
+        available_area_range: { min: 135, max: 180 },
       })],
       [OP]: [rec('op', OP, { project: 'ap' })],
       [UN]: [
@@ -220,10 +231,51 @@ describe('resolveProjectFacts', () => {
     expect(f.unitTypes).toEqual([{ ar: 'شقة', en: 'Apartment' }]);        // all_projects unit_types
     expect(f.bedrooms).toEqual({ min: 2, max: 3 });                       // rollup on all_projects
     expect(f.bathrooms).toEqual({ min: 2, max: 3 });
-    expect(f.minPrice).toEqual({ ar: '1,200,000 ر.س', en: 'SAR 1,200,000' }); // price_range.min
+    expect(f.areaRange).toEqual({ min: 135, max: 180 });                  // available_area_range
+    expect(f.minPrice).toEqual({ ar: '1,450,000 ر.س', en: 'SAR 1,450,000' }); // available_price_range.min
     expect(f.brochureLink).toBe('https://wassel.re/m52.pdf');             // brochure_url
     expect(f.locationLink).toBe('https://maps.app.goo.gl/KvrmddYBhAjiQfcNA'); // project_location (http verbatim)
     expect(f.missing).toEqual([]);                                        // nothing missing now
+  });
+
+  // QA-003: a project whose units are all sold/reserved must NOT quote the
+  // all-unit price/area ranges to customers — both facts come back null (the
+  // composer omits the lines) and are flagged in `missing`.
+  it('omits price + area entirely when no units are available (no fallback to all-unit ranges)', () => {
+    const records: Record<string, AppRecord[]> = {
+      ...geoRecords,
+      [AP_ID]: [rec('ap4', AP_ID, {
+        project_name: 'مباع بالكامل',
+        location: { region: 'r-riyadh', city: 'c-riyadh', district: 'd-narjis' },
+      })],
+      // All-unit rollups present (historical), available rollups null — the
+      // exact shape the DB trigger stores for a sold-out project.
+      [OP_ID]: [rec('op4', OP_ID, {
+        project_name: 'مباع بالكامل', project: 'ap4',
+        price_range: { min: 900000, max: 2000000 },
+        area_range: { min: 100, max: 250 },
+        available_price_range: null,
+        available_area_range: null,
+        bedroom_range: { min: 2, max: 4 },
+        bathroom_range: { min: 2, max: 3 },
+      })],
+      [UN_ID]: [
+        rec('u1', UN_ID, { project_id: 'ap4', unit_type: 'apartment', total_price: 900000, unit_status: 'sold' }),
+      ],
+    };
+
+    const f = resolveProjectFacts(records[OP_ID][0]!, models, records);
+
+    expect(f.minPrice).toBeNull();                 // NOT the sold 900k floor
+    expect(f.areaRange).toBeNull();                // NOT the all-unit area range
+    expect(f.missing).toContain('min_price');
+    expect(f.missing).toContain('area');
+
+    const { body_ar, body_en } = composeProjectMessage(f);
+    expect(body_ar).not.toContain('الأسعار تبدأ من');
+    expect(body_ar).not.toContain('المساحة');
+    expect(body_en).not.toContain('Prices start from');
+    expect(body_en).not.toContain('Area:');
   });
 });
 

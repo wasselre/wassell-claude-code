@@ -407,8 +407,10 @@ export type OurProjectsComputedKind =
   | 'units_available_count'    // COUNT where unit_status is the "available" option
   | 'units_sold_count'         // COUNT where unit_status is the "sold" option
   | 'units_reserved_count'     // COUNT where unit_status is the "reserved" option
-  | 'price_range'              // { min, max } of unit.price (range shape)
-  | 'area_range'               // { min, max } of unit.area_sqm (range shape)
+  | 'price_range'              // { min, max } of unit.price (range shape) — ALL units, incl. sold/reserved
+  | 'area_range'               // { min, max } of unit.area_sqm (range shape) — ALL units, incl. sold/reserved
+  | 'available_price_range'    // { min, max } of unit.price over AVAILABLE units only (customer-facing)
+  | 'available_area_range'     // { min, max } of unit.area_sqm over AVAILABLE units only (customer-facing)
   | 'bedroom_range'            // { min, max } of unit.bedrooms (range shape)
   | 'bathroom_range'           // { min, max } of unit.bathrooms (range shape)
   | 'min_price_per_meter'      // MIN of (price / area_sqm), skipping units with area_sqm ≤ 0

@@ -71,7 +71,8 @@ The search returns projects from three models, tagged via the "source" field:
 A result from "all_projects" is still a real result. Share it. Frame it honestly: "هذا من السوق العام، ما هو ضمن المشاريع اللي نسوّقها حالياً مباشرة، لكن أقدر أربطك بأحد مستشارينا لو يهمك."
 
 # Reading project data
-- Field names vary. The common human-readable fields are: project_name, city, district (resolved from the project's location), price_range ({min,max}), area_range ({min,max}), bedroom_range ({min,max}).
+- Field names vary. The common human-readable fields are: project_name, city, district (resolved from the project's location), price_range ({min,max}), area_range ({min,max}), bedroom_range ({min,max}), available_price_range ({min,max}), available_area_range ({min,max}).
+- CRITICAL — quoting prices/areas to a customer: use available_price_range / available_area_range (aggregated over units that are still AVAILABLE to buy). price_range / area_range span ALL units including sold and reserved ones — never tell a customer a project "starts from" the price_range minimum. If the available ranges are null/absent, the project has no available units: say the units are currently sold/reserved instead of quoting a price.
 - Some fields may be missing on a given record. State only what's present. Don't invent.
 - Prices are in SAR. Format them with thousand separators when presenting: "1,298,000 ر.س".
 
@@ -471,8 +472,11 @@ function aggregateMatches(rows: RecordRow[], nameOf: (id?: string) => string | u
       const v = d[k];
       if (typeof v === 'string' && v.trim()) byUnit[v] = (byUnit[v] ?? 0) + 1;
     }
-    const lp = pickRangeMin(d, ['price_range', 'price']);
-    const hp = pickRangeMax(d, ['price_range', 'price']);
+    // Available-units price first (QA-003): the aggregate is quoted to the
+    // customer ("الأسعار من X إلى Y"), so a sold unit's price must not set the
+    // floor. All-unit range only as a fallback when no availability data exists.
+    const lp = pickRangeMin(d, ['available_price_range', 'price_range', 'price']);
+    const hp = pickRangeMax(d, ['available_price_range', 'price_range', 'price']);
     if (lp != null) pmin = Math.min(pmin, lp);
     if (hp != null) pmax = Math.max(pmax, hp);
     const lb = pickRangeMin(d, ['bedroom_range', 'bedrooms', 'rooms']);
@@ -543,8 +547,11 @@ function matchesAllProvided(
   modelId: string,
   unitTypeMatchers: UnitTypeMatcher[],
 ): boolean {
-  const priceMin = pickRangeMin(data, ['price_range', 'price']);
-  const priceMax = pickRangeMax(data, ['price_range', 'price']);
+  // Budget matching runs against AVAILABLE units first (QA-003): a customer
+  // whose budget only fits a project's sold units shouldn't be offered it.
+  // Falls back to the all-unit range when no availability data exists.
+  const priceMin = pickRangeMin(data, ['available_price_range', 'price_range', 'price']);
+  const priceMax = pickRangeMax(data, ['available_price_range', 'price_range', 'price']);
   if (input.max_price != null && priceMin != null && priceMin > input.max_price) return false;
   if (input.min_price != null && priceMax != null && priceMax < input.min_price) return false;
 

@@ -6,8 +6,10 @@
 // Data lives across THREE models (the spec's "read it all from all_projects"
 // isn't how the schema works):
 //   - our_projects (the selected record): links to a master via the `project`
-//     lookup, and carries the auto-calculated unit rollups (bedroom_range,
-//     bathroom_range, price_range) — computed at read time, never stored.
+//     lookup. The unit rollups (bedroom_range, bathroom_range, and the
+//     available-only price/area ranges) are STORED on the records by a DB
+//     trigger; price + area read the available_* rollups so customer messages
+//     only quote units that can actually be bought (QA-003).
 //   - all_projects (the linked master): project_name, city, district,
 //     min_price, brochure_link, location.
 //   - units (project_id → all_projects.id): the source of the rollups AND the
@@ -44,9 +46,19 @@ export interface ProjectMessageFacts {
   unitTypes: Bilingual[];
   bedrooms: NumericRange | null;
   bathrooms: NumericRange | null;
-  /** Unit area range in m² (the all_projects `area_range` rollup). */
+  /**
+   * Unit area range in m² — the AVAILABLE-units-only rollup
+   * (`available_area_range`), NOT the all-unit `area_range`. Customer
+   * messages must never quote the area of a sold/reserved unit (QA-003).
+   * Null when the project has no available units → the line is omitted.
+   */
   areaRange: NumericRange | null;
-  /** Pre-formatted starting price per language (e.g. "1,200,000 ر.س" / "SAR 1,200,000"). */
+  /**
+   * Pre-formatted starting price per language (e.g. "1,200,000 ر.س" /
+   * "SAR 1,200,000"). Derived from the AVAILABLE-units-only price rollup
+   * (`available_price_range`), so "prices start from" is a price a customer
+   * can actually buy at. Null when no units are available → line omitted.
+   */
   minPrice: Bilingual | null;
   brochureLink: string | null;
   locationLink: string | null;
@@ -250,12 +262,17 @@ export function resolveProjectFacts(
 
   const bedrooms = (readRollup('bedroom_range') as NumericRange | null) ?? null;
   const bathrooms = (readRollup('bathroom_range') as NumericRange | null) ?? null;
-  const areaRange = (readRollup('area_range') as NumericRange | null) ?? null;
-  const priceRange = readRollup('price_range') as NumericRange | null;
+  // Price + area come from the AVAILABLE-units-only rollups (QA-003): the
+  // all-unit ranges include sold/reserved units, so quoting them tells a
+  // customer the project "starts from" a price nobody can buy at. When the
+  // project has no available units both come back null and the composer
+  // omits the lines entirely — deliberately no fallback to the all-unit range.
+  const areaRange = (readRollup('available_area_range') as NumericRange | null) ?? null;
+  const priceRange = readRollup('available_price_range') as NumericRange | null;
 
-  // Minimum price — the calculated floor from real units. Fall back to a plain
-  // min_price field only if the model still has one (the seed did; the live
-  // model derives price entirely from the computed price_range).
+  // Minimum price — the calculated floor from currently-available units. Fall
+  // back to a plain min_price field only if the model still has one (the seed
+  // did; the live model derives price entirely from the computed rollups).
   const minPriceSlug = slugByCandidates(allProjectsModel, ['min_price', 'starting_price']);
   const minPriceNum =
     (priceRange && Number.isFinite(priceRange.min) ? priceRange.min : null) ??

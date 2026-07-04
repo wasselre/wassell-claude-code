@@ -1,7 +1,7 @@
 # PRD: Projects & Units Experience
 
 **Status:** Live (model layer) · Built, pending deploy (UI + AI)
-**Last updated:** 2026-06-29
+**Last updated:** 2026-07-04
 **Related PRDs:** [project-matching-assistant.md](project-matching-assistant.md), [marketing-operations.md](marketing-operations.md), [public-website.md](public-website.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
@@ -12,6 +12,7 @@ The three models were functionally useful but ugly: `all_projects` had fields sc
 
 ## Key behaviors
 - **All Projects = source of truth.** Inventory numbers are STORED rollups maintained by DB triggers (see [data-storage.md](data-storage.md) "Persisted project rollups") — read, never recomputed.
+- **Two range families (QA-003, 2026-07-04).** `price_range` / `area_range` aggregate over ALL units (incl. sold + reserved) — internal/admin surfaces. `available_price_range` / `available_area_range` aggregate over AVAILABLE units only (null when none) — every customer-facing output (WhatsApp project messages, website project cards + OG "ابتداءً من" previews, AI sales agent price quotes, copywriter scripts) quotes the available family, so a sold 900k unit can never set the advertised starting price.
 - **Our Projects = curated layer, not a duplicate DB.** Each record links to an `all_projects` master via the `project` lookup and adds portfolio-only fields (status, priority, display order, hero override, sales pitch, visibility, commission/portfolio notes).
 - **Deterministic matching only.** "Match client request" calls the existing `/api/project-finder` (boundary-verified, scored, ranked). AI never chooses from the database; it only NARRATES the engine's results (`finderCandidatesForNarration` preserves the engine's groups/order/scores and cannot re-rank or add candidates).
 - **AI never invents facts.** Every AI action receives pre-resolved facts from the client (`projectFacts`/`unitFacts`); any missing field is `null` and rendered/declared as "غير متوفر". The `/api/project-ai` system prompt forbids inventing prices, locations, availability, amenities, developers, or dates.
