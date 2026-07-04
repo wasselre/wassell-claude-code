@@ -20,6 +20,8 @@ import {
 import FinderCard from '@/pages/Followups/components/FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/components/FinderRefinementBar';
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
+import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
+import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 
@@ -160,6 +162,8 @@ export default function ProjectFinderPage() {
   const [eliminateTarget, setEliminateTarget] = useState<FinderMatch | null>(null);
   const [eliminateNotes, setEliminateNotes] = useState('');
   const [eliminating, setEliminating] = useState(false);
+  // "Send to client" from a card — only offered while a client is selected.
+  const [sendTarget, setSendTarget] = useState<FinderMatch | null>(null);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -423,6 +427,7 @@ export default function ProjectFinderPage() {
       onEliminate={noop}
       onReactivate={noop}
       onSetStatus={selectedClientId ? onSetStatus : undefined}
+      onSendToClient={clientRec ? setSendTarget : undefined}
       saveState={selectedClientId ? saveStates[item.project_id] ?? 'idle' : 'idle'}
       existingStatus={selectedClientId ? existingStatusFor(item) : null}
       hideClientActions={!selectedClientId}
@@ -762,6 +767,29 @@ export default function ProjectFinderPage() {
           )}
         </div>
       </div>
+
+      {/* "Send to client" WhatsApp flow — stored message → chat composer;
+          missing message → creation flow first. Client is always set here
+          (the button only renders while one is selected). */}
+      {sendTarget && clientRec && (
+        sendTarget.source === 'market_listings' ? (
+          <ListingWhatsAppFlow
+            isAr={isAr}
+            listingId={sendTarget.project_id}
+            listingName={sendTarget.project_name}
+            clientRec={clientRec}
+            onClose={() => setSendTarget(null)}
+          />
+        ) : (
+          <ProjectWhatsAppFlow
+            isAr={isAr}
+            projectId={sendTarget.project_id}
+            projectName={sendTarget.project_name}
+            clientRec={clientRec}
+            onClose={() => setSendTarget(null)}
+          />
+        )
+      )}
 
       {/* Eliminate-with-notes prompt */}
       {eliminateTarget && (

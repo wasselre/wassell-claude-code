@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
-  Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass,
+  Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
@@ -15,6 +15,8 @@ import {
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 import QualityBadge from '@/components/market/QualityBadge';
 import AddOptionModal from '../AddOptionModal';
+import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
+import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 
 interface Props {
   client: AppRecord;
@@ -111,6 +113,8 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
   const [eliminateTarget, setEliminateTarget] = useState<AppRecord | null>(null);
   const [eliminateNotes, setEliminateNotes] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  // "Send to client" from an option card — the WhatsApp flow for this option.
+  const [sendTarget, setSendTarget] = useState<{ sourceType: 'project' | 'market_listing'; sourceId: string; sourceName: string } | null>(null);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { all: options.length };
@@ -395,6 +399,24 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
                   <ExternalLink size={12} /> {L('عرض المصدر', 'View source')}
                 </a>
 
+                {/* Send THIS option to the client over WhatsApp — the prepared
+                    message if one exists, else the creation flow. Projects +
+                    market listings (units have no message flow). */}
+                {(d.source_type === 'project' || d.source_type === 'market_listing') && (
+                  <button
+                    type="button"
+                    onClick={() => setSendTarget({
+                      sourceType: d.source_type as 'project' | 'market_listing',
+                      sourceId: d.source_id,
+                      sourceName: d.source_name || '',
+                    })}
+                    className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-terracotta"
+                    title={L('إرسال هذا الخيار للعميل عبر واتساب', 'Send this option to the client over WhatsApp')}
+                  >
+                    <Send size={12} /> {L('إرسال للعميل', 'Send to client')}
+                  </button>
+                )}
+
                 {/* Market-listing options: contact the advertiser — opens the
                     WhatsApp chat if the phone is already on the listing, else
                     runs the REGA lookup and opens it when the number lands. */}
@@ -441,6 +463,29 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
 
       {/* Manual add-option picker */}
       {addOpen && <AddOptionModal clientId={client.id} isAr={isAr} onClose={() => setAddOpen(false)} />}
+
+      {/* "Send to client" WhatsApp flow — stored message → chat composer;
+          missing message → creation flow first (project: deterministic compose;
+          listing: AI text + cleaned photos). */}
+      {sendTarget && (
+        sendTarget.sourceType === 'market_listing' ? (
+          <ListingWhatsAppFlow
+            isAr={isAr}
+            listingId={sendTarget.sourceId}
+            listingName={sendTarget.sourceName}
+            clientRec={client}
+            onClose={() => setSendTarget(null)}
+          />
+        ) : (
+          <ProjectWhatsAppFlow
+            isAr={isAr}
+            projectId={sendTarget.sourceId}
+            projectName={sendTarget.sourceName}
+            clientRec={client}
+            onClose={() => setSendTarget(null)}
+          />
+        )
+      )}
 
       {/* Eliminate-with-notes modal */}
       {eliminateTarget && (

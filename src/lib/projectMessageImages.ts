@@ -1,17 +1,20 @@
 /**
- * Multi-image WhatsApp send for chat templates.
+ * Multi-media WhatsApp send for chat templates.
  *
- * Accepts a mixed list of image references:
+ * Accepts a mixed list of media references:
  *   • CRM `files` ids — a project template's `project_image_file_ids` (the
  *     linked all_projects gallery + `main_image`). Those files are PRIVATE
  *     (Supabase Storage behind RLS), so they can't be handed to Haberchat as
  *     a URL — each is batch-signed to a view URL first.
  *   • Raw public URLs — a listing template's cleaned photos
- *     (`images[].public_url`, hosted on the public marketing-assets bucket),
+ *     (`images[].public_url`, hosted on the public marketing-assets bucket)
+ *     and direct video-file URLs (project_videos / listing video_urls),
  *     used as-is.
  * For each entry we: resolve a fetchable URL → fetch the bytes as a blob →
- * upload to Haberchat (account-scoped file id) → send as its own `image`
- * message into the conversation.
+ * upload to Haberchat (account-scoped file id) → send as its own message
+ * into the conversation — `video` when the bytes are a video, else `image`.
+ * (HLS playlists / page links are filtered out by the CALLER — see
+ * directVideoUrls in lib/matching/sendToClient.ts — they aren't uploadable.)
  *
  * The text message is sent SEPARATELY by the caller first (StartChatModal's
  * first message / the Composer's text+single-media send); this only fans out
@@ -22,6 +25,12 @@
 import { signViewUrls } from '@/lib/files/client';
 import { uploadFile } from '@/lib/haberchat/client';
 import { useAppStore } from '@/stores/appStore';
+
+// Servers occasionally omit content-type on direct video files; the URL's
+// extension recovers the mime so the bytes still send as a `video` message.
+const VIDEO_EXT_MIME: Record<string, string> = {
+  mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', '3gp': 'video/3gpp',
+};
 
 export async function sendProjectImageMessages(
   chatWid: string,
@@ -64,7 +73,8 @@ export async function sendProjectImageMessages(
       const res = await fetch(url);
       if (!res.ok) throw new Error(`fetch image failed (HTTP ${res.status})`);
       const blob = await res.blob();
-      const mime = blob.type || 'image/jpeg';
+      const urlExt = ((url.split('?')[0] ?? url).split('.').pop() ?? '').toLowerCase();
+      const mime = blob.type || VIDEO_EXT_MIME[urlExt] || 'image/jpeg';
       const ext = (mime.split('/')[1] ?? 'jpg').split('+')[0];
       // URL entries would otherwise put the whole URL in the filename; use the
       // last path segment instead (file-id entries keep the id as the name).
@@ -77,7 +87,7 @@ export async function sendProjectImageMessages(
       // our catch just keeps the loop going and tallies the failure.
       await sendChatMessage(chatWid, {
         mediaFileId: uploaded.fileId,
-        kind: 'image',
+        kind: mime.startsWith('video/') ? 'video' : 'image',
         mediaMime: uploaded.mime ?? mime,
         mediaSize: uploaded.size ?? blob.size,
       });

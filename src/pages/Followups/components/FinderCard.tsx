@@ -1,7 +1,7 @@
 import {
   Building2, MapPin, Wallet, Ruler, BedDouble, Bath, PackageCheck, AlertTriangle,
   ExternalLink, ShieldCheck, ShieldAlert, ShieldX, HelpCircle, ChevronDown,
-  CheckSquare, Square,
+  CheckSquare, Square, Send,
 } from 'lucide-react';
 import { useState } from 'react';
 import type { FinderMatch, FinderBand, FinderMatchType, FinderSource, GeoStatus } from '@/lib/matching/projectFinder';
@@ -38,6 +38,10 @@ interface Props {
   /** Set/change this card's client-option status inline (main / presented / not
    *  interested / …). Ensures the option exists first. Omit → no status control. */
   onSetStatus?: (item: FinderMatch, status: ClientOptionStatus) => void;
+  /** Send THIS project/listing to the connected client over WhatsApp — reuses
+   *  the stored message if one exists, else starts the creation flow. The
+   *  parent owns the flow modal. Omit → no send button. */
+  onSendToClient?: (item: FinderMatch) => void;
   /**
    * Standalone Project Finder (no client context): hide the select checkbox and
    * the save / eliminate / reactivate actions, leaving only "Details". Saving an
@@ -97,7 +101,7 @@ function DealPill({ deal, isAr }: { deal: DealBadge; isAr: boolean }) {
 
 export default function FinderCard({
   item, isAr, onOpenDetails, selected, onToggleSelect, saveState, existingStatus,
-  onSetStatus, hideClientActions,
+  onSetStatus, onSendToClient, hideClientActions,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const [showWhy, setShowWhy] = useState(false);
@@ -265,6 +269,18 @@ export default function FinderCard({
             reason-notes prompt. Hidden on the standalone finder (no client). */}
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
           <ActionBtn icon={<ExternalLink size={12} />} label={L('التفاصيل', 'Details')} onClick={() => onOpenDetails(item)} />
+
+          {/* Send THIS project/listing to the connected client — the prepared
+              WhatsApp message if one exists, else the creation flow, right from
+              the card. Hidden on the standalone finder (no client). */}
+          {!hideClientActions && onSendToClient && (
+            <ActionBtn
+              icon={<Send size={12} />}
+              label={L('إرسال للعميل', 'Send to client')}
+              onClick={() => onSendToClient(item)}
+              primary
+            />
+          )}
 
           {/* Market listings only: contact the advertiser — opens the WhatsApp
               chat if the phone is already on the listing, else runs the REGA

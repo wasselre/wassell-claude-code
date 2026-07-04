@@ -3,6 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { X, Loader2, Sparkles, MessageCircle, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { resolveProjectFacts, composeProjectMessage } from '@/lib/projectMessageFacts';
+import { findProjectTemplate, directVideoUrls } from '@/lib/matching/sendToClient';
 import { detectInputLanguage } from '@/lib/translateLabel';
 import { transliterateName } from '@/lib/transliterateName';
 import Button from '@/components/ui/Button';
@@ -68,11 +69,9 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       setPhase('error');
       return;
     }
-    const templates = (records[chatTemplatesModel.id] ?? []).filter(
-      (t) => (t.data as Record<string, unknown>)?.project_id === projectId,
-    );
-    if (templates.length > 0) {
-      const t = templates[0]!.data as Record<string, unknown>;
+    const existing = findProjectTemplate(records[chatTemplatesModel.id] ?? [], projectId);
+    if (existing) {
+      const t = existing.data as Record<string, unknown>;
       const ar = typeof t.body_ar === 'string' ? t.body_ar : '';
       const en = typeof t.body_en === 'string' ? t.body_en : '';
       setBodyAr(ar);
@@ -164,6 +163,15 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
     setPhase('chat');
   }
 
+  // Direct video FILES saved on the project (all_projects `project_videos`)
+  // ride along after the gallery — sendProjectImageMessages sends them as
+  // `video` messages by mime. HLS/page links are excluded (not uploadable).
+  const projectVideoUrls = useMemo(() => {
+    const apModel = models.find((m) => m.name === 'all_projects');
+    const ap = apModel ? (records[apModel.id] ?? []).find((r) => r.id === projectId) : null;
+    return directVideoUrls((ap?.data as Record<string, unknown> | undefined)?.project_videos);
+  }, [models, records, projectId]);
+
   // The chat composer popup — reuses StartChatModal with the client preselected
   // and the body prefilled. On send the message lands in the client's chat.
   if (phase === 'chat') {
@@ -171,7 +179,7 @@ export default function ProjectWhatsAppFlow({ isAr, projectId, projectName, clie
       <StartChatModal
         initialClient={pickedClient}
         initialBody={chatBody}
-        initialImageFileIds={imageFileIds}
+        initialImageFileIds={[...imageFileIds, ...projectVideoUrls]}
         onClose={onClose}
         onSent={() => {
           addToast(L('تم إرسال الرسالة', 'Message sent'), 'success');

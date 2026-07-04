@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save } from 'lucide-react';
+import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown } from 'lucide-react';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
@@ -24,6 +24,8 @@ import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
 import FinderCard from './FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
 import FinderMapView from './FinderMapView';
+import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
+import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 
 /** Small labelled divider heading a card section (our projects / other options). */
 function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) {
@@ -59,6 +61,10 @@ interface Props {
   followupId: string | null;
   projectName?: string | null;
   clientName?: string | null;
+  /** Start with the preferences-chips area collapsed — popup hosts (e.g. the
+   *  WhatsApp Client-Options modal) set this so the results get the height.
+   *  The rep can always expand/collapse it with the toggle. */
+  defaultPrefsCollapsed?: boolean;
   onDone: () => void;
 }
 
@@ -76,7 +82,8 @@ const EDIT_SLUGS = ['location', 'preferred_districts', 'preferred_unit_type', 'b
 const PAGE = 24;
 
 export default function SuggestedProjectsView({
-  isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName, onDone,
+  isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName,
+  defaultPrefsCollapsed, onDone,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -98,6 +105,8 @@ export default function SuggestedProjectsView({
   const [eliminateTarget, setEliminateTarget] = useState<FinderMatch | null>(null);
   const [eliminateNotes, setEliminateNotes] = useState('');
   const [eliminating, setEliminating] = useState(false);
+  // "Send to client" from a card — the WhatsApp flow modal for this match.
+  const [sendTarget, setSendTarget] = useState<FinderMatch | null>(null);
 
   // Results-refinement (shared with the standalone Project Finder page).
   const [scoreThreshold, setScoreThreshold] = useState<number>(FETCH_FLOOR);
@@ -110,6 +119,8 @@ export default function SuggestedProjectsView({
   const [searchedDraft, setSearchedDraft] = useState<Record<string, unknown>>(() => ({ ...prefDraft }));
   const [showEdit, setShowEdit] = useState(false);
   const [savingPrefs, setSavingPrefs] = useState(false);
+  // The preferences-chips area (QA: collapsible so popup results get the height).
+  const [showPrefs, setShowPrefs] = useState(!defaultPrefsCollapsed);
 
   // Cross-reference the client's already-saved options so each card shows its status.
   const clientOptionsModelId = useMemo(
@@ -246,6 +257,13 @@ export default function SuggestedProjectsView({
   }
   const noClient = () =>
     addToast(L('لا يوجد عميل مرتبط بهذه المتابعة.', 'No client linked to this follow-up.'), 'error');
+
+  // Send THIS card's project/listing to the connected client — the prepared
+  // message if one exists, else the creation flow (all inside stacked popups).
+  function onSendToClient(item: FinderMatch) {
+    if (!clientRec?.id) return noClient();
+    setSendTarget(item);
+  }
 
   function matchToInput(item: FinderMatch): Omit<SaveOptionInput, 'clientId'> {
     return {
@@ -532,29 +550,57 @@ export default function SuggestedProjectsView({
         </div>
       )}
 
-      {/* Preferences chips + missing warnings (reflect the last searched draft) */}
+      {/* Preferences chips + missing warnings (reflect the last searched draft).
+          COLLAPSIBLE — in a popup every pixel belongs to the results, so hosts
+          can default this collapsed; the toggle row stays one thin line with a
+          truncated summary so the context is never fully gone. */}
       <div className="border-b border-sand/30 bg-white/60">
-        <div className="mx-auto w-full max-w-6xl px-4 py-2.5 sm:px-6">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-charcoal/45">{L('التفضيلات', 'Preferences')}</span>
-            {ctx.used.length === 0 && <span className="text-xs text-charcoal/55">{L('لا توجد تفضيلات محددة', 'None set')}</span>}
-            {ctx.used.map((p) => (
-              <span key={p.slug} className="inline-flex items-center gap-1 rounded-full border border-sand/50 bg-cream/50 px-2 py-0.5 text-[11px] text-charcoal/80">
-                <span className="text-charcoal/50">{isAr ? p.label_ar : p.label_en}:</span>
-                <span className="font-semibold">{p.value}</span>
+        <div className="mx-auto w-full max-w-6xl px-4 py-2 sm:px-6">
+          <button
+            type="button"
+            onClick={() => setShowPrefs((v) => !v)}
+            aria-expanded={showPrefs}
+            className="flex w-full items-center gap-1.5 text-start"
+            title={showPrefs ? L('إخفاء التفضيلات', 'Hide preferences') : L('عرض التفضيلات', 'Show preferences')}
+          >
+            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-charcoal/45">{L('التفضيلات', 'Preferences')}</span>
+            <span className="shrink-0 rounded-full bg-sand/30 px-1.5 text-[10px] font-semibold text-charcoal/60">{ctx.used.length}</span>
+            {!showPrefs && missing.length > 0 && (
+              <span className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-semibold text-amber-700">
+                <AlertTriangle size={11} /> {missing.length}
               </span>
-            ))}
-          </div>
-          {missing.length > 0 && (
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <AlertTriangle size={13} className="text-amber-600" />
-              <span className="text-[11px] font-semibold text-amber-700">{L('اسأل العميل عن:', 'Ask the client about:')}</span>
-              {missing.map((m) => (
-                <span key={m} className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
-                  {MISSING_LABELS[m] ? (isAr ? MISSING_LABELS[m].ar : MISSING_LABELS[m].en) : m}
-                </span>
-              ))}
-            </div>
+            )}
+            {!showPrefs && (
+              <span className="min-w-0 flex-1 truncate text-[11px] text-charcoal/55">
+                {ctx.used.length > 0 ? ctx.used.map((p) => p.value).join(' · ') : L('لا توجد تفضيلات محددة', 'None set')}
+              </span>
+            )}
+            {showPrefs && <span className="flex-1" />}
+            <ChevronDown size={14} className={`shrink-0 text-charcoal/50 transition ${showPrefs ? 'rotate-180' : ''}`} />
+          </button>
+          {showPrefs && (
+            <>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                {ctx.used.length === 0 && <span className="text-xs text-charcoal/55">{L('لا توجد تفضيلات محددة', 'None set')}</span>}
+                {ctx.used.map((p) => (
+                  <span key={p.slug} className="inline-flex items-center gap-1 rounded-full border border-sand/50 bg-cream/50 px-2 py-0.5 text-[11px] text-charcoal/80">
+                    <span className="text-charcoal/50">{isAr ? p.label_ar : p.label_en}:</span>
+                    <span className="font-semibold">{p.value}</span>
+                  </span>
+                ))}
+              </div>
+              {missing.length > 0 && (
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <AlertTriangle size={13} className="text-amber-600" />
+                  <span className="text-[11px] font-semibold text-amber-700">{L('اسأل العميل عن:', 'Ask the client about:')}</span>
+                  {missing.map((m) => (
+                    <span key={m} className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
+                      {MISSING_LABELS[m] ? (isAr ? MISSING_LABELS[m].ar : MISSING_LABELS[m].en) : m}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -694,6 +740,7 @@ export default function SuggestedProjectsView({
                   onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
                   onReactivate={onReactivate}
                   onSetStatus={onSetStatus}
+                  onSendToClient={onSendToClient}
                   saveState={saveStates[item.project_id] ?? 'idle'}
                   existingStatus={existingStatusFor(item)}
                 />
@@ -718,6 +765,7 @@ export default function SuggestedProjectsView({
                     onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
                     onReactivate={onReactivate}
                     onSetStatus={onSetStatus}
+                    onSendToClient={onSendToClient}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                   />
@@ -743,6 +791,7 @@ export default function SuggestedProjectsView({
                     onEliminate={(it) => { setEliminateNotes(''); setEliminateTarget(it); }}
                     onReactivate={onReactivate}
                     onSetStatus={onSetStatus}
+                    onSendToClient={onSendToClient}
                     saveState={saveStates[item.project_id] ?? 'idle'}
                     existingStatus={existingStatusFor(item)}
                   />
@@ -788,6 +837,29 @@ export default function SuggestedProjectsView({
             </div>
           </div>
         </div>
+      )}
+
+      {/* "Send to client" WhatsApp flow — the stored message opens the client's
+          chat composer directly; a missing message runs the creation flow first
+          (project: deterministic compose; listing: AI text + cleaned photos). */}
+      {sendTarget && clientRec && (
+        sendTarget.source === 'market_listings' ? (
+          <ListingWhatsAppFlow
+            isAr={isAr}
+            listingId={sendTarget.project_id}
+            listingName={sendTarget.project_name}
+            clientRec={clientRec}
+            onClose={() => setSendTarget(null)}
+          />
+        ) : (
+          <ProjectWhatsAppFlow
+            isAr={isAr}
+            projectId={sendTarget.project_id}
+            projectName={sendTarget.project_name}
+            clientRec={clientRec}
+            onClose={() => setSendTarget(null)}
+          />
+        )
       )}
 
       {/* Eliminate-with-notes prompt */}

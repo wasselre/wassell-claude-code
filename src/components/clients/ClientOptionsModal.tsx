@@ -99,6 +99,7 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
                 followupId={null}
                 projectName={null}
                 clientName={clientName}
+                defaultPrefsCollapsed
                 onDone={() => setMode('options')}
               />
             )}
