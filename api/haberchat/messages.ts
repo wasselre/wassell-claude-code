@@ -51,6 +51,20 @@ export default async function handler(req: Request): Promise<Response> {
     const mediaCaption = typeof input.mediaCaption === 'string' ? input.mediaCaption : undefined;
     const quotedWid    = typeof input.quotedWid    === 'string' ? input.quotedWid    : undefined;
     const reference    = typeof input.reference    === 'string' ? input.reference    : crypto.randomUUID();
+    const deliverAt    = typeof input.deliverAt    === 'string' ? input.deliverAt    : undefined;
+
+    // Scheduled sends must be a valid future timestamp — a past deliverAt
+    // would either fire immediately or be rejected upstream; catch it here
+    // with a clear message instead.
+    if (deliverAt) {
+      const t = new Date(deliverAt).getTime();
+      if (Number.isNaN(t)) {
+        return jsonError(400, 'deliverAt must be a valid ISO 8601 datetime');
+      }
+      if (t <= Date.now() + 30_000) {
+        return jsonError(400, 'deliverAt must be at least 1 minute in the future');
+      }
+    }
 
     try {
       const result = await sendMessage({
@@ -63,6 +77,7 @@ export default async function handler(req: Request): Promise<Response> {
         mediaCaption,
         quotedWid,
         reference,
+        deliverAt,
       });
       return jsonOk(result);
     } catch (err) {

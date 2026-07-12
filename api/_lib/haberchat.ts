@@ -494,6 +494,10 @@ export async function sendMessage(input: {
   mediaCaption?: string;
   quotedWid?: string;
   reference?: string;
+  /** ISO 8601 future datetime — Haberchat holds the message in its delivery
+   *  queue and sends at this time. Cancelable while queued via
+   *  deleteQueuedMessage(). */
+  deliverAt?: string;
 }): Promise<{ wid: string; status: string; reference: string | null }> {
   if (!input.deviceId) throw new HaberchatError(400, 'deviceId is required');
   const targets = [input.phone, input.group, input.channel].filter(Boolean);
@@ -519,6 +523,7 @@ export async function sendMessage(input: {
   if (input.mediaFileId) payload.media = { file: input.mediaFileId };
   if (input.quotedWid) payload.quoted = input.quotedWid;
   if (input.reference) payload.reference = input.reference;
+  if (input.deliverAt) payload.deliverAt = input.deliverAt;
 
   // Stub mode for offline / CI / preview testing — short-circuits BEFORE the
   // live API call so NO real WhatsApp is ever delivered. Mirrors imageGen's
@@ -538,6 +543,101 @@ export async function sendMessage(input: {
     throw new HaberchatError(502, 'Haberchat POST /messages returned no id');
   }
   return { wid, status, reference };
+}
+
+// ─── Scheduled (queued) messages ─────────────────────────────────────
+// Haberchat holds messages sent with `deliverAt` in its own delivery queue.
+// These helpers list and cancel them — the queue is Haberchat's, so a
+// scheduled message survives our app/session being closed.
+
+export interface HaberchatQueuedMessage {
+  id: string;                 // Haberchat message resource id (used to cancel)
+  phone: string | null;       // target in E.164
+  body: string | null;        // text content
+  deliverAt: string | null;   // ISO scheduled delivery time
+  createdAt: string | null;   // ISO when it was enqueued
+  hasMedia: boolean;
+}
+
+// Raw queue item — tolerate the same field-name drift as everything else.
+interface HaberchatQueuedMessageRaw {
+  id?: string;
+  _id?: string;
+  wid?: string;
+  phone?: string | null;
+  message?: string | null;
+  body?: string | null;
+  deliverAt?: string | null;
+  createdAt?: string | null;
+  media?: unknown;
+  device?: unknown;
+  [k: string]: unknown;
+}
+
+/**
+ * List queued (scheduled, not-yet-sent) messages on one device, optionally
+ * narrowed to a single recipient phone. Endpoint: `GET /messages` with
+ * `status=queued` + `devices=<id>` (CSV filter). Phone comparison is
+ * digits-only so "+9665…" and "9665…" match.
+ */
+export async function listQueuedMessages(
+  deviceId: string,
+  phone?: string,
+): Promise<HaberchatQueuedMessage[]> {
+  if (!deviceId) throw new HaberchatError(400, 'deviceId is required');
+  if (process.env.HABERCHAT_TOKEN === 'stub') return [];
+  const out: HaberchatQueuedMessage[] = [];
+  const wantDigits = phone ? phone.replace(/\D/g, '') : null;
+  // Paginate defensively — a busy account can hold >100 queued sends.
+  for (let page = 0; page < 5; page++) {
+    const params = new URLSearchParams({
+      status: 'queued',
+      devices: deviceId,
+      size: '100',
+      page: String(page),
+    });
+    const raw = await request<HaberchatQueuedMessageRaw[] | { items?: HaberchatQueuedMessageRaw[]; data?: HaberchatQueuedMessageRaw[] }>(
+      `/messages?${params.toString()}`,
+    );
+    const items = Array.isArray(raw) ? raw : (raw.items ?? raw.data ?? []);
+    for (const item of items) {
+      const id = item.id ?? item._id ?? item.wid ?? '';
+      if (!id) continue;
+      const itemPhone = typeof item.phone === 'string' ? item.phone : null;
+      if (wantDigits && (itemPhone ?? '').replace(/\D/g, '') !== wantDigits) continue;
+      out.push({
+        id,
+        phone: itemPhone,
+        body: item.message ?? item.body ?? null,
+        deliverAt: coerceIsoDate(item.deliverAt ?? null),
+        createdAt: coerceIsoDate(item.createdAt ?? null),
+        hasMedia: item.media != null,
+      });
+    }
+    if (items.length < 100) break;
+  }
+  // Soonest delivery first.
+  out.sort((a, b) => (a.deliverAt ?? '').localeCompare(b.deliverAt ?? ''));
+  return out;
+}
+
+/**
+ * Cancel a queued (scheduled) message before it sends. Endpoint:
+ * `DELETE /messages/{id}`. Only meaningful while the message is still in
+ * the queue — Haberchat 4xxs if it already went out, which we surface.
+ */
+export async function deleteQueuedMessage(messageId: string): Promise<void> {
+  if (!messageId) throw new HaberchatError(400, 'messageId is required');
+  if (process.env.HABERCHAT_TOKEN === 'stub') return;
+  const res = await fetch(`${BASE_URL}/messages/${encodeURIComponent(messageId)}`, {
+    method: 'DELETE',
+    headers: { Token: token() },
+  });
+  if (!res.ok) {
+    let body: unknown;
+    try { body = await res.json(); } catch { body = await res.text().catch(() => null); }
+    throw new HaberchatError(res.status, `Haberchat DELETE /messages/${messageId} failed: ${res.status}`, body);
+  }
 }
 
 /**

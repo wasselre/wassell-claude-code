@@ -8,7 +8,7 @@
  */
 
 import { supabase } from '@/lib/supabase';
-import type { HaberchatDevice, HaberchatChat, ChatMessage } from '@/types';
+import type { HaberchatDevice, HaberchatChat, ChatMessage, ScheduledChatMessage } from '@/types';
 
 export class HaberchatClientError extends Error {
   constructor(public status: number, message: string) {
@@ -117,7 +117,9 @@ export async function listMessages(
   return { messages, hasMore: res.hasMore };
 }
 
-/** Send a message. Returns the server-assigned wid + status. */
+/** Send a message. Returns the server-assigned wid + status.
+ *  Pass `deliverAt` (future ISO datetime) to schedule instead of sending
+ *  now — the message waits in Haberchat's delivery queue. */
 export async function sendMessage(input: {
   deviceId: string;
   phone?: string;
@@ -128,11 +130,39 @@ export async function sendMessage(input: {
   mediaCaption?: string;
   quotedWid?: string;
   reference?: string;
+  deliverAt?: string;
 }): Promise<{ wid: string; status: string; reference: string | null }> {
   return post<{ wid: string; status: string; reference: string | null }>(
     '/api/haberchat/messages',
     input,
   );
+}
+
+/** List scheduled (queued, not-yet-sent) messages on a device, optionally
+ *  narrowed to one recipient phone. */
+export async function listScheduledMessages(
+  deviceId: string,
+  phone?: string,
+): Promise<ScheduledChatMessage[]> {
+  const qs = new URLSearchParams({ deviceId });
+  if (phone) qs.set('phone', phone);
+  const { messages } = await get<{ messages: ScheduledChatMessage[] }>(
+    `/api/haberchat/scheduled?${qs.toString()}`,
+  );
+  return messages;
+}
+
+/** Cancel a scheduled message while it is still queued. */
+export async function cancelScheduledMessage(id: string): Promise<void> {
+  const qs = new URLSearchParams({ id }).toString();
+  const res = await fetch(`/api/haberchat/scheduled?${qs}`, {
+    method: 'DELETE',
+    headers: await authHeader(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new HaberchatClientError(res.status, err?.error ?? `Cancel scheduled message failed (${res.status})`);
+  }
 }
 
 /** Patch a chat's status / labels via the proxy. */

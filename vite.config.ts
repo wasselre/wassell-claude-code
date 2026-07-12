@@ -16,6 +16,12 @@ const buildVersion =
 
 export default defineConfig({
   plugins: [react()],
+  // Honor an assigned PORT (Claude preview tooling / parallel worktree dev
+  // servers all sharing one machine) — falls back to the historical fixed
+  // port. Explicit `--port` CLI flags still win over this.
+  server: {
+    port: Number(process.env.PORT) || 5182,
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

@@ -2379,6 +2379,20 @@ export interface ChatMessage {
   client_id?: string;
 }
 
+/**
+ * A scheduled (queued, not-yet-sent) outbound message living in Haberchat's
+ * delivery queue — created by sending with `deliverAt`. Mirrors
+ * HaberchatQueuedMessage in api/_lib/haberchat.ts — keep in sync.
+ */
+export interface ScheduledChatMessage {
+  id: string;                 // Haberchat message resource id (used to cancel)
+  phone: string | null;       // recipient in E.164
+  body: string | null;
+  deliverAt: string | null;   // ISO scheduled delivery time
+  createdAt: string | null;
+  hasMedia: boolean;
+}
+
 // ─── Calls (Hatif) ────────────────────────────────────────────────
 // Call events Hatif POSTs to our webhook. Mirrors `call_logs` in schema.sql —
 // keep in sync. Every call Hatif's platform sees lands here: inbound,
@@ -2824,6 +2838,10 @@ export interface AppState {
        *  renders something reasonable before the proxy upload echoes). */
       mediaMime?: string | null;
       mediaSize?: number | null;
+      /** Future ISO datetime — schedule instead of sending now. The message
+       *  waits in Haberchat's delivery queue; no optimistic bubble (the
+       *  webhook echoes it into the thread when it actually sends). */
+      deliverAt?: string;
     },
   ) => Promise<void>;
   /**

@@ -4862,6 +4862,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       kind?: ChatMessage['kind'];
       mediaMime?: string | null;
       mediaSize?: number | null;
+      /** Future ISO datetime — schedule instead of sending now. The message
+       *  waits in Haberchat's delivery queue (no thread bubble until it
+       *  actually sends and the webhook echoes it). */
+      deliverAt?: string;
     },
   ) => {
     const state = get();
@@ -4905,6 +4909,24 @@ export const useAppStore = create<AppState>((set, get) => ({
       state.waDevicesLive.find((d) => d.id === deviceId)?.phone ??
       state.waDevices.find((d) => d.device_id === deviceId)?.phone ??
       null;
+
+    // Scheduled send — hand the message to Haberchat's delivery queue and
+    // stop. No optimistic bubble: nothing has been sent yet, and the normal
+    // message:out webhook will echo it into the thread at delivery time.
+    // Errors propagate to the caller (Composer toasts them).
+    if (input.deliverAt) {
+      await sendHaberchatMessage({
+        deviceId,
+        phone,
+        body,
+        mediaFileId,
+        mediaCaption: input.mediaCaption,
+        quotedWid: input.quotedWid,
+        reference: uuid(),
+        deliverAt: input.deliverAt,
+      });
+      return;
+    }
 
     // Pick the bubble kind. If caller supplied one, use that. Else infer
     // from whether there's media (guessing 'image' is safer than 'document'
