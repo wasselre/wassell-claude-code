@@ -1,4 +1,4 @@
-import { ArrowLeft, Clock, Activity, CalendarPlus, ListPlus, Compass } from 'lucide-react';
+import { ArrowLeft, Clock, Activity, CalendarPlus, ListPlus, Compass, FileCog } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { ClientView } from '../lib/clientView';
 import { isOverdue } from '../lib/clientView';
@@ -13,11 +13,12 @@ interface DetailHeaderProps {
   onWhatsApp: () => void;
   onCreateFollowup: () => void;
   onCreateAppointment: () => void;
+  onAdvancedView: () => void;
   now?: number;
 }
 
 /** Client 360 header — identity, badges, next-action summary, quick actions. */
-export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreateFollowup, onCreateAppointment, now = Date.now() }: DetailHeaderProps) {
+export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreateFollowup, onCreateAppointment, onAdvancedView, now = Date.now() }: DetailHeaderProps) {
   const navigate = useNavigate();
   const overdue = isOverdue(view, now);
   const due = formatRelative(view.nextActionDueAt, isAr, now);
@@ -100,6 +101,14 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
             className="inline-flex items-center gap-1.5 rounded-lg bg-chocolate/10 px-3 py-2 text-sm font-bold text-chocolate transition hover:bg-chocolate/20"
           >
             <CalendarPlus size={16} /> {isAr ? 'موعد' : 'Appointment'}
+          </button>
+          <button
+            type="button"
+            onClick={onAdvancedView}
+            title={isAr ? 'فتح نموذج السجل الكامل (تعديل وحذف)' : 'Open the full record form (edit & delete)'}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/60 transition hover:bg-cream hover:text-charcoal"
+          >
+            <FileCog size={16} /> {isAr ? 'العرض المتقدم' : 'Advanced view'}
           </button>
         </div>
       </div>

@@ -128,10 +128,11 @@ function RecordDetailDispatcher() {
     // workspace's "Advanced Fields" / "Edit Full Preferences" escape hatch).
     return <FollowUpWorkspacePage key={recordId ?? 'new'} />;
   }
-  if (modelName === 'clients' && recordId !== 'new' && searchParams.get('generic') !== '1') {
-    // Custom Client 360 cockpit replaces the generic form. The generic form
-    // stays reachable for advanced/admin editing via ?generic=1. New-record
-    // create stays on the generic form (handled by RecordNewDispatcher).
+  if (modelName === 'clients' && recordId !== 'new') {
+    // Custom Client 360 cockpit replaces the generic form. ClientDetailPage
+    // handles the ?generic=1 escape hatch itself (generic form + a
+    // back-to-workspace bar) — the header's "Advanced view" button sets it.
+    // New-record create stays on the generic form (RecordNewDispatcher).
     return <ClientDetailPage key={recordId ?? 'new'} />;
   }
   if (modelName === 'sales_valuation_reviews' && searchParams.get('generic') !== '1') {

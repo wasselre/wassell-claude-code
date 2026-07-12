@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanViewRecord, useCanEditRecord } from '@/hooks/usePermission';
 import { phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -79,7 +79,30 @@ export default function ClientDetailPage() {
   const [showApptModal, setShowApptModal] = useState(false);
   const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
 
-  if (generic) return <RecordFormPage />;
+  // Advanced view (`?generic=1`) — the raw record form, incl. the permission-gated
+  // delete button. A slim bar on top routes back to the workspace view.
+  if (generic) {
+    const backToWorkspace = () => {
+      const sp = new URLSearchParams(location.search);
+      sp.delete('generic');
+      navigate({ pathname: location.pathname, search: sp.toString() });
+    };
+    return (
+      <div>
+        <div className="mx-auto max-w-[1500px] px-4 pt-4 sm:px-6">
+          <button
+            type="button"
+            onClick={backToWorkspace}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-copper/10 px-3 py-1.5 text-sm font-bold text-copper transition hover:bg-copper/20"
+          >
+            <ArrowLeft size={15} className={isAr ? 'rotate-180' : ''} />
+            {isAr ? 'العودة إلى ملف العميل' : 'Back to client workspace'}
+          </button>
+        </div>
+        <RecordFormPage />
+      </div>
+    );
+  }
   if (!clientsModel) return <div className="p-6 text-terracotta">{isAr ? 'نموذج العملاء غير موجود' : 'Clients model not found'}</div>;
   if (!client || !view) return <div className="p-6 text-terracotta">{isAr ? 'العميل غير موجود' : 'Client not found'}</div>;
   if (!canView) return <div className="p-6 text-terracotta">{isAr ? 'لا تملك صلاحية عرض هذا العميل' : 'You do not have permission to view this client'}</div>;
@@ -108,6 +131,11 @@ export default function ClientDetailPage() {
         onWhatsApp={() => openWhatsApp(client.id, view.phone)}
         onCreateFollowup={() => setShowFollowupModal(true)}
         onCreateAppointment={() => setShowApptModal(true)}
+        onAdvancedView={() => {
+          const sp = new URLSearchParams(location.search);
+          sp.set('generic', '1');
+          navigate({ pathname: location.pathname, search: sp.toString() });
+        }}
       />
 
       <DetailKpiRow view={view} isAr={isAr} />
