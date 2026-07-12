@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
@@ -84,6 +84,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
   // Client-options popup (options list + embedded Project Finder).
   const [showClientOptions, setShowClientOptions] = useState(false);
+  // Mobile-only: preference chips collapse behind a toggle so a long
+  // preference list doesn't shrink the thread. Desktop always shows them.
+  const [prefsExpanded, setPrefsExpanded] = useState(false);
   // "Complete WhatsApp Follow-Up" popup (shown when Done/Resolve is clicked and
   // an active WhatsApp follow-up exists for the linked client).
   const [showCompleteFollowup, setShowCompleteFollowup] = useState(false);
@@ -266,19 +269,34 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           </div>
           {/* Client preference chips — the full preference picture (unit type,
               budget, bedrooms, area, location, direction, amenities, notes…).
-              Preferences only; chat labels/tags deliberately don't render here. */}
+              Preferences only; chat labels/tags deliberately don't render here.
+              On mobile they collapse behind a count toggle so a long preference
+              list doesn't push the thread off-screen; desktop always shows them. */}
           {prefChips.length > 0 && (
-            <div className="flex items-center gap-1 mt-2 flex-wrap">
-              {prefChips.map((chip) => (
-                <span
-                  key={chip.key}
-                  className={`text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-[240px] ${DETAIL_CHIP_STYLES[chip.kind]}`}
-                  title={chip.title ?? chip.text}
-                >
-                  {chip.text}
-                </span>
-              ))}
-            </div>
+            <>
+              <button
+                onClick={() => setPrefsExpanded((v) => !v)}
+                className="md:hidden mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-charcoal/60 hover:text-copper transition-colors"
+                aria-expanded={prefsExpanded}
+              >
+                <ChevronDown
+                  size={12}
+                  className={`transition-transform ${prefsExpanded ? 'rotate-180' : ''}`}
+                />
+                {isAr ? `التفضيلات (${prefChips.length})` : `Preferences (${prefChips.length})`}
+              </button>
+              <div className={`${prefsExpanded ? 'flex' : 'hidden'} md:flex items-center gap-1 mt-2 flex-wrap`}>
+                {prefChips.map((chip) => (
+                  <span
+                    key={chip.key}
+                    className={`text-[10px] font-medium px-1.5 py-0.5 rounded truncate max-w-[240px] ${DETAIL_CHIP_STYLES[chip.kind]}`}
+                    title={chip.title ?? chip.text}
+                  >
+                    {chip.text}
+                  </span>
+                ))}
+              </div>
+            </>
           )}
         </div>
 
