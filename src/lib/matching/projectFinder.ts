@@ -138,7 +138,12 @@ export async function fetchProjectFinder(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body?.error ?? `POST /api/project-finder failed (${res.status})`);
+    // `||` (not `??`): on HTTP/2 res.statusText is the EMPTY STRING, and a non-JSON
+    // failure body (e.g. Vercel's plain-text FUNCTION_INVOCATION_TIMEOUT page) lands
+    // here as { error: '' }. An empty-message Error made SuggestedProjectsView's
+    // `error` state falsy, so a 504 rendered as "no matching projects" — a silent
+    // failure that read as a legitimate empty result (live incident 2026-07-13).
+    throw new Error(body?.error || `POST /api/project-finder failed (${res.status})`);
   }
   return (await res.json()) as FinderResponse;
 }
