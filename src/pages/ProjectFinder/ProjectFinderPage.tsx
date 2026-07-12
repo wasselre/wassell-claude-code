@@ -22,6 +22,7 @@ import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/comp
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
+import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 
@@ -164,6 +165,10 @@ export default function ProjectFinderPage() {
   const [eliminating, setEliminating] = useState(false);
   // "Send to client" from a card — only offered while a client is selected.
   const [sendTarget, setSendTarget] = useState<FinderMatch | null>(null);
+  // Whether at least ONE option was saved for the selected client this session —
+  // clearing the client (or closing the tab) without it triggers a confirmation.
+  const [savedAny, setSavedAny] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -205,6 +210,7 @@ export default function ProjectFinderPage() {
     setClientQuery('');
     setSelected(new Set());
     setSaveStates({});
+    setSavedAny(false);
     const rec = clientsModel ? (records[clientsModel.id] ?? []).find((r) => r.id === id) : null;
     if (rec) {
       const d = rec.data as Record<string, unknown>;
@@ -225,6 +231,8 @@ export default function ProjectFinderPage() {
     setSelectedClientId(null);
     setSelected(new Set());
     setSaveStates({});
+    setSavedAny(false);
+    setConfirmLeave(false);
   }
 
   function buildRequirements(): MatchRequirementsInput {
@@ -353,6 +361,7 @@ export default function ProjectFinderPage() {
       ok = res.ok;
     }
     setSaveStates((s) => ({ ...s, [item.project_id]: 'idle' }));
+    if (ok) setSavedAny(true);
     const label = isAr ? CLIENT_OPTION_STATUS_META[status].ar : CLIENT_OPTION_STATUS_META[status].en;
     addToast(
       ok ? L(`تم ضبط الحالة: ${label}`, `Status set: ${label}`) : L('تعذّر ضبط الحالة.', 'Could not set status.'),
@@ -368,6 +377,7 @@ export default function ProjectFinderPage() {
     const summary = await bulkSaveOptions(selectedClientId, chosen.map(matchToInput), 'project_finder');
     setBulkSaving(false);
     const saved = summary.created + summary.updated;
+    if (saved > 0) setSavedAny(true);
     const parts: string[] = [];
     if (saved > 0) parts.push(L(`حُفظ ${saved}`, `${saved} saved`));
     if (summary.skippedEliminated > 0) parts.push(L(`${summary.skippedEliminated} مستبعد (تجاهل)`, `${summary.skippedEliminated} eliminated (skipped)`));
@@ -386,6 +396,7 @@ export default function ProjectFinderPage() {
     }
     setEliminating(false);
     if (ok) {
+      setSavedAny(true);
       addToast(L('تم استبعاد الخيار.', 'Option eliminated.'), 'success');
       setEliminateTarget(null);
       setEliminateNotes('');
@@ -413,6 +424,20 @@ export default function ProjectFinderPage() {
     () => (selectedClientId ? FINDER_GROUP_KEYS.reduce((n, k) => n + refinedGroups[k].filter((i) => selected.has(i.project_id)).length, 0) : 0),
     [selectedClientId, refinedGroups, selected],
   );
+
+  // Dropping the client (or closing the tab) without having saved a single
+  // option for them — after results were shown — needs a confirmation.
+  const mustConfirmLeave = !!selectedClientId && !savedAny && fetchedTotal > 0;
+  function requestClearClient() {
+    if (mustConfirmLeave) setConfirmLeave(true);
+    else clearClient();
+  }
+  useEffect(() => {
+    if (!mustConfirmLeave) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [mustConfirmLeave]);
 
   // One card, wired for a selected client (full actions) or read-only discovery.
   const renderCard = (item: FinderMatch, key: string) => (
@@ -469,13 +494,26 @@ export default function ProjectFinderPage() {
         <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-copper/10">
           <Compass size={20} className="text-copper" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="text-lg font-bold text-chocolate">{L('الباحث عن المشاريع', 'Project Finder')}</h1>
           <p className="text-xs text-charcoal/60">
             {L('ابحث عن المشاريع المطابقة بالحقول والخيارات — مع عميل أو بدونه، وبدون نص حر أو ذكاء اصطناعي.',
                'Find matching projects by structured fields — with or without a client, no free text, no AI.')}
           </p>
         </div>
+        {selectedClientId && (
+          <button
+            type="button"
+            onClick={onBulkSave}
+            disabled={bulkSaving || selectedVisible === 0}
+            title={L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+          >
+            {bulkSaving ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
+            <span className="hidden sm:inline">{L('حفظ الخيارات', 'Save options')}</span>
+            <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedVisible}</span>
+          </button>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-5 lg:flex-row lg:overflow-hidden">
@@ -498,7 +536,7 @@ export default function ProjectFinderPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={clearClient}
+                        onClick={requestClearClient}
                         className="shrink-0 rounded-md p-1 text-charcoal/45 transition hover:bg-white hover:text-red-600"
                         title={L('إزالة العميل', 'Clear client')}
                         aria-label={L('إزالة العميل', 'Clear client')}
@@ -750,19 +788,15 @@ export default function ProjectFinderPage() {
             )}
           </div>
 
-          {/* Footer — bulk-save the SELECTED options into the client's unified list. */}
+          {/* Footer — selection summary (the Save-options action lives in the header). */}
           {selectedClientId && !loading && !error && fetchedTotal > 0 && (
-            <div className="mt-2 flex items-center justify-between gap-3 border-t border-sand/40 pt-3">
+            <div className="mt-2 flex items-center justify-between gap-3 border-t border-sand/40 pt-2">
               <span className="text-xs text-charcoal/60">{L(`${selectedVisible} محدّد`, `${selectedVisible} selected`)}</span>
-              <button
-                type="button"
-                onClick={onBulkSave}
-                disabled={bulkSaving || selectedVisible === 0}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
-              >
-                {bulkSaving ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
-                {L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
-              </button>
+              {!savedAny && (
+                <span className="text-[11px] font-semibold text-amber-700">
+                  {L('لم يُحفظ أي خيار لهذا العميل بعد.', 'No option saved for this client yet.')}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -789,6 +823,16 @@ export default function ProjectFinderPage() {
             onClose={() => setSendTarget(null)}
           />
         )
+      )}
+
+      {/* Clearing the client without saving any option → confirm first. */}
+      {confirmLeave && clientRec && (
+        <LeaveWithoutSavingModal
+          isAr={isAr}
+          clientName={clientLabel(clientRec)}
+          onStay={() => setConfirmLeave(false)}
+          onLeave={clearClient}
+        />
       )}
 
       {/* Eliminate-with-notes prompt */}

@@ -26,6 +26,7 @@ import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar'
 import FinderMapView from './FinderMapView';
 import ProjectWhatsAppFlow from './ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
+import LeaveWithoutSavingModal from '@/components/matching/LeaveWithoutSavingModal';
 
 /** Small labelled divider heading a card section (our projects / other options). */
 function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) {
@@ -107,6 +108,10 @@ export default function SuggestedProjectsView({
   const [eliminating, setEliminating] = useState(false);
   // "Send to client" from a card — the WhatsApp flow modal for this match.
   const [sendTarget, setSendTarget] = useState<FinderMatch | null>(null);
+  // Whether at least ONE option was saved for the client during THIS visit —
+  // leaving (Done / Esc / unload) without it triggers a confirmation.
+  const [savedAny, setSavedAny] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   // Results-refinement (shared with the standalone Project Finder page).
   const [scoreThreshold, setScoreThreshold] = useState<number>(FETCH_FLOOR);
@@ -244,12 +249,33 @@ export default function SuggestedProjectsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Esc returns to the follow-up.
+  // Leaving without saving a single option for the client needs a confirmation
+  // (only once results were actually shown — an empty/failed search isn't a choice).
+  const mustConfirmLeave = !!clientRec && !savedAny && totalFinderMatches(resp) > 0;
+  function requestDone() {
+    if (mustConfirmLeave) setConfirmLeave(true);
+    else onDone();
+  }
+
+  // Esc returns to the follow-up (via the no-options-saved guard).
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onDone(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (confirmLeave) { setConfirmLeave(false); return; }
+      requestDone();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onDone]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onDone, confirmLeave, mustConfirmLeave]);
+
+  // Tab close / reload with unsaved options → the browser's native leave prompt.
+  useEffect(() => {
+    if (!mustConfirmLeave) return;
+    const h = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', h);
+    return () => window.removeEventListener('beforeunload', h);
+  }, [mustConfirmLeave]);
 
   function onOpenDetails(item: FinderMatch) {
     const model = item.source === 'market_listings' ? 'market_listings' : 'all_projects';
@@ -292,6 +318,7 @@ export default function SuggestedProjectsView({
     const res = await saveClientOption({ clientId: clientRec.id, ...matchToInput(item), addedFrom: 'project_finder' });
     if (res.ok) {
       setSaveStates((s) => ({ ...s, [item.project_id]: 'saved' }));
+      setSavedAny(true);
       if (res.outcome === 'eliminated_exists') {
         addToast(L('هذا الخيار مستبعد مسبقاً — أعد تفعيله يدوياً.', 'This option is already eliminated — reactivate it manually.'), 'info');
       } else {
@@ -316,6 +343,7 @@ export default function SuggestedProjectsView({
     const summary = await bulkSaveOptions(clientRec.id, chosen.map(matchToInput), 'project_finder');
     setBulkSaving(false);
     const saved = summary.created + summary.updated;
+    if (saved > 0) setSavedAny(true);
     const parts: string[] = [];
     if (saved > 0) parts.push(L(`حُفظ ${saved}`, `${saved} saved`));
     if (summary.skippedEliminated > 0) parts.push(L(`${summary.skippedEliminated} مستبعد (تجاهل)`, `${summary.skippedEliminated} eliminated (skipped)`));
@@ -334,6 +362,7 @@ export default function SuggestedProjectsView({
     }
     setEliminating(false);
     if (ok) {
+      setSavedAny(true);
       addToast(L('تم استبعاد الخيار.', 'Option eliminated.'), 'success');
       setEliminateTarget(null);
       setEliminateNotes('');
@@ -347,6 +376,7 @@ export default function SuggestedProjectsView({
     const existing = findClientOption(clientRec.id, finderSourceToOptionType(item.source), item.project_id);
     if (!existing) return;
     const res = await reactivateOption(existing.id);
+    if (res.ok) setSavedAny(true);
     addToast(res.ok ? L('تمت إعادة تفعيل الخيار.', 'Option reactivated.') : L('تعذّرت إعادة التفعيل.', 'Could not reactivate.'), res.ok ? 'success' : 'error');
   }
 
@@ -365,6 +395,7 @@ export default function SuggestedProjectsView({
       ok = res.ok;
     }
     setSaveStates((s) => ({ ...s, [item.project_id]: 'idle' }));
+    if (ok) setSavedAny(true);
     const label = isAr ? CLIENT_OPTION_STATUS_META[status].ar : CLIENT_OPTION_STATUS_META[status].en;
     addToast(
       ok ? L(`تم ضبط الحالة: ${label}`, `Status set: ${label}`) : L('تعذّر ضبط الحالة.', 'Could not set status.'),
@@ -488,10 +519,23 @@ export default function SuggestedProjectsView({
             <span className="hidden sm:inline">{L('تعديل التفضيلات', 'Edit preferences')}</span>
           </button>
         )}
+        {clientRec && (
+          <button
+            type="button"
+            onClick={onBulkSave}
+            disabled={bulkSaving || selectedVisible === 0}
+            title={L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+          >
+            {bulkSaving ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
+            <span className="hidden sm:inline">{L('حفظ الخيارات', 'Save options')}</span>
+            <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedVisible}</span>
+          </button>
+        )}
         <button
           type="button"
-          onClick={onDone}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
+          onClick={requestDone}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
         >
           <Check size={16} />
           {L('تم', 'Done')}
@@ -810,31 +854,18 @@ export default function SuggestedProjectsView({
         </div>
       </div>
 
-      {/* Footer — bulk-save the SELECTED options into the client's unified list. */}
-      {!loading && !error && fetchedTotal > 0 && (
+      {/* Footer — selection summary (the Save-options action lives in the header). */}
+      {!loading && !error && fetchedTotal > 0 && clientRec && (
         <div className="border-t border-sand/40 bg-white">
-          <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-2 sm:px-6">
             <span className="text-xs text-charcoal/60">
               {L(`${selectedVisible} محدّد`, `${selectedVisible} selected`)}
             </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onBulkSave}
-                disabled={bulkSaving || selectedVisible === 0}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
-              >
-                {bulkSaving ? <Loader2 size={15} className="animate-spin" /> : <Bookmark size={15} />}
-                {L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
-              </button>
-              <button
-                type="button"
-                onClick={onDone}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
-              >
-                <Check size={15} /> {L('تم', 'Done')}
-              </button>
-            </div>
+            {!savedAny && (
+              <span className="text-[11px] font-semibold text-amber-700">
+                {L('لم يُحفظ أي خيار لهذا العميل بعد.', 'No option saved for this client yet.')}
+              </span>
+            )}
           </div>
         </div>
       )}
@@ -860,6 +891,16 @@ export default function SuggestedProjectsView({
             onClose={() => setSendTarget(null)}
           />
         )
+      )}
+
+      {/* Leaving without saving any option for the client → confirm first. */}
+      {confirmLeave && (
+        <LeaveWithoutSavingModal
+          isAr={isAr}
+          clientName={clientName}
+          onStay={() => setConfirmLeave(false)}
+          onLeave={() => { setConfirmLeave(false); onDone(); }}
+        />
       )}
 
       {/* Eliminate-with-notes prompt */}
