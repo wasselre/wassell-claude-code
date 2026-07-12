@@ -54,15 +54,45 @@ export default function CompleteWhatsAppFollowupModal({
     [followupModel],
   );
 
-  // Local editable draft, seeded from the follow-up. If the task carried no
-  // WhatsApp state yet (an open checkpoint the rep is now wrapping up from the
-  // chat), display it in the "replied — record the outcome" phase so the rep
-  // lands directly on the outcome buttons. Completion nulls whatsapp_state.
-  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({
-    ...followup.data,
-    whatsapp_state: (followup.data as Record<string, unknown>).whatsapp_state ?? 'replied',
-  }));
+  // Local editable draft, seeded from the follow-up's real state. The panel then
+  // shows the honest choice ("did the client reply?"): send a check-in, mark as
+  // waiting, record no-message-sent, or record the reply outcome.
+  const [draft, setDraft] = useState<Record<string, unknown>>(() => ({ ...followup.data }));
   const patchDraft = (patch: Record<string, unknown>) => setDraft((d) => ({ ...d, ...patch }));
+
+  // "Waiting for reply" from the chat Done popup: park the task in the waiting
+  // state (arms the 24h escalation) and DO NOT resolve the chat — the rep is
+  // still waiting, so the conversation stays open. Mirrors the Workspace's
+  // handleWhatsAppSent(null).
+  const doMarkWaiting = async () => {
+    const now = new Date();
+    const attempt = typeof draft.whatsapp_attempt_number === 'number' && draft.whatsapp_attempt_number > 0 ? draft.whatsapp_attempt_number : 1;
+    const firstSent = typeof draft.first_whatsapp_sent_at === 'string' && draft.first_whatsapp_sent_at ? draft.first_whatsapp_sent_at : now.toISOString();
+    const day5 = new Date(new Date(firstSent).getTime() + 5 * 24 * 3600 * 1000);
+    const deadline = attempt >= 2 ? (day5.getTime() > now.getTime() + 60_000 ? day5 : new Date(now.getTime() + 60_000)) : new Date(now.getTime() + 24 * 3600 * 1000);
+    const finalData: Record<string, unknown> = {
+      ...draft,
+      whatsapp_state: 'message_sent_waiting_response',
+      sent_at: now.toISOString(),
+      first_whatsapp_sent_at: firstSent,
+      whatsapp_attempt_number: attempt,
+      completed_by_chat_id: chatRecordId,
+      sent_by_user: currentUserId ?? (draft.sent_by_user as string) ?? null,
+      followup_status: 'in_progress',
+      scheduled_datetime: deadline.toISOString(),
+      fired_at: null,
+      source_followup_id: followup.id,
+    };
+    setSaving(true);
+    const res = await saveRecord({ ...followup, data: finalData, updated_at: now.toISOString() }, { expectedVersion: followup.version ?? null });
+    setSaving(false);
+    if (res.status === 'conflict') {
+      addToast(isAr ? 'تم تعديل المتابعة من مكان آخر — افتح المهمة.' : 'This follow-up was edited elsewhere — open the task.', 'error');
+      return;
+    }
+    addToast(isAr ? 'بانتظار رد العميل' : 'Marked as waiting for reply', 'success');
+    onClose(); // deliberately NOT resolving the chat
+  };
 
   const doComplete = async (outcomeKey: string) => {
     const now = new Date().toISOString();
@@ -154,6 +184,7 @@ export default function CompleteWhatsAppFollowupModal({
               onBookAppointment={onOpenChat}
               // "Open chat" (replied banner) just reveals the composer behind.
               onSendWhatsApp={onOpenChat}
+              onMarkWaiting={doMarkWaiting}
               onComplete={doComplete}
               saving={saving}
             />

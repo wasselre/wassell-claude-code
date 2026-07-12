@@ -18,6 +18,18 @@ describe('whatsapp_follow_up is framed as a reply checkpoint', () => {
     expect(wa.script?.en?.length ?? 0).toBeGreaterThanOrEqual(3);
     expect((wa.script?.en ?? []).join(' ').toLowerCase()).toContain('check-in');
   });
+  it('has no "wrong_time" outcome (removed) and offers "no_message_sent" instead', () => {
+    const values = wa.allowed_outcomes.map((o) => o.value);
+    expect(values).not.toContain('wrong_time');
+    expect(values).toContain('no_message_sent');
+    expect(values).toContain('recontact_later');
+  });
+  it('"no_message_sent" hard-requires a reason (notes) and a next date', () => {
+    const nm = wa.allowed_outcomes.find((o) => o.value === 'no_message_sent')!;
+    expect(nm.requires?.outcome_notes).toBe(true);
+    expect(nm.requires?.reschedule_contact_date).toBe(true);
+    expect(nm.next_action_preview?.kind).toBe('schedule_recontact');
+  });
 });
 
 describe('DEFAULT_SALES_PROCESS integrity', () => {

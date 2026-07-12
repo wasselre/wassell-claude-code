@@ -165,14 +165,25 @@ const FOLLOWUP_TYPES: FollowUpTypeConfig[] = [
         client_update_preview: { stage: 'عرض سعر', status: 'تم طلب عرض سعر' },
         next_action_preview: { kind: 'none', note_en: 'Offer follow-up is created in the offer stage', note_ar: 'تُنشأ متابعة العرض في مرحلة العرض' },
       },
-      wrongTime('whatsapp_follow_up'),
       {
+        // Client replied "recontact later" — only offered after the client has
+        // actually responded (gated in the OutcomePanel to the reply phase).
         value: 'recontact_later',
         requires: { ...REQ_ACTUAL, reschedule_contact_date: true },
         client_update_preview: { status: 'إعادة تواصل لاحقًا' },
         next_action_preview: { kind: 'schedule_recontact', create_followup_type: 'whatsapp_follow_up', use_field: 'reschedule_contact_date' },
       },
       notInterested('غير مؤهل'),
+      {
+        // The rep deliberately did NOT send a message. A pre-reply action (shown
+        // before any customer response). Requires a reason (notes) + the next
+        // contact date; the workflow schedules the next WhatsApp on that date.
+        // 'wrong_time' was removed from WhatsApp — this is its honest replacement
+        // for "not the right moment to message".
+        value: 'no_message_sent',
+        requires: { ...REQ_ACTUAL, outcome_notes: true, reschedule_contact_date: true },
+        next_action_preview: { kind: 'schedule_recontact', create_followup_type: 'whatsapp_follow_up', use_field: 'reschedule_contact_date', note_en: 'No message sent — schedule the next WhatsApp on the chosen date', note_ar: 'لم تُرسل رسالة — جدولة متابعة واتساب في التاريخ المحدد' },
+      },
     ],
   },
   {

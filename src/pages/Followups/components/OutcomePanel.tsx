@@ -23,6 +23,9 @@ interface OutcomePanelProps {
   onBookAppointment: () => void;
   /** Open the WhatsApp composer (used by the send→waiting→response flow). */
   onSendWhatsApp?: () => void;
+  /** Park the task into the waiting state WITHOUT opening the composer — for
+   *  "I already messaged from the chat, now waiting for the reply". */
+  onMarkWaiting?: () => void;
   onComplete: (outcomeKey: string) => void;
   saving: boolean;
 }
@@ -48,7 +51,7 @@ const toneClasses: Record<string, string> = {
 };
 
 export default function OutcomePanel(props: OutcomePanelProps) {
-  const { followupModel, typeKey, draft, patchDraft, readOnly, clientId, phones, onBookAppointment, onSendWhatsApp, onComplete, saving } = props;
+  const { followupModel, typeKey, draft, patchDraft, readOnly, clientId, phones, onBookAppointment, onSendWhatsApp, onMarkWaiting, onComplete, saving } = props;
   const isAr = useAppStore((s) => s.language === 'ar');
   const [outcomeKey, setOutcomeKey] = useState<string | null>(
     typeof draft.call_result === 'string' && draft.followup_status === 'completed' ? draft.call_result : null,
@@ -135,31 +138,54 @@ export default function OutcomePanel(props: OutcomePanelProps) {
     <section className="card p-5" style={{ border: '1.5px solid rgba(184, 115, 79, 0.45)' }}>
       <h2 className="mb-3 text-base font-bold text-chocolate">{isAr ? 'النتيجة' : 'Outcome'}</h2>
 
-      {sendPhase && !recordMode ? (
+      {sendPhase && !recordMode && outcomeKey !== 'no_message_sent' ? (
         <div className="space-y-3">
           <p className="text-sm font-bold text-chocolate">{isAr ? 'المشروع أُرسل بعد المكالمة — هل ردّ العميل؟' : 'The project was sent after the call — did the client reply?'}</p>
-          <div className="grid gap-2 sm:grid-cols-2">
+          {/* Primary: send a check-in (opens the composer → waiting state) */}
+          <button
+            type="button"
+            disabled={readOnly}
+            onClick={() => onSendWhatsApp?.()}
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40"
+          >
+            <MessageCircle size={18} /> {isAr ? 'إرسال رسالة تفقّد' : 'Send a check-in message'}
+          </button>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {/* I already sent a message (e.g. from the chat) — just park as waiting */}
             <button
               type="button"
               disabled={readOnly}
-              onClick={() => onSendWhatsApp?.()}
-              className="flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-4 py-3 text-base font-bold text-white transition hover:opacity-90 disabled:opacity-40"
+              onClick={() => onMarkWaiting?.()}
+              className="flex flex-col items-center justify-center gap-1 rounded-xl border-[1.5px] border-[#C09B5F] px-3 py-2.5 text-sm font-bold text-[#8E4E3A] transition hover:bg-[#C09B5F]/10 disabled:opacity-40"
             >
-              <MessageCircle size={18} /> {isAr ? 'إرسال رسالة تفقّد' : 'Send a check-in message'}
+              <Clock size={16} /> {isAr ? 'بانتظار رد العميل' : 'Waiting for reply'}
+              <span className="text-[10px] font-normal text-charcoal/50">{isAr ? 'أرسلت الرسالة مسبقاً' : 'already sent'}</span>
             </button>
+            {/* Deliberately not messaging now — requires a reason + next date */}
+            <button
+              type="button"
+              disabled={readOnly}
+              onClick={() => selectOutcome('no_message_sent')}
+              className="flex flex-col items-center justify-center gap-1 rounded-xl border-[1.5px] border-charcoal/25 px-3 py-2.5 text-sm font-bold text-charcoal/70 transition hover:bg-charcoal/5 disabled:opacity-40"
+            >
+              <AlertCircle size={16} /> {isAr ? 'لم تُرسل رسالة' : 'No message sent'}
+              <span className="text-[10px] font-normal text-charcoal/50">{isAr ? 'سبب + تاريخ' : 'reason + date'}</span>
+            </button>
+            {/* The client already replied — record the response outcome */}
             <button
               type="button"
               disabled={readOnly}
               onClick={() => setRecordMode(true)}
-              className="flex items-center justify-center gap-2 rounded-xl border-[1.5px] border-copper px-4 py-3 text-base font-bold text-copper transition hover:bg-copper/5 disabled:opacity-40"
+              className="flex flex-col items-center justify-center gap-1 rounded-xl border-[1.5px] border-copper px-3 py-2.5 text-sm font-bold text-copper transition hover:bg-copper/5 disabled:opacity-40"
             >
-              <CheckCircle2 size={18} /> {isAr ? 'تسجيل نتيجة المحادثة' : 'Record the outcome'}
+              <CheckCircle2 size={16} /> {isAr ? 'العميل ردّ' : 'Client replied'}
+              <span className="text-[10px] font-normal text-charcoal/50">{isAr ? 'سجّل النتيجة' : 'record outcome'}</span>
             </button>
           </div>
           <p className="text-xs text-charcoal/55">
             {isAr
-              ? 'إن لم يردّ العميل، أرسل رسالة تفقّد (تضع المتابعة في انتظار الرد). إن ردّ مسبقاً أو أكملت المحادثة، سجّل النتيجة مباشرةً.'
-              : 'If the client has not replied, send a check-in (puts the task into a waiting state). If they already replied or the conversation is done, record the outcome directly.'}
+              ? 'أرسل رسالة تفقّد إن لم يردّ العميل. إن قررت عدم الإرسال، اختر «لم تُرسل رسالة» واكتب السبب. سجّل النتيجة فقط بعد أن يردّ العميل.'
+              : "Send a check-in if the client hasn't replied. If you chose not to message, pick “No message sent” and write why. Record an outcome only after the client has replied."}
           </p>
         </div>
       ) : (
@@ -198,10 +224,18 @@ export default function OutcomePanel(props: OutcomePanelProps) {
               </button>
             </div>
           )}
-          {(() => {
+          {outcomeKey === 'no_message_sent' ? (
+            <div className="mb-1 flex items-center justify-between gap-2 rounded-xl border border-charcoal/20 bg-charcoal/5 px-3 py-2.5">
+              <span className="text-sm font-bold text-charcoal">{isAr ? 'لم تُرسل رسالة — اكتب السبب وحدّد موعد المتابعة القادم' : 'No message sent — write the reason and set the next follow-up date'}</span>
+              <button type="button" onClick={() => { setOutcomeKey(null); patchDraft({ call_result: null }); }} className="shrink-0 text-xs font-semibold text-copper hover:underline">
+                {isAr ? 'رجوع' : 'Back'}
+              </button>
+            </div>
+          ) : (() => {
         // The first config outcome is the primary success path (e.g. حجز موعد for
         // a booking call) — render it as a prominent filled button; the rest as pills.
-        const [primary, ...secondary] = typeConfig.allowed_outcomes;
+        // no_message_sent is a PRE-reply action (offered on the choice screen), never a response button.
+        const [primary, ...secondary] = typeConfig.allowed_outcomes.filter((o) => o.value !== 'no_message_sent');
         const fill: Record<string, string> = { positive: '#10B981', neutral: '#C09B5F', negative: '#8E4E3A' };
         return (
           <div className="space-y-2">

@@ -252,7 +252,7 @@ export default function FollowUpWorkspacePage() {
   // workflow fires at that deadline IF still waiting; recording a response
   // clears whatsapp_state first, so the escalation skips. Workflows do the
   // transitions; this only records the action's data on THIS record.
-  const handleWhatsAppSent = async (chatId: string) => {
+  const handleWhatsAppSent = async (chatId: string | null = null) => {
     if (ctx.typeKey !== 'whatsapp_follow_up' || readOnly) return;
     const now = new Date();
     const attempt = typeof draft.whatsapp_attempt_number === 'number' && draft.whatsapp_attempt_number > 0
@@ -268,7 +268,7 @@ export default function FollowUpWorkspacePage() {
       sent_at: now.toISOString(),
       first_whatsapp_sent_at: firstSent,
       whatsapp_attempt_number: attempt,
-      completed_by_chat_id: chatId,
+      completed_by_chat_id: chatId ?? (draft.completed_by_chat_id as string | null) ?? null,
       sent_by_user: currentUserId ?? draft.sent_by_user ?? null,
       followup_status: 'in_progress',
       scheduled_datetime: deadline.toISOString(),
@@ -300,6 +300,11 @@ export default function FollowUpWorkspacePage() {
     }
     addToast(isAr ? 'تم إرسال الرسالة — بانتظار رد العميل' : 'Message sent — awaiting the customer reply', 'success');
   };
+
+  // "Waiting for reply" without opening the composer — for when the rep already
+  // messaged from the chat. Parks the task in the same waiting state (arms the
+  // 24h escalation), keeping any existing chat link as evidence.
+  const handleMarkWaiting = () => handleWhatsAppSent(null);
 
   return (
     <div className="mx-auto max-w-[1500px] p-4 sm:p-6">
@@ -343,6 +348,7 @@ export default function FollowUpWorkspacePage() {
             phones={ctx.phones}
             onBookAppointment={() => setShowApptModal(true)}
             onSendWhatsApp={() => setShowChatModal(true)}
+            onMarkWaiting={handleMarkWaiting}
             onComplete={handleComplete}
             saving={saving}
           />
