@@ -147,12 +147,23 @@ export function mergeChatIntoRecord(
 ): AppRecord {
   const now = new Date().toISOString();
   const id = chatRecordId(chat.wid);
-  const nextData = {
+  const nextData: Record<string, unknown> = {
     // Start from existing data so Wassell-owned fields survive.
     ...(existing?.data ?? {}),
     // Then apply Haberchat-authoritative fields.
     ...chatToRecordData(chat, deviceId),
   };
+  // Recency is forward-only: the webhook stamps last_message_* with the
+  // chat's true newest message, and Haberchat's LIST value can lag it (a
+  // message landing mid-sync). Never move the record's timestamp backwards —
+  // and keep the preview paired with whichever timestamp wins.
+  const prevData = (existing?.data ?? {}) as Record<string, unknown>;
+  const prevAt = typeof prevData.last_message_at === 'string' ? prevData.last_message_at : '';
+  const chatAt = chat.lastMessageAt ?? '';
+  if (prevAt && (!chatAt || prevAt > chatAt)) {
+    nextData.last_message_at = prevAt;
+    nextData.last_message_preview = prevData.last_message_preview ?? null;
+  }
   return {
     id,
     model_id: chatsModelId,

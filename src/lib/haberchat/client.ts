@@ -51,9 +51,18 @@ export async function listDevices(): Promise<HaberchatDevice[]> {
 }
 
 export async function listChats(deviceId: string): Promise<HaberchatChat[]> {
-  const qs = new URLSearchParams({ deviceId }).toString();
-  const { chats } = await get<{ chats: HaberchatChat[] }>(`/api/haberchat/chats?${qs}`);
-  return chats;
+  // Paginate through ALL chats. A single default page (100) silently dropped
+  // every conversation older than the newest hundred — the device carries
+  // 325+ — so older chats never got their name/status/last-message refreshed
+  // from Haberchat ("never cap results"). 10-page hard stop = 2,000 chats.
+  const all: HaberchatChat[] = [];
+  for (let page = 0; page < 10; page++) {
+    const qs = new URLSearchParams({ deviceId, size: '200', page: String(page) }).toString();
+    const { chats } = await get<{ chats: HaberchatChat[] }>(`/api/haberchat/chats?${qs}`);
+    all.push(...chats);
+    if (chats.length < 200) break;
+  }
+  return all;
 }
 
 export async function listMessages(
