@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown } from 'lucide-react';
+import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, TimerOff, RefreshCw } from 'lucide-react';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
 import {
-  fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
+  fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS, FinderRequestError,
   type FinderResponse, type FinderMatch,
 } from '@/lib/matching/projectFinder';
 import {
@@ -94,7 +94,7 @@ export default function SuggestedProjectsView({
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; timeout: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
   const [viewMode, setViewMode] = useState<FinderViewMode>('list');
   const [visibleCount, setVisibleCount] = useState(PAGE);
@@ -196,9 +196,13 @@ export default function SuggestedProjectsView({
   );
 
   const controllerRef = useRef<AbortController | null>(null);
+  // The draft of the LAST ATTEMPTED search — retry after a timeout re-sends it
+  // verbatim (searchedDraft only updates on success, so it can't serve here).
+  const lastDraftRef = useRef<Record<string, unknown>>(prefDraft);
   // Re-run the deterministic match for a preference draft and reset the view.
   function runSearch(d: Record<string, unknown>) {
     markActivity('finder: search request');
+    lastDraftRef.current = d;
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
@@ -233,7 +237,11 @@ export default function SuggestedProjectsView({
         if (followupId) setFinderHandoff({ followupId, prefDraft: { ...d }, followupDraft, projectName: projectName ?? null });
       })
       .catch((e) => {
-        if (e?.name !== 'AbortError') setError(e instanceof Error ? e.message : String(e));
+        if (e?.name === 'AbortError') return;
+        setError({
+          message: e instanceof Error ? e.message : String(e),
+          timeout: e instanceof FinderRequestError && e.timeout,
+        });
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -735,8 +743,49 @@ export default function SuggestedProjectsView({
               <span className="text-sm">{L('جارٍ ترشيح المشاريع…', 'Finding the best-fit projects…')}</span>
             </div>
           )}
-          {!loading && error && (
-            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+          {!loading && error && error.timeout && (
+            <div className="flex h-[50vh] flex-col items-center justify-center gap-3 px-6 text-center">
+              <TimerOff size={26} className="text-copper" />
+              <p className="text-sm font-bold text-chocolate">
+                {L('البحث استغرق وقتاً أطول من المسموح فتوقّف قبل اكتماله.', 'The search took longer than allowed and was stopped before finishing.')}
+              </p>
+              <p className="max-w-lg text-sm text-charcoal/60">
+                {L(
+                  'يحدث هذا عادةً عندما يكون نطاق الموقع واسعاً جداً — مثل قاعدة اتجاه على طريق طويل («جنوب طريق الملك سلمان») تغطي معظم المدينة. ضيّق الموقع: اختر أحياء محددة، أو اجعل قاعدة الاتجاه استثناءً على الأحياء المختارة بدل شمولها للمدينة كلها، ثم أعد المحاولة.',
+                  'This usually happens when the location scope is too wide — e.g. a direction rule on a long road ("south of King Salman Rd") covering most of the city. Narrow the location: pick specific districts, or make the direction rule an exclude on top of the chosen districts instead of city-wide, then try again.',
+                )}
+              </p>
+              <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+                {editFields.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowEdit(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3.5 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
+                  >
+                    <SlidersHorizontal size={15} /> {L('تضييق التفضيلات', 'Narrow preferences')}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => runSearch(lastDraftRef.current)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
+                >
+                  <RefreshCw size={15} /> {L('إعادة المحاولة', 'Try again')}
+                </button>
+              </div>
+            </div>
+          )}
+          {!loading && error && !error.timeout && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+              <p>{error.message}</p>
+              <button
+                type="button"
+                onClick={() => runSearch(lastDraftRef.current)}
+                className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 transition hover:bg-red-100"
+              >
+                <RefreshCw size={13} /> {L('إعادة المحاولة', 'Try again')}
+              </button>
+            </div>
           )}
           {!loading && !error && needsPreferences && (
             <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">

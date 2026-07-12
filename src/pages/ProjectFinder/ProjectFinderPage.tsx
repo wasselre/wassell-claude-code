@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle } from 'lucide-react';
+import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
 import {
-  fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS,
+  fetchProjectFinder, totalFinderMatches, FINDER_GROUP_KEYS, FinderRequestError,
   type FinderResponse, type FinderMatch, type FinderSource,
 } from '@/lib/matching/projectFinder';
 import {
@@ -172,7 +172,7 @@ export default function ProjectFinderPage() {
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; timeout: boolean } | null>(null);
   const [hasSearched, setHasSearched] = useState(false);
   const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
   const [viewMode, setViewMode] = useState<FinderViewMode>('list');
@@ -258,7 +258,7 @@ export default function ProjectFinderPage() {
     markActivity('finder: search request');
     const chosenSources = (Object.keys(sources) as FinderSource[]).filter((s) => sources[s]);
     if (chosenSources.length === 0) {
-      setError(L('اختر مصدراً واحداً على الأقل.', 'Pick at least one source.'));
+      setError({ message: L('اختر مصدراً واحداً على الأقل.', 'Pick at least one source.'), timeout: false });
       return;
     }
     controllerRef.current?.abort();
@@ -293,7 +293,10 @@ export default function ProjectFinderPage() {
       setActiveTab('exact_district_matches');
     } catch (e) {
       if ((e as { name?: string })?.name !== 'AbortError') {
-        setError(e instanceof Error ? e.message : String(e));
+        setError({
+          message: e instanceof Error ? e.message : String(e),
+          timeout: e instanceof FinderRequestError && e.timeout,
+        });
       }
     } finally {
       if (!controller.signal.aborted) setLoading(false);
@@ -734,8 +737,29 @@ export default function ProjectFinderPage() {
                 <span className="text-sm">{L('جارٍ ترشيح المشاريع…', 'Finding the best-fit projects…')}</span>
               </div>
             )}
-            {!loading && error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>
+            {!loading && error && error.timeout && (
+              <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                <TimerOff size={24} className="text-copper" />
+                <p className="text-sm font-bold text-chocolate">
+                  {L('البحث استغرق وقتاً أطول من المسموح فتوقّف قبل اكتماله.', 'The search took longer than allowed and was stopped before finishing.')}
+                </p>
+                <p className="max-w-md text-sm text-charcoal/60">
+                  {L(
+                    'ضيّق نطاق الموقع (أحياء محددة بدل قاعدة اتجاه تغطي معظم المدينة) أو قلّل المصادر، ثم أعد المحاولة.',
+                    'Narrow the location scope (specific districts instead of a direction rule covering most of the city) or reduce the sources, then try again.',
+                  )}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => runSearch()}
+                  className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
+                >
+                  <RefreshCw size={15} /> {L('إعادة المحاولة', 'Try again')}
+                </button>
+              </div>
+            )}
+            {!loading && error && !error.timeout && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error.message}</div>
             )}
             {!loading && !error && !hasSearched && (
               <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">

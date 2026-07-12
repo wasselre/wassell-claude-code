@@ -114,6 +114,25 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * Typed failure from /api/project-finder. `timeout` marks the platform killing a
+ * too-slow request (Vercel edge FUNCTION_INVOCATION_TIMEOUT → 504; 408/524 kept
+ * for proxy variants) — the finder UIs show a "narrow the search" recovery panel
+ * for these instead of a raw error string. Known live trigger: a wide directional
+ * geo rule ("south of King Salman Rd" ≈ 36k matched points) pushes the geo-match
+ * RPC past the edge time budget.
+ */
+export class FinderRequestError extends Error {
+  status: number | null;
+  timeout: boolean;
+  constructor(message: string, status: number | null) {
+    super(message);
+    this.name = 'FinderRequestError';
+    this.status = status;
+    this.timeout = status === 504 || status === 408 || status === 524;
+  }
+}
+
 export async function fetchProjectFinder(
   args: FetchFinderArgs,
   signal?: AbortSignal,
@@ -143,7 +162,10 @@ export async function fetchProjectFinder(
     // here as { error: '' }. An empty-message Error made SuggestedProjectsView's
     // `error` state falsy, so a 504 rendered as "no matching projects" — a silent
     // failure that read as a legitimate empty result (live incident 2026-07-13).
-    throw new Error(body?.error || `POST /api/project-finder failed (${res.status})`);
+    throw new FinderRequestError(
+      body?.error || `POST /api/project-finder failed (${res.status})`,
+      res.status,
+    );
   }
   return (await res.json()) as FinderResponse;
 }
