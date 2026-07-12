@@ -39,7 +39,8 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
-    const size = clampInt(url.searchParams.get('size'), 1, 200, 50);
+    // Min 50: Haberchat 400s /sync when size < 50 (verified 2026-07-12).
+    const size = clampInt(url.searchParams.get('size'), 50, 200, 50);
     const before = url.searchParams.get('before') ?? undefined;
 
     try {

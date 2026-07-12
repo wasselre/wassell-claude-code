@@ -51,12 +51,27 @@ export default async function handler(req: Request): Promise<Response> {
     return json({ error: 'HABERCHAT_WEBHOOK_SECRET not configured' }, 500);
   }
   const url = new URL(req.url);
-  const sent =
-    req.headers.get('x-webhook-secret') ??
-    url.searchParams.get('secret') ??
-    url.searchParams.get('token') ??
-    '';
-  if (sent !== expected) {
+  // Accept the secret from ANY supported carrier. Haberchat's delivery infra
+  // intermittently attaches an `X-Webhook-Secret` header (sometimes empty /
+  // stale) alongside the registered `?secret=...` URL — the old header-first
+  // precedence 401'd those deliveries even though the URL credential was
+  // valid (live incident 2026-07-12: bursts of fast 401s on the registered
+  // URL, each retried by Haberchat until a 200; their "webhook is failing"
+  // emails were these). Match if any non-empty candidate equals the expected
+  // value so an empty or stale header can never shadow a valid query param.
+  const candidates = [
+    req.headers.get('x-webhook-secret'),
+    url.searchParams.get('secret'),
+    url.searchParams.get('token'),
+  ].filter((v): v is string => !!v);
+  if (!candidates.includes(expected)) {
+    // Log carrier PRESENCE (never values) so runtime logs show which shape
+    // the rejected delivery had — forensics for the next auth drift.
+    console.warn('[webhook] 401 bad secret — carriers:', JSON.stringify({
+      header: req.headers.get('x-webhook-secret') !== null,
+      secretParam: url.searchParams.get('secret') !== null,
+      tokenParam: url.searchParams.get('token') !== null,
+    }));
     return json({ error: 'bad secret' }, 401);
   }
 

@@ -1390,12 +1390,10 @@ interface DbChatMessageRow {
   quoted: ChatMessage['quoted'];
 }
 
-/** Merge one live `chat_messages` row into `chatMessages[chat_wid]`.
- *  If the row's `reference` matches a pending optimistic placeholder, the
- *  placeholder is replaced (keyed by client_id). Otherwise the row is
- *  upserted by id. List stays sorted ascending by date. */
-function applyRealtimeRow(row: DbChatMessageRow): void {
-  const incoming: ChatMessage = {
+/** Map a `chat_messages` table row to the store's ChatMessage shape. Shared
+ *  by the Realtime merge and the mirror-fallback read in loadMessagesForChat. */
+function dbRowToChatMessage(row: DbChatMessageRow): ChatMessage {
+  return {
     id: row.id,
     chat_wid: row.chat_wid,
     flow: row.flow,
@@ -1413,6 +1411,45 @@ function applyRealtimeRow(row: DbChatMessageRow): void {
     reference: row.reference,
     quoted: row.quoted,
   };
+}
+
+/** Read a page of one chat's messages from the `chat_messages` mirror table.
+ *  Fallback path for when the live Haberchat fetch fails (their API has real
+ *  outage windows — e.g. 2026-07-09..12) so the thread renders our ingested
+ *  history instead of a false "no messages yet" empty state. Newest-first
+ *  query, returned ascending like the live path. Returns null when Supabase
+ *  is unconfigured or the read fails. */
+async function loadMessagesFromMirror(
+  chatWid: string,
+  opts: { before?: string; size?: number },
+): Promise<{ messages: ChatMessage[]; hasMore: boolean } | null> {
+  if (!supabase) return null;
+  const size = opts.size ?? 50;
+  let q = supabase
+    .from('chat_messages')
+    .select('*')
+    .eq('chat_wid', chatWid)
+    .order('date', { ascending: false })
+    .limit(size);
+  if (opts.before) q = q.lt('date', opts.before);
+  const { data, error } = await q;
+  if (error) {
+    console.error('[loadMessagesFromMirror] chat_messages read failed:', error.message);
+    return null;
+  }
+  const rows = (data ?? []) as DbChatMessageRow[];
+  return {
+    messages: rows.map(dbRowToChatMessage).reverse(),
+    hasMore: rows.length >= size,
+  };
+}
+
+/** Merge one live `chat_messages` row into `chatMessages[chat_wid]`.
+ *  If the row's `reference` matches a pending optimistic placeholder, the
+ *  placeholder is replaced (keyed by client_id). Otherwise the row is
+ *  upserted by id. List stays sorted ascending by date. */
+function applyRealtimeRow(row: DbChatMessageRow): void {
+  const incoming: ChatMessage = dbRowToChatMessage(row);
   // Capture whether this id is new BEFORE we mutate the slice — used by
   // bumpParentFromMessage to decide whether to increment unread_count.
   const prevState = useAppStore.getState();
@@ -4788,8 +4825,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       result = await listHaberchatMessages(deviceId, chatWid, opts);
     } catch (err) {
-      console.warn('[loadMessagesForChat] proxy call failed:', err);
-      return { hasMore: false };
+      // Haberchat's live API has real outage windows (webhook-failure emails +
+      // intermittent 4xx, 2026-07-09..12). Every ingested message is mirrored
+      // in `chat_messages` — render from the mirror instead of leaving the
+      // thread on a false "no messages yet" empty state. Realtime keeps it
+      // live from there.
+      console.error('[loadMessagesForChat] live fetch failed — using chat_messages mirror:', err);
+      const fallback = await loadMessagesFromMirror(chatWid, opts);
+      if (!fallback) return { hasMore: false };
+      result = fallback;
     }
 
     // Merge into the slice. When `before` is set, we're loading older

@@ -282,7 +282,9 @@ export async function listMessages(
 ): Promise<HaberchatMessage[]> {
   if (!deviceId) throw new HaberchatError(400, 'deviceId is required');
   if (!chatWid) throw new HaberchatError(400, 'chatWid is required');
-  const size = opts.size ?? 50;
+  // Haberchat rejects size < 50 on /sync with a 400 (verified live
+  // 2026-07-12: 49 → 400, 50 → 200). Clamp up so no caller can trip it.
+  const size = Math.max(50, opts.size ?? 50);
   const params = new URLSearchParams({ size: String(size) });
   if (opts.before) params.set('before', opts.before);
   const path = `/chat/${encodeURIComponent(deviceId)}/chats/${encodeURIComponent(chatWid)}/sync?${params.toString()}`;
