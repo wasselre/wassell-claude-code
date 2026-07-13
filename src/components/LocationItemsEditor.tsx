@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { MapPin, Plus, X, Search, Loader2, BadgeCheck, TriangleAlert, Check, Ban } from 'lucide-react';
+import { MapPin, Plus, X, Search, Loader2, BadgeCheck, TriangleAlert, Check, Ban, Map as MapIcon } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import DistrictMapPicker from '@/components/DistrictMapPicker';
 import type { AppModel, ModelField } from '@/types';
 import {
   type LocationItem,
@@ -120,6 +121,8 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
 
   // ── add panel state ───────────────────────────────────────────────────────
   const [mode, setMode] = useState<null | 'district' | 'element'>(null);
+  // Map-based district picker (tap the real boundary polygons to include).
+  const [showMap, setShowMap] = useState(false);
   const [polarity, setPolarity] = useState<GeoPolarity>('include');
   const [districtQuery, setDistrictQuery] = useState('');
 
@@ -296,6 +299,15 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
           >
             <Plus size={13} /> {isAr ? 'إضافة عنصر' : 'Add element'}
           </button>
+          <button
+            type="button"
+            disabled={!cityId}
+            onClick={() => { resetAdd(); setShowMap(true); }}
+            title={!cityId ? (isAr ? 'اختر المدينة أولاً' : 'Pick the city first') : undefined}
+            className="inline-flex items-center gap-1 rounded-lg border border-copper/40 bg-copper/10 px-3 py-1.5 text-xs font-bold text-copper transition hover:bg-copper/20 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <MapIcon size={13} /> {isAr ? 'اختيار من الخريطة' : 'Pick on map'}
+          </button>
         </div>
       ) : (
         <div className="rounded-lg border border-sand/50 bg-white p-3">
@@ -455,9 +467,25 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     </>
   );
 
+  const mapPicker = showMap && cityId ? (
+    <DistrictMapPicker
+      cityId={cityId}
+      items={items}
+      onApply={onChange}
+      onClose={() => setShowMap(false)}
+      isAr={isAr}
+    />
+  ) : null;
+
   return embedded ? (
-    <div className="space-y-2">{inner}</div>
+    <div className="space-y-2">
+      {inner}
+      {mapPicker}
+    </div>
   ) : (
-    <div className="sm:col-span-2 rounded-xl border border-sand/40 bg-cream/30 p-4">{inner}</div>
+    <div className="sm:col-span-2 rounded-xl border border-sand/40 bg-cream/30 p-4">
+      {inner}
+      {mapPicker}
+    </div>
   );
 }
