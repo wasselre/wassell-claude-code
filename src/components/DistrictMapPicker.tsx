@@ -180,35 +180,62 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     return () => polys.forEach((p) => p.setMap(null));
   }, [map, isLoaded, drawnItems]);
 
-  // Draw mode: a DrawingManager captures clicks to build a polygon; on complete
-  // the path becomes ONE drawn_area item (closed [lng,lat] ring) and the manager
-  // stays armed so several separate shapes can be drawn in a row.
+  // Draw mode — MANUAL polygon drawing (Google REMOVED DrawingManager in Maps
+  // JS v3.65; instantiating it throws — live incident 2026-07-13). Each map
+  // click adds a vertex to a gold preview polyline; double-click (or the
+  // "إنهاء الشكل" button) closes the shape into ONE drawn_area item. Draw mode
+  // stays armed so several separate shapes can be drawn in a row. District
+  // polygons are made unclickable while drawing so vertex clicks over them
+  // register on the map instead of toggling a district.
+  const [draftCount, setDraftCount] = useState(0);
+  const draftPathRef = useRef<google.maps.LatLngLiteral[]>([]);
+  const finishDraftRef = useRef<() => void>(() => {});
   useEffect(() => {
-    if (!map || !isLoaded || !drawMode || !window.google?.maps?.drawing) return;
-    const dm = new google.maps.drawing.DrawingManager({
-      drawingMode: google.maps.drawing.OverlayType.POLYGON,
-      drawingControl: false,
-      polygonOptions: { fillColor: GOLD, fillOpacity: 0.3, strokeColor: GOLD, strokeWeight: 2, clickable: false, zIndex: 5 },
+    polygonsRef.current.forEach((p) => p.setOptions({ clickable: !drawMode }));
+    if (!drawMode) setHoverName(null);
+  }, [drawMode]);
+  useEffect(() => {
+    if (!map || !isLoaded || !drawMode || !window.google) return;
+    map.setOptions({ disableDoubleClickZoom: true, draggableCursor: 'crosshair' });
+    const preview = new google.maps.Polyline({
+      map, path: [], strokeColor: GOLD, strokeOpacity: 0.95, strokeWeight: 2.5, zIndex: 6, clickable: false,
     });
-    dm.setMap(map);
-    const l = google.maps.event.addListener(dm, 'polygoncomplete', (poly: google.maps.Polygon) => {
-      const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
-      const path = poly
-        .getPath()
-        .getArray()
-        .map((p) => [round6(p.lng()), round6(p.lat())] as [number, number]);
-      poly.setMap(null); // re-rendered from state with the standard style
+    draftPathRef.current = [];
+    setDraftCount(0);
+
+    const finishDraft = () => {
+      const path = draftPathRef.current;
       if (path.length >= 3) {
-        const ring: [number, number][] = [...path, path[0]!];
+        const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+        const ring = path.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
+        ring.push(ring[0]!);
         setDrawnItems((prev) => [
           ...prev,
           newDrawnAreaItem(ring, `${isAr ? 'منطقة مرسومة' : 'Drawn area'} ${prev.length + 1}`, 'include'),
         ]);
       }
+      draftPathRef.current = [];
+      preview.setPath([]);
+      setDraftCount(0);
+    };
+    finishDraftRef.current = finishDraft;
+
+    const clickL = map.addListener('click', (e: google.maps.MapMouseEvent) => {
+      if (!e.latLng) return;
+      draftPathRef.current = [...draftPathRef.current, { lat: e.latLng.lat(), lng: e.latLng.lng() }];
+      preview.setPath(draftPathRef.current);
+      setDraftCount(draftPathRef.current.length);
     });
+    const dblL = map.addListener('dblclick', () => finishDraft());
+
     return () => {
-      google.maps.event.removeListener(l);
-      dm.setMap(null);
+      google.maps.event.removeListener(clickL);
+      google.maps.event.removeListener(dblL);
+      preview.setMap(null);
+      draftPathRef.current = [];
+      setDraftCount(0);
+      finishDraftRef.current = () => {};
+      map.setOptions({ disableDoubleClickZoom: false, draggableCursor: undefined });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, drawMode]);
@@ -250,10 +277,19 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
             <h2 className="truncate text-base font-bold text-chocolate">{L('اختيار المواقع من الخريطة', 'Pick locations on the map')}</h2>
             <p className="truncate text-[11px] text-charcoal/60">
               {drawMode
-                ? L('ارسم الشكل نقطةً نقطة وأغلقه بالنقر على النقطة الأولى. يمكنك رسم عدة أشكال متفرقة.', 'Click point by point and close the shape on its first point. You can draw several separate shapes.')
+                ? L('انقر على الخريطة لإضافة نقاط الشكل، ثم انقر نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه. يمكنك رسم عدة أشكال متفرقة.', 'Click the map to add the shape’s points, then double-click (or "Finish shape") to close it. You can draw several separate shapes.')
                 : L('اضغط على حي لتضمينه أو لإزالته. الأحياء الحمراء مستثناة (تُدار من القائمة).', 'Tap a district to include or remove it. Red districts are excludes (managed from the list).')}
             </p>
           </div>
+          {drawMode && draftCount >= 3 && (
+            <button
+              type="button"
+              onClick={() => finishDraftRef.current()}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-3 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
+            >
+              <Check size={15} /> {L('إنهاء الشكل', 'Finish shape')}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setDrawMode((v) => !v)}
