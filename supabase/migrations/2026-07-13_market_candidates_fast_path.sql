@@ -32,6 +32,12 @@
 -- the ~4KB blob for every key and was measured SLOWER than returning full data
 -- (9.9s vs 3.4s); jsonb_each measured 2.6s and cut the payload 15MB → 5.4MB.
 --
+-- FIX 3 — too_many short-circuit: when total > p_limit the caller (matchAgent
+-- PASS 3) discards the rows and returns the 'too_many' signal — true for BOTH
+-- the current and previous endpoint code — so return rows:[] instead of building
+-- + shipping a 4000-row agg that gets thrown away (the no-criteria 3-district
+-- scan built 15MB for nothing).
+--
 -- NOTE: the signature changes (added param), so DROP + CREATE — CREATE OR REPLACE
 -- would create a second overload and make PostgREST rpc resolution ambiguous.
 --
@@ -134,23 +140,26 @@ as $function$
       -- the model-level class already proves the answer is true for every row.
       and (case when a.klass = 'all' then true
                 else public.wassell_can_view_record(auth.uid(), r.*) end)
-  )
+  ),
+  tot as (select count(*) as n from filtered)
   select jsonb_build_object(
-    'total', (select count(*) from filtered),
-    'rows', coalesce(
-      (select jsonb_agg(jsonb_build_object(
-                'id', f.id,
-                'data', case
-                  when p_fields is null then f.data
-                  else coalesce(
-                    (select jsonb_object_agg(key, value)
-                       from jsonb_each(f.data) where key = any(p_fields)),
-                    '{}'::jsonb)
-                end
-              ) order by f.id)
-       from (select id, data from filtered order by id limit p_limit) f),
-      '[]'::jsonb
-    )
+    'total', (select n from tot),
+    'rows', case
+      when (select n from tot) > p_limit then '[]'::jsonb
+      else coalesce(
+        (select jsonb_agg(jsonb_build_object(
+                  'id', f.id,
+                  'data', case
+                    when p_fields is null then f.data
+                    else coalesce(
+                      (select jsonb_object_agg(key, value)
+                         from jsonb_each(f.data) where key = any(p_fields)),
+                      '{}'::jsonb)
+                  end
+                ) order by f.id)
+         from (select id, data from filtered order by id limit p_limit) f),
+        '[]'::jsonb)
+    end
   );
 $function$;
 
