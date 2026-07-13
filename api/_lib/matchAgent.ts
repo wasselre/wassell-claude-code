@@ -76,6 +76,24 @@ const NEARBY_MAX_KM = 12;
 // the edge timeout.
 const MARKET_SCAN_LIMIT = 4000;
 
+// The ONLY listing-data keys the market pipeline reads — adaptListingToScorable +
+// recordLocationIds + geoFor(doVerify=false). Passed to the RPC as p_fields so it
+// returns each row's data projected to just these (a full Aqar blob is ~4KB ×
+// 4000 rows ≈ 15MB of jsonb_agg + wire payload; the slim shape measured ~5MB and
+// cut the RPC ~30% — see 2026-07-13_market_candidates_fast_path.sql). If you read
+// a NEW key off a market listing's data anywhere in this pipeline, ADD IT HERE or
+// it will arrive as undefined.
+const MARKET_SLIM_FIELDS = [
+  'title', 'advertiser_name', 'external_id',
+  'price', 'area', 'bedrooms', 'bathrooms',
+  'is_active', 'sold_at',
+  'property_type', 'listing_type', 'category',
+  'main_image_url', 'image_urls', 'features',
+  'latitude', 'longitude', 'geo_confidence',
+  'quality_score', 'quality_grade',
+  'location',
+];
+
 /** Great-circle distance in km between two lat/lng points (haversine). */
 function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371;
@@ -1507,6 +1525,66 @@ export async function matchProjectsCore(
     }
   }
 
+  // ── Market fetch, started EARLY (concurrency, not a barrier). The RPC call only
+  //    needs the resolved district ids + the request filters, all available here —
+  //    so its DB time (~2-3s for a dense district set) overlaps the polygon
+  //    verification + name-map queries below instead of running after them. The
+  //    promise NEVER rejects (errors are folded into the result) so an early
+  //    failure can't become an unhandled rejection before PASS 3 awaits it. ──
+  type MarketFetch =
+    | { kind: 'ok'; rows: RecordRow[] }
+    | { kind: 'too_many'; total: number }
+    | { kind: 'needs_district' }
+    | { kind: 'skip' }
+    | { kind: 'error'; message: string };
+  const marketFetch: Promise<MarketFetch> | null = opts.includeMarket
+    ? (async (): Promise<MarketFetch> => {
+        const mModel = await getModelByName(supabase, 'market_listings');
+        if (!mModel) return { kind: 'skip' };
+        const districtIds = reqDistrictIds.length ? reqDistrictIds : reqDistrictId ? [reqDistrictId] : [];
+        // ALL acceptable types feed the DB-side ILIKE filter (OR) — pre-filtering on
+        // only the first type would drop the other acceptable types' listings before
+        // scoring ever sees them.
+        const reqTypeList = requestedPropertyTypes(req);
+        const typeTerms = reqTypeList.length
+          ? [...new Set(reqTypeList.flatMap((t) => propertyTypeTerms(t)))]
+          : null;
+        const baseArgs = {
+          p_model_id: mModel.id,
+          p_budget_min: req.budget_min ?? null,
+          p_budget_max: req.budget_max ?? null,
+          p_bedrooms: req.bedrooms ?? null,
+          p_type_terms: typeTerms,
+        };
+        // Market SCOPE: the requested district(s) when set; ELSE the client's
+        // location_items AREA (geoGate = geo-matched record ids, which include the
+        // in-area listing ids), so an element/district preference alone scopes market
+        // WITHOUT forcing the rep to also pick a district. Neither → a whole city is
+        // too broad to scan in full (needs_district). DB-side budget/bed/type filters +
+        // the count-then-cap too_many guard apply identically to both scopes.
+        let rpcArgs: Record<string, unknown> | null = null;
+        if (districtIds.length > 0) {
+          rpcArgs = { ...baseArgs, p_district_ids: districtIds };
+        } else if (geoGate && geoGate.size > 0) {
+          rpcArgs = { ...baseArgs, p_district_ids: null, p_record_ids: [...geoGate] };
+        } else {
+          return { kind: 'needs_district' };
+        }
+        // ONE call: returns { total, rows } as a single jsonb value (NOT subject to
+        // PostgREST's ~1000-row response cap), and the expensive filter (id/district +
+        // budget/bed/type + access check) runs EXACTLY ONCE. p_fields slims each
+        // row's data to the keys this pipeline actually reads (MARKET_SLIM_FIELDS).
+        // `total` drives the too_many guard (nothing dropped — we ask for criteria).
+        const { data: jsonResult, error: jErr } = await supabase.rpc('wassell_market_candidates_json', {
+          ...rpcArgs, p_limit: MARKET_SCAN_LIMIT, p_fields: MARKET_SLIM_FIELDS,
+        });
+        if (jErr) return { kind: 'error', message: jErr.message };
+        const total = Number((jsonResult as { total?: number } | null)?.total ?? 0);
+        if (total > MARKET_SCAN_LIMIT) return { kind: 'too_many', total };
+        return { kind: 'ok', rows: ((jsonResult as { rows?: RecordRow[] } | null)?.rows ?? []) as RecordRow[] };
+      })().catch((err) => ({ kind: 'error' as const, message: err instanceof Error ? err.message : String(err) }))
+    : null;
+
   const verifyGeo = opts.verifyGeo === true;
 
   // PostGIS boundary verification: resolve every candidate project's REAL district
@@ -1671,118 +1749,85 @@ export async function matchProjectsCore(
   // (with the missing criteria to ask for) instead of dropping listings.
   let market: MatchResultItem[] = [];
   let marketInfo: MarketInfo = { status: 'ok' };
-  if (opts.includeMarket) {
-    const mModel = await getModelByName(supabase, 'market_listings');
-    if (mModel) {
-      const districtIds = reqDistrictIds.length ? reqDistrictIds : reqDistrictId ? [reqDistrictId] : [];
-      // ALL acceptable types feed the DB-side ILIKE filter (OR) — pre-filtering on
-      // only the first type would drop the other acceptable types' listings before
-      // scoring ever sees them.
-      const reqTypeList = requestedPropertyTypes(req);
-      const typeTerms = reqTypeList.length
-        ? [...new Set(reqTypeList.flatMap((t) => propertyTypeTerms(t)))]
-        : null;
-      const baseArgs = {
-        p_model_id: mModel.id,
-        p_budget_min: req.budget_min ?? null,
-        p_budget_max: req.budget_max ?? null,
-        p_bedrooms: req.bedrooms ?? null,
-        p_type_terms: typeTerms,
-      };
-      // Market SCOPE: the requested district(s) when set; ELSE the client's
-      // location_items AREA (geoGate = geo-matched record ids, which include the
-      // in-area listing ids), so an element/district preference alone scopes market
-      // WITHOUT forcing the rep to also pick a district. Neither → a whole city is
-      // too broad to scan in full (needs_district). DB-side budget/bed/type filters +
-      // the count-then-paginate too_many guard apply identically to both scopes.
-      let rpcArgs: Record<string, unknown> | null = null;
-      if (districtIds.length > 0) {
-        rpcArgs = { ...baseArgs, p_district_ids: districtIds };
-      } else if (geoGate && geoGate.size > 0) {
-        rpcArgs = { ...baseArgs, p_district_ids: null, p_record_ids: [...geoGate] };
-      } else {
-        marketInfo = { status: 'needs_district' };
-      }
-      if (rpcArgs) {
-        try {
-          // ONE call: returns { total, rows } as a single jsonb value (NOT subject to
-          // PostgREST's ~1000-row response cap), and the expensive filter (id/district +
-          // budget/bed/type + per-row RLS) runs EXACTLY ONCE. The old count + 3-page
-          // fetch was 4 round-trips that each re-scanned + re-ran the per-row RLS — ~4×
-          // the work, which made a dense in-area set (2595 villas) take ~16s. `total`
-          // still drives the too_many guard (nothing dropped — we ask for more criteria).
-          const { data: jsonResult, error: jErr } = await supabase.rpc('wassell_market_candidates_json', {
-            ...rpcArgs, p_limit: MARKET_SCAN_LIMIT,
+  if (marketFetch) {
+    const fetched = await marketFetch;
+    if (fetched.kind === 'needs_district') {
+      marketInfo = { status: 'needs_district' };
+    } else if (fetched.kind === 'too_many') {
+      marketInfo = { status: 'too_many', count: fetched.total, suggest: marketSuggestions(req) };
+    } else if (fetched.kind === 'error') {
+      // Non-fatal: a market read failure must not sink the recommendation
+      // (our_projects + all_projects still return). Log loudly AND signal
+      // 'unavailable' so the UI shows "couldn't load market — retry" instead of
+      // a misleading "0 market matches".
+      console.error('[matchProjectsCore] market_listings RPC failed:', fetched.message);
+      marketInfo = { status: 'unavailable' };
+    } else if (fetched.kind === 'ok') {
+      // fetched.kind 'skip' (no market_listings model) falls through: empty market,
+      // status 'ok' — same posture as before the fetch was hoisted.
+      try {
+        const listingRows = fetched.rows;
+        const noMarketVerify = new Map<string, string | null>();
+        for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
+        for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
+        for (const r of listingRows) {
+          const adapted = adaptListingToScorable(r.data);
+          const name = asStr(adapted.project_name);
+          if (!name) continue;
+          if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
+          const loc = recordLocationIds(r.data);
+          // Market listings are EXTERNAL / unverified by design (flagged "verify
+          // before offering") and keep their stored district + own coords
+          // (doVerify=false — boundary verification is for OUR project catalog).
+          const g = geoFor(r, loc, noMarketVerify, false);
+          const s = scoreProject(adapted, req, {
+            projLat: g.projLat,
+            projLng: g.projLng,
+            reqLat,
+            reqLng,
+            reqDistrictId,
+            reqCityId,
+            reqDistrictIds,
+            reqCityIds,
+            reqCentroids,
+            geoConfidence: g.projLat != null && g.projLng != null ? 'high' : null,
+            projDistrictId: g.projDistrictId,
+            projCityId: loc.city || null,
+            projDistrictName: g.projDistrictName,
+            projCityName: cityNameById.get(loc.city) ?? null,
           });
-          if (jErr) throw new Error(jErr.message);
-          const total = Number((jsonResult as { total?: number } | null)?.total ?? 0);
-          if (total > MARKET_SCAN_LIMIT) {
-            marketInfo = { status: 'too_many', count: total, suggest: marketSuggestions(req) };
-          } else {
-            const listingRows = ((jsonResult as { rows?: RecordRow[] } | null)?.rows ?? []) as RecordRow[];
-            const noMarketVerify = new Map<string, string | null>();
-            for (const [k, v] of await geoNameMap(supabase, 'districts', listingRows.map((r) => recordLocationIds(r.data).district))) districtNameById.set(k, v);
-            for (const [k, v] of await geoNameMap(supabase, 'cities', listingRows.map((r) => recordLocationIds(r.data).city))) cityNameById.set(k, v);
-            for (const r of listingRows) {
-              const adapted = adaptListingToScorable(r.data);
-              const name = asStr(adapted.project_name);
-              if (!name) continue;
-              if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
-              const loc = recordLocationIds(r.data);
-              // Market listings are EXTERNAL / unverified by design (flagged "verify
-              // before offering") and keep their stored district + own coords
-              // (doVerify=false — boundary verification is for OUR project catalog).
-              const g = geoFor(r, loc, noMarketVerify, false);
-              const s = scoreProject(adapted, req, {
-                projLat: g.projLat,
-                projLng: g.projLng,
-                reqLat,
-                reqLng,
-                reqDistrictId,
-                reqCityId,
-                reqDistrictIds,
-                reqCityIds,
-                reqCentroids,
-                geoConfidence: g.projLat != null && g.projLng != null ? 'high' : null,
-                projDistrictId: g.projDistrictId,
-                projCityId: loc.city || null,
-                projDistrictName: g.projDistrictName,
-                projCityName: cityNameById.get(loc.city) ?? null,
-              });
-              if (s.score < MIN_RETURN) continue;
-              if (s.available_units_zero && !includeSoldOut) continue;
-              const item: MatchResultItem = {
-                project_id: r.id,
-                project_name: name,
-                data_source: 'market_listings',
-                requires_verification: true,
-                verification_warning: MARKET_WARNING,
-                score: s.score,
-                match_band: s.band,
-                match_type: s.match_type,
-                district_match_basis: s.district_match_basis,
-                score_breakdown: s.breakdown,
-                facts: s.facts,
-                data_gaps: s.data_gaps,
-                missing_info: s.missing_info,
-                location_tier: s.location_tier,
-                distance_km: s.distance_km,
-                nearest_ref_name: s.nearest_ref_name,
-                geo_confidence: s.geo_confidence,
-              };
-              g.annotate(item);
-              market.push(item);
-            }
-            market = market.sort(byBandThenScore);
-          }
-        } catch (err) {
-          // Non-fatal: a market read failure must not sink the recommendation
-          // (our_projects + all_projects still return). Log loudly AND signal
-          // 'unavailable' so the UI shows "couldn't load market — retry" instead of
-          // a misleading "0 market matches" (only if we hadn't already classified it).
-          console.error('[matchProjectsCore] market_listings RPC failed:', err instanceof Error ? err.message : String(err));
-          if (marketInfo.status === 'ok') marketInfo = { status: 'unavailable' };
+          if (s.score < MIN_RETURN) continue;
+          if (s.available_units_zero && !includeSoldOut) continue;
+          const item: MatchResultItem = {
+            project_id: r.id,
+            project_name: name,
+            data_source: 'market_listings',
+            requires_verification: true,
+            verification_warning: MARKET_WARNING,
+            score: s.score,
+            match_band: s.band,
+            match_type: s.match_type,
+            district_match_basis: s.district_match_basis,
+            score_breakdown: s.breakdown,
+            facts: s.facts,
+            data_gaps: s.data_gaps,
+            missing_info: s.missing_info,
+            location_tier: s.location_tier,
+            distance_km: s.distance_km,
+            nearest_ref_name: s.nearest_ref_name,
+            geo_confidence: s.geo_confidence,
+          };
+          g.annotate(item);
+          market.push(item);
         }
+        market = market.sort(byBandThenScore);
+      } catch (err) {
+        // Non-fatal: a market scoring/name-map failure must not sink the
+        // recommendation (our_projects + all_projects still return). Log loudly AND
+        // signal 'unavailable' so the UI shows "couldn't load market — retry"
+        // instead of a misleading "0 market matches".
+        console.error('[matchProjectsCore] market scoring failed:', err instanceof Error ? err.message : String(err));
+        marketInfo = { status: 'unavailable' };
       }
     }
   }

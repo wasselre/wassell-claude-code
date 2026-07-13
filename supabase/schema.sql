@@ -732,6 +732,44 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, p
     AND wassell_record_passes_scope(rec, auth_user_id, 'edit');
 $$;
 
+-- Model-level view-access class, computed ONCE per statement so bulk RPCs can skip
+-- the per-row wassell_can_view_record call when it is provably constant-true:
+--   'all'      — user can view the model AND their view_scope is unrestricted
+--                (admin, no scope rule, mode='all', or filtered with 0 conditions)
+--   'filtered' — view_scope has real per-record conditions (per-row check required)
+--   'none'     — no view permission / inactive / unknown user (zero rows)
+-- MUST mirror wassell_user_has_action + the mode preamble of
+-- wassell_record_passes_scope EXACTLY — if you change either of those, update this
+-- too or the fast path (wassell_market_candidates_json) disagrees with real RLS.
+-- Added 2026-07-13 (migration 2026-07-13_market_candidates_fast_path.sql).
+CREATE OR REPLACE FUNCTION wassell_view_scope_class(auth_user_id UUID, the_model_id UUID)
+RETURNS text
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $$
+DECLARE
+  prof profiles%ROWTYPE;
+  model_perm jsonb;
+  rule jsonb;
+BEGIN
+  IF auth_user_id IS NULL THEN RETURN 'none'; END IF;
+  SELECT p.* INTO prof FROM profiles p
+    JOIN users u ON u.profile_id = p.id
+   WHERE u.auth_uid = auth_user_id AND u.is_active = true LIMIT 1;
+  IF NOT FOUND THEN RETURN 'none'; END IF;
+  IF prof.is_admin THEN RETURN 'all'; END IF;
+  SELECT mp INTO model_perm FROM jsonb_array_elements(prof.model_permissions) mp
+    WHERE (mp->>'model_id')::uuid = the_model_id LIMIT 1;
+  IF model_perm IS NULL THEN RETURN 'none'; END IF;
+  IF NOT ((model_perm->'permissions') @> to_jsonb('view'::text)) THEN RETURN 'none'; END IF;
+  rule := model_perm -> 'view_scope';
+  IF rule IS NULL THEN RETURN 'all'; END IF;
+  IF rule->>'mode' = 'all' THEN RETURN 'all'; END IF;
+  IF rule->>'mode' <> 'filtered' THEN RETURN 'all'; END IF;
+  IF jsonb_array_length(COALESCE(rule->'conditions', '[]'::jsonb)) = 0 THEN RETURN 'all'; END IF;
+  RETURN 'filtered';
+END $$;
+
+GRANT EXECUTE ON FUNCTION public.wassell_view_scope_class(uuid, uuid) TO authenticated, anon;
+
 -- Drop-then-create so re-running schema.sql is idempotent. Matches the
 -- pattern the older RLS sections (wa_*, chat_messages, call_logs, etc.)
 -- already use. Without these DROPs the script fails on re-run with
