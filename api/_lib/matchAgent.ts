@@ -1402,8 +1402,12 @@ export interface MatchCoreOptions {
    *  PostGIS `wassell_geo_match` RPC. Applied BEFORE scoreProject, so it narrows the
    *  candidate pool without touching any scoring weight. `null`/undefined ⇒ no gate
    *  (unchanged behavior for clients without location_items). An EMPTY set is an
-   *  honest "nothing in the preferred areas" — it returns no matches, by design. */
-  geoMatchIds?: Set<string> | null;
+   *  honest "nothing in the preferred areas" — it returns no matches, by design.
+   *  May be a PROMISE: the finder endpoint starts the geo compile+match (~2s)
+   *  concurrently and the core awaits it only right before its first use (the
+   *  market scope decision) — after the model loads + district resolution have
+   *  already run, so the geo time overlaps them instead of preceding them. */
+  geoMatchIds?: Set<string> | null | Promise<Set<string> | null>;
   /** Extra distance-reference points (the client's selected location ELEMENTS,
    *  resolved upstream from location_items → geo_elements centroids). Appended to
    *  the requested districts' centroids so every result's distance_km is measured
@@ -1456,11 +1460,6 @@ export async function matchProjectsCore(
   }
 
   const includeSoldOut = req.include_sold_out === true;
-  // Client location-preference gate (deterministic OR-union / exclusion of
-  // location_items, resolved upstream by wassell_geo_match). When set, a candidate
-  // is only eligible if its record id is in the set — applied BEFORE scoreProject.
-  const geoGate = opts.geoMatchIds ?? null;
-  const passesGeoGate = (id: string) => geoGate === null || geoGate.has(id);
 
   // ── Location intelligence (relational, no legacy text): resolve the requested
   //    district to its authoritative `districts` record → record id (for exact match),
@@ -1548,6 +1547,14 @@ export async function matchProjectsCore(
       }
     }
   }
+
+  // ── Client location-preference GATE, awaited only NOW: when the endpoint passed
+  //    a promise (it starts the ~2s geo compile+match concurrently), the model
+  //    loads + district resolution above already ran while it was in flight. This
+  //    is the first point that needs the resolved set (the market scope decision
+  //    below + the scoring gate later). A plain Set / null passes through as-is. ──
+  const geoGate: Set<string> | null = (await Promise.resolve(opts.geoMatchIds)) ?? null;
+  const passesGeoGate = (id: string) => geoGate === null || geoGate.has(id);
 
   // ── Market fetch, started EARLY (concurrency, not a barrier). The RPC call only
   //    needs the resolved district ids + the request filters, all available here —

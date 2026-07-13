@@ -108,8 +108,10 @@ export interface FinderOptions {
   locale?: 'ar' | 'en';
   /** Client location-preference gate (resolved `location_items` → eligible record
    *  ids via wassell_geo_match). Passed straight to the core; narrows candidates
-   *  BEFORE scoring. Omit/null ⇒ no gate. */
-  geoMatchIds?: Set<string> | null;
+   *  BEFORE scoring. Omit/null ⇒ no gate. May be a PROMISE: the endpoint starts
+   *  the geo compile+match (~2s) concurrently and the core awaits it only right
+   *  before its first use — after the model loads have already run. */
+  geoMatchIds?: Set<string> | null | Promise<Set<string> | null>;
   /** Extra distance-reference points — the client's selected location ELEMENTS
    *  (landmark anchors), resolved from location_items → geo_elements. Every
    *  result's distance_km is measured to the NEAREST selected district OR element. */

@@ -199,10 +199,17 @@ export default async function handler(req: Request): Promise<Response> {
     //      subtracted) — it never alters scoreProject's weights. Best-effort: a
     //      compile/match failure is logged and falls back to NO gate (the legacy
     //      requirements-only behavior) rather than silently returning nothing.
-    let geoMatchIds: Set<string> | null = null;
-    let geoFilter: { applied: boolean; match_count: number; needs_review: number } | null = null;
     const clientId = str(body.client_id);
-    if (clientId) {
+    // Started here but NOT awaited: the ~2s compile+match runs CONCURRENTLY with
+    // the element ref-point resolution below AND the engine's model loads —
+    // matchProjectsCore awaits the gate only right before its first use (the
+    // market scope decision). The promise never rejects (a failure falls back to
+    // NO gate — the legacy requirements-only behavior — same as before).
+    const geoGatePromise: Promise<{
+      gate: Set<string> | null;
+      filter: { applied: boolean; match_count: number; needs_review: number } | null;
+    }> = (async () => {
+      if (!clientId) return { gate: null, filter: null };
       // Compile from the DRAFT location_items when the caller supplied them (so an
       // unsaved "south of the road" edit filters immediately); else the saved record.
       const draftItems = Array.isArray(body.location_items) ? body.location_items : null;
@@ -211,31 +218,36 @@ export default async function handler(req: Request): Promise<Response> {
         : await supabase.rpc('wassell_compile_client_geo', { p_client_id: clientId });
       if (compileErr) {
         console.error('[project-finder] geo compile failed:', compileErr.message);
-      } else {
-        const includes = Number((compiled as { includes?: number } | null)?.includes ?? 0);
-        const needsReview = Number((compiled as { needs_review?: number } | null)?.needs_review ?? 0);
-        if (includes > 0) {
-          // Get the FULL in-area record-id set in ONE call. The row-returning
-          // wassell_geo_match is capped at PostgREST's ~1000-row response (the area can
-          // be thousands — north-of-King-Salman-Rd = 8046), which silently truncated the
-          // gate. wassell_geo_match_ids returns a single uuid[] (one row → no cap), and
-          // the underlying scan runs exactly once.
-          const { data: idArr, error: matchErr } = await supabase.rpc('wassell_geo_match_ids', {
-            p_client_id: clientId,
-          });
-          if (matchErr) {
-            console.error('[project-finder] geo match failed:', matchErr.message);
-          } else {
-            geoMatchIds = new Set(((idArr as string[] | null) ?? []).filter(Boolean));
-            geoFilter = { applied: true, match_count: geoMatchIds.size, needs_review: needsReview };
-          }
-        } else if (needsReview > 0) {
-          // Includes exist but none are usable yet (e.g. unresolved element). Surface
-          // it — do NOT gate (would return nothing and read as "no results").
-          geoFilter = { applied: false, match_count: 0, needs_review: needsReview };
-        }
+        return { gate: null, filter: null };
       }
-    }
+      const includes = Number((compiled as { includes?: number } | null)?.includes ?? 0);
+      const needsReview = Number((compiled as { needs_review?: number } | null)?.needs_review ?? 0);
+      if (includes > 0) {
+        // Get the FULL in-area record-id set in ONE call. The row-returning
+        // wassell_geo_match is capped at PostgREST's ~1000-row response (the area can
+        // be thousands — north-of-King-Salman-Rd = 8046), which silently truncated the
+        // gate. wassell_geo_match_ids returns a single uuid[] (one row → no cap), and
+        // the underlying scan runs exactly once.
+        const { data: idArr, error: matchErr } = await supabase.rpc('wassell_geo_match_ids', {
+          p_client_id: clientId,
+        });
+        if (matchErr) {
+          console.error('[project-finder] geo match failed:', matchErr.message);
+          return { gate: null, filter: null };
+        }
+        const gate = new Set(((idArr as string[] | null) ?? []).filter(Boolean));
+        return { gate, filter: { applied: true, match_count: gate.size, needs_review: needsReview } };
+      }
+      if (needsReview > 0) {
+        // Includes exist but none are usable yet (e.g. unresolved element). Surface
+        // it — do NOT gate (would return nothing and read as "no results").
+        return { gate: null, filter: { applied: false, match_count: 0, needs_review: needsReview } };
+      }
+      return { gate: null, filter: null };
+    })().catch((e) => {
+      console.error('[project-finder] geo gate failed (non-fatal, no gate):', e instanceof Error ? e.message : e);
+      return { gate: null, filter: null as { applied: boolean; match_count: number; needs_review: number } | null };
+    });
 
     // (1c) Selected location ELEMENTS as distance references. Every card shows its
     //      distance from the CLOSEST selected reference (district centroid OR
@@ -298,13 +310,16 @@ export default async function handler(req: Request): Promise<Response> {
       minScore: num(body.minScore),
       sources,
       locale,
-      geoMatchIds,
+      // The gate as a PROMISE — the core awaits it after its model loads.
+      geoMatchIds: geoGatePromise.then((g) => g.gate),
       refPoints: refPoints.length ? refPoints : undefined,
     });
     if (!finder.ok) {
       console.error('[project-finder] engine failed:', finder.error);
       return jsonError(502, `project finder failed: ${finder.error}`);
     }
+    // Long resolved by now (the engine awaited the gate) — just read the metadata.
+    const geoFilter = (await geoGatePromise).filter;
     let result = finder.result;
 
     // (3) Optional LLM EXPLANATION — replaces explanation strings only; the guard
