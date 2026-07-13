@@ -1,7 +1,7 @@
 # PRD: Document Generation (templated branded PDFs from records)
 
 **Status:** Live
-**Last updated:** 2026-06-21
+**Last updated:** 2026-07-13 (**Schedulable sends:** the Send-to-customer confirm modal gains a «جدولة» / Schedule button (shared `SchedulePopover` from the chats feature) — the PDF is uploaded to Haberchat now but the document message waits in Haberchat’s delivery queue until the chosen time (`deliverAt`, validated ≥1 min ahead by `/api/send-document`). The activity log distinguishes scheduled sends («جُدول إرسال مستند») from immediate ones.)
 **Related PRDs:** [files.md](files.md) (Documents = the template surface + where PDFs land), [record-management.md](record-management.md) (the record form the actions live on), [chats.md](chats.md) (Haberchat send), [decks.md](decks.md) (the Fly worker + queue pattern this reuses)
 
 ## What it is (in plain English)
@@ -21,7 +21,7 @@ A reservation/offer was only data — staff had no way to produce the formal doc
 - **Variables resolve at generation time** from the record + its linked records, walked **source → client → unit → unit's project → project** (first non-empty wins). Same formatting as the editor's live preview (dropdown→label, currency→`N ر.س`, date→localized, range→min–max, lookup→title). Engine-added tokens: `{{today}}` (Riyadh date), `{{sales_rep}}` (assignee→user name), `{{client_phone}}` (canonical KSA E.164).
 - **Rendering is server-side** on the Fly worker: template content → branded **DOCX** (logo embedded as a real image) → **LibreOffice → PDF** (the same engine that powers office previews — correct Arabic/Amiri). The browser never waits on the render; it enqueues and polls (no SSE — same hard rule as every worker queue).
 - **The generated PDF is a first-class `files` row** (`kind='pdf'`), owned by the generator, attached to the source record (`files.model_id`/`record_id`), and linked via `document_links` to the client / unit / project — so it surfaces on each of those records' "Linked documents" panel. On the source record it appears in the "Generate documents" panel (driven by `document_jobs`), not double-listed.
-- **Send to customer = generate → confirm → send.** The confirm modal shows the resolved client name + **canonical phone** and the WhatsApp device (default, switchable when >1), with an editable bilingual caption. It blocks (never silently fails) when the client has no valid phone or no active device exists. The PDF is re-hosted to Haberchat and sent as a document message; the send is logged to `activity_log` (`category='file'`, `event_type='document_sent'`).
+- **Send to customer = generate → confirm → send.** The confirm modal shows the resolved client name + **canonical phone** and the WhatsApp device (default, switchable when >1), with an editable bilingual caption. It blocks (never silently fails) when the client has no valid phone or no active device exists. The PDF is re-hosted to Haberchat and sent as a document message — immediately via **Send**, or at a future time via **«جدولة» / Schedule** (shared `SchedulePopover`; Haberchat’s delivery queue holds the message, so it sends even with the app closed). The send is logged to `activity_log` (`category='file'`, `event_type='document_sent'`, with `deliver_at` and a «جُدول» summary for scheduled sends).
 - **The panel self-hides** when the record's model has no templates and no generated PDFs — zero change for models without templates.
 - **Author token palette:** opening a template in the Documents editor shows the bound model's available `{{slug}}` tokens (model fields + lookup/`unit_picker` targets, depth 1, + the engine extras) in the CRM-variables popover, instead of the empty "link a record" state.
 
@@ -47,7 +47,7 @@ A reservation/offer was only data — staff had no way to produce the formal doc
 | `worker/src/documents/{variables,docx,pageSettings}.ts` | COPIES of `src/lib/documents/*` (resolver, DOCX builder **with logo embedding**, page geometry) — the worker can't import `src/`. Keep in sync. |
 | `api/generate-document.ts` | Validate + enqueue (202 + job id). |
 | `api/document-status.ts` | Poll one job (ready/pending/failed) + list a record's generated PDFs. |
-| `api/send-document.ts` | Resolve phone → download PDF → Haberchat upload + send → log. |
+| `api/send-document.ts` | Resolve phone → download PDF → Haberchat upload + send (optional validated `deliverAt` for scheduled delivery) → log. |
 | `src/lib/documents/templateRegistry.ts` | Template CRUD service (list/create/bind/default/delete). |
 | `src/lib/documents/generate.ts` / `sendDocument.ts` | Enqueue + poll + list; send-to-customer. |
 | `src/lib/documents/recordDocTemplates.ts` | STARTER content builders (Reservation, Offer) — editable seeds, never the engine. |

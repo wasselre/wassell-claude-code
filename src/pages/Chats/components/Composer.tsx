@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type KeyboardEvent } from 'react';
-import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock, CalendarClock } from 'lucide-react';
+import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile, listScheduledMessages, cancelScheduledMessage } from '@/lib/haberchat/client';
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import TemplatePickerModal from './TemplatePickerModal';
+import SchedulePopover, { formatScheduleTime } from './SchedulePopover';
 import type { ChatMessage, ScheduledChatMessage } from '@/types';
 
 /**
@@ -138,10 +139,10 @@ export default function Composer({
         await sendChatMessage(chatWid, { body, deliverAt });
       }
       // Project gallery rides along as its own image messages after the text.
-      // (Blocked for scheduled sends — the schedule button is disabled while
-      // a gallery is attached.)
-      if (projectImages.length > 0 && !deliverAt) {
-        await sendProjectImageMessages(chatWid, projectImages);
+      // Scheduled sends stagger each image a few seconds after the text so
+      // the queue delivers them in order.
+      if (projectImages.length > 0) {
+        await sendProjectImageMessages(chatWid, projectImages, { deliverAt });
       }
       if (deliverAt) {
         addToast(
@@ -305,20 +306,15 @@ export default function Composer({
             className="flex-1 resize-none border-0 bg-transparent px-2 py-2 text-sm text-charcoal placeholder:text-charcoal/40 focus:outline-none leading-relaxed"
             dir="auto"
           />
-          {/* Schedule — hand the composed message to Haberchat's delivery
-              queue for a future time. Disabled while a template gallery is
-              attached (ride-along images can't be scheduled). */}
+          {/* Schedule — hand the composed message (incl. any gallery, which
+              is staggered after the text) to Haberchat's delivery queue. */}
           <div className="relative shrink-0">
             <button
               onClick={() => setShowSchedule((v) => !v)}
-              disabled={!canSend || projectImageFileIds.length > 0}
+              disabled={!canSend}
               className="w-9 h-9 rounded-full text-charcoal/60 hover:text-copper hover:bg-cream disabled:text-charcoal/20 disabled:cursor-not-allowed flex items-center justify-center transition-colors"
               aria-label={isAr ? 'جدولة الرسالة' : 'Schedule message'}
-              title={
-                projectImageFileIds.length > 0
-                  ? (isAr ? 'لا يمكن جدولة رسالة مع معرض صور' : 'A message with a photo gallery can’t be scheduled')
-                  : (isAr ? 'جدولة الإرسال لوقت لاحق' : 'Schedule for later')
-              }
+              title={isAr ? 'جدولة الإرسال لوقت لاحق' : 'Schedule for later'}
               type="button"
             >
               <Clock size={16} />
@@ -353,139 +349,6 @@ export default function Composer({
 }
 
 // ─── Scheduling ─────────────────────────────────────────────────────
-
-/** Format a deliverAt for toasts / strip rows — localized date + time. */
-function formatScheduleTime(iso: string, isAr: boolean): string {
-  try {
-    const d = new Date(iso);
-    const now = new Date();
-    const sameDay = d.toDateString() === now.toDateString();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(now.getDate() + 1);
-    const isTomorrow = d.toDateString() === tomorrow.toDateString();
-    const time = new Intl.DateTimeFormat(isAr ? 'ar-SA' : 'en-US', { timeStyle: 'short' }).format(d);
-    if (sameDay) return isAr ? `اليوم ${time}` : `today at ${time}`;
-    if (isTomorrow) return isAr ? `غدًا ${time}` : `tomorrow at ${time}`;
-    const date = new Intl.DateTimeFormat(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(d);
-    return date;
-  } catch {
-    return iso;
-  }
-}
-
-/** Local-time "YYYY-MM-DDTHH:mm" for <input type="datetime-local">. */
-function toLocalInputValue(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/**
- * Small popover anchored to the clock button: quick presets + a custom
- * datetime picker. Confirms with a future ISO datetime.
- */
-function SchedulePopover({
-  isAr,
-  onClose,
-  onConfirm,
-}: {
-  isAr: boolean;
-  onClose: () => void;
-  onConfirm: (iso: string) => void;
-}) {
-  // Default the custom picker to one hour from now.
-  const [customValue, setCustomValue] = useState(() => {
-    const d = new Date(Date.now() + 60 * 60 * 1000);
-    d.setSeconds(0, 0);
-    return toLocalInputValue(d);
-  });
-
-  const presets = useMemo(() => {
-    const now = new Date();
-    const list: Array<{ key: string; label: string; date: Date }> = [];
-
-    const inOneHour = new Date(now.getTime() + 60 * 60 * 1000);
-    list.push({ key: '1h', label: isAr ? 'بعد ساعة' : 'In 1 hour', date: inOneHour });
-
-    const tonight = new Date(now);
-    tonight.setHours(20, 0, 0, 0);
-    if (tonight.getTime() > now.getTime() + 5 * 60 * 1000) {
-      list.push({ key: 'tonight', label: isAr ? 'مساء اليوم 8:00' : 'Tonight 8:00 PM', date: tonight });
-    }
-
-    const tomorrowMorning = new Date(now);
-    tomorrowMorning.setDate(now.getDate() + 1);
-    tomorrowMorning.setHours(10, 0, 0, 0);
-    list.push({ key: 'tm-am', label: isAr ? 'غدًا صباحًا 10:00' : 'Tomorrow 10:00 AM', date: tomorrowMorning });
-
-    const tomorrowEvening = new Date(now);
-    tomorrowEvening.setDate(now.getDate() + 1);
-    tomorrowEvening.setHours(20, 0, 0, 0);
-    list.push({ key: 'tm-pm', label: isAr ? 'غدًا مساءً 8:00' : 'Tomorrow 8:00 PM', date: tomorrowEvening });
-
-    return list;
-  }, [isAr]);
-
-  const confirm = (d: Date) => {
-    onConfirm(d.toISOString());
-  };
-
-  const customDate = new Date(customValue);
-  const customValid = !Number.isNaN(customDate.getTime()) && customDate.getTime() > Date.now() + 60 * 1000;
-
-  return (
-    <>
-      {/* Click-outside overlay */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-      <div className="absolute bottom-full end-0 mb-2 z-50 w-64 bg-white rounded-xl shadow-lg border border-sand/30 p-3">
-        <div className="flex items-center gap-1.5 text-xs font-bold text-chocolate mb-2">
-          <CalendarClock size={13} className="text-copper" />
-          {isAr ? 'جدولة الإرسال' : 'Schedule send'}
-        </div>
-        <div className="flex flex-col gap-1">
-          {presets.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => confirm(p.date)}
-              className="w-full text-start text-xs px-2.5 py-1.5 rounded-lg hover:bg-cream/70 text-charcoal transition-colors flex items-center justify-between gap-2"
-              type="button"
-            >
-              <span>{p.label}</span>
-              <span className="text-[10px] text-charcoal/40" dir="ltr">
-                {new Intl.DateTimeFormat(isAr ? 'ar-SA' : 'en-US', { timeStyle: 'short' }).format(p.date)}
-              </span>
-            </button>
-          ))}
-        </div>
-        <div className="border-t border-sand/30 mt-2 pt-2">
-          <label className="block text-[10px] font-medium text-charcoal/60 mb-1">
-            {isAr ? 'أو اختر وقتًا محددًا' : 'Or pick a specific time'}
-          </label>
-          <input
-            type="datetime-local"
-            value={customValue}
-            min={toLocalInputValue(new Date(Date.now() + 2 * 60 * 1000))}
-            onChange={(e) => setCustomValue(e.target.value)}
-            className="w-full text-xs border border-sand rounded-lg px-2 py-1.5 text-charcoal focus:outline-none focus:border-copper"
-            dir="ltr"
-          />
-          <button
-            onClick={() => customValid && confirm(customDate)}
-            disabled={!customValid}
-            className="mt-2 w-full text-xs font-bold rounded-lg px-3 py-1.5 bg-copper text-white hover:bg-terracotta disabled:bg-charcoal/20 disabled:cursor-not-allowed transition-colors"
-            type="button"
-          >
-            {isAr ? 'جدولة' : 'Schedule'}
-          </button>
-          {!customValid && (
-            <p className="text-[10px] text-charcoal/40 mt-1">
-              {isAr ? 'اختر وقتًا في المستقبل' : 'Pick a time in the future'}
-            </p>
-          )}
-        </div>
-      </div>
-    </>
-  );
-}
 
 /**
  * Chips for scheduled messages waiting in Haberchat's queue for this chat.

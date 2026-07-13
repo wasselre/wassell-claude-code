@@ -2862,6 +2862,10 @@ export interface AppState {
      * id directly — explicit selection wins over the phone-match heuristic.
      */
     clientRecordId?: string;
+    /** Future ISO datetime — schedule the first message instead of sending
+     *  now. The conversation record is still created immediately; the
+     *  message waits in Haberchat's delivery queue. */
+    deliverAt?: string;
   }) => Promise<{ recordId: string; chatWid: string }>;
   /**
    * Subscribe to Supabase Realtime INSERT/UPDATE events on `chat_messages`

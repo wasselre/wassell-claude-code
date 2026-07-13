@@ -35,9 +35,23 @@ const VIDEO_EXT_MIME: Record<string, string> = {
 export async function sendProjectImageMessages(
   chatWid: string,
   fileIds: string[] | null | undefined,
+  opts: {
+    /**
+     * Schedule instead of sending now: the caller's text message sits in
+     * Haberchat's queue at this time, and each gallery item is staggered a
+     * few seconds after it (queue order within the same second isn't
+     * guaranteed, so the stagger keeps text → image1 → image2 delivery
+     * order). Uploads to Haberchat still happen immediately.
+     */
+    deliverAt?: string;
+  } = {},
 ): Promise<{ sent: number; failed: number }> {
   const ids = (fileIds ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0);
   if (ids.length === 0) return { sent: 0, failed: 0 };
+
+  // Media message i goes out at deliverAt + (i+1) * 10s.
+  const baseDeliverMs = opts.deliverAt ? new Date(opts.deliverAt).getTime() : null;
+  const STAGGER_MS = 10_000;
 
   const { sendChatMessage, addToast, language } = useAppStore.getState();
   const isAr = language === 'ar';
@@ -63,7 +77,7 @@ export async function sendProjectImageMessages(
 
   let sent = 0;
   let failed = 0;
-  for (const id of ids) {
+  for (const [index, id] of ids.entries()) {
     const url = isUrl(id) ? id : signed[id];
     if (!url) {
       failed++;
@@ -90,6 +104,9 @@ export async function sendProjectImageMessages(
         kind: mime.startsWith('video/') ? 'video' : 'image',
         mediaMime: uploaded.mime ?? mime,
         mediaSize: uploaded.size ?? blob.size,
+        deliverAt: baseDeliverMs != null
+          ? new Date(baseDeliverMs + (index + 1) * STAGGER_MS).toISOString()
+          : undefined,
       });
       sent++;
     } catch {

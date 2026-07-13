@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, Loader2, Send } from 'lucide-react';
+import { AlertCircle, Clock, Loader2, Send } from 'lucide-react';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { normalizePhone } from '@/lib/phone';
 import { recordTitle } from '@/lib/documents/links';
 import { sendDocumentToCustomer } from '@/lib/documents/sendDocument';
+import SchedulePopover, { formatScheduleTime } from '@/pages/Chats/components/SchedulePopover';
 
 interface Props {
   open: boolean;
@@ -66,6 +67,7 @@ export default function SendDocumentModal({ open, onClose, fileId, fileName, mod
   const [deviceId, setDeviceId] = useState(defaultDeviceId);
   const [caption, setCaption] = useState(t('doc.send.caption_default'));
   const [busy, setBusy] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
 
   const effectiveDevice = deviceId || defaultDeviceId;
   const canSend = !!clientPhone && !!effectiveDevice && !busy;
@@ -73,12 +75,21 @@ export default function SendDocumentModal({ open, onClose, fileId, fileName, mod
   const deviceLabel = (d: (typeof activeDevices)[number]) =>
     (isAr ? d.friendly_name_ar : d.friendly_name_en) || d.phone;
 
-  const handleSend = async () => {
+  /** Send now (no arg) or schedule (future ISO — Haberchat's delivery queue). */
+  const handleSend = async (deliverAt?: string) => {
     if (!canSend) return;
     setBusy(true);
+    setShowSchedule(false);
     try {
-      await sendDocumentToCustomer({ fileId, recordId, deviceId: effectiveDevice, caption: caption.trim() });
-      addToast(t('doc.send.success'), 'success');
+      await sendDocumentToCustomer({ fileId, recordId, deviceId: effectiveDevice, caption: caption.trim(), deliverAt });
+      addToast(
+        deliverAt
+          ? (isAr
+              ? `تمت جدولة المستند — سيرسل ${formatScheduleTime(deliverAt, true)}`
+              : `Document scheduled — will send ${formatScheduleTime(deliverAt, false)}`)
+          : t('doc.send.success'),
+        'success',
+      );
       onClose();
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -100,6 +111,26 @@ export default function SendDocumentModal({ open, onClose, fileId, fileName, mod
           <Button variant="secondary" disabled={busy} onClick={onClose}>
             {t('common.cancel')}
           </Button>
+          {/* Schedule — same document + caption, delivered later from
+              Haberchat's queue. */}
+          <div className="relative">
+            <Button
+              variant="secondary"
+              disabled={!canSend}
+              onClick={() => setShowSchedule((v) => !v)}
+              title={isAr ? 'جدولة الإرسال لوقت لاحق' : 'Schedule for later'}
+            >
+              <Clock size={16} />
+              {isAr ? 'جدولة' : 'Schedule'}
+            </Button>
+            {showSchedule && (
+              <SchedulePopover
+                isAr={isAr}
+                onClose={() => setShowSchedule(false)}
+                onConfirm={(iso) => void handleSend(iso)}
+              />
+            )}
+          </div>
           <Button variant="primary" disabled={!canSend} onClick={() => void handleSend()}>
             {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
             {t('doc.send.send')}

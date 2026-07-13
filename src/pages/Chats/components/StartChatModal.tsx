@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { X, Send, Loader2, User, UserCheck, Phone as PhoneIcon, MessageSquare, Pencil, AlertCircle } from 'lucide-react';
+import { X, Send, Loader2, User, UserCheck, Phone as PhoneIcon, MessageSquare, Pencil, AlertCircle, Clock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useApplyViewScope } from '@/hooks/usePermission';
 import { normalizePhone } from '@/lib/phone';
@@ -10,6 +10,7 @@ import PhoneInput from '@/pages/Records/components/PhoneInput';
 import Button from '@/components/ui/Button';
 import ClientPicker, { type PickedClient, resolveClientSlugs, recordToPickedClient } from './ClientPicker';
 import TemplatePickerModal from './TemplatePickerModal';
+import SchedulePopover, { formatScheduleTime } from './SchedulePopover';
 
 type Mode = 'client' | 'manual';
 
@@ -64,6 +65,7 @@ export default function StartChatModal({
   const isAr = useAppStore((s) => s.language === 'ar');
   const waDevices = useAppStore((s) => s.waDevices);
   const startNewChat = useAppStore((s) => s.startNewChat);
+  const addToast = useAppStore((s) => s.addToast);
   const models = useAppStore((s) => s.models);
   const records = useAppStore((s) => s.records);
 
@@ -92,6 +94,7 @@ export default function StartChatModal({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Resolve + validate the recipient phone for the current mode. Client mode
@@ -148,10 +151,12 @@ export default function StartChatModal({
     else setClient(null);
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  /** Send now (no arg) or schedule (future ISO datetime — the message waits
+   *  in Haberchat's delivery queue; the conversation still opens now). */
+  const doSend = async (deliverAt?: string) => {
     if (!canSend || !normalizedRecipient) return;
     setSending(true);
+    setShowSchedule(false);
     setError(null);
     try {
       const result = await startNewChat({
@@ -161,13 +166,23 @@ export default function StartChatModal({
         // Explicit client selection links the conversation directly; manual
         // entry leaves linking to the phone-match heuristic in startNewChat.
         clientRecordId: mode === 'client' ? client?.recordId : undefined,
+        deliverAt,
       });
       // Send the project gallery (if any) into the just-created conversation —
-      // each image as its own WhatsApp message after the first text message.
+      // each image as its own WhatsApp message after the first text message
+      // (scheduled sends stagger them after the text's delivery time).
       // chatWid mirrors startNewChat's derivation from the canonical E.164.
       if (initialImageFileIds && initialImageFileIds.length > 0) {
         const chatWid = `${normalizedRecipient.slice(1)}@c.us`;
-        await sendProjectImageMessages(chatWid, initialImageFileIds);
+        await sendProjectImageMessages(chatWid, initialImageFileIds, { deliverAt });
+      }
+      if (deliverAt) {
+        addToast(
+          isAr
+            ? `تمت الجدولة — سترسل ${formatScheduleTime(deliverAt, true)}`
+            : `Scheduled — will send ${formatScheduleTime(deliverAt, false)}`,
+          'success',
+        );
       }
       if (onSent) {
         // Caller (e.g. the Follow-up Workspace) takes over — it closes this
@@ -182,6 +197,11 @@ export default function StartChatModal({
     } finally {
       setSending(false);
     }
+  };
+
+  const handleSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    void doSend();
   };
 
   return (
@@ -387,6 +407,27 @@ export default function StartChatModal({
               <Button type="button" variant="secondary" onClick={onClose} disabled={sending}>
                 {isAr ? 'إلغاء' : 'Cancel'}
               </Button>
+              {/* Schedule — same composed message, delivered later from
+                  Haberchat's queue. The conversation still opens now. */}
+              <div className="relative">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!canSend}
+                  onClick={() => setShowSchedule((v) => !v)}
+                  title={isAr ? 'جدولة الإرسال لوقت لاحق' : 'Schedule for later'}
+                >
+                  <Clock size={14} />
+                  {isAr ? 'جدولة' : 'Schedule'}
+                </Button>
+                {showSchedule && (
+                  <SchedulePopover
+                    isAr={isAr}
+                    onClose={() => setShowSchedule(false)}
+                    onConfirm={(iso) => void doSend(iso)}
+                  />
+                )}
+              </div>
               <Button type="submit" variant="primary" disabled={!canSend}>
                 {sending ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
                 {isAr ? 'إرسال' : 'Send'}

@@ -32,6 +32,8 @@ interface Body {
   recordId?: string;
   deviceId?: string;
   caption?: string;
+  /** Future ISO datetime — schedule the send via Haberchat's delivery queue. */
+  deliverAt?: string;
 }
 
 function asLinkId(v: unknown): string | null {
@@ -116,6 +118,15 @@ export default async function handler(req: Request): Promise<Response> {
 
     const caption = (body.caption ?? '').trim() || 'مرفق المستند الخاص بكم من وصل العقارية.';
 
+    // Scheduled sends: validate the same way the messages proxy does — a
+    // valid ISO timestamp at least ~1 minute out.
+    const deliverAt = typeof body.deliverAt === 'string' && body.deliverAt ? body.deliverAt : undefined;
+    if (deliverAt) {
+      const t = new Date(deliverAt).getTime();
+      if (Number.isNaN(t)) return jsonError(400, 'deliverAt must be a valid ISO 8601 datetime');
+      if (t <= Date.now() + 30_000) return jsonError(400, 'deliverAt must be at least 1 minute in the future');
+    }
+
     try {
       const uploaded = await haberUpload(fd);
       const sent = await haberSend({
@@ -123,12 +134,17 @@ export default async function handler(req: Request): Promise<Response> {
         phone,
         mediaFileId: uploaded.fileId,
         mediaCaption: caption,
+        deliverAt,
       });
       void logFileActivityServer({
         event_type: 'document_sent',
-        summary_ar: `أُرسل مستند عبر واتساب: ${file.original_name}`,
-        summary_en: `Document sent via WhatsApp: ${file.original_name}`,
-        details: { file_id: fileId, record_id: recordId, phone, message_wid: sent.wid },
+        summary_ar: deliverAt
+          ? `جُدول إرسال مستند عبر واتساب: ${file.original_name}`
+          : `أُرسل مستند عبر واتساب: ${file.original_name}`,
+        summary_en: deliverAt
+          ? `Document scheduled via WhatsApp: ${file.original_name}`
+          : `Document sent via WhatsApp: ${file.original_name}`,
+        details: { file_id: fileId, record_id: recordId, phone, message_wid: sent.wid, deliver_at: deliverAt ?? null },
         actor_email: user.email,
         status: 'success',
       });

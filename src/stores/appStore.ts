@@ -5009,7 +5009,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  startNewChat: async (input: { phone: string; body: string; deviceId?: string; clientRecordId?: string }) => {
+  startNewChat: async (input: { phone: string; body: string; deviceId?: string; clientRecordId?: string; deliverAt?: string }) => {
     const state = get();
     const chatsModel = state.models.find((m) => m.name === 'chats');
     if (!chatsModel) throw new Error('chats model not found');
@@ -5092,6 +5092,27 @@ export const useAppStore = create<AppState>((set, get) => ({
       table: 'models',
       id: record.model_id,
     });
+
+    // Scheduled first message — the conversation record above still gets
+    // created (so the user can open it and see the scheduled chip), but the
+    // message goes to Haberchat's delivery queue instead of out now. No
+    // optimistic bubble; the webhook echoes it at delivery time.
+    if (input.deliverAt) {
+      try {
+        await sendHaberchatMessage({
+          deviceId,
+          phone: e164,
+          body,
+          reference: uuid(),
+          deliverAt: input.deliverAt,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        get().addToast(msg, 'error');
+        throw err;
+      }
+      return { recordId: record.id, chatWid };
+    }
 
     // Now send the first message — use the same optimistic+proxy flow as
     // sendChatMessage. We inline it (not delegate) because sendChatMessage

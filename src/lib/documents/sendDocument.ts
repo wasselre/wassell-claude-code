@@ -11,6 +11,8 @@ export async function sendDocumentToCustomer(input: {
   recordId: string;
   deviceId: string;
   caption: string;
+  /** Future ISO datetime — schedule the send via Haberchat's delivery queue. */
+  deliverAt?: string;
 }): Promise<{ ok: true; wid: string }> {
   const res = await fetch('/api/send-document', {
     method: 'POST',
