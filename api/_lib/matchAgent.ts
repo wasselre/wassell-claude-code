@@ -596,6 +596,29 @@ async function getModelByName(
   return { id: data.id as string, schema: data.schema };
 }
 
+/**
+ * Load ALL records of a model in ONE RPC round-trip (`wassell_model_records_json`,
+ * a single jsonb value → no PostgREST row cap), gated by the same model-level
+ * access fast path as the market scan: an unrestricted view scope skips the
+ * per-row RLS evaluation that made the paged unified_records read ~6.4s for
+ * 980 all_projects rows (measured live 2026-07-13; the RPC is ~1.3s). The RPC
+ * reads unified_records so frozen models keep working. `fields` optionally
+ * slims each row's data to just those keys.
+ * Falls back to the paged per-row-RLS read if the RPC is unavailable.
+ */
+async function loadModelRecords(
+  supabase: SupabaseClient,
+  modelId: string,
+  fields?: string[],
+): Promise<RecordRow[]> {
+  const { data, error } = await supabase.rpc('wassell_model_records_json', {
+    p_model_id: modelId, p_fields: fields ?? null,
+  });
+  if (!error && Array.isArray(data)) return data as RecordRow[];
+  if (error) console.error('[matchAgent] wassell_model_records_json failed, falling back to paged read:', error.message);
+  return pageRecords(supabase, modelId);
+}
+
 /** Page every record of a model via unified_records (frozen-safe + truncation-safe). */
 async function pageRecords(supabase: SupabaseClient, modelId: string, maxPages = 20): Promise<RecordRow[]> {
   const pageSize = 1000;
@@ -622,7 +645,8 @@ async function loadTier1ProjectIds(supabase: SupabaseClient): Promise<Set<string
   const model = await getModelByName(supabase, 'our_projects');
   const ids = new Set<string>();
   if (!model) return ids;
-  const rows = await pageRecords(supabase, model.id, 5);
+  // Slim to the one key this reads — the linked all_projects id.
+  const rows = await loadModelRecords(supabase, model.id, ['project']);
   for (const r of rows) {
     const link = r.data.project;
     if (typeof link === 'string' && link) ids.add(link);
@@ -1426,7 +1450,7 @@ export async function matchProjectsCore(
   let rows: RecordRow[];
   let tier1Ids: Set<string>;
   try {
-    [rows, tier1Ids] = await Promise.all([pageRecords(supabase, model.id), loadTier1ProjectIds(supabase)]);
+    [rows, tier1Ids] = await Promise.all([loadModelRecords(supabase, model.id), loadTier1ProjectIds(supabase)]);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -1990,7 +2014,7 @@ async function searchProjects(supabase: SupabaseClient, input: SearchProjectsInp
   let rows: RecordRow[];
   let tier1Ids: Set<string>;
   try {
-    [rows, tier1Ids] = await Promise.all([pageRecords(supabase, model.id), loadTier1ProjectIds(supabase)]);
+    [rows, tier1Ids] = await Promise.all([loadModelRecords(supabase, model.id), loadTier1ProjectIds(supabase)]);
   } catch (err) {
     return JSON.stringify({ error: err instanceof Error ? err.message : String(err), count: 0, results: [] });
   }

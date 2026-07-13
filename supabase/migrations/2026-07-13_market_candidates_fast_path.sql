@@ -165,4 +165,55 @@ $function$;
 
 GRANT EXECUTE ON FUNCTION public.wassell_market_candidates_json(uuid, text[], numeric, numeric, numeric, text[], int, uuid[], text[]) to authenticated, anon;
 
+-- FIX 4 — the same fast path for whole-model reads. The finder's
+-- all_projects/our_projects loads went through unified_records under per-row
+-- RLS (~6.4s for 980 all_projects rows measured from the SPA); this returns the
+-- same rows as ONE jsonb value (no PostgREST row cap), gated once per statement,
+-- with the per-row wassell_can_view_jsonb evaluator only for 'filtered' scopes —
+-- same semantics as the records_view policy (verified identical 980-row id
+-- fingerprint on prod; ~1.3s from the SPA). Reads unified_records so frozen
+-- models keep working (SECURITY DEFINER bypasses RLS; the explicit quals here
+-- replace it exactly). Consumed by matchAgent.loadModelRecords (with a paged
+-- per-row-RLS fallback if this function is missing).
+
+CREATE OR REPLACE FUNCTION public.wassell_model_records_json(
+  p_model_id uuid,
+  p_fields text[] default null
+) returns jsonb
+language sql
+stable
+security definer
+set search_path to 'public'
+set statement_timeout to '25s'
+as $function$
+  with access as materialized (
+    select public.wassell_view_scope_class(auth.uid(), p_model_id) as klass
+  ),
+  rows_src as materialized (
+    select u.id, u.data
+    from public.unified_records u
+    cross join access a
+    where a.klass <> 'none'
+      and u.model_id = p_model_id
+      and (case when a.klass = 'all' then true
+                else public.wassell_can_view_jsonb(auth.uid(), p_model_id, u.id, u.created_by_user_id, u.data) end)
+  )
+  select coalesce(
+    (select jsonb_agg(jsonb_build_object(
+              'id', r.id,
+              'data', case
+                when p_fields is null then r.data
+                else coalesce(
+                  (select jsonb_object_agg(key, value)
+                     from jsonb_each(r.data) where key = any(p_fields)),
+                  '{}'::jsonb)
+              end
+            ) order by r.id)
+       from rows_src r),
+    '[]'::jsonb
+  );
+$function$;
+
+GRANT EXECUTE ON FUNCTION public.wassell_model_records_json(uuid, text[]) TO authenticated, anon;
+
 COMMIT;
