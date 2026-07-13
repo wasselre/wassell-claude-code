@@ -284,3 +284,38 @@ function gctx2WithB(base: CompileCtx): CompileCtx {
     districtBoundary: (id) => (id === 'dist-B' ? DISTRICT_B : null),
   };
 }
+
+// ── drawn_area (free-drawn polygon from the map picker) ─────────────────────
+describe('drawn_area items', () => {
+  const RING: [number, number][] = [[46.60, 24.60], [46.70, 24.60], [46.70, 24.70], [46.60, 24.70], [46.60, 24.60]];
+  const drawn: LocationItem = { id: 'li-drawn', kind: 'drawn_area', polarity: 'include', coordinates: RING };
+
+  it('a closed ring compiles ok and contains its interior only', () => {
+    const c = compileItem(drawn, ctx);
+    expect(c.validationStatus).toBe('ok');
+    expect(c.hasArea).toBe(true);
+    expect(c.contains(46.65, 24.65)).toBe(true);  // inside
+    expect(c.contains(46.75, 24.65)).toBe(false); // outside
+  });
+
+  it('an OPEN ring or too-few points → needs_review (mirrors the SQL gate)', () => {
+    const open: LocationItem = { id: 'li-open', kind: 'drawn_area', polarity: 'include', coordinates: RING.slice(0, 4) as [number, number][] };
+    expect(compileItem(open, ctx).validationStatus).toBe('needs_review');
+    const tiny: LocationItem = { id: 'li-tiny', kind: 'drawn_area', polarity: 'include', coordinates: [[46.6, 24.6], [46.7, 24.6], [46.6, 24.6]] };
+    expect(compileItem(tiny, ctx).validationStatus).toBe('needs_review');
+  });
+
+  it('multiple drawn shapes OR-union; an exclude drawn area subtracts', () => {
+    const RING_B: [number, number][] = [[47.00, 24.60], [47.10, 24.60], [47.10, 24.70], [47.00, 24.70], [47.00, 24.60]];
+    const drawnB: LocationItem = { id: 'li-drawn-B', kind: 'drawn_area', polarity: 'include', coordinates: RING_B };
+    const inA: GeoCandidate = { id: 'p-a', lat: 24.65, lng: 46.65 };
+    const inB: GeoCandidate = { id: 'p-b', lat: 24.65, lng: 47.05 };
+    const outside: GeoCandidate = { id: 'p-out', lat: 24.65, lng: 46.85 };
+    const { matches } = compileAndMatch([drawn, drawnB], ctx, [inA, inB, outside]);
+    expect(matches.map((m) => m.id).sort()).toEqual(['p-a', 'p-b']);
+
+    const excludeDrawnA: LocationItem = { id: 'li-xdrawn', kind: 'drawn_area', polarity: 'exclude', coordinates: RING };
+    const both = compileAndMatch([drawn, drawnB, excludeDrawnA], ctx, [inA, inB]);
+    expect(both.matches.map((m) => m.id)).toEqual(['p-b']);
+  });
+});

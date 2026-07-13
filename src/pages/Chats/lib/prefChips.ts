@@ -147,6 +147,9 @@ export function buildClientPrefChips(
     if (item.kind === 'district') {
       const name = item.district_label || geoNames[item.district_id];
       if (name && !districts.includes(name)) districts.push(name);
+    } else if (item.kind === 'drawn_area') {
+      const name = item.label || (isAr ? 'منطقة مرسومة' : 'Drawn area');
+      if (!elements.includes(name)) elements.push(name);
     } else if (item.element_label && !elements.includes(item.element_label)) {
       elements.push(item.element_label);
     }

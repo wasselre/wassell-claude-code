@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Check, Loader2, Map as MapIcon, X } from 'lucide-react';
+import { Check, Loader2, Map as MapIcon, PenLine, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE } from '@/lib/locationUtils';
-import { newDistrictItem, type DistrictLocationItem, type LocationItem } from '@/lib/geo/locationItems';
+import {
+  newDistrictItem, newDrawnAreaItem,
+  type DistrictLocationItem, type DrawnAreaLocationItem, type LocationItem,
+} from '@/lib/geo/locationItems';
 
 const isDistrictItem = (i: LocationItem): i is DistrictLocationItem => i.kind === 'district';
+const isDrawnItem = (i: LocationItem): i is DrawnAreaLocationItem => i.kind === 'drawn_area';
 
 /**
  * Map-based district picker for a client's location preferences.
@@ -41,6 +45,7 @@ interface Props {
 const COPPER = '#B8734F';
 const CHARCOAL = '#4A4E54';
 const RED = '#B91C1C';
+const GOLD = '#C09B5F'; // drawn areas — distinct from the copper district fill
 
 /** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
 function geojsonToPaths(g: { type: string; coordinates: unknown }): google.maps.LatLngLiteral[][] {
@@ -76,6 +81,12 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   );
   const selectedRef = useRef(selected);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
+
+  // Free-drawn shapes — this picker is their editor of record: existing drawn
+  // items load for review/delete, new ones are added in draw mode. Each shape
+  // is one independent OR-union item (the client can have several).
+  const [drawnItems, setDrawnItems] = useState<DrawnAreaLocationItem[]>(() => items.filter(isDrawnItem));
+  const [drawMode, setDrawMode] = useState(false);
 
   // Load the city's district shapes (one RPC, ~145 kB for Riyadh).
   useEffect(() => {
@@ -148,16 +159,74 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, shapes]);
 
-  // Apply: keep every non-include-district item as-is; rebuild the include-district
-  // set from the map selection (existing rules keep their ids/labels; new ones get
-  // fresh items with the shape's name stashed as the display label).
+  // Render the drawn shapes (few — rebuild on change is cheap). Gold = include,
+  // red = a saved exclude drawn area. Not clickable: managed via footer chips.
+  useEffect(() => {
+    if (!map || !isLoaded || !window.google) return;
+    const polys = drawnItems.map((d) => {
+      const c = d.polarity === 'exclude' ? RED : GOLD;
+      return new google.maps.Polygon({
+        map,
+        paths: (d.coordinates ?? []).map(([lng, lat]) => ({ lat, lng })),
+        fillColor: c,
+        fillOpacity: 0.3,
+        strokeColor: c,
+        strokeOpacity: 0.95,
+        strokeWeight: 2,
+        zIndex: 4,
+        clickable: false,
+      });
+    });
+    return () => polys.forEach((p) => p.setMap(null));
+  }, [map, isLoaded, drawnItems]);
+
+  // Draw mode: a DrawingManager captures clicks to build a polygon; on complete
+  // the path becomes ONE drawn_area item (closed [lng,lat] ring) and the manager
+  // stays armed so several separate shapes can be drawn in a row.
+  useEffect(() => {
+    if (!map || !isLoaded || !drawMode || !window.google?.maps?.drawing) return;
+    const dm = new google.maps.drawing.DrawingManager({
+      drawingMode: google.maps.drawing.OverlayType.POLYGON,
+      drawingControl: false,
+      polygonOptions: { fillColor: GOLD, fillOpacity: 0.3, strokeColor: GOLD, strokeWeight: 2, clickable: false, zIndex: 5 },
+    });
+    dm.setMap(map);
+    const l = google.maps.event.addListener(dm, 'polygoncomplete', (poly: google.maps.Polygon) => {
+      const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+      const path = poly
+        .getPath()
+        .getArray()
+        .map((p) => [round6(p.lng()), round6(p.lat())] as [number, number]);
+      poly.setMap(null); // re-rendered from state with the standard style
+      if (path.length >= 3) {
+        const ring: [number, number][] = [...path, path[0]!];
+        setDrawnItems((prev) => [
+          ...prev,
+          newDrawnAreaItem(ring, `${isAr ? 'منطقة مرسومة' : 'Drawn area'} ${prev.length + 1}`, 'include'),
+        ]);
+      }
+    });
+    return () => {
+      google.maps.event.removeListener(l);
+      dm.setMap(null);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, isLoaded, drawMode]);
+
+  // Apply: element rules + exclude districts pass through untouched; the
+  // include-district set is rebuilt from the map selection (existing rules keep
+  // their ids/labels); drawn areas are re-emitted from the picker's working list
+  // (existing items verbatim, new shapes appended, deleted ones dropped).
   const apply = () => {
-    const keep = items.filter((i) => !(isDistrictItem(i) && i.polarity === 'include' && !selected.has(i.district_id)));
+    const keep = items.filter((i) => {
+      if (isDrawnItem(i)) return false; // re-emitted from drawnItems below
+      return !(isDistrictItem(i) && i.polarity === 'include' && !selected.has(i.district_id));
+    });
     const have = new Set(keep.filter(isDistrictItem).filter((i) => i.polarity === 'include').map((i) => i.district_id));
     const added = [...selected]
       .filter((id) => !have.has(id))
       .map((id) => newDistrictItem(id, nameById.get(id) ?? id, 'include'));
-    onApply([...keep, ...added]);
+    onApply([...keep, ...added, ...drawnItems]);
     onClose();
   };
 
@@ -178,11 +247,22 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
             <MapIcon size={18} className="text-copper" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-base font-bold text-chocolate">{L('اختيار الأحياء من الخريطة', 'Pick districts on the map')}</h2>
+            <h2 className="truncate text-base font-bold text-chocolate">{L('اختيار المواقع من الخريطة', 'Pick locations on the map')}</h2>
             <p className="truncate text-[11px] text-charcoal/60">
-              {L('اضغط على حي لتضمينه أو لإزالته. الأحياء الحمراء مستثناة (تُدار من القائمة).', 'Tap a district to include or remove it. Red districts are excludes (managed from the list).')}
+              {drawMode
+                ? L('ارسم الشكل نقطةً نقطة وأغلقه بالنقر على النقطة الأولى. يمكنك رسم عدة أشكال متفرقة.', 'Click point by point and close the shape on its first point. You can draw several separate shapes.')
+                : L('اضغط على حي لتضمينه أو لإزالته. الأحياء الحمراء مستثناة (تُدار من القائمة).', 'Tap a district to include or remove it. Red districts are excludes (managed from the list).')}
             </p>
           </div>
+          <button
+            type="button"
+            onClick={() => setDrawMode((v) => !v)}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-bold transition ${
+              drawMode ? 'border-copper bg-copper text-white hover:bg-terracotta' : 'border-copper/40 bg-copper/10 text-copper hover:bg-copper/20'
+            }`}
+          >
+            <PenLine size={15} /> {drawMode ? L('إيقاف الرسم', 'Stop drawing') : L('رسم منطقة', 'Draw an area')}
+          </button>
           <button
             type="button"
             onClick={onClose}
@@ -234,14 +314,38 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
           )}
         </div>
 
-        {/* Footer: selection summary + apply */}
+        {/* Footer: selection summary + drawn-shape chips + apply */}
         <div className="flex shrink-0 items-center gap-3 border-t border-sand/40 bg-white px-4 py-3">
           <div className="min-w-0 flex-1">
             <span className="text-xs font-bold text-charcoal/70">
               {L(`${selected.size} حي مختار`, `${selected.size} district(s) selected`)}
+              {drawnItems.length > 0 && (
+                <span className="text-charcoal/50"> · {L(`${drawnItems.length} منطقة مرسومة`, `${drawnItems.length} drawn area(s)`)}</span>
+              )}
             </span>
             {selectedNames.length > 0 && (
               <p className="truncate text-[11px] text-charcoal/50">{selectedNames.join(' · ')}</p>
+            )}
+            {drawnItems.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1">
+                {drawnItems.map((d) => (
+                  <span
+                    key={d.id}
+                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold"
+                    style={{ backgroundColor: `${d.polarity === 'exclude' ? RED : GOLD}1F`, color: d.polarity === 'exclude' ? RED : '#8a6a38' }}
+                  >
+                    {d.label || L('منطقة مرسومة', 'Drawn area')}
+                    <button
+                      type="button"
+                      onClick={() => setDrawnItems((prev) => prev.filter((x) => x.id !== d.id))}
+                      className="hover:opacity-60"
+                      aria-label={L('حذف', 'Delete')}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
             )}
           </div>
           <button

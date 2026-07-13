@@ -61,7 +61,17 @@ export interface ElementRuleItem {
   conditions: ElementCondition[];
 }
 
-export type LocationItem = DistrictItem | ElementRuleItem;
+/** Free-drawn polygon from the map picker — a CLOSED outer ring ([lng,lat],
+ *  first === last). Compiles to a plain polygon area, matched like a district
+ *  boundary. Multiple drawn shapes are independent OR-union items. */
+export interface DrawnAreaItem {
+  id: string;
+  kind: 'drawn_area';
+  polarity: GeoPolarity;
+  coordinates: [number, number][];
+}
+
+export type LocationItem = DistrictItem | ElementRuleItem | DrawnAreaItem;
 
 // ── Resolution context: how to turn an item's references into geometry ──────
 
@@ -117,7 +127,7 @@ export function elementUsability(e: ResolvedGeoElement | null): ElementUsability
 export interface CompiledItem {
   itemId: string;
   polarity: GeoPolarity;
-  kind: 'district' | 'element_rule';
+  kind: 'district' | 'element_rule' | 'drawn_area';
   /** District ids for matching POINT-LESS candidates (projects with no pin). */
   districtIds: string[];
   /** True when this item has a geometric area (a polygon or a within_radius disc). */
@@ -283,6 +293,31 @@ export function compileItem(item: LocationItem, ctx: CompileCtx): CompiledItem {
       hasArea: !!boundary,
       contains: boundary ? (lng, lat) => pointInPolygon(lng, lat, boundary) : () => false,
       validationStatus: 'ok', // a district item is usable even without a boundary (point-less fallback)
+    };
+  }
+
+  if (item.kind === 'drawn_area') {
+    // Mirrors the SQL drawn_area branch: a valid CLOSED ring of ≥4 points
+    // ([lng,lat], first === last) compiles to a polygon area; anything
+    // malformed is needs_review — never silently dropped.
+    const ring = Array.isArray(item.coordinates) ? item.coordinates : [];
+    const closed =
+      ring.length >= 4 &&
+      ring.every((c) => Array.isArray(c) && isFiniteNum(c[0]) && isFiniteNum(c[1])) &&
+      ring[0]![0] === ring[ring.length - 1]![0] &&
+      ring[0]![1] === ring[ring.length - 1]![1];
+    if (!closed) {
+      return { itemId: item.id, polarity, kind: 'drawn_area', districtIds: [], hasArea: false, contains: () => false, validationStatus: 'needs_review' };
+    }
+    const geom: GeoJsonGeometry = { type: 'Polygon', coordinates: [ring] };
+    return {
+      itemId: item.id,
+      polarity,
+      kind: 'drawn_area',
+      districtIds: [],
+      hasArea: true,
+      contains: (lng, lat) => pointInPolygon(lng, lat, geom),
+      validationStatus: 'ok',
     };
   }
 

@@ -75,7 +75,19 @@ export interface ElementRuleLocationItem {
   element_label?: string;
 }
 
-export type LocationItem = DistrictLocationItem | ElementRuleLocationItem;
+/** A free-drawn polygon from the map picker. One item per shape — multiple
+ *  drawn shapes are independent OR-union items, exactly like districts. */
+export interface DrawnAreaLocationItem {
+  id: string;
+  kind: 'drawn_area';
+  polarity: GeoPolarity;
+  /** CLOSED outer ring in GeoJSON order [lng, lat] — first point === last point. */
+  coordinates: [number, number][];
+  /** display-only — e.g. "منطقة مرسومة 1". */
+  label?: string;
+}
+
+export type LocationItem = DistrictLocationItem | ElementRuleLocationItem | DrawnAreaLocationItem;
 
 export const newDistrictItem = (
   district_id: string,
@@ -97,6 +109,14 @@ export const newElementRuleItem = (
   element_label,
 });
 
+/** Free-drawn polygon. `ring` must be CLOSED ([lng,lat], first === last) —
+ *  the SQL compiler treats an open ring as needs_review. */
+export const newDrawnAreaItem = (
+  ring: [number, number][],
+  label: string,
+  polarity: GeoPolarity,
+): DrawnAreaLocationItem => ({ id: uuid(), kind: 'drawn_area', polarity, coordinates: ring, label });
+
 /** within_radius (point element). Kept as a named helper for the common case. */
 export const newRadiusItem = (
   element_id: string,
@@ -114,9 +134,11 @@ const KNOWN_RULES: ConditionRule[] = [
 export function parseLocationItems(v: unknown): LocationItem[] {
   if (!Array.isArray(v)) return [];
   return v.filter(
-    (it): it is LocationItem =>
-      !!it && typeof it === 'object' &&
-      ((it as { kind?: string }).kind === 'district' || (it as { kind?: string }).kind === 'element_rule'),
+    (it): it is LocationItem => {
+      if (!it || typeof it !== 'object') return false;
+      const k = (it as { kind?: string }).kind;
+      return k === 'district' || k === 'element_rule' || k === 'drawn_area';
+    },
   );
 }
 
@@ -174,6 +196,11 @@ export function describeLocationItem(item: LocationItem, isAr: boolean): string 
   if (item.kind === 'district') {
     const name = item.district_label || (isAr ? 'حي' : 'district');
     if (isAr) return ex ? `استثناء حي ${name}` : `حي ${name}`;
+    return ex ? `Exclude ${name}` : name;
+  }
+  if (item.kind === 'drawn_area') {
+    const name = item.label || (isAr ? 'منطقة مرسومة' : 'Drawn area');
+    if (isAr) return ex ? `استثناء ${name}` : name;
     return ex ? `Exclude ${name}` : name;
   }
   const cond = Array.isArray(item.conditions) ? item.conditions[0] : undefined;
