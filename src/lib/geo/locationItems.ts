@@ -200,8 +200,11 @@ export function describeLocationItem(item: LocationItem, isAr: boolean): string 
   }
   if (item.kind === 'drawn_area') {
     const name = item.label || (isAr ? 'منطقة مرسومة' : 'Drawn area');
-    if (isAr) return ex ? `استثناء ${name}` : name;
-    return ex ? `Exclude ${name}` : name;
+    // Exclude labels from the picker already read "منطقة مستثناة N" / "Excluded
+    // area N" — don't prefix them into "استثناء منطقة مستثناة" doubles.
+    const alreadyNegated = /مستثناة|excluded/i.test(name);
+    if (!ex || alreadyNegated) return name;
+    return isAr ? `استثناء ${name}` : `Exclude ${name}`;
   }
   const cond = Array.isArray(item.conditions) ? item.conditions[0] : undefined;
   const name = item.element_label || (isAr ? 'عنصر' : 'element');
