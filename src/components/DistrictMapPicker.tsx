@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Check, Loader2, Map as MapIcon, PenLine, X } from 'lucide-react';
+import { Ban, Check, Loader2, Map as MapIcon, PenLine, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE } from '@/lib/locationUtils';
 import {
   newDistrictItem, newDrawnAreaItem,
-  type DistrictLocationItem, type DrawnAreaLocationItem, type LocationItem,
+  type DistrictLocationItem, type DrawnAreaLocationItem, type GeoPolarity, type LocationItem,
 } from '@/lib/geo/locationItems';
 
 const isDistrictItem = (i: LocationItem): i is DistrictLocationItem => i.kind === 'district';
@@ -87,6 +87,11 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   // is one independent OR-union item (the client can have several).
   const [drawnItems, setDrawnItems] = useState<DrawnAreaLocationItem[]>(() => items.filter(isDrawnItem));
   const [drawMode, setDrawMode] = useState(false);
+  // Whether the shape being drawn is a WANTED area (include, gold) or an
+  // EXCLUSION zone (exclude, red). Toggleable mid-draft — the preview recolors.
+  const [drawPolarity, setDrawPolarity] = useState<GeoPolarity>('include');
+  const drawPolarityRef = useRef<GeoPolarity>('include');
+  useEffect(() => { drawPolarityRef.current = drawPolarity; }, [drawPolarity]);
 
   // Load the city's district shapes (one RPC, ~145 kB for Riyadh).
   useEffect(() => {
@@ -190,16 +195,23 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const [draftCount, setDraftCount] = useState(0);
   const draftPathRef = useRef<google.maps.LatLngLiteral[]>([]);
   const finishDraftRef = useRef<() => void>(() => {});
+  const previewRef = useRef<google.maps.Polyline | null>(null);
   useEffect(() => {
     polygonsRef.current.forEach((p) => p.setOptions({ clickable: !drawMode }));
     if (!drawMode) setHoverName(null);
   }, [drawMode]);
+  // The preview line follows the chosen polarity color, even mid-draft.
+  useEffect(() => {
+    previewRef.current?.setOptions({ strokeColor: drawPolarity === 'exclude' ? RED : GOLD });
+  }, [drawPolarity]);
   useEffect(() => {
     if (!map || !isLoaded || !drawMode || !window.google) return;
     map.setOptions({ disableDoubleClickZoom: true, draggableCursor: 'crosshair' });
     const preview = new google.maps.Polyline({
-      map, path: [], strokeColor: GOLD, strokeOpacity: 0.95, strokeWeight: 2.5, zIndex: 6, clickable: false,
+      map, path: [], strokeColor: drawPolarityRef.current === 'exclude' ? RED : GOLD,
+      strokeOpacity: 0.95, strokeWeight: 2.5, zIndex: 6, clickable: false,
     });
+    previewRef.current = preview;
     draftPathRef.current = [];
     setDraftCount(0);
 
@@ -209,10 +221,14 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
         const ring = path.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
         ring.push(ring[0]!);
-        setDrawnItems((prev) => [
-          ...prev,
-          newDrawnAreaItem(ring, `${isAr ? 'منطقة مرسومة' : 'Drawn area'} ${prev.length + 1}`, 'include'),
-        ]);
+        const polarity = drawPolarityRef.current;
+        setDrawnItems((prev) => {
+          const nth = prev.filter((d) => d.polarity === polarity).length + 1;
+          const label = polarity === 'exclude'
+            ? `${isAr ? 'منطقة مستثناة' : 'Excluded area'} ${nth}`
+            : `${isAr ? 'منطقة مرسومة' : 'Drawn area'} ${nth}`;
+          return [...prev, newDrawnAreaItem(ring, label, polarity)];
+        });
       }
       draftPathRef.current = [];
       preview.setPath([]);
@@ -232,6 +248,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       google.maps.event.removeListener(clickL);
       google.maps.event.removeListener(dblL);
       preview.setMap(null);
+      previewRef.current = null;
       draftPathRef.current = [];
       setDraftCount(0);
       finishDraftRef.current = () => {};
@@ -277,10 +294,35 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
             <h2 className="truncate text-base font-bold text-chocolate">{L('اختيار المواقع من الخريطة', 'Pick locations on the map')}</h2>
             <p className="truncate text-[11px] text-charcoal/60">
               {drawMode
-                ? L('انقر على الخريطة لإضافة نقاط الشكل، ثم انقر نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه. يمكنك رسم عدة أشكال متفرقة.', 'Click the map to add the shape’s points, then double-click (or "Finish shape") to close it. You can draw several separate shapes.')
+                ? drawPolarity === 'exclude'
+                  ? L('منطقة استثناء: لن تظهر النتائج داخل هذا الشكل. انقر لإضافة النقاط، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'Exclusion zone: no results will show inside this shape. Click to add points, then double-click (or "Finish shape") to close it.')
+                  : L('انقر على الخريطة لإضافة نقاط الشكل، ثم انقر نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه. يمكنك رسم عدة أشكال متفرقة.', 'Click the map to add the shape’s points, then double-click (or "Finish shape") to close it. You can draw several separate shapes.')
                 : L('اضغط على حي لتضمينه أو لإزالته. الأحياء الحمراء مستثناة (تُدار من القائمة).', 'Tap a district to include or remove it. Red districts are excludes (managed from the list).')}
             </p>
           </div>
+          {drawMode && (
+            <div className="flex shrink-0 items-center gap-1">
+              {(['include', 'exclude'] as GeoPolarity[]).map((p) => {
+                const active = drawPolarity === p;
+                const isInc = p === 'include';
+                const c = isInc ? GOLD : RED;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setDrawPolarity(p)}
+                    className="inline-flex items-center gap-1 rounded-lg border px-2.5 py-2 text-xs font-bold transition"
+                    style={active
+                      ? { backgroundColor: c, borderColor: c, color: '#fff' }
+                      : { backgroundColor: '#fff', borderColor: `${c}66`, color: isInc ? '#8a6a38' : c }}
+                  >
+                    {isInc ? <Check size={13} /> : <Ban size={13} />}
+                    {isInc ? L('أريدها', 'Include') : L('استثناء', 'Exclude')}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {drawMode && draftCount >= 3 && (
             <button
               type="button"
