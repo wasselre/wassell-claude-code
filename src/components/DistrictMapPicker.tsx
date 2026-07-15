@@ -66,6 +66,15 @@ interface LandmarkRow {
   longitude: number | null;
 }
 
+/** Picker map style = the brand style MINUS Google's own neighborhood labels —
+ *  we render every district's name ourselves at its centroid, so the basemap
+ *  copy showed each name TWICE (live report 2026-07-13). Only the picker hides
+ *  them; other maps keep Google's labels (they draw no labels of their own). */
+const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
+  ...WASSEL_MAP_STYLE,
+  { featureType: 'administrative.neighborhood', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+];
+
 /** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
 function geojsonToPaths(g: { type: string; coordinates: unknown }): google.maps.LatLngLiteral[][] {
   const ringToPath = (ring: unknown): google.maps.LatLngLiteral[] =>
@@ -487,7 +496,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                 onLoad={setMap}
                 onUnmount={() => setMap(null)}
                 options={{
-                  styles: WASSEL_MAP_STYLE,
+                  styles: PICKER_MAP_STYLE,
                   disableDefaultUI: true,
                   zoomControl: true,
                   gestureHandling: 'greedy',
