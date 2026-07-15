@@ -46,6 +46,25 @@ const COPPER = '#B8734F';
 const CHARCOAL = '#4A4E54';
 const RED = '#B91C1C';
 const GOLD = '#C09B5F'; // drawn areas — distinct from the copper district fill
+const TERRACOTTA = '#8E4E3A'; // landmark pins
+
+/** Element types shown as landmark pins on the picker — the sales-relevant
+ *  anchors (all curated + verified in geo_elements). Roads/metro/parks are
+ *  deliberately left out: too dense to read at city zoom. */
+const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transport'];
+/** District name labels + landmark pins appear from this zoom in (city-wide
+ *  view stays clean); landmark NAMES appear once close enough to read. */
+const LABELS_MIN_ZOOM = 11;
+const LANDMARK_NAMES_MIN_ZOOM = 13;
+
+interface LandmarkRow {
+  external_id: string;
+  display_name: string | null;
+  name_ar: string | null;
+  element_type: string;
+  latitude: number | null;
+  longitude: number | null;
+}
 
 /** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
 function geojsonToPaths(g: { type: string; coordinates: unknown }): google.maps.LatLngLiteral[][] {
@@ -116,15 +135,39 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     return m;
   }, [shapes]);
 
+  // Important landmarks/elements (curated types, all Riyadh today). RLS allows
+  // authenticated SELECT on geo_elements — same posture as /api/geo-elements.
+  const [landmarks, setLandmarks] = useState<LandmarkRow[]>([]);
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    supabase
+      .from('geo_elements')
+      .select('external_id, display_name, name_ar, element_type, latitude, longitude')
+      .in('element_type', LANDMARK_TYPES)
+      .eq('is_active', true)
+      .eq('is_searchable', true)
+      .neq('review_status', 'rejected')
+      .not('latitude', 'is', null)
+      .limit(400)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        // Decorative layer — a load failure only costs the pins, never the picker.
+        if (error) { console.error('[DistrictMapPicker] landmarks load failed:', error.message); return; }
+        setLandmarks((data ?? []) as LandmarkRow[]);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   // (Re)build the polygons when the map + shapes are ready. Selection changes
   // restyle IN PLACE (no rebuild) via the polygonsRef.
   const polygonsRef = useRef<Map<string, google.maps.Polygon>>(new Map());
   const styleFor = (id: string, isSelected: boolean): google.maps.PolygonOptions =>
     excludedIds.has(id)
-      ? { fillColor: RED, fillOpacity: 0.22, strokeColor: RED, strokeOpacity: 0.7, strokeWeight: 1.5, zIndex: 2 }
+      ? { fillColor: RED, fillOpacity: 0.22, strokeColor: RED, strokeOpacity: 0.8, strokeWeight: 2, zIndex: 2 }
       : isSelected
-        ? { fillColor: COPPER, fillOpacity: 0.38, strokeColor: COPPER, strokeOpacity: 0.95, strokeWeight: 2, zIndex: 3 }
-        : { fillColor: CHARCOAL, fillOpacity: 0.05, strokeColor: CHARCOAL, strokeOpacity: 0.35, strokeWeight: 1, zIndex: 1 };
+        ? { fillColor: COPPER, fillOpacity: 0.38, strokeColor: COPPER, strokeOpacity: 1, strokeWeight: 2.5, zIndex: 3 }
+        : { fillColor: CHARCOAL, fillOpacity: 0.06, strokeColor: CHARCOAL, strokeOpacity: 0.65, strokeWeight: 1.5, zIndex: 1 };
 
   useEffect(() => {
     if (!map || !isLoaded || !shapes || !window.google) return;
@@ -164,6 +207,68 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, shapes]);
 
+  // District NAME labels on every polygon + landmark pins, both zoom-gated so
+  // the city-wide view stays readable: labels + pins from LABELS_MIN_ZOOM in,
+  // landmark names once close enough (LANDMARK_NAMES_MIN_ZOOM). Labels are
+  // transparent-icon markers at each district's largest-ring centroid.
+  const landmarkMarkersRef = useRef<google.maps.Marker[]>([]);
+  useEffect(() => {
+    if (!map || !isLoaded || !shapes || !window.google) return;
+    const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
+    const labelMarkers: google.maps.Marker[] = [];
+    for (const s of shapes) {
+      let ring: google.maps.LatLngLiteral[] = [];
+      for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
+      if (ring.length < 3) continue;
+      const lat = ring.reduce((a, p) => a + p.lat, 0) / ring.length;
+      const lng = ring.reduce((a, p) => a + p.lng, 0) / ring.length;
+      labelMarkers.push(new google.maps.Marker({
+        position: { lat, lng },
+        icon: invisible,
+        clickable: false,
+        label: { text: s.name, color: CHARCOAL, fontSize: '11px', fontWeight: '700' },
+      }));
+    }
+    const lmMarkers = landmarks
+      .filter((l) => l.latitude != null && l.longitude != null)
+      .map((l) => {
+        const name = (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '';
+        const marker = new google.maps.Marker({
+          position: { lat: l.latitude!, lng: l.longitude! },
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE, scale: 4.5,
+            fillColor: TERRACOTTA, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 1.5,
+            labelOrigin: new google.maps.Point(0, 3),
+          },
+          title: name,
+          clickable: true, // hover shows the name even below the label zoom
+          zIndex: 5,
+        });
+        return { marker, name };
+      });
+    landmarkMarkersRef.current = lmMarkers.map((x) => x.marker);
+    const applyZoom = () => {
+      const z = map.getZoom() ?? 0;
+      const show = z >= LABELS_MIN_ZOOM;
+      labelMarkers.forEach((m) => m.setMap(show ? map : null));
+      lmMarkers.forEach(({ marker, name }) => {
+        marker.setMap(show ? map : null);
+        marker.setLabel(z >= LANDMARK_NAMES_MIN_ZOOM && name
+          ? { text: name, color: TERRACOTTA, fontSize: '10px', fontWeight: '700' }
+          : null);
+      });
+    };
+    applyZoom();
+    const zl = map.addListener('zoom_changed', applyZoom);
+    return () => {
+      google.maps.event.removeListener(zl);
+      labelMarkers.forEach((m) => m.setMap(null));
+      lmMarkers.forEach(({ marker }) => marker.setMap(null));
+      landmarkMarkersRef.current = [];
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, isLoaded, shapes, landmarks, isAr]);
+
   // Render the drawn shapes (few — rebuild on change is cheap). Gold = include,
   // red = a saved exclude drawn area. Not clickable: managed via footer chips.
   useEffect(() => {
@@ -198,6 +303,8 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const previewRef = useRef<google.maps.Polyline | null>(null);
   useEffect(() => {
     polygonsRef.current.forEach((p) => p.setOptions({ clickable: !drawMode }));
+    // Landmark pins must not swallow vertex clicks while drawing.
+    landmarkMarkersRef.current.forEach((m) => m.setClickable(!drawMode));
     if (!drawMode) setHoverName(null);
   }, [drawMode]);
   // The preview line follows the chosen polarity color, even mid-draft.
@@ -206,7 +313,12 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   }, [drawPolarity]);
   useEffect(() => {
     if (!map || !isLoaded || !drawMode || !window.google) return;
-    map.setOptions({ disableDoubleClickZoom: true, draggableCursor: 'crosshair' });
+    // draggable:false is the CLICK FIX for trackpads: with panning on, the
+    // few-pixel wobble between mousedown and mouseup reads as a drag, so the
+    // map pans and 'click' never fires — "I click but it just moves around"
+    // (live report 2026-07-13). While drawing the map is pinned; zoom controls
+    // still work, and toggling draw off restores panning.
+    map.setOptions({ disableDoubleClickZoom: true, draggableCursor: 'crosshair', draggable: false });
     const preview = new google.maps.Polyline({
       map, path: [], strokeColor: drawPolarityRef.current === 'exclude' ? RED : GOLD,
       strokeOpacity: 0.95, strokeWeight: 2.5, zIndex: 6, clickable: false,
@@ -252,7 +364,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       draftPathRef.current = [];
       setDraftCount(0);
       finishDraftRef.current = () => {};
-      map.setOptions({ disableDoubleClickZoom: false, draggableCursor: undefined });
+      map.setOptions({ disableDoubleClickZoom: false, draggableCursor: undefined, draggable: true });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, drawMode]);
@@ -295,9 +407,9 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
             <p className="truncate text-[11px] text-charcoal/60">
               {drawMode
                 ? drawPolarity === 'exclude'
-                  ? L('منطقة استثناء: لن تظهر النتائج داخل هذا الشكل. انقر لإضافة النقاط، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'Exclusion zone: no results will show inside this shape. Click to add points, then double-click (or "Finish shape") to close it.')
-                  : L('انقر على الخريطة لإضافة نقاط الشكل، ثم انقر نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه. يمكنك رسم عدة أشكال متفرقة.', 'Click the map to add the shape’s points, then double-click (or "Finish shape") to close it. You can draw several separate shapes.')
-                : L('اضغط على حي لتضمينه أو لإزالته. الأحياء الحمراء مستثناة (تُدار من القائمة).', 'Tap a district to include or remove it. Red districts are excludes (managed from the list).')}
+                  ? L('منطقة استثناء: لن تظهر النتائج داخل هذا الشكل. الخريطة مثبّتة أثناء الرسم — انقر لإضافة النقاط، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'Exclusion zone: no results will show inside this shape. The map is pinned while drawing — click to add points, then double-click (or "Finish shape") to close it.')
+                  : L('الخريطة مثبّتة أثناء الرسم — انقر لإضافة نقاط الشكل، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه. يمكنك رسم عدة أشكال متفرقة.', 'The map is pinned while drawing — click to add the shape’s points, then double-click (or "Finish shape") to close it. You can draw several separate shapes.')
+                : L('اضغط على حي لتضمينه أو لإزالته. الأحياء الحمراء مستثناة (تُدار من القائمة). قرّب الخريطة لرؤية أسماء الأحياء والمعالم.', 'Tap a district to include or remove it. Red districts are excludes (managed from the list). Zoom in to see district names and landmarks.')}
             </p>
           </div>
           {drawMode && (
