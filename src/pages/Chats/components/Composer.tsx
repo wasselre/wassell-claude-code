@@ -370,6 +370,8 @@ function ScheduledStrip({
   const [items, setItems] = useState<ScheduledChatMessage[]>([]);
   const [loadFailed, setLoadFailed] = useState(false);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [cancelingAll, setCancelingAll] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [localRefresh, setLocalRefresh] = useState(0);
 
   const load = useCallback(async (signal: { cancelled: boolean }) => {
@@ -392,6 +394,7 @@ function ScheduledStrip({
     const signal = { cancelled: false };
     setItems([]);
     setLoadFailed(false);
+    setExpanded(false);
     void load(signal);
     return () => { signal.cancelled = true; };
   }, [load, refreshKey, localRefresh]);
@@ -409,6 +412,31 @@ function ScheduledStrip({
       setLocalRefresh((k) => k + 1);
     } finally {
       setCancelingId(null);
+    }
+  };
+
+  const cancelAll = async () => {
+    if (cancelingAll) return;
+    setCancelingAll(true);
+    let failed = 0;
+    for (const m of items) {
+      try {
+        await cancelScheduledMessage(m.id);
+        setItems((prev) => prev.filter((x) => x.id !== m.id));
+      } catch {
+        failed++;
+      }
+    }
+    setCancelingAll(false);
+    if (failed > 0) {
+      addToast(
+        isAr ? `تعذّر إلغاء ${failed} من الرسائل المجدولة` : `Couldn't cancel ${failed} scheduled message(s)`,
+        'error',
+      );
+      // Some may have already delivered — re-sync with the queue.
+      setLocalRefresh((k) => k + 1);
+    } else {
+      addToast(isAr ? 'أُلغيت كل الرسائل المجدولة' : 'All scheduled messages canceled', 'success');
     }
   };
 
@@ -432,42 +460,92 @@ function ScheduledStrip({
 
   if (items.length === 0) return null;
 
+  const chip = (m: ScheduledChatMessage) => (
+    <div
+      key={m.id}
+      className="flex items-center gap-2 bg-gold/10 border border-gold/30 rounded-lg px-2 py-1.5"
+    >
+      <div className="w-7 h-7 rounded-lg bg-gold/20 flex items-center justify-center shrink-0">
+        <Clock size={13} className="text-chocolate" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[11px] font-bold text-chocolate">
+          {isAr ? 'مجدولة — ' : 'Scheduled — '}
+          {m.deliverAt ? formatScheduleTime(m.deliverAt, isAr) : (isAr ? 'قريبًا' : 'soon')}
+        </div>
+        <div className="text-xs text-charcoal/70 truncate">
+          {m.hasMedia && (
+            <span className="text-charcoal/50 me-1">
+              {isAr ? '📎 مرفق' : '📎 attachment'}
+            </span>
+          )}
+          {m.body ?? ''}
+        </div>
+      </div>
+      <button
+        onClick={() => void cancel(m.id)}
+        disabled={cancelingId === m.id || cancelingAll}
+        className="p-1 rounded text-charcoal/50 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors shrink-0"
+        aria-label={isAr ? 'إلغاء الرسالة المجدولة' : 'Cancel scheduled message'}
+        title={isAr ? 'إلغاء الجدولة' : 'Cancel'}
+        type="button"
+      >
+        {cancelingId === m.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
+      </button>
+    </div>
+  );
+
+  // Up to 2 queued messages render as full chips. More (e.g. a listing
+  // message's photo gallery = 1 text + ~9 media) collapse into ONE compact
+  // summary row so the thread stays usable — expandable to a scrollable
+  // list, with a cancel-all.
+  if (items.length <= 2) {
+    return <div className="flex flex-col gap-1">{items.map(chip)}</div>;
+  }
+
+  const mediaCount = items.filter((m) => m.hasMedia).length;
+  const firstAt = items[0]?.deliverAt ?? null;
+
   return (
     <div className="flex flex-col gap-1">
-      {items.map((m) => (
-        <div
-          key={m.id}
-          className="flex items-center gap-2 bg-gold/10 border border-gold/30 rounded-lg px-2 py-1.5"
-        >
-          <div className="w-7 h-7 rounded-lg bg-gold/20 flex items-center justify-center shrink-0">
-            <Clock size={13} className="text-chocolate" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-[11px] font-bold text-chocolate">
-              {isAr ? 'مجدولة — ' : 'Scheduled — '}
-              {m.deliverAt ? formatScheduleTime(m.deliverAt, isAr) : (isAr ? 'قريبًا' : 'soon')}
-            </div>
-            <div className="text-xs text-charcoal/70 truncate">
-              {m.hasMedia && (
-                <span className="text-charcoal/50 me-1">
-                  {isAr ? '📎 مرفق' : '📎 attachment'}
-                </span>
-              )}
-              {m.body ?? ''}
-            </div>
-          </div>
-          <button
-            onClick={() => void cancel(m.id)}
-            disabled={cancelingId === m.id}
-            className="p-1 rounded text-charcoal/50 hover:text-red-600 hover:bg-red-50 disabled:opacity-50 transition-colors shrink-0"
-            aria-label={isAr ? 'إلغاء الرسالة المجدولة' : 'Cancel scheduled message'}
-            title={isAr ? 'إلغاء الجدولة' : 'Cancel'}
-            type="button"
-          >
-            {cancelingId === m.id ? <Loader2 size={14} className="animate-spin" /> : <X size={14} />}
-          </button>
+      <div className="flex items-center gap-2 bg-gold/10 border border-gold/30 rounded-lg px-2 py-1.5">
+        <div className="w-7 h-7 rounded-lg bg-gold/20 flex items-center justify-center shrink-0">
+          <Clock size={13} className="text-chocolate" />
         </div>
-      ))}
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          className="flex-1 min-w-0 text-start"
+          type="button"
+        >
+          <div className="text-[11px] font-bold text-chocolate">
+            {isAr ? `${items.length} رسائل مجدولة` : `${items.length} scheduled messages`}
+            {mediaCount > 0 && (
+              <span className="text-charcoal/50 font-normal ms-1">
+                {isAr ? `(منها ${mediaCount} مرفق)` : `(${mediaCount} with media)`}
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-charcoal/70 truncate">
+            {isAr ? 'أولها ' : 'First '}
+            {firstAt ? formatScheduleTime(firstAt, isAr) : (isAr ? 'قريبًا' : 'soon')}
+            <span className="text-copper ms-1">{expanded ? (isAr ? '· إخفاء' : '· hide') : (isAr ? '· عرض الكل' : '· show all')}</span>
+          </div>
+        </button>
+        <button
+          onClick={() => void cancelAll()}
+          disabled={cancelingAll}
+          className="shrink-0 text-[11px] font-medium text-charcoal/60 hover:text-red-600 hover:bg-red-50 rounded px-2 py-1 disabled:opacity-50 transition-colors inline-flex items-center gap-1"
+          type="button"
+        >
+          {cancelingAll ? <Loader2 size={12} className="animate-spin" /> : <X size={12} />}
+          {isAr ? 'إلغاء الكل' : 'Cancel all'}
+        </button>
+      </div>
+      {expanded && (
+        <div className="flex flex-col gap-1 max-h-44 overflow-y-auto pe-0.5">
+          {items.map(chip)}
+        </div>
+      )}
     </div>
   );
 }

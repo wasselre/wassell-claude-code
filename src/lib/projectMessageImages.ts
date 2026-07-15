@@ -77,40 +77,65 @@ export async function sendProjectImageMessages(
 
   let sent = 0;
   let failed = 0;
-  for (const [index, id] of ids.entries()) {
+
+  /** Fetch → upload → send one media item. Throws on failure. */
+  const sendOne = async (id: string, index: number) => {
     const url = isUrl(id) ? id : signed[id];
-    if (!url) {
-      failed++;
-      continue;
-    }
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`fetch image failed (HTTP ${res.status})`);
-      const blob = await res.blob();
-      const urlExt = ((url.split('?')[0] ?? url).split('.').pop() ?? '').toLowerCase();
-      const mime = blob.type || VIDEO_EXT_MIME[urlExt] || 'image/jpeg';
-      const ext = (mime.split('/')[1] ?? 'jpg').split('+')[0];
-      // URL entries would otherwise put the whole URL in the filename; use the
-      // last path segment instead (file-id entries keep the id as the name).
-      const baseName = isUrl(id)
-        ? ((id.split('?')[0] ?? id).split('/').pop() || 'image').slice(0, 80)
-        : id;
-      const file = new File([blob], baseName.includes('.') ? baseName : `${baseName}.${ext}`, { type: mime });
-      const uploaded = await uploadFile(file);
-      // sendChatMessage already shows its own error toast + throws on failure;
-      // our catch just keeps the loop going and tallies the failure.
-      await sendChatMessage(chatWid, {
-        mediaFileId: uploaded.fileId,
-        kind: mime.startsWith('video/') ? 'video' : 'image',
-        mediaMime: uploaded.mime ?? mime,
-        mediaSize: uploaded.size ?? blob.size,
-        deliverAt: baseDeliverMs != null
-          ? new Date(baseDeliverMs + (index + 1) * STAGGER_MS).toISOString()
-          : undefined,
-      });
-      sent++;
-    } catch {
-      failed++;
+    if (!url) throw new Error('no fetchable url');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`fetch image failed (HTTP ${res.status})`);
+    const blob = await res.blob();
+    const urlExt = ((url.split('?')[0] ?? url).split('.').pop() ?? '').toLowerCase();
+    const mime = blob.type || VIDEO_EXT_MIME[urlExt] || 'image/jpeg';
+    const ext = (mime.split('/')[1] ?? 'jpg').split('+')[0];
+    // URL entries would otherwise put the whole URL in the filename; use the
+    // last path segment instead (file-id entries keep the id as the name).
+    const baseName = isUrl(id)
+      ? ((id.split('?')[0] ?? id).split('/').pop() || 'image').slice(0, 80)
+      : id;
+    const file = new File([blob], baseName.includes('.') ? baseName : `${baseName}.${ext}`, { type: mime });
+    const uploaded = await uploadFile(file);
+    // sendChatMessage already shows its own error toast + throws on failure;
+    // callers just tally the failure and keep going.
+    await sendChatMessage(chatWid, {
+      mediaFileId: uploaded.fileId,
+      kind: mime.startsWith('video/') ? 'video' : 'image',
+      mediaMime: uploaded.mime ?? mime,
+      mediaSize: uploaded.size ?? blob.size,
+      deliverAt: baseDeliverMs != null
+        ? new Date(baseDeliverMs + (index + 1) * STAGGER_MS).toISOString()
+        : undefined,
+    });
+  };
+
+  if (baseDeliverMs != null) {
+    // Scheduled: delivery order comes from the staggered deliverAt, not from
+    // send order — so uploads can run CONCURRENTLY (small pool). A 10-photo
+    // gallery drops from ~10 sequential round-trips to ~3 batches, which is
+    // the difference between "schedule feels instant" and a long spinner.
+    const CONCURRENCY = 4;
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < ids.length) {
+        const index = cursor++;
+        try {
+          await sendOne(ids[index] as string, index);
+          sent++;
+        } catch {
+          failed++;
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
+  } else {
+    // Immediate: sequential — WhatsApp delivery order follows send order here.
+    for (const [index, id] of ids.entries()) {
+      try {
+        await sendOne(id, index);
+        sent++;
+      } catch {
+        failed++;
+      }
     }
   }
 
