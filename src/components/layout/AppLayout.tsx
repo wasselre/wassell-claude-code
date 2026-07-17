@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import GlobalChatComposer from '@/pages/Chats/components/GlobalChatComposer';
+import JobsIndicator from '@/components/JobsIndicator';
 
 export default function AppLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -34,6 +35,9 @@ export default function AppLayout() {
       {/* App-level WhatsApp composer — any phone WhatsApp action opens the chat
           popup here without navigating away from the current page. */}
       <GlobalChatComposer />
+      {/* Floating background-jobs circle + panel (listing messages, media
+          fan-outs, …). Hidden until a job exists. */}
+      <JobsIndicator />
     </div>
   );
 }

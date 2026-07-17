@@ -83,6 +83,19 @@ export async function applyCleanedToListing(recordId: string, listingId: string)
   }
 }
 
+/** Persist the AI-drafted text onto the draft (survives modal close + reload). */
+export async function setListingDraftText(recordId: string, bodyAr: string, bodyEn: string): Promise<void> {
+  const res = await fetch('/api/templates/clean-listing-images', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(await authHeader()) },
+    body: JSON.stringify({ mode: 'set-text', record_id: recordId, body_ar: bodyAr, body_en: bodyEn }),
+  });
+  if (!res.ok) {
+    const b = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(b?.error ?? `set-text failed (${res.status})`);
+  }
+}
+
 export interface ListingMessageText {
   body_ar: string;
   body_en: string;

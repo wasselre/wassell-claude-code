@@ -9,18 +9,22 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
-import { setJobActive } from '@/lib/staleBuild';
 import type { AppRecord } from '@/types';
 import {
   applyCleanedToListing,
-  fetchDraftData,
-  generateListingMessageText,
   isCleaningInFlight,
-  readCleaning,
   redoListingClean,
-  startListingClean,
   type CleaningEntry,
 } from '@/lib/listingMessage/client';
+import {
+  ensureListingMessageJob,
+  getListingJobState,
+  subscribeListingJob,
+  retryListingText,
+  resumeListingPolling,
+  setListingJobBodies,
+  clearListingJob,
+} from '@/lib/listingMessage/jobRunner';
 
 interface Props {
   listingId: string;
@@ -57,102 +61,64 @@ export default function ListingMessageModal({
   const [mode, setMode] = useState<Mode>(existing ? 'existing' : 'generating');
 
   // ── generating-mode state ────────────────────────────────────────────
-  const [recordId, setRecordId] = useState<string | null>(null);
-  const [startError, setStartError] = useState<string | null>(null);
-  const [name, setName] = useState(listingTitle);
-  const [bodyAr, setBodyAr] = useState('');
-  const [bodyEn, setBodyEn] = useState('');
-  const [textLoading, setTextLoading] = useState(false);
-  const [textError, setTextError] = useState<string | null>(null);
-  const [cleaning, setCleaning] = useState<CleaningEntry[]>([]);
-  const [pollNonce, setPollNonce] = useState(0);
-  const [saving, setSaving] = useState(false);
-  const startedRef = useRef(false);
+  // The WORK lives in the job runner (src/lib/listingMessage/jobRunner) — it
+  // keeps running when this modal closes and shows in the Job Center. The
+  // modal is a viewer/editor bound to that shared state.
+  const [, setJobTick] = useState(0);
+  useEffect(() => subscribeListingJob(listingId, () => setJobTick((n) => n + 1)), [listingId]);
 
-  // Kick off generation once when entering generating mode with no draft yet.
+  // Start (or attach to) the job when entering generating mode.
   useEffect(() => {
-    if (mode !== 'generating' || startedRef.current) return;
-    startedRef.current = true;
-    void runGeneration();
+    if (mode !== 'generating') return;
+    ensureListingMessageJob(listingId, isAr ? `رسالة الإعلان ${listingTitle}` : `Listing message ${listingTitle}`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [mode, listingId]);
 
-  const runGeneration = async () => {
-    setStartError(null);
-    setTextError(null);
-    setCleaning([]);
-    setTextLoading(true);
-    setName(listingTitle);
-    // Photo cleaning (creates the draft + fans out the jobs).
-    try {
-      const { recordId: rid } = await startListingClean(listingId);
-      setRecordId(rid);
-      setPollNonce((n) => n + 1);
-    } catch (err) {
-      setStartError(err instanceof Error ? err.message : String(err));
+  const jobState = getListingJobState(listingId);
+  const recordId = jobState?.recordId ?? null;
+  const startError = jobState?.startError ?? null;
+  const textLoading = jobState?.textLoading ?? false;
+  const textError = jobState?.textError ?? null;
+  const cleaning = jobState?.cleaning ?? [];
+
+  // Local editable copies — seeded from the runner until the user types, then
+  // the user's edits win (and sync back so a re-open shows them).
+  const [name, setName] = useState(listingTitle);
+  const [bodyAr, setBodyAr] = useState(jobState?.bodyAr ?? '');
+  const [bodyEn, setBodyEn] = useState(jobState?.bodyEn ?? '');
+  const [saving, setSaving] = useState(false);
+  const touchedRef = useRef(false);
+  useEffect(() => {
+    if (touchedRef.current) return;
+    if (jobState && (jobState.bodyAr || jobState.bodyEn)) {
+      setBodyAr(jobState.bodyAr);
+      setBodyEn(jobState.bodyEn);
     }
-    // AI message text (independent of cleaning).
-    try {
-      const txt = await generateListingMessageText(listingId);
-      setBodyAr(txt.body_ar);
-      setBodyEn(txt.body_en);
-    } catch (err) {
-      setTextError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTextLoading(false);
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobState?.bodyAr, jobState?.bodyEn]);
+
+  const editBodies = (ar: string, en: string) => {
+    touchedRef.current = true;
+    setBodyAr(ar);
+    setBodyEn(en);
+    setListingJobBodies(listingId, ar, en);
   };
 
-  // Poll the draft for cleaning progress while any photo is still in flight.
-  useEffect(() => {
-    if (!recordId) return;
-    let active = true;
-    let iv: ReturnType<typeof setInterval> | null = null;
-    const tick = async () => {
-      try {
-        const data = await fetchDraftData(recordId);
-        if (!active) return;
-        const entries = readCleaning(data);
-        setCleaning(entries);
-        if (!isCleaningInFlight(entries) && iv) {
-          clearInterval(iv);
-          iv = null;
-        }
-      } catch {
-        /* transient network — keep polling */
-      }
-    };
-    void tick();
-    iv = setInterval(tick, 2500);
-    return () => {
-      active = false;
-      if (iv) clearInterval(iv);
-    };
-  }, [recordId, pollNonce]);
+  const runGeneration = () => {
+    // Fatal start failure → drop the dead job state and start fresh.
+    clearListingJob(listingId);
+    ensureListingMessageJob(listingId, isAr ? `رسالة الإعلان ${listingTitle}` : `Listing message ${listingTitle}`);
+  };
 
   const inFlight = isCleaningInFlight(cleaning);
   const completed = cleaning.filter((c) => c.status === 'completed');
   const failedCount = cleaning.filter((c) => c.status === 'failed').length;
 
-  // Register active work with the stale-build system so a deploy's forced
-  // reload WAITS instead of killing the modal mid photo-cleaning / drafting /
-  // save (live incident 2026-07-17). The cleaning jobs themselves survive a
-  // reload (server-side), but the modal state and text draft don't.
-  useEffect(() => {
-    const busy = textLoading || inFlight || saving;
-    setJobActive('listing-message', busy);
-    return () => setJobActive('listing-message', false);
-  }, [textLoading, inFlight, saving]);
-
   const redo = async (entryIds: string[]) => {
     if (!recordId || entryIds.length === 0) return;
-    // Optimistically flip them back to queued so the spinner returns immediately.
-    setCleaning((prev) =>
-      prev.map((c) => (entryIds.includes(c.id) ? { ...c, status: 'queued', output_url: undefined, error: undefined } : c)),
-    );
     try {
       await redoListingClean(recordId, entryIds);
-      setPollNonce((n) => n + 1);
+      resumeListingPolling(listingId);
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
     }
@@ -212,6 +178,7 @@ export default function ListingMessageModal({
         (r) => r.id !== recordId && (r.data as Record<string, unknown>)?.listing_id === listingId,
       );
       for (const s of siblings) deleteRecord(chatTemplatesModelId, s.id);
+      clearListingJob(listingId);
       addToast(tr('تم حفظ رسالة الإعلان', 'Listing message saved'), 'success');
       onClose();
     } catch (err) {
@@ -323,7 +290,7 @@ export default function ListingMessageModal({
         <textarea
           dir="rtl"
           value={bodyAr}
-          onChange={(e) => setBodyAr(e.target.value)}
+          onChange={(e) => editBodies(e.target.value, bodyEn)}
           rows={8}
           className="form-input w-full text-sm"
           placeholder={tr('النص العربي', 'Arabic text')}
@@ -331,7 +298,7 @@ export default function ListingMessageModal({
         <textarea
           dir="ltr"
           value={bodyEn}
-          onChange={(e) => setBodyEn(e.target.value)}
+          onChange={(e) => editBodies(bodyAr, e.target.value)}
           rows={8}
           className="form-input w-full text-sm"
           placeholder={tr('النص الإنجليزي', 'English text')}
@@ -375,34 +342,34 @@ export default function ListingMessageModal({
       )}
 
       {/* Actions */}
-      <div className="flex items-center justify-end gap-2 mt-5">
-        <Button variant="secondary" onClick={onClose} disabled={saving}>
-          {tr('إلغاء', 'Cancel')}
-        </Button>
-        <Button
-          variant="primary"
-          onClick={() => void approve()}
-          disabled={saving || inFlight || completed.length === 0}
-        >
-          {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-          {tr('اعتماد وحفظ', 'Approve & save')}
-        </Button>
+      <div className="flex items-center justify-between gap-2 mt-5">
+        <p className="text-[0.7rem] text-charcoal/45 flex-1">
+          {(inFlight || textLoading) &&
+            tr(
+              'يمكنك إغلاق النافذة — العمل يستمر في الخلفية وستصلك إشعارات من مؤشر المهام.',
+              'You can close this window — the work continues in the background (see the jobs indicator).',
+            )}
+        </p>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button variant="secondary" onClick={onClose} disabled={saving}>
+            {tr('إغلاق', 'Close')}
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => void approve()}
+            disabled={saving || inFlight || completed.length === 0}
+          >
+            {saving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+            {tr('اعتماد وحفظ', 'Approve & save')}
+          </Button>
+        </div>
       </div>
     </Shell>
   );
 
-  async function regenText() {
-    setTextError(null);
-    setTextLoading(true);
-    try {
-      const txt = await generateListingMessageText(listingId);
-      setBodyAr(txt.body_ar);
-      setBodyEn(txt.body_en);
-    } catch (err) {
-      setTextError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setTextLoading(false);
-    }
+  function regenText() {
+    touchedRef.current = false; // let the fresh AI text re-seed the editors
+    retryListingText(listingId);
   }
 }
 

@@ -43,10 +43,12 @@ import {
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
 interface RequestBody {
-  mode?: 'start' | 'redo' | 'apply-to-listing';
+  mode?: 'start' | 'redo' | 'apply-to-listing' | 'set-text';
   listing_id?: string;
   record_id?: string;
   entry_ids?: string[];
+  body_ar?: string;
+  body_en?: string;
 }
 
 interface CleaningEntry {
@@ -140,7 +142,46 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     const appUserId = appUser.id as string;
 
     const mode =
-      body.mode === 'redo' ? 'redo' : body.mode === 'apply-to-listing' ? 'apply-to-listing' : 'start';
+      body.mode === 'redo'
+        ? 'redo'
+        : body.mode === 'apply-to-listing'
+          ? 'apply-to-listing'
+          : body.mode === 'set-text'
+            ? 'set-text'
+            : 'start';
+
+    // ════════════════════════════════════════════════════════════════════
+    // SET-TEXT — persist the AI-drafted message text onto the draft so it
+    // survives the modal being closed AND the tab reloading (the Job Center
+    // rehydrates unfinished drafts on boot). Owner-gated; optimistic-retry
+    // write so it never clobbers a concurrent worker cleaning fill-in.
+    // ════════════════════════════════════════════════════════════════════
+    if (mode === 'set-text') {
+      const recordId = body.record_id?.trim();
+      if (!recordId) return jsonError(400, 'record_id is required for set-text');
+      const bodyAr = typeof body.body_ar === 'string' ? body.body_ar : '';
+      const bodyEn = typeof body.body_en === 'string' ? body.body_en : '';
+
+      const { data: draftRow, error: draftErr } = await svc
+        .from('records')
+        .select('created_by_user_id')
+        .eq('id', recordId)
+        .single();
+      if (draftErr || !draftRow) return jsonError(404, `draft not found: ${draftErr?.message ?? recordId}`);
+      if ((draftRow.created_by_user_id as string | null) !== appUserId) {
+        return jsonError(404, 'draft not found');
+      }
+
+      try {
+        await recordSaveWithRetry(svc, {
+          recordId,
+          build: (data) => ({ ...data, body_ar: bodyAr, body_en: bodyEn }),
+        });
+      } catch (err) {
+        return jsonError(500, `failed to persist text: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      return jsonOk({ record_id: recordId }, 200);
+    }
 
     // ════════════════════════════════════════════════════════════════════
     // APPLY-TO-LISTING — on approve, replace the market listing's photos with

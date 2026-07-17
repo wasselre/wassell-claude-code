@@ -25,30 +25,24 @@
 import { signViewUrls } from '@/lib/files/client';
 import { uploadFile } from '@/lib/haberchat/client';
 import { useAppStore } from '@/stores/appStore';
-import { setJobActive } from '@/lib/staleBuild';
+import { startJob, updateJob, completeJob, failJob } from '@/lib/jobs/jobCenter';
 
 // Callers now run this WITHOUT awaiting (background fan-out — the modal /
-// composer frees up right after the text message). Two guards while any
-// fan-out is in flight: a native beforeunload prompt against the USER closing
-// the tab, and a staleBuild job registration so the update banner's FORCED
-// reload defers instead of killing the uploads mid-run.
+// composer frees up right after the text message). While any fan-out is in
+// flight a native beforeunload prompt guards against the USER closing the
+// tab; the Job Center registration (per-run, below) covers visibility,
+// completion toasts, and deferring the stale-build forced reload.
 let activeFanOuts = 0;
 function beforeUnloadGuard(e: BeforeUnloadEvent) {
   e.preventDefault();
 }
 function fanOutStarted() {
   activeFanOuts++;
-  if (activeFanOuts === 1) {
-    window.addEventListener('beforeunload', beforeUnloadGuard);
-    setJobActive('media-fanout', true);
-  }
+  if (activeFanOuts === 1) window.addEventListener('beforeunload', beforeUnloadGuard);
 }
 function fanOutFinished() {
   activeFanOuts = Math.max(0, activeFanOuts - 1);
-  if (activeFanOuts === 0) {
-    window.removeEventListener('beforeunload', beforeUnloadGuard);
-    setJobActive('media-fanout', false);
-  }
+  if (activeFanOuts === 0) window.removeEventListener('beforeunload', beforeUnloadGuard);
 }
 
 // Servers occasionally omit content-type on direct video files; the URL's
@@ -74,8 +68,29 @@ export async function sendProjectImageMessages(
   const ids = (fileIds ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0);
   if (ids.length === 0) return { sent: 0, failed: 0 };
   fanOutStarted();
+  const isArNow = useAppStore.getState().language === 'ar';
+  const jobId = startJob({
+    kind: 'media_fanout',
+    label: opts.deliverAt
+      ? (isArNow ? `جدولة ${ids.length} من الوسائط` : `Scheduling ${ids.length} media message(s)`)
+      : (isArNow ? `إرسال ${ids.length} من الوسائط` : `Sending ${ids.length} media message(s)`),
+    progress: { done: 0, total: ids.length },
+    href: `/model/chats/`,
+  });
   try {
-    return await sendProjectImageMessagesInner(chatWid, ids, opts);
+    const result = await sendProjectImageMessagesInner(chatWid, ids, opts, (done) =>
+      updateJob(jobId, { progress: { done, total: ids.length } }),
+    );
+    if (result.failed === ids.length) {
+      failJob(jobId, isArNow ? 'فشل إرسال كل الوسائط' : 'all media failed to send', { toastMessage: null });
+    } else {
+      // The caller surfaces its own success toast; keep the job entry quiet.
+      completeJob(jobId, { toastMessage: null });
+    }
+    return result;
+  } catch (err) {
+    failJob(jobId, err instanceof Error ? err.message : String(err), { toastMessage: null });
+    throw err;
   } finally {
     fanOutFinished();
   }
@@ -85,6 +100,7 @@ async function sendProjectImageMessagesInner(
   chatWid: string,
   ids: string[],
   opts: { deliverAt?: string },
+  onProgress?: (done: number) => void,
 ): Promise<{ sent: number; failed: number }> {
   // Media message i goes out at deliverAt + (i+1) * 10s.
   const baseDeliverMs = opts.deliverAt ? new Date(opts.deliverAt).getTime() : null;
@@ -161,6 +177,7 @@ async function sendProjectImageMessagesInner(
         } catch {
           failed++;
         }
+        onProgress?.(sent + failed);
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
@@ -173,6 +190,7 @@ async function sendProjectImageMessagesInner(
       } catch {
         failed++;
       }
+      onProgress?.(sent + failed);
     }
   }
 
