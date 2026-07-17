@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
   Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
-  LayoutList, Map as MapIcon,
+  LayoutList, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
@@ -13,6 +13,7 @@ import {
   updateSalesNotes,
   type ClientOptionStatus, type ClientOptionSourceType, type ClientOptionData,
 } from '@/lib/matching/clientOptions';
+import { buildAssistantContext } from '@/lib/followups/assistantContext';
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 import QualityBadge from '@/components/market/QualityBadge';
 import AddOptionModal from '../AddOptionModal';
@@ -45,6 +46,40 @@ function fmtRange(v: unknown, unit: string): string | null {
     if (hasMin) return `${fmtNum(min)} ${unit}`.trim();
   }
   return null;
+}
+
+type OptionSortKey = 'best' | 'score' | 'price_asc' | 'price_desc' | 'area_desc' | 'newest';
+
+const SORT_LABELS: Record<OptionSortKey, { ar: string; en: string }> = {
+  best: { ar: 'الأفضل (الرئيسي ثم الحالة)', en: 'Best (main, then status)' },
+  score: { ar: 'نسبة التطابق', en: 'Match score' },
+  price_asc: { ar: 'السعر: من الأقل', en: 'Price: low to high' },
+  price_desc: { ar: 'السعر: من الأعلى', en: 'Price: high to low' },
+  area_desc: { ar: 'المساحة: الأكبر أولاً', en: 'Area: largest first' },
+  newest: { ar: 'الأحدث إضافة', en: 'Newest added' },
+};
+
+/** A sortable number off a facts range ({min,max} or plain number); null when absent. */
+function factRangeNum(r: AppRecord, key: 'price_range' | 'area_range', pick: 'min' | 'max'): number | null {
+  const f = (r.data.facts ?? {}) as Record<string, unknown>;
+  const v = f[key];
+  if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    const primary = Number(o[pick]);
+    if (Number.isFinite(primary) && primary > 0) return primary;
+    const other = Number(o[pick === 'min' ? 'max' : 'min']);
+    if (Number.isFinite(other) && other > 0) return other;
+  }
+  return null;
+}
+
+/** Ascending/descending compare with nulls always LAST regardless of direction. */
+function cmpNullable(a: number | null, b: number | null, dir: 1 | -1): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return (a - b) * dir;
 }
 
 const UNIT_TYPE_AR: Record<string, string> = {
@@ -142,6 +177,52 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
   const [statusFilter, setStatusFilter] = useState<ClientOptionStatus | 'all'>('all');
   const [showEliminated, setShowEliminated] = useState(false);
   const [view, setView] = useState<'list' | 'map'>('list');
+  const [search, setSearch] = useState('');
+  const [sourceFilter, setSourceFilter] = useState<'all' | ClientOptionSourceType>('all');
+  const [sortKey, setSortKey] = useState<OptionSortKey>('best');
+
+  // Client preference chips — resolved by the SAME helper the finder's chips
+  // use (buildAssistantContext, saved record only — no draft here), plus a
+  // bedrooms chip its shared PREF_FIELDS list doesn't cover.
+  const clientsModel = useMemo(() => models.find((m) => m.name === 'clients') ?? null, [models]);
+  const geoNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const name of ['districts', 'cities']) {
+      const m = models.find((mm) => mm.name === name);
+      if (!m) continue;
+      for (const r of records[m.id] ?? []) {
+        const dn = (r.data?.display_name ?? r.data?.name_ar ?? r.data?.name_en) as unknown;
+        if (typeof dn === 'string' && dn.trim()) map[r.id] = dn.trim();
+      }
+    }
+    return map;
+  }, [models, records]);
+  const prefChips = useMemo(() => {
+    const ctx = buildAssistantContext({
+      clientsModel,
+      prefDraft: {},
+      savedClientData: (client.data as Record<string, unknown>) ?? null,
+      followupDraft: {},
+      geoNames,
+      isAr,
+    });
+    const chips = [...ctx.used];
+    const pb = (client.data as Record<string, unknown>).preferred_bedrooms;
+    let bedVal: string | null = null;
+    if (typeof pb === 'number' && pb > 0) bedVal = String(pb);
+    else if (pb && typeof pb === 'object' && !Array.isArray(pb)) {
+      const o = pb as Record<string, unknown>;
+      const mn = Number(o.min);
+      const mx = Number(o.max);
+      const hasMn = Number.isFinite(mn) && mn > 0;
+      const hasMx = Number.isFinite(mx) && mx > 0;
+      if (hasMn && hasMx) bedVal = mn === mx ? String(mn) : `${mn} – ${mx}`;
+      else if (hasMn) bedVal = `${mn}+`;
+      else if (hasMx) bedVal = isAr ? `حتى ${mx}` : `up to ${mx}`;
+    }
+    if (bedVal) chips.push({ slug: 'preferred_bedrooms', label_ar: 'الغرف', label_en: 'Bedrooms', value: bedVal });
+    return chips;
+  }, [clientsModel, client, geoNames, isAr]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editNotesId, setEditNotesId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
@@ -165,25 +246,54 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
       const i = CLIENT_OPTION_STATUS_ORDER.indexOf(s);
       return i < 0 ? 99 : i;
     };
-    return options
-      .filter((r) => {
-        const s = r.data.status as ClientOptionStatus;
-        if (statusFilter !== 'all') return s === statusFilter;
-        if (s === 'eliminated' && !showEliminated) return false;
-        return true;
-      })
-      .sort((a, b) => {
+    const score = (r: AppRecord) => (typeof r.data.match_score === 'number' ? r.data.match_score : -1);
+    const q = search.trim().toLowerCase();
+    const filtered = options.filter((r) => {
+      const s = r.data.status as ClientOptionStatus;
+      if (statusFilter !== 'all') { if (s !== statusFilter) return false; }
+      else if (s === 'eliminated' && !showEliminated) return false;
+      if (sourceFilter !== 'all' && r.data.source_type !== sourceFilter) return false;
+      if (q) {
+        const f = (r.data.facts ?? {}) as Record<string, unknown>;
+        const hay = [r.data.source_name, f.district, f.city, f.external_id]
+          .filter((x): x is string => typeof x === 'string')
+          .join(' ')
+          .toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    if (sortKey === 'best') {
+      return filtered.sort((a, b) => {
         const am = a.data.is_main === true ? 0 : 1;
         const bm = b.data.is_main === true ? 0 : 1;
         if (am !== bm) return am - bm;
         const ao = order(a.data.status as ClientOptionStatus);
         const bo = order(b.data.status as ClientOptionStatus);
         if (ao !== bo) return ao - bo;
-        const as = typeof a.data.match_score === 'number' ? a.data.match_score : -1;
-        const bs = typeof b.data.match_score === 'number' ? b.data.match_score : -1;
-        return bs - as;
+        return score(b) - score(a);
       });
-  }, [options, statusFilter, showEliminated]);
+    }
+    return filtered.sort((a, b) => {
+      let c = 0;
+      if (sortKey === 'score') c = score(b) - score(a);
+      else if (sortKey === 'price_asc') c = cmpNullable(factRangeNum(a, 'price_range', 'min'), factRangeNum(b, 'price_range', 'min'), 1);
+      else if (sortKey === 'price_desc') c = cmpNullable(factRangeNum(a, 'price_range', 'max'), factRangeNum(b, 'price_range', 'max'), -1);
+      else if (sortKey === 'area_desc') c = cmpNullable(factRangeNum(a, 'area_range', 'max'), factRangeNum(b, 'area_range', 'max'), -1);
+      else if (sortKey === 'newest') c = String(b.created_at ?? '').localeCompare(String(a.created_at ?? ''));
+      if (c !== 0) return c;
+      return score(b) - score(a);
+    });
+  }, [options, statusFilter, showEliminated, search, sourceFilter, sortKey]);
+
+  const sourceCounts = useMemo(() => {
+    const c: Record<string, number> = {};
+    for (const r of options) {
+      const t = String(r.data.source_type ?? '');
+      c[t] = (c[t] ?? 0) + 1;
+    }
+    return c;
+  }, [options]);
 
   const eliminatedCount = counts['eliminated'] ?? 0;
 
@@ -430,7 +540,8 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
   return (
     <div className="space-y-3">
       {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-sand/30 bg-white px-4 py-3">
+      <div className="space-y-2 rounded-2xl border border-sand/30 bg-white px-4 py-3">
+        <div className="flex flex-wrap items-center gap-2">
         <ListChecks size={16} className="text-copper" />
         <span className="text-sm font-bold text-charcoal">{L('خيارات العميل', 'Client Options')}</span>
         <span className="rounded-full bg-sand/30 px-2 py-0.5 text-[11px] font-semibold text-charcoal/70">{options.length}</span>
@@ -490,6 +601,60 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
             <Plus size={13} /> {L('إضافة خيار', 'Add option')}
           </button>
         )}
+        </div>
+
+        {/* Search + source filter + sort */}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="relative min-w-[180px] flex-1">
+            <Search size={13} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-charcoal/40" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder={L('بحث بالاسم أو الحي أو رقم الإعلان…', 'Search name, district, or ad id…')}
+              className="form-input w-full !py-1 ps-8 text-xs"
+            />
+          </div>
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value as 'all' | ClientOptionSourceType)}
+            className="form-input !w-auto !py-1 text-xs"
+            title={L('نوع المصدر', 'Source type')}
+          >
+            <option value="all">{L('كل المصادر', 'All sources')} ({options.length})</option>
+            {(Object.keys(CLIENT_OPTION_SOURCE_META) as ClientOptionSourceType[]).map((t) => (
+              <option key={t} value={t}>
+                {isAr ? CLIENT_OPTION_SOURCE_META[t].ar : CLIENT_OPTION_SOURCE_META[t].en} ({sourceCounts[t] ?? 0})
+              </option>
+            ))}
+          </select>
+          <ArrowUpDown size={13} className="text-charcoal/40" />
+          <select
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as OptionSortKey)}
+            className="form-input !w-auto !py-1 text-xs"
+            title={L('ترتيب الخيارات', 'Sort options')}
+          >
+            {(Object.keys(SORT_LABELS) as OptionSortKey[]).map((k) => (
+              <option key={k} value={k}>{isAr ? SORT_LABELS[k].ar : SORT_LABELS[k].en}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Client preference chips — the INPUTS the options were found against.
+            Read-only context; editing stays on the Preferences tab / finder. */}
+        <div className="flex flex-wrap items-center gap-1.5 border-t border-sand/20 pt-2">
+          <SlidersHorizontal size={12} className="text-charcoal/40" />
+          <span className="text-[10px] font-bold uppercase tracking-wider text-charcoal/45">{L('تفضيلات العميل', 'Client preferences')}</span>
+          {prefChips.length === 0 && (
+            <span className="text-[11px] text-charcoal/50">{L('لا توجد تفضيلات محددة', 'None set')}</span>
+          )}
+          {prefChips.map((p) => (
+            <span key={`${p.slug}:${isAr ? p.label_ar : p.label_en}`} className="inline-flex items-center gap-1 rounded-full border border-sand/50 bg-cream/50 px-2 py-0.5 text-[11px] text-charcoal/80">
+              <span className="text-charcoal/50">{isAr ? p.label_ar : p.label_en}:</span>
+              <span className="font-semibold">{p.value}</span>
+            </span>
+          ))}
+        </div>
       </div>
 
       {/* Empty state */}
