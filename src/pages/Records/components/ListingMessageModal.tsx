@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
+import { setJobActive } from '@/lib/staleBuild';
 import type { AppRecord } from '@/types';
 import {
   applyCleanedToListing,
@@ -132,6 +133,16 @@ export default function ListingMessageModal({
   const inFlight = isCleaningInFlight(cleaning);
   const completed = cleaning.filter((c) => c.status === 'completed');
   const failedCount = cleaning.filter((c) => c.status === 'failed').length;
+
+  // Register active work with the stale-build system so a deploy's forced
+  // reload WAITS instead of killing the modal mid photo-cleaning / drafting /
+  // save (live incident 2026-07-17). The cleaning jobs themselves survive a
+  // reload (server-side), but the modal state and text draft don't.
+  useEffect(() => {
+    const busy = textLoading || inFlight || saving;
+    setJobActive('listing-message', busy);
+    return () => setJobActive('listing-message', false);
+  }, [textLoading, inFlight, saving]);
 
   const redo = async (entryIds: string[]) => {
     if (!recordId || entryIds.length === 0) return;

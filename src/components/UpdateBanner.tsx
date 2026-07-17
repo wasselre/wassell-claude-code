@@ -21,7 +21,7 @@ export default function UpdateBanner() {
   const { t } = useTranslation();
   const language = useAppStore((s) => s.language);
   const isAr = language === 'ar';
-  const { updateAvailable, reload, secondsUntilForcedReload, hasUnsaved, writeLocked } =
+  const { updateAvailable, reload, secondsUntilForcedReload, hasUnsaved, writeLocked, hasActiveJobs } =
     useAppVersionPoller();
 
   if (!updateAvailable) return null;
@@ -62,13 +62,17 @@ export default function UpdateBanner() {
             ? isAr
               ? '⚠️ لديك تغييرات غير محفوظة — احفظها الآن قبل إعادة التحميل.'
               : '⚠️ You have unsaved changes — save them now before the reload.'
-            : writeLocked
+            : hasActiveJobs && !writeLocked
               ? isAr
-                ? 'تم إيقاف الحفظ مؤقتًا حتى يكتمل التحديث.'
-                : 'Saving is paused until the update completes.'
-              : isAr
-                ? 'سيعاد تحميل هذه الصفحة تلقائيًا لتطبيق آخر تحديث.'
-                : 'This tab will reload automatically to apply the latest update.'}
+                ? 'بانتظار اكتمال مهمة نشطة (إرسال وسائط / تنظيف صور) — سيُحدَّث تلقائيًا بعدها.'
+                : 'Waiting for an active task (media send / photo cleaning) — the update applies right after.'
+              : writeLocked
+                ? isAr
+                  ? 'تم إيقاف الحفظ مؤقتًا حتى يكتمل التحديث.'
+                  : 'Saving is paused until the update completes.'
+                : isAr
+                  ? 'سيعاد تحميل هذه الصفحة تلقائيًا لتطبيق آخر تحديث.'
+                  : 'This tab will reload automatically to apply the latest update.'}
         </div>
       </div>
       <button

@@ -32,6 +32,8 @@ import {
   markStaleBuildOutdated,
   lockStaleBuildWrites,
   hasUnsavedChanges,
+  hasActiveJobs,
+  deferForcedReloadForJobs,
   subscribeStaleBuild,
   getStaleBuildState,
 } from '@/lib/staleBuild';
@@ -61,6 +63,8 @@ export interface AppVersionState {
   writeLocked: boolean;
   /** Whether any open form has unsaved edits (drives the banner warning). */
   hasUnsaved: boolean;
+  /** Whether a long-running in-tab job is deferring the forced reload. */
+  hasActiveJobs: boolean;
   /** Force a reload now. Exposed so the banner button can call it. */
   reload: () => void;
 }
@@ -174,8 +178,16 @@ export function useAppVersionPoller(): AppVersionState {
   // CURRENT build must still be force-reloaded), gated only on a pending deadline.
   useEffect(() => {
     const interval = setInterval(() => {
-      const { forcedReloadAt } = getStaleBuildState();
+      const { forcedReloadAt, writeLocked } = getStaleBuildState();
       if (forcedReloadAt > 0 && Date.now() >= forcedReloadAt) {
+        // Active in-tab work (photo cleaning, media fan-out, AI drafting)
+        // defers the reload — bounded, and NEVER for a write-locked
+        // (storming) tab, which must die regardless (live incident
+        // 2026-07-17: a deploy reloaded the tab mid photo-cleaning).
+        if (!writeLocked && hasActiveJobs() && deferForcedReloadForJobs()) {
+          setTick((n) => n + 1);
+          return;
+        }
         lockStaleBuildWrites(); // belt-and-suspenders: no save can race the reload
         window.location.reload();
       } else if (forcedReloadAt > 0) {
@@ -203,7 +215,7 @@ export function useAppVersionPoller(): AppVersionState {
     window.location.reload();
   };
 
-  const { forcedReloadAt, writeLocked, hasUnsaved } = getStaleBuildState();
+  const { forcedReloadAt, writeLocked, hasUnsaved, hasActiveJobs: jobsActive } = getStaleBuildState();
   const secondsUntilForcedReload =
     updateAvailable && forcedReloadAt > 0
       ? Math.max(0, Math.ceil((forcedReloadAt - Date.now()) / 1000))
@@ -216,6 +228,7 @@ export function useAppVersionPoller(): AppVersionState {
     secondsUntilForcedReload,
     writeLocked,
     hasUnsaved,
+    hasActiveJobs: jobsActive,
     reload,
   };
 }

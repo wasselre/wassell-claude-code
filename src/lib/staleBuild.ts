@@ -19,11 +19,21 @@ type Listener = () => void;
 
 const listeners = new Set<Listener>();
 const unsavedKeys = new Set<string>();
+const activeJobKeys = new Set<string>();
 
 let outdated = false;
 let forcedReloadAt = 0; // epoch ms; 0 = not scheduled
 let writeLocked = false;
 let hardStopReason: string | null = null; // why writes are locked (telemetry/UX)
+let jobDeferredMsTotal = 0; // how long the forced reload has been pushed back for jobs
+
+// The forced reload DEFERS while an active job is registered (photo cleaning,
+// media fan-out, AI drafting — work a reload would kill; live incident
+// 2026-07-17: a deploy force-reloaded the tab mid listing-message cleaning).
+// Bounded so a stuck job can't keep a stale tab alive forever, and a
+// write-locked (storming) tab never defers — that's the kill switch.
+const JOB_DEFER_STEP_MS = 30_000;
+const JOB_DEFER_MAX_MS = 10 * 60_000;
 
 function emit(): void {
   for (const l of listeners) l();
@@ -35,10 +45,18 @@ export interface StaleBuildState {
   writeLocked: boolean;
   hardStopReason: string | null;
   hasUnsaved: boolean;
+  hasActiveJobs: boolean;
 }
 
 export function getStaleBuildState(): StaleBuildState {
-  return { outdated, forcedReloadAt, writeLocked, hardStopReason, hasUnsaved: unsavedKeys.size > 0 };
+  return {
+    outdated,
+    forcedReloadAt,
+    writeLocked,
+    hardStopReason,
+    hasUnsaved: unsavedKeys.size > 0,
+    hasActiveJobs: activeJobKeys.size > 0,
+  };
 }
 
 export function subscribeStaleBuild(l: Listener): () => void {
@@ -99,7 +117,9 @@ export function __resetStaleBuild(): void {
   forcedReloadAt = 0;
   writeLocked = false;
   hardStopReason = null;
+  jobDeferredMsTotal = 0;
   unsavedKeys.clear();
+  activeJobKeys.clear();
   emit();
 }
 
@@ -113,4 +133,36 @@ export function setFormUnsaved(key: string, dirty: boolean): void {
 
 export function hasUnsavedChanges(): boolean {
   return unsavedKeys.size > 0;
+}
+
+/**
+ * Long-running in-tab work (photo cleaning, background media fan-out, AI
+ * drafting) registers here so a forced reload WAITS for it instead of killing
+ * it mid-flight. Key = a short stable tag per surface; register true on start,
+ * false on finish/unmount.
+ */
+export function setJobActive(key: string, active: boolean): void {
+  const had = activeJobKeys.size > 0;
+  if (active) activeJobKeys.add(key);
+  else activeJobKeys.delete(key);
+  if ((activeJobKeys.size > 0) !== had) emit();
+}
+
+export function hasActiveJobs(): boolean {
+  return activeJobKeys.size > 0;
+}
+
+/**
+ * Called by the reload watcher when the forced-reload deadline hits while a
+ * job is active. Pushes the deadline back one step and returns true, or
+ * returns false once the total deferral budget is exhausted (a stuck job must
+ * not keep a stale tab alive forever). Write-locked (storming) tabs never get
+ * here — the watcher reloads them regardless of jobs.
+ */
+export function deferForcedReloadForJobs(): boolean {
+  if (jobDeferredMsTotal >= JOB_DEFER_MAX_MS) return false;
+  jobDeferredMsTotal += JOB_DEFER_STEP_MS;
+  forcedReloadAt = Date.now() + JOB_DEFER_STEP_MS;
+  emit();
+  return true;
 }

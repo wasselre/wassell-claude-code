@@ -25,22 +25,30 @@
 import { signViewUrls } from '@/lib/files/client';
 import { uploadFile } from '@/lib/haberchat/client';
 import { useAppStore } from '@/stores/appStore';
+import { setJobActive } from '@/lib/staleBuild';
 
 // Callers now run this WITHOUT awaiting (background fan-out — the modal /
-// composer frees up right after the text message). Guard against the user
-// closing the tab while media is still uploading: a native beforeunload
-// prompt while any fan-out is in flight.
+// composer frees up right after the text message). Two guards while any
+// fan-out is in flight: a native beforeunload prompt against the USER closing
+// the tab, and a staleBuild job registration so the update banner's FORCED
+// reload defers instead of killing the uploads mid-run.
 let activeFanOuts = 0;
 function beforeUnloadGuard(e: BeforeUnloadEvent) {
   e.preventDefault();
 }
 function fanOutStarted() {
   activeFanOuts++;
-  if (activeFanOuts === 1) window.addEventListener('beforeunload', beforeUnloadGuard);
+  if (activeFanOuts === 1) {
+    window.addEventListener('beforeunload', beforeUnloadGuard);
+    setJobActive('media-fanout', true);
+  }
 }
 function fanOutFinished() {
   activeFanOuts = Math.max(0, activeFanOuts - 1);
-  if (activeFanOuts === 0) window.removeEventListener('beforeunload', beforeUnloadGuard);
+  if (activeFanOuts === 0) {
+    window.removeEventListener('beforeunload', beforeUnloadGuard);
+    setJobActive('media-fanout', false);
+  }
 }
 
 // Servers occasionally omit content-type on direct video files; the URL's
