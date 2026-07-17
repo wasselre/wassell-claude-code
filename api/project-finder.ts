@@ -95,6 +95,8 @@ function normalizeRequirements(raw: Partial<MatchRequirements> | undefined): Mat
   const amax = num(r.area_max); if (amax != null) out.area_max = amax;
   const beds = num(r.bedrooms); if (beds != null) out.bedrooms = beds;
   const baths = num(r.bathrooms); if (baths != null) out.bathrooms = baths;
+  // عمر العقار cap — 0 ("new only") is meaningful, so null-check not truthiness.
+  const maxAge = num(r.max_unit_age); if (maxAge != null && maxAge >= 0) out.max_unit_age = maxAge;
   const amenities = strArr(r.amenities); if (amenities?.length) out.amenities = amenities;
   if (r.include_sold_out === true) out.include_sold_out = true;
   if (r.allow_stretch === false) out.allow_stretch = false;
