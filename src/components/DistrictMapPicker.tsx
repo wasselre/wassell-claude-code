@@ -335,6 +335,11 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     previewRef.current = preview;
     draftPathRef.current = [];
     setDraftCount(0);
+    // A visible DOT per clicked vertex — without it the FIRST click draws
+    // nothing (a 1-point line is invisible) and reads as "clicking does
+    // nothing" (live report 2026-07-16).
+    const dots: google.maps.Marker[] = [];
+    const clearDots = () => { dots.forEach((m) => m.setMap(null)); dots.length = 0; };
 
     const finishDraft = () => {
       const path = draftPathRef.current;
@@ -353,6 +358,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       }
       draftPathRef.current = [];
       preview.setPath([]);
+      clearDots();
       setDraftCount(0);
     };
     finishDraftRef.current = finishDraft;
@@ -361,6 +367,14 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       if (!e.latLng) return;
       draftPathRef.current = [...draftPathRef.current, { lat: e.latLng.lat(), lng: e.latLng.lng() }];
       preview.setPath(draftPathRef.current);
+      const c = drawPolarityRef.current === 'exclude' ? RED : GOLD;
+      dots.push(new google.maps.Marker({
+        map,
+        position: e.latLng,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: c, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 2 },
+        clickable: false,
+        zIndex: 7,
+      }));
       setDraftCount(draftPathRef.current.length);
     });
     const dblL = map.addListener('dblclick', () => finishDraft());
@@ -370,6 +384,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       google.maps.event.removeListener(dblL);
       preview.setMap(null);
       previewRef.current = null;
+      clearDots();
       draftPathRef.current = [];
       setDraftCount(0);
       finishDraftRef.current = () => {};
@@ -444,13 +459,18 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
               })}
             </div>
           )}
+          {drawMode && draftCount > 0 && draftCount < 3 && (
+            <span className="shrink-0 rounded-lg bg-copper/10 px-2.5 py-2 text-xs font-bold text-copper">
+              {L(`${draftCount} من 3 نقاط على الأقل`, `${draftCount} of 3+ points`)}
+            </span>
+          )}
           {drawMode && draftCount >= 3 && (
             <button
               type="button"
               onClick={() => finishDraftRef.current()}
               className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-3 py-2 text-sm font-bold text-white transition hover:bg-terracotta"
             >
-              <Check size={15} /> {L('إنهاء الشكل', 'Finish shape')}
+              <Check size={15} /> {L(`إنهاء الشكل (${draftCount})`, `Finish shape (${draftCount})`)}
             </button>
           )}
           <button
