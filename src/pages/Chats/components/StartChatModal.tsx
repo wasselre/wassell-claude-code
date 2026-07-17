@@ -171,10 +171,24 @@ export default function StartChatModal({
       // Send the project gallery (if any) into the just-created conversation —
       // each image as its own WhatsApp message after the first text message
       // (scheduled sends stagger them after the text's delivery time).
+      // NOT awaited: the modal closes right after the text message and the
+      // media fan-out continues in the BACKGROUND (a beforeunload guard in
+      // sendProjectImageMessages protects against closing the tab mid-send;
+      // failures toast from inside the fan-out).
       // chatWid mirrors startNewChat's derivation from the canonical E.164.
-      if (initialImageFileIds && initialImageFileIds.length > 0) {
+      const galleryCount = initialImageFileIds?.length ?? 0;
+      if (initialImageFileIds && galleryCount > 0) {
         const chatWid = `${normalizedRecipient.slice(1)}@c.us`;
-        await sendProjectImageMessages(chatWid, initialImageFileIds, { deliverAt });
+        void sendProjectImageMessages(chatWid, initialImageFileIds, { deliverAt }).then(({ sent, failed }) => {
+          if (sent > 0 && failed === 0) {
+            addToast(
+              deliverAt
+                ? (isAr ? `تمت جدولة ${sent} من الوسائط` : `${sent} media message(s) scheduled`)
+                : (isAr ? `أُرسلت ${sent} من الوسائط` : `${sent} media message(s) sent`),
+              'success',
+            );
+          }
+        });
       }
       if (deliverAt) {
         addToast(
@@ -182,6 +196,13 @@ export default function StartChatModal({
             ? `تمت الجدولة — سترسل ${formatScheduleTime(deliverAt, true)}`
             : `Scheduled — will send ${formatScheduleTime(deliverAt, false)}`,
           'success',
+        );
+      } else if (galleryCount > 0) {
+        addToast(
+          isAr
+            ? `تُرسل ${galleryCount} من الوسائط في الخلفية — تابع عملك`
+            : `Sending ${galleryCount} media message(s) in the background — keep working`,
+          'info',
         );
       }
       if (onSent) {

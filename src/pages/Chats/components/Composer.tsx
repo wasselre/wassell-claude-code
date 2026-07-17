@@ -140,9 +140,23 @@ export default function Composer({
       }
       // Project gallery rides along as its own image messages after the text.
       // Scheduled sends stagger each image a few seconds after the text so
-      // the queue delivers them in order.
+      // the queue delivers them in order. NOT awaited — the composer frees up
+      // right after the text send and the media fan-out runs in the
+      // BACKGROUND (beforeunload guard inside; failures toast from there).
+      // Immediate sends surface progress as bubbles landing in the thread;
+      // scheduled ones re-sync the strip when the fan-out completes.
       if (projectImages.length > 0) {
-        await sendProjectImageMessages(chatWid, projectImages, { deliverAt });
+        void sendProjectImageMessages(chatWid, projectImages, { deliverAt }).then(() => {
+          if (deliverAt) setScheduledRefreshKey((k) => k + 1);
+        });
+        if (!deliverAt) {
+          addToast(
+            isAr
+              ? `تُرسل ${projectImages.length} من الوسائط في الخلفية`
+              : `Sending ${projectImages.length} media message(s) in the background`,
+            'info',
+          );
+        }
       }
       if (deliverAt) {
         addToast(

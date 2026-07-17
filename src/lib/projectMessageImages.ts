@@ -26,6 +26,23 @@ import { signViewUrls } from '@/lib/files/client';
 import { uploadFile } from '@/lib/haberchat/client';
 import { useAppStore } from '@/stores/appStore';
 
+// Callers now run this WITHOUT awaiting (background fan-out — the modal /
+// composer frees up right after the text message). Guard against the user
+// closing the tab while media is still uploading: a native beforeunload
+// prompt while any fan-out is in flight.
+let activeFanOuts = 0;
+function beforeUnloadGuard(e: BeforeUnloadEvent) {
+  e.preventDefault();
+}
+function fanOutStarted() {
+  activeFanOuts++;
+  if (activeFanOuts === 1) window.addEventListener('beforeunload', beforeUnloadGuard);
+}
+function fanOutFinished() {
+  activeFanOuts = Math.max(0, activeFanOuts - 1);
+  if (activeFanOuts === 0) window.removeEventListener('beforeunload', beforeUnloadGuard);
+}
+
 // Servers occasionally omit content-type on direct video files; the URL's
 // extension recovers the mime so the bytes still send as a `video` message.
 const VIDEO_EXT_MIME: Record<string, string> = {
@@ -48,7 +65,19 @@ export async function sendProjectImageMessages(
 ): Promise<{ sent: number; failed: number }> {
   const ids = (fileIds ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0);
   if (ids.length === 0) return { sent: 0, failed: 0 };
+  fanOutStarted();
+  try {
+    return await sendProjectImageMessagesInner(chatWid, ids, opts);
+  } finally {
+    fanOutFinished();
+  }
+}
 
+async function sendProjectImageMessagesInner(
+  chatWid: string,
+  ids: string[],
+  opts: { deliverAt?: string },
+): Promise<{ sent: number; failed: number }> {
   // Media message i goes out at deliverAt + (i+1) * 10s.
   const baseDeliverMs = opts.deliverAt ? new Date(opts.deliverAt).getTime() : null;
   const STAGGER_MS = 10_000;
