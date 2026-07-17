@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
   Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
+  LayoutList, Map as MapIcon,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
@@ -15,6 +16,7 @@ import {
 import ContactAdvertiserButton from '@/components/market/ContactAdvertiserButton';
 import QualityBadge from '@/components/market/QualityBadge';
 import AddOptionModal from '../AddOptionModal';
+import ClientOptionsMapView from '../ClientOptionsMapView';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
 
@@ -60,10 +62,12 @@ const UNIT_TYPE_AR: Record<string, string> = {
  * source, mark main, change status, eliminate, reactivate). Deterministic — no AI.
  *
  * Default view: active options first (eliminated hidden behind a toggle / sorted
- * last). Filter by status. The preference INPUTS live on the Preferences tab and
- * are never touched here — this tab is the OUTPUT list, plus two ways to ADD to
- * it: open the client-scoped Project Finder, or manually pick a specific
- * project / unit / market listing (AddOptionModal, added_from='manual').
+ * last). Filter by status. A list/map toggle switches between the card list and
+ * ClientOptionsMapView (same cards, opened from status-colored pins). The
+ * preference INPUTS live on the Preferences tab and are never touched here —
+ * this tab is the OUTPUT list, plus two ways to ADD to it: open the
+ * client-scoped Project Finder, or manually pick a specific project / unit /
+ * market listing (AddOptionModal, added_from='manual').
  */
 export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
@@ -137,6 +141,7 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
 
   const [statusFilter, setStatusFilter] = useState<ClientOptionStatus | 'all'>('all');
   const [showEliminated, setShowEliminated] = useState(false);
+  const [view, setView] = useState<'list' | 'map'>('list');
   const [busyId, setBusyId] = useState<string | null>(null);
   const [editNotesId, setEditNotesId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
@@ -222,6 +227,202 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
     setEditNotesId(null);
   }
 
+  // ONE option-card renderer shared by the list view and the map view's
+  // clicked-pin panel, so the action wiring is identical in both.
+  const renderOptionCard = (r: AppRecord) => {
+    const d = r.data as unknown as ClientOptionData;
+    const f = (d.facts ?? {}) as Record<string, unknown>;
+    const isMain = d.is_main === true;
+    const isEliminated = d.status === 'eliminated';
+    const busy = busyId === r.id;
+    const cur = L('ر.س', 'SAR');
+    const city = typeof f.city === 'string' ? f.city : '';
+    const district = typeof f.district === 'string' ? f.district : '';
+    const unitTypes = Array.isArray(f.unit_types)
+      ? (f.unit_types as unknown[]).filter((x): x is string => typeof x === 'string').map((t) => (isAr ? UNIT_TYPE_AR[t.trim().toLowerCase()] ?? t : t)).join('، ')
+      : '';
+    const price = fmtRange(f.price_range, cur);
+    const area = fmtRange(f.area_range, L('م²', 'm²'));
+    const beds = fmtRange(f.bedroom_range, '');
+    const baths = fmtRange(f.bathroom_range, '');
+    const avail = typeof f.available_units === 'number' ? f.available_units : null;
+    const meta = CLIENT_OPTION_STATUS_META[d.status as ClientOptionStatus] ?? CLIENT_OPTION_STATUS_META.suitable;
+    const srcMeta = CLIENT_OPTION_SOURCE_META[d.source_type as ClientOptionSourceType];
+    const adId =
+      d.source_type === 'market_listing'
+        ? (typeof f.external_id === 'string' && f.external_id
+            ? f.external_id
+            : externalIdBySourceId.get(String(d.source_id ?? '')) ?? null)
+        : null;
+
+    return (
+      <div key={r.id} className={`overflow-hidden rounded-xl border bg-white shadow-sm ${isMain ? 'border-copper/60 ring-1 ring-copper/30' : isEliminated ? 'border-red-200 opacity-80' : 'border-sand/50'}`}>
+        {/* Header */}
+        <div className="flex items-center gap-2 border-b border-sand/30 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => onToggleMain(r)}
+            disabled={!canEdit || busy}
+            className={`shrink-0 transition disabled:opacity-50 ${isMain ? 'text-gold' : 'text-charcoal/30 hover:text-gold'}`}
+            title={isMain ? L('الخيار الرئيسي — اضغط لإلغائه', 'Main option — click to clear') : L('تعيين كخيار رئيسي', 'Set as main option')}
+            aria-pressed={isMain}
+          >
+            <Star size={18} fill={isMain ? 'currentColor' : 'none'} />
+          </button>
+          <Building2 size={15} className="shrink-0 text-charcoal/50" />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-bold text-charcoal">{d.source_name || L('بدون اسم', 'Untitled')}</div>
+            <div className="flex items-center gap-1 truncate text-[11px] text-charcoal/55">
+              <MapPin size={11} className="shrink-0 text-copper" />
+              {[district, city].filter(Boolean).join('، ') || L('الموقع غير محدد', 'Location not set')}
+            </div>
+          </div>
+          {adId && (
+            <span
+              className="inline-flex shrink-0 items-center rounded-full border border-chocolate/25 bg-chocolate/5 px-2 py-0.5 text-[11px] font-bold text-chocolate"
+              title={L('رقم الإعلان', 'Ad ID')}
+            >
+              @{adId}
+            </span>
+          )}
+          {srcMeta && (
+            <span className="inline-flex shrink-0 items-center rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] font-semibold text-charcoal/70">
+              {isAr ? srcMeta.ar : srcMeta.en}
+            </span>
+          )}
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold"
+            style={{ color: meta.color, borderColor: `${meta.color}55`, backgroundColor: `${meta.color}12` }}
+          >
+            {isAr ? meta.ar : meta.en}
+          </span>
+          {typeof d.match_score === 'number' && (
+            <span className="inline-flex shrink-0 items-center rounded-full bg-charcoal/5 px-2 py-0.5 text-[11px] font-bold text-charcoal/70">{d.match_score}%</span>
+          )}
+          {/* Listing quality — snapshotted into facts at save time; for
+              options saved before the quality feature (2026-07-02) the
+              snapshot has no grade, so fall back to the live listing record
+              in the slim store. Renders nothing when neither has a grade. */}
+          {d.source_type === 'market_listing' && (() => {
+            const live = qualityBySourceId.get(String(d.source_id ?? ''));
+            const grade = (typeof f.quality_grade === 'string' && f.quality_grade) ? f.quality_grade : live?.grade;
+            const score = (typeof f.quality_score === 'number' && Number.isFinite(f.quality_score)) ? f.quality_score : live?.score;
+            return <QualityBadge grade={grade} score={score} isAr={isAr} />;
+          })()}
+        </div>
+
+        <div className="space-y-2.5 p-3">
+          {/* Specs grid */}
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg bg-cream/30 p-2.5 text-xs sm:grid-cols-3">
+            <Spec icon={<Wallet size={12} />} label={L('السعر', 'Price')} value={price} isAr={isAr} />
+            <Spec icon={<PackageCheck size={12} />} label={L('وحدات متاحة', 'Available')} value={avail != null ? String(avail) : null} isAr={isAr} />
+            <Spec icon={<Building2 size={12} />} label={L('النوع', 'Type')} value={unitTypes || null} isAr={isAr} />
+            <Spec icon={<Ruler size={12} />} label={L('المساحة', 'Area')} value={area} isAr={isAr} />
+            <Spec icon={<BedDouble size={12} />} label={L('الغرف', 'Bedrooms')} value={beds} isAr={isAr} />
+            <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} isAr={isAr} />
+          </div>
+
+          {/* Sales notes (inline-editable) */}
+          {editNotesId === r.id ? (
+            <div className="space-y-1.5">
+              <textarea value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)} rows={2} autoFocus className="form-input w-full resize-none text-xs" placeholder={L('ملاحظات المبيعات…', 'Sales notes…')} />
+              <div className="flex gap-1.5">
+                <button type="button" onClick={() => saveNotes(r)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white hover:bg-terracotta disabled:opacity-50">
+                  {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {L('حفظ', 'Save')}
+                </button>
+                <button type="button" onClick={() => setEditNotesId(null)} className="rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/70 hover:bg-cream/60">{L('إلغاء', 'Cancel')}</button>
+              </div>
+            </div>
+          ) : (
+            d.sales_notes ? (
+              <div className="flex items-start gap-1.5 rounded-lg bg-cream/40 px-2.5 py-1.5 text-xs text-charcoal/80">
+                <span className="font-semibold text-charcoal/50">{L('ملاحظات:', 'Notes:')}</span>
+                <span className="flex-1 whitespace-pre-wrap break-words">{d.sales_notes}</span>
+              </div>
+            ) : null
+          )}
+
+          {/* Elimination notes */}
+          {isEliminated && d.elimination_notes && (
+            <div className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
+              <XCircle size={13} className="mt-0.5 shrink-0" />
+              <span><span className="font-semibold">{L('سبب الاستبعاد: ', 'Eliminated: ')}</span>{d.elimination_notes}</span>
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <a
+              href={optionSourceUrl(d.source_type as ClientOptionSourceType, d.source_id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60"
+            >
+              <ExternalLink size={12} /> {L('عرض المصدر', 'View source')}
+            </a>
+
+            {/* Send THIS option to the client over WhatsApp — the prepared
+                message if one exists, else the creation flow. Projects +
+                market listings (units have no message flow). */}
+            {(d.source_type === 'project' || d.source_type === 'market_listing') && (
+              <button
+                type="button"
+                onClick={() => setSendTarget({
+                  sourceType: d.source_type as 'project' | 'market_listing',
+                  sourceId: d.source_id,
+                  sourceName: d.source_name || '',
+                })}
+                className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-terracotta"
+                title={L('إرسال هذا الخيار للعميل عبر واتساب', 'Send this option to the client over WhatsApp')}
+              >
+                <Send size={12} /> {L('إرسال للعميل', 'Send to client')}
+              </button>
+            )}
+
+            {/* Market-listing options: contact the advertiser — opens the
+                WhatsApp chat if the phone is already on the listing, else
+                runs the REGA lookup and opens it when the number lands. */}
+            {d.source_type === 'market_listing' && (
+              <ContactAdvertiserButton listingId={d.source_id} isAr={isAr} />
+            )}
+
+            {canEdit && (
+              <>
+                <select
+                  value={d.status}
+                  onChange={(e) => onChangeStatus(r, e.target.value as ClientOptionStatus)}
+                  disabled={busy}
+                  className="form-input !w-auto !py-1 text-[11px] disabled:opacity-50"
+                  title={L('تحديث الحالة', 'Update status')}
+                >
+                  {CLIENT_OPTION_STATUS_ORDER.map((s) => (
+                    <option key={s} value={s}>{isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}</option>
+                  ))}
+                </select>
+
+                {!isEliminated && (
+                  <button type="button" onClick={() => { setNotesDraft(String(d.sales_notes ?? '')); setEditNotesId(r.id); }} className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60">
+                    <Pencil size={12} /> {L('ملاحظة', 'Note')}
+                  </button>
+                )}
+
+                {isEliminated ? (
+                  <button type="button" onClick={() => onReactivate(r)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60 disabled:opacity-50">
+                    {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} {L('إعادة تفعيل', 'Reactivate')}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => { setEliminateNotes(String(d.elimination_notes ?? '')); setEliminateTarget(r); }} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-50">
+                    <XCircle size={12} /> {L('استبعاد', 'Eliminate')}
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   if (!modelId) {
     return <div className="rounded-2xl border border-sand/30 bg-white p-6 text-sm text-charcoal/55">{L('نموذج خيارات العميل غير محمّل.', 'Client options model not loaded.')}</div>;
   }
@@ -234,6 +435,25 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
         <span className="text-sm font-bold text-charcoal">{L('خيارات العميل', 'Client Options')}</span>
         <span className="rounded-full bg-sand/30 px-2 py-0.5 text-[11px] font-semibold text-charcoal/70">{options.length}</span>
         <div className="flex-1" />
+        {/* List / Map view toggle */}
+        <div className="flex overflow-hidden rounded-lg border border-sand/60">
+          <button
+            type="button"
+            onClick={() => setView('list')}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold transition ${view === 'list' ? 'bg-copper text-white' : 'bg-white text-charcoal/60 hover:bg-cream/60'}`}
+            aria-pressed={view === 'list'}
+          >
+            <LayoutList size={13} /> {L('قائمة', 'List')}
+          </button>
+          <button
+            type="button"
+            onClick={() => setView('map')}
+            className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold transition ${view === 'map' ? 'bg-copper text-white' : 'bg-white text-charcoal/60 hover:bg-cream/60'}`}
+            aria-pressed={view === 'map'}
+          >
+            <MapIcon size={13} /> {L('خريطة', 'Map')}
+          </button>
+        </div>
         <Filter size={14} className="text-charcoal/40" />
         <select
           value={statusFilter}
@@ -301,200 +521,14 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
         <div className="rounded-2xl border border-sand/30 bg-white px-6 py-8 text-center text-sm text-charcoal/55">{L('لا خيارات بهذا الفلتر.', 'No options match this filter.')}</div>
       )}
 
-      {/* Option cards */}
-      {visible.map((r) => {
-        const d = r.data as unknown as ClientOptionData;
-        const f = (d.facts ?? {}) as Record<string, unknown>;
-        const isMain = d.is_main === true;
-        const isEliminated = d.status === 'eliminated';
-        const busy = busyId === r.id;
-        const cur = L('ر.س', 'SAR');
-        const city = typeof f.city === 'string' ? f.city : '';
-        const district = typeof f.district === 'string' ? f.district : '';
-        const unitTypes = Array.isArray(f.unit_types)
-          ? (f.unit_types as unknown[]).filter((x): x is string => typeof x === 'string').map((t) => (isAr ? UNIT_TYPE_AR[t.trim().toLowerCase()] ?? t : t)).join('، ')
-          : '';
-        const price = fmtRange(f.price_range, cur);
-        const area = fmtRange(f.area_range, L('م²', 'm²'));
-        const beds = fmtRange(f.bedroom_range, '');
-        const baths = fmtRange(f.bathroom_range, '');
-        const avail = typeof f.available_units === 'number' ? f.available_units : null;
-        const meta = CLIENT_OPTION_STATUS_META[d.status as ClientOptionStatus] ?? CLIENT_OPTION_STATUS_META.suitable;
-        const srcMeta = CLIENT_OPTION_SOURCE_META[d.source_type as ClientOptionSourceType];
-        const adId =
-          d.source_type === 'market_listing'
-            ? (typeof f.external_id === 'string' && f.external_id
-                ? f.external_id
-                : externalIdBySourceId.get(String(d.source_id ?? '')) ?? null)
-            : null;
+      {/* Map view — status-colored pins; a pin click opens the same option
+          card (full actions) in a floating panel over the map. */}
+      {view === 'map' && visible.length > 0 && (
+        <ClientOptionsMapView options={visible} isAr={isAr} renderCard={renderOptionCard} />
+      )}
 
-        return (
-          <div key={r.id} className={`overflow-hidden rounded-xl border bg-white shadow-sm ${isMain ? 'border-copper/60 ring-1 ring-copper/30' : isEliminated ? 'border-red-200 opacity-80' : 'border-sand/50'}`}>
-            {/* Header */}
-            <div className="flex items-center gap-2 border-b border-sand/30 px-3 py-2">
-              <button
-                type="button"
-                onClick={() => onToggleMain(r)}
-                disabled={!canEdit || busy}
-                className={`shrink-0 transition disabled:opacity-50 ${isMain ? 'text-gold' : 'text-charcoal/30 hover:text-gold'}`}
-                title={isMain ? L('الخيار الرئيسي — اضغط لإلغائه', 'Main option — click to clear') : L('تعيين كخيار رئيسي', 'Set as main option')}
-                aria-pressed={isMain}
-              >
-                <Star size={18} fill={isMain ? 'currentColor' : 'none'} />
-              </button>
-              <Building2 size={15} className="shrink-0 text-charcoal/50" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-bold text-charcoal">{d.source_name || L('بدون اسم', 'Untitled')}</div>
-                <div className="flex items-center gap-1 truncate text-[11px] text-charcoal/55">
-                  <MapPin size={11} className="shrink-0 text-copper" />
-                  {[district, city].filter(Boolean).join('، ') || L('الموقع غير محدد', 'Location not set')}
-                </div>
-              </div>
-              {adId && (
-                <span
-                  className="inline-flex shrink-0 items-center rounded-full border border-chocolate/25 bg-chocolate/5 px-2 py-0.5 text-[11px] font-bold text-chocolate"
-                  title={L('رقم الإعلان', 'Ad ID')}
-                >
-                  @{adId}
-                </span>
-              )}
-              {srcMeta && (
-                <span className="inline-flex shrink-0 items-center rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] font-semibold text-charcoal/70">
-                  {isAr ? srcMeta.ar : srcMeta.en}
-                </span>
-              )}
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold"
-                style={{ color: meta.color, borderColor: `${meta.color}55`, backgroundColor: `${meta.color}12` }}
-              >
-                {isAr ? meta.ar : meta.en}
-              </span>
-              {typeof d.match_score === 'number' && (
-                <span className="inline-flex shrink-0 items-center rounded-full bg-charcoal/5 px-2 py-0.5 text-[11px] font-bold text-charcoal/70">{d.match_score}%</span>
-              )}
-              {/* Listing quality — snapshotted into facts at save time; for
-                  options saved before the quality feature (2026-07-02) the
-                  snapshot has no grade, so fall back to the live listing record
-                  in the slim store. Renders nothing when neither has a grade. */}
-              {d.source_type === 'market_listing' && (() => {
-                const live = qualityBySourceId.get(String(d.source_id ?? ''));
-                const grade = (typeof f.quality_grade === 'string' && f.quality_grade) ? f.quality_grade : live?.grade;
-                const score = (typeof f.quality_score === 'number' && Number.isFinite(f.quality_score)) ? f.quality_score : live?.score;
-                return <QualityBadge grade={grade} score={score} isAr={isAr} />;
-              })()}
-            </div>
-
-            <div className="space-y-2.5 p-3">
-              {/* Specs grid */}
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg bg-cream/30 p-2.5 text-xs sm:grid-cols-3">
-                <Spec icon={<Wallet size={12} />} label={L('السعر', 'Price')} value={price} isAr={isAr} />
-                <Spec icon={<PackageCheck size={12} />} label={L('وحدات متاحة', 'Available')} value={avail != null ? String(avail) : null} isAr={isAr} />
-                <Spec icon={<Building2 size={12} />} label={L('النوع', 'Type')} value={unitTypes || null} isAr={isAr} />
-                <Spec icon={<Ruler size={12} />} label={L('المساحة', 'Area')} value={area} isAr={isAr} />
-                <Spec icon={<BedDouble size={12} />} label={L('الغرف', 'Bedrooms')} value={beds} isAr={isAr} />
-                <Spec icon={<Bath size={12} />} label={L('دورات المياه', 'Bathrooms')} value={baths} isAr={isAr} />
-              </div>
-
-              {/* Sales notes (inline-editable) */}
-              {editNotesId === r.id ? (
-                <div className="space-y-1.5">
-                  <textarea value={notesDraft} onChange={(e) => setNotesDraft(e.target.value)} rows={2} autoFocus className="form-input w-full resize-none text-xs" placeholder={L('ملاحظات المبيعات…', 'Sales notes…')} />
-                  <div className="flex gap-1.5">
-                    <button type="button" onClick={() => saveNotes(r)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white hover:bg-terracotta disabled:opacity-50">
-                      {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} {L('حفظ', 'Save')}
-                    </button>
-                    <button type="button" onClick={() => setEditNotesId(null)} className="rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/70 hover:bg-cream/60">{L('إلغاء', 'Cancel')}</button>
-                  </div>
-                </div>
-              ) : (
-                d.sales_notes ? (
-                  <div className="flex items-start gap-1.5 rounded-lg bg-cream/40 px-2.5 py-1.5 text-xs text-charcoal/80">
-                    <span className="font-semibold text-charcoal/50">{L('ملاحظات:', 'Notes:')}</span>
-                    <span className="flex-1 whitespace-pre-wrap break-words">{d.sales_notes}</span>
-                  </div>
-                ) : null
-              )}
-
-              {/* Elimination notes */}
-              {isEliminated && d.elimination_notes && (
-                <div className="flex items-start gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs text-red-700">
-                  <XCircle size={13} className="mt-0.5 shrink-0" />
-                  <span><span className="font-semibold">{L('سبب الاستبعاد: ', 'Eliminated: ')}</span>{d.elimination_notes}</span>
-                </div>
-              )}
-
-              {/* Actions */}
-              <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                <a
-                  href={optionSourceUrl(d.source_type as ClientOptionSourceType, d.source_id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60"
-                >
-                  <ExternalLink size={12} /> {L('عرض المصدر', 'View source')}
-                </a>
-
-                {/* Send THIS option to the client over WhatsApp — the prepared
-                    message if one exists, else the creation flow. Projects +
-                    market listings (units have no message flow). */}
-                {(d.source_type === 'project' || d.source_type === 'market_listing') && (
-                  <button
-                    type="button"
-                    onClick={() => setSendTarget({
-                      sourceType: d.source_type as 'project' | 'market_listing',
-                      sourceId: d.source_id,
-                      sourceName: d.source_name || '',
-                    })}
-                    className="inline-flex items-center gap-1 rounded-lg bg-copper px-2.5 py-1 text-[11px] font-bold text-white transition hover:bg-terracotta"
-                    title={L('إرسال هذا الخيار للعميل عبر واتساب', 'Send this option to the client over WhatsApp')}
-                  >
-                    <Send size={12} /> {L('إرسال للعميل', 'Send to client')}
-                  </button>
-                )}
-
-                {/* Market-listing options: contact the advertiser — opens the
-                    WhatsApp chat if the phone is already on the listing, else
-                    runs the REGA lookup and opens it when the number lands. */}
-                {d.source_type === 'market_listing' && (
-                  <ContactAdvertiserButton listingId={d.source_id} isAr={isAr} />
-                )}
-
-                {canEdit && (
-                  <>
-                    <select
-                      value={d.status}
-                      onChange={(e) => onChangeStatus(r, e.target.value as ClientOptionStatus)}
-                      disabled={busy}
-                      className="form-input !w-auto !py-1 text-[11px] disabled:opacity-50"
-                      title={L('تحديث الحالة', 'Update status')}
-                    >
-                      {CLIENT_OPTION_STATUS_ORDER.map((s) => (
-                        <option key={s} value={s}>{isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}</option>
-                      ))}
-                    </select>
-
-                    {!isEliminated && (
-                      <button type="button" onClick={() => { setNotesDraft(String(d.sales_notes ?? '')); setEditNotesId(r.id); }} className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60">
-                        <Pencil size={12} /> {L('ملاحظة', 'Note')}
-                      </button>
-                    )}
-
-                    {isEliminated ? (
-                      <button type="button" onClick={() => onReactivate(r)} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/75 transition hover:bg-cream/60 disabled:opacity-50">
-                        {busy ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} {L('إعادة تفعيل', 'Reactivate')}
-                      </button>
-                    ) : (
-                      <button type="button" onClick={() => { setEliminateNotes(String(d.elimination_notes ?? '')); setEliminateTarget(r); }} disabled={busy} className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-50">
-                        <XCircle size={12} /> {L('استبعاد', 'Eliminate')}
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      {/* Option cards (list view) */}
+      {view === 'list' && visible.map((r) => renderOptionCard(r))}
 
       {/* Manual add-option picker */}
       {addOpen && <AddOptionModal clientId={client.id} isAr={isAr} onClose={() => setAddOpen(false)} />}
