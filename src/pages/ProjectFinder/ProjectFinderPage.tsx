@@ -58,7 +58,7 @@ function SectionLabel({ text, tone }: { text: string; tone: 'ours' | 'other' }) 
 
 // The clients-model field slugs the finder reads (mirrors the Follow-up draft
 // shape consumed by draftToMatchRequirements). Rendered if present on the live model.
-const FILTER_SLUGS = ['location', 'preferred_districts', 'preferred_unit_type', 'budget', 'preferred_area', 'preferred_amenities'] as const;
+const FILTER_SLUGS = ['location', 'preferred_districts', 'preferred_unit_type', 'preferred_max_unit_age', 'budget', 'preferred_area', 'preferred_amenities'] as const;
 
 const SOURCE_LABELS: Record<FinderSource, { ar: string; en: string }> = {
   our_projects: { ar: 'مشاريعنا', en: 'Our Projects' },

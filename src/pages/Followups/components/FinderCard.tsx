@@ -122,6 +122,14 @@ export default function FinderCard({
   const beds = fmtRange(f.bedroom_range, '');
   const baths = fmtRange(f.bathroom_range, '');
   const avail = typeof f.available_units === 'number' ? f.available_units : null;
+  // عمر العقار (years; 0 = new). Market listings carry the parsed Aqar age;
+  // catalog projects are stamped 0 (new-development stock).
+  const unitAge = typeof f.unit_age === 'number' && Number.isFinite(f.unit_age) ? f.unit_age : null;
+  const unitAgeText = unitAge == null ? null
+    : unitAge <= 0 ? L('جديد', 'New')
+    : unitAge === 1 ? L('سنة', '1 yr')
+    : unitAge === 2 ? L('سنتين', '2 yrs')
+    : L(`${unitAge} سنوات`, `${unitAge} yrs`);
   // Aqar ad id — only market listings carry it; shown as a small "@id" chip.
   const adId = item.source === 'market_listings' && typeof f.external_id === 'string' && f.external_id ? f.external_id : null;
 
@@ -194,6 +202,16 @@ export default function FinderCard({
               part of the match score. Renders nothing when facts carry no grade. */}
           {item.source === 'market_listings' && (
             <QualityBadge grade={f.quality_grade} score={f.quality_score} isAr={isAr} />
+          )}
+          {/* عمر العقار — shown for market listings (parsed Aqar age). The catalog's
+              implicit "new" stamp is skipped to avoid a redundant chip on every card. */}
+          {item.source === 'market_listings' && unitAgeText && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full border border-sand/60 bg-cream/50 px-2 py-0.5 text-[11px] font-bold text-charcoal/75"
+              title={L('عمر العقار', 'Unit age')}
+            >
+              {L(`العمر: ${unitAgeText}`, `Age: ${unitAgeText}`)}
+            </span>
           )}
           {item.geo_status && <GeoStatusPill status={item.geo_status} isAr={isAr} />}
           {item.geo_confidence && <GeoConfidencePill confidence={item.geo_confidence} isAr={isAr} />}

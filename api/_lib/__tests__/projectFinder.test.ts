@@ -473,3 +473,59 @@ function makeCore(parts: { our?: MatchResultItem[]; all?: MatchResultItem[]; mar
     marketInfo: { status: 'ok' },
   };
 }
+
+// ── unit age (عمر العقار) ───────────────────────────────────────────────────
+import { __test as matchTest } from '../matchAgent.js';
+
+describe('unit age parsing (TS twin of wassell_parse_unit_age — keep in sync)', () => {
+  const p = matchTest.parseUnitAgeText;
+  it('parses the observed Aqar value space', () => {
+    expect(p('جديد')).toBe(0);
+    expect(p('جديدة')).toBe(0);
+    expect(p('سنتين')).toBe(2);
+    expect(p('سنتان')).toBe(2);
+    expect(p('سنة')).toBe(1);
+    expect(p('سنة ونصف')).toBe(1);
+    expect(p('9 سنة')).toBe(9);
+    expect(p('5 سنوات')).toBe(5);
+    expect(p('15')).toBe(15);
+    expect(p('أكثر من 10 سنوات')).toBe(11);
+    expect(p('أكثر من 30 سنة')).toBe(31);
+  });
+  it('null/empty/junk → null (requested-but-missing at scoring time)', () => {
+    expect(p(null)).toBeNull();
+    expect(p('')).toBeNull();
+    expect(p('غير معروف')).toBeNull();
+  });
+});
+
+describe('unit-age scoring dimension', () => {
+  const score = (data: Record<string, unknown>, max: number) =>
+    matchTest.scoreProject({ available_units: 1, ...data }, { max_unit_age: max });
+  it('at/under the max → full credit; ≤2 years over → half; far over → 0', () => {
+    expect(score({ unit_age: 0 }, 0).breakdown.unit_age).toBe(1);
+    expect(score({ unit_age: 2 }, 0).breakdown.unit_age).toBe(0.5);
+    expect(score({ unit_age: 5 }, 0).breakdown.unit_age).toBe(0);
+    expect(score({ unit_age: 4 }, 5).breakdown.unit_age).toBe(1);
+  });
+  it('age unknown → requested-but-missing (0 credit, full weight, gap recorded)', () => {
+    const s = score({}, 0);
+    expect(s.breakdown.unit_age).toBe(0);
+    expect(s.data_gaps).toContain('no unit age data');
+  });
+  it('not requested → dimension excluded entirely', () => {
+    const s = matchTest.scoreProject({ available_units: 1, unit_age: 30 }, {});
+    expect(s.breakdown.unit_age).toBeNull();
+  });
+});
+
+describe('listing adapter carries the parsed age', () => {
+  it('adaptListingToScorable parses the age text into unit_age', () => {
+    const a = matchTest.adaptListingToScorable({ title: 'x', is_active: true, age: 'أكثر من 10 سنوات' });
+    expect(a.unit_age).toBe(11);
+    const b = matchTest.adaptListingToScorable({ title: 'x', is_active: true, age: 'جديد' });
+    expect(b.unit_age).toBe(0);
+    const c = matchTest.adaptListingToScorable({ title: 'x', is_active: true });
+    expect(c.unit_age).toBeUndefined();
+  });
+});

@@ -204,6 +204,13 @@ export function buildDetailedClientPrefChips(
     chips.push({ key: `unit:${v}`, kind: 'unit_type', text: optionLabel(unitField, v, isAr) });
   }
 
+  // ── Unit age (عمر العقار) — dropdown of max-age buckets ──
+  const ageField = fieldBySlug(clientsModel, 'preferred_max_unit_age');
+  const ageV = clientData.preferred_max_unit_age;
+  if (typeof ageV === 'string' && ageV.trim() !== '') {
+    chips.push({ key: 'unit_age', kind: 'unit_type', text: optionLabel(ageField, ageV, isAr) });
+  }
+
   // ── Budget range ──
   const budget = formatRange(clientData.budget, isAr ? 'ر.س' : 'SAR');
   if (budget) chips.push({ key: 'budget', kind: 'budget', text: budget });

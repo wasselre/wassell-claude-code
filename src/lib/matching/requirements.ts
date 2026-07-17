@@ -44,6 +44,8 @@ export interface MatchRequirementsInput {
   area_min?: number;
   area_max?: number;
   bedrooms?: number;
+  /** Max acceptable unit age in YEARS (عمر العقار) — 0 = new only. */
+  max_unit_age?: number;
   amenities?: string[];
 }
 
@@ -180,6 +182,15 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
   const area = rangeBounds(pick('preferred_area'));
   if (area.min != null) out.area_min = area.min;
   if (area.max != null) out.area_max = area.max;
+
+  // ── Unit age (عمر العقار) — the dropdown stores the max years as a STRING
+  //    option value ('0' = new only, '2', '5', '10'). '0' is meaningful, so the
+  //    check is Number.isFinite, not truthiness. ──
+  const ageV = pick('preferred_max_unit_age');
+  if (typeof ageV === 'string' || typeof ageV === 'number') {
+    const n = Number(ageV);
+    if (Number.isFinite(n) && n >= 0) out.max_unit_age = n;
+  }
 
   // ── Amenities (best-effort; low weight in scoring) ──
   const amenities = pick('preferred_amenities');

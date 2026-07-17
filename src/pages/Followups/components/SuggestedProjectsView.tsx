@@ -78,7 +78,7 @@ const MISSING_LABELS: Record<string, { ar: string; en: string }> = {
 
 // Client preference fields the rep can edit here to refine the search, in order.
 // Only those present on the live clients model are rendered.
-const EDIT_SLUGS = ['location', 'preferred_districts', 'preferred_unit_type', 'budget', 'preferred_area', 'preferred_bedrooms', 'preferred_amenities'] as const;
+const EDIT_SLUGS = ['location', 'preferred_districts', 'preferred_unit_type', 'preferred_max_unit_age', 'budget', 'preferred_area', 'preferred_bedrooms', 'preferred_amenities'] as const;
 
 const PAGE = 24;
 

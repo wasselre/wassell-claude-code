@@ -106,3 +106,18 @@ describe('draftToMatchRequirements — multi-district', () => {
     expect(out.district_ids).toBeUndefined();
   });
 });
+
+describe('preferred_max_unit_age → max_unit_age', () => {
+  it("maps the dropdown's string value, including the meaningful '0' (new only)", () => {
+    expect(draftToMatchRequirements({ clientsModel: null, prefDraft: { preferred_max_unit_age: '0' }, savedClientData: null }).max_unit_age).toBe(0);
+    expect(draftToMatchRequirements({ clientsModel: null, prefDraft: { preferred_max_unit_age: '5' }, savedClientData: null }).max_unit_age).toBe(5);
+  });
+  it('absent / empty / junk → no max_unit_age', () => {
+    expect(draftToMatchRequirements({ clientsModel: null, prefDraft: {}, savedClientData: null }).max_unit_age).toBeUndefined();
+    expect(draftToMatchRequirements({ clientsModel: null, prefDraft: { preferred_max_unit_age: '' }, savedClientData: null }).max_unit_age).toBeUndefined();
+    expect(draftToMatchRequirements({ clientsModel: null, prefDraft: { preferred_max_unit_age: 'abc' }, savedClientData: null }).max_unit_age).toBeUndefined();
+  });
+  it('falls back to the saved client when the draft slot is empty', () => {
+    expect(draftToMatchRequirements({ clientsModel: null, prefDraft: {}, savedClientData: { preferred_max_unit_age: '2' } }).max_unit_age).toBe(2);
+  });
+});

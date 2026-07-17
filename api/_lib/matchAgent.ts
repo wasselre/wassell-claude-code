@@ -46,6 +46,7 @@ const WEIGHTS = {
   area: 10,
   bedrooms: 8,
   bathrooms: 6,
+  unit_age: 6,
   availability: 5,
   amenities: 2,
 } as const;
@@ -85,7 +86,7 @@ const MARKET_SCAN_LIMIT = 4000;
 // it will arrive as undefined.
 const MARKET_SLIM_FIELDS = [
   'title', 'advertiser_name', 'external_id',
-  'price', 'area', 'bedrooms', 'bathrooms',
+  'price', 'area', 'bedrooms', 'bathrooms', 'age',
   'is_active', 'sold_at',
   'property_type', 'listing_type', 'category',
   'main_image_url', 'image_urls', 'features',
@@ -686,6 +687,9 @@ export interface MatchRequirements {
   area_max?: number;
   bedrooms?: number;
   bathrooms?: number;
+  /** Max acceptable unit age in YEARS (عمر العقار) — 0 = new only. Compared
+   *  against the listing's parsed `age` text; catalog projects count as new. */
+  max_unit_age?: number;
   lifestyle?: string[];
   amenities?: string[];
   financing_needed?: boolean;
@@ -742,6 +746,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     area: { value: null },
     bedrooms: { value: null },
     bathrooms: { value: null },
+    unit_age: { value: null },
     availability: { value: null },
     amenities: { value: null },
   };
@@ -926,6 +931,26 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     }
   }
 
+  // ── Unit age (عمر العقار, years; 0 = new) ──
+  // The customer sets a MAX acceptable age. Full credit at/under it, half
+  // credit up to 2 years over (near-miss), else 0. A listing whose age text
+  // didn't parse (or is absent) is requested-but-missing — honesty penalty,
+  // same posture as a missing price.
+  if (req.max_unit_age != null) {
+    const age = asNum(data.unit_age);
+    if (age == null) {
+      gaps.push('no unit age data');
+      missing.push('Confirm the unit age');
+      requestedMissing.add('unit_age');
+    } else if (age <= req.max_unit_age) {
+      dims.unit_age.value = 1;
+    } else if (age <= req.max_unit_age + 2) {
+      dims.unit_age.value = 0.5;
+    } else {
+      dims.unit_age.value = 0;
+    }
+  }
+
   // ── Availability (always applies — intrinsic quality signal) ──
   const avail = asNum(data.available_units);
   let availZero = false;
@@ -1007,6 +1032,9 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
   put('bathroom_range', data.bathroom_range);
   put('unit_count', asNum(data.unit_count));
   put('available_units', avail);
+  // Unit age in years (0 = new). Market listings carry the parsed `age` text;
+  // catalog projects are stamped 0 by the caller (new-development stock).
+  put('unit_age', asNum(data.unit_age));
   put('preferred_amenities', asArr(data.preferred_amenities));
   if (distanceKm != null) put('distance_km', distanceKm);
   // Main image for the result card. Market listings carry a raw URL (`image`, set by
@@ -1092,6 +1120,28 @@ const MARKET_WARNING =
  * + sold_at; geography rides on the same `district_lookup` + real per-listing
  * lat/lng. Keeps ONE deterministic scorer for all three sources.
  */
+/** Aqar's free-text عمر العقار → numeric years, or null when unparseable.
+ *  TS TWIN of the SQL `wassell_parse_unit_age` (migration
+ *  2026-07-17_unit_age_preference.sql) — keep the two semantically identical.
+ *  Observed value space: "جديد"/"جديدة" (0), "سنتين"/"سنتان" (2), "N سنوات"/
+ *  "N سنة"/bare digits (N), "أكثر من N سنوات" (N+1), digit-less "سنة"/
+ *  "سنة واحدة"/"سنة ونصف" (1). */
+export function parseUnitAgeText(v: string | null | undefined): number | null {
+  if (v == null) return null;
+  const s = v.trim();
+  if (s === '') return null;
+  if (s.includes('جديد')) return 0;
+  if (s.includes('سنتين') || s.includes('سنتان')) return 2;
+  const western = s.replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)));
+  if (/[0-9]/.test(western)) {
+    const n = Number(western.replace(/[^0-9]/g, ''));
+    if (!Number.isFinite(n)) return null;
+    return s.includes('أكثر') ? n + 1 : n;
+  }
+  if (s.includes('سنة')) return 1;
+  return null;
+}
+
 function adaptListingToScorable(d: Record<string, unknown>): Record<string, unknown> {
   const price = asNum(d.price);
   const area = asNum(d.area);
@@ -1116,6 +1166,8 @@ function adaptListingToScorable(d: Record<string, unknown>): Record<string, unkn
     bedroom_range: beds != null ? { min: beds, max: beds } : undefined,
     bathroom_range: baths != null ? { min: baths, max: baths } : undefined,
     available_units: active ? 1 : 0,
+    // عمر العقار — parsed from Aqar's free text (null when absent/unparseable).
+    unit_age: parseUnitAgeText(asStr(d.age) || null) ?? undefined,
     preferred_amenities: Array.isArray(d.features) ? d.features : [],
     latitude: asNum(d.latitude),
     longitude: asNum(d.longitude),
@@ -1586,6 +1638,10 @@ export async function matchProjectsCore(
           p_budget_max: req.budget_max ?? null,
           p_bedrooms: req.bedrooms ?? null,
           p_type_terms: typeTerms,
+          // Missing-tolerant DB-side age filter: only listings whose PARSED age
+          // is known and over the max are dropped; unknown ages survive to
+          // scoring (where they take the requested-but-missing penalty).
+          p_max_age: req.max_unit_age ?? null,
         };
         // Market SCOPE: the requested district(s) when set; ELSE the client's
         // location_items AREA (geoGate = geo-matched record ids, which include the
@@ -1702,7 +1758,11 @@ export async function matchProjectsCore(
       if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
       const loc = recordLocationIds(r.data);
       const g = geoFor(r, loc, polyMap, verifyGeo);
-      const s = scoreProject(r.data, req, {
+      // unit_age default 0: the catalog (our_projects/all_projects) is new-
+      // development stock by definition, so an age-capped client never sees it
+      // penalized as "age unknown". A real data.unit_age (if ever added to the
+      // schema) overrides via the spread.
+      const s = scoreProject({ unit_age: 0, ...r.data }, req, {
         projLat: g.projLat,
         projLng: g.projLng,
         reqLat,
@@ -2107,7 +2167,8 @@ async function compareProjects(supabase: SupabaseClient, input: CompareInput): P
 
   const projects = rows.map((r) => {
     const loc = recordLocationIds(r.data);
-    const s = scoreProject(r.data, req, {
+    // Same catalog new-stock default as scoreInto (see the comment there).
+    const s = scoreProject({ unit_age: 0, ...r.data }, req, {
       projDistrictId: loc.district || null,
       projCityId: loc.city || null,
       projDistrictName: districtNameById.get(loc.district) ?? null,
@@ -2432,4 +2493,4 @@ export async function executeMatchTool(
 }
 
 // Exported for unit testing the deterministic scorer + metadata enforcement.
-export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates, adaptListingToScorable };
+export const __test = { scoreProject, collectAuthoritativeMeta, reconcileRecommendationPayload, haversineKm, computeLeadTemperature, resolveClientFromCandidates, adaptListingToScorable, parseUnitAgeText };

@@ -35,6 +35,7 @@ const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kin
   { slug: 'location', geoKey: 'city', label_ar: 'المدينة', label_en: 'City', kind: 'geo' },
   { slug: 'location', geoKey: 'district', label_ar: 'الحي', label_en: 'District', kind: 'geo' },
   { slug: 'preferred_unit_type', label_ar: 'نوع العقار', label_en: 'Property type', kind: 'list' },
+  { slug: 'preferred_max_unit_age', label_ar: 'عمر العقار', label_en: 'Unit age', kind: 'list' },
   { slug: 'budget', label_ar: 'الميزانية', label_en: 'Budget', kind: 'money' },
   { slug: 'preferred_area', label_ar: 'المساحة', label_en: 'Area', kind: 'area' },
   { slug: 'preferred_amenities', label_ar: 'المرافق / نمط الحياة', label_en: 'Amenities / lifestyle', kind: 'list' },

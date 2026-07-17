@@ -830,6 +830,28 @@ const clientsModel: AppModel = {
             options: CLIENT_UNIT_TYPE_OPTIONS,
           },
           {
+            // Mirror of the live field added by 2026-07-17_unit_age_preference.sql:
+            // max acceptable عمر العقار as a dropdown; the STRING option value is
+            // the number of years ('0' = new only) — draftToMatchRequirements
+            // parses it into requirements.max_unit_age.
+            id: uuid(),
+            name: 'preferred_max_unit_age',
+            label_ar: 'عمر العقار (حد أقصى)',
+            label_en: 'Unit age (max)',
+            type: 'dropdown',
+            required: false,
+            order: 8,
+            section_id: clientsPrefsSectionId,
+            width: 'half',
+            show_in_table: false,
+            options: [
+              { id: uuid(), label_ar: 'جديد فقط', label_en: 'New only', value: '0', color: '#C09B5F' },
+              { id: uuid(), label_ar: 'حتى سنتين', label_en: 'Up to 2 years', value: '2', color: '#B8734F' },
+              { id: uuid(), label_ar: 'حتى 5 سنوات', label_en: 'Up to 5 years', value: '5', color: '#8E4E3A' },
+              { id: uuid(), label_ar: 'حتى 10 سنوات', label_en: 'Up to 10 years', value: '10', color: '#4A4E54' },
+            ],
+          },
+          {
             id: uuid(),
             name: 'preferred_amenities',
             label_ar: 'المرافق المفضلة للعميل',
