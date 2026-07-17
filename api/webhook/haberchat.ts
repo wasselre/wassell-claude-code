@@ -30,6 +30,26 @@ export const config = {
   runtime: 'edge',
 };
 
+/**
+ * Extract a device id from a webhook field that Haberchat delivers as EITHER
+ * a bare id string OR a nested device object ({ id | _id, phone, ... },
+ * varies by event type). The old blind `as string` cast let an object slip
+ * through into `chat_messages.device_id` / the chats record's `device_id`,
+ * which the SPA then interpolated into a Haberchat URL as "[object Object]"
+ * (live 2026-07-17: /sync 400s on chat 966544144798, mirror fallback saved
+ * the thread; the next list sync overwrote the bad value — transient but
+ * recurring).
+ */
+function deviceIdFrom(v: unknown): string | undefined {
+  if (typeof v === 'string' && v) return v;
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    const id = o.id ?? o._id;
+    if (typeof id === 'string' && id) return id;
+  }
+  return undefined;
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method === 'GET') {
     // Plain GET so the admin can sanity-check the endpoint exists without
@@ -85,9 +105,9 @@ export default async function handler(req: Request): Promise<Response> {
 
   const type = String(event.type ?? event.event ?? '').toLowerCase();
   const deviceId =
-    (event.device as string | undefined) ??
-    (event.deviceId as string | undefined) ??
-    (event.data?.device as string | undefined) ??
+    deviceIdFrom(event.device) ??
+    deviceIdFrom(event.deviceId) ??
+    deviceIdFrom(event.data?.device) ??
     '';
 
   let handlerError: string | undefined;
@@ -470,10 +490,10 @@ function normalizeWebhookMessage(
 
   // Device id fallback chain: event envelope → payload → param.
   const resolvedDevice =
-    ((event.device as string | undefined) ??
-      (event.deviceId as string | undefined) ??
-      (raw.device as string | undefined) ??
-      (raw.deviceId as string | undefined) ??
+    (deviceIdFrom(event.device) ??
+      deviceIdFrom(event.deviceId) ??
+      deviceIdFrom(raw.device) ??
+      deviceIdFrom(raw.deviceId) ??
       deviceId) || '';
 
   return {

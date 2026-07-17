@@ -4805,7 +4805,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const wid = (r.data as Record<string, unknown>).wid;
       return typeof wid === 'string' && wid === chatWid;
     });
-    const recordDeviceId = record ? ((record.data as Record<string, unknown>).device_id as string | undefined) : undefined;
+    // typeof guard, not a cast — a webhook once wrote a device OBJECT into
+    // device_id (fixed at the source), and "[object Object]" in the URL 400s.
+    const rawRecordDevice = record ? (record.data as Record<string, unknown>).device_id : undefined;
+    const recordDeviceId = typeof rawRecordDevice === 'string' && rawRecordDevice ? rawRecordDevice : undefined;
 
     // Pick the device: record's own device_id first, else the overlay
     // default, else the first active device. This lets us load messages
@@ -4896,7 +4899,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         : 'Body or attachment is required');
     }
 
-    const recordDeviceId = (data.device_id as string | undefined) ?? null;
+    // typeof guard, not a cast — see loadMessagesForChat (webhook once wrote
+    // a device OBJECT here; sending to /chat/[object Object]/... 400s).
+    const recordDeviceId = typeof data.device_id === 'string' && data.device_id ? data.device_id : null;
     const deviceId =
       recordDeviceId ??
       state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
@@ -5268,7 +5273,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!rec) throw new Error('conversation not found in records');
 
     const data = rec.data as Record<string, unknown>;
-    const deviceId = (data.device_id as string | undefined) ??
+    const deviceId = (typeof data.device_id === 'string' && data.device_id ? data.device_id : undefined) ??
       state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
       state.waDevices.find((d) => d.is_active)?.device_id ??
       state.waDevicesLive[0]?.id ??
