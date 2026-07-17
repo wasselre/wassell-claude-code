@@ -25,7 +25,7 @@ import { computeAllFormulas } from '@/lib/formulaEngine';
 import { runMigrations, healSystemModelGroups, healClientsSchema, healDecksSchema, healMapsConfigForModels, refreshSystemModels, pruneRemovedSystemModels } from '@/lib/schemaMigrations';
 import { applyFieldRename } from '@/lib/fieldRename';
 import { listDevices as listHaberchatDevices, listChats as listHaberchatChats, listMessages as listHaberchatMessages, sendMessage as sendHaberchatMessage, patchChat as patchHaberchatChat } from '@/lib/haberchat/client';
-import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient } from '@/lib/haberchat/normalize';
+import { mergeChatIntoRecord, resolveClientLink, phoneFieldSlugs, isLiveClient, deviceIdString } from '@/lib/haberchat/normalize';
 import { normalizePhone } from '@/lib/phone';
 import { markRecentlyWritten } from '@/lib/realtime/dedup';
 import { startRealtimeOrchestrator } from '@/lib/realtime/RealtimeOrchestrator';
@@ -4805,10 +4805,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       const wid = (r.data as Record<string, unknown>).wid;
       return typeof wid === 'string' && wid === chatWid;
     });
-    // typeof guard, not a cast — a webhook once wrote a device OBJECT into
-    // device_id (fixed at the source), and "[object Object]" in the URL 400s.
-    const rawRecordDevice = record ? (record.data as Record<string, unknown>).device_id : undefined;
-    const recordDeviceId = typeof rawRecordDevice === 'string' && rawRecordDevice ? rawRecordDevice : undefined;
+    // deviceIdString guards against the legacy corrupt shape where the
+    // webhook persisted the whole device OBJECT — a raw cast produced
+    // "deviceId=[object Object]" proxy calls that 400'd the thread load.
+    // (Extracts the object's id when possible, so multi-device setups still
+    // hit the right device instead of falling back to the default.)
+    const recordDeviceId = record ? deviceIdString((record.data as Record<string, unknown>).device_id) : null;
 
     // Pick the device: record's own device_id first, else the overlay
     // default, else the first active device. This lets us load messages
@@ -4899,9 +4901,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         : 'Body or attachment is required');
     }
 
-    // typeof guard, not a cast — see loadMessagesForChat (webhook once wrote
-    // a device OBJECT here; sending to /chat/[object Object]/... 400s).
-    const recordDeviceId = typeof data.device_id === 'string' && data.device_id ? data.device_id : null;
+    // deviceIdString: legacy webhook-created chats can carry the whole
+    // device OBJECT in data.device_id — sending with it 400s at Haberchat.
+    const recordDeviceId = deviceIdString(data.device_id);
     const deviceId =
       recordDeviceId ??
       state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
@@ -5240,6 +5242,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   markChatAsRead: (chatWid: string) => {
     if (!chatWid) return;
+    // Track what we changed so the zero can be PERSISTED after the local
+    // update. The old local-only version was the "unread badge comes back
+    // after refresh" bug: the webhook increments unread_count in Supabase,
+    // and nothing ever wrote the zero back — every reload resurrected it.
+    let updatedRec: AppRecord | null = null;
+    let modelId: string | null = null;
+    let updatedList: AppRecord[] | null = null;
     set((s) => {
       const chatsModel = s.models.find((m) => m.name === 'chats');
       if (!chatsModel) return s;
@@ -5252,9 +5261,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       const data = rec.data as Record<string, unknown>;
       if ((data.unread_count ?? 0) === 0) return s;
       const nextList = [...list];
-      nextList[idx] = { ...rec, data: { ...data, unread_count: 0 } };
+      nextList[idx] = {
+        ...rec,
+        data: { ...data, unread_count: 0, last_read_at: new Date().toISOString() },
+        updated_at: new Date().toISOString(),
+      };
+      updatedRec = nextList[idx];
+      modelId = chatsModel.id;
+      updatedList = nextList;
       return { records: { ...s.records, [chatsModel.id]: nextList } };
     });
+    if (updatedRec && modelId && updatedList) {
+      // Same persistence pattern as loadChatsFromHaberchat: local mirror
+      // synchronously, Supabase in the background (surfaces + queues on
+      // failure via supabaseUpsert).
+      saveLocalRecordsForModel(modelId, updatedList);
+      void supabaseUpsert('records', updatedRec);
+    }
   },
 
   patchChat: async (
@@ -5273,7 +5296,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!rec) throw new Error('conversation not found in records');
 
     const data = rec.data as Record<string, unknown>;
-    const deviceId = (typeof data.device_id === 'string' && data.device_id ? data.device_id : undefined) ??
+    const deviceId = deviceIdString(data.device_id) ??
       state.waDevices.find((d) => d.is_default && d.is_active)?.device_id ??
       state.waDevices.find((d) => d.is_active)?.device_id ??
       state.waDevicesLive[0]?.id ??

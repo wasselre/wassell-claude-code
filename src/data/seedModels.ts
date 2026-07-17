@@ -2905,6 +2905,23 @@ const chatsModel: AppModel = {
               { id: uuid(), label_ar: 'صادر', label_en: 'Outbound', value: 'out', color: '#B8734F' },
             ],
           },
+          {
+            // When this app's user last opened the conversation (markChatAsRead
+            // stamps it alongside persisting unread_count = 0). unread_count is
+            // CRM-owned: the webhook increments, opening the chat clears —
+            // Haberchat's own unread (the phone's read state) only seeds chats
+            // we've never tracked.
+            id: uuid(),
+            name: 'last_read_at',
+            label_ar: 'آخر قراءة',
+            label_en: 'Last Read At',
+            type: 'datetime',
+            required: false,
+            order: 13,
+            section_id: chatsBaseSectionId,
+            width: 'third',
+            show_in_table: false,
+          },
         ],
       },
     ],

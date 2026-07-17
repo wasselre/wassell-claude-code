@@ -124,10 +124,18 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
 
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
 
-  // Zero out unread_count whenever we open this chat.
+  // Zero out unread_count whenever we open this chat — and again whenever a
+  // new message lands while it stays open (the Realtime bump increments the
+  // badge even though the user is looking right at the thread). newestMessageId
+  // changes on every arrival, so this effect re-fires and re-clears.
+  const newestMessageId = useAppStore((s) => {
+    if (!chatWid) return null;
+    const msgs = s.chatMessages[chatWid];
+    return msgs && msgs.length > 0 ? msgs[msgs.length - 1]?.id ?? null : null;
+  });
   useEffect(() => {
     if (chatWid) markChatAsRead(chatWid);
-  }, [chatWid, markChatAsRead]);
+  }, [chatWid, newestMessageId, markChatAsRead]);
 
   if (!record) {
     return (

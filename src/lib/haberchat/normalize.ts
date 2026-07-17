@@ -135,6 +135,25 @@ export function chatToRecordData(chat: HaberchatChat, deviceId: string): Record<
 }
 
 /**
+ * Coerce a stored `device_id` value to the 24-hex id string. The Haberchat
+ * webhook used to persist the WHOLE device envelope object ({id, plan,
+ * alias, phone}) into records.data.device_id — a chat created by the webhook
+ * then produced "deviceId=[object Object]" proxy URLs (400) for every thread
+ * load and send until a list sync repaired it. The webhook is fixed and the
+ * stored rows migrated, but records cached in localStorage (or a not-yet-
+ * migrated environment) can still carry the object shape — every reader goes
+ * through this guard.
+ */
+export function deviceIdString(value: unknown): string | null {
+  if (typeof value === 'string' && value) return value;
+  if (value && typeof value === 'object') {
+    const id = (value as Record<string, unknown>).id;
+    if (typeof id === 'string' && id) return id;
+  }
+  return null;
+}
+
+/**
  * Merge Haberchat's fresh view of a chat onto an existing record's data.
  * Keeps fields only Wassell owns (owner, client_link) and overwrites
  * everything Haberchat is authoritative for.
@@ -163,6 +182,22 @@ export function mergeChatIntoRecord(
   if (prevAt && (!chatAt || prevAt > chatAt)) {
     nextData.last_message_at = prevAt;
     nextData.last_message_preview = prevData.last_message_preview ?? null;
+  }
+  // Haberchat's chat list carries NO last-message body (verified against a
+  // live chat object 2026-07-17 — there is no lastMessage/preview field), so
+  // a sync must never null out the preview the webhook stamped. Keep ours
+  // whenever Haberchat has nothing to say.
+  if (chat.lastMessagePreview == null && prevData.last_message_preview != null) {
+    nextData.last_message_preview = prevData.last_message_preview;
+  }
+  // unread_count is CRM-owned: the webhook increments it on inbound and
+  // opening the chat zeroes it (markChatAsRead persists the zero). Haberchat's
+  // meta.unreadCount reflects the PHONE's read state, not what this app's
+  // user has seen — taking it on every sync both resurrected badges the user
+  // had cleared and (before the meta.unreadCount mapping fix) zeroed every
+  // badge. Haberchat's value only SEEDS a chat we've never tracked before.
+  if (typeof prevData.unread_count === 'number') {
+    nextData.unread_count = prevData.unread_count;
   }
   return {
     id,

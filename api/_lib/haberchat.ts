@@ -183,7 +183,12 @@ interface HaberchatChatRaw {
   owner?: string | null;
   ownerAgentId?: string | null;
   labels?: string[];
-  // Stats
+  // Stats. The REAL unread counter on current Haberchat (Wassenger) payloads
+  // lives at `meta.unreadCount` — verified against a live webhook chat object
+  // 2026-07-17. `stats` exists but holds {notes, localMessages, inbound/
+  // outboundMessages}, NOT unread. The legacy candidates below are kept for
+  // older payload shapes.
+  meta?: { unreadCount?: number; isUnread?: boolean; [k: string]: unknown } | null;
   stats?: { unread?: number; unreadCount?: number } | null;
   unread?: number;
   unreadCount?: number;
@@ -232,11 +237,13 @@ function normalizeChat(raw: HaberchatChatRaw): HaberchatChat | null {
     (raw.archived ? 'archived' : raw.resolved ? 'resolved' : 'active');
 
   const unreadCount =
+    (typeof raw.meta?.unreadCount === 'number' ? raw.meta.unreadCount : undefined) ??
     raw.stats?.unread ??
     raw.stats?.unreadCount ??
     raw.unread ??
     raw.unreadCount ??
-    0;
+    // `meta.isUnread` without a count still means "something unread here".
+    (raw.meta?.isUnread ? 1 : 0);
 
   const lastMessageAt =
     raw.lastMessageAt ??

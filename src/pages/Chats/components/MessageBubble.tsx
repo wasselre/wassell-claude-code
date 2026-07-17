@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import { fetchFileBlob } from '@/lib/haberchat/client';
+import { deviceIdString } from '@/lib/haberchat/normalize';
 import { useAppStore } from '@/stores/appStore';
 import type { ChatMessage } from '@/types';
 
@@ -120,7 +121,9 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
     const rec = (s.records[chatsModel.id] ?? []).find((r) =>
       ((r.data as Record<string, unknown>).wid as string | undefined) === message.chat_wid,
     );
-    return rec ? ((rec.data as Record<string, unknown>).device_id as string | undefined) ?? undefined : undefined;
+    // deviceIdString: legacy webhook-created records can carry the whole
+    // device object here — a raw cast broke the media URL.
+    return rec ? deviceIdString((rec.data as Record<string, unknown>).device_id) ?? undefined : undefined;
   });
 
   const { url, status, error } = useMediaBlob(message.media_file_id, deviceId);
