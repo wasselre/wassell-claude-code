@@ -43,22 +43,45 @@ const providerCache = new Map<string, CacheEntry>();
 const PROVIDER_TTL_MS = 60_000;
 let anyWahaCache: { value: boolean; at: number } | null = null;
 
+/**
+ * WAHA is configured only when WAHA_URL is set (cutover). Until then EVERY
+ * number is Haberchat, so the provider lookups short-circuit WITHOUT touching
+ * Supabase. This also fixed a live edge-runtime hang: doing the whatsapp_numbers
+ * lookup on the hot proxy path timed the edge function out at 25s (devices/chats
+ * 504'd) — skipping it when WAHA is off keeps the Haberchat path identical to
+ * before, and the timeout guard below makes the lookup fail-safe at cutover.
+ */
+function wahaConfigured(): boolean {
+  return !!process.env.WAHA_URL;
+}
+
+// Memoized service client (avoid re-creating per request) + a hard timeout so a
+// slow/hung Supabase call can never stall a proxy response.
+let cachedSvc: ReturnType<typeof makeServiceClient> | undefined;
+function svcClient() {
+  if (cachedSvc === undefined) cachedSvc = makeServiceClient('api:wa-gateway');
+  return cachedSvc;
+}
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([p, new Promise<T>((res) => setTimeout(() => res(fallback), ms))]);
+}
+
 /** Resolve the provider for a device id. Defaults to 'haberchat' when unknown. */
 export async function providerFor(deviceId: string | null | undefined): Promise<Provider> {
-  if (!deviceId) return 'haberchat';
+  if (!deviceId || !wahaConfigured()) return 'haberchat';
   const hit = providerCache.get(deviceId);
   if (hit && Date.now() - hit.at < PROVIDER_TTL_MS) return hit.provider;
 
-  let provider: Provider = 'haberchat';
-  const svc = makeServiceClient('api:wa-gateway');
-  if (svc) {
+  const provider = await withTimeout((async (): Promise<Provider> => {
+    const svc = svcClient();
+    if (!svc) return 'haberchat';
     const { data } = await svc
       .from('whatsapp_numbers')
       .select('provider')
       .eq('device_id', deviceId)
       .maybeSingle();
-    if (data?.provider === 'waha') provider = 'waha';
-  }
+    return data?.provider === 'waha' ? 'waha' : 'haberchat';
+  })(), 2500, 'haberchat');
   providerCache.set(deviceId, { provider, at: Date.now() });
   return provider;
 }
@@ -70,26 +93,30 @@ export async function providerFor(deviceId: string | null | undefined): Promise<
  * multi-number caller should pass an explicit deviceId.
  */
 async function defaultProvider(): Promise<Provider> {
-  const svc = makeServiceClient('api:wa-gateway');
-  if (!svc) return 'haberchat';
-  const { data } = await svc
-    .from('whatsapp_numbers')
-    .select('provider')
-    .eq('is_active', true)
-    .eq('is_default', true)
-    .maybeSingle();
-  return data?.provider === 'waha' ? 'waha' : 'haberchat';
+  if (!wahaConfigured()) return 'haberchat';
+  return withTimeout((async (): Promise<Provider> => {
+    const svc = svcClient();
+    if (!svc) return 'haberchat';
+    const { data } = await svc
+      .from('whatsapp_numbers')
+      .select('provider')
+      .eq('is_active', true)
+      .eq('is_default', true)
+      .maybeSingle();
+    return data?.provider === 'waha' ? 'waha' : 'haberchat';
+  })(), 2500, 'haberchat');
 }
 
 /** True if ANY WAHA number is configured (so listDevices should also poll WAHA). */
 async function anyWahaConfigured(): Promise<boolean> {
+  if (!wahaConfigured()) return false;
   if (anyWahaCache && Date.now() - anyWahaCache.at < PROVIDER_TTL_MS) return anyWahaCache.value;
-  let value = false;
-  const svc = makeServiceClient('api:wa-gateway');
-  if (svc) {
+  const value = await withTimeout((async (): Promise<boolean> => {
+    const svc = svcClient();
+    if (!svc) return false;
     const { data } = await svc.from('whatsapp_numbers').select('device_id').eq('provider', 'waha').limit(1);
-    value = Boolean(data && data.length > 0);
-  }
+    return Boolean(data && data.length > 0);
+  })(), 2500, false);
   anyWahaCache = { value, at: Date.now() };
   return value;
 }
