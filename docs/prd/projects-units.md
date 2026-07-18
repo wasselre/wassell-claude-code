@@ -1,7 +1,7 @@
 # PRD: Projects & Units Experience
 
 **Status:** Live (model layer) · Built, pending deploy (UI + AI)
-**Last updated:** 2026-07-04
+**Last updated:** 2026-07-18 (AI actions provider swap: `/api/project-ai` now runs on Qwen3 30B on Cloudflare Workers AI as the primary model, with the original Claude path as automatic fallback on any Qwen failure; `TEXT_LLM_PROVIDER=anthropic` reverts to Claude-only — see `docs/cloudflare-workers-ai.md`)
 **Related PRDs:** [project-matching-assistant.md](project-matching-assistant.md), [marketing-operations.md](marketing-operations.md), [public-website.md](public-website.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
@@ -46,7 +46,7 @@ The three models were functionally useful but ugly: `all_projects` had fields sc
 | `src/lib/projects/projectView.ts` | Pure resolver for project facts (missing → null) |
 | `src/lib/projects/unitView.ts` | Pure resolver for unit facts + sort + best-by |
 | `src/lib/projects/projectAi.ts` | Deterministic audit/issue-detection + AI client + fact builders |
-| `api/project-ai.ts` | Fact-grounded AI actions (clean/brief/whatsapp/compare/audit/match_explain) |
+| `api/project-ai.ts` | Fact-grounded AI actions (clean/brief/whatsapp/compare/audit/match_explain) — Qwen3 30B on Cloudflare Workers AI primary, Claude fallback (`api/_lib/textLlm.ts`) |
 | `src/App.tsx` | Dispatcher wiring (`all_projects`, `our_projects`) |
 
 ## Open questions / known limitations
