@@ -368,15 +368,23 @@ async function bumpConversationRecord(args: {
     }
   }
 
-  // Reply reconciliation: an inbound customer message on a chat linked to a
-  // client marks that client's ACTIVE WhatsApp follow-up(s) as 'replied' — so
-  // the task surfaces now in the queue and the on_due escalation stops treating
-  // the client as silent. Best-effort: a failure here must not fail the webhook
-  // (the message + chat bump are already persisted; the next inbound retries).
+  // Reply reconciliation (v2): an inbound customer message on a chat linked to
+  // a client marks that client's WAITING WhatsApp follow-up(s) as 'replied' —
+  // so the task surfaces now in the queue and the on_due escalation stops
+  // treating the client as silent. The RPC only matches tasks in
+  // whatsapp_state='message_sent_waiting_response' whose check-in `sent_at`
+  // predates the message timestamp — a message from BEFORE the rep's send (or
+  // before any send at all) is NOT a reply to the check-in and must not flip
+  // the task (2026-07-18 fix). Best-effort: a failure here must not fail the
+  // webhook (the message + chat bump are already persisted; the next inbound
+  // retries).
   const clientLink = typeof prevData.client_link === 'string' ? prevData.client_link : null;
   if (args.lastFlow === 'in' && clientLink && UUID_RE.test(clientLink)) {
     try {
-      const { error: rpcErr } = await supa.rpc('mark_whatsapp_replied', { p_client_id: clientLink });
+      const { error: rpcErr } = await supa.rpc('mark_whatsapp_replied', {
+        p_client_id: clientLink,
+        p_message_at: args.lastAt,
+      });
       if (rpcErr) console.error('[webhook.bumpRecord] mark_whatsapp_replied failed:', rpcErr.message);
     } catch (err) {
       console.error('[webhook.bumpRecord] mark_whatsapp_replied threw:', err instanceof Error ? err.message : String(err));

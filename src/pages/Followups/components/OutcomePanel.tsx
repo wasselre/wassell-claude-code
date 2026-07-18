@@ -199,6 +199,22 @@ export default function OutcomePanel(props: OutcomePanelProps) {
                   {isAr ? 'فتح المحادثة' : 'Open chat'}
                 </button>
               </div>
+              {/* Escape hatch: the marked "reply" wasn't (or is no longer) the
+                  answer the rep is waiting on — e.g. the rep sent a fresh
+                  message and the client went silent again. Re-parks the task
+                  in the waiting state and re-arms the no-response escalation
+                  (same handler as the send flow's "Waiting for reply"). */}
+              {onMarkWaiting && !readOnly && (
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => onMarkWaiting()}
+                  className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-xl border-[1.5px] border-[#C09B5F] px-3 py-2 text-sm font-bold text-[#8E4E3A] transition hover:bg-[#C09B5F]/10 disabled:opacity-40"
+                >
+                  <Clock size={15} /> {isAr ? 'ما زلت بانتظار رد العميل' : 'Still waiting for a reply'}
+                  <span className="text-[10px] font-normal text-charcoal/50">{isAr ? 'أرسلت رسالة جديدة — أعد التذكير التلقائي' : 'sent a new message — re-arm auto-reminder'}</span>
+                </button>
+              )}
             </div>
           )}
           {waitingPhase && (
