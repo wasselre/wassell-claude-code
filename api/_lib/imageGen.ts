@@ -510,11 +510,9 @@ async function startGeneration(
 
 /**
  * Read env for the listing-photo text-removal flow. Reuses FAL_KEY / FAL_BASE_URL
- * but a DEDICATED model id so it doesn't fight the marketing/chat flows. Defaults
- * to fal's purpose-built text-removal model (EasyOCR text detection + LaMa
- * inpaint) which removes all text while PRESERVING the rest of the photo —
- * unlike the generative nano-banana / gpt-image-2 editors which re-render the
- * whole frame. Swap FAL_CLEAN_TEXT_MODEL_ID if a stricter pipeline is needed.
+ * but a DEDICATED model id so it doesn't fight the marketing/chat flows.
+ * Prompt-driven generative EDIT model. Swap FAL_CLEAN_TEXT_MODEL_ID if a
+ * stricter pipeline is needed.
  */
 function readCleanTextEnv(): FalEnv {
   const apiKey = process.env.FAL_KEY;
@@ -524,17 +522,24 @@ function readCleanTextEnv(): FalEnv {
   return {
     apiKey,
     baseUrl: process.env.FAL_BASE_URL ?? 'https://queue.fal.run',
-    // Prompt-driven generative EDIT model (OpenAI GPT Image 2 edit). Model
-    // history (all verified live 2026-06-30 on real Aqar photos):
-    //   1. `image-editing/text-removal` — auto-detect, preserved the photo but
-    //      INCONSISTENTLY left large stylized banner text (the Aqar title banners).
-    //   2. `nano-banana-pro/edit` (Gemini 3 Pro Image) — REFUSES ("unsafe content")
-    //      because it treats watermark/logo removal as policy-restricted.
-    //   3. `gpt-image-2/edit` — reliably removes ALL overlays (banners, logos,
-    //      aqar.fm watermark, handles) per the prompt while keeping the building,
-    //      angle, lighting, and aspect. Slower (~3 min/photo) but it actually works.
+    // Model history (all verified live on real Aqar photos):
+    //   1. `image-editing/text-removal` (2026-06-30) — auto-detect, preserved the
+    //      photo but INCONSISTENTLY left large stylized banner text (the Aqar
+    //      title banners).
+    //   2. `nano-banana-pro/edit` (Gemini 3 Pro Image, 2026-06-30) — REFUSES
+    //      ("unsafe content") because it treats watermark/logo removal as
+    //      policy-restricted.
+    //   3. `gpt-image-2/edit` (2026-06-30) — reliably removes ALL overlays per the
+    //      prompt while keeping the building. Slow (~3 min/photo) and ~$0.02–0.22
+    //      per photo.
+    //   4. `flux-2/klein/4b/edit` (2026-07-18) — side-by-side vs #3 on the same
+    //      Aqar photos: removes ALL overlays (banners, logos, aqar.fm watermark,
+    //      handles), no refusals, preserves the photo at least as faithfully,
+    //      keeps the source aspect, ~3 s/photo, ~$0.005/photo (Apache-2.0 open
+    //      weights). Only known weakness: collage backgrounds can fill slightly
+    //      unevenly where #3 filled clean white.
     // Env-swappable via FAL_CLEAN_TEXT_MODEL_ID.
-    modelId: process.env.FAL_CLEAN_TEXT_MODEL_ID ?? 'openai/gpt-image-2/edit',
+    modelId: process.env.FAL_CLEAN_TEXT_MODEL_ID ?? 'fal-ai/flux-2/klein/4b/edit',
   };
 }
 
@@ -548,9 +553,64 @@ const CLEAN_TEXT_PROMPT =
   'Remove every piece of text, writing, numbers, Arabic and English letters, logos, watermarks, captions, stickers, and graphic title banners from this image — including any colored header or footer banners, the real-estate agency logo at the top, the aqar.fm / sa.aqar.fm watermark, phone numbers, and social-media handles. Do NOT change the actual property photograph itself: keep the exact same building, rooms, composition, perspective, colors, and lighting. Cleanly fill the areas where text or graphics were removed so the result looks like the original photo with zero text or overlay graphics. Output only the clean photo, nothing else.';
 
 interface TextRemovalOpts {
-  /** Publicly-fetchable URL of the source photo (fal pulls the bytes). */
+  /** URL of the source photo. Downloaded server-side and inlined as a data URI. */
   imageUrl: string;
   signal?: AbortSignal;
+}
+
+/**
+ * Ceiling for inlining source bytes as a data URI. Aqar listing photos are
+ * ~30 KB; anything past this is submitted by URL and left to fal's fetcher.
+ */
+const CLEAN_TEXT_INLINE_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Edge-safe base64 (no Buffer — this file can run on Vercel Edge). */
+function bytesToBase64(bytes: Uint8Array): string {
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(bin);
+}
+
+/**
+ * Download the source photo and inline it as a data URI. images.aqar.fm started
+ * blocking fal's server-side fetcher (verified 2026-07-18: file_download_error on
+ * BOTH gpt-image-2 and klein for URLs that fal fetched fine on 2026-06-30), so
+ * passing the raw URL breaks the whole flow; inlined bytes sidestep fal's fetch
+ * entirely. Falls back to the raw URL — loudly — only if OUR download fails or
+ * the file exceeds the inline cap, so hosts that block us but not fal still work.
+ */
+async function inlineImageForCleanText(imageUrl: string, signal?: AbortSignal): Promise<string> {
+  try {
+    const res = await fetch(imageUrl, {
+      headers: {
+        // Browser-y UA: aqar serves bots differently.
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+        Accept: 'image/*',
+      },
+      signal,
+    });
+    if (!res.ok) {
+      throw new Error(`source download failed (${res.status})`);
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > CLEAN_TEXT_INLINE_MAX_BYTES) {
+      throw new Error(`source size ${bytes.length} bytes outside inline range`);
+    }
+    const contentType = res.headers.get('content-type')?.split(';')[0]?.trim() || 'image/jpeg';
+    return `data:${contentType};base64,${bytesToBase64(bytes)}`;
+  } catch (err) {
+    if (signal?.aborted) {
+      throw err;
+    }
+    console.error(
+      `[imageGen] clean-text: could not inline ${imageUrl} (${err instanceof Error ? err.message : String(err)}); submitting raw URL for fal to fetch`,
+    );
+    return imageUrl;
+  }
 }
 
 /**
@@ -569,14 +629,16 @@ export async function imageGenTextRemoval(opts: TextRemovalOpts): Promise<ImageG
   if (!opts.imageUrl) {
     throw new Error('imageGenTextRemoval requires an imageUrl');
   }
-  return startTextRemoval(env, opts.imageUrl, opts.signal);
+  const inlined = await inlineImageForCleanText(opts.imageUrl, opts.signal);
+  return startTextRemoval(env, inlined, opts.signal);
 }
 
 /**
  * Submit a text-removal EDIT to fal.ai's queue. Prompt-driven: `image_urls:[url]`
- * + the removal prompt. `aspect_ratio` is intentionally OMITTED so the edit keeps
- * the source framing instead of reframing to a fixed bucket. Returns the standard
- * queue tracking URLs.
+ * (usually a data URI — see inlineImageForCleanText) + the removal prompt.
+ * `image_size` is intentionally OMITTED so the edit keeps the source framing
+ * instead of reframing to a fixed bucket (verified 2026-07-18: klein matches the
+ * input aspect when unset). Returns the standard queue tracking URLs.
  */
 async function startTextRemoval(
   env: FalEnv,
