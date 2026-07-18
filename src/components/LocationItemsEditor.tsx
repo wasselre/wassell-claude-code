@@ -8,6 +8,8 @@ import {
   type GeoPolarity,
   type ElementCondition,
   type ConditionRule,
+  DIRECTION_DEFAULT_M,
+  isDirectionRule,
   describeLocationItem,
   newDistrictItem,
   newElementRuleItem,
@@ -16,8 +18,11 @@ import { searchGeoElements, type GeoElementHit } from '@/lib/geo/client';
 
 type GeomKind = 'point' | 'linestring' | 'polygon';
 
-/** Whether a rule needs a distance input (within X). */
-const RULE_NEEDS_DISTANCE = (r: ConditionRule): boolean => r === 'within_radius' || r === 'within_distance';
+/** Whether a rule takes a distance input. Direction rules are BOUNDED bands
+ *  ("south of the road up to X km") — never half-planes — so they take one too
+ *  (user decision 2026-07-18). Only inside_area has no distance. */
+const RULE_NEEDS_DISTANCE = (r: ConditionRule): boolean =>
+  r === 'within_radius' || r === 'within_distance' || isDirectionRule(r);
 
 /**
  * Which rules a chosen element supports, by its geometry kind. Point anchors take
@@ -182,14 +187,18 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
     if (!picked) return;
     const label = (isAr ? picked.name_ar || picked.name_en : picked.name_en || picked.name_ar) || picked.display_name || picked.external_id;
     const element_id = picked.external_id;
-    const dist = Math.round(distKm * 1000);
+    const dist = Math.round(distKm * 1000) || DIRECTION_DEFAULT_M;
     let cond: ElementCondition;
     if (ruleSel === 'within_radius') cond = { rule: 'within_radius', element_id, distance_m: dist };
     else if (ruleSel === 'within_distance') cond = { rule: 'within_distance', element_id, distance_m: dist };
     else if (ruleSel === 'inside_area') cond = { rule: 'inside_area', element_id };
-    else cond = { rule: ruleSel, element_id }; // north_of | south_of | east_of | west_of
+    else cond = { rule: ruleSel, element_id, distance_m: dist }; // BOUNDED band on the chosen side
     onChange([...items, newElementRuleItem(label, cond, polarity)]);
     resetAdd();
+    // Show the rule's area immediately: the map picker renders every element
+    // rule's COMPILED shape and lets the rep resize it there (user decision
+    // 2026-07-18 — always SEE what a rule covers, never a blind half-plane).
+    if (cityId) setShowMap(true);
   };
   const removeItem = (id: string) => onChange(items.filter((i) => i.id !== id));
 
@@ -389,7 +398,11 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
               <div className="flex items-end gap-2">
                 {RULE_NEEDS_DISTANCE(ruleSel) && (
                   <div>
-                    <label className="mb-1 block text-[11px] font-semibold text-charcoal/60">{isAr ? 'المسافة (كم)' : 'Distance (km)'}</label>
+                    <label className="mb-1 block text-[11px] font-semibold text-charcoal/60">
+                      {isDirectionRule(ruleSel)
+                        ? (isAr ? 'العمق من الطريق (كم)' : 'Depth from road (km)')
+                        : (isAr ? 'المسافة (كم)' : 'Distance (km)')}
+                    </label>
                     <input
                       type="number"
                       min={0.1}

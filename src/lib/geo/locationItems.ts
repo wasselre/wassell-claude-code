@@ -53,11 +53,17 @@ export interface InsideAreaCondition {
   rule: 'inside_area';
   element_id: string;
 }
-/** Cardinal side of a LINE element (road) — relative to the closest point on it. */
+/** Cardinal side of a LINE element (road) — relative to the closest point on
+ *  it, BOUNDED to within `distance_m` of the road (a band, never a half-plane —
+ *  user decision 2026-07-18). Missing distance_m compiles with the default. */
 export interface DirectionalCondition {
   rule: DirectionRule;
   element_id: string;
+  distance_m?: number;
 }
+
+/** Default band depth for direction rules saved without a distance. */
+export const DIRECTION_DEFAULT_M = 5000;
 
 export type ElementCondition =
   | WithinRadiusCondition
@@ -155,13 +161,16 @@ function describeCondition(cond: ElementCondition, name: string, isAr: boolean):
     case 'inside_area':
       return isAr ? `داخل ${name}` : `Inside ${name}`;
     case 'north_of':
-      return isAr ? `شمال ${name}` : `North of ${name}`;
     case 'south_of':
-      return isAr ? `جنوب ${name}` : `South of ${name}`;
     case 'east_of':
-      return isAr ? `شرق ${name}` : `East of ${name}`;
-    case 'west_of':
-      return isAr ? `غرب ${name}` : `West of ${name}`;
+    case 'west_of': {
+      const km = kmOf((cond as DirectionalCondition).distance_m ?? DIRECTION_DEFAULT_M);
+      const side = cond.rule === 'north_of' ? (isAr ? 'شمال' : 'North of')
+        : cond.rule === 'south_of' ? (isAr ? 'جنوب' : 'South of')
+        : cond.rule === 'east_of' ? (isAr ? 'شرق' : 'East of')
+        : (isAr ? 'غرب' : 'West of');
+      return isAr ? `${side} ${name} (حتى ${km} كم)` : `${side} ${name} (up to ${km} km)`;
+    }
     default:
       return name;
   }
@@ -178,13 +187,16 @@ function describeExcludeCondition(cond: ElementCondition, name: string, isAr: bo
     case 'inside_area':
       return isAr ? `خارج ${name}` : `Outside ${name}`;
     case 'north_of':
-      return isAr ? `ليس شمال ${name}` : `Not north of ${name}`;
     case 'south_of':
-      return isAr ? `ليس جنوب ${name}` : `Not south of ${name}`;
     case 'east_of':
-      return isAr ? `ليس شرق ${name}` : `Not east of ${name}`;
-    case 'west_of':
-      return isAr ? `ليس غرب ${name}` : `Not west of ${name}`;
+    case 'west_of': {
+      const km = kmOf((cond as DirectionalCondition).distance_m ?? DIRECTION_DEFAULT_M);
+      const side = cond.rule === 'north_of' ? (isAr ? 'ليس شمال' : 'Not north of')
+        : cond.rule === 'south_of' ? (isAr ? 'ليس جنوب' : 'Not south of')
+        : cond.rule === 'east_of' ? (isAr ? 'ليس شرق' : 'Not east of')
+        : (isAr ? 'ليس غرب' : 'Not west of');
+      return isAr ? `${side} ${name} (حتى ${km} كم)` : `${side} ${name} (up to ${km} km)`;
+    }
     default:
       return isAr ? `استثناء ${name}` : `Exclude ${name}`;
   }

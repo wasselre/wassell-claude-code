@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Ban, Check, Loader2, Map as MapIcon, PenLine, RotateCcw, X } from 'lucide-react';
+import { Ban, Check, Loader2, Map as MapIcon, Minus, PenLine, Plus, RotateCcw, TriangleAlert, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE } from '@/lib/locationUtils';
 import {
-  describeLocationItem, newDistrictItem, newDrawnAreaItem,
-  type DistrictLocationItem, type DrawnAreaLocationItem, type ElementRuleLocationItem,
+  DIRECTION_DEFAULT_M, describeLocationItem, isDirectionRule, newDistrictItem, newDrawnAreaItem,
+  type DistrictLocationItem, type DrawnAreaLocationItem, type ElementCondition, type ElementRuleLocationItem,
   type GeoPolarity, type LocationItem,
 } from '@/lib/geo/locationItems';
 
@@ -57,6 +57,9 @@ interface CompiledPreviewRow {
   validation_status: string;
   geojson?: { type: string; coordinates: unknown } | null;
   ref_geojson?: { type: string; coordinates: unknown } | null;
+  /** Candidate points inside the rule's area — drives the "this rule is too big" flag. */
+  listing_count?: number | null;
+  project_count?: number | null;
 }
 
 interface Props {
@@ -84,12 +87,15 @@ const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transpor
  *  view stays clean); landmark NAMES appear once close enough to read. */
 const LABELS_MIN_ZOOM = 11;
 const LANDMARK_NAMES_MIN_ZOOM = 13;
-/** Display band (~13 km) for the included side of north/south/east/west-of
- *  rules. The MATCH is unbounded — the band only visualizes the direction. */
-const DIRECTION_BAND_DEG = 0.12;
 /** Max vertices when a district boundary is copied into an editable shape —
  *  keeps the vertex handles usable (a full simplified ring can be 300+). */
 const CONVERT_MAX_POINTS = 80;
+/** The finder's market too_many cap (MARKET_SCAN_LIMIT server-side): a rule
+ *  covering more listings than this hides ALL market ads, so the picker flags
+ *  exactly which rule must shrink. Keep in sync with api/_lib/matchAgent.ts. */
+const MARKET_LIMIT = 4000;
+/** Stepper increment for resizing a rule's distance from the picker. */
+const DIST_STEP_M = 500;
 
 interface LandmarkRow {
   external_id: string;
@@ -274,24 +280,50 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     return () => { cancelled = true; };
   }, []);
 
-  // ELEMENT-RULE previews — the saved element rules compiled into display
-  // geometry by the REAL matcher compiler (wassell_preview_geo_items), so the
-  // area on screen is exactly the area the finder will match.
-  const elementItems = useMemo(() => items.filter(isElementItem), [items]);
+  // ELEMENT RULES — editable HERE (resize via the chip steppers, delete via the
+  // chip ×; re-emitted on Apply). Their compiled shapes come from the REAL
+  // matcher compiler (wassell_preview_geo_items), so the area on screen is
+  // exactly the area the finder will match — with per-rule candidate counts so
+  // an oversized rule is called out BY NAME.
+  const [elemItems, setElemItems] = useState<ElementRuleLocationItem[]>(() => items.filter(isElementItem));
   const [previews, setPreviews] = useState<CompiledPreviewRow[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
   useEffect(() => {
-    if (!supabase || elementItems.length === 0) { setPreviews([]); return; }
+    if (!supabase || elemItems.length === 0) { setPreviews([]); setPreviewLoading(false); return; }
     let cancelled = false;
-    supabase
-      .rpc('wassell_preview_geo_items', { p_items: elementItems })
-      .then(({ data, error }) => {
-        if (cancelled) return;
-        // Decorative layer — a failure costs the rule overlays, never the picker.
-        if (error) { console.error('[DistrictMapPicker] element-rule preview failed:', error.message); return; }
-        setPreviews(Array.isArray(data) ? (data as CompiledPreviewRow[]) : []);
-      });
-    return () => { cancelled = true; };
-  }, [elementItems]);
+    setPreviewLoading(true);
+    // Debounced: stepper clicks recompile server-side (~0.5-1s) — batch them.
+    const t = setTimeout(() => {
+      supabase!
+        .rpc('wassell_preview_geo_items', { p_items: elemItems })
+        .then(({ data, error }) => {
+          if (cancelled) return;
+          setPreviewLoading(false);
+          // Decorative layer — a failure costs the rule overlays, never the picker.
+          if (error) { console.error('[DistrictMapPicker] element-rule preview failed:', error.message); return; }
+          setPreviews(Array.isArray(data) ? (data as CompiledPreviewRow[]) : []);
+        });
+    }, 450);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [elemItems]);
+
+  /** Current distance of a rule (null when the rule has no distance concept). */
+  const ruleDistanceM = (it: ElementRuleLocationItem): number | null => {
+    const c = it.conditions?.[0];
+    if (!c || c.rule === 'inside_area') return null;
+    const d = (c as { distance_m?: number }).distance_m;
+    if (typeof d === 'number' && d > 0) return d;
+    return isDirectionRule(c.rule) ? DIRECTION_DEFAULT_M : null;
+  };
+  const setRuleDistanceM = (id: string, m: number) => {
+    setElemItems((prev) => prev.map((it) => it.id === id
+      ? {
+          ...it,
+          conditions: it.conditions.map((c, i) =>
+            i === 0 && c.rule !== 'inside_area' ? ({ ...c, distance_m: m } as ElementCondition) : c),
+        }
+      : it));
+  };
 
   // (Re)build the polygons when the map + shapes are ready. Selection changes
   // restyle IN PLACE (no rebuild) via the polygonsRef.
@@ -426,16 +458,16 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, shapes, landmarks, isAr]);
 
-  // ELEMENT-RULE overlays: compiled areas (radius circles, road buffers, zones)
-  // as terracotta polygons; direction rules as the reference road plus a shaded
-  // band on the included side (the MATCH is unbounded — the band shows the
-  // direction). Labeled with the same chip text as the editor. Display-only.
+  // ELEMENT-RULE overlays: every rule's COMPILED area (radius circle, road-side
+  // band, road buffer, zone) as a terracotta polygon — direction rules arrive
+  // already clipped to the matched side by the preview RPC. Roads additionally
+  // draw their reference line. Labeled with the same chip text as the editor.
   useEffect(() => {
     if (!map || !isLoaded || !window.google || previews.length === 0) return;
     const overlays: Array<google.maps.Polygon | google.maps.Polyline | google.maps.Marker> = [];
     const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
     const labelFor = (row: CompiledPreviewRow): string => {
-      const item = elementItems.find((i) => i.id === row.item_id);
+      const item = elemItems.find((i) => i.id === row.item_id);
       return item ? describeLocationItem(item, isAr) : '';
     };
     for (const row of previews) {
@@ -445,7 +477,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         if (paths.length) {
           overlays.push(new google.maps.Polygon({
             map, paths,
-            fillColor: c, fillOpacity: 0.12, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
+            fillColor: c, fillOpacity: 0.14, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
             zIndex: 2, clickable: false,
           }));
           let ring = paths[0] ?? [];
@@ -465,41 +497,16 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
           }
         }
       }
-      if (row.ref_geojson && row.direction) {
-        const lines = geojsonToLinePaths(row.ref_geojson);
-        let longest: google.maps.LatLngLiteral[] = lines[0] ?? [];
-        for (const l of lines) if (l.length > longest.length) longest = l;
-        for (const line of lines) {
+      if (row.ref_geojson) {
+        for (const line of geojsonToLinePaths(row.ref_geojson)) {
           overlays.push(new google.maps.Polyline({
             map, path: line, strokeColor: c, strokeOpacity: 0.95, strokeWeight: 4, zIndex: 3, clickable: false,
           }));
         }
-        if (longest.length >= 2) {
-          const dLat = row.direction === 'north' ? DIRECTION_BAND_DEG : row.direction === 'south' ? -DIRECTION_BAND_DEG : 0;
-          const dLng = row.direction === 'east' ? DIRECTION_BAND_DEG : row.direction === 'west' ? -DIRECTION_BAND_DEG : 0;
-          const shifted = longest.map((p) => ({ lat: p.lat + dLat, lng: p.lng + dLng }));
-          overlays.push(new google.maps.Polygon({
-            map,
-            paths: [[...longest, ...shifted.slice().reverse()]],
-            fillColor: c, fillOpacity: 0.1, strokeOpacity: 0, strokeWeight: 0,
-            zIndex: 1, clickable: false,
-          }));
-          const mid = longest[Math.floor(longest.length / 2)]!;
-          const text = labelFor(row);
-          if (text) {
-            overlays.push(new google.maps.Marker({
-              map,
-              position: { lat: mid.lat + dLat / 3, lng: mid.lng + dLng / 3 },
-              icon: invisible,
-              clickable: false,
-              label: { text, color: c, fontSize: '11px', fontWeight: '700' },
-            }));
-          }
-        }
       }
     }
     return () => overlays.forEach((o) => o.setMap(null));
-  }, [map, isLoaded, previews, elementItems, isAr]);
+  }, [map, isLoaded, previews, elemItems, isAr]);
 
   // Render the drawn shapes as EDITABLE polygons (outside draw mode): drag a
   // vertex or midpoint handle to reshape; right-click a vertex to delete it
@@ -664,23 +671,31 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, drawMode]);
 
-  // Apply: element rules + exclude districts pass through untouched; the
-  // include-district set is rebuilt from the map selection (existing rules keep
-  // their ids/labels); drawn areas are re-emitted from the picker's working list
-  // (existing items verbatim — including border edits — new shapes appended,
-  // deleted ones dropped).
+  // Apply: exclude districts pass through untouched; the include-district set
+  // is rebuilt from the map selection (existing rules keep their ids/labels);
+  // drawn areas AND element rules are re-emitted from the picker's working
+  // lists (resized distances + deletions included).
   const apply = () => {
     const keep = items.filter((i) => {
-      if (isDrawnItem(i)) return false; // re-emitted from drawnItems below
+      if (isDrawnItem(i)) return false;   // re-emitted from drawnItems below
+      if (isElementItem(i)) return false; // re-emitted from elemItems below
       return !(isDistrictItem(i) && i.polarity === 'include' && !selected.has(i.district_id));
     });
     const have = new Set(keep.filter(isDistrictItem).filter((i) => i.polarity === 'include').map((i) => i.district_id));
     const added = [...selected]
       .filter((id) => !have.has(id))
       .map((id) => newDistrictItem(id, nameById.get(id) ?? id, 'include'));
-    onApply([...keep, ...added, ...drawnItems]);
+    onApply([...keep, ...added, ...drawnItems, ...elemItems]);
     onClose();
   };
+
+  // Rules whose area alone exceeds the market cap — the "shrink THIS one" list.
+  const oversizedRules = previews
+    .filter((p) => typeof p.listing_count === 'number' && p.listing_count > MARKET_LIMIT)
+    .map((p) => ({
+      row: p,
+      item: elemItems.find((i) => i.id === p.item_id) ?? null,
+    }));
 
   const selectedNames = [...selected].map((id) => nameById.get(id) ?? null).filter((n): n is string => !!n);
 
@@ -815,22 +830,37 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
           )}
         </div>
 
-        {/* Footer: selection summary + drawn-shape chips + apply */}
+        {/* Footer: selection summary + drawn-shape chips + element-rule chips
+            (count + resize stepper) + oversize guidance + apply */}
         <div className="flex shrink-0 items-center gap-3 border-t border-sand/40 bg-white px-4 py-3">
           <div className="min-w-0 flex-1">
+            {/* "Shrink THIS rule" — named, precise, with the exact number. */}
+            {oversizedRules.length > 0 && (
+              <div className="mb-1.5 flex flex-wrap items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-700">
+                <TriangleAlert size={13} className="shrink-0" />
+                {oversizedRules.map(({ row, item }) => (
+                  <span key={row.item_id}>
+                    {L(
+                      `«${item ? describeLocationItem(item, true) : row.item_id}» تغطي ${Number(row.listing_count).toLocaleString('en-US')} إعلان — الحد ${MARKET_LIMIT.toLocaleString('en-US')}. صغّرها بزر −.`,
+                      `"${item ? describeLocationItem(item, false) : row.item_id}" covers ${Number(row.listing_count).toLocaleString('en-US')} ads — limit ${MARKET_LIMIT.toLocaleString('en-US')}. Shrink it with −.`,
+                    )}
+                  </span>
+                ))}
+              </div>
+            )}
             <span className="text-xs font-bold text-charcoal/70">
               {L(`${selected.size} حي مختار`, `${selected.size} district(s) selected`)}
               {drawnItems.length > 0 && (
                 <span className="text-charcoal/50"> · {L(`${drawnItems.length} منطقة مرسومة`, `${drawnItems.length} drawn area(s)`)}</span>
               )}
-              {elementItems.length > 0 && (
-                <span className="text-charcoal/50"> · {L(`${elementItems.length} قاعدة معلم`, `${elementItems.length} element rule(s)`)}</span>
+              {elemItems.length > 0 && (
+                <span className="text-charcoal/50"> · {L(`${elemItems.length} قاعدة معلم`, `${elemItems.length} element rule(s)`)}</span>
               )}
             </span>
             {selectedNames.length > 0 && (
               <p className="truncate text-[11px] text-charcoal/50">{selectedNames.join(' · ')}</p>
             )}
-            {drawnItems.length > 0 && (
+            {(drawnItems.length > 0 || elemItems.length > 0) && (
               <div className="mt-1 flex flex-wrap gap-1">
                 {drawnItems.map((d) => (
                   <span
@@ -849,6 +879,59 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                     </button>
                   </span>
                 ))}
+                {/* Element-rule chips: label + covered-listings count + a −/+
+                    resize stepper (recompiles + redraws the shape) + delete. */}
+                {elemItems.map((it) => {
+                  const row = previews.find((p) => p.item_id === it.id);
+                  const count = typeof row?.listing_count === 'number' ? row.listing_count : null;
+                  const over = count !== null && count > MARKET_LIMIT;
+                  const dist = ruleDistanceM(it);
+                  const c = over ? RED : it.polarity === 'exclude' ? RED : TERRACOTTA;
+                  return (
+                    <span
+                      key={it.id}
+                      className={`inline-flex max-w-[360px] items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ${over ? 'ring-1 ring-red-400' : ''}`}
+                      style={{ backgroundColor: `${c}1F`, color: c }}
+                    >
+                      <span className="truncate">{describeLocationItem(it, isAr)}</span>
+                      {count !== null && (
+                        <span className="shrink-0 rounded-full bg-white/70 px-1.5 font-bold">
+                          {count.toLocaleString('en-US')} {L('إعلان', 'ads')}
+                        </span>
+                      )}
+                      {previewLoading && <Loader2 size={10} className="shrink-0 animate-spin" />}
+                      {dist !== null && (
+                        <span className="inline-flex shrink-0 items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setRuleDistanceM(it.id, Math.max(DIST_STEP_M, dist - DIST_STEP_M))}
+                            className="rounded-full bg-white/70 p-0.5 hover:opacity-70"
+                            aria-label={L('تصغير المسافة', 'Shrink distance')}
+                          >
+                            <Minus size={10} />
+                          </button>
+                          <span className="min-w-[42px] text-center">{(dist / 1000).toFixed(1)} {L('كم', 'km')}</span>
+                          <button
+                            type="button"
+                            onClick={() => setRuleDistanceM(it.id, dist + DIST_STEP_M)}
+                            className="rounded-full bg-white/70 p-0.5 hover:opacity-70"
+                            aria-label={L('تكبير المسافة', 'Grow distance')}
+                          >
+                            <Plus size={10} />
+                          </button>
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setElemItems((prev) => prev.filter((x) => x.id !== it.id))}
+                        className="shrink-0 hover:opacity-60"
+                        aria-label={L('حذف', 'Delete')}
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
             )}
           </div>

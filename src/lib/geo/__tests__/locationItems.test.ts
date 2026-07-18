@@ -70,11 +70,13 @@ describe('describeLocationItem (bilingual)', () => {
     expect(describeLocationItem(mk('inside_area', 'واجهة الرياض'), true)).toBe('داخل واجهة الرياض');
     expect(describeLocationItem({ ...mk('inside_area', 'Riyadh Front'), polarity: 'exclude' }, false)).toBe('Outside Riyadh Front');
   });
-  it('directional N/S/E/W (ar/en) and exclude negation', () => {
-    expect(describeLocationItem(mk('north_of', 'طريق الملك سلمان'), true)).toBe('شمال طريق الملك سلمان');
-    expect(describeLocationItem(mk('south_of', 'King Salman Road'), false)).toBe('South of King Salman Road');
-    expect(describeLocationItem(mk('east_of', 'طريق الملك فهد'), true)).toBe('شرق طريق الملك فهد');
-    expect(describeLocationItem(mk('west_of', 'King Fahd Road'), false)).toBe('West of King Fahd Road');
-    expect(describeLocationItem({ ...mk('north_of', 'الطريق الدائري'), polarity: 'exclude' }, true)).toBe('ليس شمال الطريق الدائري');
+  it('directional N/S/E/W (ar/en) and exclude negation — BOUNDED band labels', () => {
+    // Direction rules are bounded bands (2026-07-18): the label always carries
+    // the depth — the saved distance_m, or the 5km default for older rules.
+    expect(describeLocationItem(mk('north_of', 'طريق الملك سلمان'), true)).toBe('شمال طريق الملك سلمان (حتى 5 كم)');
+    expect(describeLocationItem(mk('south_of', 'King Salman Road'), false)).toBe('South of King Salman Road (up to 5 km)');
+    expect(describeLocationItem(mk('east_of', 'طريق الملك فهد', { distance_m: 3000 }), true)).toBe('شرق طريق الملك فهد (حتى 3 كم)');
+    expect(describeLocationItem(mk('west_of', 'King Fahd Road', { distance_m: 7500 }), false)).toBe('West of King Fahd Road (up to 7.5 km)');
+    expect(describeLocationItem({ ...mk('north_of', 'الطريق الدائري'), polarity: 'exclude' }, true)).toBe('ليس شمال الطريق الدائري (حتى 5 كم)');
   });
 });

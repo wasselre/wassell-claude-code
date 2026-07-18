@@ -44,7 +44,13 @@ export type DirectionRule = 'north_of' | 'south_of' | 'east_of' | 'west_of';
 export interface WithinRadiusCondition { rule: 'within_radius'; element_id: string; distance_m: number; }
 export interface WithinDistanceCondition { rule: 'within_distance'; element_id: string; distance_m: number; }
 export interface InsideAreaCondition { rule: 'inside_area'; element_id: string; }
-export interface DirectionalCondition { rule: DirectionRule; element_id: string; }
+/** BOUNDED band: on the chosen side of the line AND within distance_m of it
+ *  (user decision 2026-07-18 — never an unbounded half-plane). Missing
+ *  distance_m applies DIRECTION_DEFAULT_M. */
+export interface DirectionalCondition { rule: DirectionRule; element_id: string; distance_m?: number; }
+
+/** Default band depth for direction rules saved without a distance. */
+export const DIRECTION_DEFAULT_M = 5000;
 
 export type ElementCondition =
   | WithinRadiusCondition
@@ -350,7 +356,11 @@ export function compileItem(item: LocationItem, ctx: CompileCtx): CompiledItem {
     } else if (cond.rule === 'north_of' || cond.rule === 'south_of' || cond.rule === 'east_of' || cond.rule === 'west_of') {
       if (!geom || !isLineal(geom)) { validation = 'needs_review'; continue; }
       const dir = cond.rule;
-      preds.push((lng, lat) => directionalMatch(lng, lat, geom, dir));
+      // BOUNDED: side-of-road AND within distance_m of it — mirrors the SQL
+      // compiler's buffer(geom, distance_m) ∧ side test (2026-07-18).
+      const dRaw = Number((cond as DirectionalCondition).distance_m);
+      const km = (Number.isFinite(dRaw) && dRaw > 0 ? dRaw : DIRECTION_DEFAULT_M) / 1000;
+      preds.push((lng, lat) => directionalMatch(lng, lat, geom, dir) && distanceToGeometryKm(lng, lat, geom) <= km);
     } else {
       validation = 'needs_review'; // unknown rule
     }
