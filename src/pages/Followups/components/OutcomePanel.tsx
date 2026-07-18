@@ -120,6 +120,12 @@ export default function OutcomePanel(props: OutcomePanelProps) {
   const sentAtLabel = typeof draft.sent_at === 'string' && draft.sent_at
     ? new Date(draft.sent_at).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'short', timeStyle: 'short' })
     : null;
+  // Early-message indicator: the client messaged us while the task was still
+  // fresh (webhook stamp). Shown only in the send phase — it means "check the
+  // conversation before sending a check-in"; it is NOT the replied state.
+  const clientMessagedLabel = typeof draft.client_messaged_at === 'string' && draft.client_messaged_at
+    ? new Date(draft.client_messaged_at).toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'short', timeStyle: 'short' })
+    : null;
 
   const dt = (slug: string, label: string) => (
     <label className="block text-sm">
@@ -140,6 +146,18 @@ export default function OutcomePanel(props: OutcomePanelProps) {
 
       {sendPhase && !recordMode && outcomeKey !== 'no_message_sent' ? (
         <div className="space-y-3">
+          {clientMessagedLabel && (
+            <div className="flex items-center gap-2 rounded-xl border border-[#10B981]/40 bg-[#10B981]/10 px-3 py-2.5 text-sm text-[#0f7a52]">
+              <MessageCircle size={16} className="shrink-0" />
+              <span className="flex-1 font-semibold">
+                {isAr ? 'العميل أرسل رسالة — تحقق من المحادثة قبل التواصل' : 'The client sent a message — check the conversation first'}
+                <span className="font-normal text-charcoal/50"> · {clientMessagedLabel}</span>
+              </span>
+              <button type="button" onClick={() => setRecordMode(true)} className="shrink-0 text-xs font-semibold text-copper hover:underline">
+                {isAr ? 'سجّل النتيجة' : 'Record outcome'}
+              </button>
+            </div>
+          )}
           <p className="text-sm font-bold text-chocolate">{isAr ? 'المشروع أُرسل بعد المكالمة — هل ردّ العميل؟' : 'The project was sent after the call — did the client reply?'}</p>
           {/* Primary: send a check-in (opens the composer → waiting state) */}
           <button

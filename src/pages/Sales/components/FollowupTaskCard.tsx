@@ -46,7 +46,10 @@ export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWha
 
   const statusLabel = FOLLOWUP_STATUS_LABELS[task.followupStatus];
   const waState = task.whatsappState ? WHATSAPP_STATE_LABELS[task.whatsappState] : null;
-  const waNeedsSend = isWhatsApp && !task.whatsappState; // no state yet → message to send
+  // Fresh task + the client already messaged us (webhook stamp) — that's the
+  // salient fact, so it replaces the generic "message to send" chip.
+  const earlyMessaged = isWhatsApp && !task.whatsappState && !!task.clientMessagedAt;
+  const waNeedsSend = isWhatsApp && !task.whatsappState && !earlyMessaged; // no state yet → message to send
   const outcome = task.result ? getOutcome(task.result) : undefined;
 
   return (
@@ -119,6 +122,11 @@ export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWha
             {waNeedsSend && (
               <span className="rounded-full bg-[#25D366]/15 px-2 py-0.5 font-bold text-[#128C7E]">
                 {isAr ? 'رسالة بحاجة للإرسال' : 'Message to send'}
+              </span>
+            )}
+            {earlyMessaged && (
+              <span className="rounded-full bg-[#10B981]/15 px-2 py-0.5 font-bold text-[#0f7a52]">
+                {isAr ? 'العميل أرسل رسالة' : 'Client messaged'}
               </span>
             )}
             {waState && (

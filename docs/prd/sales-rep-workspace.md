@@ -1,7 +1,7 @@
 # PRD: Sales Rep Workspace (My Clients + My Tasks)
 
 **Status:** Live
-**Last updated:** 2026-06-30
+**Last updated:** 2026-07-18 (**Early-message surfacing on My Tasks:** a FRESH WhatsApp follow-up — no check-in sent yet — whose client has already messaged us (`client_messaged_at`, stamped by the Haberchat webhook reconciler) now surfaces in My Tasks like a replied task (promoted to TODAY even when future-dated) and its card shows a green **«العميل أرسل رسالة» / "Client messaged"** chip in place of the generic "Message to send" chip. A stale stamp never leaks past the fresh phase — once a check-in is sent, only a real `replied` state surfaces the task. See [followups-workspace.md](followups-workspace.md).)
 **Related PRDs:** access-control.md, clients-cockpit.md, followups-workspace.md, sales-process.md, record-management.md
 
 ## What it is (in plain English)
@@ -17,7 +17,7 @@ The generic model UI and the full Clients/Sales cockpits expose far more than a 
 - **"Late" is calendar-day-strict.** A follow-up is late only when its scheduled day is strictly before today AND it isn't done (completed/cancelled/skipped). A task scheduled *earlier today* is still today's task, never late — matches the Sales Queue's `computeSla` overdue rule.
 - **My Client card** shows: Client ID (the `client_id` auto_id), name, phone, stage, status, assigned rep, lifecycle-health badge, visit-rating stars, latest follow-up type + outcome, next scheduled follow-up (with overdue emphasis), and a related-records summary (appointments / visits / offers / reservations counts). Quick actions: open next follow-up, in-app WhatsApp, call. Clicking the card opens the existing Client 360 (`/model/clients/:id`).
 - **My Tasks sections:** **Today's Follow-ups** and **Late Follow-ups** each split into **Calls** vs **Conversations** sub-tabs (channel resolved from the follow-up type's `primary_channel`; `whatsapp_follow_up` / `rating_request` → Conversations, `*_call` → Calls). **Incomplete Client Preferences** is an intentional empty-state placeholder (logic deferred). **Other Tasks** lists the rep's open `tasks` rows (not completed/approved), with a "New task" button when the rep has create permission on the Tasks model.
-- **Conversation cards** surface the WhatsApp sub-state: no state yet → "Message to send"; `message_sent_waiting_response` → "Waiting for reply"; `replied` → "Replied"; plus a colored channel accent (green WhatsApp / copper Call / red Overdue) for fast scanning.
+- **Conversation cards** surface the WhatsApp sub-state: no state yet → "Message to send" (or **"Client messaged" / «العميل أرسل رسالة»** when the client already messaged before any check-in — `client_messaged_at` set); `message_sent_waiting_response` → "Waiting for reply"; `replied` → "Replied"; plus a colored channel accent (green WhatsApp / copper Call / red Overdue) for fast scanning.
 - **Reuse:** follow-up cards open the Follow-up Workspace (`/model/followups/:id?returnTo=…`); WhatsApp uses the shared in-app popup (`useClientWhatsApp`); filters reuse the Clients cockpit's `ClientsFilterBar` + `ClientFilters` (owner/rep dropdown hidden for reps via the new `hideOwner` prop).
 - **States:** loading (until store `initialized`), per-tab/section empty states, a "no clients assigned to you yet" empty state, and a "Clients/Tasks model unavailable" guard.
 

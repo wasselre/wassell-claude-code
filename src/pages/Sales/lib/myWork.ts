@@ -86,6 +86,8 @@ export interface FollowupTask {
   followupStatus: string;
   /** WhatsApp conversation sub-state — message sent/waiting/replied. */
   whatsappState: string | null;
+  /** Inbound client message received while the task was still fresh (no check-in sent) — set by the webhook reconciler. */
+  clientMessagedAt: string | null;
   /** Recorded outcome (call_result), when present. */
   result: string | null;
   priority: string | null;
@@ -122,11 +124,14 @@ export function buildFollowupTasks(
     // to a WhatsApp follow-up — a reply needs action now, even if the task's
     // scheduled_datetime is still in the future. (Set by the inbound reconciler.)
     const repliedWhatsapp = str(d.whatsapp_state) === 'replied';
-    if (bucket !== 'late' && bucket !== 'today' && !repliedWhatsapp) continue;
-    // Promote a replied task that isn't already overdue into TODAY so the My
-    // Tasks page (which renders only the today + late sections) shows it — a
-    // future-scheduled reply must appear now, not be silently dropped.
-    if (repliedWhatsapp && bucket !== 'late') bucket = 'today';
+    // A FRESH WhatsApp task (no check-in yet) whose client already messaged us
+    // surfaces early too — same promotion as a reply, without the replied state.
+    const earlyMessaged = !str(d.whatsapp_state) && !!str(d.client_messaged_at);
+    if (bucket !== 'late' && bucket !== 'today' && !repliedWhatsapp && !earlyMessaged) continue;
+    // Promote a replied/early-messaged task that isn't already overdue into
+    // TODAY so the My Tasks page (which renders only the today + late sections)
+    // shows it — a future-scheduled reply must appear now, not be dropped.
+    if ((repliedWhatsapp || earlyMessaged) && bucket !== 'late') bucket = 'today';
     const clientId = firstId(d.client_id);
     const client = clientId ? clientsById.get(clientId) : undefined;
     const typeKey = readFollowupType(d);
@@ -140,6 +145,7 @@ export function buildFollowupTasks(
       scheduledISO: str(d.scheduled_datetime),
       followupStatus: status,
       whatsappState: str(d.whatsapp_state),
+      clientMessagedAt: str(d.client_messaged_at),
       result: str(d.call_result),
       priority: str(d.priority),
       salesRep: firstId(d.sales_rep),

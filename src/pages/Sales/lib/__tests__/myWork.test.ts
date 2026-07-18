@@ -106,6 +106,26 @@ describe('buildFollowupTasks', () => {
     expect(tasks.find((t) => t.followupId === 'replied1')?.bucket).toBe('today');
   });
 
+  it('surfaces a future FRESH WhatsApp task once the client has messaged (early-message indicator)', () => {
+    const followups = [
+      followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: 'whatsapp_follow_up', client_messaged_at: YESTERDAY }, 'early1'),
+      followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: 'whatsapp_follow_up' }, 'quiet1'),
+    ];
+    const tasks = buildFollowupTasks(followups, clientsById, NOW);
+    const ids = tasks.map((t) => t.followupId);
+    expect(ids).toContain('early1'); // client messaged pre-check-in → surfaced
+    expect(ids).not.toContain('quiet1');
+    expect(tasks.find((t) => t.followupId === 'early1')?.bucket).toBe('today');
+  });
+
+  it('does NOT early-surface a waiting task via a stale client_messaged_at stamp', () => {
+    const tasks = buildFollowupTasks(
+      [followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'in_progress', followup_type: 'whatsapp_follow_up', whatsapp_state: 'message_sent_waiting_response', client_messaged_at: YESTERDAY }, 'w')],
+      clientsById, NOW,
+    );
+    expect(tasks.map((t) => t.followupId)).not.toContain('w');
+  });
+
   it('keeps a replied WhatsApp task in the LATE bucket when genuinely overdue', () => {
     const tasks = buildFollowupTasks(
       [followup({ client_id: 'c1', scheduled_datetime: YESTERDAY, followup_status: 'open', followup_type: 'whatsapp_follow_up', whatsapp_state: 'replied' }, 'r')],

@@ -31,6 +31,8 @@ export interface QueueItem {
   followupStatus: string;
   /** WhatsApp conversation sub-state — 'replied' means the customer answered and the task needs action now. */
   whatsappState: string | null;
+  /** Inbound client message received while the task was still fresh (no check-in sent) — set by the webhook reconciler. */
+  clientMessagedAt: string | null;
   priority: string;
   attempt: number | null;
   clientStage: string;
@@ -98,6 +100,7 @@ export function buildQueueItems(
       actualISO,
       followupStatus,
       whatsappState: typeof d.whatsapp_state === 'string' ? d.whatsapp_state : null,
+      clientMessagedAt: typeof d.client_messaged_at === 'string' ? d.client_messaged_at : null,
       priority: (d.priority as string) ?? '',
       attempt: typeof d.followup_number === 'number' ? d.followup_number : null,
       clientStage: (client?.client_stage as string) ?? '',
@@ -120,6 +123,13 @@ const isOpen = (i: QueueItem) => OPEN_STATES.has(i.followupStatus);
  */
 const isRepliedWhatsapp = (i: QueueItem) => i.whatsappState === 'replied';
 
+/**
+ * A FRESH WhatsApp follow-up (no check-in sent yet) whose client has already
+ * messaged us. Surfaces early like a reply — but without the replied state, so
+ * the rep keeps the full choice screen (including "waiting for reply").
+ */
+const isEarlyMessagedWhatsapp = (i: QueueItem) => !i.whatsappState && !!i.clientMessagedAt;
+
 /** Bucket follow-up items into the queue views. A row may appear in several. */
 export function bucketize(items: QueueItem[], currentUserId: string | null, now: number): Record<Exclude<QueueViewId, 'no_next_action'>, QueueItem[]> {
   const today = startOfDay(now);
@@ -130,8 +140,8 @@ export function bucketize(items: QueueItem[], currentUserId: string | null, now:
   return {
     my_tasks: items.filter((i) => isOpen(i) && i.salesRep && i.salesRep === currentUserId),
     overdue: items.filter((i) => isOpen(i) && i.sla === 'overdue'),
-    // A replied WhatsApp task is due-now regardless of its scheduled time.
-    due_now: items.filter((i) => isOpen(i) && (i.sla === 'due_now' || isRepliedWhatsapp(i))),
+    // A replied (or early-messaged) WhatsApp task is due-now regardless of its scheduled time.
+    due_now: items.filter((i) => isOpen(i) && (i.sla === 'due_now' || isRepliedWhatsapp(i) || isEarlyMessagedWhatsapp(i))),
     today: items.filter((i) => isOpen(i) && dayOf(i.scheduledISO) === today),
     tomorrow: items.filter((i) => isOpen(i) && dayOf(i.scheduledISO) === tomorrow),
     waiting: items.filter((i) => isOpen(i) && WAITING_STATUSES.has(i.clientStatus)),

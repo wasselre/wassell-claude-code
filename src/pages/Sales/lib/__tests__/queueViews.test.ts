@@ -51,6 +51,31 @@ describe('bucketize — replied WhatsApp surfacing', () => {
     expect(bucketize(items, null, NOW).overdue.map((i) => i.followupId)).toContain('od');
   });
 
+  it('puts a FRESH task the client already messaged in Due Now (early-message indicator)', () => {
+    const items = buildQueueItems(
+      [
+        followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: ['whatsapp_follow_up'], client_messaged_at: YESTERDAY }, 'early1'),
+        followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'open', followup_type: ['whatsapp_follow_up'] }, 'quiet1'),
+      ],
+      clientsById,
+      NOW,
+    );
+    const dueNow = bucketize(items, null, NOW).due_now.map((i) => i.followupId);
+    expect(dueNow).toContain('early1'); // client messaged pre-check-in → surface now
+    expect(dueNow).not.toContain('quiet1');
+  });
+
+  it('does NOT early-surface a waiting task via a stale client_messaged_at stamp', () => {
+    // Once a check-in is sent, only a real reply (whatsapp_state='replied')
+    // surfaces the task — the fresh-phase stamp must not leak through.
+    const items = buildQueueItems(
+      [followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'in_progress', followup_type: ['whatsapp_follow_up'], whatsapp_state: 'message_sent_waiting_response', client_messaged_at: YESTERDAY }, 'w')],
+      clientsById,
+      NOW,
+    );
+    expect(bucketize(items, null, NOW).due_now.map((i) => i.followupId)).not.toContain('w');
+  });
+
   it('does not surface a replied task once it is completed', () => {
     const items = buildQueueItems(
       [followup({ client_id: 'c1', scheduled_datetime: TOMORROW, followup_status: 'completed', followup_type: ['whatsapp_follow_up'], whatsapp_state: 'replied' }, 'done')],
