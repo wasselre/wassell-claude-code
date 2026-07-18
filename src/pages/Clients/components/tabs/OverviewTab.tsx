@@ -70,6 +70,7 @@ export default function OverviewTab({ view, ctx, isAr, returnTo, onOpenTimeline,
     <div className="grid gap-4 lg:grid-cols-2">
       {/* Identity */}
       <Card title={isAr ? 'هوية العميل' : 'Client identity'}>
+        <Row label={isAr ? 'معرف العميل' : 'Client ID'}>{view.clientId ?? <Dash />}</Row>
         <Row label={isAr ? 'الاسم' : 'Name'}>{view.name ?? <Dash />}</Row>
         <Row label={isAr ? 'الجوال' : 'Phone'}><span dir="ltr">{view.phone ?? '—'}</span></Row>
         <Row label={isAr ? 'مستشار المبيعات' : 'Sales Consultant'}>{view.ownerName ?? <Dash />}</Row>

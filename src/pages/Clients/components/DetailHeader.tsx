@@ -45,6 +45,12 @@ export default function DetailHeader({ view, isAr, returnTo, onWhatsApp, onCreat
           </div>
 
           <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-charcoal/60">
+            {view.clientId && (
+              <>
+                <span className="font-bold text-copper">{view.clientId}</span>
+                <span className="text-charcoal/30">•</span>
+              </>
+            )}
             <span dir="ltr">{view.phone ?? '—'}</span>
             <span className="text-charcoal/30">•</span>
             <span>{view.ownerName ?? (isAr ? 'بدون مستشار' : 'No consultant')}</span>

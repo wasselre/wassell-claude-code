@@ -107,6 +107,8 @@ export interface RelatedCounts {
 
 export interface ClientView {
   id: string;
+  /** Human-facing auto-ID — `client_id` (live, e.g. "ع1039") else `client_code` (seed, "CLT-0001"). */
+  clientId: string | null;
   name: string | null;
   phone: string | null;
   ownerId: string | null;
@@ -492,6 +494,7 @@ export function resolveClientView(client: AppRecord, ctx: ClientViewCtx): Client
 
   return {
     id: client.id,
+    clientId: nonEmptyString(data.client_id) ?? nonEmptyString(data.client_code),
     name: nonEmptyString(data.client_name),
     phone: nonEmptyString(data.phone_number),
     ownerId: readOwnerId(data.client_owner),
