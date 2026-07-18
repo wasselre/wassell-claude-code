@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Ban, Check, Loader2, Map as MapIcon, PenLine, X } from 'lucide-react';
+import { Ban, Check, Loader2, Map as MapIcon, PenLine, RotateCcw, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE } from '@/lib/locationUtils';
 import {
-  newDistrictItem, newDrawnAreaItem,
-  type DistrictLocationItem, type DrawnAreaLocationItem, type GeoPolarity, type LocationItem,
+  describeLocationItem, newDistrictItem, newDrawnAreaItem,
+  type DistrictLocationItem, type DrawnAreaLocationItem, type ElementRuleLocationItem,
+  type GeoPolarity, type LocationItem,
 } from '@/lib/geo/locationItems';
 
 const isDistrictItem = (i: LocationItem): i is DistrictLocationItem => i.kind === 'district';
 const isDrawnItem = (i: LocationItem): i is DrawnAreaLocationItem => i.kind === 'drawn_area';
+const isElementItem = (i: LocationItem): i is ElementRuleLocationItem => i.kind === 'element_rule';
 
 /**
  * Map-based district picker for a client's location preferences.
@@ -23,12 +25,38 @@ const isDrawnItem = (i: LocationItem): i is DrawnAreaLocationItem => i.kind === 
  * already saved as EXCLUDE rules render red and are managed from the chips
  * list, not the map. "تم" applies the changes back into `location_items`
  * (element rules and excludes untouched).
+ *
+ * Also on the map:
+ *  • ELEMENT RULES render as their COMPILED geometry (the new
+ *    `wassell_preview_geo_items` RPC runs the real matcher compiler and returns
+ *    per-item GeoJSON): radius/buffer rules as terracotta areas, inside_area as
+ *    the zone polygon, north/south/east/west-of as the reference road plus a
+ *    shaded band on the included side. Display-only — rules are edited from
+ *    the chips list.
+ *  • DRAWN SHAPES are EDITABLE: drag a vertex or a midpoint handle to stretch
+ *    or shrink the shape; right-click a vertex to delete it (deleting below 3
+ *    points deletes the shape). Labels name the districts the shape covers
+ *    ("منطقة مرسومة: النرجس، العارض") and update as the shape is edited.
+ *  • Right-clicking a DISTRICT copies its official boundary into a new
+ *    editable drawn shape (and clears the district selection) so its borders
+ *    can be stretched or trimmed.
  */
 
 interface DistrictShape {
   district_id: string;
   name: string;
   geojson: { type: string; coordinates: unknown };
+}
+
+/** One row of wassell_preview_geo_items — the compiled display geometry. */
+interface CompiledPreviewRow {
+  item_id: string;
+  kind: string;
+  polarity: string;
+  direction: string | null;
+  validation_status: string;
+  geojson?: { type: string; coordinates: unknown } | null;
+  ref_geojson?: { type: string; coordinates: unknown } | null;
 }
 
 interface Props {
@@ -46,7 +74,7 @@ const COPPER = '#B8734F';
 const CHARCOAL = '#4A4E54';
 const RED = '#B91C1C';
 const GOLD = '#C09B5F'; // drawn areas — distinct from the copper district fill
-const TERRACOTTA = '#8E4E3A'; // landmark pins
+const TERRACOTTA = '#8E4E3A'; // landmark pins + element-rule areas
 
 /** Element types shown as landmark pins on the picker — the sales-relevant
  *  anchors (all curated + verified in geo_elements). Roads/metro/parks are
@@ -56,6 +84,12 @@ const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transpor
  *  view stays clean); landmark NAMES appear once close enough to read. */
 const LABELS_MIN_ZOOM = 11;
 const LANDMARK_NAMES_MIN_ZOOM = 13;
+/** Display band (~13 km) for the included side of north/south/east/west-of
+ *  rules. The MATCH is unbounded — the band only visualizes the direction. */
+const DIRECTION_BAND_DEG = 0.12;
+/** Max vertices when a district boundary is copied into an editable shape —
+ *  keeps the vertex handles usable (a full simplified ring can be 300+). */
+const CONVERT_MAX_POINTS = 80;
 
 interface LandmarkRow {
   external_id: string;
@@ -88,6 +122,31 @@ function geojsonToPaths(g: { type: string; coordinates: unknown }): google.maps.
   return [];
 }
 
+/** GeoJSON LineString/MultiLineString → google.maps polyline paths. */
+function geojsonToLinePaths(g: { type: string; coordinates: unknown }): google.maps.LatLngLiteral[][] {
+  const lineToPath = (line: unknown): google.maps.LatLngLiteral[] =>
+    (Array.isArray(line) ? line : [])
+      .filter((c): c is [number, number] => Array.isArray(c) && c.length >= 2)
+      .map((c) => ({ lat: c[1], lng: c[0] }));
+  if (g.type === 'LineString') return [lineToPath(g.coordinates)];
+  if (g.type === 'MultiLineString') return ((g.coordinates as unknown[]) ?? []).map(lineToPath);
+  return [];
+}
+
+/** Ray-cast point-in-ring on [lng,lat] pairs (closed or open ring). */
+function pointInRing(lng: number, lat: number, ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i]!;
+    const [xj, yj] = ring[j]!;
+    const intersect = (yi > lat) !== (yj > lat) && lng < ((xj - xi) * (lat - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
+
 export default function DistrictMapPicker({ cityId, items, onApply, onClose, isAr }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
@@ -111,8 +170,8 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   useEffect(() => { selectedRef.current = selected; }, [selected]);
 
   // Free-drawn shapes — this picker is their editor of record: existing drawn
-  // items load for review/delete, new ones are added in draw mode. Each shape
-  // is one independent OR-union item (the client can have several).
+  // items load for review/edit/delete, new ones are added in draw mode. Each
+  // shape is one independent OR-union item (the client can have several).
   const [drawnItems, setDrawnItems] = useState<DrawnAreaLocationItem[]>(() => items.filter(isDrawnItem));
   const [drawMode, setDrawMode] = useState(false);
   // Whether the shape being drawn is a WANTED area (include, gold) or an
@@ -144,6 +203,53 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     return m;
   }, [shapes]);
 
+  // Largest ring ([lng,lat]) + centroid per district — powers the drawn-area
+  // coverage labels ("منطقة مرسومة: النرجس، العارض").
+  const districtGeoms = useMemo(() => {
+    return (shapes ?? [])
+      .map((s) => {
+        let ring: google.maps.LatLngLiteral[] = [];
+        for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
+        if (ring.length < 3) return null;
+        return {
+          name: s.name,
+          ring: ring.map((p) => [p.lng, p.lat] as [number, number]),
+          centroid: {
+            lng: ring.reduce((a, p) => a + p.lng, 0) / ring.length,
+            lat: ring.reduce((a, p) => a + p.lat, 0) / ring.length,
+          },
+        };
+      })
+      .filter((d): d is NonNullable<typeof d> => d !== null);
+  }, [shapes]);
+
+  // District names a CLOSED [lng,lat] ring covers: the district's centroid is
+  // inside the ring (big shapes) OR a ring vertex falls inside the district
+  // (small shapes inside one district). Cheap — ~190 districts × ring points.
+  const coverageNames = (ring: [number, number][]): string[] => {
+    const names: string[] = [];
+    for (const d of districtGeoms) {
+      const hit = pointInRing(d.centroid.lng, d.centroid.lat, ring)
+        || ring.some(([lng, lat]) => pointInRing(lng, lat, d.ring));
+      if (hit) names.push(d.name);
+    }
+    return names;
+  };
+  const drawnBase = (polarity: GeoPolarity) =>
+    polarity === 'exclude' ? (isAr ? 'منطقة مستثناة' : 'Excluded area') : (isAr ? 'منطقة مرسومة' : 'Drawn area');
+  /** "منطقة مرسومة: النرجس، العارض +2" — null when the ring covers no district. */
+  const coverageLabel = (ring: [number, number][], polarity: GeoPolarity): string | null => {
+    const names = coverageNames(ring);
+    if (!names.length) return null;
+    const head = names.slice(0, 3).join(isAr ? '، ' : ', ');
+    const more = names.length > 3 ? ` +${names.length - 3}` : '';
+    return `${drawnBase(polarity)}: ${head}${more}`;
+  };
+  const coverageLabelRef = useRef(coverageLabel);
+  coverageLabelRef.current = coverageLabel;
+  const drawnBaseRef = useRef(drawnBase);
+  drawnBaseRef.current = drawnBase;
+
   // Important landmarks/elements (curated types, all Riyadh today). RLS allows
   // authenticated SELECT on geo_elements — same posture as /api/geo-elements.
   const [landmarks, setLandmarks] = useState<LandmarkRow[]>([]);
@@ -167,6 +273,25 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       });
     return () => { cancelled = true; };
   }, []);
+
+  // ELEMENT-RULE previews — the saved element rules compiled into display
+  // geometry by the REAL matcher compiler (wassell_preview_geo_items), so the
+  // area on screen is exactly the area the finder will match.
+  const elementItems = useMemo(() => items.filter(isElementItem), [items]);
+  const [previews, setPreviews] = useState<CompiledPreviewRow[]>([]);
+  useEffect(() => {
+    if (!supabase || elementItems.length === 0) { setPreviews([]); return; }
+    let cancelled = false;
+    supabase
+      .rpc('wassell_preview_geo_items', { p_items: elementItems })
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        // Decorative layer — a failure costs the rule overlays, never the picker.
+        if (error) { console.error('[DistrictMapPicker] element-rule preview failed:', error.message); return; }
+        setPreviews(Array.isArray(data) ? (data as CompiledPreviewRow[]) : []);
+      });
+    return () => { cancelled = true; };
+  }, [elementItems]);
 
   // (Re)build the polygons when the map + shapes are ready. Selection changes
   // restyle IN PLACE (no rebuild) via the polygonsRef.
@@ -201,6 +326,29 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
           poly.setOptions(styleFor(s.district_id, next.has(s.district_id)));
           return next;
         });
+      });
+      // Right-click a district: copy its official boundary into a NEW editable
+      // drawn shape (decimated so the vertex handles stay usable) and clear the
+      // district selection — the rep can then stretch or trim the borders.
+      poly.addListener('rightclick', () => {
+        if (excludedIds.has(s.district_id)) return;
+        let ring: google.maps.LatLngLiteral[] = [];
+        for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
+        if (ring.length < 3) return;
+        const step = Math.max(1, Math.ceil(ring.length / CONVERT_MAX_POINTS));
+        const dec = ring.filter((_, i) => i % step === 0);
+        const lngLat = dec.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
+        lngLat.push(lngLat[0]!);
+        setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(s.district_id);
+          poly.setOptions(styleFor(s.district_id, false));
+          return next;
+        });
+        setDrawnItems((prev) => [
+          ...prev,
+          newDrawnAreaItem(lngLat, `${drawnBaseRef.current('include')}: ${s.name}`, 'include'),
+        ]);
       });
       poly.addListener('mouseover', () => setHoverName(s.name));
       poly.addListener('mouseout', () => setHoverName((n) => (n === s.name ? null : n)));
@@ -278,37 +426,149 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, isLoaded, shapes, landmarks, isAr]);
 
-  // Render the drawn shapes (few — rebuild on change is cheap). Gold = include,
-  // red = a saved exclude drawn area. Not clickable: managed via footer chips.
+  // ELEMENT-RULE overlays: compiled areas (radius circles, road buffers, zones)
+  // as terracotta polygons; direction rules as the reference road plus a shaded
+  // band on the included side (the MATCH is unbounded — the band shows the
+  // direction). Labeled with the same chip text as the editor. Display-only.
+  useEffect(() => {
+    if (!map || !isLoaded || !window.google || previews.length === 0) return;
+    const overlays: Array<google.maps.Polygon | google.maps.Polyline | google.maps.Marker> = [];
+    const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
+    const labelFor = (row: CompiledPreviewRow): string => {
+      const item = elementItems.find((i) => i.id === row.item_id);
+      return item ? describeLocationItem(item, isAr) : '';
+    };
+    for (const row of previews) {
+      const c = row.polarity === 'exclude' ? RED : TERRACOTTA;
+      if (row.geojson) {
+        const paths = geojsonToPaths(row.geojson);
+        if (paths.length) {
+          overlays.push(new google.maps.Polygon({
+            map, paths,
+            fillColor: c, fillOpacity: 0.12, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
+            zIndex: 2, clickable: false,
+          }));
+          let ring = paths[0] ?? [];
+          for (const p of paths) if (p.length > ring.length) ring = p;
+          const text = labelFor(row);
+          if (ring.length >= 3 && text) {
+            overlays.push(new google.maps.Marker({
+              map,
+              position: {
+                lat: ring.reduce((a, p) => a + p.lat, 0) / ring.length,
+                lng: ring.reduce((a, p) => a + p.lng, 0) / ring.length,
+              },
+              icon: invisible,
+              clickable: false,
+              label: { text, color: c, fontSize: '11px', fontWeight: '700' },
+            }));
+          }
+        }
+      }
+      if (row.ref_geojson && row.direction) {
+        const lines = geojsonToLinePaths(row.ref_geojson);
+        let longest: google.maps.LatLngLiteral[] = lines[0] ?? [];
+        for (const l of lines) if (l.length > longest.length) longest = l;
+        for (const line of lines) {
+          overlays.push(new google.maps.Polyline({
+            map, path: line, strokeColor: c, strokeOpacity: 0.95, strokeWeight: 4, zIndex: 3, clickable: false,
+          }));
+        }
+        if (longest.length >= 2) {
+          const dLat = row.direction === 'north' ? DIRECTION_BAND_DEG : row.direction === 'south' ? -DIRECTION_BAND_DEG : 0;
+          const dLng = row.direction === 'east' ? DIRECTION_BAND_DEG : row.direction === 'west' ? -DIRECTION_BAND_DEG : 0;
+          const shifted = longest.map((p) => ({ lat: p.lat + dLat, lng: p.lng + dLng }));
+          overlays.push(new google.maps.Polygon({
+            map,
+            paths: [[...longest, ...shifted.slice().reverse()]],
+            fillColor: c, fillOpacity: 0.1, strokeOpacity: 0, strokeWeight: 0,
+            zIndex: 1, clickable: false,
+          }));
+          const mid = longest[Math.floor(longest.length / 2)]!;
+          const text = labelFor(row);
+          if (text) {
+            overlays.push(new google.maps.Marker({
+              map,
+              position: { lat: mid.lat + dLat / 3, lng: mid.lng + dLng / 3 },
+              icon: invisible,
+              clickable: false,
+              label: { text, color: c, fontSize: '11px', fontWeight: '700' },
+            }));
+          }
+        }
+      }
+    }
+    return () => overlays.forEach((o) => o.setMap(null));
+  }, [map, isLoaded, previews, elementItems, isAr]);
+
+  // Render the drawn shapes as EDITABLE polygons (outside draw mode): drag a
+  // vertex or midpoint handle to reshape; right-click a vertex to delete it
+  // (below 3 points → the shape is deleted). Edits debounce back into
+  // drawnItems with a recomputed coverage label. Gold = include, red = a saved
+  // exclude drawn area. Whole-shape delete stays on the footer chips.
   useEffect(() => {
     if (!map || !isLoaded || !window.google) return;
-    const polys = drawnItems.map((d) => {
+    const cleanups: Array<() => void> = [];
+    for (const d of drawnItems) {
       const c = d.polarity === 'exclude' ? RED : GOLD;
-      return new google.maps.Polygon({
+      const coords = d.coordinates ?? [];
+      const isClosed = coords.length >= 2
+        && coords[0]![0] === coords[coords.length - 1]![0]
+        && coords[0]![1] === coords[coords.length - 1]![1];
+      // OPEN path for editing — the ring-closing duplicate would render as a
+      // second draggable vertex stacked on the first.
+      const path = (isClosed ? coords.slice(0, -1) : coords).map(([lng, lat]) => ({ lat, lng }));
+      if (path.length < 3) continue;
+      const poly = new google.maps.Polygon({
         map,
-        paths: (d.coordinates ?? []).map(([lng, lat]) => ({ lat, lng })),
-        fillColor: c,
-        fillOpacity: 0.3,
-        strokeColor: c,
-        strokeOpacity: 0.95,
-        strokeWeight: 2,
+        paths: path,
+        fillColor: c, fillOpacity: 0.3, strokeColor: c, strokeOpacity: 0.95, strokeWeight: 2,
         zIndex: 4,
-        clickable: false,
+        editable: !drawMode,
+        clickable: !drawMode,
       });
-    });
-    return () => polys.forEach((p) => p.setMap(null));
-  }, [map, isLoaded, drawnItems]);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const commit = () => {
+        const pts = poly.getPath().getArray().map((ll) => [round6(ll.lng()), round6(ll.lat())] as [number, number]);
+        if (pts.length < 3) return;
+        const ring = [...pts, pts[0]!];
+        setDrawnItems((prev) => prev.map((x) => x.id === d.id
+          ? { ...x, coordinates: ring, label: coverageLabelRef.current(ring, x.polarity) ?? x.label }
+          : x));
+      };
+      const debounced = () => { if (timer) clearTimeout(timer); timer = setTimeout(commit, 500); };
+      const gPath = poly.getPath();
+      const ls = [
+        gPath.addListener('set_at', debounced),
+        gPath.addListener('insert_at', debounced),
+        gPath.addListener('remove_at', debounced),
+        poly.addListener('rightclick', (e: google.maps.PolyMouseEvent) => {
+          if (e.vertex == null) return;
+          if (gPath.getLength() > 3) gPath.removeAt(e.vertex);
+          else setDrawnItems((prev) => prev.filter((x) => x.id !== d.id));
+        }),
+      ];
+      cleanups.push(() => {
+        ls.forEach((l) => google.maps.event.removeListener(l));
+        if (timer) clearTimeout(timer);
+        poly.setMap(null);
+      });
+    }
+    return () => cleanups.forEach((f) => f());
+  }, [map, isLoaded, drawnItems, drawMode]);
 
   // Draw mode — MANUAL polygon drawing (Google REMOVED DrawingManager in Maps
   // JS v3.65; instantiating it throws — live incident 2026-07-13). Each map
   // click adds a vertex to a gold preview polyline; double-click (or the
-  // "إنهاء الشكل" button) closes the shape into ONE drawn_area item. Draw mode
-  // stays armed so several separate shapes can be drawn in a row. District
-  // polygons are made unclickable while drawing so vertex clicks over them
-  // register on the map instead of toggling a district.
+  // "إنهاء الشكل" button) closes the shape into ONE drawn_area item. A wrong
+  // point is undone with the "تراجع" button or a right-click. Draw mode stays
+  // armed so several separate shapes can be drawn in a row. District polygons
+  // are made unclickable while drawing so vertex clicks over them register on
+  // the map instead of toggling a district.
   const [draftCount, setDraftCount] = useState(0);
   const draftPathRef = useRef<google.maps.LatLngLiteral[]>([]);
   const finishDraftRef = useRef<() => void>(() => {});
+  const undoLastRef = useRef<() => void>(() => {});
   const previewRef = useRef<google.maps.Polyline | null>(null);
   useEffect(() => {
     polygonsRef.current.forEach((p) => p.setOptions({ clickable: !drawMode }));
@@ -344,15 +604,12 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     const finishDraft = () => {
       const path = draftPathRef.current;
       if (path.length >= 3) {
-        const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
         const ring = path.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
         ring.push(ring[0]!);
         const polarity = drawPolarityRef.current;
         setDrawnItems((prev) => {
           const nth = prev.filter((d) => d.polarity === polarity).length + 1;
-          const label = polarity === 'exclude'
-            ? `${isAr ? 'منطقة مستثناة' : 'Excluded area'} ${nth}`
-            : `${isAr ? 'منطقة مرسومة' : 'Drawn area'} ${nth}`;
+          const label = coverageLabelRef.current(ring, polarity) ?? `${drawnBaseRef.current(polarity)} ${nth}`;
           return [...prev, newDrawnAreaItem(ring, label, polarity)];
         });
       }
@@ -362,6 +619,17 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       setDraftCount(0);
     };
     finishDraftRef.current = finishDraft;
+
+    // Undo the LAST clicked point (button + right-click) so a misplaced
+    // segment can be redrawn without starting the whole shape over.
+    const undoLast = () => {
+      if (draftPathRef.current.length === 0) return;
+      draftPathRef.current = draftPathRef.current.slice(0, -1);
+      preview.setPath(draftPathRef.current);
+      dots.pop()?.setMap(null);
+      setDraftCount(draftPathRef.current.length);
+    };
+    undoLastRef.current = undoLast;
 
     const clickL = map.addListener('click', (e: google.maps.MapMouseEvent) => {
       if (!e.latLng) return;
@@ -378,16 +646,19 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       setDraftCount(draftPathRef.current.length);
     });
     const dblL = map.addListener('dblclick', () => finishDraft());
+    const rightL = map.addListener('rightclick', () => undoLast());
 
     return () => {
       google.maps.event.removeListener(clickL);
       google.maps.event.removeListener(dblL);
+      google.maps.event.removeListener(rightL);
       preview.setMap(null);
       previewRef.current = null;
       clearDots();
       draftPathRef.current = [];
       setDraftCount(0);
       finishDraftRef.current = () => {};
+      undoLastRef.current = () => {};
       map.setOptions({ disableDoubleClickZoom: false, draggableCursor: undefined, draggable: true });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -396,7 +667,8 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   // Apply: element rules + exclude districts pass through untouched; the
   // include-district set is rebuilt from the map selection (existing rules keep
   // their ids/labels); drawn areas are re-emitted from the picker's working list
-  // (existing items verbatim, new shapes appended, deleted ones dropped).
+  // (existing items verbatim — including border edits — new shapes appended,
+  // deleted ones dropped).
   const apply = () => {
     const keep = items.filter((i) => {
       if (isDrawnItem(i)) return false; // re-emitted from drawnItems below
@@ -431,9 +703,9 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
             <p className="truncate text-[11px] text-charcoal/60">
               {drawMode
                 ? drawPolarity === 'exclude'
-                  ? L('منطقة استثناء: لن تظهر النتائج داخل هذا الشكل. الخريطة مثبّتة أثناء الرسم — انقر لإضافة النقاط، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'Exclusion zone: no results will show inside this shape. The map is pinned while drawing — click to add points, then double-click (or "Finish shape") to close it.')
-                  : L('الخريطة مثبّتة أثناء الرسم — انقر لإضافة نقاط الشكل، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه. يمكنك رسم عدة أشكال متفرقة.', 'The map is pinned while drawing — click to add the shape’s points, then double-click (or "Finish shape") to close it. You can draw several separate shapes.')
-                : L('اضغط على حي لتضمينه أو لإزالته. الأحياء الحمراء مستثناة (تُدار من القائمة). قرّب الخريطة لرؤية أسماء الأحياء والمعالم.', 'Tap a district to include or remove it. Red districts are excludes (managed from the list). Zoom in to see district names and landmarks.')}
+                  ? L('منطقة استثناء: لن تظهر النتائج داخل هذا الشكل. انقر لإضافة النقاط، نقرة يمنى تتراجع عن آخر نقطة، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'Exclusion zone: no results will show inside this shape. Click to add points, right-click undoes the last point, then double-click (or "Finish shape") to close it.')
+                  : L('الخريطة مثبّتة أثناء الرسم — انقر لإضافة النقاط، نقرة يمنى تتراجع عن آخر نقطة، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'The map is pinned while drawing — click to add points, right-click undoes the last point, then double-click (or "Finish shape") to close it.')
+                : L('اضغط على حي لتضمينه أو لإزالته، أو بزر يمين لنسخ حدوده كشكل قابل للتعديل. اسحب نقاط الأشكال المرسومة لتعديل حدودها (زر يمين على نقطة يحذفها).', 'Tap a district to include/remove it, or right-click to copy its borders as an editable shape. Drag a drawn shape’s points to reshape it (right-click a point deletes it).')}
             </p>
           </div>
           {drawMode && (
@@ -458,6 +730,16 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                 );
               })}
             </div>
+          )}
+          {drawMode && draftCount > 0 && (
+            <button
+              type="button"
+              onClick={() => undoLastRef.current()}
+              className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-2 text-xs font-bold text-charcoal/70 transition hover:bg-cream"
+              title={L('تراجع عن آخر نقطة', 'Undo last point')}
+            >
+              <RotateCcw size={13} /> {L('تراجع', 'Undo')}
+            </button>
           )}
           {drawMode && draftCount > 0 && draftCount < 3 && (
             <span className="shrink-0 rounded-lg bg-copper/10 px-2.5 py-2 text-xs font-bold text-copper">
@@ -541,6 +823,9 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
               {drawnItems.length > 0 && (
                 <span className="text-charcoal/50"> · {L(`${drawnItems.length} منطقة مرسومة`, `${drawnItems.length} drawn area(s)`)}</span>
               )}
+              {elementItems.length > 0 && (
+                <span className="text-charcoal/50"> · {L(`${elementItems.length} قاعدة معلم`, `${elementItems.length} element rule(s)`)}</span>
+              )}
             </span>
             {selectedNames.length > 0 && (
               <p className="truncate text-[11px] text-charcoal/50">{selectedNames.join(' · ')}</p>
@@ -550,14 +835,14 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                 {drawnItems.map((d) => (
                   <span
                     key={d.id}
-                    className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold"
+                    className="inline-flex max-w-[280px] items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold"
                     style={{ backgroundColor: `${d.polarity === 'exclude' ? RED : GOLD}1F`, color: d.polarity === 'exclude' ? RED : '#8a6a38' }}
                   >
-                    {d.label || L('منطقة مرسومة', 'Drawn area')}
+                    <span className="truncate">{d.label || L('منطقة مرسومة', 'Drawn area')}</span>
                     <button
                       type="button"
                       onClick={() => setDrawnItems((prev) => prev.filter((x) => x.id !== d.id))}
-                      className="hover:opacity-60"
+                      className="shrink-0 hover:opacity-60"
                       aria-label={L('حذف', 'Delete')}
                     >
                       <X size={11} />
