@@ -1,9 +1,23 @@
-# Cloudflare Workers AI — Qwen provider (standalone)
+# Cloudflare Workers AI — Qwen provider
 
-**Status:** Provisioned + standalone verification only. **NOT integrated** with
-translation, listings, copywriting, or any other Wassel flow — that requires a
-separate approved plan (user decision, 2026-07-18). Anthropic remains the
-production LLM everywhere.
+**Status (updated 2026-07-18):** LIVE as the **primary provider for all
+writing/translation tasks** (user decision: "all writing and translation tasks
+route to it"). Every routed endpoint keeps its full Anthropic implementation as
+an automatic fallback — if Qwen fails for any reason (daily free quota, rate
+limit, timeout, unusable output), the request silently completes on Claude and
+the failure is logged loudly. Agentic flows (sales agent, copywriter tool-loop,
+builder/workflow agents, migration vision, decks, reel analysis) remain on
+Anthropic — they need tool-use loops/vision that this provider doesn't cover.
+
+**Routing lives in [`api/_lib/textLlm.ts`](../api/_lib/textLlm.ts).** Routed:
+`/api/translate`, `/api/transliterate-name`, `/api/doc-assist`,
+`/api/project-ai`, `/api/templates/listing-message`,
+`/api/templates/generate-from-description`, and the
+`project-details-ai-v2` Supabase Edge Function (own inline copy).
+
+**Kill switch:** set `TEXT_LLM_PROVIDER=anthropic` (Vercel env + Supabase
+function secrets) to revert every routed endpoint to Claude instantly — no
+deploy needed.
 
 ## What this is
 
@@ -130,8 +144,11 @@ be retried in a loop — on the free plan it fails until the daily UTC reset.
 
 ## Hard rules
 
-1. **Do not import `cloudflareAi.ts` from any app flow** until a separate
-   integration plan is approved. It replaces nothing; Anthropic stays.
+1. **Route new writing/translation call sites through `api/_lib/textLlm.ts`**
+   (Qwen primary + Anthropic fallback + kill switch) — never call
+   `cloudflareAi.ts` directly from an endpoint, and never remove an endpoint's
+   Anthropic fallback path. Agentic/vision flows stay on Anthropic until
+   separately approved.
 2. **Scoped token only** — never the Global API Key, never broaden the scope
    beyond Workers AI on the one account.
 3. **No plan upgrades / payment methods** without explicit user approval.

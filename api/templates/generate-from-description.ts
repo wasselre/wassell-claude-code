@@ -20,6 +20,7 @@
 import type { IncomingMessage, ServerResponse } from 'http';
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
+import { qwenRoutingEnabled, qwenJson, logQwenFallback } from '../_lib/textLlm.js';
 
 export const config = {
   runtime: 'nodejs',
@@ -143,8 +144,6 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   const req = await nodeToWebRequest(nodeReq);
   const resp = await withAuth(req, async (_user) => {
     if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
 
     let body: RequestBody;
     try {
@@ -157,6 +156,41 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     if (description.length < 20) return jsonError(400, 'description is too short — paste the full template spec');
     if (description.length > 60_000) return jsonError(400, 'description is too long — keep it under 60k chars');
 
+    // ── Primary: Qwen on Cloudflare Workers AI (writing/translation routing) ──
+    if (qwenRoutingEnabled()) {
+      try {
+        const out = await qwenJson<ToolInput>({
+          system: SYSTEM_PROMPT.replace(
+            ' and call `create_design_template` with it. NEVER write prose; ALWAYS call the tool',
+            '',
+          ),
+          user: description,
+          shape:
+            '{"name": string, "cleanup_prompt": string, "editing_prompt": string, "design_prompt": string, "variables": [{"name": string, "label_ar": string, "label_en": string, "type": "text"|"number"|"currency"}], "notes": string}',
+          requiredKeys: ['name', 'cleanup_prompt', 'editing_prompt', 'design_prompt', 'variables'],
+          maxTokens: 8_000,
+          timeoutMs: 120_000,
+        });
+        if (!Array.isArray(out.variables)) throw new Error('qwen returned non-array variables');
+        return jsonOk({
+          ok: true,
+          template: {
+            name: out.name,
+            cleanup_prompt: out.cleanup_prompt,
+            editing_prompt: out.editing_prompt,
+            design_prompt: out.design_prompt,
+            variables: out.variables,
+            notes: out.notes ?? '',
+          },
+        });
+      } catch (err) {
+        logQwenFallback('/api/templates/generate-from-description', err);
+      }
+    }
+
+    // ── Fallback: Claude force-tool (original path, unchanged) ─────────
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
     const client = new Anthropic({ apiKey });
 
     let response;

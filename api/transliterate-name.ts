@@ -9,12 +9,14 @@
  * Request:  { name: string }
  * Response: { ok: true, name_en: string }
  *
- * Auth: Supabase JWT via withAuth (same as api/translate.ts). Edge runtime +
- * Haiku force-tool — a tiny, fast, cached-on-the-client call.
+ * Auth: Supabase JWT via withAuth (same as api/translate.ts). Edge runtime.
+ * Qwen on Cloudflare Workers AI first (writing/translation routing — see
+ * api/_lib/textLlm.ts), Claude Haiku force-tool as fallback.
  */
 
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { qwenRoutingEnabled, qwenJson, logQwenFallback } from './_lib/textLlm.js';
 
 export const config = {
   runtime: 'edge',
@@ -51,9 +53,6 @@ const TOOL_SCHEMA = {
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
   return withAuth(req, async () => {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-
     let body: { name?: string };
     try {
       body = (await req.json()) as { name?: string };
@@ -63,6 +62,26 @@ export default async function handler(req: Request): Promise<Response> {
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     if (!name) return jsonError(400, 'name is required');
 
+    // ── Primary: Qwen on Cloudflare Workers AI ─────────────────────────
+    if (qwenRoutingEnabled()) {
+      try {
+        const out = await qwenJson<{ name_en: string }>({
+          system: SYSTEM_PROMPT.replace(' Always call the `transliterate` tool.', ''),
+          user: name,
+          shape: '{"name_en": string}',
+          requiredKeys: ['name_en'],
+          maxTokens: 800,
+          timeoutMs: 25_000,
+        });
+        return jsonOk({ ok: true, name_en: out.name_en.trim() });
+      } catch (err) {
+        logQwenFallback('/api/transliterate-name', err);
+      }
+    }
+
+    // ── Fallback: Claude Haiku force-tool (original path, unchanged) ───
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
     const client = new Anthropic({ apiKey });
     let response;
     try {

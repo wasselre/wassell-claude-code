@@ -24,6 +24,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { getServiceClient } from '../_lib/files.js';
+import { qwenRoutingEnabled, qwenJson, logQwenFallback } from '../_lib/textLlm.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
@@ -112,8 +113,6 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
   const req = await nodeToWebRequest(nodeReq);
   const resp = await withAuth(req, async (_user) => {
     if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
 
     let body: RequestBody;
     try {
@@ -194,6 +193,34 @@ ${JSON.stringify(
 LISTING DESCRIPTION (Arabic free text — extract amenities/features from here only):
 ${facts.description ?? '(no description provided)'}`;
 
+    // ── Primary: Qwen on Cloudflare Workers AI (writing/translation routing) ──
+    if (qwenRoutingEnabled()) {
+      try {
+        const out = await qwenJson<{ body_ar: string; body_en: string }>({
+          system: SYSTEM_PROMPT.replace(
+            ' Write the message by calling `write_listing_message`.',
+            '',
+          ).replace(' NEVER write prose outside the tool; ALWAYS call write_listing_message.', ''),
+          user: userContent,
+          shape: '{"body_ar": string, "body_en": string}',
+          requiredKeys: ['body_ar', 'body_en'],
+          maxTokens: 3_000,
+          timeoutMs: 55_000,
+        });
+        const qAr = asString(out.body_ar);
+        const qEn = asString(out.body_en);
+        if (qAr || qEn) {
+          return jsonOk({ ok: true, body_ar: qAr ?? '', body_en: qEn ?? '', facts });
+        }
+        throw new Error('qwen returned an empty message');
+      } catch (err) {
+        logQwenFallback('/api/templates/listing-message', err);
+      }
+    }
+
+    // ── Fallback: Claude force-tool (original path, unchanged) ─────────
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
     const client = new Anthropic({ apiKey });
     let response;
     try {

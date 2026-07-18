@@ -22,6 +22,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { qwenRoutingEnabled, qwenText, logQwenFallback } from './_lib/textLlm.js';
 
 export const config = { runtime: 'edge' };
 
@@ -82,9 +83,6 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonError(400, `selection too long (${text.length} chars; max ${MAX_INPUT_CHARS})`);
     }
 
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-
     const parts: string[] = [];
     parts.push(`Action: ${ACTION_INSTRUCTIONS[action]}`);
     if (action === 'translate') {
@@ -96,6 +94,25 @@ export default async function handler(req: Request): Promise<Response> {
     }
     parts.push(`Text to transform:\n<<<\n${text}\n>>>`);
 
+    // ── Primary: Qwen on Cloudflare Workers AI (writing/translation routing) ──
+    if (qwenRoutingEnabled()) {
+      try {
+        const out = await qwenText({
+          system: SYSTEM_PROMPT,
+          user: parts.join('\n\n'),
+          // Thinking tokens count toward the cap — headroom over the Claude sizing.
+          maxTokens: Math.min(8_000, Math.max(2_000, Math.ceil(text.length / 2) + 1_000)),
+          timeoutMs: 55_000,
+        });
+        return jsonOk({ result: out });
+      } catch (err) {
+        logQwenFallback('/api/doc-assist', err);
+      }
+    }
+
+    // ── Fallback: Claude (original path, unchanged) ────────────────────
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
     const client = new Anthropic({ apiKey });
     try {
       const response = await client.messages.create({

@@ -29,6 +29,54 @@ import Anthropic from "npm:@anthropic-ai/sdk@0.35.0";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 8000;
 
+// Writing/translation routing (user decision 2026-07-18): Qwen3 30B on
+// Cloudflare Workers AI is the PRIMARY writer; Claude stays as the fallback
+// on any Qwen failure (quota/rate-limit/timeout/garbage). Mirrors
+// api/_lib/textLlm.ts (this Deno function can't import it). Kill switch:
+// TEXT_LLM_PROVIDER=anthropic.
+const QWEN_MODEL_DEFAULT = "@cf/qwen/qwen3-30b-a3b-fp8";
+const QWEN_MAX_TOKENS = 4096;
+
+/** Remove Qwen3 <think>…</think> reasoning blocks (incl. an unclosed one). */
+function stripThink(content: string): string {
+  return content
+    .replace(/<think>[\s\S]*?<\/think>/g, "")
+    .replace(/<think>[\s\S]*$/g, "")
+    .trim();
+}
+
+/** One Qwen chat call via Cloudflare's OpenAI-compatible endpoint. Throws on any failure. */
+async function qwenChat(accountId: string, apiToken: string, system: string, user: string): Promise<string> {
+  const model = Deno.env.get("CLOUDFLARE_AI_MODEL") || QWEN_MODEL_DEFAULT;
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiToken}` },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        max_tokens: QWEN_MAX_TOKENS,
+        stream: false,
+      }),
+      signal: AbortSignal.timeout(60_000),
+    },
+  );
+  if (!res.ok) {
+    const bodyText = await res.text().catch(() => "");
+    throw new Error(`cloudflare ${res.status}: ${bodyText.slice(0, 200)}`);
+  }
+  const json = await res.json();
+  const content = json?.choices?.[0]?.message?.content;
+  if (typeof content !== "string" || !content) throw new Error("qwen returned no content");
+  const text = stripThink(content);
+  if (!text) throw new Error("qwen returned only a think block");
+  return text;
+}
+
 function buildCorsHeaders(req: Request): Record<string, string> {
   const requested = req.headers.get("access-control-request-headers");
   return {
@@ -130,21 +178,40 @@ Deno.serve(async (req: Request): Promise<Response> => {
       'features: 8–12 عنصر. landmarks: 5–8 عناصر.',
     ].join('\n');
 
-    const response = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: MAX_TOKENS,
-      system,
-      messages: [{ role: "user", content: user }],
-    });
+    let text = "";
+
+    // ── Primary: Qwen on Cloudflare Workers AI ─────────────────────────
+    const cfAccount = Deno.env.get("CLOUDFLARE_ACCOUNT_ID") ?? "";
+    const cfToken = Deno.env.get("CLOUDFLARE_API_TOKEN") ?? "";
+    const qwenOn =
+      (Deno.env.get("TEXT_LLM_PROVIDER") ?? "").trim().toLowerCase() !== "anthropic" &&
+      cfAccount !== "" && cfToken !== "";
+    if (qwenOn) {
+      try {
+        text = await qwenChat(cfAccount, cfToken, system, user);
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        console.error(`[project-details-ai-v2] qwen failed — falling back to Anthropic: ${m}`);
+      }
+    }
+
+    // ── Fallback: Claude (original path, unchanged) ────────────────────
+    if (!text) {
+      const response = await client.messages.create({
+        model: CLAUDE_MODEL,
+        max_tokens: MAX_TOKENS,
+        system,
+        messages: [{ role: "user", content: user }],
+      });
+      // deno-lint-ignore no-explicit-any
+      const content = response.content as any[];
+      for (let i = content.length - 1; i >= 0; i--) {
+        const block = content[i];
+        if (block.type === "text") { text = String(block.text ?? "").trim(); break; }
+      }
+    }
 
     step = "parse_response";
-    // deno-lint-ignore no-explicit-any
-    const content = response.content as any[];
-    let text = "";
-    for (let i = content.length - 1; i >= 0; i--) {
-      const block = content[i];
-      if (block.type === "text") { text = String(block.text ?? "").trim(); break; }
-    }
 
     // deno-lint-ignore no-explicit-any
     let parsed: any = null;

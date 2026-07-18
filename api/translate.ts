@@ -7,9 +7,11 @@
  * ("Clients") + a clean slug ("clients") so the saved model never has
  * mismatched / placeholder labels or `item_<timestamp>` slugs.
  *
- * Implementation: Claude Haiku 4.5 with forced tool-use to guarantee a
- * structured response. Haiku is fast (~300-500ms) and cheap — important
- * because this fires on every debounced input change in the Builder.
+ * Implementation: Qwen3 30B on Cloudflare Workers AI FIRST (all writing/
+ * translation routes there — user decision 2026-07-18, see api/_lib/textLlm.ts),
+ * falling back to Claude Haiku 4.5 with forced tool-use on any Qwen failure.
+ * Both paths share the same validation; this fires on every debounced input
+ * change in the Builder, so speed matters on both.
  *
  * Runtime: `edge`. This endpoint is bursty — a user opens the options editor,
  * translates a handful of labels, then closes it — so a `nodejs` function
@@ -26,6 +28,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
+import { qwenRoutingEnabled, qwenJson, logQwenFallback } from './_lib/textLlm.js';
 
 export const config = { runtime: 'edge' };
 
@@ -116,13 +119,21 @@ function sanitizeSlug(raw: string): string {
   return slug;
 }
 
+/** Shared validation for both providers. Null = unusable model output. */
+function buildResult(out: ToolInput): { ok: true; label_ar: string; label_en: string; name: string } | null {
+  const labelAr = (out.label_ar ?? '').trim();
+  const labelEn = (out.label_en ?? '').trim();
+  if (!labelAr || !labelEn) return null;
+  let slug = (out.name ?? '').trim();
+  if (!VALID_SLUG_RE.test(slug)) slug = sanitizeSlug(labelEn);
+  if (!slug) return null;
+  return { ok: true, label_ar: labelAr, label_en: labelEn, name: slug };
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, 'Method not allowed');
 
   return withAuth(req, async (_user) => {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
-
     let body: RequestBody;
     try {
       body = (await req.json()) as RequestBody;
@@ -139,6 +150,28 @@ export default async function handler(req: Request): Promise<Response> {
 
     const userMessage = `Context: this is ${kindHint}.\nSource language hint: ${sourceLang}.\nInput: ${input}`;
 
+    // ── Primary: Qwen on Cloudflare Workers AI ─────────────────────────
+    if (qwenRoutingEnabled()) {
+      try {
+        const out = await qwenJson<ToolInput>({
+          system: SYSTEM_PROMPT.replace('Always call the `translate_label` tool — never reply in prose.', ''),
+          user: userMessage,
+          shape: '{"label_ar": string, "label_en": string, "name": string}',
+          requiredKeys: ['label_ar', 'label_en', 'name'],
+          maxTokens: 1_200,
+          timeoutMs: 25_000,
+        });
+        const res = buildResult(out);
+        if (res) return jsonOk(res);
+        throw new Error('qwen returned unusable labels/slug');
+      } catch (err) {
+        logQwenFallback('/api/translate', err);
+      }
+    }
+
+    // ── Fallback: Claude Haiku force-tool (original path, unchanged) ───
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) return jsonError(500, 'ANTHROPIC_API_KEY is not configured');
     const client = new Anthropic({ apiKey });
 
     let response;
@@ -160,29 +193,8 @@ export default async function handler(req: Request): Promise<Response> {
     if (!toolBlock || toolBlock.type !== 'tool_use') {
       return jsonError(502, 'Translation model did not call the tool');
     }
-    const out = toolBlock.input as ToolInput;
-
-    const labelAr = (out.label_ar ?? '').trim();
-    const labelEn = (out.label_en ?? '').trim();
-    const slugRaw = (out.name ?? '').trim();
-
-    if (!labelAr || !labelEn) {
-      return jsonError(502, 'Translation model returned an empty label');
-    }
-
-    let slug = slugRaw;
-    if (!VALID_SLUG_RE.test(slug)) {
-      slug = sanitizeSlug(labelEn);
-    }
-    if (!slug) {
-      return jsonError(502, 'Translation model returned an unusable slug');
-    }
-
-    return jsonOk({
-      ok: true,
-      label_ar: labelAr,
-      label_en: labelEn,
-      name: slug,
-    });
+    const res = buildResult(toolBlock.input as ToolInput);
+    if (!res) return jsonError(502, 'Translation model returned an empty label or unusable slug');
+    return jsonOk(res);
   });
 }
