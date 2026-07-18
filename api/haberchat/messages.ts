@@ -20,7 +20,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
-import { sendMessage, defaultDeviceId, HaberchatError } from '../_lib/haberchat.js';
+import { sendMessage, defaultDeviceId, maybeScheduleWaha, HaberchatError } from '../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',
@@ -30,7 +30,7 @@ export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return jsonError(405, `Method ${req.method} not allowed`);
   }
-  return withAuth(req, async () => {
+  return withAuth(req, async (user) => {
     let input: Record<string, unknown>;
     try {
       input = (await req.json()) as Record<string, unknown>;
@@ -67,6 +67,14 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     try {
+      // Scheduled send on a WAHA number → enqueue into our own queue (WAHA has
+      // no native deliverAt). Haberchat scheduled sends fall through to
+      // sendMessage's native deliverAt. Returns null when not a WAHA schedule.
+      const scheduled = deliverAt
+        ? await maybeScheduleWaha({ deviceId, phone, body, mediaFileId, mediaCaption, reference, deliverAt }, user.userId)
+        : null;
+      if (scheduled) return jsonOk(scheduled);
+
       const result = await sendMessage({
         deviceId,
         phone,

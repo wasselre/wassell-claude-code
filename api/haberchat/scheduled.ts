@@ -14,7 +14,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
-import { listQueuedMessages, deleteQueuedMessage, defaultDeviceId, HaberchatError } from '../_lib/haberchat.js';
+import { listScheduled, cancelScheduled, defaultDeviceId, HaberchatError } from '../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',
@@ -34,14 +34,14 @@ export default async function handler(req: Request): Promise<Response> {
           return jsonError(400, 'deviceId is required — pass as query param or set HABERCHAT_DEFAULT_DEVICE_ID');
         }
         const phone = url.searchParams.get('phone') ?? undefined;
-        const messages = await listQueuedMessages(deviceId, phone);
+        const messages = await listScheduled(deviceId, phone);
         return jsonOk({ messages });
       }
 
-      // DELETE — cancel one queued message.
+      // DELETE — cancel one queued message (WAHA job uuid or Haberchat id).
       const id = url.searchParams.get('id') ?? '';
       if (!id) return jsonError(400, 'id is required');
-      await deleteQueuedMessage(id);
+      await cancelScheduled(id);
       return jsonOk({ ok: true });
     } catch (err) {
       if (err instanceof HaberchatError) {

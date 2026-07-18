@@ -18,7 +18,7 @@
  */
 
 import { withAuth, jsonError } from '../../_lib/auth.js';
-import { downloadFile, HaberchatError } from '../../_lib/haberchat.js';
+import { downloadFile, HaberchatError } from '../../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',

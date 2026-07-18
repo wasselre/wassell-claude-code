@@ -10,7 +10,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
-import { listChats, defaultDeviceId, HaberchatError } from '../_lib/haberchat.js';
+import { listChats, defaultDeviceId, HaberchatError } from '../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',

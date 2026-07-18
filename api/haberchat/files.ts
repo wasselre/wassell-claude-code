@@ -13,7 +13,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
-import { uploadFile, HaberchatError } from '../_lib/haberchat.js';
+import { uploadFile, HaberchatError } from '../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',
@@ -35,13 +35,18 @@ export default async function handler(req: Request): Promise<Response> {
     if (!(file instanceof File)) {
       return jsonError(400, 'missing "file" field in form data');
     }
-    // Rebuild a minimal FormData for Haberchat — some implementations
+    // Rebuild a minimal FormData for the gateway — some implementations
     // reject extra fields we don't care about.
     const out = new FormData();
     out.append('file', file, file.name);
 
+    // deviceId routes the upload to the right provider: a WAHA device stashes
+    // the bytes in temp storage for the two-step send; omitting it keeps the
+    // legacy Haberchat account-scoped upload.
+    const deviceId = new URL(req.url).searchParams.get('deviceId') ?? undefined;
+
     try {
-      const result = await uploadFile(out);
+      const result = await uploadFile(out, deviceId);
       return jsonOk(result);
     } catch (err) {
       if (err instanceof HaberchatError) {

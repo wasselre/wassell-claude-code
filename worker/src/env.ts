@@ -75,6 +75,12 @@ export interface WorkerEnv {
    *  no local Chromium). */
   BROWSERBASE_API_KEY: string | null;
   BROWSERBASE_PROJECT_ID: string | null;
+  /** Self-hosted WAHA gateway (scheduled_whatsapp_jobs queue + zombie watchdog).
+   *  When EITHER is UNSET the worker's scheduled-WhatsApp + WAHA-watchdog loops
+   *  self-disable (boots fine before any number is moved to provider='waha').
+   *  Set BOTH via `fly secrets set` to turn them on. */
+  WAHA_URL: string | null;
+  WAHA_API_KEY: string | null;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -105,5 +111,7 @@ export function loadEnv(): WorkerEnv {
     WORKFLOW_PROOF_ONLY: process.env.WORKFLOW_PROOF_ONLY === '1',
     BROWSERBASE_API_KEY: process.env.BROWSERBASE_API_KEY ?? null,
     BROWSERBASE_PROJECT_ID: process.env.BROWSERBASE_PROJECT_ID ?? null,
+    WAHA_URL: process.env.WAHA_URL ?? null,
+    WAHA_API_KEY: process.env.WAHA_API_KEY ?? null,
   };
 }

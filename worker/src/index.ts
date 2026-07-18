@@ -35,6 +35,8 @@ import { runImageJob, type ImageJob } from './runImageJob.js';
 import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
+import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
+import { getSessionStatus, restartSession, type WahaSendConfig } from './waha.js';
 
 const env = loadEnv();
 
@@ -42,6 +44,11 @@ const env = loadEnv();
 // x-wassel-instance=FLY_MACHINE_ID) so a worker storm/loop is attributable
 // in Postgres logs. Shared by all poll loops in this process.
 const supabase: SupabaseClient = makeServiceClient(env, 'worker');
+
+// WAHA send config (scheduled_whatsapp_jobs) — null until both WAHA secrets are
+// set, which gates the scheduled-WhatsApp + WAHA-session-watchdog loops below.
+const wahaSend: WahaSendConfig | null =
+  env.WAHA_URL && env.WAHA_API_KEY ? { url: env.WAHA_URL, apiKey: env.WAHA_API_KEY, supabase } : null;
 
 let shuttingDown = false;
 let busy = false;
@@ -97,6 +104,13 @@ let workflowAuthFailures = 0;
 // Registered only when BROWSERBASE_API_KEY + BROWSERBASE_PROJECT_ID are set.
 let regaBusy = false;
 let regaWakeRequested = false;
+// Scheduled WhatsApp sends (scheduled_whatsapp_jobs, TENTH loop). Time-gated:
+// claim rows whose deliver_at has passed and send them via WAHA (WAHA has no
+// native deliverAt). Plus a WAHA session watchdog that restarts a session that
+// is dead-but-"WORKING" (eval §4b). Both gated on the WAHA secrets.
+let scheduledWaBusy = false;
+let scheduledWaWakeRequested = false;
+let wahaWatchdogBusy = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -1469,6 +1483,7 @@ const server = http.createServer((req, res) => {
     reportsWakeRequested = true;
     workflowWakeRequested = true;
     regaWakeRequested = true;
+    scheduledWaWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -1489,7 +1504,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -1497,6 +1512,143 @@ async function shutdown(signal: string): Promise<void> {
 }
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));
+
+// ─────────────────────────────────────────────────────────────────────────
+// Scheduled WhatsApp sends (scheduled_whatsapp_jobs) — time-gated, WAHA only.
+// scheduled_whatsapp_claim_due returns only rows whose deliver_at has passed
+// (SKIP LOCKED), so no separate scheduler is needed. Each row is sent via WAHA.
+// The same loop ticks the queue watchdog AND the WAHA session (zombie) watchdog.
+// ─────────────────────────────────────────────────────────────────────────
+
+interface ScheduledWaRow {
+  job_id: string;
+  device_id: string;
+  chat_wid: string;
+  phone: string | null;
+  body: string | null;
+  media: unknown;
+  reference: string | null;
+  attempts: number;
+}
+
+async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
+  if (!wahaSend) return false;
+  const { data, error } = await supabase.rpc('scheduled_whatsapp_claim_due', {
+    p_worker_id: env.WORKER_ID,
+    p_limit: 5,
+  });
+  if (error) {
+    console.error(`[worker] scheduled-wa claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as ScheduledWaRow[];
+  if (rows.length === 0) return false;
+
+  for (const r of rows) {
+    const job: ScheduledWhatsappJob = {
+      id: r.job_id,
+      deviceId: r.device_id,
+      chatWid: r.chat_wid,
+      phone: r.phone,
+      body: r.body,
+      media: Array.isArray(r.media) ? (r.media as ScheduledWhatsappJob['media']) : [],
+      reference: r.reference,
+      attempts: r.attempts,
+    };
+    console.log(`[worker] sending scheduled WhatsApp job=${job.id} chat=${job.chatWid} attempts=${job.attempts}`);
+    try {
+      const result = await runScheduledWhatsappJob(wahaSend, job);
+      const { error: doneErr } = await supabase.rpc('scheduled_whatsapp_complete', { p_job_id: job.id, p_result: result });
+      if (doneErr) console.error(`[worker] scheduled_whatsapp_complete failed: ${doneErr.message}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[worker] scheduled WhatsApp job=${job.id} FAILED:`, msg);
+      const { error: failErr } = await supabase.rpc('scheduled_whatsapp_fail', { p_job_id: job.id, p_error: msg });
+      if (failErr) console.error(`[worker] scheduled_whatsapp_fail failed: ${failErr.message}`);
+    }
+  }
+  return true;
+}
+
+async function runScheduledWhatsappWatchdog(): Promise<void> {
+  try {
+    const { data, error } = await supabase.rpc('scheduled_whatsapp_watchdog');
+    if (error) { console.error(`[worker] scheduled-wa watchdog RPC error: ${error.message}`); return; }
+    const swept = typeof data === 'number' ? data : 0;
+    if (swept > 0) console.warn(`[worker] scheduled-wa watchdog swept ${swept} stuck send(s)`);
+  } catch (err) {
+    console.error('[worker] scheduled-wa watchdog threw:', err);
+  }
+}
+
+/**
+ * WAHA session (zombie) watchdog — the gateway has no built-in liveness probe
+ * (eval §5, WAHA issue #1931/#2151). v1 recovers the RELIABLE failure modes:
+ * a session that is NOT 'WORKING' (FAILED / STOPPED / logged-out) is restarted
+ * via the API (restart recovers in ~10s without re-scan, proven in the POC). A
+ * dead-but-'WORKING' session is only LOGGED (with its activity age) — auto-
+ * restarting a healthy-but-quiet session would needlessly drop it, so
+ * activity-age restart is deliberately NOT automated in v1.
+ */
+async function runWahaSessionWatchdog(): Promise<void> {
+  if (!wahaSend || wahaWatchdogBusy) return;
+  wahaWatchdogBusy = true;
+  try {
+    const { data, error } = await supabase
+      .from('whatsapp_numbers')
+      .select('device_id, session_name')
+      .eq('provider', 'waha')
+      .eq('is_active', true);
+    if (error) { console.error(`[worker] waha watchdog list failed: ${error.message}`); return; }
+    const sessions = (data ?? []).map((r) => (r.session_name as string | null) ?? (r.device_id as string));
+    for (const session of sessions) {
+      if (!session) continue;
+      try {
+        const st = await getSessionStatus(wahaSend, session);
+        if (st.status !== 'WORKING') {
+          console.warn(`[worker] waha session '${session}' status=${st.status} → restarting`);
+          await restartSession(wahaSend, session).catch((e: unknown) => console.error(`[worker] waha restart '${session}' failed:`, (e as Error).message));
+        } else if (st.activityTs) {
+          const ageMin = Math.round((Date.now() - st.activityTs) / 60000);
+          if (ageMin > 30) console.warn(`[worker] waha session '${session}' WORKING but last activity ${ageMin}m ago (watch for zombie)`);
+        }
+      } catch (e) {
+        console.error(`[worker] waha watchdog probe '${session}' failed:`, (e as Error).message);
+      }
+    }
+  } finally {
+    wahaWatchdogBusy = false;
+  }
+}
+
+async function scheduledWhatsappPollLoop(): Promise<void> {
+  let lastWatchdog = 0;
+  while (!shuttingDown) {
+    scheduledWaBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneScheduledWhatsapp();
+    } catch (err) {
+      console.error('[worker] scheduled-wa poll iteration error:', err);
+    }
+    scheduledWaBusy = false;
+
+    if (Date.now() - lastWatchdog > env.WATCHDOG_INTERVAL_MS) {
+      lastWatchdog = Date.now();
+      await runScheduledWhatsappWatchdog();
+      await runWahaSessionWatchdog();
+    }
+
+    if (didClaim || scheduledWaWakeRequested) {
+      scheduledWaWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !scheduledWaWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
 
 // Drain the queues concurrently for the lifetime of the process.
 let loops: Array<Promise<void>>;
@@ -1541,6 +1693,15 @@ if (env.WORKFLOW_PROOF_ONLY) {
     loops.push(regaPollLoop());
   } else {
     console.log('[worker] rega lookup loop disabled (BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID unset)');
+  }
+  // Scheduled-WhatsApp + WAHA-session-watchdog loop — only when the WAHA gateway
+  // is configured (deploying this code is a no-op for the queue until both
+  // WAHA_URL + WAHA_API_KEY exist, i.e. after a number is moved to WAHA).
+  if (wahaSend) {
+    console.log('[worker] scheduled-WhatsApp (WAHA) loop enabled');
+    loops.push(scheduledWhatsappPollLoop());
+  } else {
+    console.log('[worker] scheduled-WhatsApp (WAHA) loop disabled (WAHA_URL / WAHA_API_KEY unset)');
   }
 }
 Promise.all(loops).catch((err) => {
