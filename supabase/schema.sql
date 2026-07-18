@@ -3062,7 +3062,13 @@ BEGIN
     PERFORM public.freeze_apply_row(p_model_id, p_id, p_data, p_created_by);
   ELSE
     IF p_expected_version IS NOT NULL THEN
-      SELECT version INTO v_existing_version FROM records WHERE id = p_id;
+      -- FOR UPDATE (2026-07-18): lock the row BEFORE the version check so
+      -- check+write are atomic — without it two concurrent writers could both
+      -- pass the check and the second silently overwrote the first's data.
+      -- (Live function has drifted from this file — see
+      -- migrations/2026-07-18_record_save_version_check_row_lock.sql for the
+      -- deployed body; the lock fix applies in both.)
+      SELECT version INTO v_existing_version FROM records WHERE id = p_id FOR UPDATE;
       IF FOUND AND v_existing_version <> p_expected_version THEN
         RAISE EXCEPTION
           'version_mismatch: record was edited by another user (loaded v%, current v%)',

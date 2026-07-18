@@ -64,9 +64,14 @@ const POLL_INTERVAL_MS = 2500;
 // jobs write the SAME draft row concurrently (one per worker machine), so the
 // loser of a version race re-reads + re-applies several times. The default
 // budget timed out under a transient Supabase slowdown and stranded an entry at
-// 'queued' (live 2026-06-30). 6 attempts / 20s rides it out — safe because each
-// job now writes the draft exactly ONCE (its terminal status).
-const CLEAN_RETRY_OPTS = { maxAttempts: 6, budgetMs: 20_000, capMs: 3_000 } as const;
+// 'queued' (live 2026-06-30). Widened again 2026-07-18: with klein finishing
+// every photo in ~3 s the whole batch's writes land in one burst, and a real
+// incident saw the Supabase REST gateway answer 'upstream request timeout' for
+// ~2 straight minutes — 6 attempts / 20 s exhausted mid-brownout and stranded
+// two entries. 10 attempts / 4 min rides out a multi-minute brownout; safe
+// because each job writes the draft exactly ONCE (its terminal status) and the
+// 15-min generation_jobs watchdog remains the backstop above it.
+const CLEAN_RETRY_OPTS = { maxAttempts: 10, budgetMs: 240_000, capMs: 8_000 } as const;
 
 interface RunArgs {
   supabase: SupabaseClient;
