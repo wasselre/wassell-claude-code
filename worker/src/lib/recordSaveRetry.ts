@@ -39,6 +39,11 @@ export function classifySaveError(error: SaveError | null | undefined): SaveDisp
   if (
     code === '503' || code === '504' || code === 'etimedout' || code === 'econnreset' ||
     msg.includes('fetch failed') || msg.includes('network') || msg.includes('timeout') ||
+    // "Timed out acquiring connection from connection pool." — Supabase pooler
+    // under burst load (seen live 2026-07-18 during a 20+-writer clean-text
+    // burst). Spelled "timed out" (with a space), so the 'timeout' match above
+    // misses it and it was classified terminal.
+    msg.includes('timed out') || msg.includes('connection pool') ||
     msg.includes('econnreset') || msg.includes('503') || msg.includes('504') ||
     msg.includes('service unavailable') || msg.includes('bad gateway') || msg.includes('gateway timeout')
   ) {
