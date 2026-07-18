@@ -240,3 +240,37 @@ unblocked — intact at v35, never killed. Backup of record state at the time:
 | Per-session auto-block | ≥25 conflicts / 30s → 10 min | `record_conflict_report` (`c_strip`/`c_swindow`/`c_sblock`) |
 | Forced-reload grace | 90s | `useAppVersionPoller` (`FORCE_RELOAD_GRACE_MS`) |
 | Version poll | 60s (visible tabs) | `useAppVersionPoller` (`POLL_INTERVAL_MS`) |
+
+---
+
+## 4. The 2026-07-05 → 2026-07-18 storm (13 days undetected-in-practice)
+
+The sweep fired correctly every 10 minutes for THIRTEEN DAYS (~1,600
+rollbacks/sec, ~150M failed transactions/day) but nobody actioned it: the alert
+carried no attribution, and the documented "grep record_save_conflict in the
+Postgres logs" runbook failed because the flood itself lagged the hosted log
+indexer ~9 hours behind. Offenders (finally identified 2026-07-18 via a
+60-second diagnostic capture inside record_save): **two zombie browser tabs on
+months-old pre-1340f07 SPA bundles** tight-looping stale-version `record_save`
+retries against dead `chat_templates` drafts — old bundles neither call
+`record_conflict_report` (so no auto-throttle, no telemetry) nor honor the
+newer forced-reload path. The loops died the moment a retry received a success
+response (which is also why `mode='noop'` record blocks kill loops the reject
+mode can't).
+
+Changes shipped in `2026-07-18_conflict_storm_sweep_attribution.sql`:
+
+- Alert + RPC response now include `top_offenders` (last-60s
+  `conflict_telemetry_buckets` aggregate; empty ⇒ non-reporting client) and
+  `storm_run_minutes` (minutes since the last calm `conflict_rate_samples`
+  row).
+- A storm running >60 min re-alerts hourly (was: 10-min dedup forever — one
+  long storm went effectively silent after the first alert).
+- The runbook text in the alert now covers the logs-lagging case: identify the
+  hot record LIVE via `pg_locks` (`locktype='tuple'`, relation `records`,
+  map `page/tuple` through `ctid`), and prefer a `noop` block for dead records
+  (success breaks retry loops; NEVER noop a record still receiving legitimate
+  edits).
+
+Threshold left at 75/s — the true calm baseline is ~0/s (verified: rollbacks
+went to literally zero once the loops broke).
