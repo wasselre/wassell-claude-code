@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw } from 'lucide-react';
+import { Compass, Loader2, Search, RotateCcw, Info, AlertTriangle, User, X, Bookmark, XCircle, TimerOff, RefreshCw, CheckSquare } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
 import { draftToMatchRequirements, type MatchRequirementsInput } from '@/lib/matching/requirements';
@@ -428,6 +428,21 @@ export default function ProjectFinderPage() {
     [selectedClientId, refinedGroups, selected],
   );
 
+  // Select ALL currently-FILTERED results (score slider + refine filters, across
+  // every tab) — or clear them if they already all are. Filtered-out items are
+  // never touched; bulk-save persists only the filtered∩selected set anyway, so
+  // tightening the slider after "select all" saves only what remains visible.
+  const allFilteredSelected = refinedTotal > 0 && selectedVisible === refinedTotal;
+  function toggleSelectAllFiltered() {
+    const ids = FINDER_GROUP_KEYS.flatMap((k) => refinedGroups[k].map((i) => i.project_id));
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) for (const id of ids) next.delete(id);
+      else for (const id of ids) next.add(id);
+      return next;
+    });
+  }
+
   // Dropping the client (or closing the tab) without having saved a single
   // option for them — after results were shown — needs a confirmation.
   const mustConfirmLeave = !!selectedClientId && !savedAny && fetchedTotal > 0;
@@ -505,17 +520,34 @@ export default function ProjectFinderPage() {
           </p>
         </div>
         {selectedClientId && (
-          <button
-            type="button"
-            onClick={onBulkSave}
-            disabled={bulkSaving || selectedVisible === 0}
-            title={L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
-          >
-            {bulkSaving ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
-            <span className="hidden sm:inline">{L('حفظ الخيارات', 'Save options')}</span>
-            <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedVisible}</span>
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={toggleSelectAllFiltered}
+              disabled={refinedTotal === 0}
+              title={allFilteredSelected
+                ? L('إلغاء تحديد جميع النتائج المصفّاة', 'Clear all filtered results')
+                : L('تحديد جميع النتائج المصفّاة الحالية', 'Select all currently-filtered results')}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-bold transition disabled:opacity-50 ${
+                allFilteredSelected ? 'border-copper/40 bg-copper/10 text-copper' : 'border-sand/60 bg-white text-charcoal/75 hover:bg-cream/60'
+              }`}
+            >
+              <CheckSquare size={15} />
+              <span className="hidden sm:inline">{allFilteredSelected ? L('إلغاء التحديد', 'Clear selection') : L('تحديد الكل', 'Select all')}</span>
+              <span className={`rounded-full px-1.5 text-[11px] ${allFilteredSelected ? 'bg-copper/15' : 'bg-sand/40'}`}>{refinedTotal}</span>
+            </button>
+            <button
+              type="button"
+              onClick={onBulkSave}
+              disabled={bulkSaving || selectedVisible === 0}
+              title={L('حفظ المحدّد كخيارات للعميل', 'Save selected to client options')}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+            >
+              {bulkSaving ? <Loader2 size={16} className="animate-spin" /> : <Bookmark size={16} />}
+              <span className="hidden sm:inline">{L('حفظ الخيارات', 'Save options')}</span>
+              <span className="rounded-full bg-white/25 px-1.5 text-[11px]">{selectedVisible}</span>
+            </button>
+          </>
         )}
       </div>
 
