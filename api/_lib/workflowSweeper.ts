@@ -67,7 +67,7 @@ import {
   substituteFieldTokens,
 } from '../../src/lib/workflowEngineCore.js';
 import { normalizePhone } from '../../src/lib/phone.js';
-import { sendMessage as haberchatSendMessage, defaultDeviceId } from './haberchat.js';
+import { sendMessage as haberchatSendMessage, resolveDefaultDeviceId } from './whatsappGateway.js';
 
 interface ActionResult {
   action_id: string;
@@ -655,7 +655,7 @@ async function executeSendWhatsApp(
   // Resolve the sending device. Action override → server env default.
   // The client engine also consults the user's overlay default but that
   // table is per-user — for cron we fall back to the env default.
-  const deviceId = action.device_id || defaultDeviceId();
+  const deviceId = action.device_id || (await resolveDefaultDeviceId());
   if (!deviceId) {
     return {
       action_id: action.id,

@@ -48,7 +48,7 @@ import {
 import { evaluateFormula } from '../../src/lib/formulaEngine.js';
 import { normalizePhone } from '../../src/lib/phone.js';
 // SAME server-side send path the on_due sweeper uses — no second WhatsApp impl.
-import { sendMessage as haberchatSendMessage, defaultDeviceId } from './haberchat.js';
+import { sendMessage as haberchatSendMessage, resolveDefaultDeviceId } from './whatsappGateway.js';
 import { resolveActorPublicUserId } from './actorMapping.js';
 
 export const SUPPORTED_ACTION_TYPES = new Set<WorkflowAction['type']>([
@@ -450,7 +450,7 @@ async function execSendWhatsApp(action: WorkflowActionSendWhatsAppMessage, runId
   );
   if (!body.trim()) return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'empty_body_after_substitution' };
 
-  const deviceId = action.device_id || defaultDeviceId();
+  const deviceId = action.device_id || (await resolveDefaultDeviceId());
   if (!deviceId) return { action_id: action.id, type: 'send_whatsapp_message', status: 'failed', reason: 'no_device_id' };
 
   // Stable idempotency reference per (run, action): a worker retry of the SAME

@@ -20,7 +20,7 @@ This folder contains the **living source of truth** for what every section of th
 | 10 | [home-dashboard.md](home-dashboard.md) | Home landing page — overview stats and quick actions |
 | 11 | [workflow-logs.md](workflow-logs.md) | Workflow execution logs — detailed audit trail of every firing |
 | 12 | [calling.md](calling.md) | Call logging via Hatif — post-call webhook, transcripts, client-record link |
-| 13 | [chats.md](chats.md) | WhatsApp inbox via Haberchat — two-pane list + thread, live webhook updates, media, client auto-link |
+| 13 | [chats.md](chats.md) | WhatsApp inbox — two-pane list + thread, live webhook updates, media, client auto-link. Gateway is **per-number and swappable**: self-hosted **WAHA** since 2026-07-19 (migrated off Haberchat, which is kept as a legacy provider) |
 | 14 | [whiteboard.md](whiteboard.md) | Built-in drawing canvas (tldraw) — freeform sketching, annotations, per-browser IndexedDB persistence |
 | 15 | [ai-agent.md](ai-agent.md) | Internal Claude-powered AI sales agent — chat UI inside the app, tool-use loop over project records, save_lead into clients. **⛔ UNWIRED (retired under `PROJECT_FINDER_ONLY`)** — code + data kept; superseded by the deterministic Project Finder (#30) |
 | 16 | [logs.md](logs.md) | Unified activity log — single timeline showing auth, record CRUD, workflow runs, AI agent turns + tool calls, API hits, webhook receipts |

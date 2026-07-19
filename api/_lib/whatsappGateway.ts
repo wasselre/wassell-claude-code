@@ -127,6 +127,37 @@ export function defaultDeviceId(): string | null {
   return haberchat.defaultDeviceId();
 }
 
+/**
+ * The device id of the ACTIVE DEFAULT number, whatever provider it is on.
+ *
+ * Server-side senders (send-document, the workflow runner, the on-due sweeper)
+ * historically fell back to `defaultDeviceId()` = HABERCHAT_DEFAULT_DEVICE_ID.
+ * After the WAHA cutover that env still names the DEAD Haberchat device, so
+ * those paths would keep sending through a dead gateway. Resolve the real
+ * default from whatsapp_numbers instead, falling back to the env only when the
+ * table has no active default.
+ */
+export async function resolveDefaultDeviceId(): Promise<string | null> {
+  const fallback = haberchat.defaultDeviceId();
+  const svc = svcClient();
+  if (!svc) return fallback;
+  try {
+    return await withTimeout((async (): Promise<string | null> => {
+      const { data } = await svc
+        .from('whatsapp_numbers')
+        .select('device_id')
+        .eq('is_active', true)
+        .eq('is_default', true)
+        .maybeSingle();
+      const id = (data as { device_id?: string } | null)?.device_id;
+      return (typeof id === 'string' && id) ? id : fallback;
+    })(), 2500, fallback);
+  } catch {
+    // Never let device resolution break a send — fall back to the env value.
+    return fallback;
+  }
+}
+
 /** Merge devices from both providers. One provider failing never kills the list. */
 export async function listDevices(): Promise<HaberchatDevice[]> {
   const out: HaberchatDevice[] = [];

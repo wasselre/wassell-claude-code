@@ -22,7 +22,7 @@ import {
   logFileActivityServer,
   signFileUrl,
 } from './_lib/files.js';
-import { uploadFile as haberUpload, sendMessage as haberSend, defaultDeviceId, HaberchatError } from './_lib/haberchat.js';
+import { uploadFile as haberUpload, sendMessage as haberSend, resolveDefaultDeviceId, HaberchatError } from './_lib/whatsappGateway.js';
 
 export const config = { runtime: 'edge' };
 export const maxDuration = 60;
@@ -98,7 +98,7 @@ export default async function handler(req: Request): Promise<Response> {
     if (!phone || phone.length < 8) return jsonError(400, 'client has no valid phone number');
 
     // 3. Resolve the WhatsApp device (caller-chosen, else the env default).
-    const device = (body.deviceId ?? '').trim() || defaultDeviceId();
+    const device = (body.deviceId ?? '').trim() || (await resolveDefaultDeviceId());
     if (!device) return jsonError(400, 'no WhatsApp device configured');
 
     // 4. Download the PDF bytes (service-role signed URL, short TTL).
