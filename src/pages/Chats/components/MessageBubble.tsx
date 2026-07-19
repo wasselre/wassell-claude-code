@@ -178,7 +178,11 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
         {status === 'loading' && <MediaLoadingSkeleton compact />}
         {status === 'error' && <MediaErrorRow message={error} isAr={isAr} />}
         {status === 'ready' && url && (
-          <audio src={url} controls className="w-full max-w-[260px]" />
+          // Definite width, NOT w-full: the bubble sizes to its content, so a
+          // percentage width on the only child is circular and collapsed the
+          // player to ~27px (voice notes looked broken though the audio itself
+          // decoded fine — readyState 4, real duration). Reported live 2026-07-19.
+          <audio src={url} controls className="w-[260px] max-w-full" />
         )}
         {caption && (
           <p className="text-sm mt-1.5 whitespace-pre-wrap break-words">{caption}</p>
