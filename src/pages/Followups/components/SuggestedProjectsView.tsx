@@ -20,6 +20,8 @@ import {
   type SortKey, type Refine, type DisplayTabKey,
 } from '@/lib/matching/finderRefine';
 import { setFinderHandoff } from '@/lib/matching/finderHandoff';
+import { saveFinderStash, loadFinderStash, clearFinderStash, type FinderStash } from '@/lib/matching/finderStash';
+import { setFormUnsaved } from '@/lib/staleBuild';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
 import FieldConstraintControl from '@/components/matching/FieldConstraintControl';
 import { CONSTRAINT_BY_SLUG, resolveConstraint, type RequirementConstraints } from '@/lib/matching/constraints';
@@ -287,6 +289,60 @@ export default function SuggestedProjectsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ── Refresh safety net for the UNSAVED selection ─────────────────────────
+  // A finder session is in-memory only, so a forced stale-build reload (or an
+  // accidental F5) used to bin the whole selection — 95 ticked cards gone
+  // (live report 2026-07-19). Two layers:
+  //   1. register the selection as unsaved WORK so the update banner turns into
+  //      the amber "save before the reload" warning and beforeunload prompts;
+  //   2. stash the ready-to-save payloads so even a hard reload can restore
+  //      them with one click on the next open.
+  const selectedPayloads = useMemo(() => {
+    if (selected.size === 0) return [];
+    const all = FINDER_GROUP_KEYS.flatMap((k) => resp?.groups[k] ?? []);
+    return all.filter((i) => selected.has(i.project_id)).map(matchToInput);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, resp]);
+
+  useEffect(() => {
+    const key = `finder:${clientRec?.id ?? 'none'}`;
+    setFormUnsaved(key, selectedPayloads.length > 0);
+    return () => setFormUnsaved(key, false);
+  }, [selectedPayloads.length, clientRec?.id]);
+
+  useEffect(() => {
+    if (!clientRec?.id) return;
+    // Debounced: ticking through cards shouldn't hit localStorage per click.
+    const t = setTimeout(() => saveFinderStash(clientRec.id, selectedPayloads), 400);
+    return () => clearTimeout(t);
+  }, [selectedPayloads, clientRec?.id]);
+
+  // A stash left by a previous session (reload/crash) — offered for restore.
+  const [stash, setStash] = useState<FinderStash | null>(() =>
+    clientRec?.id ? loadFinderStash(clientRec.id) : null);
+  const [restoring, setRestoring] = useState(false);
+
+  async function restoreStash() {
+    if (!stash || !clientRec?.id || restoring) return;
+    setRestoring(true);
+    const summary = await bulkSaveOptions(clientRec.id, stash.items, 'project_finder');
+    setRestoring(false);
+    const saved = summary.created + summary.updated;
+    if (saved > 0) setSavedAny(true);
+    clearFinderStash(clientRec.id);
+    setStash(null);
+    const parts: string[] = [];
+    if (saved > 0) parts.push(L(`حُفظ ${saved}`, `${saved} saved`));
+    if (summary.skippedEliminated > 0) parts.push(L(`${summary.skippedEliminated} مستبعد (تجاهل)`, `${summary.skippedEliminated} eliminated (skipped)`));
+    if (summary.failed > 0) parts.push(L(`${summary.failed} فشل`, `${summary.failed} failed`));
+    addToast(parts.join(' · ') || L('لا تغييرات', 'No changes'), summary.failed > 0 ? 'error' : 'success');
+  }
+
+  function discardStash() {
+    if (clientRec?.id) clearFinderStash(clientRec.id);
+    setStash(null);
+  }
+
   // Leaving without saving a single option for the client needs a confirmation
   // (only once results were actually shown — an empty/failed search isn't a choice).
   const mustConfirmLeave = !!clientRec && !savedAny && totalFinderMatches(resp) > 0;
@@ -382,6 +438,12 @@ export default function SuggestedProjectsView({
     setBulkSaving(false);
     const saved = summary.created + summary.updated;
     if (saved > 0) setSavedAny(true);
+    // The work is persisted — drop the refresh safety net so it can't resurface
+    // as a stale "unsaved selection" on the next open.
+    if (summary.failed === 0) {
+      setSelected(new Set());
+      if (clientRec.id) clearFinderStash(clientRec.id);
+    }
     const parts: string[] = [];
     if (saved > 0) parts.push(L(`حُفظ ${saved}`, `${saved} saved`));
     if (summary.skippedEliminated > 0) parts.push(L(`${summary.skippedEliminated} مستبعد (تجاهل)`, `${summary.skippedEliminated} eliminated (skipped)`));
@@ -611,6 +673,40 @@ export default function SuggestedProjectsView({
           {L('تم', 'Done')}
         </button>
       </div>
+
+      {/* Recovered selection from a previous session (forced update / refresh /
+          crash). One click saves it — no re-search, nothing lost. */}
+      {stash && stash.items.length > 0 && clientRec && (
+        <div className="border-b border-amber-300/70 bg-amber-50">
+          <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center gap-2 px-4 py-2 sm:px-6">
+            <AlertTriangle size={15} className="shrink-0 text-amber-600" />
+            <span className="text-xs font-bold text-amber-800">
+              {L(
+                `${stash.items.length} خيار كنت قد حدّدتها ولم تُحفظ قبل إعادة تحميل الصفحة.`,
+                `${stash.items.length} option(s) you had selected were not saved before the page reloaded.`,
+              )}
+            </span>
+            <div className="flex-1" />
+            <button
+              type="button"
+              onClick={restoreStash}
+              disabled={restoring}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-3 py-1.5 text-xs font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+            >
+              {restoring ? <Loader2 size={13} className="animate-spin" /> : <Bookmark size={13} />}
+              {L('حفظها الآن', 'Save them now')}
+            </button>
+            <button
+              type="button"
+              onClick={discardStash}
+              disabled={restoring}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-bold text-amber-800 transition hover:bg-amber-100 disabled:opacity-50"
+            >
+              <XCircle size={13} /> {L('تجاهل', 'Discard')}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Editable preferences panel — refine the SERVER-SIDE search. Height is
           CAPPED with its own scrollbar so it can never swallow the results area
