@@ -123,11 +123,18 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   const flow: 'in' | 'out' = p.fromMe ? 'out' : 'in';
 
   // Counterparty phone → canonical <digits>@c.us chat wid.
-  const counterpartyPhone = flow === 'in'
-    ? resolveWahaPhone(p)
-    : phoneFromJid(String(p.to ?? ''));
+  //
+  // Primary source is the CHAT ID embedded in the message id
+  // ("<true|false>_<chatId>_<hash>"): WAHA sends `to: null` on outbound
+  // messages, so relying on `to` silently dropped every message we sent
+  // (caught live 2026-07-19). Falls back to from/to, then to the LID->phone
+  // SenderAlt resolution for inbound messages whose `from` is a @lid.
+  const rawChat =
+    chatIdFromMessageId(p.id) ??
+    (flow === 'in' ? String(p.from ?? '') : String(p.to ?? ''));
+  const counterpartyPhone = phoneFromJid(rawChat) ?? (flow === 'in' ? resolveWahaPhone(p) : null);
   if (!counterpartyPhone) {
-    console.warn('[webhook.waha] could not resolve counterparty phone for', p.id);
+    console.warn('[webhook.waha] could not resolve counterparty phone for', p.id, 'rawChat=', rawChat);
     return;
   }
   const digits = counterpartyPhone.replace(/\D/g, '');
@@ -194,6 +201,19 @@ async function handleAck(event: WahaEvent): Promise<void> {
 function phoneFromJid(jid: string): string | null {
   const m = jid.match(/^\+?(\d+)@c\.us$/) ?? jid.match(/^\+?(\d+)@s\.whatsapp\.net$/);
   return m ? `+${m[1]}` : null;
+}
+
+/**
+ * WhatsApp message ids embed the chat they belong to:
+ *   "<true|false>_<chatId>_<hash>[_<participant>]"
+ * e.g. "true_966554620315@c.us_3EB0..." → "966554620315@c.us".
+ * This is the ONLY field present in both directions (outbound payloads have
+ * `to: null`), so it is the primary chat resolver.
+ */
+function chatIdFromMessageId(id: string | undefined): string | null {
+  if (!id) return null;
+  const parts = id.split('_');
+  return parts.length >= 3 && parts[1]?.includes('@') ? parts[1]! : null;
 }
 
 function kindFromMime(mime: string | null): string {
