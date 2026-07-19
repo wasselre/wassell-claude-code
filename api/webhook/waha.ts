@@ -79,7 +79,14 @@ export default async function handler(req: Request): Promise<Response> {
   // In-instance dedupe on the WAHA event id (retries + any accidental double
   // registration). chat_messages upsert is also idempotent, but this keeps the
   // unread bump / reply RPC from firing twice within a warm instance.
-  if (event.id && seenEvent(event.id)) {
+  //
+  // The key MUST include the event TYPE: WhatsApp emits an inbound message as
+  // BOTH `message` and `message.any` sharing one envelope id, so keying on the
+  // id alone let the ignored `message` consume the slot and silently skip the
+  // `message.any` that does the actual write — inbound messages never landed
+  // while outbound (which only fires `message.any`) worked. Caught live
+  // 2026-07-19.
+  if (event.id && seenEvent(`${type}:${event.id}`)) {
     return json({ ok: true, dedup: true });
   }
 
