@@ -3,10 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { v4 as uuid } from 'uuid';
 import {
   ArrowLeft, ArrowRight, Save, Trash2, Paperclip, X, Loader2,
-  Image as ImageIcon, Video, Mic, FileText, MessageSquare, Sparkles,
+  Image as ImageIcon, ImagePlus, Video, Mic, FileText, MessageSquare, Sparkles,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile } from '@/lib/haberchat/client';
+import { uploadImage } from '@/lib/imageUpload';
+import { signViewUrls } from '@/lib/files/client';
 import { resolveTemplateCategory, templateCategoryLabel, type TemplateCategory } from '@/lib/chatTemplates';
 import Button from '@/components/ui/Button';
 import ProjectMessageGeneratorModal from './components/ProjectMessageGeneratorModal';
@@ -59,6 +61,95 @@ export default function ChatTemplateFormPage() {
   const [showGenerator, setShowGenerator] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // ── Gallery (the images fanned out after the text message) ───────────
+  // Two storage shapes, edited in ONE grid:
+  //   • project templates → `project_image_file_ids` (CRM `files` ids of the
+  //     linked project gallery; raw public URLs are also legal entries — the
+  //     send fan-out handles both). Manual adds append a public URL here so
+  //     EVERY send surface (composer picker + follow-up project flow) sees it.
+  //   • listing templates → `images[]` ({public_url}) written on Approve.
+  // Removal drops only the entry — storage bytes are never deleted (cleaned
+  // outputs are shared with the listing's applied photos; project files are
+  // the project gallery). Persisted with the normal Save button.
+  const [projectImageIds, setProjectImageIds] = useState<string[]>([]);
+  const [listingImages, setListingImages] = useState<Array<Record<string, unknown>>>([]);
+  const [signedById, setSignedById] = useState<Record<string, string>>({});
+  const [galleryUploading, setGalleryUploading] = useState(0);
+  const galleryInputRef = useRef<HTMLInputElement | null>(null);
+  const isProjectGallery = projectImageIds.length > 0 || category === 'project';
+
+  // Sign the project file ids for PREVIEW (private files bucket). Best-effort:
+  // a failed sign leaves broken tiles but never blocks editing — the error is
+  // toasted once.
+  useEffect(() => {
+    const fileIds = projectImageIds.filter((id) => !/^https?:\/\//i.test(id) && !(id in signedById));
+    if (fileIds.length === 0) return;
+    let cancelled = false;
+    void signViewUrls(fileIds)
+      .then((m) => {
+        if (!cancelled) setSignedById((prev) => ({ ...prev, ...m }));
+      })
+      .catch((err) => {
+        console.error('[chat-template] gallery preview sign failed:', err);
+        addToast(
+          isAr ? 'تعذّر تجهيز معاينة صور المشروع' : 'Could not prepare the project image previews',
+          'error',
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectImageIds]);
+
+  const galleryTiles: Array<{ key: string; url: string | null; remove: () => void }> = [
+    ...projectImageIds.map((id, i) => ({
+      key: `p-${id}-${i}`,
+      url: /^https?:\/\//i.test(id) ? id : (signedById[id] ?? null),
+      remove: () => setProjectImageIds((arr) => arr.filter((_, j) => j !== i)),
+    })),
+    ...listingImages.map((im, i) => ({
+      key: `l-${String(im.public_url ?? i)}-${i}`,
+      url: typeof im.public_url === 'string' ? im.public_url : null,
+      remove: () => setListingImages((arr) => arr.filter((_, j) => j !== i)),
+    })),
+  ];
+
+  const addGalleryImages = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (list.length === 0) return;
+    setGalleryUploading(list.length);
+    try {
+      for (const file of list) {
+        const url = await uploadImage(file, 'listing-manual');
+        if (isProjectGallery) {
+          setProjectImageIds((arr) => [...arr, url]);
+        } else {
+          setListingImages((arr) => [
+            ...arr,
+            {
+              asset_id: null,
+              public_url: url,
+              source_url: null,
+              image_index: arr.reduce((m, im) => Math.max(m, Number(im.image_index ?? 0)), -1) + 1,
+            },
+          ]);
+        }
+        setGalleryUploading((n) => n - 1);
+      }
+    } catch (err) {
+      setGalleryUploading(0);
+      addToast(
+        (isAr ? 'تعذّر رفع الصورة: ' : 'Image upload failed: ') +
+          (err instanceof Error ? err.message : String(err)),
+        'error',
+      );
+    } finally {
+      if (galleryInputRef.current) galleryInputRef.current.value = '';
+    }
+  };
+
   const BackIcon = isAr ? ArrowRight : ArrowLeft;
   const isNew = !existing;
 
@@ -90,6 +181,20 @@ export default function ChatTemplateFormPage() {
     setMediaMime((d.media_mime as string) ?? null);
     setMediaSize((d.media_size as number) ?? null);
     setMediaFilename((d.media_filename as string) ?? null);
+    setProjectImageIds(
+      Array.isArray(d.project_image_file_ids)
+        ? (d.project_image_file_ids as unknown[]).filter(
+            (x): x is string => typeof x === 'string' && x.length > 0,
+          )
+        : [],
+    );
+    setListingImages(
+      Array.isArray(d.images)
+        ? (d.images as unknown[]).filter(
+            (im): im is Record<string, unknown> => !!im && typeof im === 'object',
+          )
+        : [],
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existing?.id]);
 
@@ -179,6 +284,8 @@ export default function ChatTemplateFormPage() {
           media_mime: mediaMime,
           media_size: mediaSize,
           media_filename: mediaFilename,
+          project_image_file_ids: projectImageIds,
+          images: listingImages,
         },
         created_at: existing?.created_at ?? now,
         updated_at: now,
@@ -399,29 +506,73 @@ export default function ChatTemplateFormPage() {
           </p>
         </div>
 
-        {/* Cleaned listing photos — read-only, set by the Listing Message
-          * generator (text removed via fal.ai). Shown only when present. */}
-        {Array.isArray((existing?.data as Record<string, unknown> | undefined)?.images) &&
-          ((existing!.data as Record<string, unknown>).images as unknown[]).length > 0 && (
-            <div>
-              <label className="block text-xs font-bold text-charcoal/40 mb-2">
-                {isAr ? 'صور الإعلان (بعد إزالة النص)' : 'Listing photos (text removed)'}
+        {/* Gallery — the images fanned out after the text message. Editable:
+          * remove any tile, add manual uploads. Covers both project templates
+          * (project_image_file_ids) and listing templates (cleaned images[]). */}
+        {(galleryTiles.length > 0 || category === 'project' || listingImages.length > 0) && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-bold text-charcoal/40">
+                {isAr ? 'صور الرسالة (تُرسل بعد النص)' : 'Message images (sent after the text)'}
               </label>
+              <button
+                type="button"
+                onClick={() => galleryInputRef.current?.click()}
+                disabled={galleryUploading > 0 || saving}
+                className="inline-flex items-center gap-1 text-[0.7rem] font-bold text-copper hover:underline disabled:opacity-40"
+              >
+                {galleryUploading > 0 ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
+                {galleryUploading > 0
+                  ? (isAr ? `جارٍ رفع ${galleryUploading} صورة…` : `Uploading ${galleryUploading} image(s)…`)
+                  : (isAr ? 'إضافة صور' : 'Add images')}
+              </button>
+              <input
+                ref={galleryInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => void addGalleryImages(e.target.files)}
+              />
+            </div>
+            {galleryTiles.length > 0 ? (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
-                {((existing!.data as Record<string, unknown>).images as Array<{ public_url?: string }>).map(
-                  (im, i) =>
-                    im.public_url ? (
+                {galleryTiles.map((tile) => (
+                  <div key={tile.key} className="relative group">
+                    {tile.url ? (
                       <img
-                        key={i}
-                        src={im.public_url}
+                        src={tile.url}
                         alt=""
                         className="w-full aspect-square object-cover rounded-lg border border-sand/30"
                       />
-                    ) : null,
-                )}
+                    ) : (
+                      <div className="w-full aspect-square rounded-lg border border-sand/30 bg-cream/50 flex items-center justify-center">
+                        <Loader2 size={16} className="animate-spin text-charcoal/30" />
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={tile.remove}
+                      title={isAr ? 'إزالة الصورة' : 'Remove image'}
+                      className="absolute top-1 end-1 p-1 rounded-md bg-white/90 text-charcoal/70 hover:text-red-600 shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
               </div>
-            </div>
-          )}
+            ) : (
+              <p className="text-xs text-charcoal/40">
+                {isAr ? 'لا توجد صور — أضِف صورًا لإرسالها مع الرسالة.' : 'No images — add some to send with the message.'}
+              </p>
+            )}
+            <p className="text-[10px] text-charcoal/40 mt-1.5">
+              {isAr
+                ? 'الإزالة تحذف الصورة من الرسالة فقط، ولا تمس معرض المشروع أو صور الإعلان.'
+                : 'Removing only takes the image out of this message — the project gallery / listing photos are untouched.'}
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Footer actions */}
