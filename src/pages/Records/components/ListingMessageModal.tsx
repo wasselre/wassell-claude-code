@@ -12,6 +12,7 @@ import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import {
   applyCleanedToListing,
+  generateListingMessageText,
   isCleaningInFlight,
   redoListingClean,
   type CleaningEntry,
@@ -59,6 +60,56 @@ export default function ListingMessageModal({
   const tr = (ar: string, en: string) => (isAr ? ar : en);
 
   const [mode, setMode] = useState<Mode>(existing ? 'existing' : 'generating');
+
+  // ── existing-mode "rewrite text only" state ──────────────────────────
+  // Regenerates ONLY body_ar/body_en on the saved template — the cleaned
+  // images and the listing photos are never touched (unlike «إعادة الإنشاء»,
+  // which re-runs the whole pipeline including photo cleaning).
+  const [rewriting, setRewriting] = useState(false);
+  const [rewritten, setRewritten] = useState(false);
+  const [exAr, setExAr] = useState('');
+  const [exEn, setExEn] = useState('');
+  const [savingText, setSavingText] = useState(false);
+
+  const rewriteTextOnly = async () => {
+    setRewriting(true);
+    try {
+      const text = await generateListingMessageText(listingId);
+      setExAr(text.body_ar);
+      setExEn(text.body_en);
+      setRewritten(true);
+    } catch (err) {
+      addToast(
+        tr('تعذّرت إعادة كتابة الرسالة: ', 'Could not rewrite the message: ') +
+          (err instanceof Error ? err.message : String(err)),
+        'error',
+      );
+    } finally {
+      setRewriting(false);
+    }
+  };
+
+  const saveRewrittenText = async () => {
+    if (!existing) return;
+    setSavingText(true);
+    try {
+      const rec: AppRecord = {
+        ...existing,
+        data: { ...(existing.data ?? {}), body_ar: exAr, body_en: exEn },
+        updated_at: new Date().toISOString(),
+      };
+      const result = await saveRecord(rec);
+      if (result.status !== 'saved') {
+        setSavingText(false);
+        return; // store already toasted the conflict / failure
+      }
+      addToast(tr('تم تحديث نص الرسالة', 'Message text updated'), 'success');
+      onClose();
+    } catch (err) {
+      addToast(err instanceof Error ? err.message : String(err), 'error');
+      setSavingText(false);
+    }
+  };
 
   // ── generating-mode state ────────────────────────────────────────────
   // The WORK lives in the job runner (src/lib/listingMessage/jobRunner) — it
@@ -195,11 +246,38 @@ export default function ListingMessageModal({
       <Shell onClose={onClose} title={tr('رسالة الإعلان', 'Listing message')} isAr={isAr}>
         <p className="text-xs text-charcoal/50 mb-3">
           {tr(
-            'يوجد بالفعل رسالة محفوظة لهذا الإعلان. يمكنك استخدامها أو إعادة إنشائها.',
-            'A saved message already exists for this listing. Use it, or regenerate it.',
+            'يوجد بالفعل رسالة محفوظة لهذا الإعلان. يمكنك استخدامها، أو إعادة كتابة النص فقط، أو إعادة إنشائها بالكامل.',
+            'A saved message already exists for this listing. Use it, rewrite just the text, or regenerate everything.',
           )}
         </p>
-        <MessagePreview ar={(d.body_ar as string) ?? ''} en={(d.body_en as string) ?? ''} isAr={isAr} />
+        {rewritten ? (
+          <>
+            <p className="text-xs text-copper mb-2">
+              {tr(
+                'نص جديد — راجِعه وعدِّله ثم احفظ. الصور لن تتغيّر.',
+                'New text — review/edit it, then save. The images will not change.',
+              )}
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <textarea
+                dir="rtl"
+                value={exAr}
+                onChange={(e) => setExAr(e.target.value)}
+                rows={8}
+                className="form-input w-full text-sm"
+              />
+              <textarea
+                dir="ltr"
+                value={exEn}
+                onChange={(e) => setExEn(e.target.value)}
+                rows={8}
+                className="form-input w-full text-sm"
+              />
+            </div>
+          </>
+        ) : (
+          <MessagePreview ar={(d.body_ar as string) ?? ''} en={(d.body_en as string) ?? ''} isAr={isAr} />
+        )}
         {exImages.length > 0 && (
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-3">
             {exImages.map((im, i) =>
@@ -214,14 +292,25 @@ export default function ListingMessageModal({
             )}
           </div>
         )}
-        <div className="flex items-center justify-end gap-2 mt-5">
-          <Button variant="secondary" onClick={onClose}>
+        <div className="flex items-center justify-end gap-2 mt-5 flex-wrap">
+          <Button variant="secondary" onClick={onClose} disabled={savingText}>
             {tr('إغلاق', 'Close')}
           </Button>
-          <Button variant="primary" onClick={() => setMode('generating')}>
-            <RefreshCw size={16} />
-            {tr('إعادة الإنشاء', 'Regenerate')}
+          <Button variant="secondary" onClick={() => void rewriteTextOnly()} disabled={rewriting || savingText}>
+            {rewriting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+            {rewritten ? tr('إعادة كتابة مرة أخرى', 'Rewrite again') : tr('إعادة كتابة الرسالة فقط', 'Rewrite text only')}
           </Button>
+          {rewritten ? (
+            <Button variant="primary" onClick={() => void saveRewrittenText()} disabled={rewriting || savingText}>
+              {savingText ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+              {tr('حفظ النص الجديد', 'Save new text')}
+            </Button>
+          ) : (
+            <Button variant="primary" onClick={() => setMode('generating')} disabled={rewriting || savingText}>
+              <RefreshCw size={16} />
+              {tr('إعادة الإنشاء بالكامل', 'Regenerate everything')}
+            </Button>
+          )}
         </div>
       </Shell>
     );
