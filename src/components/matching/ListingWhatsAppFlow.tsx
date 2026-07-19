@@ -64,11 +64,22 @@ export default function ListingWhatsAppFlow({ isAr, listingId, listingName, clie
   const listingData = (listing?.data ?? {}) as Record<string, unknown>;
 
   // Media that rides along after the text: the template's cleaned photos +
-  // any direct video FILES on the listing (HLS streams can't be sent — see
-  // directVideoUrls). sendProjectImageMessages picks image/video by mime.
+  // the listing's videos. A video sends when it is a direct FILE, or when the
+  // worker has converted its HLS stream to an .mp4 (data.video_mp4_map — the
+  // video-convert queue fills this cache when the listing message is
+  // generated; Aqar videos are Cloudflare Stream .m3u8 playlists WhatsApp
+  // can't carry directly). Unconverted streams are still skipped.
+  // sendProjectImageMessages picks image/video by mime.
   const mediaSends = useMemo(() => {
     const d = (readyTemplate?.data ?? {}) as Record<string, unknown>;
-    return [...templateListingImageUrls(d), ...directVideoUrls(listingData.video_urls ?? listingData.videos)];
+    const raw = listingData.video_urls ?? listingData.videos;
+    const mp4Map = (listingData.video_mp4_map ?? {}) as Record<string, unknown>;
+    const converted = Array.isArray(raw)
+      ? (raw as unknown[])
+          .map((u) => (typeof u === 'string' ? mp4Map[u] : null))
+          .filter((u): u is string => typeof u === 'string' && u.length > 0)
+      : [];
+    return [...templateListingImageUrls(d), ...new Set([...directVideoUrls(raw), ...converted])];
   }, [readyTemplate, listingData]);
 
   // Loud, not silent — without the model there is no template to send or create.

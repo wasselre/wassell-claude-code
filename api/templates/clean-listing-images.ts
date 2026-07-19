@@ -447,9 +447,66 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       }
       return jsonError(500, `failed to enqueue clean jobs: ${insErr.message}`);
     }
-    await wakeWorker(jobs.length);
+    // ── Also convert the listing's STREAM videos to sendable .mp4s ────────
+    // Aqar videos are Cloudflare Stream HLS playlists (.m3u8), which WhatsApp
+    // cannot carry — the worker converts each ONCE (kind='video-convert') and
+    // caches data.video_mp4_map on the LISTING; the send flow reads the cache.
+    // Direct video FILES (.mp4 etc.) send natively and are skipped, as are
+    // already-cached sources and sources with an active conversion job.
+    // Failure here is non-fatal to the photo flow: log loudly and continue —
+    // the send simply keeps skipping unconverted videos.
+    let videoJobCount = 0;
+    try {
+      const DIRECT_VIDEO_RE = /\.(mp4|m4v|webm|mov|3gp)(\?|#|$)/i;
+      const rawVideos = Array.isArray(ld.video_urls) ? ld.video_urls : Array.isArray(ld.videos) ? ld.videos : [];
+      const mp4Map = (ld.video_mp4_map ?? {}) as Record<string, unknown>;
+      const streamVideos = (rawVideos as unknown[]).filter(
+        (u): u is string =>
+          typeof u === 'string' &&
+          /^https?:\/\//i.test(u) &&
+          !DIRECT_VIDEO_RE.test(u) &&
+          !(typeof mp4Map[u] === 'string' && mp4Map[u]),
+      );
+      if (streamVideos.length > 0) {
+        const { data: activeRows } = await svc
+          .from('generation_jobs')
+          .select('params')
+          .eq('record_id', listingId)
+          .eq('kind', 'video-convert')
+          .in('status', ['queued', 'running']);
+        const activeSources = new Set(
+          ((activeRows ?? []) as Array<{ params: Record<string, unknown> | null }>).map(
+            (r) => r.params?.source_url as string,
+          ),
+        );
+        const videoJobs = streamVideos
+          .filter((u) => !activeSources.has(u))
+          .map((u) => ({
+            id: crypto.randomUUID(),
+            record_id: listingId,
+            message_id: null,
+            generation_id: null,
+            user_id: user.userId,
+            kind: 'video-convert',
+            status: 'queued',
+            prompt: null,
+            params: { source_url: u, listing_id: listingId },
+          }));
+        if (videoJobs.length > 0) {
+          const { error: vidErr } = await svc.from('generation_jobs').insert(videoJobs);
+          if (vidErr) throw new Error(vidErr.message);
+          videoJobCount = videoJobs.length;
+        }
+      }
+    } catch (err) {
+      console.error(
+        `[clean-listing-images] video-convert enqueue failed (photos unaffected): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    await wakeWorker(jobs.length + videoJobCount);
     console.log(
-      `[clean-listing-images] start listing=${listingId} draft=${draftId} jobs=${jobs.length}`,
+      `[clean-listing-images] start listing=${listingId} draft=${draftId} jobs=${jobs.length} video_jobs=${videoJobCount}`,
     );
     return jsonOk(
       { record_id: draftId, image_count: entries.length, job_ids: jobs.map((j) => j.id) },

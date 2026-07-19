@@ -41,7 +41,11 @@ ENV NODE_ENV=production
 # ghostscript gives us `gs` — used by runCompressJob.ts to compress PDFs
 # (pdfwrite + /ebook downsampling) entirely in-house (~30 MB). The iLovePDF
 # API was rejected: bytes to a third party + a 250 files/month cap.
+# ffmpeg — converts listing HLS video streams (Aqar = Cloudflare Stream .m3u8)
+# to WhatsApp-sendable .mp4 (runVideoConvertJob.ts). Copy-remux first, one
+# 720p re-encode fallback under the ~16 MB WhatsApp cap.
 RUN apk add --no-cache \
+    ffmpeg \
     poppler-utils \
     ghostscript \
     libreoffice-writer \

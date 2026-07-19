@@ -28,6 +28,7 @@ import { type SupabaseClient } from '@supabase/supabase-js';
 import { loadEnv } from './env.js';
 import { makeServiceClient } from './lib/serviceClient.js';
 import { runCleanTextJob, type CleanTextJob } from './runCleanTextJob.js';
+import { runVideoConvertJob, type VideoConvertJob } from './runVideoConvertJob.js';
 import { runCompressJob, type CompressJob } from './runCompressJob.js';
 import { runDeckJob, type DeckJob } from './runDeckJob.js';
 import { runDocumentJob, type DocumentJob } from './runDocumentJob.js';
@@ -65,6 +66,12 @@ let imageWakeRequested = false;
 // loop's generation_jobs_watchdog() already sweeps stale jobs of ALL kinds.
 let cleanBusy = false;
 let cleanWakeRequested = false;
+// Listing-video conversion (generation_jobs kind='video-convert') gets its own
+// loop: an ffmpeg remux takes seconds-to-minutes and must not head-of-line-
+// block photo cleaning (or vice-versa). Shares the generation_jobs RPCs; the
+// image loop's watchdog sweeps stale jobs of ALL kinds.
+let videoBusy = false;
+let videoWakeRequested = false;
 // Office-preview conversions (file_preview_jobs) get a THIRD independent loop
 // for the same reason — a 2-10s soffice run should never wait behind a deck.
 let previewBusy = false;
@@ -394,6 +401,99 @@ async function cleanTextPollLoop(): Promise<void> {
     }
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !cleanWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Listing-video conversion — generation_jobs (kind='video-convert') queue.
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Claim ONE queued video-convert job (if any) and run it to completion.
+ * Mirrors claimAndRunOneCleanText against kind='video-convert' and the
+ * ffmpeg HLS→mp4 pipeline (runVideoConvertJob). Returns true if a job was
+ * claimed.
+ */
+async function claimAndRunOneVideoConvert(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('generation_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+    p_kind: 'video-convert',
+  });
+  if (error) {
+    console.error(`[worker] video-convert claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string;
+    record_id: string;
+    message_id: string | null;
+    user_id: string;
+    kind: string;
+    prompt: string | null;
+    params: Record<string, unknown>;
+    attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: VideoConvertJob = {
+    id: row.job_id,
+    recordId: row.record_id,
+    userId: row.user_id,
+    params: row.params ?? {},
+    attempts: row.attempts,
+  };
+  console.log(
+    `[worker] claimed video-convert job=${job.id} listing=${job.recordId} attempts=${job.attempts}`,
+  );
+  try {
+    const result = await runVideoConvertJob({ supabase, env, job });
+    const { error: doneErr } = await supabase.rpc('generation_job_complete', {
+      p_job_id: job.id,
+      p_result: result ?? {},
+    });
+    if (doneErr) {
+      console.error(`[worker] generation_job_complete (video-convert) RPC failed: ${doneErr.message}`);
+    } else {
+      console.log(`[worker] completed video-convert job=${job.id}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[worker] video-convert job=${job.id} FAILED:`, msg);
+    try {
+      const { error: failErr } = await supabase.rpc('generation_job_fail', {
+        p_job_id: job.id,
+        p_error: msg,
+      });
+      if (failErr) {
+        console.error(`[worker] generation_job_fail (video-convert) RPC failed: ${failErr.message}`);
+      }
+    } catch (innerErr) {
+      console.error(`[worker] could not mark video-convert job failed: ${(innerErr as Error).message}`);
+    }
+  }
+  return true;
+}
+
+/** Video-convert twin of cleanTextPollLoop (own busy/wake flags, no watchdog). */
+async function videoConvertPollLoop(): Promise<void> {
+  while (!shuttingDown) {
+    videoBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneVideoConvert();
+    } catch (err) {
+      console.error('[worker] video-convert poll iteration error:', err);
+    }
+    videoBusy = false;
+
+    if (didClaim || videoWakeRequested) {
+      videoWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !videoWakeRequested && !shuttingDown) {
       await sleep(200);
     }
   }
@@ -1451,6 +1551,7 @@ const server = http.createServer((req, res) => {
         busy,
         image_busy: imageBusy,
         clean_busy: cleanBusy,
+        video_busy: videoBusy,
         preview_busy: previewBusy,
         compress_busy: compressBusy,
         document_busy: documentBusy,
@@ -1476,6 +1577,7 @@ const server = http.createServer((req, res) => {
     wakeRequested = true;
     imageWakeRequested = true;
     cleanWakeRequested = true;
+    videoWakeRequested = true;
     previewWakeRequested = true;
     compressWakeRequested = true;
     documentWakeRequested = true;
@@ -1664,6 +1766,7 @@ if (env.WORKFLOW_PROOF_ONLY) {
     pollLoop(),
     imagePollLoop(),
     cleanTextPollLoop(),
+    videoConvertPollLoop(),
     previewPollLoop(),
     compressPollLoop(),
     documentPollLoop(),
