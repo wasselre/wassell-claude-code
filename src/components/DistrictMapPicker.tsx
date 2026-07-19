@@ -545,33 +545,89 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   // band, road buffer, zone) as a terracotta polygon — direction rules arrive
   // already clipped to the matched side by the preview RPC. Roads additionally
   // draw their reference line. Labeled with the same chip text as the editor.
+  //
+  // Element areas are EDITABLE like selected districts (user decision
+  // 2026-07-18): the largest ring renders with drag handles (decimated to ≤80);
+  // dragging a handle — or right-click-deleting a vertex — converts the edited
+  // ring into a drawn_area of the SAME polarity, replacing the element rule
+  // with the custom shape. Untouched rules keep following the element + km
+  // (the chip steppers resize without converting).
   useEffect(() => {
     if (!map || !isLoaded || !window.google || previews.length === 0) return;
     const overlays: Array<google.maps.Polygon | google.maps.Polyline | google.maps.Marker> = [];
+    const listeners: google.maps.MapsEventListener[] = [];
+    const timers: Array<ReturnType<typeof setTimeout>> = [];
     const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
-    const labelFor = (row: CompiledPreviewRow): string => {
-      const item = elemItems.find((i) => i.id === row.item_id);
-      return item ? describeLocationItem(item, isAr) : '';
+
+    const convertEdited = (item: ElementRuleLocationItem, poly: google.maps.Polygon) => {
+      const pts = poly.getPath().getArray().map((ll) => [round6(ll.lng()), round6(ll.lat())] as [number, number]);
+      // The element rule is replaced by the custom shape either way; a
+      // degenerate (<3 pt) ring just drops the rule without a shape.
+      setElemItems((prev) => prev.filter((x) => x.id !== item.id));
+      if (pts.length < 3) return;
+      const ring = [...pts, pts[0]!];
+      const fallback = `${drawnBaseRef.current(item.polarity)}: ${item.element_label ?? ''}`.replace(/: $/, '');
+      setDrawnItems((prev) => [
+        ...prev,
+        newDrawnAreaItem(ring, coverageLabelRef.current(ring, item.polarity) ?? fallback, item.polarity),
+      ]);
     };
+
     for (const row of previews) {
+      // A rule deleted/converted client-side may still have a stale preview
+      // row until the debounced refetch lands — never draw those.
+      const item = elemItems.find((i) => i.id === row.item_id);
+      if (!item) continue;
       const c = row.polarity === 'exclude' ? RED : TERRACOTTA;
+      const text = describeLocationItem(item, isAr);
       if (row.geojson) {
         const paths = geojsonToPaths(row.geojson);
-        if (paths.length) {
-          overlays.push(new google.maps.Polygon({
-            map, paths,
+        let largest: google.maps.LatLngLiteral[] = [];
+        for (const p of paths) if (p.length > largest.length) largest = p;
+        if (largest.length >= 3) {
+          const step = Math.max(1, Math.ceil(largest.length / CONVERT_MAX_POINTS));
+          const decimated = largest.filter((_, i) => i % step === 0);
+          const poly = new google.maps.Polygon({
+            map,
+            paths: [decimated],
             fillColor: c, fillOpacity: 0.14, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
-            zIndex: 2, clickable: false,
-          }));
-          let ring = paths[0] ?? [];
-          for (const p of paths) if (p.length > ring.length) ring = p;
-          const text = labelFor(row);
-          if (ring.length >= 3 && text) {
+            zIndex: 2,
+            editable: !drawMode,
+            clickable: !drawMode,
+          });
+          overlays.push(poly);
+          // Clipped direction bands can be MultiPolygon — draw the remaining
+          // pieces as display-only fills so the area still reads complete.
+          for (const p of paths) {
+            if (p === largest || p.length < 3) continue;
+            overlays.push(new google.maps.Polygon({
+              map, paths: [p],
+              fillColor: c, fillOpacity: 0.14, strokeColor: c, strokeOpacity: 0.85, strokeWeight: 2,
+              zIndex: 2, clickable: false,
+            }));
+          }
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const onEdit = () => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => convertEdited(item, poly), 400);
+            timers.push(timer);
+          };
+          const gPath = poly.getPath();
+          listeners.push(
+            gPath.addListener('set_at', onEdit),
+            gPath.addListener('insert_at', onEdit),
+            gPath.addListener('remove_at', onEdit),
+            poly.addListener('rightclick', (e: google.maps.PolyMouseEvent) => {
+              if (e.vertex == null || drawMode) return;
+              if (gPath.getLength() > 3) gPath.removeAt(e.vertex); // remove_at → convert
+            }),
+          );
+          if (text) {
             overlays.push(new google.maps.Marker({
               map,
               position: {
-                lat: ring.reduce((a, p) => a + p.lat, 0) / ring.length,
-                lng: ring.reduce((a, p) => a + p.lng, 0) / ring.length,
+                lat: largest.reduce((a, p) => a + p.lat, 0) / largest.length,
+                lng: largest.reduce((a, p) => a + p.lng, 0) / largest.length,
               },
               icon: invisible,
               clickable: false,
@@ -588,8 +644,12 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         }
       }
     }
-    return () => overlays.forEach((o) => o.setMap(null));
-  }, [map, isLoaded, previews, elemItems, isAr]);
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      listeners.forEach((l) => google.maps.event.removeListener(l));
+      overlays.forEach((o) => o.setMap(null));
+    };
+  }, [map, isLoaded, previews, elemItems, isAr, drawMode]);
 
   // Render the drawn shapes as EDITABLE polygons (outside draw mode): drag a
   // vertex or midpoint handle to reshape; right-click a vertex to delete it
@@ -810,7 +870,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                 ? drawPolarity === 'exclude'
                   ? L('منطقة استثناء: لن تظهر النتائج داخل هذا الشكل. انقر لإضافة النقاط، نقرة يمنى تتراجع عن آخر نقطة، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'Exclusion zone: no results will show inside this shape. Click to add points, right-click undoes the last point, then double-click (or "Finish shape") to close it.')
                   : L('الخريطة مثبّتة أثناء الرسم — انقر لإضافة النقاط، نقرة يمنى تتراجع عن آخر نقطة، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'The map is pinned while drawing — click to add points, right-click undoes the last point, then double-click (or "Finish shape") to close it.')
-                : L('اضغط على حي لتضمينه — تظهر عليه مقابض: اسحب أي نقطة لتعديل حدوده فيتحول لمنطقة مرسومة خاصة بك. الأشكال المرسومة تُعدَّل بالسحب أيضاً (زر يمين على نقطة يحذفها).', 'Tap a district to include it — handles appear: drag any point to adjust its borders and it becomes your own drawn area. Drawn shapes are edited by dragging too (right-click a point deletes it).')}
+                : L('اضغط على حي لتضمينه — تظهر عليه مقابض: اسحب أي نقطة لتعديل حدوده فيتحول لمنطقة مرسومة خاصة بك. مناطق العناصر والأشكال المرسومة تُعدَّل بالسحب أيضاً (زر يمين على نقطة يحذفها).', 'Tap a district to include it — handles appear: drag any point to adjust its borders and it becomes your own drawn area. Element areas and drawn shapes are edited by dragging too (right-click a point deletes it).')}
             </p>
           </div>
           {drawMode && (
