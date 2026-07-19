@@ -17,6 +17,7 @@
 
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { parseGoogleMapsUrl } from './locationUtils';
+import { resolveLocalizedName } from './geo/localizedName';
 
 export interface Bilingual {
   ar: string;
@@ -203,18 +204,30 @@ export function resolveProjectFacts(
     ? (ap.location as Record<string, unknown>) : {};
   const oneId = (v: unknown): string | null =>
     Array.isArray(v) ? (typeof v[0] === 'string' ? v[0] : null) : (typeof v === 'string' && v ? v : null);
-  const resolveGeoName = (modelName: 'cities' | 'districts', id: string | null): string | null => {
+  // ISSUE #8 — this used to build `{ ar: arabicName, en: arabicName }`, so the
+  // ENGLISH message body rendered "City: الرياض" while `name_en: "Riyadh"` sat
+  // unused in the same record. Geography now goes through the shared
+  // localization contract: Arabic from display_name/name_ar, English from the
+  // authoritative stored name_en. If a record cannot be fully localized we emit
+  // NOTHING for that level rather than leaking Arabic into the English body.
+  const resolveGeo = (modelName: 'cities' | 'districts', id: string | null): Bilingual | null => {
     if (!id) return null;
     const m = models.find((mm) => mm.name === modelName);
     if (!m) return null;
     const rec = (records[m.id] ?? []).find((r) => r.id === id);
-    const dn = rec?.data?.display_name ?? rec?.data?.name_ar;
-    return typeof dn === 'string' && dn ? dn : null;
+    const localized = resolveLocalizedName(id, rec?.data as Record<string, unknown> | undefined);
+    if (!localized) {
+      if (rec) {
+        console.error(
+          `[projectMessageFacts] ${modelName} ${id} is not fully localized (missing name_en) — omitting from the message rather than leaking Arabic into the English body`,
+        );
+      }
+      return null;
+    }
+    return { ar: localized.ar, en: localized.enDisplay };
   };
-  const cityName = resolveGeoName('cities', oneId(loc.city));
-  const city: Bilingual | null = cityName ? { ar: cityName, en: cityName } : null;
-  const districtName = resolveGeoName('districts', oneId(loc.district));
-  const district: Bilingual | null = districtName ? { ar: districtName, en: districtName } : null;
+  const city: Bilingual | null = resolveGeo('cities', oneId(loc.city));
+  const district: Bilingual | null = resolveGeo('districts', oneId(loc.district));
 
   // Units linked to this project (project_id → all_projects.id).
   const units = unitsModel ? (records[unitsModel.id] ?? []) : [];

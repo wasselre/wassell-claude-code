@@ -77,6 +77,82 @@ async function qwenChat(accountId: string, apiToken: string, system: string, use
   return text;
 }
 
+/* ─── Geography localization (Issue #8) ──────────────────────────────────
+ * Deno adapter of the canonical contract in src/lib/geo/localizedName.ts.
+ * Keep behaviour identical — the conformance fixtures in
+ * src/lib/geo/geoLocalizationFixtures.ts are the shared source of truth.
+ * This function writes ARABIC ONLY, so it needs the Arabic side plus a hard
+ * guarantee that no UUID ever reaches the prompt.
+ */
+export function looksLikeUuid(value: unknown): boolean {
+  return typeof value === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+function normalizeWhitespace(v: string): string {
+  return v.replace(/\s+/g, " ").trim();
+}
+
+function arabicNameOf(data: Record<string, unknown> | null): string | null {
+  if (!data) return null;
+  for (const key of ["display_name", "name_ar"]) {
+    const v = data[key];
+    if (typeof v === "string" && v.trim()) return normalizeWhitespace(v);
+  }
+  return null;
+}
+
+/** First id out of a location level (levels may store a bare id or an array). */
+function oneGeoId(v: unknown): string | null {
+  if (Array.isArray(v)) return typeof v[0] === "string" ? v[0] : null;
+  return typeof v === "string" && v ? v : null;
+}
+
+interface LocalizedLocation {
+  region_ar: string | null;
+  city_ar: string | null;
+  district_ar: string | null;
+}
+
+/**
+ * Resolve a project's `location` compound ({region,city,district} record ids)
+ * into authoritative Arabic names. Missing/unresolvable levels stay null — we
+ * omit them rather than emitting an id or guessing.
+ */
+async function resolveProjectLocation(
+  // deno-lint-ignore no-explicit-any
+  sb: any,
+  projectData: Record<string, unknown>,
+): Promise<LocalizedLocation> {
+  const out: LocalizedLocation = { region_ar: null, city_ar: null, district_ar: null };
+  const loc = projectData.location;
+  if (!loc || typeof loc !== "object" || Array.isArray(loc)) return out;
+  const levels = loc as Record<string, unknown>;
+  const ids = {
+    region: oneGeoId(levels.region),
+    city: oneGeoId(levels.city),
+    district: oneGeoId(levels.district),
+  };
+  const wanted = [ids.region, ids.city, ids.district].filter((x): x is string => !!x);
+  if (wanted.length === 0) return out;
+
+  const { data, error } = await sb.from("unified_records").select("id, data").in("id", wanted);
+  if (error) {
+    // Loud, not silent: an unresolved location means the copy loses the location
+    // entirely — which is correct — but we must be able to see that it happened.
+    console.error(`[project-details-ai-v2] geography resolve failed: ${error.message}`);
+    return out;
+  }
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const row of (data ?? []) as Array<{ id: string; data: Record<string, unknown> }>) {
+    byId.set(row.id, row.data ?? {});
+  }
+  if (ids.region) out.region_ar = arabicNameOf(byId.get(ids.region) ?? null);
+  if (ids.city) out.city_ar = arabicNameOf(byId.get(ids.city) ?? null);
+  if (ids.district) out.district_ar = arabicNameOf(byId.get(ids.district) ?? null);
+  return out;
+}
+
 function buildCorsHeaders(req: Request): Record<string, string> {
   const requested = req.headers.get("access-control-request-headers");
   return {
@@ -142,23 +218,47 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (projErr) return json({ error: "project read failed: " + projErr.message, step, code: projErr.code, hint: projErr.hint }, 500, cors);
     if (!project) return json({ error: "project not found", step, projectId }, 404, cors);
 
-    step = "call_claude";
+    step = "resolve_geography";
+    // ISSUE #8 — the `location` field is a compound of geography RECORD IDS
+    // ({region,city,district}). It used to be copied into the fact sheet raw, so
+    // the model received UUIDs where the location should be and had no way to
+    // know where the project was — while being ordered to emit 5-8 landmarks.
+    // Resolve to authoritative localized names FIRST; never send an id.
+    const localizedLocation = await resolveProjectLocation(sb, project.data ?? {});
+
+    step = "call_model";
     const client = new Anthropic({ apiKey: anthropicKey });
-    const HIDDEN_KEYS = new Set(["is_public","image_url","location_url","created_by","updated_by"]);
+    const HIDDEN_KEYS = new Set([
+      "is_public","image_url","location_url","created_by","updated_by",
+      // `location` holds geography UUIDs — replaced by the resolved names below.
+      "location",
+    ]);
     const factSheet: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(project.data ?? {})) {
       if (HIDDEN_KEYS.has(k)) continue;
       if (v === null || v === undefined || v === "") continue;
+      if (looksLikeUuid(v)) continue; // never let a bare id reach the model
       factSheet[k] = v;
     }
+    // Authoritative, human-readable location (Arabic — this function writes Arabic).
+    if (localizedLocation.region_ar)   factSheet["المنطقة"] = localizedLocation.region_ar;
+    if (localizedLocation.city_ar)     factSheet["المدينة"] = localizedLocation.city_ar;
+    if (localizedLocation.district_ar) factSheet["الحي"]    = localizedLocation.district_ar;
+    // ISSUE #8 — LANDMARKS ARE NO LONGER GENERATED.
+    // The old prompt ordered 5-8 `landmarks[].name` + distances while telling the
+    // model "never invent facts" — a direct contradiction it could only resolve by
+    // fabricating. Wassel has no landmark reference source, so there is nothing
+    // authoritative to ground them in: the only correct number of AI-invented
+    // landmarks on a public page is zero. Features/description stay — those are
+    // written FROM the supplied project facts, not invented proper nouns.
     const system = [
       'You are a real-estate marketing copywriter for Wassel Real Estate, Riyadh, Saudi Arabia.',
       'Write in formal Arabic only. Tone: refined, confident, professional.',
       'Never invent numbers or facts not in the project data.',
+      'NEVER invent place names, landmarks, distances, or travel times. If the project data does not state it, do not write it.',
+      'Use the supplied المنطقة / المدينة / الحي values EXACTLY as given — never translate, transliterate, re-spell or substitute them.',
       'Each project must read distinctly.',
       'Feature icons must come from: ' + FEATURE_ICONS.join(', '),
-      'Landmark icons must come from: ' + LANDMARK_ICONS.join(', '),
-      'Distances may be reasonable estimates; add تقريباً when uncertain.',
       'Return ONLY valid JSON — no preamble.',
     ].join('\n');
     const user = [
@@ -171,27 +271,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
       '{',
       '  "hero_short_description": "جملة واحدة (20–30 كلمة)",',
       '  "description": "ثلاث فقرات مفصولة بسطرين فارغين",',
-      '  "features": [{"icon":"<من القائمة>","title":"...","description":"..."}],',
-      '  "landmarks": [{"icon":"<من القائمة>","name":"...","distance":"0.8 كم"}]',
+      '  "features": [{"icon":"<من القائمة>","title":"...","description":"..."}]',
       '}',
       '',
-      'features: 8–12 عنصر. landmarks: 5–8 عناصر.',
+      'features: 8–12 عنصر.',
+      'لا تكتب معالم قريبة (landmarks) ولا مسافات — غير مسموح بتقديرها.',
     ].join('\n');
 
     let text = "";
+    // Provider attribution (Issue #8): every generation records which model
+    // actually answered, so a silent Qwen→Claude fallback can never again make
+    // stored output unattributable.
+    let usedProvider = "none";
 
     // ── Primary: Qwen on Cloudflare Workers AI ─────────────────────────
     const cfAccount = Deno.env.get("CLOUDFLARE_ACCOUNT_ID") ?? "";
     const cfToken = Deno.env.get("CLOUDFLARE_API_TOKEN") ?? "";
+    const qwenModel = Deno.env.get("CLOUDFLARE_AI_MODEL") || QWEN_MODEL_DEFAULT;
     const qwenOn =
       (Deno.env.get("TEXT_LLM_PROVIDER") ?? "").trim().toLowerCase() !== "anthropic" &&
       cfAccount !== "" && cfToken !== "";
     if (qwenOn) {
       try {
         text = await qwenChat(cfAccount, cfToken, system, user);
+        usedProvider = `cloudflare:${qwenModel}`;
+        console.log(`[project-details-ai-v2] generated by ${usedProvider}`);
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
-        console.error(`[project-details-ai-v2] qwen failed — falling back to Anthropic: ${m}`);
+        console.error(`[project-details-ai-v2] PRIMARY cloudflare:${qwenModel} FAILED — falling back to anthropic:${CLAUDE_MODEL}: ${m}`);
       }
     }
 
@@ -209,6 +316,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const block = content[i];
         if (block.type === "text") { text = String(block.text ?? "").trim(); break; }
       }
+      usedProvider = `anthropic:${CLAUDE_MODEL}`;
+      console.log(`[project-details-ai-v2] generated by ${usedProvider} (fallback)`);
     }
 
     step = "parse_response";
@@ -236,10 +345,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
         }
       }
     }
-    if (!parsed) return json({ error: "Could not extract JSON from Claude response", step, first_300: text.slice(0, 300) }, 500, cors);
+    // Attribute the failure to the provider that ACTUALLY answered — this said
+    // "Claude" even when Qwen produced the output, which misled triage.
+    if (!parsed) return json({ error: `Could not extract JSON from the model response (provider: ${usedProvider})`, step, provider: usedProvider, first_300: text.slice(0, 300) }, 500, cors);
 
     const features = Array.isArray(parsed.features) ? parsed.features : [];
-    const landmarks = Array.isArray(parsed.landmarks) ? parsed.landmarks : [];
+    // Landmarks are DROPPED even if a model emits them anyway (prompt drift /
+    // fallback provider). The provenance marker below is what the public site
+    // gates on — absent or 'ai_unverified' means "do not render as fact".
     return json({
       hero_short_description: String(parsed.hero_short_description || '').trim(),
       description: String(parsed.description || '').trim(),
@@ -250,13 +363,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
         description: String(f.description || '').trim(),
       // deno-lint-ignore no-explicit-any
       })).filter((f: any) => f.title),
-      // deno-lint-ignore no-explicit-any
-      landmarks: landmarks.slice(0, 10).map((l: any) => ({
-        icon: LANDMARK_ICONS.includes(String(l.icon)) ? String(l.icon) : 'pin',
-        name: String(l.name || '').trim(),
-        distance: String(l.distance || '').trim(),
-      // deno-lint-ignore no-explicit-any
-      })).filter((l: any) => l.name),
+      landmarks: [],
+      // Provenance (Issue #8). 'none' = this generation produced no landmarks.
+      // A human curating landmarks later sets landmarks_source='curated', which
+      // is the ONLY value the public site renders.
+      landmarks_source: 'none',
+      // Attribution — which model actually answered (Qwen primary / Claude fallback).
+      generated_by: usedProvider,
     }, 200, cors);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

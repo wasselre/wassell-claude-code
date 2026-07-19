@@ -19,6 +19,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizePhoneE164 } from './hatif';
+import { resolveLocalizedName, type LocalizedName } from '../../src/lib/geo/localizedName.js';
 
 export const AGENT_MODEL = 'claude-opus-4-7';
 export const AGENT_MAX_TOKENS = 16_000;
@@ -401,8 +402,12 @@ async function searchProjects(
     return {
       id: row.id,
       source: modelMap.get(row.model_id) ?? 'unknown',
-      city: nameOf(city) ?? '',
-      district: nameOf(district) ?? '',
+      // ISSUE #8 — authoritative bilingual geography. The model copies the
+      // form matching the customer's language; it never transliterates.
+      city_ar: nameOf(city)?.ar ?? '',
+      city_en: nameOf(city)?.enDisplay ?? '',
+      district_ar: nameOf(district)?.ar ?? '',
+      district_en: nameOf(district)?.enDisplay ?? '',
       ...cleanRecord(row.data),
     };
   });
@@ -428,30 +433,52 @@ function projectLocationIds(d: Record<string, unknown>): { city?: string; distri
   return { city: one(loc.city), district: one(loc.district) };
 }
 
-/** Resolve geography record ids → display names via unified_records (ids are globally unique). */
-async function resolveLocationNames(supabase: SupabaseClient, ids: string[]): Promise<Map<string, string>> {
-  const map = new Map<string, string>();
+/**
+ * Resolve geography record ids → LOCALIZED names via unified_records.
+ *
+ * ISSUE #8 — this used to return one Arabic string per id (`display_name ??
+ * name_ar`, never touching `name_en`). The agent's system prompt says "English
+ * in → English out", so on an English conversation the model received only
+ * Arabic place names and had to invent Latin spellings, with no guardrail at
+ * all against substituting a different real place. Now both forms are carried
+ * and the caller picks by conversation language.
+ */
+async function resolveLocationNames(
+  supabase: SupabaseClient,
+  ids: string[],
+): Promise<Map<string, LocalizedName>> {
+  const map = new Map<string, LocalizedName>();
   const uniq = [...new Set(ids.filter((x) => !!x))];
   for (let i = 0; i < uniq.length; i += 400) {
     const { data } = await supabase.from('unified_records').select('id, data').in('id', uniq.slice(i, i + 400));
     for (const r of (data ?? []) as RecordRow[]) {
-      const n = r.data.display_name ?? r.data.name_ar;
-      if (typeof n === 'string' && n) map.set(r.id, n);
+      const localized = resolveLocalizedName(r.id, r.data);
+      if (localized) {
+        map.set(r.id, localized);
+      } else {
+        console.error(`[aiAgent] geography ${r.id} is not fully localized (missing name_en) — omitted from tool results`);
+      }
     }
   }
   return map;
 }
 
-function aggregateMatches(rows: RecordRow[], nameOf: (id?: string) => string | undefined): {
+function aggregateMatches(
+  rows: RecordRow[],
+  nameOf: (id?: string) => LocalizedName | undefined,
+): {
   total: number;
-  by_city: Record<string, number>;
-  top_districts: Array<{ district: string; count: number }>;
+  // ISSUE #8 — these were Record<arabicName, count>, i.e. proper nouns used as
+  // object KEYS. Now keyed by stable record id with both names carried, so the
+  // model never has to reconstruct a place name from a key.
+  by_city: Array<{ city_ar: string; city_en: string; count: number }>;
+  top_districts: Array<{ district_ar: string; district_en: string; count: number }>;
   top_unit_types: Array<{ type: string; count: number }>;
   price_range_overall: { min: number; max: number } | null;
   bedroom_range_overall: { min: number; max: number } | null;
 } {
-  const byCity: Record<string, number> = {};
-  const byDistrict: Record<string, number> = {};
+  const byCity = new Map<string, { name: LocalizedName; count: number }>();
+  const byDistrict = new Map<string, { name: LocalizedName; count: number }>();
   const byUnit: Record<string, number> = {};
   let pmin = Infinity;
   let pmax = -Infinity;
@@ -462,10 +489,15 @@ function aggregateMatches(rows: RecordRow[], nameOf: (id?: string) => string | u
     const d = r.data;
     const { city: cityId, district: districtId } = projectLocationIds(d);
     const city = nameOf(cityId);
-    if (city && city.trim()) byCity[city] = (byCity[city] ?? 0) + 1;
+    if (city) {
+      const cur = byCity.get(city.id);
+      byCity.set(city.id, { name: city, count: (cur?.count ?? 0) + 1 });
+    }
     const district = nameOf(districtId);
-    if (district && district.trim())
-      byDistrict[district] = (byDistrict[district] ?? 0) + 1;
+    if (district) {
+      const cur = byDistrict.get(district.id);
+      byDistrict.set(district.id, { name: district, count: (cur?.count ?? 0) + 1 });
+    }
     // Unit type lives under various slugs depending on how the model was
     // built. We just collect anything plausibly-typed for honesty.
     for (const k of ['unit_type', 'property_type', 'type']) {
@@ -485,10 +517,10 @@ function aggregateMatches(rows: RecordRow[], nameOf: (id?: string) => string | u
     if (hb != null) bmax = Math.max(bmax, hb);
   }
 
-  const topDistricts = Object.entries(byDistrict)
-    .sort((a, b) => b[1] - a[1])
+  const topDistricts = [...byDistrict.values()]
+    .sort((a, b) => b.count - a.count)
     .slice(0, 8)
-    .map(([district, count]) => ({ district, count }));
+    .map((d) => ({ district_ar: d.name.ar, district_en: d.name.enDisplay, count: d.count }));
   const topUnits = Object.entries(byUnit)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5)
@@ -496,7 +528,9 @@ function aggregateMatches(rows: RecordRow[], nameOf: (id?: string) => string | u
 
   return {
     total: rows.length,
-    by_city: byCity,
+    by_city: [...byCity.values()]
+      .sort((a, b) => b.count - a.count)
+      .map((c) => ({ city_ar: c.name.ar, city_en: c.name.enDisplay, count: c.count })),
     top_districts: topDistricts,
     top_unit_types: topUnits,
     price_range_overall:

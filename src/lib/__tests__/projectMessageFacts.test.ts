@@ -72,11 +72,27 @@ const units = model('units', UN_ID, [
 // location.{city,district} ids to display names against these records in the store.
 const CITIES_ID = 'm_cities';
 const DISTRICTS_ID = 'm_districts';
-const cities = model('cities', CITIES_ID, [field({ name: 'display_name', type: 'text' })]);
-const districts = model('districts', DISTRICTS_ID, [field({ name: 'display_name', type: 'text' })]);
+// ISSUE #8 — these fixtures previously declared ONLY `display_name`, so the
+// missing-`name_en` defect was structurally invisible to CI. Real geography
+// records carry all three fields with DISTINCT values; the fixtures now mirror
+// production so an Arabic-in-English regression fails loudly.
+const cities = model('cities', CITIES_ID, [
+  field({ name: 'display_name', type: 'text' }),
+  field({ name: 'name_ar', type: 'text' }),
+  field({ name: 'name_en', type: 'text' }),
+]);
+const districts = model('districts', DISTRICTS_ID, [
+  field({ name: 'display_name', type: 'text' }),
+  field({ name: 'name_ar', type: 'text' }),
+  field({ name: 'name_en', type: 'text' }),
+]);
 const geoRecords: Record<string, AppRecord[]> = {
-  [CITIES_ID]: [rec('c-riyadh', CITIES_ID, { display_name: 'الرياض' })],
-  [DISTRICTS_ID]: [rec('d-narjis', DISTRICTS_ID, { display_name: 'النرجس' })],
+  [CITIES_ID]: [rec('c-riyadh', CITIES_ID, {
+    display_name: 'الرياض', name_ar: 'الرياض', name_en: 'Riyadh',
+  })],
+  [DISTRICTS_ID]: [rec('d-narjis', DISTRICTS_ID, {
+    display_name: 'النرجس', name_ar: 'حي النرجس', name_en: 'Al Narjis Dist.',
+  })],
 };
 
 const models = [allProjects, ourProjects, units, cities, districts];
@@ -108,8 +124,10 @@ describe('resolveProjectFacts', () => {
 
     expect(f.allProjectId).toBe('ap1');                       // links to the master
     expect(f.name).toBe('مينا 52');                            // prefers master name
-    expect(f.city).toEqual({ ar: 'الرياض', en: 'الرياض' });    // denormalized city_name (lookup)
-    expect(f.district).toEqual({ ar: 'النرجس', en: 'النرجس' }); // denormalized district_name (lookup)
+    // ISSUE #8: English MUST come from the stored `name_en`, never from the
+    // Arabic value. `enDisplay` drops the trailing "Dist." for marketing copy.
+    expect(f.city).toEqual({ ar: 'الرياض', en: 'Riyadh' });
+    expect(f.district).toEqual({ ar: 'النرجس', en: 'Al Narjis' });
     expect(f.unitTypes).toEqual([                              // distinct, first-seen order
       { ar: 'شقة', en: 'Apartment' },
       { ar: 'فيلا', en: 'Villa' },
@@ -226,8 +244,8 @@ describe('resolveProjectFacts', () => {
     };
     const f = resolveProjectFacts(recs[OP][0]!, ms, recs);
     expect(f.name).toBe('مينا 52');
-    expect(f.city).toEqual({ ar: 'الرياض', en: 'الرياض' });               // city_name (lookup)
-    expect(f.district).toEqual({ ar: 'النرجس', en: 'النرجس' });           // district_name (lookup)
+    expect(f.city).toEqual({ ar: 'الرياض', en: 'Riyadh' });               // English from stored name_en
+    expect(f.district).toEqual({ ar: 'النرجس', en: 'Al Narjis' });        // "Dist." suffix dropped for display
     expect(f.unitTypes).toEqual([{ ar: 'شقة', en: 'Apartment' }]);        // all_projects unit_types
     expect(f.bedrooms).toEqual({ min: 2, max: 3 });                       // rollup on all_projects
     expect(f.bathrooms).toEqual({ min: 2, max: 3 });

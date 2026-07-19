@@ -25,6 +25,7 @@ import { createClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from '../_lib/auth.js';
 import { getServiceClient } from '../_lib/files.js';
 import { qwenRoutingEnabled, qwenJson, logQwenFallback } from '../_lib/textLlm.js';
+import { resolveLocalizedName, type LocalizedName } from '../../src/lib/geo/localizedName.js';
 
 export const config = { runtime: 'nodejs', maxDuration: 60 };
 
@@ -102,7 +103,7 @@ Rules:
    - \`street_width_m\` is عرض الشارع: «شارع عرض 20 م» / "on a 20 m street".
    - \`property_age\` قيمة «جديد» stays «جديد» / "Brand new".
 4. Use Saudi Riyal (ر.س / SAR) if a price is provided; never invent a price.
-5. body_en PROPER NOUNS: transliterate Arabic district/city/project/street names phonetically into Latin letters (e.g. «حي المهدية» → "Al Mahdiya"). NEVER substitute a different similar-sounding place name and NEVER translate the name's meaning; if unsure, keep the Arabic name transliterated letter-for-letter.
+5. GEOGRAPHY IS AUTHORITATIVE — NEVER INVENT IT. The facts carry \`district_ar\`/\`district_en\` and \`city_ar\`/\`city_en\` resolved from the company database. Use the \`_ar\` values VERBATIM in body_ar and the \`_en\` values VERBATIM in body_en. Do NOT transliterate, translate, re-spell, abbreviate, expand or "correct" them — copy them character for character. If a value is null, omit that place entirely; never guess it and never substitute the other language's value.
 6. A few tasteful emojis are fine; do not overuse them.
 7. END the message after the facts — the LAST line is the price (or the last available fact if there is no price). Do NOT add any closing line: NO call to action, NO "للتواصل والاستفسار", NO contact/inquiry line, NO agency name or sign-off (e.g. «وصل العقارية» / «لقطة وصل» / «Wassel»). Nothing after the facts.
 8. Natural marketing tone — summarized facts, not a dry copy of the description. NEVER write prose outside the tool; ALWAYS call write_listing_message.`;
@@ -119,6 +120,55 @@ const TOOL_SCHEMA = {
     required: ['body_ar', 'body_en'],
   },
 };
+
+/**
+ * Protected-fact validation (Issue #8).
+ *
+ * The authoritative place names are supplied to the model; this asserts the
+ * model actually used them. A body that DROPPED or ALTERED a place name is
+ * rejected rather than published — prompt instructions alone proved insufficient
+ * (Qwen3 measured ~30% run-to-run variance on proper nouns, and produced
+ * "Al-Muharraq" for «حي المهدية»).
+ *
+ * Deliberately NOT a blanket "no Arabic in the English body" rule: brand names
+ * and intentionally untransliterated terms are legitimate. We assert only the
+ * exact localized geography values.
+ */
+function assertGeographyIntact(args: {
+  bodyAr: string | null;
+  bodyEn: string | null;
+  districtGeo: LocalizedName | null;
+  cityGeo: LocalizedName | null;
+  provider: string;
+}): void {
+  const { bodyAr, bodyEn, districtGeo, cityGeo, provider } = args;
+  const violations: string[] = [];
+
+  const checkAr = (geo: LocalizedName | null, level: string) => {
+    if (!geo || !bodyAr) return;
+    if (!bodyAr.includes(geo.ar)) violations.push(`body_ar is missing the authoritative ${level} «${geo.ar}»`);
+  };
+  const checkEn = (geo: LocalizedName | null, level: string) => {
+    if (!geo || !bodyEn) return;
+    // Accept either the display form ("Al Mahdiyah") or the canonical stored
+    // form ("Al Mahdiyah Dist.") — both are authoritative, neither is invented.
+    const ok = bodyEn.includes(geo.enDisplay) || bodyEn.includes(geo.enCanonical);
+    if (!ok) violations.push(`body_en is missing the authoritative ${level} "${geo.enDisplay}"`);
+    // The Arabic form must never appear in the English body.
+    if (bodyEn.includes(geo.ar)) violations.push(`body_en contains the ARABIC ${level} «${geo.ar}» instead of "${geo.enDisplay}"`);
+  };
+
+  checkAr(districtGeo, 'district');
+  checkAr(cityGeo, 'city');
+  checkEn(districtGeo, 'district');
+  checkEn(cityGeo, 'city');
+
+  if (violations.length > 0) {
+    // Loud, never silent — this is a correctness failure, not a style nit.
+    console.error(`[listing-message] REJECTED ${provider} output — protected geography altered: ${violations.join('; ')}`);
+    throw new Error(`generated message failed geography validation (${provider}): ${violations.join('; ')}`);
+  }
+}
 
 export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
   const req = await nodeToWebRequest(nodeReq);
@@ -158,21 +208,35 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
     if (listingErr || !listingRow) return jsonError(404, `listing not found: ${listingErr?.message ?? listingId}`);
     const ld = (listingRow.data ?? {}) as Record<string, unknown>;
 
-    // Resolve district / city display names from the (frozen) geo models via
-    // unified_records. Reference data — service role read, non-sensitive.
-    const resolveGeoName = async (id: string | null): Promise<string | null> => {
+    // Resolve district / city from the (frozen) geo models via unified_records.
+    // Reference data — service role read, non-sensitive.
+    //
+    // ISSUE #8 — this used to return ONE Arabic string (`display_name ?? name_ar
+    // ?? name_en`, where the name_en branch was unreachable because display_name
+    // is Arabic and never null). The prompt then ordered the model to invent the
+    // Latin spelling, and it rendered «حي المهدية» as "Al-Muharraq" — a city in
+    // Bahrain — in a customer WhatsApp message. Both names are now resolved from
+    // the authoritative record and handed to the model explicitly.
+    const resolveGeoLocalized = async (id: string | null): Promise<LocalizedName | null> => {
       if (!id) return null;
       const { data } = await svc.from('unified_records').select('data').eq('id', id).maybeSingle();
       const gd = (data as { data?: Record<string, unknown> } | null)?.data ?? null;
-      if (!gd) return null;
-      return asString(gd.display_name) ?? asString(gd.name_ar) ?? asString(gd.name_en);
+      const localized = resolveLocalizedName(id, gd);
+      if (!localized && gd) {
+        console.error(
+          `[listing-message] geography ${id} is not fully localized (missing name_en) — omitting from the message rather than letting the model invent an English name`,
+        );
+      }
+      return localized;
     };
     const loc =
       ld.location && typeof ld.location === 'object' && !Array.isArray(ld.location)
         ? (ld.location as Record<string, unknown>)
         : {};
-    const district = await resolveGeoName(oneId(loc.district));
-    const city = await resolveGeoName(oneId(loc.city));
+    const districtGeo = await resolveGeoLocalized(oneId(loc.district));
+    const cityGeo = await resolveGeoLocalized(oneId(loc.city));
+    const district = districtGeo?.ar ?? null;
+    const city = cityGeo?.ar ?? null;
 
     const facts: ListingFacts = {
       title: asString(ld.title),
@@ -198,8 +262,12 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
 ${JSON.stringify(
   {
     unit_type: facts.property_type,
-    district: facts.district,
-    city: facts.city,
+    // ISSUE #8 — authoritative bilingual geography. The model must COPY these
+    // verbatim into the matching language body and never transliterate.
+    district_ar: districtGeo?.ar ?? null,
+    district_en: districtGeo?.enDisplay ?? null,
+    city_ar: cityGeo?.ar ?? null,
+    city_en: cityGeo?.enDisplay ?? null,
     area_m2: facts.area,
     bedrooms: facts.bedrooms,
     bathrooms: facts.bathrooms,
@@ -235,7 +303,14 @@ ${facts.description ?? '(no description provided)'}`;
         const qAr = asString(out.body_ar);
         const qEn = asString(out.body_en);
         if (qAr || qEn) {
-          return jsonOk({ ok: true, body_ar: qAr ?? '', body_en: qEn ?? '', facts });
+          // Protected-fact gate: a model that altered an authoritative place
+          // name is REJECTED, not published. Throwing here routes to the
+          // Anthropic fallback below, which is validated the same way.
+          assertGeographyIntact({ bodyAr: qAr, bodyEn: qEn, districtGeo, cityGeo, provider: 'cloudflare-qwen' });
+          return jsonOk({
+            ok: true, body_ar: qAr ?? '', body_en: qEn ?? '', facts,
+            generated_by: `cloudflare:${process.env.CLOUDFLARE_AI_MODEL || '@cf/qwen/qwen3-30b-a3b-fp8'}`,
+          });
         }
         throw new Error('qwen returned an empty message');
       } catch (err) {
@@ -273,7 +348,18 @@ ${facts.description ?? '(no description provided)'}`;
     const bodyEn = asString(out.body_en);
     if (!bodyAr && !bodyEn) return jsonError(502, 'Claude returned an empty message');
 
-    return jsonOk({ ok: true, body_ar: bodyAr ?? '', body_en: bodyEn ?? '', facts });
+    // Same protected-fact gate as the Qwen path — no provider is trusted to
+    // leave authoritative place names alone.
+    try {
+      assertGeographyIntact({ bodyAr, bodyEn, districtGeo, cityGeo, provider: 'anthropic' });
+    } catch (err) {
+      return jsonError(502, err instanceof Error ? err.message : String(err));
+    }
+
+    return jsonOk({
+      ok: true, body_ar: bodyAr ?? '', body_en: bodyEn ?? '', facts,
+      generated_by: 'anthropic:claude-opus-4-7',
+    });
   });
   await writeWebResponseToNode(resp, nodeRes);
 }
