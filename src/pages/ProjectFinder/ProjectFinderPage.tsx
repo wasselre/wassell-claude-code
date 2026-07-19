@@ -17,6 +17,8 @@ import {
   REFINE_DEFAULT, FETCH_FLOOR, BEDROOM_OPTS,
   type SortKey, type Refine, type DisplayTabKey,
 } from '@/lib/matching/finderRefine';
+import FieldConstraintControl from '@/components/matching/FieldConstraintControl';
+import { CONSTRAINT_BY_SLUG, resolveConstraint, type RequirementConstraints } from '@/lib/matching/constraints';
 import FinderCard from '@/pages/Followups/components/FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/components/FinderRefinementBar';
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
@@ -103,10 +105,10 @@ export default function ProjectFinderPage() {
   // The structured preference buffer (same slug shape as the Follow-up draft).
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [bedrooms, setBedrooms] = useState<number | ''>('');
-  // "Must have" toggle for the selected amenities: when on, they become
-  // required_amenities — a HARD engine gate (candidates not listing ALL of them
-  // are dropped, fails closed). UI-only — never persisted anywhere.
-  const [amenitiesRequired, setAmenitiesRequired] = useState(false);
+  // Per-field strictness (hard/soft + tolerance band). Only the fields the rep
+  // actually changed are stored; everything else resolves to DEFAULT_CONSTRAINTS
+  // in the engine. UI-only state — never written to the client record.
+  const [constraints, setConstraints] = useState<RequirementConstraints>({});
   const [sources, setSources] = useState<Record<FinderSource, boolean>>({
     our_projects: true, all_projects: true, market_listings: false,
   });
@@ -244,8 +246,12 @@ export default function ProjectFinderPage() {
       clientsModel, prefDraft: draft, savedClientData: clientRec?.data ?? null, resolveLookupName,
     });
     if (typeof bedrooms === 'number' && bedrooms > 0) reqs.bedrooms = bedrooms;
-    // "Must have" toggle → the selected amenities become a hard engine gate.
-    if (amenitiesRequired && reqs.amenities?.length) reqs.required_amenities = reqs.amenities;
+    if (Object.keys(constraints).length) reqs.constraints = constraints;
+    // Amenities set to «إلزامي» → the selected amenities become a hard gate.
+    // (required_amenities stays the explicit wire format the engine already reads.)
+    if (resolveConstraint('amenities', constraints).mode === 'hard' && reqs.amenities?.length) {
+      reqs.required_amenities = reqs.amenities;
+    }
     return reqs;
   }
 
@@ -253,7 +259,7 @@ export default function ProjectFinderPage() {
     const r = buildRequirements();
     return Object.keys(r).length > 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, bedrooms, amenitiesRequired, resolveLookupName, clientRec]);
+  }, [draft, bedrooms, constraints, resolveLookupName, clientRec]);
 
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -313,7 +319,7 @@ export default function ProjectFinderPage() {
     controllerRef.current?.abort();
     setDraft({});
     setBedrooms('');
-    setAmenitiesRequired(false);
+    setConstraints({});
     setSources({ our_projects: true, all_projects: true, market_listings: false });
     setScoreThreshold(FETCH_FLOOR);
     setSortKey('score');
@@ -645,16 +651,14 @@ export default function ProjectFinderPage() {
                       recordId={selectedClientId ?? undefined}
                       onPatch={(patch) => setDraft((d) => ({ ...d, ...patch }))}
                     />
-                    {field.name === 'preferred_amenities' && (
-                      <label className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-charcoal/70">
-                        <input
-                          type="checkbox"
-                          checked={amenitiesRequired}
-                          onChange={(e) => setAmenitiesRequired(e.target.checked)}
-                          className="accent-copper"
-                        />
-                        {L('إلزامية — استبعد أي خيار لا تتوفر فيه كل المميزات المحددة', 'Must have — exclude any option not listing ALL selected amenities')}
-                      </label>
+                    {CONSTRAINT_BY_SLUG[field.name] && (
+                      <FieldConstraintControl
+                        field={CONSTRAINT_BY_SLUG[field.name]!}
+                        constraints={constraints}
+                        onChange={setConstraints}
+                        isAr={isAr}
+                        droppedCount={resp?.metadata.constraint_drops?.[CONSTRAINT_BY_SLUG[field.name]!]}
+                      />
                     )}
                   </div>
                 ))}
@@ -672,6 +676,13 @@ export default function ProjectFinderPage() {
                       <option key={n} value={n}>{n}{n === 6 ? '+' : ''}</option>
                     ))}
                   </select>
+                  <FieldConstraintControl
+                    field="bedrooms"
+                    constraints={constraints}
+                    onChange={setConstraints}
+                    isAr={isAr}
+                    droppedCount={resp?.metadata.constraint_drops?.bedrooms}
+                  />
                 </div>
 
                 {/* Sources */}

@@ -21,6 +21,8 @@ import {
 } from '@/lib/matching/finderRefine';
 import { setFinderHandoff } from '@/lib/matching/finderHandoff';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
+import FieldConstraintControl from '@/components/matching/FieldConstraintControl';
+import { CONSTRAINT_BY_SLUG, resolveConstraint, type RequirementConstraints } from '@/lib/matching/constraints';
 import FinderCard from './FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
 import FinderMapView from './FinderMapView';
@@ -136,10 +138,10 @@ export default function SuggestedProjectsView({
   // preferences, then search" start screen when editPrefsFirst defers it.
   const [hasSearched, setHasSearched] = useState(!editPrefsFirst);
   const [savingPrefs, setSavingPrefs] = useState(false);
-  // "Must have" toggle for the selected amenities: when on, they become
-  // required_amenities — a HARD engine gate (candidates not listing ALL of them
-  // are dropped, fails closed). UI-only state — never written to the client record.
-  const [amenitiesRequired, setAmenitiesRequired] = useState(false);
+  // Per-field strictness (hard/soft + tolerance band). Only changed fields are
+  // stored; the rest resolve to DEFAULT_CONSTRAINTS in the engine. UI-only state —
+  // never written to the client record (unlike the preferences themselves).
+  const [constraints, setConstraints] = useState<RequirementConstraints>({});
   // The preferences-chips area (QA: collapsible so popup results get the height).
   const [showPrefs, setShowPrefs] = useState(!defaultPrefsCollapsed);
 
@@ -203,8 +205,11 @@ export default function SuggestedProjectsView({
     } else if (typeof pb === 'number' && pb > 0) {
       reqs.bedrooms = pb;
     }
-    // "Must have" toggle → the selected amenities become a hard engine gate.
-    if (amenitiesRequired && reqs.amenities?.length) reqs.required_amenities = reqs.amenities;
+    if (Object.keys(constraints).length) reqs.constraints = constraints;
+    // Amenities set to «إلزامي» → the selected amenities become a hard gate.
+    if (resolveConstraint('amenities', constraints).mode === 'hard' && reqs.amenities?.length) {
+      reqs.required_amenities = reqs.amenities;
+    }
     return reqs;
   }
 
@@ -651,16 +656,14 @@ export default function SuggestedProjectsView({
                     recordId={clientRec?.id ?? undefined}
                     onPatch={(patch) => setEditDraft((d) => ({ ...d, ...patch }))}
                   />
-                  {field.name === 'preferred_amenities' && (
-                    <label className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-charcoal/70">
-                      <input
-                        type="checkbox"
-                        checked={amenitiesRequired}
-                        onChange={(e) => setAmenitiesRequired(e.target.checked)}
-                        className="accent-copper"
-                      />
-                      {L('إلزامية — استبعد أي خيار لا تتوفر فيه كل المميزات المحددة', 'Must have — exclude any option not listing ALL selected amenities')}
-                    </label>
+                  {CONSTRAINT_BY_SLUG[field.name] && (
+                    <FieldConstraintControl
+                      field={CONSTRAINT_BY_SLUG[field.name]!}
+                      constraints={constraints}
+                      onChange={setConstraints}
+                      isAr={isAr}
+                      droppedCount={resp?.metadata.constraint_drops?.[CONSTRAINT_BY_SLUG[field.name]!]}
+                    />
                   )}
                 </div>
               ))}

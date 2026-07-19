@@ -14,6 +14,7 @@
 
 import { supabase } from '@/lib/supabase';
 import type { MatchRequirementsInput } from './requirements';
+import type { ConstraintField } from './constraints';
 import type { DealBadge } from '@/lib/market/dealBadge';
 
 export type FinderGroupKey =
@@ -78,6 +79,9 @@ export interface FinderResponse {
     /** Market-source status. 'ok' = full filtered set scored; 'needs_district' = pick a
      *  district; 'too_many' = too dense, ask for `suggest`ed criteria (never truncated). */
     market?: { status: 'ok' | 'needs_district' | 'too_many' | 'unavailable'; count?: number; suggest?: string[] };
+    /** How many candidates each REQUIRED field excluded — the UI turns this into
+     *  "المساحة استبعدت 812 خياراً — وسّع النطاق" instead of a blank result page. */
+    constraint_drops?: Partial<Record<ConstraintField, number>>;
     /** True on the no-criteria short-circuit (the UI asks for preferences). */
     needs_preferences?: boolean;
     used_ai_parse?: boolean;

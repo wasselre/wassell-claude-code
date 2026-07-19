@@ -38,6 +38,10 @@ import {
   type MatchSource,
 } from './_lib/projectFinder.js';
 import { parseRequirements, explainMatches, applyLlmExplanations } from './_lib/projectFinderAI.js';
+import {
+  CONSTRAINT_FIELDS, MAX_TOLERANCE_PCT,
+  type ConstraintField, type FieldConstraint, type RequirementConstraints,
+} from './_lib/constraints.js';
 import { enrichWithDealBadges } from './_lib/marketBadge.js';
 
 export const config = { runtime: 'edge' };
@@ -77,6 +81,25 @@ const strArr = (v: unknown): string[] | undefined =>
 
 const VALID_SOURCES: MatchSource[] = ['our_projects', 'all_projects', 'market_listings'];
 
+/** Clean the untrusted per-field constraint map. Unknown field names, bad modes,
+ *  and out-of-range tolerances are DROPPED (the engine then falls back to that
+ *  field's default) rather than trusted — this arrives from the browser. */
+function normalizeConstraints(raw: unknown): RequirementConstraints | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: RequirementConstraints = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!(CONSTRAINT_FIELDS as string[]).includes(k)) continue;
+    if (!v || typeof v !== 'object' || Array.isArray(v)) continue;
+    const rec = v as Record<string, unknown>;
+    const entry: FieldConstraint = {} as FieldConstraint;
+    if (rec.mode === 'soft' || rec.mode === 'hard') entry.mode = rec.mode;
+    const tol = num(rec.tolerance_pct);
+    if (tol != null && tol >= 0) entry.tolerance_pct = Math.min(tol, MAX_TOLERANCE_PCT);
+    if (entry.mode || entry.tolerance_pct != null) out[k as ConstraintField] = entry;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Clean the untrusted body.requirements into a trusted MatchRequirements. */
 function normalizeRequirements(raw: Partial<MatchRequirements> | undefined): MatchRequirements {
   const r = raw ?? {};
@@ -99,6 +122,7 @@ function normalizeRequirements(raw: Partial<MatchRequirements> | undefined): Mat
   const maxAge = num(r.max_unit_age); if (maxAge != null && maxAge >= 0) out.max_unit_age = maxAge;
   const amenities = strArr(r.amenities); if (amenities?.length) out.amenities = amenities;
   const requiredAmenities = strArr(r.required_amenities); if (requiredAmenities?.length) out.required_amenities = requiredAmenities;
+  const constraints = normalizeConstraints(r.constraints); if (constraints) out.constraints = constraints;
   if (r.include_sold_out === true) out.include_sold_out = true;
   if (r.allow_stretch === false) out.allow_stretch = false;
   return out;

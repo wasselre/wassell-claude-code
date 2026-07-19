@@ -32,6 +32,10 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { classifyGeo, type GeoStatus } from './geoVerify.js';
+import {
+  resolveConstraint, spanPassesBand, widenBand,
+  type ConstraintField, type RequirementConstraints,
+} from './constraints.js';
 
 export const MATCH_MODEL = 'claude-opus-4-7';
 export const MATCH_MAX_TOKENS = 8_000;
@@ -711,6 +715,10 @@ export interface MatchRequirements {
    *  project preferred_amenities). Fails CLOSED — no amenity data ⇒ dropped,
    *  because "must contain" means verified-present, not unknown. */
   required_amenities?: string[];
+  /** PER-FIELD strictness: which requirements HARD-exclude a candidate and with
+   *  what tolerance band. Omitted ⇒ DEFAULT_CONSTRAINTS (see constraints.ts).
+   *  Only 'hard' fields exclude; 'soft' ones influence the score only. */
+  constraints?: RequirementConstraints;
   financing_needed?: boolean;
   special_requirements?: string[];
   allow_stretch?: boolean;
@@ -898,8 +906,7 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
       requestedMissing.add('type');
     } else {
       const needles = [...new Set(reqTypes.flatMap((rt) => expandPropertyType(rt)))];
-      const hit = types.some((t) => needles.some((n) => t.includes(n) || n.includes(t)));
-      dims.type.value = hit ? 1 : 0;
+      dims.type.value = types.some((t) => typeTextMatches(t, needles)) ? 1 : 0;
     }
   }
 
@@ -1170,6 +1177,43 @@ export function parseUnitAgeText(v: string | null | undefined): number | null {
   return null;
 }
 
+/** The candidate's PRIMARY property type — the FIRST type keyword that appears
+ *  in its type text. Aqar concatenates property_type + listing_type + category
+ *  ("شقة في فيلا"، "فلل-للبيع"), and the old bidirectional substring test made
+ *  "شقة في فيلا".includes("فيلا") true — so an APARTMENT scored FULL villa
+ *  credit and outranked real villas (live 2026-07-19: a 127 m² شقة scored 90 on
+ *  a villa-only search). Reading the earliest keyword resolves the head noun:
+ *  "شقة في فيلا" → apartment, "تاون هاوس sale فلل-للبيع" → townhouse.
+ *  Returns the matching synonym GROUP (normalized), or null when no known type
+ *  keyword appears (caller then falls back to the loose test). */
+function primaryTypeGroup(typeText: string): string[] | null {
+  const hay = normalizeForSearch(typeText);
+  if (!hay) return null;
+  let bestIdx = Number.POSITIVE_INFINITY;
+  let bestGroup: string[] | null = null;
+  for (const group of PROPERTY_TYPE_SYNONYMS) {
+    for (const syn of group) {
+      const idx = hay.indexOf(normalizeForSearch(syn));
+      if (idx >= 0 && idx < bestIdx) {
+        bestIdx = idx;
+        bestGroup = group.map((s) => normalizeForSearch(s));
+      }
+    }
+  }
+  return bestGroup;
+}
+
+/** Does a candidate type text satisfy the requested type needles? Primary-type
+ *  aware (see primaryTypeGroup): when the candidate names a known type, ONLY its
+ *  primary type counts, so a "شقة في فيلا" can never satisfy a villa request.
+ *  Unknown/absent type text falls back to the historical loose substring test. */
+export function typeTextMatches(typeText: string, needles: string[]): boolean {
+  const group = primaryTypeGroup(typeText);
+  if (group) return needles.some((n) => group.includes(normalizeForSearch(n)));
+  const t = normalizeForSearch(typeText);
+  return needles.some((n) => t.includes(n) || n.includes(t));
+}
+
 /** The market DB pre-filter's price window — DELIBERATELY WIDER than the client's
  *  stated budget on BOTH sides, because the pre-filter runs before scoring and a
  *  hard cut would pre-empt decisions that belong to the scorer:
@@ -1181,14 +1225,106 @@ export function parseUnitAgeText(v: string | null | undefined): number | null {
  *  Keep this the ONLY place the pre-filter's bounds are computed, and keep both
  *  sides in sync with scoreProject's budget dimension. Exported for tests. */
 export function marketBudgetBounds(req: MatchRequirements): { p_budget_min: number | null; p_budget_max: number | null } {
+  // The band now comes from the budget CONSTRAINT (default ±15%) so the SQL cut
+  // and the JS gate agree by construction. allow_stretch:false still collapses
+  // the upper side to the exact ceiling.
+  const { tolerance_pct } = resolveConstraint('budget', req.constraints);
+  const upper = req.allow_stretch === false ? 0 : tolerance_pct;
+  const band = widenBand(req.budget_min ?? null, req.budget_max ?? null, tolerance_pct);
   // Rounded: binary floating point makes 1.8M × 1.15 = 2069999.9999999998, and a
   // fractional-riyal bound is meaningless noise in logs and query plans.
   return {
-    p_budget_min: req.budget_min != null ? Math.round(req.budget_min * BUDGET_FLOOR_TOLERANCE) : null,
-    p_budget_max: req.budget_max != null
-      ? Math.round(req.budget_max * (req.allow_stretch === false ? 1 : STRETCH_TOLERANCE))
-      : null,
+    p_budget_min: band.lo != null ? Math.round(band.lo) : null,
+    p_budget_max: req.budget_max != null ? Math.round(req.budget_max * (1 + upper)) : null,
   };
+}
+
+/**
+ * THE HARD CONSTRAINT GATE — the single place a candidate is EXCLUDED for
+ * missing a requirement, applied identically to all three sources before
+ * scoring. Returns the first field that rejected it (for the honest per-field
+ * drop counts), or null when the candidate is allowed through.
+ *
+ * Semantics per field, using the caller's `constraints` (see constraints.ts):
+ *   budget / area        — the candidate's span must OVERLAP the widened band.
+ *   bedrooms / bathrooms — AT-LEAST: the candidate's max must reach the widened
+ *                          minimum (more rooms than asked is fine).
+ *   unit_age             — AT-MOST: no older than the widened maximum.
+ *   property_type        — primary-type match (typeTextMatches).
+ *   amenities            — ALL requested amenities present (fuzzy).
+ *
+ * FAILS CLOSED on missing data: a hard field with no evidence on the candidate
+ * is a rejection, because "required" means verified-present, not unknown. That
+ * is why the modes are per-field and the default for `amenities` is soft —
+ * amenity coverage is patchy in scraped listings.
+ *
+ * Soft fields are never consulted here; they keep influencing the score only.
+ * Exported for tests.
+ */
+export function firstFailedHardConstraint(
+  data: Record<string, unknown>,
+  req: MatchRequirements,
+): ConstraintField | null {
+  const c = req.constraints;
+
+  // ── budget ──
+  const budget = resolveConstraint('budget', c);
+  if (budget.mode === 'hard' && (req.budget_min != null || req.budget_max != null)) {
+    const r = pickRange(data, 'price_range');
+    // allow_stretch:false is an explicit "no over-budget at all" — collapse the
+    // upper tolerance so the band cannot reach past the stated ceiling.
+    const tol = req.allow_stretch === false ? 0 : budget.tolerance_pct;
+    if (!spanPassesBand(r?.min ?? null, r?.max ?? null, req.budget_min ?? null, req.budget_max ?? null, tol)) {
+      return 'budget';
+    }
+  }
+
+  // ── area ──
+  const area = resolveConstraint('area', c);
+  if (area.mode === 'hard' && (req.area_min != null || req.area_max != null)) {
+    const r = pickRange(data, 'area_range');
+    if (!spanPassesBand(r?.min ?? null, r?.max ?? null, req.area_min ?? null, req.area_max ?? null, area.tolerance_pct)) {
+      return 'area';
+    }
+  }
+
+  // ── bedrooms / bathrooms (AT-LEAST) ──
+  const beds = resolveConstraint('bedrooms', c);
+  if (beds.mode === 'hard' && req.bedrooms != null) {
+    const r = pickRange(data, 'bedroom_range');
+    const max = r?.max ?? r?.min ?? null;
+    if (max == null || max < req.bedrooms * (1 - beds.tolerance_pct)) return 'bedrooms';
+  }
+  const baths = resolveConstraint('bathrooms', c);
+  if (baths.mode === 'hard' && req.bathrooms != null) {
+    const r = pickRange(data, 'bathroom_range');
+    const max = r?.max ?? r?.min ?? null;
+    if (max == null || max < req.bathrooms * (1 - baths.tolerance_pct)) return 'bathrooms';
+  }
+
+  // ── unit age (AT-MOST) ──
+  const age = resolveConstraint('unit_age', c);
+  if (age.mode === 'hard' && req.max_unit_age != null) {
+    const v = asNum(data.unit_age);
+    if (v == null || v > req.max_unit_age * (1 + age.tolerance_pct)) return 'unit_age';
+  }
+
+  // ── property type ──
+  const ptype = resolveConstraint('property_type', c);
+  const reqTypes = requestedPropertyTypes(req);
+  if (ptype.mode === 'hard' && reqTypes.length) {
+    const needles = [...new Set(reqTypes.flatMap((rt) => expandPropertyType(rt)))];
+    const types = asArr(data.unit_types);
+    if (types.length === 0 || !types.some((t) => typeTextMatches(t, needles))) return 'property_type';
+  }
+
+  // ── amenities (the "must have" list; `required_amenities` forces hard mode) ──
+  const amen = resolveConstraint('amenities', c);
+  const wantedAmenities = (req.required_amenities?.length ? req.required_amenities : amen.mode === 'hard' ? req.amenities ?? [] : [])
+    .filter((s) => typeof s === 'string' && s.trim() !== '');
+  if (!amenitiesAllPresent(data, wantedAmenities)) return 'amenities';
+
+  return null;
 }
 
 /** HARD must-have amenity gate. True when EVERY `required_amenities` entry
@@ -1198,7 +1334,15 @@ export function marketBudgetBounds(req: MatchRequirements): { p_budget_min: numb
  *  with no amenity data is dropped, because "must contain" means
  *  verified-present, not unknown. Exported for tests. */
 export function passesRequiredAmenities(data: Record<string, unknown>, req: MatchRequirements): boolean {
-  const required = (req.required_amenities ?? []).filter((s) => typeof s === 'string' && s.trim() !== '');
+  return amenitiesAllPresent(data, req.required_amenities ?? []);
+}
+
+/** THE amenity primitive both callers share (the standalone `required_amenities`
+ *  check above and the amenities branch of firstFailedHardConstraint). Empty
+ *  wanted list ⇒ pass; any wanted entry ⇒ the candidate must have evidence for
+ *  ALL of them, so no amenity data at all is a fail. */
+function amenitiesAllPresent(data: Record<string, unknown>, wanted: string[]): boolean {
+  const required = wanted.filter((s) => typeof s === 'string' && s.trim() !== '');
   if (required.length === 0) return true;
   const have = asArr(data.preferred_amenities);
   if (have.length === 0) return false;
@@ -1485,6 +1629,9 @@ export interface MatchCoreSuccess {
    *  = the filtered exact-district set exceeds MARKET_SCAN_LIMIT, so the UI should
    *  ask for the `suggest`ed extra criteria instead of dropping listings. */
   marketInfo: MarketInfo;
+  /** How many candidates each HARD field constraint excluded (all sources).
+   *  Absent fields excluded nothing. Drives the UI's "loosen this field" hint. */
+  constraintDrops: Partial<Record<ConstraintField, number>>;
 }
 export interface MarketInfo {
   /** 'ok' = scored in full; 'needs_district' = too broad; 'too_many' = exceeds the
@@ -1695,18 +1842,41 @@ export async function matchProjectsCore(
         const typeTerms = reqTypeList.length
           ? [...new Set(reqTypeList.flatMap((t) => propertyTypeTerms(t)))]
           : null;
+        // The DB pre-filter is an OPTIMIZATION, never the policy: it must only
+        // ever narrow to what firstFailedHardConstraint would keep anyway.
+        // Therefore a field filters in SQL ONLY when it is HARD — a 'soft' field
+        // (score-only) passes null so nothing is cut before scoring. Every bound
+        // is the tolerance-WIDENED one, so the band the rep chose survives the
+        // SQL cut and the scorer makes the final call. (Pre-2026-07-19 these
+        // filtered unconditionally at the exact bound — the root cause of the
+        // "stretch is dead code" and "under-budget never surfaces" bugs.)
+        const cBudget = resolveConstraint('budget', req.constraints);
+        const cArea = resolveConstraint('area', req.constraints);
+        const cBeds = resolveConstraint('bedrooms', req.constraints);
+        const cType = resolveConstraint('property_type', req.constraints);
+        const cAge = resolveConstraint('unit_age', req.constraints);
+        const areaBand = widenBand(req.area_min ?? null, req.area_max ?? null, cArea.tolerance_pct);
         const baseArgs = {
           p_model_id: mModel.id,
-          // Soft floor: the DB pre-filter gets the 10%-lowered floor so a
-          // slightly-under-budget listing survives to scoring (where it takes
-          // the 0.9 budget subscore) instead of never being seen at all.
-          ...marketBudgetBounds(req),
-          p_bedrooms: req.bedrooms ?? null,
-          p_type_terms: typeTerms,
+          ...(cBudget.mode === 'hard'
+            ? marketBudgetBounds(req)
+            : { p_budget_min: null, p_budget_max: null }),
+          // Area: NEW pre-filter param (2026-07-19). Listings carry a single
+          // area, so the widened band applies directly; NULL/unparsable areas
+          // survive the SQL cut and are rejected by the JS gate instead (one
+          // missing-data policy, in one place).
+          p_area_min: cArea.mode === 'hard' && areaBand.lo != null ? Math.round(areaBand.lo) : null,
+          p_area_max: cArea.mode === 'hard' && areaBand.hi != null ? Math.round(areaBand.hi) : null,
+          p_bedrooms: cBeds.mode === 'hard' && req.bedrooms != null
+            ? Math.floor(req.bedrooms * (1 - cBeds.tolerance_pct))
+            : null,
+          p_type_terms: cType.mode === 'hard' ? typeTerms : null,
           // Missing-tolerant DB-side age filter: only listings whose PARSED age
           // is known and over the max are dropped; unknown ages survive to
           // scoring (where they take the requested-but-missing penalty).
-          p_max_age: req.max_unit_age ?? null,
+          p_max_age: cAge.mode === 'hard' && req.max_unit_age != null
+            ? req.max_unit_age * (1 + cAge.tolerance_pct)
+            : null,
         };
         // Market SCOPE: the requested district(s) when set; ELSE the client's
         // location_items AREA (geoGate = geo-matched record ids, which include the
@@ -1774,9 +1944,11 @@ export async function matchProjectsCore(
 
   let anyDistrictExact = false;
   let anyNearby = false;
-  // Candidates dropped by the required_amenities hard gate (all sources) — surfaced
-  // as an honest note so a thin result list never reads as "that's all there is".
-  let requiredAmenitiesDropped = 0;
+  // Per-field HARD-gate exclusions across all sources. Surfaced in the result
+  // metadata + a note, so a thin list never reads as "that's all there is" —
+  // the rep can see WHICH constraint is doing the cutting and loosen that one.
+  const constraintDrops: Partial<Record<ConstraintField, number>> = {};
+  const noteConstraintDrop = (f: ConstraintField) => { constraintDrops[f] = (constraintDrops[f] ?? 0) + 1; };
 
   // Build the GeoContext + per-result geo annotations for one record. When
   // verifyGeo is on, the project's district is the polygon that CONTAINS its pin
@@ -1824,7 +1996,10 @@ export async function matchProjectsCore(
       const name = asStr(r.data.project_name);
       if (!name) continue;
       if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
-      if (!passesRequiredAmenities(r.data, req)) { requiredAmenitiesDropped += 1; continue; } // must-have gate
+      // unit_age default 0 mirrors the scorer's catalog assumption (new-development
+      // stock), so a hard age cap doesn't reject the whole catalog as "unknown age".
+      const failed = firstFailedHardConstraint({ unit_age: 0, ...r.data }, req);
+      if (failed) { noteConstraintDrop(failed); continue; }
       const loc = recordLocationIds(r.data);
       const g = geoFor(r, loc, polyMap, verifyGeo);
       // unit_age default 0: the catalog (our_projects/all_projects) is new-
@@ -1935,7 +2110,8 @@ export async function matchProjectsCore(
           const name = asStr(adapted.project_name);
           if (!name) continue;
           if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
-          if (!passesRequiredAmenities(adapted, req)) { requiredAmenitiesDropped += 1; continue; } // must-have gate
+          const failedC = firstFailedHardConstraint(adapted, req);
+          if (failedC) { noteConstraintDrop(failedC); continue; }
           const loc = recordLocationIds(r.data);
           // Market listings are EXTERNAL / unverified by design (flagged "verify
           // before offering") and keep their stored district + own coords
@@ -2006,9 +2182,14 @@ export async function matchProjectsCore(
   if (usedFallback) {
     notes.push('No good match in our_projects — falling back to all_projects. Those results MUST be verified before offering.');
   }
-  if ((req.required_amenities?.length ?? 0) > 0 && requiredAmenitiesDropped > 0) {
+  const dropEntries = (Object.entries(constraintDrops) as Array<[ConstraintField, number]>)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+  if (dropEntries.length) {
     notes.push(
-      `Must-have amenities (${req.required_amenities!.join(', ')}) excluded ${requiredAmenitiesDropped} candidates that do not list them. Candidates with NO amenity data are excluded too ("must have" fails closed) — untick the must-have toggle to see them.`,
+      `Required-field filters excluded ${dropEntries.map(([f, n]) => `${n} on ${f}`).join(', ')}. ` +
+      'Candidates with NO data for a required field are excluded too (required means verified-present, not unknown) — ' +
+      'switch that field to "preferred", or widen its tolerance band, to see them.',
     );
   }
 
@@ -2024,6 +2205,7 @@ export async function matchProjectsCore(
     all: tier2,
     market,
     marketInfo,
+    constraintDrops,
   };
 }
 

@@ -28,6 +28,7 @@ import {
   type MarketInfo,
 } from './matchAgent.js';
 import type { GeoStatus } from './geoVerify.js';
+import type { ConstraintField } from './constraints.js';
 
 export type { MatchSource } from './matchAgent.js';
 
@@ -92,6 +93,9 @@ export interface FinderResult {
     /** Market-source status — lets the UI be honest when market wasn't fully scanned
      *  (too dense → ask for more criteria) instead of silently showing a subset. */
     market: MarketInfo;
+    /** Per-field HARD-constraint exclusion counts (all sources). Lets the UI say
+     *  WHICH required field is cutting the list, instead of an empty page. */
+    constraint_drops: Partial<Record<ConstraintField, number>>;
   };
 }
 
@@ -425,6 +429,7 @@ export function groupForFinder(
       missing_required_preferences: missingPreferences(req),
       notes: core.notes,
       market: core.marketInfo,
+      constraint_drops: core.constraintDrops ?? {},
     },
   };
 }

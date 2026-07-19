@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { __test, passesRequiredAmenities, marketBudgetBounds, type MatchResultItem, type MatchCoreSuccess, type MatchRequirements } from '../matchAgent';
+import {
+  __test, passesRequiredAmenities, marketBudgetBounds, firstFailedHardConstraint, typeTextMatches,
+  type MatchResultItem, type MatchCoreSuccess, type MatchRequirements,
+} from '../matchAgent';
 import { classifyGeo } from '../geoVerify';
 import {
   groupForFinder,
@@ -265,11 +268,17 @@ describe('9b. soft budget floor (10% tolerance below budget_min)', () => {
 // Regression: a 1.85M listing was invisible to a 1.8M search because the DB cut
 // at the exact ceiling, so the 15% stretch branch could never fire (2026-07-19).
 // ─────────────────────────────────────────────────────────────────────────────
-describe('9b-ii. market pre-filter budget window (floor 0.9 / ceiling 1.15)', () => {
+describe('9b-ii. market pre-filter budget window (±15% default band)', () => {
   it('widens BOTH bounds so the scorer decides, not the SQL filter', () => {
     const b = marketBudgetBounds({ budget_min: 2_000_000, budget_max: 1_800_000 });
-    expect(b.p_budget_min).toBe(1_800_000); // 2.0M × 0.9
+    expect(b.p_budget_min).toBe(1_700_000); // 2.0M × 0.85
     expect(b.p_budget_max).toBe(2_070_000); // 1.8M × 1.15
+  });
+  it('the band follows the budget CONSTRAINT tolerance', () => {
+    const tight = marketBudgetBounds({ budget_max: 1_000_000, constraints: { budget: { mode: 'hard', tolerance_pct: 0 } } });
+    expect(tight.p_budget_max).toBe(1_000_000);
+    const loose = marketBudgetBounds({ budget_max: 1_000_000, constraints: { budget: { mode: 'hard', tolerance_pct: 0.25 } } });
+    expect(loose.p_budget_max).toBe(1_250_000);
   });
   it('the live-miss listing (1.85M vs a 1.8M budget) survives the pre-filter', () => {
     const { p_budget_max } = marketBudgetBounds({ budget_max: 1_800_000 });
@@ -282,6 +291,81 @@ describe('9b-ii. market pre-filter budget window (floor 0.9 / ceiling 1.15)', ()
   });
   it('absent bounds stay null (no filter)', () => {
     expect(marketBudgetBounds({})).toEqual({ p_budget_min: null, p_budget_max: null });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST 9d — PER-FIELD hard constraints. The regression that motivated them: a
+// 125 m² villa scored 89% against a 500–750 m² request because area was a soft
+// 10-of-90 dimension and had NO pre-filter at all (live 2026-07-19).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('9d. per-field hard constraints', () => {
+  const small = { ...baseProject, area_range: { min: 125, max: 125 } };
+  const req = { area_min: 500, area_max: 750 } as MatchRequirements;
+
+  it('area HARD (default) excludes the 125 m² candidate outright', () => {
+    expect(firstFailedHardConstraint(small, req)).toBe('area');
+  });
+  it('area SOFT keeps the old score-only behavior (nothing excluded)', () => {
+    expect(firstFailedHardConstraint(small, { ...req, constraints: { area: { mode: 'soft' } } })).toBeNull();
+    // …and it still scores badly, which is the point of soft mode.
+    expect(scoreProject(small, req, {}).breakdown.area).toBe(0);
+  });
+  it('the tolerance band widens INCLUSION on both sides', () => {
+    const justUnder = { ...baseProject, area_range: { min: 450, max: 450 } }; // 10% under 500
+    expect(firstFailedHardConstraint(justUnder, { ...req, constraints: { area: { mode: 'hard', tolerance_pct: 0 } } })).toBe('area');
+    expect(firstFailedHardConstraint(justUnder, { ...req, constraints: { area: { mode: 'hard', tolerance_pct: 0.15 } } })).toBeNull();
+  });
+  it('an overlapping span passes (a project with SOME units in range)', () => {
+    const spans = { ...baseProject, area_range: { min: 300, max: 800 } };
+    expect(firstFailedHardConstraint(spans, req)).toBeNull();
+  });
+  it('fails CLOSED when the candidate has no data for a hard field', () => {
+    const noArea = { ...baseProject, area_range: undefined };
+    expect(firstFailedHardConstraint(noArea, req)).toBe('area');
+    expect(firstFailedHardConstraint(noArea, { ...req, constraints: { area: { mode: 'soft' } } })).toBeNull();
+  });
+  it('bedrooms/bathrooms are AT-LEAST — more than asked still passes', () => {
+    const seven = { ...baseProject, bedroom_range: { min: 7, max: 7 } };
+    expect(firstFailedHardConstraint(seven, { bedrooms: 6 })).toBeNull();
+    const four = { ...baseProject, bedroom_range: { min: 4, max: 4 } };
+    expect(firstFailedHardConstraint(four, { bedrooms: 6 })).toBe('bedrooms');
+  });
+  it('budget honors allow_stretch:false by collapsing the upper band', () => {
+    const over = { ...baseProject, price_range: { min: 1_850_000, max: 1_850_000 } };
+    expect(firstFailedHardConstraint(over, { budget_max: 1_800_000 })).toBeNull(); // within +15%
+    expect(firstFailedHardConstraint(over, { budget_max: 1_800_000, allow_stretch: false })).toBe('budget');
+  });
+  it('reports the FIRST failing field (drives the per-field drop counts)', () => {
+    const wrong = { ...baseProject, area_range: { min: 100, max: 100 }, price_range: { min: 9_000_000, max: 9_000_000 } };
+    expect(firstFailedHardConstraint(wrong, { area_min: 500, budget_max: 1_000_000 })).toBe('budget');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST 9e — Property type is matched on the PRIMARY type, not any substring.
+// Regression: "شقة في فيلا" matched a villa request via includes() and an
+// apartment outranked real villas (live 2026-07-19).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('9e. primary-type matching', () => {
+  const villaNeedles = ['villa', 'villas', 'فيلا', 'فلل'];
+  it('"شقة في فيلا" does NOT satisfy a villa request', () => {
+    expect(typeTextMatches('شقة في فيلا', villaNeedles)).toBe(false);
+  });
+  it('a real villa still matches', () => {
+    expect(typeTextMatches('فيلا، sale، فلل-للبيع', villaNeedles)).toBe(true);
+  });
+  it('the earliest keyword wins for concatenated Aqar type text', () => {
+    expect(typeTextMatches('تاون هاوس sale فلل-للبيع', villaNeedles)).toBe(false);
+    expect(typeTextMatches('تاون هاوس sale فلل-للبيع', ['تاون هاوس', 'townhouse'])).toBe(true);
+  });
+  it('unknown type text falls back to the loose test (no data loss)', () => {
+    expect(typeTextMatches('something-else', ['something'])).toBe(true);
+  });
+  it('the apartment is now EXCLUDED from a villa-only search', () => {
+    const apt = { ...baseProject, unit_types: ['شقة في فيلا', 'sale', 'شقق-للبيع'] };
+    expect(firstFailedHardConstraint(apt, { property_type: 'فيلا' })).toBe('property_type');
+    expect(scoreProject(apt, { property_type: 'فيلا' }, {}).breakdown.type).toBe(0);
   });
 });
 

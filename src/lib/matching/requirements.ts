@@ -16,6 +16,7 @@
  */
 
 import type { AppModel } from '@/types';
+import type { RequirementConstraints } from './constraints';
 
 /** Mirror of api/_lib/matchAgent.MatchRequirements (the fields the SPA fills). */
 export interface MatchRequirementsInput {
@@ -51,6 +52,9 @@ export interface MatchRequirementsInput {
    *  of them (hard gate, fails closed on no-amenity-data). Set by the finder UIs'
    *  "must have" toggle from the selected `amenities`; never stored on the client. */
   required_amenities?: string[];
+  /** PER-FIELD strictness (hard/soft + tolerance band). Omitted fields fall back
+   *  to DEFAULT_CONSTRAINTS in the engine. See `./constraints`. */
+  constraints?: RequirementConstraints;
 }
 
 export interface DraftToRequirementsArgs {
