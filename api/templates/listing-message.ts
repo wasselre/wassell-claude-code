@@ -40,6 +40,12 @@ interface ListingFacts {
   area: number | null;
   bedrooms: number | null;
   bathrooms: number | null;
+  living_rooms: number | null;
+  floors_count: number | null;
+  age: string | null;
+  frontage: string | null;
+  street_width: number | null;
+  features: string[];
   price: number | null;
   description: string | null;
 }
@@ -85,16 +91,17 @@ function oneId(v: unknown): string | null {
 
 const SYSTEM_PROMPT = `You are a real-estate marketing copywriter for Wassel Real Estate (وصل العقارية), a Saudi company. You write short, attractive WhatsApp messages that advertise a single property listing to a potential buyer.
 
-You are given STRUCTURED FACTS (unit type, district, city, area in m², bedrooms, bathrooms, optional price) plus the listing's free-text Arabic DESCRIPTION. Write the message by calling \`write_listing_message\`.
+You are given STRUCTURED FACTS (unit type, district, city, area in m², rooms, floors, age, frontage, street width, features, optional price) plus the listing's free-text Arabic DESCRIPTION. Write the message by calling \`write_listing_message\`.
 
 Rules:
 1. Write in BOTH languages: body_ar (Arabic, the primary) and body_en (a faithful English equivalent).
-2. The message MUST mention, where present: the unit type, the district, the area (m²), the number of bedrooms, and the number of bathrooms.
-3. Extract the features / amenities ONLY from the DESCRIPTION (e.g. private pool, elevator, maid's room, parking, finishing quality, near a mosque/school) and weave the real ones in. Do NOT invent amenities, prices, areas, or any fact not given.
+2. COVER EVERY FACT: the message must mention EVERY structured fact that is present (non-null), plus every real feature/amenity stated in the DESCRIPTION (e.g. private pool, elevator, maid's room, parking, finishing quality, furnished/unfurnished, utilities, near a mosque/school) — each summarized briefly, not quoted verbatim. Skip only facts that are null/absent. Do NOT invent amenities, prices, areas, or any fact not given.
+3. FORMAT: a short attractive intro line naming the unit type + district/city, then ONE short line per fact (use "- " dashes), grouped sensibly (size/rooms together is fine). Keep each line tight — this is WhatsApp, summarize, never ramble.
 4. Use Saudi Riyal (ر.س / SAR) if a price is provided; never invent a price.
-5. Keep it concise and WhatsApp-friendly (a short intro line + the key facts). A few tasteful emojis are fine; do not overuse them.
-6. END the message after the key facts — the LAST line is the price (or the last available fact if there is no price). Do NOT add any closing line: NO call to action, NO "للتواصل والاستفسار", NO contact/inquiry line, NO agency name or sign-off (e.g. «وصل العقارية» / «لقطة وصل» / «Wassel»). Nothing after the facts.
-7. Natural marketing tone — not a dry field list. NEVER write prose outside the tool; ALWAYS call write_listing_message.`;
+5. body_en PROPER NOUNS: transliterate Arabic district/city/project/street names phonetically into Latin letters (e.g. «حي المهدية» → "Al Mahdiya"). NEVER substitute a different similar-sounding place name and NEVER translate the name's meaning; if unsure, keep the Arabic name transliterated letter-for-letter.
+6. A few tasteful emojis are fine; do not overuse them.
+7. END the message after the facts — the LAST line is the price (or the last available fact if there is no price). Do NOT add any closing line: NO call to action, NO "للتواصل والاستفسار", NO contact/inquiry line, NO agency name or sign-off (e.g. «وصل العقارية» / «لقطة وصل» / «Wassel»). Nothing after the facts.
+8. Natural marketing tone — summarized facts, not a dry copy of the description. NEVER write prose outside the tool; ALWAYS call write_listing_message.`;
 
 const TOOL_SCHEMA = {
   name: 'write_listing_message',
@@ -171,6 +178,14 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
       area: asFiniteNumber(ld.area),
       bedrooms: asFiniteNumber(ld.bedrooms),
       bathrooms: asFiniteNumber(ld.bathrooms),
+      living_rooms: asFiniteNumber(ld.living_rooms),
+      floors_count: asFiniteNumber(ld.floors_count),
+      age: asString(ld.age),
+      frontage: asString(ld.frontage),
+      street_width: asFiniteNumber(ld.street_width),
+      features: Array.isArray(ld.features)
+        ? (ld.features as unknown[]).filter((f): f is string => typeof f === 'string' && !!f.trim())
+        : [],
       price: asFiniteNumber(ld.price),
       description: asString(ld.description),
     };
@@ -184,6 +199,12 @@ ${JSON.stringify(
     area_m2: facts.area,
     bedrooms: facts.bedrooms,
     bathrooms: facts.bathrooms,
+    living_rooms: facts.living_rooms,
+    floors: facts.floors_count,
+    property_age: facts.age,
+    frontage: facts.frontage,
+    street_width_m: facts.street_width,
+    features: facts.features.length > 0 ? facts.features : null,
     price_sar: facts.price,
   },
   null,
