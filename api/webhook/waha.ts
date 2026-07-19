@@ -96,6 +96,8 @@ export default async function handler(req: Request): Promise<Response> {
       await handleMessage(event, session);
     } else if (type === 'message.ack') {
       await handleAck(event);
+    } else if (type === 'message.reaction') {
+      await handleReaction(event, session);
     } else if (type === 'message' || type === 'session.status') {
       // `message` is a duplicate of `message.any`; session.status has no
       // chat_messages effect (device state is polled by the watchdog). No-op.
@@ -154,7 +156,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   const chatWid = `${digits}@c.us`;
 
   const mime = p.media?.mimetype ?? null;
-  const kind = (p.hasMedia || p.media) ? kindFromMime(mime) : 'text';
+  const kind = (p.hasMedia || p.media) ? kindFromMime(mime, p._data?.Info?.MediaType) : 'text';
 
   let mediaFileId: string | null = null;
   if (p.media?.url) {
@@ -200,6 +202,72 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   });
 }
 
+/**
+ * message.reaction → a `reaction` row pointing at the target message.
+ *
+ * Payload: `{ payload: { from, fromMe?, reaction: { text, messageId } } }`.
+ * An EMPTY `text` means the reaction was REMOVED. Reactions carry no id of their
+ * own, so the row id is synthesized per (target, sender) — re-reacting upserts
+ * over the previous emoji instead of stacking rows.
+ */
+async function handleReaction(event: WahaEvent, session: string): Promise<void> {
+  const p = event.payload as (WahaMessageRaw & {
+    reaction?: { text?: string | null; messageId?: string | null };
+  }) | undefined;
+  const targetId = p?.reaction?.messageId;
+  if (!p || !targetId) return;
+
+  const emoji = (p.reaction?.text ?? '').trim();
+  const flow: 'in' | 'out' = p.fromMe ? 'out' : 'in';
+
+  const rawChat =
+    chatIdFromMessageId(targetId) ??
+    String(p.from ?? '');
+  let counterpartyPhone = phoneFromJid(rawChat) ?? (flow === 'in' ? resolveWahaPhone(p) : null);
+  if (!counterpartyPhone && rawChat.endsWith('@lid')) {
+    counterpartyPhone = await resolveLidToPhone(session, rawChat);
+  }
+  if (!counterpartyPhone) {
+    console.warn('[webhook.waha] reaction: could not resolve chat for target', targetId, 'rawChat=', rawChat);
+    return;
+  }
+  const chatWid = `${counterpartyPhone.replace(/\D/g, '')}@c.us`;
+  const rowId = `reaction_${targetId}_${flow === 'out' ? 'me' : counterpartyPhone.replace(/\D/g, '')}`;
+
+  // Reaction REMOVED — drop the stored reaction rather than leaving a stale one.
+  if (!emoji) {
+    const supa = getServiceSupabase();
+    const { error } = await supa.from('chat_messages').delete().eq('id', rowId);
+    if (error) console.error('[webhook.waha] reaction delete failed:', error.message);
+    return;
+  }
+
+  const ts = typeof p.timestamp === 'number' ? p.timestamp : Math.floor(Date.now() / 1000);
+  await upsertChatMessage({
+    id: rowId,
+    chat_wid: chatWid,
+    conversation_record_id: uuidV5FromWidSync(chatWid),
+    device_id: session,
+    flow,
+    kind: 'reaction',
+    subtype: null,
+    body: emoji,
+    from_phone: flow === 'in' ? counterpartyPhone : null,
+    to_phone: flow === 'out' ? counterpartyPhone : null,
+    ack: null,
+    date: new Date(ts * 1000).toISOString(),
+    media_file_id: null,
+    media_mime: null,
+    media_size: null,
+    media_caption: null,
+    reference: null,
+    // Points at the message that was reacted to.
+    quoted: { wid: targetId, body: null, kind: 'text' },
+  });
+  // Deliberately NOT bumping the conversation record: a reaction should not
+  // steal the last-message preview or raise an unread badge.
+}
+
 async function handleAck(event: WahaEvent): Promise<void> {
   const p = event.payload;
   const wid = p?.id;
@@ -229,8 +297,16 @@ function chatIdFromMessageId(id: string | undefined): string | null {
   return parts.length >= 3 && parts[1]?.includes('@') ? parts[1]! : null;
 }
 
-function kindFromMime(mime: string | null): string {
+/**
+ * Media kind. WhatsApp stickers are `image/webp` and WAHA additionally reports
+ * `_data.Info.MediaType === 'sticker'` — without this they were stored as plain
+ * images and lost the sticker rendering the UI already supports (verified live
+ * 2026-07-19: an inbound sticker arrived as image/webp).
+ */
+function kindFromMime(mime: string | null, mediaType?: string | null): string {
+  if (mediaType && mediaType.toLowerCase() === 'sticker') return 'sticker';
   if (!mime) return 'document';
+  if (mime === 'image/webp') return 'sticker';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('video/')) return 'video';
   if (mime.startsWith('audio/')) return 'audio';
