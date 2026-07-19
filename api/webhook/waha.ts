@@ -98,6 +98,10 @@ export default async function handler(req: Request): Promise<Response> {
       await handleAck(event);
     } else if (type === 'message.reaction') {
       await handleReaction(event, session);
+    } else if (type === 'message.revoked') {
+      await handleRevoked(event);
+    } else if (type === 'message.edited') {
+      await handleEdited(event);
     } else if (type === 'message' || type === 'session.status') {
       // `message` is a duplicate of `message.any`; session.status has no
       // chat_messages effect (device state is polled by the watchdog). No-op.
@@ -268,6 +272,44 @@ async function handleReaction(event: WahaEvent, session: string): Promise<void> 
   });
   // Deliberately NOT bumping the conversation record: a reaction should not
   // steal the last-message preview or raise an unread badge.
+}
+
+/**
+ * message.revoked → the customer DELETED a message ("deleted for everyone").
+ *
+ * Payload: `{ payload: { revokedMessageId, after: { id } } }`. We keep the row
+ * (deleting it would silently rewrite history and hide that a deletion
+ * happened) and re-kind it to 'revoked', which the bubble already renders as a
+ * muted "message deleted" notice. The original body is cleared — the customer
+ * asked for it to be withdrawn.
+ */
+async function handleRevoked(event: WahaEvent): Promise<void> {
+  const p = event.payload as { revokedMessageId?: string | null } | undefined;
+  const targetId = p?.revokedMessageId;
+  if (!targetId) return;
+  const supa = getServiceSupabase();
+  const { error } = await supa
+    .from('chat_messages')
+    .update({ kind: 'revoked', body: null, media_file_id: null })
+    .eq('id', targetId);
+  if (error) console.error('[webhook.waha] revoke update failed:', error.message);
+}
+
+/**
+ * message.edited → the customer EDITED a message. Payload:
+ * `{ payload: { editedMessageId, body } }`. Update the stored text in place so
+ * the thread shows what the message actually says now.
+ */
+async function handleEdited(event: WahaEvent): Promise<void> {
+  const p = event.payload as { editedMessageId?: string | null; body?: string | null } | undefined;
+  const targetId = p?.editedMessageId;
+  if (!targetId) return;
+  const supa = getServiceSupabase();
+  const { error } = await supa
+    .from('chat_messages')
+    .update({ body: p?.body ?? null })
+    .eq('id', targetId);
+  if (error) console.error('[webhook.waha] edit update failed:', error.message);
 }
 
 async function handleAck(event: WahaEvent): Promise<void> {

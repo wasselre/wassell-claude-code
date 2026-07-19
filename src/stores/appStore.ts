@@ -1419,6 +1419,27 @@ function dbRowToChatMessage(row: DbChatMessageRow): ChatMessage {
  *  history instead of a false "no messages yet" empty state. Newest-first
  *  query, returned ascending like the live path. Returns null when Supabase
  *  is unconfigured or the read fails. */
+/**
+ * Reactions live ONLY in our own `chat_messages` mirror — the gateway's history
+ * API returns messages, not reactions — so a thread rebuilt from the live fetch
+ * would lose every 👍 on reload. Load them separately and merge.
+ */
+async function loadReactionsFromMirror(chatWid: string): Promise<ChatMessage[]> {
+  if (!supabase) return [];
+  const { data, error } = await supabase
+    .from('chat_messages')
+    .select('*')
+    .eq('chat_wid', chatWid)
+    .eq('kind', 'reaction')
+    .order('date', { ascending: true })
+    .limit(500);
+  if (error) {
+    console.error('[loadReactionsFromMirror] read failed:', error.message);
+    return [];
+  }
+  return ((data ?? []) as DbChatMessageRow[]).map(dbRowToChatMessage);
+}
+
 async function loadMessagesFromMirror(
   chatWid: string,
   opts: { before?: string; size?: number },
@@ -4846,15 +4867,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       result = fallback;
     }
 
+    // Reactions come from our mirror only (the gateway's history API doesn't
+    // return them) — without this they'd disappear on every thread reload.
+    const reactions = await loadReactionsFromMirror(chatWid);
+
     // Merge into the slice. When `before` is set, we're loading older
     // history — prepend. Otherwise replace the window with the fresh latest.
     // Either way, dedupe by message id and keep ascending by date.
     set((s) => {
       const existing = s.chatMessages[chatWid] ?? [];
       const byId = new Map<string, ChatMessage>();
-      // Existing rows first so fresh-from-Haberchat values overwrite stale ones.
+      // Existing rows first so fresh-from-gateway values overwrite stale ones.
       for (const m of existing) byId.set(m.id, m);
       for (const m of result.messages) byId.set(m.id, m);
+      for (const m of reactions) byId.set(m.id, m);
       const merged = [...byId.values()].sort((a, b) => a.date.localeCompare(b.date));
       return { chatMessages: { ...s.chatMessages, [chatWid]: merged } };
     });

@@ -18,9 +18,12 @@ import type { ChatMessage } from '@/types';
 export default function MessageBubble({
   message,
   isAr,
+  reactions,
 }: {
   message: ChatMessage;
   isAr: boolean;
+  /** Reaction rows whose `quoted.wid` targets THIS message (see MessageThread). */
+  reactions?: ChatMessage[];
 }) {
   const isOut = message.flow === 'out';
 
@@ -44,9 +47,12 @@ export default function MessageBubble({
 
   return (
     <div className={`flex ${isOut ? 'justify-end' : 'justify-start'} w-full`}>
+      {/* Column wrapper so any reaction badge hangs off the bubble's bottom
+          edge on the same side, instead of becoming its own bubble. */}
+      <div className={`flex flex-col max-w-[75%] sm:max-w-[65%] ${isOut ? 'items-end' : 'items-start'}`}>
       <div
         dir={isAr ? 'rtl' : 'ltr'}
-        className={`max-w-[75%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm ${
+        className={`max-w-full rounded-2xl px-3.5 py-2 shadow-sm ${
           isOut
             ? 'bg-copper/10 text-charcoal rounded-br-md'
             : 'bg-sand/20 text-charcoal rounded-bl-md'
@@ -70,6 +76,39 @@ export default function MessageBubble({
           <AckIndicator message={message} />
         </div>
       </div>
+      {reactions && reactions.length > 0 && (
+        <ReactionBadge reactions={reactions} isAr={isAr} />
+      )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * WhatsApp-style reaction pill hanging off the bubble's bottom edge. Identical
+ * emojis are aggregated with a count (several people can send the same one).
+ */
+function ReactionBadge({ reactions, isAr }: { reactions: ChatMessage[]; isAr: boolean }) {
+  const counts = new Map<string, number>();
+  for (const r of reactions) {
+    const emoji = (r.body ?? '').trim();
+    if (!emoji) continue;
+    counts.set(emoji, (counts.get(emoji) ?? 0) + 1);
+  }
+  if (counts.size === 0) return null;
+  const total = [...counts.values()].reduce((a, b) => a + b, 0);
+  return (
+    <div
+      dir={isAr ? 'rtl' : 'ltr'}
+      title={isAr ? `${total} تفاعل` : `${total} reaction${total > 1 ? 's' : ''}`}
+      className="-mt-1.5 flex items-center gap-1 rounded-full bg-white border border-sand/60 shadow-sm px-1.5 py-0.5"
+    >
+      {[...counts.entries()].map(([emoji, n]) => (
+        <span key={emoji} className="text-[13px] leading-none">
+          {emoji}
+          {n > 1 && <span className="ms-0.5 text-[10px] align-middle text-charcoal/60">{n}</span>}
+        </span>
+      ))}
     </div>
   );
 }

@@ -127,7 +127,29 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
     }
   };
 
-  const grouped = useMemo(() => groupByDay(messages, isAr), [messages, isAr]);
+  // Reactions are stored as their own rows pointing at the message they were
+  // placed on (`quoted.wid`). They must NOT render as standalone bubbles —
+  // split them out and hand each target message its emojis so the bubble can
+  // show them as a badge, the way WhatsApp does.
+  const { conversational, reactionsByTarget } = useMemo(() => {
+    const byTarget = new Map<string, ChatMessage[]>();
+    const rest: ChatMessage[] = [];
+    for (const m of messages) {
+      const targetWid = m.kind === 'reaction' ? m.quoted?.wid : undefined;
+      if (targetWid) {
+        const list = byTarget.get(targetWid);
+        if (list) list.push(m);
+        else byTarget.set(targetWid, [m]);
+      } else if (m.kind !== 'reaction') {
+        rest.push(m);
+      }
+      // A reaction with no resolvable target is dropped rather than shown as a
+      // stray bubble — it carries no meaning on its own.
+    }
+    return { conversational: rest, reactionsByTarget: byTarget };
+  }, [messages]);
+
+  const grouped = useMemo(() => groupByDay(conversational, isAr), [conversational, isAr]);
 
   return (
     // h-full: fill whatever the parent allocates. ChatDetail wraps this in a
@@ -193,7 +215,12 @@ export default function MessageThread({ chatWid }: { chatWid: string }) {
           <div key={group.key} className="space-y-2">
             <DaySeparator label={group.label} />
             {group.messages.map((m) => (
-              <MessageBubble key={m.id} message={m} isAr={isAr} />
+              <MessageBubble
+                key={m.id}
+                message={m}
+                isAr={isAr}
+                reactions={reactionsByTarget.get(m.id)}
+              />
             ))}
           </div>
         ))}
