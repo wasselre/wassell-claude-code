@@ -24,8 +24,9 @@ interface PreferenceSummaryProps {
 // cascade) — there are no separate preferred_cities / preferred_districts fields.
 // budget + preferred_bedrooms render as min/max ranges, unit_type/purchase_objective
 // as multiselect, preference_notes as a textarea. Slugs missing from the live model
-// are skipped.
-const PREF_SLUGS = ['location', 'preferred_unit_type', 'preferred_area', 'preferred_bedrooms', 'budget', 'purchase_objective', 'preference_notes'] as const;
+// are skipped. Mirrors the Finder's editable set (unit age + amenities included) so
+// the Workspace captures every preference the matching engine can use.
+const PREF_SLUGS = ['location', 'preferred_unit_type', 'preferred_max_unit_age', 'preferred_area', 'preferred_bedrooms', 'budget', 'preferred_amenities', 'purchase_objective', 'preference_notes'] as const;
 
 /** Inline-editable client preferences — unit type, budget, location, direction. */
 export default function PreferenceSummary({ clientId, onEditFull, draft: draftProp, onFieldChange }: PreferenceSummaryProps) {
