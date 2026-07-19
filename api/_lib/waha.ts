@@ -26,8 +26,8 @@
  * media-URL findings this adapter is built around.
  */
 
-import { makeServiceClient } from './serviceClient';
-import type { HaberchatDevice, HaberchatChat, HaberchatMessage } from './haberchat';
+import { makeServiceClient } from './serviceClient.js';
+import type { HaberchatDevice, HaberchatChat, HaberchatMessage } from './haberchat.js';
 
 const OUTBOUND_BUCKET = 'wassel-files';
 const OUTBOUND_PREFIX = 'waha-outbound';

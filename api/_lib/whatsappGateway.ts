@@ -13,12 +13,12 @@
  * inert until a `whatsapp_numbers` row is set to provider='waha'.
  */
 
-import { makeServiceClient } from './serviceClient';
-import * as haberchat from './haberchat';
-import * as waha from './waha';
-import { HaberchatError } from './haberchat';
-import { WahaError } from './waha';
-import type { HaberchatDevice, HaberchatChat, HaberchatMessage } from './haberchat';
+import { makeServiceClient } from './serviceClient.js';
+import * as haberchat from './haberchat.js';
+import * as waha from './waha.js';
+import { HaberchatError } from './haberchat.js';
+import { WahaError } from './waha.js';
+import type { HaberchatDevice, HaberchatChat, HaberchatMessage } from './haberchat.js';
 
 export type Provider = 'haberchat' | 'waha';
 
