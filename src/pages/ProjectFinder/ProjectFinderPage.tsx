@@ -103,6 +103,10 @@ export default function ProjectFinderPage() {
   // The structured preference buffer (same slug shape as the Follow-up draft).
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [bedrooms, setBedrooms] = useState<number | ''>('');
+  // "Must have" toggle for the selected amenities: when on, they become
+  // required_amenities — a HARD engine gate (candidates not listing ALL of them
+  // are dropped, fails closed). UI-only — never persisted anywhere.
+  const [amenitiesRequired, setAmenitiesRequired] = useState(false);
   const [sources, setSources] = useState<Record<FinderSource, boolean>>({
     our_projects: true, all_projects: true, market_listings: false,
   });
@@ -240,6 +244,8 @@ export default function ProjectFinderPage() {
       clientsModel, prefDraft: draft, savedClientData: clientRec?.data ?? null, resolveLookupName,
     });
     if (typeof bedrooms === 'number' && bedrooms > 0) reqs.bedrooms = bedrooms;
+    // "Must have" toggle → the selected amenities become a hard engine gate.
+    if (amenitiesRequired && reqs.amenities?.length) reqs.required_amenities = reqs.amenities;
     return reqs;
   }
 
@@ -247,7 +253,7 @@ export default function ProjectFinderPage() {
     const r = buildRequirements();
     return Object.keys(r).length > 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, bedrooms, resolveLookupName, clientRec]);
+  }, [draft, bedrooms, amenitiesRequired, resolveLookupName, clientRec]);
 
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -307,6 +313,7 @@ export default function ProjectFinderPage() {
     controllerRef.current?.abort();
     setDraft({});
     setBedrooms('');
+    setAmenitiesRequired(false);
     setSources({ our_projects: true, all_projects: true, market_listings: false });
     setScoreThreshold(FETCH_FLOOR);
     setSortKey('score');
@@ -638,6 +645,17 @@ export default function ProjectFinderPage() {
                       recordId={selectedClientId ?? undefined}
                       onPatch={(patch) => setDraft((d) => ({ ...d, ...patch }))}
                     />
+                    {field.name === 'preferred_amenities' && (
+                      <label className="mt-1 flex items-center gap-1.5 text-[11px] font-semibold text-charcoal/70">
+                        <input
+                          type="checkbox"
+                          checked={amenitiesRequired}
+                          onChange={(e) => setAmenitiesRequired(e.target.checked)}
+                          className="accent-copper"
+                        />
+                        {L('إلزامية — استبعد أي خيار لا تتوفر فيه كل المميزات المحددة', 'Must have — exclude any option not listing ALL selected amenities')}
+                      </label>
+                    )}
                   </div>
                 ))}
 

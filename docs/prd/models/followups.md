@@ -5,7 +5,7 @@
 # Model: Follow-ups / المتابعات  `followups`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-17
+**Last updated (from DB):** 2026-07-18
 **Model id:** `764e0e67-0ad1-4e21-8ed3-8f32cb0e6e63`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **3** (3 base, 0 non-base)
-- Fields: **37**
+- Fields: **44**
 - Section-selector field: Follow-up Type (`followup_type`)
 - Duplicate-check field: none
 - Custom buttons: 3
@@ -41,9 +41,10 @@
 | `sales_rep` | Sales Rep / مستشار المبيعات | Assignee | no | half | yes | any user |
 | `followup_type` | Follow-up Type / نوع المتابعة | Section selector | yes | half | yes | controls section visibility |
 | `followup_number` | Follow-up Number / رقم المتابعة | Number | no | half | yes |  |
-| `followup_status` | Status / حالة المتابعة | Dropdown | no | half | yes | 5 options |
+| `followup_status` | Status / حالة المتابعة | Dropdown | no | half | yes | 6 options |
 | `priority` | Priority / الأولوية | Dropdown | no | half | yes | 4 options |
 | `whatsapp_state` | WhatsApp State / حالة الواتساب | Dropdown | no | half | no | 3 options |
+| `rating_token` | Rating Token / رمز التقييم | Text | no | full | no |  |
 | `fired_at` | Auto-Reminder Fired At / وقت تشغيل التذكير الآلي | Date & time | no | half | no |  |
 
 **Field details:**
@@ -77,12 +78,15 @@
   - `follow_up_call_after_visit` → "Follow-Up Call After Visit" (custom, non-section)
   - `whatsapp_follow_up` → "WhatsApp Follow-Up" (custom, non-section)
   - `appointment_booking_call` → "Appointment Booking Call" (custom, non-section)
+  - `no_show_recovery_call` → "no_show_recovery_call" (custom, non-section)
+  - `rating_request` → "Visit Rating Request" (custom, non-section)
 - **Status / حالة المتابعة** (`followup_status`, type `dropdown`) — options:
   - API value `open` → "Open" / "مفتوحة" · color `#3B82F6`
   - API value `in_progress` → "In Progress" / "قيد التنفيذ" · color `#C09B5F`
   - API value `completed` → "Completed" / "مكتملة" · color `#10B981`
   - API value `cancelled` → "Cancelled" / "ملغاة" · color `#6B7280`
   - API value `skipped` → "Skipped" / "متخطاة" · color `#8E4E3A`
+  - API value `scheduled` → "Scheduled" / "مجدولة" · color `#6B7280`
 - **Priority / الأولوية** (`priority`, type `dropdown`) — options:
   - API value `low` → "Low" / "منخفضة" · color `#6B7280`
   - API value `normal` → "Normal" / "عادية" · color `#3B82F6`
@@ -110,7 +114,7 @@
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `call_result` | Outcome / النتيجة | Dropdown | no | full | yes | 26 options |
+| `call_result` | Outcome / النتيجة | Dropdown | no | full | yes | 29 options |
 | `next_followup_after_days` | Next Follow-up After (days) / المتابعة التالية بعد (أيام) | Number | no | half | no |  |
 | `reschedule_contact_date` | Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة | Date & time | no | half | yes |  |
 | `actual_datetime` | Actual Follow-up / موعد المتابعة الفعلي | Date & time | no | half | yes |  |
@@ -130,6 +134,12 @@
 | `source_followup_id` | Source Follow-up / متابعة المصدر | Lookup | no | half | no | → Follow-ups |
 | `sent_by_user` | Sent By / أرسلها | Assignee | no | half | no | any user |
 | `whatsapp_template_id` | WhatsApp Template / معرّف قالب الواتساب | Text | no | half | no |  |
+| `client_messaged_at` | Client Messaged At / رسالة العميل قبل التواصل | Date & time | no | half | no |  |
+| `cancel_reason` | Cancel reason / سبب الإلغاء | Text | no | half | no |  |
+| `cancelled_at` | Cancelled at / تاريخ الإلغاء | Date & time | no | half | no |  |
+| `cancelled_by_event_type` | Cancelled by event / نوع الحدث المُلغِي | Text | no | half | no |  |
+| `cancelled_by_event_id` | Cancelled by event id / معرّف الحدث المُلغِي | Text | no | half | no |  |
+| `cancelled_by_system` | Cancelled by system / ألغي آلياً | Checkbox | no | half | no |  |
 
 **Field details:**
 
@@ -160,6 +170,9 @@
   - API value `appointment_cancelled_rebook` → "Cancelled — Rebook" / "إلغاء الموعد - إعادة حجز"
   - API value `appointment_cancelled_lost` → "Cancelled — Lost" / "إلغاء الموعد - خسارة"
   - API value `no_response` → "No Response" / "لا يوجد رد" · color `#8E4E3A`
+  - API value `requested_another_visit` → "Requested Another Visit" / "طلب زيارة أخرى" · color `#10B981`
+  - API value `visited_other_project` → "Visited Another Project" / "زار مشروعًا آخر" · color `#8E4E3A`
+  - API value `unanswered_request` → "Unanswered Request" / "طلب غير مجاب" · color `#8B5CF6`
 - **Next Follow-up After (days) / المتابعة التالية بعد (أيام)** (`next_followup_after_days`, type `number`):
   - shown only when Follow-up Type (`followup_type`) is one of: `whatsapp_follow_up`
 - **Reschedule Contact Date / تاريخ التواصل لإعادة الجدولة** (`reschedule_contact_date`, type `datetime`):

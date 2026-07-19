@@ -58,6 +58,12 @@ const STRONG = 75;
 const GOOD = 60;
 const MIN_RETURN = 40; // never surface a project below this
 const STRETCH_TOLERANCE = 1.15; // a unit up to 15% over budget is a "stretch"
+// A unit priced up to 10% BELOW the client's budget floor still surfaces —
+// under-budget is a good problem (a 1.9M find for a 2.0–2.1M client is a win),
+// so the floor filters the wrong SEGMENT, not a slightly-cheaper bargain.
+// Applied in BOTH places the floor exists: the market DB pre-filter (the RPC
+// receives the softened floor) and the budget subscore (near-full credit).
+const BUDGET_FLOOR_TOLERANCE = 0.9;
 const TOP_N = 5; // max results returned per tier
 
 // Location intelligence (Phase 2). A project NOT in the requested district but
@@ -692,6 +698,12 @@ export interface MatchRequirements {
   max_unit_age?: number;
   lifestyle?: string[];
   amenities?: string[];
+  /** MUST-HAVE amenities (e.g. "غرفة سائق", "ملحق"). Unlike `amenities` (a soft
+   *  scoring dimension), every entry here is a HARD gate: a candidate is dropped
+   *  unless ALL of them fuzzy-match its amenity evidence (listing feature tags /
+   *  project preferred_amenities). Fails CLOSED — no amenity data ⇒ dropped,
+   *  because "must contain" means verified-present, not unknown. */
+  required_amenities?: string[];
   financing_needed?: boolean;
   special_requirements?: string[];
   allow_stretch?: boolean;
@@ -858,8 +870,11 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
           dims.budget.value = 0;
         }
       } else {
-        // Entirely below the customer's floor — wrong segment, mild credit.
-        dims.budget.value = 0.2;
+        // Entirely below the customer's floor. Within the soft-floor band
+        // (10% under) → near-full credit: an under-budget find is desirable and
+        // should surface, ranked just beneath in-window matches. Further below →
+        // wrong segment, mild credit.
+        dims.budget.value = pmax >= lo * BUDGET_FLOOR_TOLERANCE ? 0.9 : 0.2;
       }
     }
   }
@@ -910,8 +925,12 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     } else {
       const bmin = range.min ?? range.max ?? 0;
       const bmax = range.max ?? range.min ?? bmin;
-      if (req.bedrooms >= bmin && req.bedrooms <= bmax) dims.bedrooms.value = 1;
-      else if (req.bedrooms >= bmin - 1 && req.bedrooms <= bmax + 1) dims.bedrooms.value = 0.6;
+      // AT-LEAST semantics: the request is a MINIMUM. MORE bedrooms than asked is
+      // acceptable (a 7BR villa satisfies a 6BR request — same rule as the UI's
+      // client-side bedroomsMin refine); FEWER is the real miss. Full credit when
+      // any unit offers >= the requested count; one-under is a near-miss.
+      if (bmax >= req.bedrooms) dims.bedrooms.value = 1;
+      else if (bmax >= req.bedrooms - 1) dims.bedrooms.value = 0.6;
       else dims.bedrooms.value = 0;
     }
   }
@@ -964,8 +983,10 @@ function scoreProject(data: Record<string, unknown>, req: MatchRequirements, geo
     availZero = true;
   }
 
-  // ── Amenities / lifestyle (best-effort, low weight) ──
-  const wanted = [...(req.lifestyle ?? []), ...(req.amenities ?? [])].map((s) => s).filter(Boolean);
+  // ── Amenities / lifestyle (best-effort, low weight). required_amenities also
+  //    count here so a must-have that passed the hard gate still earns its
+  //    subscore credit. ──
+  const wanted = [...new Set([...(req.lifestyle ?? []), ...(req.amenities ?? []), ...(req.required_amenities ?? [])])].filter(Boolean);
   if (wanted.length > 0) {
     const have = asArr(data.preferred_amenities);
     let matched = 0;
@@ -1140,6 +1161,20 @@ export function parseUnitAgeText(v: string | null | undefined): number | null {
   }
   if (s.includes('سنة')) return 1;
   return null;
+}
+
+/** HARD must-have amenity gate. True when EVERY `required_amenities` entry
+ *  fuzzy-matches the candidate's amenity evidence — `preferred_amenities` on the
+ *  (possibly adapted) data shape: Aqar feature tags for market listings, the
+ *  project's own amenity list for catalog projects. Fails CLOSED: a candidate
+ *  with no amenity data is dropped, because "must contain" means
+ *  verified-present, not unknown. Exported for tests. */
+export function passesRequiredAmenities(data: Record<string, unknown>, req: MatchRequirements): boolean {
+  const required = (req.required_amenities ?? []).filter((s) => typeof s === 'string' && s.trim() !== '');
+  if (required.length === 0) return true;
+  const have = asArr(data.preferred_amenities);
+  if (have.length === 0) return false;
+  return required.every((w) => have.some((h) => fuzzyContains(h, w)));
 }
 
 function adaptListingToScorable(d: Record<string, unknown>): Record<string, unknown> {
@@ -1634,7 +1669,10 @@ export async function matchProjectsCore(
           : null;
         const baseArgs = {
           p_model_id: mModel.id,
-          p_budget_min: req.budget_min ?? null,
+          // Soft floor: the DB pre-filter gets the 10%-lowered floor so a
+          // slightly-under-budget listing survives to scoring (where it takes
+          // the 0.9 budget subscore) instead of never being seen at all.
+          p_budget_min: req.budget_min != null ? req.budget_min * BUDGET_FLOOR_TOLERANCE : null,
           p_budget_max: req.budget_max ?? null,
           p_bedrooms: req.bedrooms ?? null,
           p_type_terms: typeTerms,
@@ -1709,6 +1747,9 @@ export async function matchProjectsCore(
 
   let anyDistrictExact = false;
   let anyNearby = false;
+  // Candidates dropped by the required_amenities hard gate (all sources) — surfaced
+  // as an honest note so a thin result list never reads as "that's all there is".
+  let requiredAmenitiesDropped = 0;
 
   // Build the GeoContext + per-result geo annotations for one record. When
   // verifyGeo is on, the project's district is the polygon that CONTAINS its pin
@@ -1756,6 +1797,7 @@ export async function matchProjectsCore(
       const name = asStr(r.data.project_name);
       if (!name) continue;
       if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
+      if (!passesRequiredAmenities(r.data, req)) { requiredAmenitiesDropped += 1; continue; } // must-have gate
       const loc = recordLocationIds(r.data);
       const g = geoFor(r, loc, polyMap, verifyGeo);
       // unit_age default 0: the catalog (our_projects/all_projects) is new-
@@ -1866,6 +1908,7 @@ export async function matchProjectsCore(
           const name = asStr(adapted.project_name);
           if (!name) continue;
           if (!passesGeoGate(r.id)) continue; // location_items gate (before scoring)
+          if (!passesRequiredAmenities(adapted, req)) { requiredAmenitiesDropped += 1; continue; } // must-have gate
           const loc = recordLocationIds(r.data);
           // Market listings are EXTERNAL / unverified by design (flagged "verify
           // before offering") and keep their stored district + own coords
@@ -1935,6 +1978,11 @@ export async function matchProjectsCore(
   }
   if (usedFallback) {
     notes.push('No good match in our_projects — falling back to all_projects. Those results MUST be verified before offering.');
+  }
+  if ((req.required_amenities?.length ?? 0) > 0 && requiredAmenitiesDropped > 0) {
+    notes.push(
+      `Must-have amenities (${req.required_amenities!.join(', ')}) excluded ${requiredAmenitiesDropped} candidates that do not list them. Candidates with NO amenity data are excluded too ("must have" fails closed) — untick the must-have toggle to see them.`,
+    );
   }
 
   return {

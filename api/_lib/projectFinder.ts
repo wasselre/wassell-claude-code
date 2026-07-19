@@ -456,7 +456,8 @@ export function hasAnyCriteria(req: MatchRequirements): boolean {
     req.area_max != null ||
     req.bedrooms != null ||
     req.bathrooms != null ||
-    (req.amenities && req.amenities.length > 0)
+    (req.amenities && req.amenities.length > 0) ||
+    (req.required_amenities && req.required_amenities.length > 0)
   );
 }
 

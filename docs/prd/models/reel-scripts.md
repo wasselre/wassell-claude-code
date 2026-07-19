@@ -5,10 +5,10 @@
 # Model: Reels / الريلز  `reel_scripts`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-11
+**Last updated (from DB):** 2026-07-18
 **Model id:** `7c0ffee1-5cab-4b0a-9d3e-12ab34cd56ef`
 **Storage:** unified records (JSONB)
-**Group:** Designs
+**Group:** (ungrouped)
 **System model:** yes   ·   **Custom UI:** no
 **Icon:** `clapperboard`   ·   **Color:** `#B8734F`
 
@@ -30,13 +30,13 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `title` | Title / العنوان | Text | yes | half | yes |  |
-| `project` | Project / المشروع | Lookup | no | half | yes | → All Projects |
+| `project` | Project / المشروع | Lookup | no | half | yes | → `d0b7206c-eb80-464b-be01-270a04f77cee` (unknown model) |
 | `status` | Status / الحالة | Dropdown | no | half | yes | 6 options |
 
 **Field details:**
 
 - **Project / المشروع** (`project`, type `lookup`):
-  - target model: All Projects
+  - target model: `d0b7206c-eb80-464b-be01-270a04f77cee` (unknown model)
   - shows field: `project_name`
   - multiple: no
 - **Status / الحالة** (`status`, type `dropdown`) — options:

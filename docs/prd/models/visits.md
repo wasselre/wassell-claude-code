@@ -5,7 +5,7 @@
 # Model: Visits / الزيارات  `visits`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-17
+**Last updated (from DB):** 2026-06-21
 **Model id:** `372ed642-3753-40b4-9dd7-e8390f91b1f8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **9**
+- Fields: **12**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -38,6 +38,9 @@
 | `sales_representative` | Sales Representative / ممثل المبيعات | Assignee | no | half | yes | any user |
 | `visit_notes` | Visit Notes / ملاحظات الزيارة | Notes | no | half | yes |  |
 | `source_followup_id` | Source Follow-up / المتابعة المصدر | Lookup | no | half | no | → Follow-ups |
+| `rating_token` | Rating Token / رمز التقييم | Text | no | full | no |  |
+| `visit_rating` | Visit Rating / تقييم الزيارة | Number | no | half | yes |  |
+| `rated_at` | Rated At / تاريخ التقييم | Date & time | no | half | no |  |
 
 **Field details:**
 

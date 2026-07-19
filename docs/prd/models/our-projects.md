@@ -5,7 +5,7 @@
 # Model: Our Projects / مشاريعنا  `our_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-06-29
 **Model id:** `6609286a-f95a-45db-94e6-48cfa915ccbd`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -13,15 +13,16 @@
 **Icon:** `star`   ·   **Color:** `#C09B5F`
 
 ## Overview
-- Sections: **4** (1 base, 3 non-base)
-- Fields: **4**
+- Sections: **5** (2 base, 3 non-base)
+- Fields: **15**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
 
 ## Card view
-- Title: `02b21215-927e-4611-b8bc-1bdbe7424d9a` (unknown field)
-- Badge: `22f55ec2-dba8-4d28-b97d-e2be4df2b60f` (unknown field)
+- Title: Project (`project`)
+- Badge: Portfolio Status (`portfolio_status`)
+- Shown: Sales Priority (`sales_priority`), Exclusive Status (`exclusive_status`)
 
 ## Maps view
 - Location URL field: `0cf73ff9-fb05-452f-9d5b-30d2d9c3c4b2::project_location` (unknown field)
@@ -35,6 +36,7 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `project` | Project / المشروع | Lookup | no | full | yes | → All Projects |
+| `brochure` | Brochure / البروشور | Mirror | no | half | yes | computed mirror |
 
 **Field details:**
 
@@ -42,6 +44,7 @@
   - target model: All Projects
   - shows field: `project_name`
   - multiple: no · max in dropdown: 20
+- **Brochure / البروشور** (`brochure`, type `mirror`) — read-only; shows `brochure_link` from the record linked via Project (`project`).
 
 ### 2. Project Data / بيانات المشروع  _(color #B8734F)_
 
@@ -81,3 +84,34 @@
   - via lookup: Project (`project`)
   - source section: `2b138126-5054-4662-88f0-f7dd4a173623`
   - fields: all · editable: none · sync-back: all
+
+### 5. Portfolio / المحفظة  _(base, color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `portfolio_status` | Portfolio Status / حالة المحفظة | Dropdown | no | half | yes | 4 options |
+| `sales_priority` | Sales Priority / أولوية المبيعات | Dropdown | no | half | yes | 3 options |
+| `website_display_order` | Website Display Order / ترتيب العرض على الموقع | Number | no | half | no |  |
+| `hero_image_override` | Hero Image Override / صورة الغلاف البديلة | Image | no | half | no |  |
+| `sales_pitch` | Sales Pitch / عرض البيع | Text area | no | full | no |  |
+| `objection_handling_notes` | Objection Handling Notes / التعامل مع الاعتراضات | Text area | no | full | no |  |
+| `exclusive_status` | Exclusive Status / حالة الحصرية | Dropdown | no | half | yes | 3 options |
+| `commission_notes` | Commission Notes / ملاحظات العمولة | Text area | no | full | no |  |
+| `show_on_website` | Show on Website / عرض على الموقع | Checkbox | no | half | yes |  |
+| `portfolio_notes` | Portfolio Notes / ملاحظات المحفظة | Text area | no | full | no |  |
+
+**Field details:**
+
+- **Portfolio Status / حالة المحفظة** (`portfolio_status`, type `dropdown`) — options:
+  - API value `active` → "Active" / "نشط" · color `#10B981`
+  - API value `paused` → "Paused" / "متوقف" · color `#F59E0B`
+  - API value `hidden` → "Hidden" / "مخفي" · color `#9CA3AF`
+  - API value `sold_out` → "Sold Out" / "مكتمل البيع" · color `#8B5CF6`
+- **Sales Priority / أولوية المبيعات** (`sales_priority`, type `dropdown`) — options:
+  - API value `high` → "High" / "عالية" · color `#8E4E3A`
+  - API value `normal` → "Normal" / "عادية" · color `#C09B5F`
+  - API value `low` → "Low" / "منخفضة" · color `#9CA3AF`
+- **Exclusive Status / حالة الحصرية** (`exclusive_status`, type `dropdown`) — options:
+  - API value `exclusive` → "Exclusive" / "حصري" · color `#8E4E3A`
+  - API value `shared` → "Shared" / "مشترك" · color `#C09B5F`
+  - API value `open_market` → "Open Market" / "سوق مفتوح" · color `#9CA3AF`

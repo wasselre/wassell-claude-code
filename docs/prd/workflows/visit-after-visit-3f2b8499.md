@@ -5,7 +5,7 @@
 # Workflow: Visit → After-Visit / متابعة بعد الزيارة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-17
+**Last updated (from DB):** 2026-06-21
 **Workflow id:** `3f2b8499-c2ed-42d8-960f-75722a2d3736`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is created
@@ -33,3 +33,13 @@ Create a **Follow-ups / المتابعات** record with:
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d @10:00`
 - Status (`followup_status`) ← static value open
 - Sales Rep (`sales_rep`) ← the trigger record's Sales Representative (`sales_representative`)
+- Follow-up Number (`followup_number`) ← static value 1
+
+**Action 3 — Create Record**
+Create a **Follow-ups / المتابعات** record with:
+- Client ID (`client_id`) ← the trigger record's Client (`client_id`)
+- Follow-up Type (`followup_type`) ← static value rating_request
+- Rating Token (`rating_token`) ← the trigger record's Rating Token (`rating_token`)
+- Visit (`visit`) ← the trigger record's id
+- Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by ``
+- Status (`followup_status`) ← static value scheduled

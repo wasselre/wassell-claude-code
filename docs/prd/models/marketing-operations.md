@@ -5,7 +5,7 @@
 # Model: Marketing Operations / عمليات التسويق  `marketing_operations`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-06-28
 **Model id:** `58e92e8d-b7c6-48ef-b9c4-41987e522075`
 **Storage:** unified records (JSONB)
 **Group:** Designs
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **4** (4 base, 0 non-base)
-- Fields: **17**
+- Fields: **16**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 1
@@ -46,8 +46,7 @@
 | `mirror_developer` | Developer / المطور | Mirror | no | half | no | computed mirror |
 | `mirror_unit_types` | Unit Types / أنواع الوحدات | Mirror | no | half | no | computed mirror |
 | `mirror_amenities` | Amenities / المرافق | Mirror | no | half | no | computed mirror |
-| `mirror_city` | City / المدينة | Mirror | no | half | no | computed mirror |
-| `mirror_district` | District / الحي | Mirror | no | half | no | computed mirror |
+| `mirror_location` | Location / الموقع | Mirror | no | half | no | computed mirror |
 | `mirror_price_range` | Price Range / نطاق السعر | Mirror | no | half | no | computed mirror |
 | `mirror_area_range` | Area Range / نطاق المساحة | Mirror | no | half | no | computed mirror |
 | `mirror_bedrooms` | Bedrooms Range / نطاق غرف النوم | Mirror | no | half | no | computed mirror |
@@ -59,8 +58,7 @@
 - **Developer / المطور** (`mirror_developer`, type `mirror`) — read-only; shows `item_mo4ul4p0` from the record linked via Project (`project`).
 - **Unit Types / أنواع الوحدات** (`mirror_unit_types`, type `mirror`) — read-only; shows `unit_types` from the record linked via Project (`project`).
 - **Amenities / المرافق** (`mirror_amenities`, type `mirror`) — read-only; shows `preferred_amenities` from the record linked via Project (`project`).
-- **City / المدينة** (`mirror_city`, type `mirror`) — read-only; shows `preferred_city` from the record linked via Project (`project`).
-- **District / الحي** (`mirror_district`, type `mirror`) — read-only; shows `preferred_neighborhoods` from the record linked via Project (`project`).
+- **Location / الموقع** (`mirror_location`, type `mirror`) — read-only; shows `location` from the record linked via Project (`project`).
 - **Price Range / نطاق السعر** (`mirror_price_range`, type `mirror`) — read-only; shows `price_range` from the record linked via Project (`project`).
 - **Area Range / نطاق المساحة** (`mirror_area_range`, type `mirror`) — read-only; shows `area_range` from the record linked via Project (`project`).
 - **Bedrooms Range / نطاق غرف النوم** (`mirror_bedrooms`, type `mirror`) — read-only; shows `bedroom_range` from the record linked via Project (`project`).

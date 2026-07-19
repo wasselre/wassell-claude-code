@@ -5,7 +5,7 @@
 # Model: All Projects / جميع المشاريع  `all_projects`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-15
+**Last updated (from DB):** 2026-07-19
 **Model id:** `220c49b9-de57-492d-9eca-c0d9f54fd40f`
 **Storage:** unified records (JSONB)
 **Group:** Projects
@@ -13,15 +13,17 @@
 **Icon:** `building-2`   ·   **Color:** `#8E4E3A`
 
 ## Overview
-- Sections: **6** (1 base, 5 non-base)
-- Fields: **32**
+- Sections: **9** (1 base, 8 non-base)
+- Fields: **57**
 - Section-selector field: none
-- Duplicate-check field: Project ID (`project_id`)
+- Duplicate-check field: none
 - Custom buttons: 1
 
 ## Card view
 - Title: Project Name (`project_name`)
-- Badge: `95d2ba80-86f4-4b49-ab67-ed1a028fb2eb` (unknown field)
+- Subtitle: Location (`location`)
+- Badge: Project Status (`project_status`)
+- Shown: Developer (`developer`), Unit Types (`unit_types`), Available Units (`available_units`), Price Range (`price_range`)
 
 ## Maps view
 - Location URL field: Project Location (`project_location`)
@@ -30,30 +32,55 @@
 
 ## Sections & fields
 
-### 1. Project Information / معلومات المشروع  _(base, color #8E4E3A)_
+### 1. Project Identity / هوية المشروع  _(base, color #8E4E3A)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `developer` | Developer / المطور | Lookup | no | half | yes | → Developers |
 | `project_name` | Project Name / اسم المشروع | Text | yes | half | yes |  |
+| `developer` | Developer / المطور | Lookup | no | half | yes | → Developers |
 | `project_id` | Project ID / معرف المشروع | Auto ID | no | half | yes | م ش### |
-| `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 12 options · multi |
-| `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 7 options · multi |
-| `project_status` | Project Status / حالة المشروع | Dropdown | no | half | yes | 6 options |
-| `data_sources` | Data Sources / مصادر البيانات | Multi-select | no | half | yes | 5 options · multi |
-| `construction_status` | Construction Status / حالة الإنشاء | Dropdown | no | half | yes | 6 options |
 | `project_type` | Project Type / نوع المشروع | Dropdown | no | half | yes | 3 options |
+| `project_status` | Project Status / حالة المشروع | Dropdown | no | half | yes | 6 options |
+| `project_classification` | Project Classification / تصنيف المشروع | Dropdown | no | half | yes | 4 options |
+| `construction_status` | Construction Status / حالة الإنشاء | Dropdown | no | half | yes | 7 options |
+| `unit_types` | Unit Types / أنواع الوحدات | Multi-select | no | half | yes | 13 options · multi |
+| `preferred_amenities` | Preferred Amenities / المرافق | Multi-select | no | half | no | 38 options · multi |
+| `status_checked_at` | Status Last Checked / آخر تحقق من الحالة | Date | no | half | no |  |
 
 **Field details:**
 
+- **Project Name / اسم المشروع** (`project_name`, type `text`):
+  - falls back to Project ID (`project_id`) when empty on save
 - **Developer / المطور** (`developer`, type `lookup`):
   - target model: Developers
   - shows field: `name`
   - multiple: no · max in dropdown: 498
-- **Project Name / اسم المشروع** (`project_name`, type `text`):
-  - falls back to Project ID (`project_id`) when empty on save
 - **Project ID / معرف المشروع** (`project_id`, type `auto_id`):
   - format: `م ش000` · starts at 1
+- **Project Type / نوع المشروع** (`project_type`, type `dropdown`) — options:
+  - API value `general` → "general" / "عام" · color `#3B82F6`
+  - API value `targetted` → "targetted" / "مستهدف" · color `#10B981`
+  - API value `our_projects` → "Our Projects" / "مشاريعنا" · color `#F59E0B`
+- **Project Status / حالة المشروع** (`project_status`, type `dropdown`) — options:
+  - API value `under_construction` → "Under Construction" / "تحت الإنشاء" · color `#3B82F6`
+  - API value `available_on_map` → "Available On Map" / "متاح على الخارطة" · color `#10B981`
+  - API value `unknown` → "Unknown" / "غير معروف" · color `#F59E0B`
+  - API value `sold_out` → "Sold Out" / "مباع" · color `#EF4444`
+  - API value `available` → "Available" / "متاح" · color `#8B5CF6`
+  - API value `upcoming` → "Upcoming Projects" / "مشاريع مستقبلية" · color `#EC4899`
+- **Project Classification / تصنيف المشروع** (`project_classification`, type `dropdown`) — options:
+  - API value `our_projects` → "Our Projects" / "مشاريعنا" · color `#B8734F`
+  - API value `general_project` → "General Project" / "مشروع عام" · color `#C09B5F`
+  - API value `aqar_platform` → "Aqar Platform" / "منصة عقار" · color `#8E4E3A`
+  - API value `riva_projects` → "Riva Projects" / "مشاريع ريفا" · color `#C09B5F`
+- **Construction Status / حالة الإنشاء** (`construction_status`, type `dropdown`) — options:
+  - API value `excavation` → "Excavation" / "الحفر" · color `#8B5CF6`
+  - API value `foundations` → "Foundations" / "القواعد" · color `#3B82F6`
+  - API value `structure` → "Structure" / "عظم" · color `#10B981`
+  - API value `finishing` → "Finishing" / "التشطيب" · color `#EC4899`
+  - API value `facade_installation` → "Facade Installation" / "تركيب الواجهات " · color `#14B8A6`
+  - API value `ready` → "Ready" / "جاهز " · color `#EF4444`
+  - API value `تحت-التطوير` → "تحت التطوير" / "تحت التطوير" · color `#06B6D4`
 - **Unit Types / أنواع الوحدات** (`unit_types`, type `multiselect`) — multi-value. Options:
   - API value `apartment` → "Apartment" / "شقة" · color `#3B82F6`
   - API value `townhouse` → "Townhouse" / "تاون هاوس" · color `#10B981`
@@ -67,564 +94,134 @@
   - API value `villas` → "Villas" / "فلل" · color `#6B7280`
   - API value `اختبار-سلج` → "Test" / "اختبار-سلج" · color `#3B82F6`
   - API value `برج` → "برج" / "برج" · color `#10B981`
+  - API value `penthouse` → "Penthouse" / "بنتهاوس" · color `#06B6D4`
 - **Preferred Amenities / المرافق** (`preferred_amenities`, type `multiselect`) — multi-value. Options:
-  - API value `مجلس` → "Majlis" / "مجلس"
-  - API value `غرفة خادمة` → "Maid Room" / "غرفة خادمة"
-  - API value `غرفة سائق` → "Driver Room" / "غرفة سائق"
-  - API value `مسبح` → "Pool" / "مسبح"
-  - API value `حوش` → "Yard" / "حوش"
-  - API value `سطح` → "Rooftop" / "سطح"
-  - API value `مصعد` → "Elevator" / "مصعد"
-- **Project Status / حالة المشروع** (`project_status`, type `dropdown`) — options:
-  - API value `under_construction` → "Under Construction" / "تحت الإنشاء" · color `#3B82F6`
-  - API value `available_on_map` → "Available On Map" / "متاح على الخارطة" · color `#10B981`
-  - API value `unknown` → "Unknown" / "غير معروف" · color `#F59E0B`
-  - API value `sold_out` → "Sold Out" / "مباع" · color `#EF4444`
-  - API value `available` → "Available" / "متاح" · color `#8B5CF6`
-  - API value `upcoming` → "Upcoming Projects" / "مشاريع مستقبلية" · color `#EC4899`
-- **Data Sources / مصادر البيانات** (`data_sources`, type `multiselect`) — multi-value. Options:
-  - API value `units_table` → "Units Table" / "جدول الوحدات" · color `#3B82F6`
-  - API value `brochure` → "Brochure" / "بروشور" · color `#10B981`
-  - API value `project_page` → "Project Page" / "صفحة المشروع" · color `#F59E0B`
-  - API value `inquiry` → "Inquiry" / "الإستفسار" · color `#EF4444`
-  - API value `field_survey` → "Field Survey" / "مسح ميداني" · color `#8B5CF6`
-- **Construction Status / حالة الإنشاء** (`construction_status`, type `dropdown`) — options:
-  - API value `excavation` → "Excavation" / "الحفر" · color `#8B5CF6`
-  - API value `foundations` → "Foundations" / "القواعد" · color `#3B82F6`
-  - API value `structure` → "Structure" / "عظم" · color `#10B981`
-  - API value `finishing` → "Finishing" / "التشطيب" · color `#EC4899`
-  - API value `facade_installation` → "Facade Installation" / "تركيب الواجهات " · color `#14B8A6`
-  - API value `ready` → "Ready" / "جاهز " · color `#EF4444`
-- **Project Type / نوع المشروع** (`project_type`, type `dropdown`) — options:
-  - API value `general` → "general" / "عام" · color `#3B82F6`
-  - API value `targetted` → "targetted" / "مستهدف" · color `#10B981`
-  - API value `our_projects` → "Our Projects" / "مشاريعنا" · color `#F59E0B`
+  - API value `prayer_room` → "Prayer Room" / "مصلى" · color `#3B82F6`
+  - API value `mosque` → "Mosque" / "مسجد" · color `#10B981`
+  - API value `swimming_pool` → "Swimming Pool" / "مسبح" · color `#F59E0B`
+  - API value `sports_club` → "Sports Club" / "نادي رياضي" · color `#EF4444`
+  - API value `lounge` → "Lounge" / "لاونج" · color `#8B5CF6`
+  - API value `mini_market` → "Mini Market" / "ميني ماركت" · color `#EC4899`
+  - API value `garden` → "Garden" / "حديقة" · color `#14B8A6`
+  - API value `green_spaces` → "Green Spaces" / "مساحات خضراء" · color `#F97316`
+  - API value `basement_parking` → "Basement Parking" / "مواقف قبو" · color `#6366F1`
+  - API value `football_pitch` → "Football Pitch" / "ملعب كرة قدم" · color `#6B7280`
+  - API value `basketball_court` → "Basketball Court" / "ملعب كرة سلة" · color `#B8734F`
+  - API value `volleyball_court` → "Volleyball Court" / "ملعب كرة طائرة" · color `#C09B5F`
+  - API value `tennis_court` → "Tennis Court" / "ملعب تنس" · color `#3B82F6`
+  - API value `مواقف-خارجية` → "مواقف خارجية" / "مواقف خارجية" · color `#EF4444`
+  - API value `اسطح-خاصة` → "أسطح خاصة" / "أسطح خاصة" · color `#8B5CF6`
+  - API value `بلكونات` → "بلكونات" / "بلكونات" · color `#EC4899`
+  - API value `نظام-مراقبة-امنية` → "نظام مراقبة أمنية" / "نظام مراقبة أمنية" · color `#06B6D4`
+  - API value `مواقف-خارجية-مظللة` → "مواقف خارجية مظللة" / "مواقف خارجية مظللة" · color `#84CC16`
+  - API value `شواحن-سيارات-كهربايية` → "شواحن سيارات كهربائية" / "شواحن سيارات كهربائية" · color `#F97316`
+  - API value `نظام-دخول-ذكي` → "نظام دخول ذكي" / "نظام دخول ذكي" · color `#6366F1`
+  - API value `مصاعد` → "مصاعد" / "مصاعد" · color `#3B82F6`
+  - API value `خزان-مياه-ارضي` → "خزان مياه أرضي" / "خزان مياه أرضي" · color `#10B981`
+  - API value `مضخات-مياه` → "مضخات مياه" / "مضخات مياه" · color `#F59E0B`
+  - API value `سينما` → "سينما" / "سينما" · color `#EF4444`
+  - API value `جلسات-خارجية` → "جلسات خارجية" / "جلسات خارجية" · color `#8B5CF6`
+  - API value `فراغات-مرنة` → "فراغات مرنة" / "فراغات مرنة" · color `#EC4899`
+  - API value `jacuzzi` → "Jacuzzi" / "جاكوزي" · color `#C09B5F`
+  - API value `sauna` → "Sauna" / "ساونا" · color `#C09B5F`
+  - API value `steam_room` → "Steam Room" / "غرفة بخار" · color `#C09B5F`
+  - API value `سبا` → "Spa" / "سبا" · color `#C09B5F`
+  - API value `منطقة-دراجات` → "Bicycle Area" / "منطقة دراجات" · color `#C09B5F`
+  - API value `منطقة-خدمة-ذاتية` → "Self-Service Area" / "منطقة خدمة ذاتية" · color `#C09B5F`
+  - API value `golf` → "Golf Course" / "ملاعب غولف" · color `#2E7D32`
+  - API value `commercial_showrooms` → "Commercial Showrooms" / "معارض تجارية" · color `#8E4E3A`
+  - API value `كونسرج` → "Concierge" / "كونسرج" · color `#C09B5F`
+  - API value `غرفة-بريد` → "Mail room" / "غرفة بريد" · color `#C09B5F`
+  - API value `بزنس-سنتر` → "Business Center" / "بزنس سنتر" · color `#B8734F`
+  - API value `ممرات-رياضية` → "Jogging Tracks" / "ممرات رياضية" · color `#C09B5F`
 
-### 2. Geographic Information / المعلومات الجغرافية  _(color #3B82F6)_
+### 2. Location & Geo / الموقع والإحداثيات  _(color #B8734F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `preferred_country` | Preferred Country / الدولة | Dropdown | no | half | no | 125 options |
-| `preferred_city` | Preferred City / المدينة | Dropdown | no | half | no | 164 options |
-| `preferred_neighborhoods` | Preferred Neighborhoods / الحي | Dropdown | no | half | no | 154 options |
+| `location` | Location / الموقع | location | no | full | yes |  |
 | `project_location` | Project Location / موقع المشروع | URL | no | half | yes |  |
+| `latitude` | Latitude / خط العرض | Number | no | half | no |  |
+| `longitude` | Longitude / خط الطول | Number | no | half | no |  |
+| `geo_source` | Geo Source / مصدر الإحداثيات | Dropdown | no | half | no | 3 options |
+| `geo_confidence` | Geo Confidence / دقة الموقع | Dropdown | no | half | no | 4 options |
+| `location_verified_at` | Location Verified At / تاريخ التحقق من الموقع | Date & time | no | half | no |  |
 
 **Field details:**
 
-- **Preferred Country / الدولة** (`preferred_country`, type `dropdown`) — options:
-  - API value `السعودية` → "Saudi Arabia" / "السعودية"
-  - API value `الإمارات العربية المتحدة` → "United Arab Emirates" / "الإمارات العربية المتحدة"
-  - API value `الكويت` → "Kuwait" / "الكويت"
-  - API value `قطر` → "Qatar" / "قطر"
-  - API value `البحرين` → "Bahrain" / "البحرين"
-  - API value `عُمان` → "Oman" / "عُمان"
-  - API value `اليمن` → "Yemen" / "اليمن"
-  - API value `الأردن` → "Jordan" / "الأردن"
-  - API value `لبنان` → "Lebanon" / "لبنان"
-  - API value `سوريا` → "Syria" / "سوريا"
-  - API value `فلسطين` → "Palestine" / "فلسطين"
-  - API value `العراق` → "Iraq" / "العراق"
-  - API value `مصر` → "Egypt" / "مصر"
-  - API value `السودان` → "Sudan" / "السودان"
-  - API value `ليبيا` → "Libya" / "ليبيا"
-  - API value `تونس` → "Tunisia" / "تونس"
-  - API value `الجزائر` → "Algeria" / "الجزائر"
-  - API value `المغرب` → "Morocco" / "المغرب"
-  - API value `موريتانيا` → "Mauritania" / "موريتانيا"
-  - API value `جيبوتي` → "Djibouti" / "جيبوتي"
-  - API value `الصومال` → "Somalia" / "الصومال"
-  - API value `فرنسا` → "France" / "فرنسا"
-  - API value `ألمانيا` → "Germany" / "ألمانيا"
-  - API value `إيطاليا` → "Italy" / "إيطاليا"
-  - API value `إسبانيا` → "Spain" / "إسبانيا"
-  - API value `البرتغال` → "Portugal" / "البرتغال"
-  - API value `هولندا` → "Netherlands" / "هولندا"
-  - API value `بلجيكا` → "Belgium" / "بلجيكا"
-  - API value `السويد` → "Sweden" / "السويد"
-  - API value `النرويج` → "Norway" / "النرويج"
-  - API value `الدنمارك` → "Denmark" / "الدنمارك"
-  - API value `فنلندا` → "Finland" / "فنلندا"
-  - API value `سويسرا` → "Switzerland" / "سويسرا"
-  - API value `النمسا` → "Austria" / "النمسا"
-  - API value `بولندا` → "Poland" / "بولندا"
-  - API value `تشيكيا` → "Czechia" / "تشيكيا"
-  - API value `سلوفاكيا` → "Slovakia" / "سلوفاكيا"
-  - API value `المجر` → "Hungary" / "المجر"
-  - API value `رومانيا` → "Romania" / "رومانيا"
-  - API value `بلغاريا` → "Bulgaria" / "بلغاريا"
-  - API value `اليونان` → "Greece" / "اليونان"
-  - API value `كرواتيا` → "Croatia" / "كرواتيا"
-  - API value `سلوفينيا` → "Slovenia" / "سلوفينيا"
-  - API value `صربيا` → "Serbia" / "صربيا"
-  - API value `البوسنة والهرسك` → "Bosnia and Herzegovina" / "البوسنة والهرسك"
-  - API value `ألبانيا` → "Albania" / "ألبانيا"
-  - API value `إستونيا` → "Estonia" / "إستونيا"
-  - API value `لاتفيا` → "Latvia" / "لاتفيا"
-  - API value `ليتوانيا` → "Lithuania" / "ليتوانيا"
-  - API value `أيرلندا` → "Ireland" / "أيرلندا"
-  - API value `المملكة المتحدة` → "United Kingdom" / "المملكة المتحدة"
-  - API value `آيسلندا` → "Iceland" / "آيسلندا"
-  - API value `لوكسمبورغ` → "Luxembourg" / "لوكسمبورغ"
-  - API value `مالطا` → "Malta" / "مالطا"
-  - API value `قبرص` → "Cyprus" / "قبرص"
-  - API value `الصين` → "China" / "الصين"
-  - API value `اليابان` → "Japan" / "اليابان"
-  - API value `كوريا الجنوبية` → "South Korea" / "كوريا الجنوبية"
-  - API value `كوريا الشمالية` → "North Korea" / "كوريا الشمالية"
-  - API value `الهند` → "India" / "الهند"
-  - API value `باكستان` → "Pakistan" / "باكستان"
-  - API value `إندونيسيا` → "Indonesia" / "إندونيسيا"
-  - API value `ماليزيا` → "Malaysia" / "ماليزيا"
-  - API value `سنغافورة` → "Singapore" / "سنغافورة"
-  - API value `تايلاند` → "Thailand" / "تايلاند"
-  - API value `فيتنام` → "Vietnam" / "فيتنام"
-  - API value `الفلبين` → "Philippines" / "الفلبين"
-  - API value `ميانمار` → "Myanmar" / "ميانمار"
-  - API value `كمبوديا` → "Cambodia" / "كمبوديا"
-  - API value `لاوس` → "Laos" / "لاوس"
-  - API value `بنغلاديش` → "Bangladesh" / "بنغلاديش"
-  - API value `نيبال` → "Nepal" / "نيبال"
-  - API value `سريلانكا` → "Sri Lanka" / "سريلانكا"
-  - API value `المالديف` → "Maldives" / "المالديف"
-  - API value `إيران` → "Iran" / "إيران"
-  - API value `أفغانستان` → "Afghanistan" / "أفغانستان"
-  - API value `أوزبكستان` → "Uzbekistan" / "أوزبكستان"
-  - API value `تركمانستان` → "Turkmenistan" / "تركمانستان"
-  - API value `كازاخستان` → "Kazakhstan" / "كازاخستان"
-  - API value `قرغيزستان` → "Kyrgyzstan" / "قرغيزستان"
-  - API value `طاجيكستان` → "Tajikistan" / "طاجيكستان"
-  - API value `منغوليا` → "Mongolia" / "منغوليا"
-  - API value `أذربيجان` → "Azerbaijan" / "أذربيجان"
-  - API value `أرمينيا` → "Armenia" / "أرمينيا"
-  - API value `جورجيا` → "Georgia" / "جورجيا"
-  - API value `تركيا` → "Turkey" / "تركيا"
-  - API value `جنوب أفريقيا` → "South Africa" / "جنوب أفريقيا"
-  - API value `نيجيريا` → "Nigeria" / "نيجيريا"
-  - API value `إثيوبيا` → "Ethiopia" / "إثيوبيا"
-  - API value `كينيا` → "Kenya" / "كينيا"
-  - API value `تنزانيا` → "Tanzania" / "تنزانيا"
-  - API value `أوغندا` → "Uganda" / "أوغندا"
-  - API value `رواندا` → "Rwanda" / "رواندا"
-  - API value `بوروندي` → "Burundi" / "بوروندي"
-  - API value `الكونغو الديمقراطية` → "DR Congo" / "الكونغو الديمقراطية"
-  - API value `الكونغو` → "Congo" / "الكونغو"
-  - API value `الكاميرون` → "Cameroon" / "الكاميرون"
-  - API value `غانا` → "Ghana" / "غانا"
-  - API value `ساحل العاج` → "Ivory Coast" / "ساحل العاج"
-  - API value `السنغال` → "Senegal" / "السنغال"
-  - API value `غامبيا` → "Gambia" / "غامبيا"
-  - API value `غينيا` → "Guinea" / "غينيا"
-  - API value `غينيا بيساو` → "Guinea-Bissau" / "غينيا بيساو"
-  - API value `سيراليون` → "Sierra Leone" / "سيراليون"
-  - API value `ليبيريا` → "Liberia" / "ليبيريا"
-  - API value `تشاد` → "Chad" / "تشاد"
-  - API value `النيجر` → "Niger" / "النيجر"
-  - API value `مالي` → "Mali" / "مالي"
-  - API value `بوركينا فاسو` → "Burkina Faso" / "بوركينا فاسو"
-  - API value `التوغو` → "Togo" / "التوغو"
-  - API value `بنين` → "Benin" / "بنين"
-  - API value `جمهورية أفريقيا الوسطى` → "Central African Republic" / "جمهورية أفريقيا الوسطى"
-  - API value `الغابون` → "Gabon" / "الغابون"
-  - API value `أنغولا` → "Angola" / "أنغولا"
-  - API value `زامبيا` → "Zambia" / "زامبيا"
-  - API value `زيمبابوي` → "Zimbabwe" / "زيمبابوي"
-  - API value `موزمبيق` → "Mozambique" / "موزمبيق"
-  - API value `بوتسوانا` → "Botswana" / "بوتسوانا"
-  - API value `ناميبيا` → "Namibia" / "ناميبيا"
-  - API value `ليسوتو` → "Lesotho" / "ليسوتو"
-  - API value `إسواتيني` → "Eswatini" / "إسواتيني"
-  - API value `مدغشقر` → "Madagascar" / "مدغشقر"
-  - API value `جزر القمر` → "Comoros" / "جزر القمر"
-  - API value `سيشل` → "Seychelles" / "سيشل"
-  - API value `موريشيوس` → "Mauritius" / "موريشيوس"
-- **Preferred City / المدينة** (`preferred_city`, type `dropdown`) — options:
-  - API value `الرياض` → "Riyadh" / "الرياض"
-  - API value `جدة` → "Jeddah" / "جدة"
-  - API value `مكة المكرمة` → "Makkah" / "مكة المكرمة"
-  - API value `المدينة المنورة` → "Madinah" / "المدينة المنورة"
-  - API value `الدمام` → "Dammam" / "الدمام"
-  - API value `الخبر` → "Khobar" / "الخبر"
-  - API value `الظهران` → "Dhahran" / "الظهران"
-  - API value `الجبيل` → "Jubail" / "الجبيل"
-  - API value `رأس تنورة` → "Ras Tanura" / "رأس تنورة"
-  - API value `القطيف` → "Qatif" / "القطيف"
-  - API value `الأحساء` → "Al-Ahsa" / "الأحساء"
-  - API value `الهفوف` → "Hofuf" / "الهفوف"
-  - API value `حفر الباطن` → "Hafar Al-Batin" / "حفر الباطن"
-  - API value `بريدة` → "Buraidah" / "بريدة"
-  - API value `عنيزة` → "Unaizah" / "عنيزة"
-  - API value `الرس` → "Ar Rass" / "الرس"
-  - API value `البكيرية` → "Al-Bukayriyah" / "البكيرية"
-  - API value `البدائع` → "Al-Badaya" / "البدائع"
-  - API value `المذنب` → "Al-Muthnib" / "المذنب"
-  - API value `الأسياح` → "Al-Asyah" / "الأسياح"
-  - API value `الخفجي` → "Khafji" / "الخفجي"
-  - API value `النعيرية` → "An-Nairyah" / "النعيرية"
-  - API value `القيصومة` → "Al-Qaisumah" / "القيصومة"
-  - API value `سكاكا` → "Sakaka" / "سكاكا"
-  - API value `دومة الجندل` → "Dumat Al-Jandal" / "دومة الجندل"
-  - API value `طبرجل` → "Tabarjal" / "طبرجل"
-  - API value `عرعر` → "Arar" / "عرعر"
-  - API value `رفحاء` → "Rafha" / "رفحاء"
-  - API value `طريف` → "Turaif" / "طريف"
-  - API value `القريات` → "Al-Qurayyat" / "القريات"
-  - API value `تبوك` → "Tabuk" / "تبوك"
-  - API value `الوجه` → "Al-Wajh" / "الوجه"
-  - API value `ضباء` → "Duba" / "ضباء"
-  - API value `أملج` → "Umluj" / "أملج"
-  - API value `حقل` → "Haql" / "حقل"
-  - API value `البدع` → "Al-Bada" / "البدع"
-  - API value `خيبر` → "Khaybar" / "خيبر"
-  - API value `العلا` → "AlUla" / "العلا"
-  - API value `ينبع` → "Yanbu" / "ينبع"
-  - API value `بدر` → "Badr" / "بدر"
-  - API value `المهد` → "Al-Mahd" / "المهد"
-  - API value `الطائف` → "Taif" / "الطائف"
-  - API value `رنية` → "Ranyah" / "رنية"
-  - API value `تربة` → "Turabah" / "تربة"
-  - API value `الخرمة` → "Al-Khurma" / "الخرمة"
-  - API value `المويه` → "Al-Muwayh" / "المويه"
-  - API value `الرين` → "Al-Rayn" / "الرين"
-  - API value `القويعية` → "Al-Quway'iyah" / "القويعية"
-  - API value `الدوادمي` → "Ad-Dawadmi" / "الدوادمي"
-  - API value `عفيف` → "Afif" / "عفيف"
-  - API value `الزلفي` → "Az-Zulfi" / "الزلفي"
-  - API value `المجمعة` → "Al-Majma'ah" / "المجمعة"
-  - API value `شقراء` → "Shaqra" / "شقراء"
-  - API value `حوطة بني تميم` → "Hawtat Bani Tamim" / "حوطة بني تميم"
-  - API value `الحريق` → "Al-Hariq" / "الحريق"
-  - API value `الأفلاج` → "Al-Aflaj" / "الأفلاج"
-  - API value `السليل` → "As-Sulayyil" / "السليل"
-  - API value `وادي الدواسر` → "Wadi Ad-Dawasir" / "وادي الدواسر"
-  - API value `بيشة` → "Bisha" / "بيشة"
-  - API value `النماص` → "An-Namas" / "النماص"
-  - API value `تنومة` → "Tanumah" / "تنومة"
-  - API value `بلقرن` → "Balqarn" / "بلقرن"
-  - API value `سبت العلاية` → "Sabt Al-Alaya" / "سبت العلاية"
-  - API value `خميس مشيط` → "Khamis Mushait" / "خميس مشيط"
-  - API value `أبها` → "Abha" / "أبها"
-  - API value `رجال ألمع` → "Rijal Alma" / "رجال ألمع"
-  - API value `ظهران الجنوب` → "Dhahran Al-Janub" / "ظهران الجنوب"
-  - API value `سراة عبيدة` → "Sarat Abidah" / "سراة عبيدة"
-  - API value `الحرجة` → "Al-Harjah" / "الحرجة"
-  - API value `تثليث` → "Tathlith" / "تثليث"
-  - API value `محايل عسير` → "Mahayel Asir" / "محايل عسير"
-  - API value `جازان` → "Jazan" / "جازان"
-  - API value `صامطة` → "Samtah" / "صامطة"
-  - API value `صبيا` → "Sabya" / "صبيا"
-  - API value `أبوعريش` → "Abu Arish" / "أبوعريش"
-  - API value `بيش` → "Baysh" / "بيش"
-  - API value `الدرب` → "Ad-Darb" / "الدرب"
-  - API value `الريث` → "Ar-Rayth" / "الريث"
-  - API value `فيفاء` → "Fayfa" / "فيفاء"
-  - API value `العيدابي` → "Al-Aydabi" / "العيدابي"
-  - API value `الدائر` → "Ad-Dayir" / "الدائر"
-  - API value `العاصمة المقدسة (مكة)` → "Holy Capital (Makkah)" / "العاصمة المقدسة (مكة)"
-  - API value `بحرة` → "Bahra" / "بحرة"
-  - API value `القنفذة` → "Al-Qunfudhah" / "القنفذة"
-  - API value `الليث` → "Al-Lith" / "الليث"
-  - API value `رابغ` → "Rabigh" / "رابغ"
-  - API value `خليص` → "Khulais" / "خليص"
-  - API value `الجموم` → "Al-Jumum" / "الجموم"
-  - API value `الكامل` → "Al-Kamil" / "الكامل"
-  - API value `الطوال` → "At-Tuwal" / "الطوال"
-  - API value `العارضة` → "Al-Aridah" / "العارضة"
-  - API value `نجران` → "Najran" / "نجران"
-  - API value `حبونا` → "Hubuna" / "حبونا"
-  - API value `يدمة` → "Yadamah" / "يدمة"
-  - API value `بدر الجنوب` → "Badr Al-Janub" / "بدر الجنوب"
-  - API value `ثادق` → "Thadiq" / "ثادق"
-  - API value `رماح` → "Rumah" / "رماح"
-  - API value `مرات` → "Marat" / "مرات"
-  - API value `حوطة سدير` → "Hawtat Sudair" / "حوطة سدير"
-  - API value `تمير` → "Tumair" / "تمير"
-  - API value `الأرطاوية` → "Al-Artawiyah" / "الأرطاوية"
-  - API value `الأحساء (الهفوف والمبرز)` → "Al-Ahsa (Hofuf & Mubarraz)" / "الأحساء (الهفوف والمبرز)"
-  - API value `سلوى` → "Salwa" / "سلوى"
-  - API value `العقير` → "Al-Uqair" / "العقير"
-  - API value `العيون` → "Al-Uyun" / "العيون"
-  - API value `بقيق` → "Buqayq" / "بقيق"
-  - API value `قرية العليا` → "Qaryat Al-Ulya" / "قرية العليا"
-  - API value `صفوى` → "Safwa" / "صفوى"
-  - API value `تاروت` → "Tarout" / "تاروت"
-  - API value `سيهات` → "Saihat" / "سيهات"
-  - API value `العوامية` → "Al-Awamiyah" / "العوامية"
-  - API value `سنابس` → "Sanabis" / "سنابس"
-  - API value `أم الساهك` → "Umm As-Sahik" / "أم الساهك"
-  - API value `حزم الجلاميد` → "Hazm Al-Jalamid" / "حزم الجلاميد"
-  - API value `قارا` → "Qara" / "قارا"
-  - API value `الردف` → "Ar-Rudf" / "الردف"
-  - API value `الشعبة` → "Ash-Shu'bah" / "الشعبة"
-  - API value `الدلم` → "Ad-Dilam" / "الدلم"
-  - API value `الحوطة` → "Al-Hawtah" / "الحوطة"
-  - API value `الخرج` → "Al-Kharj" / "الخرج"
-  - API value `الفرعة` → "Al-Far'ah" / "الفرعة"
-  - API value `الدرعية` → "Ad-Diriyah" / "الدرعية"
-  - API value `العمارية` → "Al-Ammariyah" / "العمارية"
-  - API value `ملهم` → "Mulham" / "ملهم"
-  - API value `العيينة` → "Al-Uyaynah" / "العيينة"
-  - API value `حريملاء` → "Huraymila" / "حريملاء"
-  - API value `صلبوخ` → "Salbukh" / "صلبوخ"
-  - API value `المزاحمية` → "Al-Muzahimiyah" / "المزاحمية"
-  - API value `لبخة` → "Labkhah" / "لبخة"
-  - API value `ضرما` → "Dhurma" / "ضرما"
-  - API value `نساح` → "Nisah" / "نساح"
-  - API value `القصب` → "Al-Qasab" / "القصب"
-  - API value `أشيقر` → "Ushayqir" / "أشيقر"
-  - API value `الرويضة` → "Ar-Ruwaydah" / "الرويضة"
-  - API value `جلاجل` → "Jalajel" / "جلاجل"
-  - API value `البره` → "Al-Burrah" / "البره"
-  - API value `الشقراء` → "Ash-Shaqra" / "الشقراء"
-  - API value `السر` → "As-Sirr" / "السر"
-  - API value `ساجر` → "Sajir" / "ساجر"
-  - API value `نفي` → "Nafi" / "نفي"
-  - API value `البجادية` → "Al-Bijadiyah" / "البجادية"
-  - API value `عروى` → "Urwa" / "عروى"
-  - API value `الرفيعة` → "Ar-Rafi'ah" / "الرفيعة"
-  - API value `العقدة` → "Al-Uqdah" / "العقدة"
-  - API value `الشماسية` → "Ash-Shamasiyah" / "الشماسية"
-  - API value `الخبراء` → "Al-Khabra" / "الخبراء"
-  - API value `رياض الخبراء` → "Riyad Al-Khabra" / "رياض الخبراء"
-  - API value `البصر` → "Al-Basr" / "البصر"
-  - API value `عقلة الصقور` → "Uqlat As-Suqur" / "عقلة الصقور"
-  - API value `النبهانية` → "An-Nabhaniyah" / "النبهانية"
-  - API value `قبة` → "Qibbah" / "قبة"
-  - API value `ميسان` → "Maysan" / "ميسان"
-  - API value `المظيلف` → "Al-Muzaylif" / "المظيلف"
-  - API value `ثول` → "Thuwal" / "ثول"
-  - API value `الحناكية` → "Al-Hanakiyah" / "الحناكية"
-  - API value `العيص` → "Al-Ays" / "العيص"
-  - API value `الحائط` → "Al-Hait" / "الحائط"
-  - API value `السليمي` → "As-Sulaymi" / "السليمي"
-  - API value `الشملي` → "Ash-Shamli" / "الشملي"
-  - API value `الحليفة` → "Al-Hulayfah" / "الحليفة"
-  - API value `ثار` → "Thar" / "ثار"
-  - API value `شرورة` → "Sharurah" / "شرورة"
-  - API value `الوديعة` → "Al-Wadi'ah" / "الوديعة"
-  - API value `الخرخير` → "Al-Kharkhir" / "الخرخير"
-- **Preferred Neighborhoods / الحي** (`preferred_neighborhoods`, type `dropdown`) — options:
-  - API value `الملز` → "Al-Malaz" / "الملز"
-  - API value `المروج` → "Al-Muruj" / "المروج"
-  - API value `التعاون` → "At-Ta'awun" / "التعاون"
-  - API value `الصفا` → "As-Safa" / "الصفا"
-  - API value `السليمانية` → "As-Sulaimaniyah" / "السليمانية"
-  - API value `الروضة` → "Ar-Rawdah" / "الروضة"
-  - API value `السلام` → "As-Salam" / "السلام"
-  - API value `الربوة` → "Ar-Rabwa" / "الربوة"
-  - API value `الريان` → "Ar-Rayyan" / "الريان"
-  - API value `المعذر` → "Al-Ma'athar" / "المعذر"
-  - API value `المربع` → "Al-Murabba" / "المربع"
-  - API value `العليا` → "Al-Olaya" / "العليا"
-  - API value `المرسلات` → "Al-Mursalat" / "المرسلات"
-  - API value `النخيل` → "An-Nakheel" / "النخيل"
-  - API value `الغدير` → "Al-Ghadir" / "الغدير"
-  - API value `الواحة` → "Al-Wahah" / "الواحة"
-  - API value `الصحافة` → "As-Sahafah" / "الصحافة"
-  - API value `الياسمين` → "Al-Yasmin" / "الياسمين"
-  - API value `النرجس` → "An-Narjis" / "النرجس"
-  - API value `العقيق` → "Al-Aqiq" / "العقيق"
-  - API value `الربيع` → "Ar-Rabi" / "الربيع"
-  - API value `الازدهار` → "Al-Izdihar" / "الازدهار"
-  - API value `الورود` → "Al-Wurud" / "الورود"
-  - API value `المغرزات` → "Al-Mughrizat" / "المغرزات"
-  - API value `المعيزيلة` → "Al-Mu'aizilah" / "المعيزيلة"
-  - API value `اليرموك` → "Al-Yarmuk" / "اليرموك"
-  - API value `الحمراء` → "Al-Hamra" / "الحمراء"
-  - API value `قرطبة` → "Qurtubah" / "قرطبة"
-  - API value `الفلاح` → "Al-Falah" / "الفلاح"
-  - API value `المونسية` → "Al-Munisiyah" / "المونسية"
-  - API value `النظيم` → "An-Nadheem" / "النظيم"
-  - API value `الجنادرية` → "Al-Janadriyah" / "الجنادرية"
-  - API value `الندوة` → "An-Nadwah" / "الندوة"
-  - API value `المنار` → "Al-Manar" / "المنار"
-  - API value `الفيحاء` → "Al-Fayha" / "الفيحاء"
-  - API value `النسيم الشرقي` → "An-Naseem East" / "النسيم الشرقي"
-  - API value `النسيم الغربي` → "An-Naseem West" / "النسيم الغربي"
-  - API value `المنصورة` → "Al-Mansurah" / "المنصورة"
-  - API value `الفيصلية` → "Al-Faisaliyah" / "الفيصلية"
-  - API value `الشميسي` → "Ash-Shumaisi" / "الشميسي"
-  - API value `الجرادية` → "Al-Jaradiyah" / "الجرادية"
-  - API value `الديرة` → "Ad-Dirah" / "الديرة"
-  - API value `البطحاء` → "Al-Batha" / "البطحاء"
-  - API value `الظهيرة` → "Adh-Dhahirah" / "الظهيرة"
-  - API value `عليشة` → "Olaishah" / "عليشة"
-  - API value `العريجاء الشرقية` → "Al-Uraija East" / "العريجاء الشرقية"
-  - API value `العريجاء الغربية` → "Al-Uraija West" / "العريجاء الغربية"
-  - API value `العريجاء الوسطى` → "Al-Uraija Central" / "العريجاء الوسطى"
-  - API value `طويق` → "Tuwaiq" / "طويق"
-  - API value `السويدي` → "As-Suwaidi" / "السويدي"
-  - API value `السويدي الغربي` → "As-Suwaidi West" / "السويدي الغربي"
-  - API value `السويدي الشرقي` → "As-Suwaidi East" / "السويدي الشرقي"
-  - API value `الشفا` → "Ash-Shifa" / "الشفا"
-  - API value `بدر` → "Badr" / "بدر"
-  - API value `الدريهمية` → "Ad-Duraihimiyah" / "الدريهمية"
-  - API value `العزيزية` → "Al-Aziziyah" / "العزيزية"
-  - API value `الدار البيضاء` → "Ad-Dar Al-Bayda" / "الدار البيضاء"
-  - API value `الحزم` → "Al-Hazm" / "الحزم"
-  - API value `نمار` → "Namar" / "نمار"
-  - API value `لبن` → "Laban" / "لبن"
-  - API value `ظهرة لبن` → "Dhahrat Laban" / "ظهرة لبن"
-  - API value `جامعة الملك سعود` → "King Saud University" / "جامعة الملك سعود"
-  - API value `المعذر الشمالي` → "Al-Ma'athar North" / "المعذر الشمالي"
-  - API value `المعذر الجنوبي` → "Al-Ma'athar South" / "المعذر الجنوبي"
-  - API value `الناصرية` → "An-Nasriyah" / "الناصرية"
-  - API value `الخالدية` → "Al-Khalidiyah" / "الخالدية"
-  - API value `عتيقة` → "Atiqah" / "عتيقة"
-  - API value `منفوحة` → "Manfuha" / "منفوحة"
-  - API value `منفوحة الجديدة` → "Manfuha Al-Jadidah" / "منفوحة الجديدة"
-  - API value `غبيراء` → "Ghubayra" / "غبيراء"
-  - API value `الصالحية` → "As-Salihiyah" / "الصالحية"
-  - API value `الفوطة` → "Al-Futah" / "الفوطة"
-  - API value `الزهرة` → "Az-Zahrah" / "الزهرة"
-  - API value `العريجا` → "Al-Uraija" / "العريجا"
-  - API value `ضاحية لبن` → "Dhahiyat Laban" / "ضاحية لبن"
-  - API value `الجامعة` → "Al-Jami'ah" / "الجامعة"
-  - API value `البديعة` → "Al-Badiah" / "البديعة"
-  - API value `الوشام` → "Al-Washm" / "الوشام"
-  - API value `المرقب` → "Al-Murqab" / "المرقب"
-  - API value `الجزيرة` → "Al-Jazirah" / "الجزيرة"
-  - API value `القدس` → "Al-Quds" / "القدس"
-  - API value `الروابي` → "Ar-Rawabi" / "الروابي"
-  - API value `النسيم` → "An-Naseem" / "النسيم"
-  - API value `النهضة` → "An-Nahdah" / "النهضة"
-  - API value `غرناطة` → "Gharnatah" / "غرناطة"
-  - API value `المصيف` → "Al-Musayif" / "المصيف"
-  - API value `الوزارات` → "Al-Wizarat" / "الوزارات"
-  - API value `النخيل الشرقي` → "An-Nakheel East" / "النخيل الشرقي"
-  - API value `النخيل الغربي` → "An-Nakheel West" / "النخيل الغربي"
-  - API value `السفارات` → "As-Safarat" / "السفارات"
-  - API value `حي الملقا` → "Al-Malqa" / "حي الملقا"
-  - API value `حي جامعة الملك سعود` → "KSU District" / "حي جامعة الملك سعود"
-  - API value `حي العارض` → "Al-Aridh" / "حي العارض"
-  - API value `حي العارض الشمالي` → "Al-Aridh North" / "حي العارض الشمالي"
-  - API value `حي القيروان` → "Al-Qairawan" / "حي القيروان"
-  - API value `حي حطين` → "Hittin" / "حي حطين"
-  - API value `حي الندى` → "An-Nada" / "حي الندى"
-  - API value `حي النرجس الشمالي` → "An-Narjis North" / "حي النرجس الشمالي"
-  - API value `حي الملقا الجنوبي` → "Al-Malqa South" / "حي الملقا الجنوبي"
-  - API value `حي الملقا الشمالي` → "Al-Malqa North" / "حي الملقا الشمالي"
-  - API value `حي العارض الغربي` → "Al-Aridh West" / "حي العارض الغربي"
-  - API value `حي الخير` → "Al-Khair" / "حي الخير"
-  - API value `حي بنبان` → "Banban" / "حي بنبان"
-  - API value `حي المهدية` → "Al-Mahdiyah" / "حي المهدية"
-  - API value `حي ديراب` → "Dirab" / "حي ديراب"
-  - API value `حي نمار` → "Namar" / "حي نمار"
-  - API value `حي طويق` → "Tuwaiq" / "حي طويق"
-  - API value `حي ظهرة لبن` → "Dhahrat Laban" / "حي ظهرة لبن"
-  - API value `حي لبن الغربي` → "Laban West" / "حي لبن الغربي"
-  - API value `حي السويدي الغربي` → "As-Suwaidi West" / "حي السويدي الغربي"
-  - API value `حي بدر` → "Badr" / "حي بدر"
-  - API value `حي العزيزية` → "Al-Aziziyah" / "حي العزيزية"
-  - API value `حي الدار البيضاء` → "Ad-Dar Al-Bayda" / "حي الدار البيضاء"
-  - API value `حي المنصورة` → "Al-Mansurah" / "حي المنصورة"
-  - API value `حي الصناعية القديمة` → "Old Industrial" / "حي الصناعية القديمة"
-  - API value `حي الصناعية الجديدة` → "New Industrial" / "حي الصناعية الجديدة"
-  - API value `حي الفاخرية` → "Al-Fakhiriyah" / "حي الفاخرية"
-  - API value `حي المصفاة` → "Al-Musaffah" / "حي المصفاة"
-  - API value `حي السعادة` → "As-Sa'adah" / "حي السعادة"
-  - API value `حي السلي` → "As-Sulay" / "حي السلي"
-  - API value `حي الجزيرة` → "Al-Jazirah" / "حي الجزيرة"
-  - API value `حي الصناعية الثانية` → "Industrial 2nd" / "حي الصناعية الثانية"
-  - API value `حي الخليج` → "Al-Khaleej" / "حي الخليج"
-  - API value `حي النهضة` → "An-Nahdah" / "حي النهضة"
-  - API value `حي القدس` → "Al-Quds" / "حي القدس"
-  - API value `حي اليرموك` → "Al-Yarmuk" / "حي اليرموك"
-  - API value `حي الحمراء الشرقية` → "Al-Hamra East" / "حي الحمراء الشرقية"
-  - API value `حي الحمراء الغربية` → "Al-Hamra West" / "حي الحمراء الغربية"
-  - API value `حي قرطبة الشرقية` → "Qurtubah East" / "حي قرطبة الشرقية"
-  - API value `حي قرطبة الغربية` → "Qurtubah West" / "حي قرطبة الغربية"
-  - API value `حي الفلاح` → "Al-Falah" / "حي الفلاح"
-  - API value `حي غرناطة الشمالية` → "Gharnatah North" / "حي غرناطة الشمالية"
-  - API value `حي غرناطة الجنوبية` → "Gharnatah South" / "حي غرناطة الجنوبية"
-  - API value `حي المونسية الشرقية` → "Al-Munisiyah East" / "حي المونسية الشرقية"
-  - API value `حي المونسية الغربية` → "Al-Munisiyah West" / "حي المونسية الغربية"
-  - API value `حي الازدهار` → "Al-Izdihar" / "حي الازدهار"
-  - API value `حي الربيع الشرقي` → "Ar-Rabi East" / "حي الربيع الشرقي"
-  - API value `حي الربيع الغربي` → "Ar-Rabi West" / "حي الربيع الغربي"
-  - API value `حي العقيق الشمالي` → "Al-Aqiq North" / "حي العقيق الشمالي"
-  - API value `حي العقيق الجنوبي` → "Al-Aqiq South" / "حي العقيق الجنوبي"
-  - API value `حي الصحافة الشمالية` → "As-Sahafah North" / "حي الصحافة الشمالية"
-  - API value `حي الصحافة الجنوبية` → "As-Sahafah South" / "حي الصحافة الجنوبية"
-  - API value `حي النرجس الجنوبية` → "An-Narjis South" / "حي النرجس الجنوبية"
-  - API value `al_yasmin_south` → "Al-Yasmin South" / "حي الياسمين الجنوبية"
-  - API value `al_malqa_central` → "Al-Malqa Central" / "حي الملقا الوسطى"
-  - API value `al_qairawan_south` → "Al-Qairawan South" / "حي القيروان الجنوبي"
-  - API value `al_qairawan_north` → "Al-Qairawan North" / "حي القيروان الشمالي"
-  - API value `hittin_an_narjis` → "Hittin An-Narjis" / "حي حطين النرجس"
-  - API value `al_yasmin_west` → "Al-Yasmin West" / "حي الياسمين الغربي"
-  - API value `al_aridh_central` → "Al-Aridh Central" / "حي العارض الأوسط"
-  - API value `king_fahad` → "King Fahad" / "الملك فهد" · color `#14B8A6`
-  - API value `الشهداء` → "Al-Shuhada" / "الشهداء" · color `#10B981`
-  - API value `الرفيعة` → "الرفيعة" / "الرفيعة" · color `#F59E0B`
-  - API value `الفاروق` → "الفاروق" / "الفاروق" · color `#EF4444`
+- **Geo Source / مصدر الإحداثيات** (`geo_source`, type `dropdown`) — options:
+  - API value `inline_link` → "From map link" / "من رابط الخريطة" · color `#22c55e`
+  - API value `district_centroid` → "District centroid" / "مركز الحي" · color `#eab308`
+  - API value `manual` → "Manual" / "يدوي" · color `#3b82f6`
+- **Geo Confidence / دقة الموقع** (`geo_confidence`, type `dropdown`) — options:
+  - API value `high` → "High" / "عالية" · color `#22c55e`
+  - API value `medium` → "Medium" / "متوسطة" · color `#eab308`
+  - API value `low` → "Low" / "منخفضة" · color `#ef4444`
+  - API value `unavailable` → "Unavailable" / "غير متوفر" · color `#EF4444`
 
-### 3. Project Details / تفاصيل المشروع  _(color #C09B5F)_
+### 3. Inventory Summary / ملخص المخزون  _(color #C09B5F)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
+| `unit_count` | Unit Count / عدد الوحدات | Number | no | half | yes | rollup: units_count |
 | `available_units` | Available Units / عدد الوحدات المتاحة | Number | no | half | yes | rollup: units_available_count |
 | `sold_units` | Sold Units / عدد الوحدات المباعة | Number | no | half | yes | rollup: units_sold_count |
 | `reserved_units` | Reserved Units / عدد الوحدات المحجوزة | Number | no | half | yes | rollup: units_reserved_count |
-| `price_range` | Area Range / نطاق السعر | Range | no | half | yes | 30000–1000000 |
+| `price_range` | Price Range / نطاق السعر | Range | no | half | yes | 30000–1000000 |
 | `area_range` | Area Range / نطاق المساحة | Range | no | half | yes | 50–10000 |
-| `unit_count` | Unit Count / عدد الوحدات | Number | no | half | yes | rollup: units_count |
 | `bedroom_range` | Bedroom Range / نطاق غرف النوم | Range | no | half | yes | 0–10 |
 | `bathroom_range` | Bathroom Range / نطاق دورات المياة | Range | no | half | yes | 0–10 |
-| `avg_max_price_per_m2` | Avg Max Price per m² / متوسط السعر الأعلى للمتر | Currency | no | half | yes | rollup: max_price_per_meter |
 | `avg_min_price_per_m2` | Avg Min Price per m² / متوسط السعر الأدنى للمتر | Currency | no | half | yes | rollup: min_price_per_meter |
+| `avg_max_price_per_m2` | Avg Max Price per m² / متوسط السعر الأعلى للمتر | Currency | no | half | yes | rollup: max_price_per_meter |
 | `avg_price_per_m2` | Avg Price per m² / متوسط السعر الإجمالي للمتر | Currency | no | half | yes | rollup: avg_price_per_meter |
+| `available_price_range` | Available Price Range / نطاق سعر الوحدات المتاحة | Range | no | half | no | 30000–1000000 |
+| `available_area_range` | Available Area Range / نطاق مساحة الوحدات المتاحة | Range | no | half | no | 50–10000 |
 
 **Field details:**
 
+- **Unit Count / عدد الوحدات** (`unit_count`, type `number`):
+  - stored rollup (`units_count`), read-only
 - **Available Units / عدد الوحدات المتاحة** (`available_units`, type `number`):
   - stored rollup (`units_available_count`), read-only
 - **Sold Units / عدد الوحدات المباعة** (`sold_units`, type `number`):
   - stored rollup (`units_sold_count`), read-only
 - **Reserved Units / عدد الوحدات المحجوزة** (`reserved_units`, type `number`):
   - stored rollup (`units_reserved_count`), read-only
-- **Area Range / نطاق السعر** (`price_range`, type `range`):
+- **Price Range / نطاق السعر** (`price_range`, type `range`):
   - 30000 to 1000000 step 10000 SAR
   - stored rollup (`price_range`), read-only
 - **Area Range / نطاق المساحة** (`area_range`, type `range`):
   - 50 to 10000 step 1 m²
   - stored rollup (`area_range`), read-only
-- **Unit Count / عدد الوحدات** (`unit_count`, type `number`):
-  - stored rollup (`units_count`), read-only
 - **Bedroom Range / نطاق غرف النوم** (`bedroom_range`, type `range`):
   - 0 to 10 step 1
   - stored rollup (`bedroom_range`), read-only
 - **Bathroom Range / نطاق دورات المياة** (`bathroom_range`, type `range`):
   - 0 to 10 step 1
   - stored rollup (`bathroom_range`), read-only
-- **Avg Max Price per m² / متوسط السعر الأعلى للمتر** (`avg_max_price_per_m2`, type `currency`):
-  - stored rollup (`max_price_per_meter`), read-only
 - **Avg Min Price per m² / متوسط السعر الأدنى للمتر** (`avg_min_price_per_m2`, type `currency`):
   - stored rollup (`min_price_per_meter`), read-only
+- **Avg Max Price per m² / متوسط السعر الأعلى للمتر** (`avg_max_price_per_m2`, type `currency`):
+  - stored rollup (`max_price_per_meter`), read-only
 - **Avg Price per m² / متوسط السعر الإجمالي للمتر** (`avg_price_per_m2`, type `currency`):
   - stored rollup (`avg_price_per_meter`), read-only
+- **Available Price Range / نطاق سعر الوحدات المتاحة** (`available_price_range`, type `range`):
+  - 30000 to 1000000 step 10000 SAR
+  - stored rollup (`available_price_range`), read-only
+- **Available Area Range / نطاق مساحة الوحدات المتاحة** (`available_area_range`, type `range`):
+  - 50 to 10000 step 1 m²
+  - stored rollup (`available_area_range`), read-only
 
-### 4. Project Content / محتوى المشروع-المطور  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `brochure_url` | Brochure / البروشور | URL | no | half | yes |  |
-| `project_page_url` | Project Page / صفحة المشروع | URL | no | half | yes |  |
-| `developer_content` | Developer Content / المحتوى من المطور | Attachment | no | half | yes |  |
-| `marketing_document` | Marketing Document / الوثيقة التسويقية | Text area | no | full | no |  |
-
-### 5. Website Settings / إعدادات الموقع  _(color #B8734F)_
+### 4. Sales & Targeting / المبيعات والاستهداف  _(color #8E4E3A)_
 
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
-| `image_url` | Project Image / صورة المشروع | Image | no | full | no |  |
-| `is_public` | Show on Website / عرض على الموقع | Checkbox | no | half | yes |  |
-
-### 6. Project Targeting / استهداف المشروع  _(color #B8734F)_
-
-| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
-| --- | --- | --- | --- | --- | --- | --- |
-| `project_targt_status` | Project Stage / مرحلة إستهداف المشروع | Dropdown | no | half | yes | 7 options |
 | `is_targeted` | Project Targeting / إستهداف المشروع | Checkbox | no | half | yes |  |
+| `project_targt_status` | Project Stage / مرحلة إستهداف المشروع | Dropdown | no | half | yes | 7 options |
+| `sales_priority` | Sales Priority / أولوية المبيعات | Dropdown | no | half | yes | 3 options |
+| `exclusive_status` | Exclusive Status / حالة الحصرية | Dropdown | no | half | yes | 3 options |
+| `internal_sales_notes` | Internal Sales Notes / ملاحظات مبيعات داخلية | Text area | no | full | no |  |
+| `objection_handling_notes` | Objection Handling Notes / التعامل مع الاعتراضات | Text area | no | full | no |  |
 
 **Field details:**
 
@@ -636,6 +233,88 @@
   - API value `not_targeted` → "Not Targeted" / "غير مستهدف" · color `#EF4444`
   - API value `exclusive` → "Exclusive" / "حصري" · color `#8B5CF6`
   - API value `shared` → "Shared" / "مشترك" · color `#EC4899`
+- **Sales Priority / أولوية المبيعات** (`sales_priority`, type `dropdown`) — options:
+  - API value `high` → "High" / "عالية" · color `#8E4E3A`
+  - API value `normal` → "Normal" / "عادية" · color `#C09B5F`
+  - API value `low` → "Low" / "منخفضة" · color `#9CA3AF`
+- **Exclusive Status / حالة الحصرية** (`exclusive_status`, type `dropdown`) — options:
+  - API value `exclusive` → "Exclusive" / "حصري" · color `#8E4E3A`
+  - API value `shared` → "Shared" / "مشترك" · color `#C09B5F`
+  - API value `open_market` → "Open Market" / "سوق مفتوح" · color `#9CA3AF`
+
+### 5. Media & Marketing / الوسائط والتسويق  _(color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `main_image` | Main Image / الصورة الرئيسية | Image | no | half | no |  |
+| `project_images` | Project Images / صور المشروع | Multi-image | no | full | no |  |
+| `project_videos` | Project Videos / فيديوهات المشروع | multi_video | no | full | yes |  |
+| `features` | Features / المزايا | Table | no | half | yes | 2 columns |
+| `guarantees` | Guarantees / الضمانات | Table | no | half | yes | 4 columns |
+| `nearby_landmarks` | Nearby Landmarks / المعالم القريبة | Table | no | half | yes | 4 columns |
+| `services` | Services / الخدمات | Table | no | half | yes | 2 columns |
+
+**Field details:**
+
+- **Features / المزايا** (`features`, type `table`) — columns:
+  - `feature` "Feature" (text)
+  - `keywords` "Notes" (text)
+- **Guarantees / الضمانات** (`guarantees`, type `table`) — columns:
+  - `col_1` "" (text)
+  - `col_2` "" (text)
+  - `col_3` "" (text)
+  - `col_4` "" (text)
+- **Nearby Landmarks / المعالم القريبة** (`nearby_landmarks`, type `table`) — columns:
+  - `landmark` "Landmark" (text)
+  - `distance` "Distance" (text)
+  - `duration` "Duration" (text)
+  - `property_type` "Landmark Type" (text)
+- **Services / الخدمات** (`services`, type `table`) — columns:
+  - `service` "Service" (text)
+  - `notes` "Notes" (text)
+
+### 6. Developer Content / محتوى المطور  _(color #C09B5F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `broucher_developer` | Developer Brochure Link / رابط بروشور المطور | URL | no | half | yes |  |
+| `project_page_url` | Project Page / صفحة المشروع - المطور | URL | no | half | yes |  |
+| `developer_content` | Developer Content / المحتوى - المطور | Attachment | no | half | yes |  |
+
+### 7. Our Content / محتوانا  _(color #8E4E3A)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `brochure_link` | Our Brochure Link / رابط بروشورنا | URL | no | half | yes |  |
+| `project_analysis` | Project Analysis / تحليل المشروع | Text area | no | half | yes |  |
+| `project_content` | Project Content / محتوى المشروع | Attachment | no | half | yes |  |
+| `marketing_document` | Marketing Document / الوثيقة التسويقية | Text area | no | full | no |  |
+
+### 8. Website Settings / إعدادات الموقع  _(color #B8734F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `is_public` | Show on Website / عرض على الموقع | Checkbox | no | half | yes |  |
+
+### 9. Data Quality / جودة البيانات  _(color #C09B5F)_
+
+| API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
+| --- | --- | --- | --- | --- | --- | --- |
+| `data_sources` | Data Sources / مصادر البيانات | Multi-select | no | half | yes | 5 options · multi |
+| `last_verified_at` | Last Verified At / آخر تحقق | Date & time | no | half | no |  |
+| `data_confidence_score` | Data Confidence Score / درجة الثقة في البيانات | Number | no | half | no |  |
+| `missing_required_fields` | Missing Required Fields / الحقول المطلوبة الناقصة | Text area | no | full | no |  |
+| `ai_audit_notes` | AI Audit Notes / ملاحظات تدقيق الذكاء الاصطناعي | Text area | no | full | no |  |
+| `source_notes` | Source Notes / ملاحظات المصدر | Text area | no | full | no |  |
+
+**Field details:**
+
+- **Data Sources / مصادر البيانات** (`data_sources`, type `multiselect`) — multi-value. Options:
+  - API value `units_table` → "Units Table" / "جدول الوحدات" · color `#3B82F6`
+  - API value `brochure` → "Brochure" / "بروشور" · color `#10B981`
+  - API value `project_page` → "Project Page" / "صفحة المشروع" · color `#F59E0B`
+  - API value `inquiry` → "Inquiry" / "الإستفسار" · color `#EF4444`
+  - API value `field_survey` → "Field Survey" / "مسح ميداني" · color `#8B5CF6`
 
 ## Custom buttons
 

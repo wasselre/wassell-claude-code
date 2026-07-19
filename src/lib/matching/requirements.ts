@@ -47,6 +47,10 @@ export interface MatchRequirementsInput {
   /** Max acceptable unit age in YEARS (عمر العقار) — 0 = new only. */
   max_unit_age?: number;
   amenities?: string[];
+  /** MUST-HAVE amenities — the engine drops any candidate that doesn't list ALL
+   *  of them (hard gate, fails closed on no-amenity-data). Set by the finder UIs'
+   *  "must have" toggle from the selected `amenities`; never stored on the client. */
+  required_amenities?: string[];
 }
 
 export interface DraftToRequirementsArgs {

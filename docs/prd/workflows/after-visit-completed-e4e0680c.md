@@ -5,7 +5,7 @@
 # Workflow: After-Visit Completed / إكمال متابعة بعد الزيارة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-17
+**Last updated (from DB):** 2026-06-21
 **Workflow id:** `e4e0680c-4400-4030-8013-2bb21abb2a2f`   ·   **Active:** yes
 **Group:** Sales Lifecycle
 **Trigger:** When a record is updated
@@ -13,7 +13,22 @@
 
 ## Logic (branched)
 
-### Branch 1: IF — Request Offer
+### Branch 1: IF — Unreachable after visit (cap reached)
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Follow-up Type (`followup_type`) equals "Follow-Up Call After Visit" (`follow_up_call_after_visit`)
+- Actual Follow-up (`actual_datetime`) is not empty
+- Outcome (`call_result`) equals "No Answer" (`no_answer`) · _only when it newly becomes true_
+- Follow-up Number (`followup_number`) greater than 16
+
+**Actions (run in order):**
+
+**Action 1 — Update Record**
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
+- Client Status (`client_status`) ← static value تعذّر التواصل بعد الزيارة
+
+### Branch 2: ELSE IF — Request Offer
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -28,7 +43,7 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 - Client Stage (`client_stage`) ← static value عرض سعر
 - Client Status (`client_status`) ← static value تم طلب عرض سعر
 
-### Branch 2: ELSE IF — Still Interested
+### Branch 3: ELSE IF — Still Interested
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -49,7 +64,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+2d @10:00`
 - Status (`followup_status`) ← static value open
 
-### Branch 3: ELSE IF — Needs Financing Info
+### Branch 4: ELSE IF — Needs Financing Info
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -70,7 +85,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+2d @10:00`
 - Status (`followup_status`) ← static value open
 
-### Branch 4: ELSE IF — Family Discussion
+### Branch 5: ELSE IF — Family Discussion
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -91,7 +106,7 @@ Create a **Follow-ups / المتابعات** record with:
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+3d @10:00`
 - Status (`followup_status`) ← static value open
 
-### Branch 5: ELSE IF — Not Interested
+### Branch 6: ELSE IF — Not Interested
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -107,7 +122,7 @@ Update **Clients / العملاء** records where `id` (unknown field) = the tri
 - Client Status (`client_status`) ← static value غير مهتم
 - Lost Reason (`lost_reason`) ← the trigger record's Lost Reason (`lost_reason`)
 
-### Branch 6: ELSE IF — No Answer
+### Branch 7: ELSE IF — No Answer
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -123,8 +138,9 @@ Create a **Follow-ups / المتابعات** record with:
 - Follow-up Type (`followup_type`) ← static value follow_up_call_after_visit
 - Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d`
 - Status (`followup_status`) ← static value open
+- Follow-up Number (`followup_number`) ← formula `{followup_number} + 1`
 
-### Branch 7: ELSE IF — Wrong Time
+### Branch 8: ELSE IF — Wrong Time
 
 **Conditions:**
 _Match: ALL must pass (AND)_
@@ -144,3 +160,88 @@ Create a **Follow-ups / المتابعات** record with:
 - Follow-up Type (`followup_type`) ← static value follow_up_call_after_visit
 - Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
 - Status (`followup_status`) ← static value open
+
+### Branch 9: ELSE IF — Requested Another Visit
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Follow-up Type (`followup_type`) equals "Follow-Up Call After Visit" (`follow_up_call_after_visit`)
+- Actual Follow-up (`actual_datetime`) is not empty
+- Outcome (`call_result`) equals "Requested Another Visit" (`requested_another_visit`) · _only when it newly becomes true_
+
+**Actions (run in order):**
+
+**Action 1 — Update Record**
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
+- Client Stage (`client_stage`) ← static value الاتصال لحجز موعد
+- Client Status (`client_status`) ← static value مهتم
+
+**Action 2 — Create Record**
+Create a **Follow-ups / المتابعات** record with:
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
+- Follow-up Type (`followup_type`) ← static value appointment_booking_call
+- Follow-up Number (`followup_number`) ← static value 1
+- Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+0d`
+- Status (`followup_status`) ← static value open
+
+### Branch 10: ELSE IF — Visited Another Project
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Follow-up Type (`followup_type`) equals "Follow-Up Call After Visit" (`follow_up_call_after_visit`)
+- Actual Follow-up (`actual_datetime`) is not empty
+- Outcome (`call_result`) equals "Visited Another Project" (`visited_other_project`) · _only when it newly becomes true_
+
+**Actions (run in order):**
+
+**Action 1 — Update Record**
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
+- Client Status (`client_status`) ← static value زار مشروعًا آخر — للمراجعة
+
+**Action 2 — Create Record**
+Create a **Follow-ups / المتابعات** record with:
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
+- Follow-up Type (`followup_type`) ← static value follow_up_call_after_visit
+- Sales Rep (`sales_rep`) ← a user chosen by role Sales Manager
+- Priority (`priority`) ← static value high
+- Follow-up Number (`followup_number`) ← static value 1
+- Scheduled Follow-up (`scheduled_datetime`) ← the current date offset by `+1d @10:00`
+- Status (`followup_status`) ← static value open
+
+### Branch 11: ELSE IF — Recontact Later
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Follow-up Type (`followup_type`) equals "Follow-Up Call After Visit" (`follow_up_call_after_visit`)
+- Actual Follow-up (`actual_datetime`) is not empty
+- Outcome (`call_result`) equals "Recontact Later To Reschedule" (`recontact_later`) · _only when it newly becomes true_
+
+**Actions (run in order):**
+
+**Action 1 — Update Record**
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
+- Client Status (`client_status`) ← static value إعادة تواصل لاحقًا
+
+**Action 2 — Create Record**
+Create a **Follow-ups / المتابعات** record with:
+- Client ID (`client_id`) ← the trigger record's Client ID (`client_id`)
+- Follow-up Type (`followup_type`) ← static value follow_up_call_after_visit
+- Follow-up Number (`followup_number`) ← static value 1
+- Scheduled Follow-up (`scheduled_datetime`) ← trigger field Reschedule Contact Date (`reschedule_contact_date`) offset by `+0d`
+- Status (`followup_status`) ← static value open
+
+### Branch 12: ELSE IF — Invalid Number
+
+**Conditions:**
+_Match: ALL must pass (AND)_
+- Follow-up Type (`followup_type`) equals "Follow-Up Call After Visit" (`follow_up_call_after_visit`)
+- Actual Follow-up (`actual_datetime`) is not empty
+- Outcome (`call_result`) equals "Invalid Number" (`invalid_number`) · _only when it newly becomes true_
+
+**Actions (run in order):**
+
+**Action 1 — Update Record**
+Update **Clients / العملاء** records where `id` (unknown field) = the trigger record's Client ID (`client_id`), setting:
+- Client Stage (`client_stage`) ← static value غير مؤهل
+- Client Status (`client_status`) ← static value رقم خاطئ
+- Lost Reason (`lost_reason`) ← the trigger record's Lost Reason (`lost_reason`)

@@ -5,7 +5,7 @@
 # Model: Chat Templates / قوالب الرسائل  `chat_templates`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-08
+**Last updated (from DB):** 2026-07-03
 **Model id:** `4a70d8f1-2a6a-4ea7-b7ef-45c6e6af732b`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -14,7 +14,7 @@
 
 ## Overview
 - Sections: **1** (1 base, 0 non-base)
-- Fields: **11**
+- Fields: **13**
 - Section-selector field: none
 - Duplicate-check field: none
 - Custom buttons: 0
@@ -40,6 +40,8 @@
 | `media_mime` | MIME type / نوع MIME | Text | no | half | no |  |
 | `media_size` | File size (bytes) / حجم الملف | Number | no | half | no |  |
 | `project_id` | Project / المشروع | Lookup | no | half | yes | → All Projects |
+| `listing_id` | Market Listing / إعلان السوق | Lookup | no | half | yes | → Market Listings |
+| `category` | Category / التصنيف | Dropdown | no | half | yes | 2 options |
 
 **Field details:**
 
@@ -56,3 +58,10 @@
   - target model: All Projects
   - shows field: `project_name`
   - multiple: no
+- **Market Listing / إعلان السوق** (`listing_id`, type `lookup`):
+  - target model: Market Listings
+  - shows field: `title`
+  - multiple: no
+- **Category / التصنيف** (`category`, type `dropdown`) — options:
+  - API value `project` → "Project messages" / "رسائل المشاريع" · color `#B8734F`
+  - API value `contact` → "Contact messages" / "رسائل التواصل" · color `#C09B5F`

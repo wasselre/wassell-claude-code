@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { __test, type MatchResultItem, type MatchCoreSuccess, type MatchRequirements } from '../matchAgent';
+import { __test, passesRequiredAmenities, type MatchResultItem, type MatchCoreSuccess, type MatchRequirements } from '../matchAgent';
 import { classifyGeo } from '../geoVerify';
 import {
   groupForFinder,
@@ -228,6 +228,58 @@ describe('9. bedrooms / bathrooms filtering', () => {
   it('bathrooms in range → full credit; out of range → zero', () => {
     expect(scoreProject(baseProject, { bathrooms: 3 }, {}).breakdown.bathrooms).toBe(1);
     expect(scoreProject(baseProject, { bathrooms: 9 }, {}).breakdown.bathrooms).toBe(0);
+  });
+  it('MORE bedrooms than requested is a full match (at-least semantics)', () => {
+    const seven = { ...baseProject, bedroom_range: { min: 7, max: 7 } };
+    expect(scoreProject(seven, { bedrooms: 6 }, {}).breakdown.bedrooms).toBe(1);
+    const five = { ...baseProject, bedroom_range: { min: 5, max: 5 } };
+    expect(scoreProject(five, { bedrooms: 6 }, {}).breakdown.bedrooms).toBe(0.6); // one under → near-miss
+    const three = { ...baseProject, bedroom_range: { min: 3, max: 3 } };
+    expect(scoreProject(three, { bedrooms: 6 }, {}).breakdown.bedrooms).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST 9b — Soft budget floor: slightly under-budget surfaces with near-full
+// credit; far under stays "wrong segment".
+// ─────────────────────────────────────────────────────────────────────────────
+describe('9b. soft budget floor (10% tolerance below budget_min)', () => {
+  it('within 10% below the floor → 0.9 credit', () => {
+    // price max 1.2M vs floor 1.3M → 1.2M >= 1.3M×0.9 (1.17M) → near-full credit.
+    const r = scoreProject(baseProject, { budget_min: 1_300_000, budget_max: 2_000_000 }, {});
+    expect(r.breakdown.budget).toBe(0.9);
+  });
+  it('far below the floor → wrong segment, mild credit (0.2)', () => {
+    const r = scoreProject(baseProject, { budget_min: 5_000_000, budget_max: 6_000_000 }, {});
+    expect(r.breakdown.budget).toBe(0.2);
+  });
+  it('inside the window is still a full match', () => {
+    const r = scoreProject(baseProject, { budget_min: 600_000, budget_max: 2_000_000 }, {});
+    expect(r.breakdown.budget).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST 9c — required_amenities is a HARD gate that fails closed.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('9c. required amenities hard gate', () => {
+  const withAmenities = { ...baseProject, preferred_amenities: ['غرفة سائق', 'ملحق سفلي', 'مصعد'] };
+  it('passes when every required amenity fuzzy-matches the evidence', () => {
+    expect(passesRequiredAmenities(withAmenities, { required_amenities: ['غرفة سائق', 'ملحق'] })).toBe(true);
+  });
+  it('fails when ANY required amenity is missing', () => {
+    expect(passesRequiredAmenities(withAmenities, { required_amenities: ['غرفة سائق', 'مسبح'] })).toBe(false);
+  });
+  it('fails CLOSED when the candidate has no amenity data', () => {
+    expect(passesRequiredAmenities(baseProject, { required_amenities: ['ملحق'] })).toBe(false);
+  });
+  it('no required amenities → always passes', () => {
+    expect(passesRequiredAmenities(baseProject, {})).toBe(true);
+    expect(passesRequiredAmenities(baseProject, { required_amenities: [] })).toBe(true);
+  });
+  it('required amenities also earn the amenities subscore', () => {
+    const r = scoreProject(withAmenities, { required_amenities: ['غرفة سائق', 'ملحق'] }, {});
+    expect(r.breakdown.amenities).toBe(1);
   });
 });
 

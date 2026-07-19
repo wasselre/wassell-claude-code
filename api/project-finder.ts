@@ -98,6 +98,7 @@ function normalizeRequirements(raw: Partial<MatchRequirements> | undefined): Mat
   // عمر العقار cap — 0 ("new only") is meaningful, so null-check not truthiness.
   const maxAge = num(r.max_unit_age); if (maxAge != null && maxAge >= 0) out.max_unit_age = maxAge;
   const amenities = strArr(r.amenities); if (amenities?.length) out.amenities = amenities;
+  const requiredAmenities = strArr(r.required_amenities); if (requiredAmenities?.length) out.required_amenities = requiredAmenities;
   if (r.include_sold_out === true) out.include_sold_out = true;
   if (r.allow_stretch === false) out.allow_stretch = false;
   return out;
