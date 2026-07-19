@@ -1482,6 +1482,11 @@ function applyRealtimeRow(row: DbChatMessageRow): void {
  *  increments on NEW inbound rows (not on UPDATEs to existing rows like
  *  ack progression). */
 function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
+  // A REACTION must never steal the conversation preview or raise an unread
+  // badge — a customer reacting 👍 is not "sent a message awaiting a reply".
+  // The webhook already skips the durable bump; this is the browser-side twin
+  // (without it the emoji showed up as the chat's title/preview, live 2026-07-19).
+  if (row.kind === 'reaction') return;
   useAppStore.setState((s) => {
     const chatsModel = s.models.find((m) => m.name === 'chats');
     if (!chatsModel) return s;

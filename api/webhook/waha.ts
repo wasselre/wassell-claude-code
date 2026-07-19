@@ -220,9 +220,11 @@ async function handleReaction(event: WahaEvent, session: string): Promise<void> 
   const emoji = (p.reaction?.text ?? '').trim();
   const flow: 'in' | 'out' = p.fromMe ? 'out' : 'in';
 
-  const rawChat =
-    chatIdFromMessageId(targetId) ??
-    String(p.from ?? '');
+  // The conversation is WHO REACTED (payload.from) — NOT the target message id.
+  // WhatsApp writes the target id from the REACTOR's perspective
+  // ("false_<ourOwnLid>_<hash>"), so deriving the chat from it resolved to our
+  // OWN number and filed every reaction into the self-chat (live 2026-07-19).
+  const rawChat = String(p.from ?? '') || (chatIdFromMessageId(targetId) ?? '');
   let counterpartyPhone = phoneFromJid(rawChat) ?? (flow === 'in' ? resolveWahaPhone(p) : null);
   if (!counterpartyPhone && rawChat.endsWith('@lid')) {
     counterpartyPhone = await resolveLidToPhone(session, rawChat);
