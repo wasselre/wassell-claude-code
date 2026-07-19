@@ -15,6 +15,7 @@
  */
 
 import type { AppModel, ModelField } from '@/types';
+import { pickLocalized, type LocalizedName } from '@/lib/geo/localizedName';
 
 /** One resolved preference, ready to show in the panel and feed the assistant. */
 export interface UsedPreference {
@@ -42,14 +43,27 @@ const PREF_FIELDS: Array<{ slug: string; label_ar: string; label_en: string; kin
   { slug: 'preferred_direction', label_ar: 'الاتجاه', label_en: 'Direction', kind: 'list' },
 ];
 
-/** Resolve an array of lookup record ids (districts/cities) to display names. */
-function geoValue(raw: unknown, geoNames: Record<string, string> | undefined): string | null {
+/**
+ * Resolve an array of lookup record ids (districts/cities) to LOCALIZED names.
+ *
+ * ISSUE #8 — `geoNames` used to be Record<id, arabicString>, so an ENGLISH
+ * assistant preface read "- City: الرياض" and the model had to invent the Latin
+ * spelling of a place it was only shown in Arabic. The map is now
+ * Record<id, LocalizedName> and the caller's language picks the form.
+ */
+function geoValue(
+  raw: unknown,
+  geoNames: Record<string, LocalizedName> | undefined,
+  isAr: boolean,
+): string | null {
   const arr = Array.isArray(raw) ? raw : raw ? [raw] : [];
   const names = arr
     .filter((x): x is string => typeof x === 'string' && x.trim() !== '')
     .map((id) => geoNames?.[id])
-    .filter((s): s is string => !!s);
-  return names.length ? names.join('، ') : null;
+    .filter((n): n is LocalizedName => !!n)
+    .map((n) => pickLocalized(n, isAr));
+  // Arabic comma only in Arabic prefaces; English uses a plain comma.
+  return names.length ? names.join(isAr ? '، ' : ', ') : null;
 }
 
 const isPresent = (v: unknown): boolean => {
@@ -119,7 +133,7 @@ export interface BuildContextArgs {
   projectName?: string | null;
   /** id → display name map for districts + cities, so preferred_districts /
    *  preferred_cities lookup ids resolve to readable names. Built by the caller. */
-  geoNames?: Record<string, string>;
+  geoNames?: Record<string, LocalizedName>;
   isAr: boolean;
 }
 
@@ -163,7 +177,7 @@ export function buildAssistantContext(args: BuildContextArgs): AssistantContext 
       // raw is the `location` compound; geoKey selects the city / district level.
       const sub = raw && typeof raw === 'object' && !Array.isArray(raw)
         ? (raw as Record<string, unknown>)[def.geoKey ?? 'district'] : undefined;
-      value = geoValue(sub, geoNames);
+      value = geoValue(sub, geoNames, isAr);
     } else value = listValue(field, raw, isAr);
     if (!value) continue;
     used.push({ slug: def.slug, label_ar: def.label_ar, label_en: def.label_en, value });

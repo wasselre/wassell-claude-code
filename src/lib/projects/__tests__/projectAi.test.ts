@@ -8,6 +8,8 @@ function makeView(over: Partial<ProjectView> = {}): ProjectView {
   return {
     id: 'p', raw: { id: 'p', model_id: 'ap', data: {}, created_at: '', updated_at: '' } as AppRecord,
     name: null, developer: null, projectId: null, city: null, district: null,
+    // ISSUE #8 — English output must come from the localized pair, not the Arabic name.
+    cityLocalized: null, districtLocalized: null,
     status: null, construction: null, projectType: null, unitTypes: [],
     unitCount: null, availableUnits: null, soldUnits: null, reservedUnits: null,
     priceRange: null, areaRange: null, imageRef: null,
@@ -29,6 +31,8 @@ describe('auditProject (deterministic scoring)', () => {
   it('a complete project scores 100 and blocks nothing', () => {
     const a = auditProject(makeView({
       name: 'X', developer: 'D', city: 'Riyadh', district: 'Olaya',
+      cityLocalized: { id: 'c1', ar: 'الرياض', enCanonical: 'Riyadh', enDisplay: 'Riyadh' },
+      districtLocalized: { id: 'd1', ar: 'العليا', enCanonical: 'Al Olaya Dist.', enDisplay: 'Al Olaya' },
       status: { value: 'active', label_ar: '', label_en: 'Active', color: null },
       construction: { value: 'ready', label_ar: '', label_en: 'Ready', color: null },
       projectType: { value: 't', label_ar: '', label_en: 'T', color: null },
@@ -71,7 +75,9 @@ describe('projectFacts (non-hallucination boundary)', () => {
   });
 
   it('passes through only real values', () => {
-    const f = projectFacts(makeView({ name: 'Wassel Tower', city: 'Riyadh', priceRange: { min: 1000, max: 2000 } }), false);
+    const f = projectFacts(makeView({ name: 'Wassel Tower', city: 'Riyadh',
+      cityLocalized: { id: 'c1', ar: 'الرياض', enCanonical: 'Riyadh', enDisplay: 'Riyadh' },
+      priceRange: { min: 1000, max: 2000 } }), false);
     expect(f.name).toBe('Wassel Tower');
     expect(f.city).toBe('Riyadh');
     expect(f.price_range).toContain('1,000');

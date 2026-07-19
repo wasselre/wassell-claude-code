@@ -1,3 +1,4 @@
+import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, ChevronUp, TimerOff, RefreshCw, CheckSquare } from 'lucide-react';
 import type { AppModel, AppRecord, ModelField } from '@/types';
@@ -159,21 +160,12 @@ export default function SuggestedProjectsView({
   const existingStatusFor = (item: FinderMatch): ClientOptionStatus | null =>
     existingByKey[`${finderSourceToOptionType(item.source)}:${item.project_id}`] ?? null;
 
-  // id → display name for districts + cities, from the loaded geography records.
-  const geoNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const name of ['districts', 'cities']) {
-      const m = models.find((mm) => mm.name === name);
-      if (!m) continue;
-      for (const r of records[m.id] ?? []) {
-        const dn = (r.data?.display_name ?? r.data?.name_ar ?? r.data?.name_en) as unknown;
-        if (typeof dn === 'string' && dn.trim()) map[r.id] = dn.trim();
-      }
-    }
-    return map;
-  }, [models, records]);
+  // ISSUE #8 — id → LOCALIZED name (was a single Arabic string, which leaked
+  // into English assistant prefaces). The MATCHER still wants Arabic: it fuzzy-
+  // matches against Arabic project text, so resolveLookupName returns `.ar`.
+  const geoNames = useMemo(() => buildGeoNameMap(models, records), [models, records]);
   const resolveLookupName = useMemo(
-    () => (id: string, _target: 'districts' | 'cities'): string | null => geoNames[id] ?? null,
+    () => (id: string, _target: 'districts' | 'cities'): string | null => geoNames[id]?.ar ?? null,
     [geoNames],
   );
 

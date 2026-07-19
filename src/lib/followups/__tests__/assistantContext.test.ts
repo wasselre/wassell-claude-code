@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { LocalizedName } from '@/lib/geo/localizedName';
 import { buildAssistantContext } from '../assistantContext';
 import type { AppModel } from '@/types';
 
@@ -24,11 +25,12 @@ const clientsModel = {
   },
 } as unknown as AppModel;
 
-// id → display name for the districts/cities the tests reference.
-const geoNames: Record<string, string> = {
-  'c-riyadh': 'الرياض',
-  'd-narjis': 'النرجس',
-  'd-aridh': 'العارض',
+// ISSUE #8 — id → LOCALIZED name. Arabic and English are deliberately DISTINCT
+// so an Arabic-leaks-into-English regression fails loudly instead of passing.
+const geoNames: Record<string, LocalizedName> = {
+  'c-riyadh': { id: 'c-riyadh', ar: 'الرياض', enCanonical: 'Riyadh', enDisplay: 'Riyadh' },
+  'd-narjis': { id: 'd-narjis', ar: 'النرجس', enCanonical: 'Al Narjis Dist.', enDisplay: 'Al Narjis' },
+  'd-aridh': { id: 'd-aridh', ar: 'العارض', enCanonical: 'Al Aridh Dist.', enDisplay: 'Al Aridh' },
 };
 
 describe('buildAssistantContext — draft-first preference resolution (lookup geography)', () => {

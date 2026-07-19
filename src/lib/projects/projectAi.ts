@@ -134,8 +134,12 @@ export function projectFacts(view: ProjectView, isAr: boolean): Record<string, u
   return {
     name: view.name,
     developer: view.developer,
-    city: view.city,
-    district: view.district,
+    // ISSUE #8 — geography must match the requested output language. `view.city`
+    // is the ARABIC name; sending it while asking for English output is what let
+    // models invent transliterations. Falls back to null (omit) rather than
+    // leaking Arabic into an English brief.
+    city: isAr ? view.city : (view.cityLocalized?.enDisplay ?? null),
+    district: isAr ? view.district : (view.districtLocalized?.enDisplay ?? null),
     status: view.status ? (isAr ? view.status.label_ar : view.status.label_en) : null,
     construction: view.construction ? (isAr ? view.construction.label_ar : view.construction.label_en) : null,
     project_type: view.projectType ? (isAr ? view.projectType.label_ar : view.projectType.label_en) : null,

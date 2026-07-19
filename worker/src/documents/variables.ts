@@ -178,6 +178,46 @@ export function formatFieldValue(
         .filter((x): x is string => !!x);
       return titles.length > 0 ? titles.join(isAr ? '، ' : ', ') : null;
     }
+    case 'location': {
+      // ISSUE #8 — there was NO `location` case, so a location compound (an
+      // object) fell through to `default:` and returned null: region/city/
+      // district were SILENTLY omitted from every generated DOCX/PDF. That is
+      // the exact silent-failure class CLAUDE.md forbids.
+      //
+      // Renders the cascade widest→narrowest, language-aware: Arabic uses
+      // display_name ?? name_ar; English uses the authoritative name_en with a
+      // trailing "Dist."/"District" dropped for presentation. A level with no
+      // usable name for the active language is omitted rather than emitting the
+      // other language's value.
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+      const levels = raw as Record<string, unknown>;
+      const oneId = (v: unknown): string | null =>
+        Array.isArray(v) ? (typeof v[0] === 'string' ? v[0] : null) : (typeof v === 'string' && v ? v : null);
+      const nameFor = (levelKey: string, modelName: string): string | null => {
+        const id = oneId(levels[levelKey]);
+        if (!id) return null;
+        const m = models.find((mm) => mm.name === modelName);
+        if (!m) return null;
+        const rec = (recordsMap[m.id] ?? []).find((r) => r.id === id);
+        const d = rec?.data as Record<string, unknown> | undefined;
+        if (!d) return null;
+        const str = (k: string): string | null => {
+          const v = d[k];
+          return typeof v === 'string' && v.trim() ? v.replace(/\s+/g, ' ').trim() : null;
+        };
+        if (isAr) return str('display_name') ?? str('name_ar');
+        const en = str('name_en');
+        if (!en) return null;
+        const display = en.replace(/[\s,]*\b(?:Dist\.|District)\s*$/i, '').replace(/\s+/g, ' ').trim();
+        return display || en;
+      };
+      const parts = [
+        nameFor('district', 'districts'),
+        nameFor('city', 'cities'),
+        nameFor('region', 'regions'),
+      ].filter((x): x is string => !!x);
+      return parts.length > 0 ? parts.join(isAr ? '، ' : ', ') : null;
+    }
     default: {
       // text / textarea / email / phone / url / auto_id / assignee-ish strings
       if (typeof raw === 'string') {

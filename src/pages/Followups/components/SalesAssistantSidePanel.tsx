@@ -1,3 +1,4 @@
+import { buildGeoNameMap } from '@/lib/geo/geoNameMap';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Compass, Send, Loader2, Search, FileSearch, Trophy, GitCompareArrows,
@@ -90,18 +91,9 @@ export default function SalesAssistantSidePanel({
   const records = useAppStore((s) => s.records);
   const models = useAppStore((s) => s.models);
   const addToast = useAppStore((s) => s.addToast);
-  const geoNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    for (const name of ['districts', 'cities']) {
-      const m = models.find((mm) => mm.name === name);
-      if (!m) continue;
-      for (const r of records[m.id] ?? []) {
-        const dn = (r.data?.display_name ?? r.data?.name_ar) as unknown;
-        if (typeof dn === 'string' && dn) map[r.id] = dn;
-      }
-    }
-    return map;
-  }, [records, models]);
+  // ISSUE #8 — was Record<id, arabicString>, which put Arabic place names into
+  // ENGLISH assistant prefaces. buildGeoNameMap returns the localized contract.
+  const geoNames = useMemo(() => buildGeoNameMap(models, records), [records, models]);
 
   const ctx = useMemo(
     () => buildAssistantContext({

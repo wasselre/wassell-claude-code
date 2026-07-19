@@ -14,6 +14,7 @@
 //   * Slugs are resolved defensively (live slug first, seed fallback) because
 //     the live models were Builder-rebuilt with drifted slugs.
 
+import { resolveLocalizedName, resolveArabicName, type LocalizedName } from '@/lib/geo/localizedName';
 import type { AppModel, AppRecord, ModelField, FieldOption } from '@/types';
 
 export interface ProjectStoreSlices {
@@ -41,6 +42,9 @@ export interface ProjectView {
   projectId: string | null; // auto_id (human code)
   city: string | null;
   district: string | null;
+  /** ISSUE #8 — full localized geography; use these for any ENGLISH output. */
+  cityLocalized: LocalizedName | null;
+  districtLocalized: LocalizedName | null;
   status: OptionView | null;
   construction: OptionView | null;
   projectType: OptionView | null;
@@ -142,14 +146,37 @@ function firstId(v: unknown): string | null {
   return typeof v === 'string' && v ? v : null;
 }
 
-/** Resolve a geography record id (cities/districts) to its display name. */
+/**
+ * Resolve a geography record id to its ARABIC display name.
+ *
+ * ISSUE #8 — `name_en` is deliberately NOT in this chain any more: it used to
+ * sit third behind two fields that are never null, so it was dead code that
+ * merely LOOKED bilingual. Anything that needs English must call
+ * `geoLocalized()` and handle a null (missing `name_en`) explicitly.
+ */
 export function geoName(store: ProjectStoreSlices, modelName: 'cities' | 'districts', id: string | null): string | null {
+  return geoLocalized(store, modelName, id)?.ar
+    ?? (() => {
+      // Arabic-only surfaces still work for a record with no name_en.
+      if (!id) return null;
+      const m = modelByName(store.models, modelName);
+      if (!m) return null;
+      const rec = (store.records[m.id] ?? []).find((r) => r.id === id);
+      return resolveArabicName(rec?.data as Record<string, unknown> | undefined);
+    })();
+}
+
+/** Full localized contract for a geography id — null when not fully localizable. */
+export function geoLocalized(
+  store: ProjectStoreSlices,
+  modelName: 'cities' | 'districts',
+  id: string | null,
+): LocalizedName | null {
   if (!id) return null;
   const m = modelByName(store.models, modelName);
   if (!m) return null;
   const rec = (store.records[m.id] ?? []).find((r) => r.id === id);
-  const dn = rec?.data?.display_name ?? rec?.data?.name_ar ?? rec?.data?.name_en;
-  return typeof dn === 'string' && dn ? dn : null;
+  return resolveLocalizedName(id, rec?.data as Record<string, unknown> | undefined);
 }
 
 /** Resolve a single lookup id to a display value on its target model. */
@@ -197,6 +224,8 @@ export function resolveProjectView(store: ProjectStoreSlices, record: AppRecord)
     projectId: projectIdField ? asString(data[projectIdField.name]) : null,
     city: geoName(store, 'cities', firstId(loc.city)),
     district: geoName(store, 'districts', firstId(loc.district)),
+    cityLocalized: geoLocalized(store, 'cities', firstId(loc.city)),
+    districtLocalized: geoLocalized(store, 'districts', firstId(loc.district)),
     status: optionFor(statusField, statusField ? data[statusField.name] : null),
     construction: optionFor(constructionField, constructionField ? data[constructionField.name] : null),
     projectType: optionFor(typeField, typeField ? data[typeField.name] : null),
