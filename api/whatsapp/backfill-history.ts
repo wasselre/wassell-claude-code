@@ -15,6 +15,7 @@
  * Reply: { processedChats, upserted, nextOffset, done }
  */
 
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
 import { makeServiceClient } from '../_lib/serviceClient.js';
 import { listChats, listMessages, WahaError } from '../_lib/waha.js';
@@ -28,7 +29,43 @@ export const config = {
 const DEFAULT_LIMIT = 10;   // chats per invocation
 const DEFAULT_PER_CHAT = 200; // messages per chat
 
-export default async function handler(req: Request): Promise<Response> {
+/**
+ * The Vercel NODEJS runtime uses the Node `(req, res)` signature — a returned
+ * Web `Response` is IGNORED, so the request hangs until the 300s ceiling and
+ * 504s (hit live 2026-07-19). Bridge Node↔Web the same way the other
+ * node-runtime endpoints in this repo do.
+ */
+async function nodeToWebRequest(nodeReq: IncomingMessage): Promise<Request> {
+  const host = (nodeReq.headers.host as string | undefined) ?? 'localhost';
+  const url = new URL(nodeReq.url ?? '/', `https://${host}`);
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(nodeReq.headers)) {
+    if (typeof v === 'string') headers.set(k, v);
+    else if (Array.isArray(v)) headers.set(k, v.join(', '));
+  }
+  const method = nodeReq.method ?? 'GET';
+  let body: string | undefined;
+  if (method !== 'GET' && method !== 'HEAD') {
+    const chunks: Buffer[] = [];
+    for await (const chunk of nodeReq) chunks.push(Buffer.from(chunk));
+    body = Buffer.concat(chunks).toString('utf8');
+  }
+  return new Request(url.toString(), { method, headers, body });
+}
+
+async function writeWebResponseToNode(webResp: Response, nodeRes: ServerResponse): Promise<void> {
+  nodeRes.statusCode = webResp.status;
+  for (const [k, v] of webResp.headers) nodeRes.setHeader(k, v);
+  nodeRes.end(Buffer.from(await webResp.arrayBuffer()));
+}
+
+export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerResponse): Promise<void> {
+  const req = await nodeToWebRequest(nodeReq);
+  const resp = await runBackfill(req);
+  await writeWebResponseToNode(resp, nodeRes);
+}
+
+async function runBackfill(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
 
   return withAuth(req, async (user) => {
