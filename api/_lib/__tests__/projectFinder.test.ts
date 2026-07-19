@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { __test, passesRequiredAmenities, type MatchResultItem, type MatchCoreSuccess, type MatchRequirements } from '../matchAgent';
+import { __test, passesRequiredAmenities, marketBudgetBounds, type MatchResultItem, type MatchCoreSuccess, type MatchRequirements } from '../matchAgent';
 import { classifyGeo } from '../geoVerify';
 import {
   groupForFinder,
@@ -256,6 +256,32 @@ describe('9b. soft budget floor (10% tolerance below budget_min)', () => {
   it('inside the window is still a full match', () => {
     const r = scoreProject(baseProject, { budget_min: 600_000, budget_max: 2_000_000 }, {});
     expect(r.breakdown.budget).toBe(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TEST 9b-ii — The market PRE-FILTER window must be wider than the stated budget
+// on BOTH sides, or the scorer's tolerances are unreachable for market listings.
+// Regression: a 1.85M listing was invisible to a 1.8M search because the DB cut
+// at the exact ceiling, so the 15% stretch branch could never fire (2026-07-19).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('9b-ii. market pre-filter budget window (floor 0.9 / ceiling 1.15)', () => {
+  it('widens BOTH bounds so the scorer decides, not the SQL filter', () => {
+    const b = marketBudgetBounds({ budget_min: 2_000_000, budget_max: 1_800_000 });
+    expect(b.p_budget_min).toBe(1_800_000); // 2.0M × 0.9
+    expect(b.p_budget_max).toBe(2_070_000); // 1.8M × 1.15
+  });
+  it('the live-miss listing (1.85M vs a 1.8M budget) survives the pre-filter', () => {
+    const { p_budget_max } = marketBudgetBounds({ budget_max: 1_800_000 });
+    expect(1_850_000).toBeLessThanOrEqual(p_budget_max!);
+  });
+  it('allow_stretch:false → exact ceiling, no widening', () => {
+    const b = marketBudgetBounds({ budget_max: 1_800_000, allow_stretch: false });
+    expect(b.p_budget_max).toBe(1_800_000);
+    expect(1_850_000).toBeGreaterThan(b.p_budget_max!);
+  });
+  it('absent bounds stay null (no filter)', () => {
+    expect(marketBudgetBounds({})).toEqual({ p_budget_min: null, p_budget_max: null });
   });
 });
 

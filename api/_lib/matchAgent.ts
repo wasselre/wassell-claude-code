@@ -57,7 +57,14 @@ const STRONG = 75;
 // i.e. we only reach into all_projects when our portfolio has nothing this good.
 const GOOD = 60;
 const MIN_RETURN = 40; // never surface a project below this
-const STRETCH_TOLERANCE = 1.15; // a unit up to 15% over budget is a "stretch"
+// A unit up to 15% over budget is a "stretch" — surfaced, scored down (0.5) and
+// labelled. This MUST also be applied to the market DB pre-filter's ceiling:
+// the filter runs BEFORE scoring, so a hard `price <= budget_max` cut made the
+// stretch branch unreachable for market listings (it only ever fired for the
+// price-unfiltered catalog). Live miss 2026-07-19: a 1.85M تاون هاوس with the
+// requested غرفة سائق — the ONLY one in the client's drawn area — was invisible
+// to a 1.8M search, 3% over.
+const STRETCH_TOLERANCE = 1.15;
 // A unit priced up to 10% BELOW the client's budget floor still surfaces —
 // under-budget is a good problem (a 1.9M find for a 2.0–2.1M client is a win),
 // so the floor filters the wrong SEGMENT, not a slightly-cheaper bargain.
@@ -1163,6 +1170,27 @@ export function parseUnitAgeText(v: string | null | undefined): number | null {
   return null;
 }
 
+/** The market DB pre-filter's price window — DELIBERATELY WIDER than the client's
+ *  stated budget on BOTH sides, because the pre-filter runs before scoring and a
+ *  hard cut would pre-empt decisions that belong to the scorer:
+ *    - floor  × 0.9  (BUDGET_FLOOR_TOLERANCE) — under-budget is a good problem;
+ *                     the scorer gives it 0.9 credit.
+ *    - ceiling × 1.15 (STRETCH_TOLERANCE)     — the "stretch" band; the scorer
+ *                     gives it 0.5 credit + the `stretch` label. Honors
+ *                     allow_stretch:false (client opted out ⇒ exact ceiling).
+ *  Keep this the ONLY place the pre-filter's bounds are computed, and keep both
+ *  sides in sync with scoreProject's budget dimension. Exported for tests. */
+export function marketBudgetBounds(req: MatchRequirements): { p_budget_min: number | null; p_budget_max: number | null } {
+  // Rounded: binary floating point makes 1.8M × 1.15 = 2069999.9999999998, and a
+  // fractional-riyal bound is meaningless noise in logs and query plans.
+  return {
+    p_budget_min: req.budget_min != null ? Math.round(req.budget_min * BUDGET_FLOOR_TOLERANCE) : null,
+    p_budget_max: req.budget_max != null
+      ? Math.round(req.budget_max * (req.allow_stretch === false ? 1 : STRETCH_TOLERANCE))
+      : null,
+  };
+}
+
 /** HARD must-have amenity gate. True when EVERY `required_amenities` entry
  *  fuzzy-matches the candidate's amenity evidence — `preferred_amenities` on the
  *  (possibly adapted) data shape: Aqar feature tags for market listings, the
@@ -1672,8 +1700,7 @@ export async function matchProjectsCore(
           // Soft floor: the DB pre-filter gets the 10%-lowered floor so a
           // slightly-under-budget listing survives to scoring (where it takes
           // the 0.9 budget subscore) instead of never being seen at all.
-          p_budget_min: req.budget_min != null ? req.budget_min * BUDGET_FLOOR_TOLERANCE : null,
-          p_budget_max: req.budget_max ?? null,
+          ...marketBudgetBounds(req),
           p_bedrooms: req.bedrooms ?? null,
           p_type_terms: typeTerms,
           // Missing-tolerant DB-side age filter: only listings whose PARSED age
