@@ -31,7 +31,7 @@ import {
   uuidV5FromWidSync,
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
-import { resolveWahaPhone, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaPhone, resolveLidToPhone, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -139,7 +139,13 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   const rawChat =
     chatIdFromMessageId(p.id) ??
     (flow === 'in' ? String(p.from ?? '') : String(p.to ?? ''));
-  const counterpartyPhone = phoneFromJid(rawChat) ?? (flow === 'in' ? resolveWahaPhone(p) : null);
+  // Resolution ladder: plain @c.us → nested SenderAlt → WAHA's LID map. The
+  // last step is required: a real inbound arrives identified ONLY by LID with
+  // no SenderAlt (verified live 2026-07-19).
+  let counterpartyPhone = phoneFromJid(rawChat) ?? (flow === 'in' ? resolveWahaPhone(p) : null);
+  if (!counterpartyPhone && rawChat.endsWith('@lid')) {
+    counterpartyPhone = await resolveLidToPhone(session, rawChat);
+  }
   if (!counterpartyPhone) {
     console.warn('[webhook.waha] could not resolve counterparty phone for', p.id, 'rawChat=', rawChat);
     return;

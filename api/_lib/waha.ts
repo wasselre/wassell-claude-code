@@ -104,6 +104,35 @@ export function resolveWahaPhone(msg: WahaMessageRaw): string | null {
   return extractPhoneFromWid(from);
 }
 
+/**
+ * Resolve a WhatsApp LID (`<n>@lid`) to its phone number via WAHA's LID map
+ * (`GET /api/{session}/lids/{lid}` → `{lid, pn}`).
+ *
+ * Needed because inbound webhooks often identify the chat ONLY by LID, and the
+ * nested `_data.Info.SenderAlt` phone is not always present (verified live
+ * 2026-07-19: a real inbound arrived as `187763857031330@lid` with no
+ * SenderAlt). Without this, phone→client matching silently drops the message.
+ * Results are cached — the mapping is stable.
+ */
+const lidCache = new Map<string, string | null>();
+export async function resolveLidToPhone(session: string, lid: string): Promise<string | null> {
+  const key = `${session}:${lid}`;
+  const hit = lidCache.get(key);
+  if (hit !== undefined) return hit;
+  let phone: string | null = null;
+  try {
+    const raw = await request<{ lid?: string; pn?: string }>(
+      `/api/${encodeURIComponent(session)}/lids/${encodeURIComponent(lid)}`,
+    );
+    const m = (raw.pn ?? '').match(/^\+?(\d+)@(?:c\.us|s\.whatsapp\.net)$/);
+    if (m) phone = `+${m[1]}`;
+  } catch (e) {
+    console.error('[waha.resolveLidToPhone] failed for', lid, (e as Error).message);
+  }
+  lidCache.set(key, phone);
+  return phone;
+}
+
 /** WAHA ack integer/name → our ack enum. */
 function mapAck(ack: number | string | null | undefined): HaberchatMessage['ack'] {
   if (ack == null) return null;
