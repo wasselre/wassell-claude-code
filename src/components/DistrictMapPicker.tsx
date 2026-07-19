@@ -327,7 +327,23 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
 
   // (Re)build the polygons when the map + shapes are ready. Selection changes
   // restyle IN PLACE (no rebuild) via the polygonsRef.
+  //
+  // A SELECTED district is EDITABLE (user decision 2026-07-18): its polygon
+  // swaps to a decimated ring (≤80 handles) with vertex/midpoint handles — the
+  // moment a handle is dragged (or a vertex right-click-deleted) the edited
+  // ring CONVERTS into a drawn_area item ("منطقة مرسومة: <الحي>") and the
+  // district rule is replaced by the custom shape. Untouched selections stay
+  // ordinary district rules with the official boundary.
   const polygonsRef = useRef<Map<string, google.maps.Polygon>>(new Map());
+  interface DistrictMeta {
+    poly: google.maps.Polygon;
+    fullPaths: google.maps.LatLngLiteral[][];
+    decimated: google.maps.LatLngLiteral[];
+    pathListeners: google.maps.MapsEventListener[];
+    editTimer?: ReturnType<typeof setTimeout>;
+  }
+  const districtMetaRef = useRef<Map<string, DistrictMeta>>(new Map());
+  const drawModeRef = useRef(false);
   const styleFor = (id: string, isSelected: boolean): google.maps.PolygonOptions =>
     excludedIds.has(id)
       ? { fillColor: RED, fillOpacity: 0.22, strokeColor: RED, strokeOpacity: 0.8, strokeWeight: 2, zIndex: 2 }
@@ -338,45 +354,107 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   useEffect(() => {
     if (!map || !isLoaded || !shapes || !window.google) return;
     const polys = polygonsRef.current;
+    const metas = districtMetaRef.current;
     const bounds = new google.maps.LatLngBounds();
+
+    const clearPathListeners = (m: DistrictMeta) => {
+      m.pathListeners.forEach((l) => google.maps.event.removeListener(l));
+      m.pathListeners = [];
+      if (m.editTimer) { clearTimeout(m.editTimer); m.editTimer = undefined; }
+    };
+
+    // The edited ring becomes a drawn_area; the district rule is dropped and
+    // its polygon returns to the official (unselected) rendering.
+    const convertEdited = (s: DistrictShape, m: DistrictMeta) => {
+      const pts = m.poly.getPath().getArray().map((ll) => [round6(ll.lng()), round6(ll.lat())] as [number, number]);
+      exitEditable(s, m, false);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(s.district_id);
+        return next;
+      });
+      if (pts.length < 3) return;
+      const ring = [...pts, pts[0]!];
+      setDrawnItems((prev) => [
+        ...prev,
+        newDrawnAreaItem(
+          ring,
+          coverageLabelRef.current(ring, 'include') ?? `${drawnBaseRef.current('include')}: ${s.name}`,
+          'include',
+        ),
+      ]);
+    };
+
+    const wireEditListeners = (s: DistrictShape, m: DistrictMeta) => {
+      clearPathListeners(m);
+      const gPath = m.poly.getPath();
+      // Debounced: a handle drag can fire set_at repeatedly — convert once,
+      // from the final geometry.
+      const onEdit = () => {
+        if (m.editTimer) clearTimeout(m.editTimer);
+        m.editTimer = setTimeout(() => convertEdited(s, m), 400);
+      };
+      m.pathListeners = [
+        gPath.addListener('set_at', onEdit),
+        gPath.addListener('insert_at', onEdit),
+        gPath.addListener('remove_at', onEdit),
+      ];
+    };
+
+    const enterEditable = (s: DistrictShape, m: DistrictMeta) => {
+      m.poly.setPaths([m.decimated]);
+      m.poly.setOptions({ ...styleFor(s.district_id, true), editable: !drawModeRef.current });
+      wireEditListeners(s, m);
+    };
+    const exitEditable = (s: DistrictShape, m: DistrictMeta, stillSelected: boolean) => {
+      clearPathListeners(m);
+      m.poly.setPaths(m.fullPaths);
+      m.poly.setOptions({ ...styleFor(s.district_id, stillSelected), editable: false });
+    };
 
     for (const s of shapes) {
       const paths = geojsonToPaths(s.geojson);
       if (!paths.length) continue;
+      let largest: google.maps.LatLngLiteral[] = [];
+      for (const p of paths) if (p.length > largest.length) largest = p;
+      const step = Math.max(1, Math.ceil(largest.length / CONVERT_MAX_POINTS));
+      const decimated = largest.filter((_, i) => i % step === 0);
       const poly = new google.maps.Polygon({
         paths,
         map,
         clickable: true,
-        ...styleFor(s.district_id, selectedRef.current.has(s.district_id)),
+        ...styleFor(s.district_id, false),
       });
+      const meta: DistrictMeta = { poly, fullPaths: paths, decimated, pathListeners: [] };
+      metas.set(s.district_id, meta);
+
       poly.addListener('click', () => {
         if (excludedIds.has(s.district_id)) return; // exclude rules are managed from the chips
         setSelected((prev) => {
           const next = new Set(prev);
-          if (next.has(s.district_id)) next.delete(s.district_id);
-          else next.add(s.district_id);
-          poly.setOptions(styleFor(s.district_id, next.has(s.district_id)));
+          if (next.has(s.district_id)) {
+            next.delete(s.district_id);
+            exitEditable(s, meta, false);
+          } else {
+            next.add(s.district_id);
+            enterEditable(s, meta);
+          }
           return next;
         });
       });
-      // Right-click a district: copy its official boundary into a NEW editable
-      // drawn shape (decimated so the vertex handles stay usable) and clear the
-      // district selection — the rep can then stretch or trim the borders.
-      poly.addListener('rightclick', () => {
-        if (excludedIds.has(s.district_id)) return;
-        let ring: google.maps.LatLngLiteral[] = [];
-        for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
-        if (ring.length < 3) return;
-        const step = Math.max(1, Math.ceil(ring.length / CONVERT_MAX_POINTS));
-        const dec = ring.filter((_, i) => i % step === 0);
-        const lngLat = dec.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
+      // Right-click: on a SELECTED district's vertex → delete that vertex
+      // (flows into the edit→convert path); anywhere else → copy the official
+      // boundary into a NEW editable drawn shape without selecting it.
+      poly.addListener('rightclick', (e: google.maps.PolyMouseEvent) => {
+        if (excludedIds.has(s.district_id) || drawModeRef.current) return;
+        if (selectedRef.current.has(s.district_id) && e.vertex != null) {
+          const gPath = meta.poly.getPath();
+          if (gPath.getLength() > 3) gPath.removeAt(e.vertex);
+          return;
+        }
+        const lngLat = meta.decimated.map((p) => [round6(p.lng), round6(p.lat)] as [number, number]);
+        if (lngLat.length < 3) return;
         lngLat.push(lngLat[0]!);
-        setSelected((prev) => {
-          const next = new Set(prev);
-          next.delete(s.district_id);
-          poly.setOptions(styleFor(s.district_id, false));
-          return next;
-        });
         setDrawnItems((prev) => [
           ...prev,
           newDrawnAreaItem(lngLat, `${drawnBaseRef.current('include')}: ${s.name}`, 'include'),
@@ -385,11 +463,16 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       poly.addListener('mouseover', () => setHoverName(s.name));
       poly.addListener('mouseout', () => setHoverName((n) => (n === s.name ? null : n)));
       polys.set(s.district_id, poly);
+      // Districts already selected (saved rules / the editor's options list)
+      // open EDITABLE right away — "select it, then adjust the highlighted area".
+      if (selectedRef.current.has(s.district_id)) enterEditable(s, meta);
       for (const path of paths) for (const p of path) bounds.extend(p);
     }
     if (!bounds.isEmpty()) map.fitBounds(bounds, 24);
 
     return () => {
+      metas.forEach((m) => clearPathListeners(m));
+      metas.clear();
       polys.forEach((p) => p.setMap(null));
       polys.clear();
     };
@@ -578,10 +661,17 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const undoLastRef = useRef<() => void>(() => {});
   const previewRef = useRef<google.maps.Polyline | null>(null);
   useEffect(() => {
-    polygonsRef.current.forEach((p) => p.setOptions({ clickable: !drawMode }));
+    drawModeRef.current = drawMode;
+    polygonsRef.current.forEach((p, id) => p.setOptions({
+      clickable: !drawMode,
+      // Selected districts keep their edit handles OUTSIDE draw mode only —
+      // handles would swallow the draw clicks.
+      editable: !drawMode && selectedRef.current.has(id) && !excludedIds.has(id),
+    }));
     // Landmark pins must not swallow vertex clicks while drawing.
     landmarkMarkersRef.current.forEach((m) => m.setClickable(!drawMode));
     if (!drawMode) setHoverName(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawMode]);
   // The preview line follows the chosen polarity color, even mid-draft.
   useEffect(() => {
@@ -720,7 +810,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                 ? drawPolarity === 'exclude'
                   ? L('منطقة استثناء: لن تظهر النتائج داخل هذا الشكل. انقر لإضافة النقاط، نقرة يمنى تتراجع عن آخر نقطة، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'Exclusion zone: no results will show inside this shape. Click to add points, right-click undoes the last point, then double-click (or "Finish shape") to close it.')
                   : L('الخريطة مثبّتة أثناء الرسم — انقر لإضافة النقاط، نقرة يمنى تتراجع عن آخر نقطة، ثم نقراً مزدوجاً (أو «إنهاء الشكل») لإغلاقه.', 'The map is pinned while drawing — click to add points, right-click undoes the last point, then double-click (or "Finish shape") to close it.')
-                : L('اضغط على حي لتضمينه أو لإزالته، أو بزر يمين لنسخ حدوده كشكل قابل للتعديل. اسحب نقاط الأشكال المرسومة لتعديل حدودها (زر يمين على نقطة يحذفها).', 'Tap a district to include/remove it, or right-click to copy its borders as an editable shape. Drag a drawn shape’s points to reshape it (right-click a point deletes it).')}
+                : L('اضغط على حي لتضمينه — تظهر عليه مقابض: اسحب أي نقطة لتعديل حدوده فيتحول لمنطقة مرسومة خاصة بك. الأشكال المرسومة تُعدَّل بالسحب أيضاً (زر يمين على نقطة يحذفها).', 'Tap a district to include it — handles appear: drag any point to adjust its borders and it becomes your own drawn area. Drawn shapes are edited by dragging too (right-click a point deletes it).')}
             </p>
           </div>
           {drawMode && (

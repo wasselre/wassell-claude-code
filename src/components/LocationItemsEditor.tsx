@@ -180,8 +180,14 @@ export default function LocationItemsEditor({ items, onChange, locationField, lo
   };
 
   const addDistrict = (opt: { id: string; label: string }) => {
+    const wasInclude = polarity === 'include';
     onChange([...items, newDistrictItem(opt.id, opt.label, polarity)]);
     resetAdd();
+    // Show the selection immediately: the picker highlights the district WITH
+    // edit handles, so the rep can adjust the area right away (user decision
+    // 2026-07-18 — same always-see-it flow as element rules). Excludes are
+    // managed from the chips, so no map jump for them.
+    if (wasInclude && cityId) setShowMap(true);
   };
   const addElement = () => {
     if (!picked) return;
