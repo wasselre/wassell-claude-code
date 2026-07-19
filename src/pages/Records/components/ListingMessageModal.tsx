@@ -2,9 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import {
   AlertCircle,
   CheckCircle2,
+  ImagePlus,
   Loader2,
   RefreshCw,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-react';
 import Button from '@/components/ui/Button';
@@ -17,6 +19,7 @@ import {
   redoListingClean,
   type CleaningEntry,
 } from '@/lib/listingMessage/client';
+import { uploadImage } from '@/lib/imageUpload';
 import {
   ensureListingMessageJob,
   getListingJobState,
@@ -34,6 +37,14 @@ interface Props {
   /** An existing 'ready' template for this listing, if one was found (reuse-first). */
   existing: AppRecord | null;
   onClose: () => void;
+}
+
+/** One entry of a saved template's data.images[] (cleaned or manually added). */
+interface TemplateImage {
+  asset_id?: string | null;
+  public_url?: string | null;
+  source_url?: string | null;
+  image_index: number;
 }
 
 type Mode = 'existing' | 'generating';
@@ -71,6 +82,60 @@ export default function ListingMessageModal({
   const [exEn, setExEn] = useState('');
   const [savingText, setSavingText] = useState(false);
 
+  // ── existing-mode image management ───────────────────────────────────
+  // Remove tiles / add manual uploads on the SAVED template. Removal only
+  // drops the array entry — storage bytes are never deleted (cleaned outputs
+  // are also referenced by the listing's applied photos). Adds upload to
+  // marketing-assets/listing-manual (public URL — same render+send path as
+  // cleaned photos). Nothing persists until «حفظ التعديلات».
+  const [exImagesState, setExImagesState] = useState<TemplateImage[]>(() =>
+    Array.isArray((existing?.data as Record<string, unknown> | undefined)?.images)
+      ? (((existing!.data as Record<string, unknown>).images as TemplateImage[]).filter(
+          (im) => im && typeof im === 'object',
+        ) as TemplateImage[])
+      : [],
+  );
+  const [imagesDirty, setImagesDirty] = useState(false);
+  const [uploadingCount, setUploadingCount] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const removeTemplateImage = (idx: number) => {
+    setExImagesState((arr) => arr.filter((_, i) => i !== idx));
+    setImagesDirty(true);
+  };
+
+  const addTemplateImages = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (list.length === 0) return;
+    setUploadingCount(list.length);
+    try {
+      for (const file of list) {
+        const url = await uploadImage(file, 'listing-manual');
+        setExImagesState((arr) => [
+          ...arr,
+          {
+            asset_id: null,
+            public_url: url,
+            source_url: null,
+            image_index: arr.reduce((m, im) => Math.max(m, im.image_index ?? 0), -1) + 1,
+          },
+        ]);
+        setImagesDirty(true);
+        setUploadingCount((n) => n - 1);
+      }
+    } catch (err) {
+      setUploadingCount(0);
+      addToast(
+        tr('تعذّر رفع الصورة: ', 'Image upload failed: ') +
+          (err instanceof Error ? err.message : String(err)),
+        'error',
+      );
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
   const rewriteTextOnly = async () => {
     setRewriting(true);
     try {
@@ -89,13 +154,17 @@ export default function ListingMessageModal({
     }
   };
 
-  const saveRewrittenText = async () => {
+  const saveTemplateEdits = async () => {
     if (!existing) return;
     setSavingText(true);
     try {
       const rec: AppRecord = {
         ...existing,
-        data: { ...(existing.data ?? {}), body_ar: exAr, body_en: exEn },
+        data: {
+          ...(existing.data ?? {}),
+          ...(rewritten ? { body_ar: exAr, body_en: exEn } : {}),
+          ...(imagesDirty ? { images: exImagesState } : {}),
+        },
         updated_at: new Date().toISOString(),
       };
       const result = await saveRecord(rec);
@@ -103,7 +172,7 @@ export default function ListingMessageModal({
         setSavingText(false);
         return; // store already toasted the conflict / failure
       }
-      addToast(tr('تم تحديث نص الرسالة', 'Message text updated'), 'success');
+      addToast(tr('تم حفظ تعديلات الرسالة', 'Message changes saved'), 'success');
       onClose();
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -241,7 +310,7 @@ export default function ListingMessageModal({
   // ── Existing-mode view (reuse-first hit) ─────────────────────────────
   if (mode === 'existing' && existing) {
     const d = (existing.data ?? {}) as Record<string, unknown>;
-    const exImages = Array.isArray(d.images) ? (d.images as Array<{ public_url?: string }>) : [];
+    const hasEdits = rewritten || imagesDirty;
     return (
       <Shell onClose={onClose} title={tr('رسالة الإعلان', 'Listing message')} isAr={isAr}>
         <p className="text-xs text-charcoal/50 mb-3">
@@ -278,19 +347,53 @@ export default function ListingMessageModal({
         ) : (
           <MessagePreview ar={(d.body_ar as string) ?? ''} en={(d.body_en as string) ?? ''} isAr={isAr} />
         )}
-        {exImages.length > 0 && (
-          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 mt-3">
-            {exImages.map((im, i) =>
+        {/* Image management: remove tiles / add manual uploads */}
+        <div className="flex items-center justify-between mt-3 mb-1">
+          <label className="block text-xs font-bold text-charcoal/60">{tr('الصور', 'Images')}</label>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingCount > 0 || savingText}
+            className="inline-flex items-center gap-1 text-[0.7rem] font-bold text-copper hover:underline disabled:opacity-40"
+          >
+            {uploadingCount > 0 ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
+            {uploadingCount > 0
+              ? tr(`جارٍ رفع ${uploadingCount} صورة…`, `Uploading ${uploadingCount} image(s)…`)
+              : tr('إضافة صور', 'Add images')}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => void addTemplateImages(e.target.files)}
+          />
+        </div>
+        {exImagesState.length > 0 ? (
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+            {exImagesState.map((im, i) =>
               im.public_url ? (
-                <img
-                  key={i}
-                  src={im.public_url}
-                  alt=""
-                  className="w-full aspect-square object-cover rounded-lg border border-sand/30"
-                />
+                <div key={`${im.public_url}-${i}`} className="relative group">
+                  <img
+                    src={im.public_url}
+                    alt=""
+                    className="w-full aspect-square object-cover rounded-lg border border-sand/30"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeTemplateImage(i)}
+                    title={tr('إزالة الصورة', 'Remove image')}
+                    className="absolute top-1 end-1 p-1 rounded-md bg-white/90 text-charcoal/70 hover:text-red-600 shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
               ) : null,
             )}
           </div>
+        ) : (
+          <p className="text-xs text-charcoal/40">{tr('لا توجد صور في هذه الرسالة.', 'No images on this message.')}</p>
         )}
         <div className="flex items-center justify-end gap-2 mt-5 flex-wrap">
           <Button variant="secondary" onClick={onClose} disabled={savingText}>
@@ -300,10 +403,14 @@ export default function ListingMessageModal({
             {rewriting ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
             {rewritten ? tr('إعادة كتابة مرة أخرى', 'Rewrite again') : tr('إعادة كتابة الرسالة فقط', 'Rewrite text only')}
           </Button>
-          {rewritten ? (
-            <Button variant="primary" onClick={() => void saveRewrittenText()} disabled={rewriting || savingText}>
+          {hasEdits ? (
+            <Button
+              variant="primary"
+              onClick={() => void saveTemplateEdits()}
+              disabled={rewriting || savingText || uploadingCount > 0}
+            >
               {savingText ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-              {tr('حفظ النص الجديد', 'Save new text')}
+              {tr('حفظ التعديلات', 'Save changes')}
             </Button>
           ) : (
             <Button variant="primary" onClick={() => setMode('generating')} disabled={rewriting || savingText}>

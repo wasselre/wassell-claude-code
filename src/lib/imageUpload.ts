@@ -14,7 +14,10 @@ export type ImageFolder =
   // (not user-facing and so not in this client-side enum).
   | 'presets'
   | 'snippets'
-  | 'image-chats/uploads';
+  | 'image-chats/uploads'
+  // Manually-added photos on a saved listing-message template
+  // (ListingMessageModal → add images). Public render + WhatsApp send.
+  | 'listing-manual';
 
 const BUCKET = 'marketing-assets';
 
