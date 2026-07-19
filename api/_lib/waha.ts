@@ -146,9 +146,15 @@ function mapAck(ack: number | string | null | undefined): HaberchatMessage['ack'
   return null;
 }
 
-/** WAHA media mimetype → our message kind. */
-function kindFromMime(mime: string | null | undefined): HaberchatMessage['kind'] {
+/**
+ * WAHA media mimetype → our message kind. Mirrors the webhook's classifier:
+ * WhatsApp stickers are image/webp (and WAHA reports MediaType 'sticker'), so
+ * they must not be flattened into plain images.
+ */
+function kindFromMime(mime: string | null | undefined, mediaType?: string | null): HaberchatMessage['kind'] {
+  if (mediaType && mediaType.toLowerCase() === 'sticker') return 'sticker';
   if (!mime) return 'document';
+  if (mime === 'image/webp') return 'sticker';
   if (mime.startsWith('image/')) return 'image';
   if (mime.startsWith('video/')) return 'video';
   if (mime.startsWith('audio/')) return 'audio';
@@ -325,7 +331,12 @@ export async function listMessages(
   if (!deviceId) throw new WahaError(400, 'deviceId (session) is required');
   if (!chatWid) throw new WahaError(400, 'chatWid is required');
   const limit = Math.max(1, opts.size ?? 50);
-  const params = new URLSearchParams({ limit: String(limit), downloadMedia: 'false' });
+  // downloadMedia MUST be true: with it false WAHA omits the `media` object, so
+  // every media message came back with no mimetype and no url — the thread
+  // rendered photos, stickers and voice notes all as generic "Document" chips
+  // with nothing to open (reported live 2026-07-19). WAHA has already fetched
+  // the bytes (WHATSAPP_DOWNLOAD_MEDIA=true), so this just returns their URLs.
+  const params = new URLSearchParams({ limit: String(limit), downloadMedia: 'true' });
   // `before` is an ISO cursor in the app; WAHA paginates by timestamp.lte (secs).
   if (opts.before) {
     const t = new Date(opts.before).getTime();
@@ -346,7 +357,7 @@ export function mapWahaMessage(m: WahaMessageRaw, fallbackChatWid: string, sessi
   if (!wid) return null;
   const flow: 'in' | 'out' = m.fromMe ? 'out' : 'in';
   const mime = m.media?.mimetype ?? null;
-  const kind = m.hasMedia || m.media ? kindFromMime(mime) : 'text';
+  const kind = m.hasMedia || m.media ? kindFromMime(mime, m._data?.Info?.MediaType) : 'text';
 
   // Media ref: store a compact WAHA-hosted ref `wf_<session>/<filename>` so
   // downloadFile can fetch it back through the proxy (the media.url WAHA returns
