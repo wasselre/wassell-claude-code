@@ -99,7 +99,10 @@ export default function SuggestedProjectsView({
   const saveRecord = useAppStore((s) => s.saveRecord);
 
   const [resp, setResp] = useState<FinderResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Starts true because the search normally fires on mount — but NOT when the
+  // host defers it (editPrefsFirst), or the spinner would hang forever in place
+  // of the start screen (caught in the live smoke-test 2026-07-19).
+  const [loading, setLoading] = useState(!editPrefsFirst);
   const [error, setError] = useState<{ message: string; timeout: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<DisplayTabKey>('exact_district_matches');
   const [viewMode, setViewMode] = useState<FinderViewMode>('list');
