@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, TimerOff, RefreshCw, CheckSquare } from 'lucide-react';
+import { Compass, Check, Loader2, AlertTriangle, Info, Bookmark, XCircle, SlidersHorizontal, Search, Save, ChevronDown, ChevronUp, TimerOff, RefreshCw, CheckSquare } from 'lucide-react';
 import type { AppModel, AppRecord, ModelField } from '@/types';
 import { useAppStore } from '@/stores/appStore';
 import DynamicField from '@/pages/Records/components/DynamicField';
@@ -66,6 +66,12 @@ interface Props {
    *  WhatsApp Client-Options modal) set this so the results get the height.
    *  The rep can always expand/collapse it with the toggle. */
   defaultPrefsCollapsed?: boolean;
+  /** Open with the EDIT-PREFERENCES panel and DON'T auto-run the first search
+   *  (user request 2026-07-19: "inside the chat I should be able to edit the
+   *  preferences BEFORE the search starts"). The rep reviews/adjusts, then
+   *  presses Search. Hosts that want the old fire-immediately behavior (the
+   *  follow-up workspace, the standalone page) simply omit this. */
+  editPrefsFirst?: boolean;
   onDone: () => void;
 }
 
@@ -84,7 +90,7 @@ const PAGE = 24;
 
 export default function SuggestedProjectsView({
   isAr, clientsModel, clientRec, prefDraft, followupDraft, followupId, projectName, clientName,
-  defaultPrefsCollapsed, onDone,
+  defaultPrefsCollapsed, editPrefsFirst, onDone,
 }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const models = useAppStore((s) => s.models);
@@ -122,7 +128,10 @@ export default function SuggestedProjectsView({
   // Editable preference draft + the draft the CURRENT results were searched with.
   const [editDraft, setEditDraft] = useState<Record<string, unknown>>(() => ({ ...prefDraft }));
   const [searchedDraft, setSearchedDraft] = useState<Record<string, unknown>>(() => ({ ...prefDraft }));
-  const [showEdit, setShowEdit] = useState(false);
+  const [showEdit, setShowEdit] = useState(!!editPrefsFirst);
+  // False until a search has actually been run — drives the "review your
+  // preferences, then search" start screen when editPrefsFirst defers it.
+  const [hasSearched, setHasSearched] = useState(!editPrefsFirst);
   const [savingPrefs, setSavingPrefs] = useState(false);
   // "Must have" toggle for the selected amenities: when on, they become
   // required_amenities — a HARD engine gate (candidates not listing ALL of them
@@ -209,9 +218,12 @@ export default function SuggestedProjectsView({
   function runSearch(d: Record<string, unknown>) {
     markActivity('finder: search request');
     lastDraftRef.current = d;
+    // Abort any in-flight search: a rep who edits mid-search gets the NEW one
+    // (the aborted request's .catch ignores AbortError).
     controllerRef.current?.abort();
     const controller = new AbortController();
     controllerRef.current = controller;
+    setHasSearched(true);
     setLoading(true);
     setError(null);
     setScoreThreshold(FETCH_FLOOR);
@@ -254,11 +266,15 @@ export default function SuggestedProjectsView({
       });
   }
 
-  // Initial fetch on mount.
+  // Initial fetch on mount — SKIPPED when the host wants the rep to review the
+  // preferences first (editPrefsFirst); the panel is open and the results area
+  // shows the start screen until Search is pressed.
   useEffect(() => {
     startFreezeDetector();
-    markActivity('finder: initial load');
-    runSearch(prefDraft);
+    if (!editPrefsFirst) {
+      markActivity('finder: initial load');
+      runSearch(prefDraft);
+    }
     return () => controllerRef.current?.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -594,9 +610,27 @@ export default function SuggestedProjectsView({
       {showEdit && editFields.length > 0 && (
         <div className="max-h-[42vh] overflow-y-auto overscroll-contain border-b border-sand/40 bg-white/70">
           <div className="mx-auto w-full max-w-6xl px-4 py-3 sm:px-6">
-            <div className="mb-2 flex items-center gap-2">
-              <SlidersHorizontal size={14} className="text-copper" />
-              <span className="text-xs font-bold text-charcoal/75">{L('تعديل تفضيلات العميل وإعادة البحث', 'Edit client preferences & search again')}</span>
+            {/* Sticky panel header: the COLLAPSE control lives here so the
+                results are always one click away — previously the only way to
+                close the panel was the header toggle or running a search
+                (live report 2026-07-19: "no button to collapse the
+                preferences, the listings window stays tiny"). */}
+            <div className="sticky top-0 z-10 -mx-4 mb-2 flex items-center gap-2 bg-white/95 px-4 py-1.5 backdrop-blur sm:-mx-6 sm:px-6">
+              <SlidersHorizontal size={14} className="shrink-0 text-copper" />
+              <span className="text-xs font-bold text-charcoal/75">
+                {hasSearched
+                  ? L('تعديل تفضيلات العميل وإعادة البحث', 'Edit client preferences & search again')
+                  : L('راجع التفضيلات ثم ابدأ البحث', 'Review the preferences, then search')}
+              </span>
+              <div className="flex-1" />
+              <button
+                type="button"
+                onClick={() => setShowEdit(false)}
+                className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/70 transition hover:bg-cream/60"
+                title={L('إخفاء التفضيلات وإظهار النتائج', 'Collapse preferences and show the results')}
+              >
+                <ChevronUp size={13} /> {L('طيّ التفضيلات', 'Collapse')}
+              </button>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {editFields.map((field) => (
@@ -629,14 +663,21 @@ export default function SuggestedProjectsView({
               ))}
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
+              {/* Enabled DURING a search on purpose: editing mid-flight and
+                  pressing search supersedes the running request (runSearch
+                  aborts it) instead of forcing the rep to wait it out. */}
               <button
                 type="button"
                 onClick={onSearchWithPrefs}
-                disabled={loading || savingPrefs}
+                disabled={savingPrefs}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
               >
-                {(loading || savingPrefs) ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-                {L('بحث بالتفضيلات الجديدة', 'Search with new preferences')}
+                {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                {!hasSearched
+                  ? L('ابدأ البحث', 'Start search')
+                  : loading
+                    ? L('إعادة البحث بالتفضيلات الجديدة', 'Restart with new preferences')
+                    : L('بحث بالتفضيلات الجديدة', 'Search with new preferences')}
               </button>
               <span className="inline-flex items-center gap-1 text-[11px] text-charcoal/50">
                 <Save size={12} /> {L('تُحفظ التفضيلات للعميل عند البحث.', 'Preferences are saved to the client on search.')}
@@ -786,6 +827,35 @@ export default function SuggestedProjectsView({
       {/* Cards */}
       <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-6xl px-4 py-4 sm:px-6">
+          {/* Start screen — editPrefsFirst hosts land here: nothing has been
+              searched yet, so prompt instead of showing an empty result set. */}
+          {!hasSearched && !loading && (
+            <div className="flex h-[50vh] flex-col items-center justify-center gap-3 px-6 text-center">
+              <Compass size={26} className="text-copper" />
+              <p className="text-sm font-bold text-chocolate">{L('راجع تفضيلات العميل قبل البحث', 'Review the client’s preferences before searching')}</p>
+              <p className="max-w-lg text-sm text-charcoal/60">
+                {L('عدّل الموقع أو الميزانية أو النوع من لوحة التفضيلات بالأعلى، ثم اضغط «ابدأ البحث». يمكنك التعديل وإعادة البحث في أي وقت.',
+                   'Adjust location, budget or type in the preferences panel above, then press “Start search”. You can edit and search again at any time.')}
+              </p>
+              <button
+                type="button"
+                onClick={onSearchWithPrefs}
+                disabled={savingPrefs}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-copper px-4 py-2 text-sm font-bold text-white transition hover:bg-terracotta disabled:opacity-50"
+              >
+                {savingPrefs ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />} {L('ابدأ البحث', 'Start search')}
+              </button>
+              {!showEdit && editFields.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowEdit(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-sand/60 bg-white px-3.5 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60"
+                >
+                  <SlidersHorizontal size={15} /> {L('تعديل التفضيلات', 'Edit preferences')}
+                </button>
+              )}
+            </div>
+          )}
           {loading && (
             <div className="flex h-[50vh] flex-col items-center justify-center gap-2 text-charcoal/55">
               <Loader2 size={24} className="animate-spin text-copper" />
@@ -847,7 +917,7 @@ export default function SuggestedProjectsView({
               )}
             </div>
           )}
-          {!loading && !error && !needsPreferences && fetchedTotal === 0 && (
+          {hasSearched && !loading && !error && !needsPreferences && fetchedTotal === 0 && (
             <div className="flex h-[50vh] flex-col items-center justify-center gap-2 px-6 text-center text-charcoal/55">
               <Info size={24} className="text-copper" />
               <p className="text-sm">{L('لا توجد مشاريع مطابقة بالتفضيلات الحالية. جرّب توسيع الميزانية أو الموقع، أو اسأل العميل عن تفاصيل أكثر.', 'No matching projects for the current preferences. Try widening the budget or location, or gather more details from the client.')}</p>

@@ -100,6 +100,11 @@ export default function ClientOptionsModal({ clientId, onClose }: { clientId: st
                 projectName={null}
                 clientName={clientName}
                 defaultPrefsCollapsed
+                // In the popup the rep opens the finder deliberately — let them
+                // review/adjust the preferences BEFORE the search runs, instead
+                // of firing one search then having to redo it (user request
+                // 2026-07-19).
+                editPrefsFirst
                 onDone={() => setMode('options')}
               />
             )}
