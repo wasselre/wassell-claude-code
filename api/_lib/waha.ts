@@ -441,9 +441,11 @@ export async function sendMessage(input: {
   if (input.mediaFileId) {
     const file = await resolveMediaFile(input.mediaFileId);
     const caption = input.mediaCaption ?? input.body ?? undefined;
+    // 'sticker' (image/webp) is sent as an IMAGE — there is no separate sticker
+    // send here, and routing it to sendFile would deliver a webp attachment.
     const k = kindFromMime(file.mimetype);
     path =
-      k === 'image' ? '/api/sendImage' :
+      k === 'image' || k === 'sticker' ? '/api/sendImage' :
       k === 'video' ? '/api/sendVideo' :
       k === 'audio' ? '/api/sendVoice' : '/api/sendFile';
     payload = { session, chatId, file, reply_to };
@@ -468,16 +470,36 @@ function toChatId(target: string, isGroup: boolean, isChannel: boolean): string 
   return `${digits}@c.us`;
 }
 
+/**
+ * Extension → mime. The outbound ref carries no content type of its own, and
+ * WITHOUT a mime the send classifier fell through to 'document', so every photo
+ * we sent arrived as a FILE attachment instead of an inline image (reported
+ * live 2026-07-19). Infer it from the stored filename instead.
+ */
+const EXT_MIME: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', gif: 'image/gif',
+  mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', m4v: 'video/mp4',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4',
+  pdf: 'application/pdf',
+};
+
+function mimeFromRef(ref: string): string | undefined {
+  const clean = ref.split(/[?#]/)[0] ?? '';
+  const dot = clean.lastIndexOf('.');
+  if (dot < 0) return undefined;
+  return EXT_MIME[clean.slice(dot + 1).toLowerCase()];
+}
+
 /** Resolve a mediaFileId to a WAHA `file` payload ({url} or passthrough). */
 async function resolveMediaFile(mediaFileId: string): Promise<{ url: string; mimetype?: string; filename?: string }> {
   if (mediaFileId.startsWith('http://') || mediaFileId.startsWith('https://')) {
-    return { url: mediaFileId };
+    return { url: mediaFileId, mimetype: mimeFromRef(mediaFileId) };
   }
   if (mediaFileId.startsWith(TEMP_REF)) {
     const path = mediaFileId.slice(TEMP_REF.length);
     const { data, error } = await svc().storage.from(OUTBOUND_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_S);
     if (error || !data?.signedUrl) throw new WahaError(502, `WAHA media temp signed-url failed: ${error?.message ?? 'no url'}`);
-    return { url: data.signedUrl, filename: path.split('/').pop() };
+    return { url: data.signedUrl, filename: path.split('/').pop(), mimetype: mimeFromRef(path) };
   }
   throw new WahaError(400, `Unresolvable mediaFileId for WAHA: ${mediaFileId.slice(0, 24)}`);
 }
