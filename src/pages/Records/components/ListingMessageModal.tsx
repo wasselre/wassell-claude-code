@@ -47,6 +47,12 @@ interface TemplateImage {
   image_index: number;
 }
 
+/** One entry of a saved template's data.videos[] (converted stream / direct file / manual upload). */
+interface TemplateVideo {
+  source_url?: string | null;
+  public_url: string;
+}
+
 type Mode = 'existing' | 'generating';
 
 /**
@@ -95,6 +101,16 @@ export default function ListingMessageModal({
         ) as TemplateImage[])
       : [],
   );
+  // Sendable VIDEOS — curated exactly like images. Seeded server-side on
+  // Approve ({source_url, public_url}: direct files + worker-converted HLS
+  // mp4s); manual adds upload a video FILE (≤15.5 MB — WhatsApp's video cap).
+  const [exVideosState, setExVideosState] = useState<TemplateVideo[]>(() =>
+    Array.isArray((existing?.data as Record<string, unknown> | undefined)?.videos)
+      ? (((existing!.data as Record<string, unknown>).videos as TemplateVideo[]).filter(
+          (v) => v && typeof v === 'object' && typeof v.public_url === 'string',
+        ) as TemplateVideo[])
+      : [],
+  );
   const [imagesDirty, setImagesDirty] = useState(false);
   const [uploadingCount, setUploadingCount] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -104,30 +120,55 @@ export default function ListingMessageModal({
     setImagesDirty(true);
   };
 
+  const removeTemplateVideo = (idx: number) => {
+    setExVideosState((arr) => arr.filter((_, i) => i !== idx));
+    setImagesDirty(true);
+  };
+
+  /** WhatsApp rejects videos over ~16 MB — refuse oversize manual uploads. */
+  const MAX_VIDEO_UPLOAD_BYTES = 15_500_000;
+
   const addTemplateImages = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const list = Array.from(files).filter(
+      (f) => f.type.startsWith('image/') || f.type.startsWith('video/'),
+    );
     if (list.length === 0) return;
     setUploadingCount(list.length);
     try {
       for (const file of list) {
+        if (file.type.startsWith('video/') && file.size > MAX_VIDEO_UPLOAD_BYTES) {
+          addToast(
+            tr(
+              `«${file.name}» أكبر من 15.5 ميغابايت — واتساب لا يقبل فيديو أكبر من ذلك.`,
+              `"${file.name}" is over 15.5 MB — WhatsApp rejects larger videos.`,
+            ),
+            'error',
+          );
+          setUploadingCount((n) => n - 1);
+          continue;
+        }
         const url = await uploadImage(file, 'listing-manual');
-        setExImagesState((arr) => [
-          ...arr,
-          {
-            asset_id: null,
-            public_url: url,
-            source_url: null,
-            image_index: arr.reduce((m, im) => Math.max(m, im.image_index ?? 0), -1) + 1,
-          },
-        ]);
+        if (file.type.startsWith('video/')) {
+          setExVideosState((arr) => [...arr, { source_url: null, public_url: url }]);
+        } else {
+          setExImagesState((arr) => [
+            ...arr,
+            {
+              asset_id: null,
+              public_url: url,
+              source_url: null,
+              image_index: arr.reduce((m, im) => Math.max(m, im.image_index ?? 0), -1) + 1,
+            },
+          ]);
+        }
         setImagesDirty(true);
         setUploadingCount((n) => n - 1);
       }
     } catch (err) {
       setUploadingCount(0);
       addToast(
-        tr('تعذّر رفع الصورة: ', 'Image upload failed: ') +
+        tr('تعذّر رفع الملف: ', 'Upload failed: ') +
           (err instanceof Error ? err.message : String(err)),
         'error',
       );
@@ -163,7 +204,7 @@ export default function ListingMessageModal({
         data: {
           ...(existing.data ?? {}),
           ...(rewritten ? { body_ar: exAr, body_en: exEn } : {}),
-          ...(imagesDirty ? { images: exImagesState } : {}),
+          ...(imagesDirty ? { images: exImagesState, videos: exVideosState } : {}),
         },
         updated_at: new Date().toISOString(),
       };
@@ -347,9 +388,11 @@ export default function ListingMessageModal({
         ) : (
           <MessagePreview ar={(d.body_ar as string) ?? ''} en={(d.body_en as string) ?? ''} isAr={isAr} />
         )}
-        {/* Image management: remove tiles / add manual uploads */}
+        {/* Media management: remove tiles / add manual uploads (images + videos) */}
         <div className="flex items-center justify-between mt-3 mb-1">
-          <label className="block text-xs font-bold text-charcoal/60">{tr('الصور', 'Images')}</label>
+          <label className="block text-xs font-bold text-charcoal/60">
+            {tr('الوسائط (صور وفيديو)', 'Media (images & videos)')}
+          </label>
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
@@ -358,18 +401,40 @@ export default function ListingMessageModal({
           >
             {uploadingCount > 0 ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
             {uploadingCount > 0
-              ? tr(`جارٍ رفع ${uploadingCount} صورة…`, `Uploading ${uploadingCount} image(s)…`)
-              : tr('إضافة صور', 'Add images')}
+              ? tr(`جارٍ رفع ${uploadingCount} ملف…`, `Uploading ${uploadingCount} file(s)…`)
+              : tr('إضافة صور / فيديو', 'Add images / videos')}
           </button>
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/*,video/*"
             multiple
             className="hidden"
             onChange={(e) => void addTemplateImages(e.target.files)}
           />
         </div>
+        {exVideosState.length > 0 && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
+            {exVideosState.map((v, i) => (
+              <div key={`${v.public_url}-${i}`} className="relative group">
+                <video
+                  src={v.public_url}
+                  controls
+                  preload="metadata"
+                  className="w-full aspect-video object-cover rounded-lg border border-sand/30 bg-black/80"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeTemplateVideo(i)}
+                  title={tr('إزالة الفيديو', 'Remove video')}
+                  className="absolute top-1 end-1 p-1 rounded-md bg-white/90 text-charcoal/70 hover:text-red-600 shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         {exImagesState.length > 0 ? (
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
             {exImagesState.map((im, i) =>

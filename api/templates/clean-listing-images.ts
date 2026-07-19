@@ -255,6 +255,40 @@ export default async function handler(nodeReq: IncomingMessage, nodeRes: ServerR
         p_expected_version: null,
       });
       if (saveErr) return jsonError(500, `failed to update listing images: ${saveErr.message}`);
+
+      // ── Seed the template's sendable VIDEOS (curated media, like images) ──
+      // The browser can't do this: the SPA loads listings through the slim
+      // market_listings_summary view, which strips video_urls/video_mp4_map.
+      // Here we hold the FULL listing row, so materialize
+      // data.videos = [{source_url, public_url}] on the template — direct video
+      // files as-is + HLS streams through the worker's mp4 cache. The saved-
+      // message modal and the template editor edit this list; the send flow
+      // reads it. Best-effort: a failure never blocks the approve.
+      try {
+        const DIRECT_VIDEO_RE = /\.(mp4|m4v|webm|mov|3gp)(\?|#|$)/i;
+        const rawVideos = Array.isArray(ld.video_urls) ? ld.video_urls : Array.isArray(ld.videos) ? ld.videos : [];
+        const mp4Map = (ld.video_mp4_map ?? {}) as Record<string, unknown>;
+        const videos = (rawVideos as unknown[])
+          .filter((u): u is string => typeof u === 'string' && /^https?:\/\//i.test(u))
+          .map((u) => ({
+            source_url: u,
+            public_url: DIRECT_VIDEO_RE.test(u)
+              ? u
+              : typeof mp4Map[u] === 'string' && mp4Map[u]
+                ? (mp4Map[u] as string)
+                : null,
+          }))
+          .filter((v): v is { source_url: string; public_url: string } => !!v.public_url);
+        await recordSaveWithRetry(svc, {
+          recordId,
+          build: (data) => ({ ...data, videos }),
+        });
+      } catch (err) {
+        console.error(
+          `[clean-listing-images] template video seed failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+
       console.log(
         `[clean-listing-images] applied ${cleanedByIndex.size} cleaned photo(s) to listing=${listingId}`,
       );

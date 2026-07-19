@@ -64,22 +64,32 @@ export default function ListingWhatsAppFlow({ isAr, listingId, listingName, clie
   const listingData = (listing?.data ?? {}) as Record<string, unknown>;
 
   // Media that rides along after the text: the template's cleaned photos +
-  // the listing's videos. A video sends when it is a direct FILE, or when the
-  // worker has converted its HLS stream to an .mp4 (data.video_mp4_map — the
-  // video-convert queue fills this cache when the listing message is
-  // generated; Aqar videos are Cloudflare Stream .m3u8 playlists WhatsApp
-  // can't carry directly). Unconverted streams are still skipped.
+  // its curated VIDEOS. `data.videos` is seeded server-side on Approve
+  // ({source_url, public_url}: direct files as-is + HLS streams via the
+  // worker's video-convert mp4 cache — Aqar videos are Cloudflare Stream
+  // .m3u8 playlists WhatsApp can't carry directly) and is user-editable in
+  // the saved-message modal / template editor, exactly like images. When the
+  // key is present it is AUTHORITATIVE (an empty array = user removed all
+  // videos). Legacy templates without the key fall back to the old
+  // listing-derived path (best-effort — the slim market_listings_summary the
+  // store loads strips video fields, so this usually yields nothing).
   // sendProjectImageMessages picks image/video by mime.
   const mediaSends = useMemo(() => {
     const d = (readyTemplate?.data ?? {}) as Record<string, unknown>;
+    const curated = Array.isArray(d.videos)
+      ? (d.videos as Array<{ public_url?: unknown } | null>)
+          .map((v) => v?.public_url)
+          .filter((u): u is string => typeof u === 'string' && u.length > 0)
+      : null;
     const raw = listingData.video_urls ?? listingData.videos;
     const mp4Map = (listingData.video_mp4_map ?? {}) as Record<string, unknown>;
-    const converted = Array.isArray(raw)
+    const legacyConverted = Array.isArray(raw)
       ? (raw as unknown[])
           .map((u) => (typeof u === 'string' ? mp4Map[u] : null))
           .filter((u): u is string => typeof u === 'string' && u.length > 0)
       : [];
-    return [...templateListingImageUrls(d), ...new Set([...directVideoUrls(raw), ...converted])];
+    const videos = curated ?? [...new Set([...directVideoUrls(raw), ...legacyConverted])];
+    return [...templateListingImageUrls(d), ...videos];
   }, [readyTemplate, listingData]);
 
   // Loud, not silent — without the model there is no template to send or create.

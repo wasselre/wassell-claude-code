@@ -73,6 +73,9 @@ export default function ChatTemplateFormPage() {
   // the project gallery). Persisted with the normal Save button.
   const [projectImageIds, setProjectImageIds] = useState<string[]>([]);
   const [listingImages, setListingImages] = useState<Array<Record<string, unknown>>>([]);
+  // Curated sendable videos (listing templates — data.videos, seeded on
+  // Approve; manual video uploads land here too, ≤15.5 MB WhatsApp cap).
+  const [listingVideos, setListingVideos] = useState<Array<Record<string, unknown>>>([]);
   const [signedById, setSignedById] = useState<Record<string, string>>({});
   const [galleryUploading, setGalleryUploading] = useState(0);
   const galleryInputRef = useRef<HTMLInputElement | null>(null);
@@ -115,15 +118,36 @@ export default function ChatTemplateFormPage() {
     })),
   ];
 
+  /** WhatsApp rejects videos over ~16 MB — refuse oversize manual uploads. */
+  const MAX_VIDEO_UPLOAD_BYTES = 15_500_000;
+
   const addGalleryImages = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const list = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const list = Array.from(files).filter(
+      (f) => f.type.startsWith('image/') || f.type.startsWith('video/'),
+    );
     if (list.length === 0) return;
     setGalleryUploading(list.length);
     try {
       for (const file of list) {
+        if (file.type.startsWith('video/') && file.size > MAX_VIDEO_UPLOAD_BYTES) {
+          addToast(
+            isAr
+              ? `«${file.name}» أكبر من 15.5 ميغابايت — واتساب لا يقبل فيديو أكبر من ذلك.`
+              : `"${file.name}" is over 15.5 MB — WhatsApp rejects larger videos.`,
+            'error',
+          );
+          setGalleryUploading((n) => n - 1);
+          continue;
+        }
         const url = await uploadImage(file, 'listing-manual');
-        if (isProjectGallery) {
+        if (file.type.startsWith('video/')) {
+          // Videos: project templates send project_image_file_ids entries (the
+          // fan-out classifies by mime, so a video URL there sends as video);
+          // listing/contact templates use the curated videos[] list.
+          if (isProjectGallery) setProjectImageIds((arr) => [...arr, url]);
+          else setListingVideos((arr) => [...arr, { source_url: null, public_url: url }]);
+        } else if (isProjectGallery) {
           setProjectImageIds((arr) => [...arr, url]);
         } else {
           setListingImages((arr) => [
@@ -141,7 +165,7 @@ export default function ChatTemplateFormPage() {
     } catch (err) {
       setGalleryUploading(0);
       addToast(
-        (isAr ? 'تعذّر رفع الصورة: ' : 'Image upload failed: ') +
+        (isAr ? 'تعذّر رفع الملف: ' : 'Upload failed: ') +
           (err instanceof Error ? err.message : String(err)),
         'error',
       );
@@ -192,6 +216,14 @@ export default function ChatTemplateFormPage() {
       Array.isArray(d.images)
         ? (d.images as unknown[]).filter(
             (im): im is Record<string, unknown> => !!im && typeof im === 'object',
+          )
+        : [],
+    );
+    setListingVideos(
+      Array.isArray(d.videos)
+        ? (d.videos as unknown[]).filter(
+            (v): v is Record<string, unknown> =>
+              !!v && typeof v === 'object' && typeof (v as Record<string, unknown>).public_url === 'string',
           )
         : [],
     );
@@ -286,6 +318,7 @@ export default function ChatTemplateFormPage() {
           media_filename: mediaFilename,
           project_image_file_ids: projectImageIds,
           images: listingImages,
+          videos: listingVideos,
         },
         created_at: existing?.created_at ?? now,
         updated_at: now,
@@ -523,18 +556,42 @@ export default function ChatTemplateFormPage() {
               >
                 {galleryUploading > 0 ? <Loader2 size={12} className="animate-spin" /> : <ImagePlus size={12} />}
                 {galleryUploading > 0
-                  ? (isAr ? `جارٍ رفع ${galleryUploading} صورة…` : `Uploading ${galleryUploading} image(s)…`)
-                  : (isAr ? 'إضافة صور' : 'Add images')}
+                  ? (isAr ? `جارٍ رفع ${galleryUploading} ملف…` : `Uploading ${galleryUploading} file(s)…`)
+                  : (isAr ? 'إضافة صور / فيديو' : 'Add images / videos')}
               </button>
               <input
                 ref={galleryInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,video/*"
                 multiple
                 className="hidden"
                 onChange={(e) => void addGalleryImages(e.target.files)}
               />
             </div>
+            {listingVideos.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
+                {listingVideos.map((v, i) => (
+                  <div key={`${String(v.public_url)}-${i}`} className="relative group">
+                    <video
+                      src={String(v.public_url)}
+                      controls
+                      preload="metadata"
+                      className="w-full aspect-video object-cover rounded-lg border border-sand/30 bg-black/80"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setListingVideos((arr) => arr.filter((_, j) => j !== i));
+                      }}
+                      title={isAr ? 'إزالة الفيديو' : 'Remove video'}
+                      className="absolute top-1 end-1 p-1 rounded-md bg-white/90 text-charcoal/70 hover:text-red-600 shadow opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             {galleryTiles.length > 0 ? (
               <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                 {galleryTiles.map((tile) => (

@@ -29,7 +29,14 @@ function templateImageSends(d: Record<string, unknown>): string[] {
         .map((im) => im?.public_url)
         .filter((u): u is string => typeof u === 'string' && u.length > 0)
     : [];
-  return [...projectIds, ...listingUrls];
+  // Curated sendable videos (data.videos — seeded on listing Approve, editable
+  // like images). The fan-out classifies by mime, so these send as videos.
+  const videoUrls = Array.isArray(d.videos)
+    ? (d.videos as Array<{ public_url?: unknown } | null>)
+        .map((v) => v?.public_url)
+        .filter((u): u is string => typeof u === 'string' && u.length > 0)
+    : [];
+  return [...projectIds, ...listingUrls, ...videoUrls];
 }
 
 /**
