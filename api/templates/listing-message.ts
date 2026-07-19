@@ -97,6 +97,10 @@ Rules:
 1. Write in BOTH languages: body_ar (Arabic, the primary) and body_en (a faithful English equivalent).
 2. COVER EVERY FACT: the message must mention EVERY structured fact that is present (non-null), plus every real feature/amenity stated in the DESCRIPTION (e.g. private pool, elevator, maid's room, parking, finishing quality, furnished/unfurnished, utilities, near a mosque/school) — each summarized briefly, not quoted verbatim. Skip only facts that are null/absent. Do NOT invent amenities, prices, areas, or any fact not given.
 3. FORMAT: a short attractive intro line naming the unit type + district/city, then ONE short line per fact (use "- " dashes), grouped sensibly (size/rooms together is fine). Keep each line tight — this is WhatsApp, summarize, never ramble.
+   Domain terms — use the exact real-estate wording:
+   - \`frontage\` is the building's FACADE direction (الواجهة): write «الواجهة غربية» / «الواجهة شمالية» … in Arabic (adjective form) and "West frontage" in English. NEVER call it مدخل / entrance.
+   - \`street_width_m\` is عرض الشارع: «شارع عرض 20 م» / "on a 20 m street".
+   - \`property_age\` قيمة «جديد» stays «جديد» / "Brand new".
 4. Use Saudi Riyal (ر.س / SAR) if a price is provided; never invent a price.
 5. body_en PROPER NOUNS: transliterate Arabic district/city/project/street names phonetically into Latin letters (e.g. «حي المهدية» → "Al Mahdiya"). NEVER substitute a different similar-sounding place name and NEVER translate the name's meaning; if unsure, keep the Arabic name transliterated letter-for-letter.
 6. A few tasteful emojis are fine; do not overuse them.
