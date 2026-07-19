@@ -14,7 +14,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
-import { listScheduled, cancelScheduled, defaultDeviceId, HaberchatError } from '../_lib/whatsappGateway.js';
+import { listScheduled, cancelScheduled, resolveDefaultDeviceId, HaberchatError } from '../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',
@@ -29,7 +29,7 @@ export default async function handler(req: Request): Promise<Response> {
 
     try {
       if (req.method === 'GET') {
-        const deviceId = url.searchParams.get('deviceId') ?? defaultDeviceId() ?? '';
+        const deviceId = url.searchParams.get('deviceId') ?? (await resolveDefaultDeviceId()) ?? '';
         if (!deviceId) {
           return jsonError(400, 'deviceId is required — pass as query param or set HABERCHAT_DEFAULT_DEVICE_ID');
         }

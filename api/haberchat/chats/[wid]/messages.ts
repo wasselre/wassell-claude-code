@@ -8,7 +8,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../../../_lib/auth.js';
-import { listMessages, defaultDeviceId, HaberchatError } from '../../../_lib/whatsappGateway.js';
+import { listMessages, resolveDefaultDeviceId, HaberchatError } from '../../../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',
@@ -31,7 +31,7 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonError(400, 'chatWid is missing from path');
     }
 
-    const deviceId = url.searchParams.get('deviceId') ?? defaultDeviceId();
+    const deviceId = url.searchParams.get('deviceId') ?? (await resolveDefaultDeviceId());
     if (!deviceId) {
       return jsonError(
         400,

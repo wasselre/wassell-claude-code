@@ -10,7 +10,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
-import { listChats, defaultDeviceId, HaberchatError } from '../_lib/whatsappGateway.js';
+import { listChats, resolveDefaultDeviceId, HaberchatError } from '../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',
@@ -22,7 +22,7 @@ export default async function handler(req: Request): Promise<Response> {
   }
   return withAuth(req, async () => {
     const url = new URL(req.url);
-    const deviceId = url.searchParams.get('deviceId') ?? defaultDeviceId();
+    const deviceId = url.searchParams.get('deviceId') ?? (await resolveDefaultDeviceId());
     if (!deviceId) {
       return jsonError(
         400,

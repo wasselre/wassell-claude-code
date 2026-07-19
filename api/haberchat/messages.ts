@@ -20,7 +20,7 @@
  */
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
-import { sendMessage, defaultDeviceId, maybeScheduleWaha, HaberchatError } from '../_lib/whatsappGateway.js';
+import { sendMessage, resolveDefaultDeviceId, maybeScheduleWaha, HaberchatError } from '../_lib/whatsappGateway.js';
 
 export const config = {
   runtime: 'edge',
@@ -38,7 +38,7 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonError(400, 'invalid JSON body');
     }
 
-    const deviceId = (input.deviceId as string | undefined) ?? defaultDeviceId() ?? '';
+    const deviceId = (input.deviceId as string | undefined) ?? (await resolveDefaultDeviceId()) ?? '';
     if (!deviceId) {
       return jsonError(400, 'deviceId is required — pass in body or set HABERCHAT_DEFAULT_DEVICE_ID');
     }
