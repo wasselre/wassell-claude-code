@@ -76,7 +76,10 @@ export default async function handler(req: Request): Promise<Response> {
 
         let msgs;
         try {
-          msgs = await listMessages(session, chat.wid, { size: perChat });
+          // downloadMedia:false — text history only. Making WAHA fetch bytes
+          // for every historical message is far too slow for a bulk run; the
+          // thread's live fetch supplies media when a chat is opened.
+          msgs = await listMessages(session, chat.wid, { size: perChat, downloadMedia: false });
         } catch (e) {
           // One unreadable chat must not abort the whole run.
           console.error('[backfill] listMessages failed for', chat.wid, (e as Error).message);

@@ -326,17 +326,22 @@ export async function listChats(deviceId: string, opts: { size?: number; page?: 
 export async function listMessages(
   deviceId: string,
   chatWid: string,
-  opts: { size?: number; before?: string } = {},
+  opts: { size?: number; before?: string; downloadMedia?: boolean } = {},
 ): Promise<HaberchatMessage[]> {
   if (!deviceId) throw new WahaError(400, 'deviceId (session) is required');
   if (!chatWid) throw new WahaError(400, 'chatWid is required');
   const limit = Math.max(1, opts.size ?? 50);
-  // downloadMedia MUST be true: with it false WAHA omits the `media` object, so
-  // every media message came back with no mimetype and no url — the thread
-  // rendered photos, stickers and voice notes all as generic "Document" chips
-  // with nothing to open (reported live 2026-07-19). WAHA has already fetched
-  // the bytes (WHATSAPP_DOWNLOAD_MEDIA=true), so this just returns their URLs.
-  const params = new URLSearchParams({ limit: String(limit), downloadMedia: 'true' });
+  // downloadMedia defaults TRUE for the thread: with it false WAHA omits the
+  // `media` object, so every media message came back with no mimetype and no
+  // url — photos, stickers and voice notes all rendered as generic "Document"
+  // chips with nothing to open (reported live 2026-07-19).
+  // The BACKFILL passes false: it only needs the text history, and making WAHA
+  // fetch bytes for thousands of historical messages is far too slow (a
+  // 5-chat batch blew past 45s).
+  const params = new URLSearchParams({
+    limit: String(limit),
+    downloadMedia: String(opts.downloadMedia ?? true),
+  });
   // `before` is an ISO cursor in the app; WAHA paginates by timestamp.lte (secs).
   if (opts.before) {
     const t = new Date(opts.before).getTime();
