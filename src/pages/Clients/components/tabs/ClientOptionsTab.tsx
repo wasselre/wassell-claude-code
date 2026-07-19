@@ -3,14 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
   Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
-  LayoutList, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square,
+  LayoutList, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square, Trash2,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import {
   CLIENT_OPTION_STATUS_META, CLIENT_OPTION_SOURCE_META, CLIENT_OPTION_STATUS_ORDER,
   optionSourceUrl, setMainOption, updateOptionStatus, eliminateOption, reactivateOption,
-  updateSalesNotes,
+  updateSalesNotes, deleteClientOption,
   type ClientOptionStatus, type ClientOptionSourceType, type ClientOptionData,
 } from '@/lib/matching/clientOptions';
 import { buildAssistantContext } from '@/lib/followups/assistantContext';
@@ -204,6 +204,10 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
   // When true, the eliminate-with-notes modal applies to the whole selection.
   const [bulkEliminate, setBulkEliminate] = useState(false);
+  // HARD-DELETE confirm: one option (record) or the whole selection ('bulk').
+  // Delete REMOVES the option row so the property can be found + added again —
+  // unlike eliminate, which keeps the tombstone that blocks re-adding.
+  const [deleteTarget, setDeleteTarget] = useState<AppRecord | 'bulk' | null>(null);
 
   // Client preference chips — resolved by the SAME helper the finder's chips
   // use (buildAssistantContext, saved record only — no draft here), plus a
@@ -463,6 +467,33 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
     applyBulk([...selectedIds], (id) => updateOptionStatus(id, status),
       L('تم تحديث حالة الخيارات المحددة.', 'Selected options updated.'));
   }
+  /** Confirmed hard-delete: one option, or every selected one. */
+  function confirmDelete() {
+    if (deleteTarget === 'bulk') {
+      const ids = [...selectedIds];
+      let ok = 0;
+      for (const id of ids) if (deleteClientOption(id).ok) ok += 1;
+      setSelectedIds(new Set());
+      setDeleteTarget(null);
+      addToast(
+        ok === ids.length
+          ? L(`تم حذف ${ok} خيار من قائمة العميل.`, `${ok} options removed from the client's list.`)
+          : L(`تم حذف ${ok} من ${ids.length}.`, `Deleted ${ok} of ${ids.length}.`),
+        ok === ids.length ? 'success' : 'error',
+      );
+      return;
+    }
+    if (!deleteTarget) return;
+    const res = deleteClientOption(deleteTarget.id);
+    setSelectedIds((prev) => { const n = new Set(prev); n.delete(deleteTarget.id); return n; });
+    setDeleteTarget(null);
+    addToast(
+      res.ok ? L('تم حذف الخيار من قائمة العميل.', 'Option removed from the client’s list.')
+             : L('تعذّر الحذف.', 'Could not delete.'),
+      res.ok ? 'success' : 'error',
+    );
+  }
+
   function bulkReactivate() {
     const ids = [...selectedIds].filter((id) => optionById(id)?.data.status === 'eliminated');
     if (ids.length === 0) { addToast(L('لا خيارات مستبعدة ضمن التحديد.', 'No eliminated options in the selection.'), 'info'); return; }
@@ -668,6 +699,19 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
                     <XCircle size={12} /> {L('استبعاد', 'Eliminate')}
                   </button>
                 )}
+
+                {/* Hard-delete: drop the option from THIS client's list so the
+                    same property can be found + added again later. Never
+                    touches the underlying project / unit / listing record. */}
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(r)}
+                  disabled={busy}
+                  title={L('حذف من قائمة العميل فقط — يمكن إيجاده وإضافته لاحقاً', 'Remove from this client’s list only — it can be found and re-added later')}
+                  className="inline-flex items-center gap-1 rounded-lg border border-charcoal/20 bg-white px-2.5 py-1 text-[11px] font-bold text-charcoal/60 transition hover:bg-cream/60 disabled:opacity-50"
+                >
+                  <Trash2 size={12} /> {L('حذف', 'Delete')}
+                </button>
               </>
             )}
           </div>
@@ -894,6 +938,15 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
             <button
               type="button"
               disabled={bulkBusy}
+              onClick={() => setDeleteTarget('bulk')}
+              title={L('يحذف الخيارات من قائمة العميل فقط — يمكن إيجادها وإضافتها لاحقاً', 'Removes the options from this client’s list only — they can be found and re-added later')}
+              className="inline-flex items-center gap-1 rounded-lg border border-charcoal/25 bg-white px-2.5 py-1 text-xs font-bold text-charcoal/70 transition hover:bg-cream/60 disabled:opacity-50"
+            >
+              <Trash2 size={12} /> {L('حذف من القائمة', 'Delete from list')}
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
               onClick={() => setSelectedIds(new Set())}
               className="rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-xs font-semibold text-charcoal/60 transition hover:bg-cream/60 disabled:opacity-50"
             >
@@ -981,6 +1034,39 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
             onClose={() => setSendTarget(null)}
           />
         )
+      )}
+
+      {/* Hard-delete confirm — spells out how it differs from eliminate. */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/40 p-4" onMouseDown={() => setDeleteTarget(null)}>
+          <div className="w-full max-w-md rounded-2xl bg-cream p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()} dir={isAr ? 'rtl' : 'ltr'}>
+            <div className="mb-2 flex items-center gap-2 text-chocolate">
+              <Trash2 size={18} className="text-charcoal/70" />
+              <h3 className="text-base font-bold">
+                {deleteTarget === 'bulk'
+                  ? L(`حذف ${selectedIds.size} خيار من قائمة العميل`, `Delete ${selectedIds.size} options from the client’s list`)
+                  : L('حذف الخيار من قائمة العميل', 'Delete option from the client’s list')}
+              </h3>
+            </div>
+            {deleteTarget !== 'bulk' && (
+              <p className="mb-2 text-sm font-semibold text-charcoal/80">{String(deleteTarget.data.source_name ?? '')}</p>
+            )}
+            <p className="mb-2 text-xs leading-5 text-charcoal/70">
+              {L('سيُحذف من قائمة خيارات هذا العميل فقط. العقار نفسه (المشروع / الوحدة / إعلان السوق) لن يُحذف، ويمكن إيجاده في البحث وإضافته لهذا العميل مرة أخرى.',
+                 'It is removed from THIS client’s options only. The property itself (project / unit / market listing) is not deleted, and it can be found in search and added to this client again.')}
+            </p>
+            <p className="mb-4 rounded-lg bg-white/70 px-2.5 py-1.5 text-[11px] leading-5 text-charcoal/60">
+              {L('الفرق عن «استبعاد»: الاستبعاد يبقي الخيار مع سببه ويمنع إضافته مرة أخرى من البحث. الحذف يزيله تماماً حتى يظهر في عمليات البحث القادمة.',
+                 'Difference from “Eliminate”: eliminating keeps the option with its reason and blocks it from being re-added by search. Deleting removes it entirely so it can appear in future searches.')}
+            </p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setDeleteTarget(null)} className="rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60">{L('إلغاء', 'Cancel')}</button>
+              <button type="button" onClick={confirmDelete} className="inline-flex items-center gap-1.5 rounded-lg bg-charcoal px-3.5 py-2 text-sm font-bold text-white transition hover:bg-charcoal/85">
+                <Trash2 size={15} /> {L('حذف', 'Delete')}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Eliminate-with-notes modal — single option OR the whole selection

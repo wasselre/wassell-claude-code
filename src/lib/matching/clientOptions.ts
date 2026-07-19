@@ -333,6 +333,34 @@ export function reactivateOption(optionId: string): Promise<SimpleResult> {
 }
 
 /**
+ * HARD-DELETE one option row — remove the property from this client's options
+ * entirely. Distinct from `eliminateOption`:
+ *
+ *   eliminate → the row STAYS with status 'eliminated'. It is the tombstone
+ *               that makes the finder refuse to re-add this source ("already
+ *               eliminated"), preserving the rep's judgement + reason.
+ *   delete    → the row is GONE. The uniqueness key (client + source_type +
+ *               source_id) frees up, so a later search can surface the same
+ *               property again and save it fresh. Use when the option was
+ *               added by mistake or the list should be re-opened for a clean
+ *               re-search.
+ *
+ * Deletes ONLY the client_property_options row. The underlying project / unit /
+ * market listing record is never touched.
+ */
+export function deleteClientOption(optionId: string): SimpleResult {
+  const state = useAppStore.getState();
+  const model = state.models.find((m) => m.name === CLIENT_OPTIONS_MODEL);
+  if (!model) return { ok: false, status: 'error', reason: 'client_property_options model not loaded' };
+  const rec = optionById(optionId);
+  if (!rec) return { ok: false, status: 'error', reason: 'option not found' };
+  // Store-level delete: removes locally, mirrors to Supabase through the
+  // shared helper (surfaces + queues failures per the silent-failure rules).
+  state.deleteRecord(model.id, optionId);
+  return { ok: true, status: 'saved' };
+}
+
+/**
  * Change an option's status. 'main_focus' is routed through setMainOption to keep
  * a single active main; 'eliminated' should go through eliminateOption (so a
  * reason is captured) — but is handled here too for completeness (no notes).
