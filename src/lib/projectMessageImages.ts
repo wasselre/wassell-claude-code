@@ -1,204 +1,143 @@
 /**
- * Multi-media WhatsApp send for chat templates.
+ * Multi-media WhatsApp send for chat templates — SERVER-SIDE fan-out.
  *
  * Accepts a mixed list of media references:
  *   • CRM `files` ids — a project template's `project_image_file_ids` (the
- *     linked all_projects gallery + `main_image`). Those files are PRIVATE
- *     (Supabase Storage behind RLS), so they can't be handed to Haberchat as
- *     a URL — each is batch-signed to a view URL first.
+ *     linked all_projects gallery + `main_image`). Private files — the batch
+ *     endpoint RLS-checks visibility and signs them server-side.
  *   • Raw public URLs — a listing template's cleaned photos
- *     (`images[].public_url`, hosted on the public marketing-assets bucket)
- *     and direct video-file URLs (project_videos / listing video_urls),
- *     used as-is.
- * For each entry we: resolve a fetchable URL → fetch the bytes as a blob →
- * upload to Haberchat (account-scoped file id) → send as its own message
- * into the conversation — `video` when the bytes are a video, else `image`.
+ *     (`images[].public_url`) and direct video-file URLs (project_videos /
+ *     listing video_urls / converted HLS mp4s), passed through as-is.
  * (HLS playlists / page links are filtered out by the CALLER — see
- * directVideoUrls in lib/matching/sendToClient.ts — they aren't uploadable.)
+ * directVideoUrls in lib/matching/sendToClient.ts — they aren't sendable.)
  *
  * The text message is sent SEPARATELY by the caller first (StartChatModal's
- * first message / the Composer's text+single-media send); this only fans out
- * the gallery afterwards. Sequential to preserve gallery order; best-effort —
- * a single image failing is surfaced once and skipped, the rest still send.
+ * first message / the Composer's text+single-media send); this fans out the
+ * gallery afterwards.
+ *
+ * REFRESH-SAFE BY DESIGN (2026-07-19): the whole ordered batch goes to
+ * `/api/whatsapp/send-media-batch` in ONE small keepalive request; the WAHA
+ * gateway fetches each media's bytes itself and the nodejs function completes
+ * the sequential sends even if this tab refreshes or closes. The old
+ * implementation looped fetch→upload→send IN THE TAB — a refresh after the
+ * text send silently killed every remaining media message (live incident
+ * 2026-07-19, chat 88a6c43e: listing text sent, 0 of the images/videos went
+ * out). Do not reintroduce a browser-side send loop here.
  */
 
-import { signViewUrls } from '@/lib/files/client';
-import { uploadFile } from '@/lib/haberchat/client';
+import { supabase } from '@/lib/supabase';
 import { useAppStore } from '@/stores/appStore';
-import { startJob, updateJob, completeJob, failJob } from '@/lib/jobs/jobCenter';
+import { startJob, completeJob, failJob } from '@/lib/jobs/jobCenter';
 
-// Callers now run this WITHOUT awaiting (background fan-out — the modal /
-// composer frees up right after the text message). While any fan-out is in
-// flight a native beforeunload prompt guards against the USER closing the
-// tab; the Job Center registration (per-run, below) covers visibility,
-// completion toasts, and deferring the stale-build forced reload.
-let activeFanOuts = 0;
-function beforeUnloadGuard(e: BeforeUnloadEvent) {
-  e.preventDefault();
-}
-function fanOutStarted() {
-  activeFanOuts++;
-  if (activeFanOuts === 1) window.addEventListener('beforeunload', beforeUnloadGuard);
-}
-function fanOutFinished() {
-  activeFanOuts = Math.max(0, activeFanOuts - 1);
-  if (activeFanOuts === 0) window.removeEventListener('beforeunload', beforeUnloadGuard);
+/** Legacy webhook-created chats can carry the whole device OBJECT in
+ *  data.device_id — same guard as appStore's deviceIdString. */
+function deviceIdString(v: unknown): string | null {
+  if (typeof v === 'string' && v.trim()) return v.trim();
+  if (v && typeof v === 'object' && typeof (v as { id?: unknown }).id === 'string') {
+    return (v as { id: string }).id;
+  }
+  return null;
 }
 
-// Servers occasionally omit content-type on direct video files; the URL's
-// extension recovers the mime so the bytes still send as a `video` message.
-const VIDEO_EXT_MIME: Record<string, string> = {
-  mp4: 'video/mp4', m4v: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime', '3gp': 'video/3gpp',
-};
+/** Recipient phone + send-from device for a chat wid — mirrors the resolution
+ *  in appStore.sendChatMessage (record device → default → any active → live). */
+function resolveChatTarget(chatWid: string): { phone: string; deviceId: string | null } {
+  const state = useAppStore.getState();
+  const chatsModel = state.models.find((m) => m.name === 'chats');
+  const record = chatsModel
+    ? (state.records[chatsModel.id] ?? []).find((r) => (r.data as Record<string, unknown>).wid === chatWid)
+    : undefined;
+  const data = (record?.data ?? {}) as Record<string, unknown>;
+  const phone = typeof data.phone === 'string' && data.phone
+    ? data.phone
+    // Direct-chat wid is "<digits>@c.us" — recover the phone from it when the
+    // record hasn't loaded (defensive; callers normally have the record).
+    : chatWid.endsWith('@c.us') ? `+${chatWid.slice(0, -'@c.us'.length).replace(/\D/g, '')}` : '';
+  const deviceId =
+    deviceIdString(data.device_id) ??
+    (state.waDevices ?? []).find((d) => d.is_default && d.is_active)?.device_id ??
+    (state.waDevices ?? []).find((d) => d.is_active)?.device_id ??
+    (state.waDevicesLive ?? [])[0]?.id ??
+    null;
+  return { phone, deviceId };
+}
 
 export async function sendProjectImageMessages(
   chatWid: string,
   fileIds: string[] | null | undefined,
   opts: {
     /**
-     * Schedule instead of sending now: the caller's text message sits in
-     * Haberchat's queue at this time, and each gallery item is staggered a
-     * few seconds after it (queue order within the same second isn't
-     * guaranteed, so the stagger keeps text → image1 → image2 delivery
-     * order). Uploads to Haberchat still happen immediately.
+     * Schedule instead of sending now: the caller's text message sits in the
+     * delivery queue at this time, and the endpoint staggers each gallery item
+     * a few seconds after it (queue order within the same second isn't
+     * guaranteed, so the stagger keeps text → image1 → image2 delivery order).
      */
     deliverAt?: string;
   } = {},
 ): Promise<{ sent: number; failed: number }> {
   const ids = (fileIds ?? []).filter((id): id is string => typeof id === 'string' && id.length > 0);
   if (ids.length === 0) return { sent: 0, failed: 0 };
-  fanOutStarted();
-  const isArNow = useAppStore.getState().language === 'ar';
+
+  const { addToast, language } = useAppStore.getState();
+  const isAr = language === 'ar';
   const jobId = startJob({
     kind: 'media_fanout',
     label: opts.deliverAt
-      ? (isArNow ? `جدولة ${ids.length} من الوسائط` : `Scheduling ${ids.length} media message(s)`)
-      : (isArNow ? `إرسال ${ids.length} من الوسائط` : `Sending ${ids.length} media message(s)`),
+      ? (isAr ? `جدولة ${ids.length} من الوسائط` : `Scheduling ${ids.length} media message(s)`)
+      : (isAr ? `إرسال ${ids.length} من الوسائط` : `Sending ${ids.length} media message(s)`),
     progress: { done: 0, total: ids.length },
     href: `/model/chats/`,
   });
+
   try {
-    const result = await sendProjectImageMessagesInner(chatWid, ids, opts, (done) =>
-      updateJob(jobId, { progress: { done, total: ids.length } }),
-    );
+    const { phone, deviceId } = resolveChatTarget(chatWid);
+    if (!phone) throw new Error(isAr ? 'المحادثة بلا رقم مستلم' : 'conversation is missing the recipient phone');
+
+    const token = supabase ? (await supabase.auth.getSession()).data.session?.access_token : null;
+    // keepalive: the browser delivers the request even if the page unloads
+    // right after send — from then on the server owns the fan-out.
+    const res = await fetch('/api/whatsapp/send-media-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({
+        phone,
+        deviceId: deviceId ?? undefined,
+        items: ids.map((ref) => ({ ref })),
+        ...(opts.deliverAt ? { deliverAt: opts.deliverAt } : {}),
+      }),
+      keepalive: true,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(body?.error || `send-media-batch failed (${res.status})`);
+    }
+    const result = (await res.json()) as { sent: number; failed: number; firstError?: string };
+
+    if (result.failed > 0) {
+      addToast(
+        isAr
+          ? `تعذّر إرسال ${result.failed} من الوسائط${result.firstError ? ` — ${result.firstError}` : ''}`
+          : `Couldn't send ${result.failed} media message(s)${result.firstError ? ` — ${result.firstError}` : ''}`,
+        result.failed === ids.length ? 'error' : 'info',
+      );
+    }
     if (result.failed === ids.length) {
-      failJob(jobId, isArNow ? 'فشل إرسال كل الوسائط' : 'all media failed to send', { toastMessage: null });
+      failJob(jobId, isAr ? 'فشل إرسال كل الوسائط' : 'all media failed to send', { toastMessage: null });
     } else {
       // The caller surfaces its own success toast; keep the job entry quiet.
       completeJob(jobId, { toastMessage: null });
     }
-    return result;
+    return { sent: result.sent, failed: result.failed };
   } catch (err) {
-    failJob(jobId, err instanceof Error ? err.message : String(err), { toastMessage: null });
-    throw err;
-  } finally {
-    fanOutFinished();
-  }
-}
-
-async function sendProjectImageMessagesInner(
-  chatWid: string,
-  ids: string[],
-  opts: { deliverAt?: string },
-  onProgress?: (done: number) => void,
-): Promise<{ sent: number; failed: number }> {
-  // Media message i goes out at deliverAt + (i+1) * 10s.
-  const baseDeliverMs = opts.deliverAt ? new Date(opts.deliverAt).getTime() : null;
-  const STAGGER_MS = 10_000;
-
-  const { sendChatMessage, addToast, language } = useAppStore.getState();
-  const isAr = language === 'ar';
-
-  // Most ids are CRM `files` ids needing a signed view URL; a few projects store
-  // a raw public image URL (e.g. a `main_image` that holds a marketing-assets
-  // URL instead of a file id) — those are used as-is. Batch-sign only the file
-  // ids; URL entries pass straight through to the fetch below.
-  const isUrl = (s: string) => /^https?:\/\//i.test(s);
-  const fileIdsToSign = ids.filter((id) => !isUrl(id));
-  let signed: Record<string, string> = {};
-  if (fileIdsToSign.length > 0) {
-    try {
-      signed = await signViewUrls(fileIdsToSign);
-    } catch {
-      addToast(
-        isAr ? 'تعذّر تجهيز صور المشروع للإرسال' : 'Could not prepare the project images for sending',
-        'error',
-      );
-      return { sent: 0, failed: ids.length };
-    }
-  }
-
-  let sent = 0;
-  let failed = 0;
-
-  /** Fetch → upload → send one media item. Throws on failure. */
-  const sendOne = async (id: string, index: number) => {
-    const url = isUrl(id) ? id : signed[id];
-    if (!url) throw new Error('no fetchable url');
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`fetch image failed (HTTP ${res.status})`);
-    const blob = await res.blob();
-    const urlExt = ((url.split('?')[0] ?? url).split('.').pop() ?? '').toLowerCase();
-    const mime = blob.type || VIDEO_EXT_MIME[urlExt] || 'image/jpeg';
-    const ext = (mime.split('/')[1] ?? 'jpg').split('+')[0];
-    // URL entries would otherwise put the whole URL in the filename; use the
-    // last path segment instead (file-id entries keep the id as the name).
-    const baseName = isUrl(id)
-      ? ((id.split('?')[0] ?? id).split('/').pop() || 'image').slice(0, 80)
-      : id;
-    const file = new File([blob], baseName.includes('.') ? baseName : `${baseName}.${ext}`, { type: mime });
-    const uploaded = await uploadFile(file);
-    // sendChatMessage already shows its own error toast + throws on failure;
-    // callers just tally the failure and keep going.
-    await sendChatMessage(chatWid, {
-      mediaFileId: uploaded.fileId,
-      kind: mime.startsWith('video/') ? 'video' : 'image',
-      mediaMime: uploaded.mime ?? mime,
-      mediaSize: uploaded.size ?? blob.size,
-      deliverAt: baseDeliverMs != null
-        ? new Date(baseDeliverMs + (index + 1) * STAGGER_MS).toISOString()
-        : undefined,
-    });
-  };
-
-  if (baseDeliverMs != null) {
-    // Scheduled: delivery order comes from the staggered deliverAt, not from
-    // send order — so uploads can run CONCURRENTLY (small pool). A 10-photo
-    // gallery drops from ~10 sequential round-trips to ~3 batches, which is
-    // the difference between "schedule feels instant" and a long spinner.
-    const CONCURRENCY = 4;
-    let cursor = 0;
-    const worker = async () => {
-      while (cursor < ids.length) {
-        const index = cursor++;
-        try {
-          await sendOne(ids[index] as string, index);
-          sent++;
-        } catch {
-          failed++;
-        }
-        onProgress?.(sent + failed);
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, ids.length) }, worker));
-  } else {
-    // Immediate: sequential — WhatsApp delivery order follows send order here.
-    for (const [index, id] of ids.entries()) {
-      try {
-        await sendOne(id, index);
-        sent++;
-      } catch {
-        failed++;
-      }
-      onProgress?.(sent + failed);
-    }
-  }
-
-  if (failed > 0) {
+    // NEVER reject: every caller fires this with `void ...then(...)` (no catch),
+    // so a throw here would be an unhandled rejection with no user feedback.
+    // Toast + fail the job entry, report everything as failed.
+    const msg = err instanceof Error ? err.message : String(err);
+    failJob(jobId, msg, { toastMessage: null });
     addToast(
-      isAr ? `تعذّر إرسال ${failed} من صور المشروع` : `Couldn't send ${failed} project image(s)`,
-      failed === ids.length ? 'error' : 'info',
+      isAr ? `تعذّر إرسال الوسائط — ${msg}` : `Couldn't send the media — ${msg}`,
+      'error',
     );
+    return { sent: 0, failed: ids.length };
   }
-  return { sent, failed };
 }

@@ -199,8 +199,9 @@ export default function Composer({
       // Project gallery rides along as its own image messages after the text.
       // Scheduled sends stagger each image a few seconds after the text so
       // the queue delivers them in order. NOT awaited — the composer frees up
-      // right after the text send and the media fan-out runs in the
-      // BACKGROUND (beforeunload guard inside; failures toast from there).
+      // right after the text send; the fan-out is ONE keepalive request to
+      // /api/whatsapp/send-media-batch, so the server completes the sends even
+      // if the tab refreshes (failures toast from inside the lib).
       // Immediate sends surface progress as bubbles landing in the thread;
       // scheduled ones re-sync the strip when the fan-out completes.
       if (projectImages.length > 0) {
