@@ -20,11 +20,17 @@
  * then rethrow so index.ts marks the job failed.
  *
  * Concurrency (CRITICAL): one draft record has a SHARED data.cleaning[] array and
- * every photo's job writes into it concurrently. Every write uses OPTIMISTIC
- * CONCURRENCY via record_save's p_expected_version + retry on 40001 (the
- * records_bump_version trigger increments `version` per UPDATE) — same posture as
- * Image Chats v3. The browser MUST NOT write the draft during the cleaning window
- * (echo-dedup rule); it only reads via Realtime and writes once on Approve.
+ * every photo's job writes into it concurrently. Since 2026-07-19 each terminal
+ * write goes through the clean_text_entry_patch SQL RPC (single UPDATE that
+ * jsonb_set-merges the patch into ONE cleaning[] element under the row lock —
+ * migration 2026-07-19_clean_text_entry_patch.sql). No whole-data read-modify-
+ * write, no version check, no 40001 retry loop — so a same-second burst of
+ * finishing photos (FLUX.2 klein, ~3 s each) can no longer convoy on the draft
+ * row and saturate the PostgREST pool (live incident 2026-07-18). The retry
+ * wrapper below only rides out TRANSIENT REST/pool brownouts. The browser MUST
+ * still NOT write the draft during the cleaning window (echo-dedup rule); it
+ * only reads via Realtime and writes once on Approve — that Approve save stays
+ * optimistic and still works because records_bump_version fires per patch.
  *
  * Auth: service-role client (bypasses RLS). Ownership was validated by
  * api/templates/clean-listing-images.ts before enqueue; job.userId scopes the
@@ -33,7 +39,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from './env.js';
-import { recordSaveWithRetry } from './lib/recordSaveRetry.js';
+import { retryRecordSave, type SaveError } from './lib/recordSaveRetry.js';
 import { imageGenTextRemoval, pollImageGen } from './imageGen.js';
 
 /** Shape of a claimed generation_jobs row (kind='clean-text'). */
@@ -51,26 +57,20 @@ export interface CleanTextJob {
   attempts: number;
 }
 
-interface CleaningEntry {
-  id: string;
-  [k: string]: unknown;
-}
-
 const BUCKET = 'marketing-assets';
 const POLL_TIMEOUT_MS = 10 * 60_000;
 const POLL_INTERVAL_MS = 2500;
 
-// Larger retry budget than the default (3 attempts / 5s). Up to ~5 clean-text
-// jobs write the SAME draft row concurrently (one per worker machine), so the
-// loser of a version race re-reads + re-applies several times. The default
-// budget timed out under a transient Supabase slowdown and stranded an entry at
-// 'queued' (live 2026-06-30). Widened again 2026-07-18: with klein finishing
-// every photo in ~3 s the whole batch's writes land in one burst, and a real
-// incident saw the Supabase REST gateway answer 'upstream request timeout' for
-// ~2 straight minutes — 6 attempts / 20 s exhausted mid-brownout and stranded
-// two entries. 10 attempts / 4 min rides out a multi-minute brownout; safe
-// because each job writes the draft exactly ONCE (its terminal status) and the
-// 15-min generation_jobs watchdog remains the backstop above it.
+// Larger retry budget than the default (3 attempts / 5s), for TRANSIENT errors
+// only. Since 2026-07-19 the terminal write is a clean_text_entry_patch RPC
+// (single row-locked UPDATE of one cleaning[] element) — version races are
+// structurally impossible, so retries here only cover REST-gateway/pool
+// brownouts. A real incident (2026-07-18) saw the Supabase REST gateway answer
+// 'upstream request timeout' for ~2 straight minutes — 6 attempts / 20 s
+// exhausted mid-brownout and stranded two entries. 10 attempts / 4 min rides
+// out a multi-minute brownout; safe because each job writes the draft exactly
+// ONCE (its terminal status) and the 15-min generation_jobs watchdog remains
+// the backstop above it.
 const CLEAN_RETRY_OPTS = { maxAttempts: 10, budgetMs: 240_000, capMs: 8_000 } as const;
 
 interface RunArgs {
@@ -86,32 +86,29 @@ export async function runCleanTextJob({ supabase, job }: RunArgs): Promise<Recor
     throw new Error(`clean-text job ${job.id} missing params.source_url — cannot run`);
   }
 
-  // ── Patch ONE entry in records.data.cleaning (optimistic concurrency) ──
+  // ── Patch ONE entry in records.data.cleaning (targeted SQL merge) ──────
+  // clean_text_entry_patch does the whole read-modify-write inside one UPDATE
+  // (row-locked, index found by entry id) — no version check, no whole-data
+  // rebuild, so concurrent per-photo fills can't convoy on the shared draft row
+  // (2026-07-18 incident). It RAISEs if the draft/entry is gone; that surfaces
+  // here as a terminal error and aborts loudly, same as the old build() throw.
+  // recordSaveWithRetry stays in use elsewhere (image_chats etc.) — this RPC is
+  // clean-text-only.
   const patchEntry = async (patch: Record<string, unknown>): Promise<void> => {
-    await recordSaveWithRetry(supabase, {
-      recordId: job.recordId,
-      build: (data) => {
-        const arr: CleaningEntry[] = Array.isArray(data.cleaning)
-          ? (data.cleaning as CleaningEntry[])
-          : [];
-        let found = false;
-        const next = arr.map((it) => {
-          if (it.id === job.entryId) {
-            found = true;
-            return { ...it, ...patch };
-          }
-          return it;
-        });
-        if (!found) {
-          // The draft (or this entry) is gone — e.g. deleted mid-run. Abort
-          // loudly; never silently no-op (CLAUDE.md).
-          throw new Error(
-            `cleaning entry ${job.entryId} not present in record ${job.recordId} — aborting`,
-          );
-        }
-        return { ...data, cleaning: next };
-      },
-    }, CLEAN_RETRY_OPTS);
+    const step = async (): Promise<SaveError | null> => {
+      const { error } = await supabase.rpc('clean_text_entry_patch', {
+        p_record_id: job.recordId,
+        p_entry_id: job.entryId,
+        p_patch: patch,
+      });
+      return (error as SaveError | null) ?? null;
+    };
+    const result = await retryRecordSave(step, CLEAN_RETRY_OPTS);
+    if (!result.ok) {
+      throw new Error(
+        `clean_text_entry_patch failed after ${result.attempts} attempt(s) (record=${job.recordId} entry=${job.entryId}): ${result.error?.message ?? 'unknown'}`,
+      );
+    }
   };
 
   const isCancelled = async (): Promise<boolean> => {
