@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   ListChecks, Star, ExternalLink, XCircle, RotateCcw, Loader2, Building2, MapPin,
   Wallet, Ruler, BedDouble, Bath, PackageCheck, Pencil, Check, Filter, Plus, Compass, Send,
-  LayoutList, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal,
+  LayoutList, Map as MapIcon, Search, ArrowUpDown, SlidersHorizontal, CheckSquare, Square,
 } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
@@ -59,8 +59,22 @@ const SORT_LABELS: Record<OptionSortKey, { ar: string; en: string }> = {
   newest: { ar: 'الأحدث إضافة', en: 'Newest added' },
 };
 
+/** Deep-refine filter fields — all optional; empty string = no bound. */
+interface OptionRefine {
+  priceMin: string;
+  priceMax: string;
+  areaMin: string;
+  areaMax: string;
+  bedsMin: string;
+  district: 'all' | string;
+  grade: 'all' | string;
+}
+const REFINE_EMPTY: OptionRefine = { priceMin: '', priceMax: '', areaMin: '', areaMax: '', bedsMin: '', district: 'all', grade: 'all' };
+const refineActive = (f: OptionRefine): boolean =>
+  f.priceMin !== '' || f.priceMax !== '' || f.areaMin !== '' || f.areaMax !== '' || f.bedsMin !== '' || f.district !== 'all' || f.grade !== 'all';
+
 /** A sortable number off a facts range ({min,max} or plain number); null when absent. */
-function factRangeNum(r: AppRecord, key: 'price_range' | 'area_range', pick: 'min' | 'max'): number | null {
+function factRangeNum(r: AppRecord, key: 'price_range' | 'area_range' | 'bedroom_range', pick: 'min' | 'max'): number | null {
   const f = (r.data.facts ?? {}) as Record<string, unknown>;
   const v = f[key];
   if (typeof v === 'number' && Number.isFinite(v) && v > 0) return v;
@@ -180,6 +194,16 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<'all' | ClientOptionSourceType>('all');
   const [sortKey, setSortKey] = useState<OptionSortKey>('best');
+  // Deep refine (price / area / rooms / district / quality) — collapsible row.
+  const [showRefine, setShowRefine] = useState(false);
+  const [refine, setRefine] = useState<OptionRefine>(REFINE_EMPTY);
+  // Multi-select for bulk actions. Selection survives filter changes; the
+  // select-all toggle operates on the currently VISIBLE set.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
+  // When true, the eliminate-with-notes modal applies to the whole selection.
+  const [bulkEliminate, setBulkEliminate] = useState(false);
 
   // Client preference chips — resolved by the SAME helper the finder's chips
   // use (buildAssistantContext, saved record only — no draft here), plus a
@@ -241,6 +265,23 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
     return c;
   }, [options]);
 
+  // The grade an option displays: facts snapshot first, live listing fallback.
+  const gradeOf = (r: AppRecord): string | null => {
+    const f = (r.data.facts ?? {}) as Record<string, unknown>;
+    if (typeof f.quality_grade === 'string' && f.quality_grade) return f.quality_grade;
+    return qualityBySourceId.get(String(r.data.source_id ?? ''))?.grade ?? null;
+  };
+
+  // Districts present across this client's options — feeds the refine dropdown.
+  const optionDistricts = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of options) {
+      const d = (r.data.facts as Record<string, unknown> | null)?.district;
+      if (typeof d === 'string' && d.trim()) s.add(d.trim());
+    }
+    return [...s].sort((a, b) => a.localeCompare(b, 'ar'));
+  }, [options]);
+
   const visible = useMemo(() => {
     const order = (s: ClientOptionStatus) => {
       const i = CLIENT_OPTION_STATUS_ORDER.indexOf(s);
@@ -248,6 +289,24 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
     };
     const score = (r: AppRecord) => (typeof r.data.match_score === 'number' ? r.data.match_score : -1);
     const q = search.trim().toLowerCase();
+    const num = (v: string): number | null => {
+      const n = Number(v);
+      return v.trim() !== '' && Number.isFinite(n) ? n : null;
+    };
+    const pMin = num(refine.priceMin), pMax = num(refine.priceMax);
+    const aMin = num(refine.areaMin), aMax = num(refine.areaMax);
+    const bMin = num(refine.bedsMin);
+    // Range-overlap check vs a facts range; a bound EXCLUDES options missing
+    // that fact (filtering means "show me ones that qualify").
+    const passesRange = (r: AppRecord, key: 'price_range' | 'area_range', lo: number | null, hi: number | null): boolean => {
+      if (lo === null && hi === null) return true;
+      const rMin = factRangeNum(r, key, 'min');
+      const rMax = factRangeNum(r, key, 'max');
+      if (rMin === null && rMax === null) return false;
+      if (lo !== null && (rMax ?? rMin)! < lo) return false;
+      if (hi !== null && (rMin ?? rMax)! > hi) return false;
+      return true;
+    };
     const filtered = options.filter((r) => {
       const s = r.data.status as ClientOptionStatus;
       if (statusFilter !== 'all') { if (s !== statusFilter) return false; }
@@ -261,6 +320,17 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
           .toLowerCase();
         if (!hay.includes(q)) return false;
       }
+      if (!passesRange(r, 'price_range', pMin, pMax)) return false;
+      if (!passesRange(r, 'area_range', aMin, aMax)) return false;
+      if (bMin !== null) {
+        const bh = factRangeNum(r, 'bedroom_range', 'max');
+        if (bh === null || bh < bMin) return false;
+      }
+      if (refine.district !== 'all') {
+        const d = (r.data.facts as Record<string, unknown> | null)?.district;
+        if (d !== refine.district) return false;
+      }
+      if (refine.grade !== 'all' && gradeOf(r) !== refine.grade) return false;
       return true;
     });
     if (sortKey === 'best') {
@@ -284,7 +354,8 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
       if (c !== 0) return c;
       return score(b) - score(a);
     });
-  }, [options, statusFilter, showEliminated, search, sourceFilter, sortKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options, statusFilter, showEliminated, search, sourceFilter, sortKey, refine, qualityBySourceId]);
 
   const sourceCounts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -322,6 +393,15 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
   }
 
   async function confirmEliminate() {
+    if (bulkEliminate) {
+      // ONE shared reason applied to every selected option.
+      const notes = eliminateNotes.trim();
+      setBulkEliminate(false);
+      setEliminateNotes('');
+      await applyBulk([...selectedIds], (id) => eliminateOption(id, notes),
+        L('تم استبعاد الخيارات المحددة.', 'Selected options eliminated.'));
+      return;
+    }
     if (!eliminateTarget) return;
     await withBusy(eliminateTarget.id, () => eliminateOption(eliminateTarget.id, eliminateNotes.trim()), L('تم استبعاد الخيار.', 'Option eliminated.'), L('تعذّر الاستبعاد.', 'Could not eliminate.'));
     setEliminateTarget(null);
@@ -335,6 +415,58 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
   async function saveNotes(r: AppRecord) {
     await withBusy(r.id, () => updateSalesNotes(r.id, notesDraft.trim()), L('تم حفظ الملاحظة.', 'Note saved.'), L('تعذّر الحفظ.', 'Could not save.'));
     setEditNotesId(null);
+  }
+
+  // ── Multi-select + bulk actions ──────────────────────────────────────────
+  const allVisibleSelected = visible.length > 0 && visible.every((r) => selectedIds.has(r.id));
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const toggleSelectAll = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visible.forEach((r) => next.delete(r.id));
+      else visible.forEach((r) => next.add(r.id));
+      return next;
+    });
+  };
+
+  /** Run one write per selected id sequentially (deterministic tallying, no
+   *  write storms), with live progress; toast a summary; clear the selection. */
+  async function applyBulk(ids: string[], fn: (id: string) => Promise<{ ok: boolean }>, okMsg: string) {
+    if (ids.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    let ok = 0, fail = 0;
+    for (const id of ids) {
+      setBulkProgress({ done: ok + fail, total: ids.length });
+      const res = await fn(id);
+      if (res.ok) ok += 1; else fail += 1;
+    }
+    setBulkBusy(false);
+    setBulkProgress(null);
+    addToast(
+      fail > 0 ? L(`${ok} نجح، ${fail} فشل.`, `${ok} succeeded, ${fail} failed.`) : okMsg,
+      fail > 0 ? 'error' : 'success',
+    );
+    setSelectedIds(new Set());
+  }
+
+  const optionById = (id: string) => options.find((r) => r.id === id);
+  function bulkSetStatus(status: ClientOptionStatus) {
+    // main_focus is single-by-invariant and eliminated needs a reason — both
+    // are excluded from the bulk dropdown; guard anyway.
+    if (status === 'main_focus' || status === 'eliminated') return;
+    applyBulk([...selectedIds], (id) => updateOptionStatus(id, status),
+      L('تم تحديث حالة الخيارات المحددة.', 'Selected options updated.'));
+  }
+  function bulkReactivate() {
+    const ids = [...selectedIds].filter((id) => optionById(id)?.data.status === 'eliminated');
+    if (ids.length === 0) { addToast(L('لا خيارات مستبعدة ضمن التحديد.', 'No eliminated options in the selection.'), 'info'); return; }
+    applyBulk(ids, (id) => reactivateOption(id), L('تمت إعادة تفعيل الخيارات المستبعدة المحددة.', 'Selected eliminated options reactivated.'));
   }
 
   // ONE option-card renderer shared by the list view and the map view's
@@ -366,9 +498,20 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
         : null;
 
     return (
-      <div key={r.id} className={`overflow-hidden rounded-xl border bg-white shadow-sm ${isMain ? 'border-copper/60 ring-1 ring-copper/30' : isEliminated ? 'border-red-200 opacity-80' : 'border-sand/50'}`}>
+      <div key={r.id} className={`overflow-hidden rounded-xl border bg-white shadow-sm ${selectedIds.has(r.id) ? 'border-copper ring-2 ring-copper/40' : isMain ? 'border-copper/60 ring-1 ring-copper/30' : isEliminated ? 'border-red-200 opacity-80' : 'border-sand/50'}`}>
         {/* Header */}
         <div className="flex items-center gap-2 border-b border-sand/30 px-3 py-2">
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => toggleSelect(r.id)}
+              className={`shrink-0 transition ${selectedIds.has(r.id) ? 'text-copper' : 'text-charcoal/30 hover:text-copper'}`}
+              title={L('تحديد للإجراءات الجماعية', 'Select for bulk actions')}
+              aria-pressed={selectedIds.has(r.id)}
+            >
+              {selectedIds.has(r.id) ? <CheckSquare size={16} /> : <Square size={16} />}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onToggleMain(r)}
@@ -638,7 +781,126 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
               <option key={k} value={k}>{isAr ? SORT_LABELS[k].ar : SORT_LABELS[k].en}</option>
             ))}
           </select>
+          <button
+            type="button"
+            onClick={() => setShowRefine((v) => !v)}
+            className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${showRefine || refineActive(refine) ? 'border-copper/40 bg-copper/10 text-copper' : 'border-sand/60 bg-white text-charcoal/60 hover:bg-cream/60'}`}
+            aria-expanded={showRefine}
+          >
+            <SlidersHorizontal size={12} /> {L('تصفية دقيقة', 'Refine')}
+            {refineActive(refine) && <span className="ms-0.5 inline-block h-1.5 w-1.5 rounded-full bg-copper" />}
+          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={toggleSelectAll}
+              disabled={visible.length === 0}
+              className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-semibold transition disabled:opacity-40 ${allVisibleSelected ? 'border-copper bg-copper text-white' : 'border-sand/60 bg-white text-charcoal/60 hover:bg-cream/60'}`}
+            >
+              {allVisibleSelected ? <CheckSquare size={12} /> : <Square size={12} />}
+              {allVisibleSelected ? L('إلغاء التحديد', 'Clear selection') : L(`تحديد الكل (${visible.length})`, `Select all (${visible.length})`)}
+            </button>
+          )}
         </div>
+
+        {/* Deep refine: price / area / rooms / district / quality */}
+        {showRefine && (
+          <div className="flex flex-wrap items-end gap-2 rounded-lg bg-cream/40 p-2">
+            <div>
+              <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/55">{L('السعر من', 'Price from')}</label>
+              <input type="number" min={0} value={refine.priceMin} onChange={(e) => setRefine((f) => ({ ...f, priceMin: e.target.value }))} className="form-input !w-28 !py-1 text-xs" placeholder="1,000,000" />
+            </div>
+            <div>
+              <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/55">{L('السعر إلى', 'Price to')}</label>
+              <input type="number" min={0} value={refine.priceMax} onChange={(e) => setRefine((f) => ({ ...f, priceMax: e.target.value }))} className="form-input !w-28 !py-1 text-xs" placeholder="3,000,000" />
+            </div>
+            <div>
+              <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/55">{L('المساحة من (م²)', 'Area from (m²)')}</label>
+              <input type="number" min={0} value={refine.areaMin} onChange={(e) => setRefine((f) => ({ ...f, areaMin: e.target.value }))} className="form-input !w-24 !py-1 text-xs" />
+            </div>
+            <div>
+              <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/55">{L('المساحة إلى (م²)', 'Area to (m²)')}</label>
+              <input type="number" min={0} value={refine.areaMax} onChange={(e) => setRefine((f) => ({ ...f, areaMax: e.target.value }))} className="form-input !w-24 !py-1 text-xs" />
+            </div>
+            <div>
+              <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/55">{L('الغرف (على الأقل)', 'Bedrooms (min)')}</label>
+              <input type="number" min={0} value={refine.bedsMin} onChange={(e) => setRefine((f) => ({ ...f, bedsMin: e.target.value }))} className="form-input !w-20 !py-1 text-xs" />
+            </div>
+            <div>
+              <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/55">{L('الحي', 'District')}</label>
+              <select value={refine.district} onChange={(e) => setRefine((f) => ({ ...f, district: e.target.value }))} className="form-input !w-auto !py-1 text-xs">
+                <option value="all">{L('كل الأحياء', 'All districts')}</option>
+                {optionDistricts.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-0.5 block text-[10px] font-semibold text-charcoal/55">{L('الجودة', 'Quality')}</label>
+              <select value={refine.grade} onChange={(e) => setRefine((f) => ({ ...f, grade: e.target.value }))} className="form-input !w-auto !py-1 text-xs">
+                <option value="all">{L('الكل', 'All')}</option>
+                {['A', 'B', 'C', 'D'].map((g) => <option key={g} value={g}>{g}</option>)}
+              </select>
+            </div>
+            {refineActive(refine) && (
+              <button
+                type="button"
+                onClick={() => setRefine(REFINE_EMPTY)}
+                className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-xs font-semibold text-charcoal/60 transition hover:bg-cream/60"
+              >
+                <XCircle size={12} /> {L('مسح التصفية', 'Clear')}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* Bulk-actions bar — appears with a selection */}
+        {canEdit && selectedIds.size > 0 && (
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-copper/40 bg-copper/5 px-3 py-2">
+            <CheckSquare size={14} className="text-copper" />
+            <span className="text-xs font-bold text-charcoal">
+              {L(`${selectedIds.size} خيار محدد`, `${selectedIds.size} selected`)}
+              {bulkProgress && <span className="ms-1 text-charcoal/60">{bulkProgress.done}/{bulkProgress.total}…</span>}
+            </span>
+            {bulkBusy && <Loader2 size={13} className="animate-spin text-copper" />}
+            <div className="flex-1" />
+            <select
+              value=""
+              disabled={bulkBusy}
+              onChange={(e) => { if (e.target.value) bulkSetStatus(e.target.value as ClientOptionStatus); }}
+              className="form-input !w-auto !py-1 text-xs disabled:opacity-50"
+            >
+              <option value="">{L('تغيير الحالة إلى…', 'Set status to…')}</option>
+              {CLIENT_OPTION_STATUS_ORDER
+                .filter((s) => s !== 'main_focus' && s !== 'eliminated')
+                .map((s) => (
+                  <option key={s} value={s}>{isAr ? CLIENT_OPTION_STATUS_META[s].ar : CLIENT_OPTION_STATUS_META[s].en}</option>
+                ))}
+            </select>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => { setEliminateNotes(''); setBulkEliminate(true); }}
+              className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-bold text-red-700 transition hover:bg-red-100 disabled:opacity-50"
+            >
+              <XCircle size={12} /> {L('استبعاد المحدد', 'Eliminate selected')}
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={bulkReactivate}
+              className="inline-flex items-center gap-1 rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-xs font-bold text-charcoal/70 transition hover:bg-cream/60 disabled:opacity-50"
+            >
+              <RotateCcw size={12} /> {L('إعادة تفعيل المستبعد', 'Reactivate eliminated')}
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => setSelectedIds(new Set())}
+              className="rounded-lg border border-sand/60 bg-white px-2.5 py-1 text-xs font-semibold text-charcoal/60 transition hover:bg-cream/60 disabled:opacity-50"
+            >
+              {L('مسح التحديد', 'Clear')}
+            </button>
+          </div>
+        )}
 
         {/* Client preference chips — the INPUTS the options were found against.
             Read-only context; editing stays on the Preferences tab / finder. */}
@@ -721,21 +983,33 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
         )
       )}
 
-      {/* Eliminate-with-notes modal */}
-      {eliminateTarget && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/40 p-4" onMouseDown={() => busyId == null && setEliminateTarget(null)}>
+      {/* Eliminate-with-notes modal — single option OR the whole selection
+          (one shared reason, applied to every selected option). */}
+      {(eliminateTarget || bulkEliminate) && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-charcoal/40 p-4"
+          onMouseDown={() => { if (busyId == null && !bulkBusy) { setEliminateTarget(null); setBulkEliminate(false); } }}
+        >
           <div className="w-full max-w-md rounded-2xl bg-cream p-5 shadow-2xl" onMouseDown={(e) => e.stopPropagation()} dir={isAr ? 'rtl' : 'ltr'}>
             <div className="mb-2 flex items-center gap-2 text-chocolate">
               <XCircle size={18} className="text-red-600" />
-              <h3 className="text-base font-bold">{L('استبعاد الخيار', 'Eliminate option')}</h3>
+              <h3 className="text-base font-bold">
+                {bulkEliminate
+                  ? L(`استبعاد ${selectedIds.size} خيار`, `Eliminate ${selectedIds.size} options`)
+                  : L('استبعاد الخيار', 'Eliminate option')}
+              </h3>
             </div>
-            <p className="mb-3 text-sm text-charcoal/70">{String(eliminateTarget.data.source_name ?? '')}</p>
+            <p className="mb-3 text-sm text-charcoal/70">
+              {bulkEliminate
+                ? L('سيُطبَّق نفس السبب على كل الخيارات المحددة.', 'The same reason is applied to every selected option.')
+                : String(eliminateTarget?.data.source_name ?? '')}
+            </p>
             <label className="mb-1 block text-xs font-semibold text-charcoal/60">{L('سبب الاستبعاد', 'Elimination reason')}</label>
             <textarea value={eliminateNotes} onChange={(e) => setEliminateNotes(e.target.value)} rows={3} autoFocus placeholder={L('مثال: خارج الميزانية…', 'e.g. over budget…')} className="form-input w-full resize-none" />
             <div className="mt-4 flex justify-end gap-2">
-              <button type="button" onClick={() => setEliminateTarget(null)} className="rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60">{L('إلغاء', 'Cancel')}</button>
-              <button type="button" onClick={confirmEliminate} disabled={busyId != null} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50">
-                {busyId != null ? <Loader2 size={15} className="animate-spin" /> : <XCircle size={15} />} {L('استبعاد', 'Eliminate')}
+              <button type="button" onClick={() => { setEliminateTarget(null); setBulkEliminate(false); }} className="rounded-lg border border-sand/60 bg-white px-3 py-2 text-sm font-bold text-charcoal/75 transition hover:bg-cream/60">{L('إلغاء', 'Cancel')}</button>
+              <button type="button" onClick={confirmEliminate} disabled={busyId != null || bulkBusy} className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50">
+                {busyId != null || bulkBusy ? <Loader2 size={15} className="animate-spin" /> : <XCircle size={15} />} {L('استبعاد', 'Eliminate')}
               </button>
             </div>
           </div>
