@@ -2,6 +2,11 @@ import { useState, useRef, useEffect, useMemo, useCallback, type KeyboardEvent }
 import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile, listScheduledMessages, cancelScheduledMessage } from '@/lib/haberchat/client';
+import {
+  loadDraftText, saveDraftText,
+  loadDraftTemplateMeta, saveDraftTemplateMeta,
+  loadDraftFile, saveDraftFile, clearDraftFile, clearDraft,
+} from '../lib/drafts';
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import TemplatePickerModal from './TemplatePickerModal';
 import SchedulePopover, { formatScheduleTime } from './SchedulePopover';
@@ -38,8 +43,13 @@ export default function Composer({
   const sendChatMessage = useAppStore((s) => s.sendChatMessage);
   const addToast = useAppStore((s) => s.addToast);
 
-  const [text, setText] = useState('');
-  const [attachment, setAttachment] = useState<Attachment | null>(null);
+  // Draft restore is SYNCHRONOUS for text (lazy initial state) so a saved draft
+  // paints on first render — no flash of an empty box before it appears.
+  const [text, setText] = useState(() => loadDraftText(chatWid));
+  const [attachment, setAttachment] = useState<Attachment | null>(() => {
+    const meta = loadDraftTemplateMeta(chatWid);
+    return meta ? { kind: 'template', ...meta } : null;
+  });
   // Templates can carry images that ride along as their own image messages
   // after the text/single-media send: a project template's gallery (CRM file
   // ids) or a listing template's cleaned photos (public URLs). Set when such
@@ -86,6 +96,50 @@ export default function Composer({
     el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
   }, [text]);
 
+  // ─── Draft persistence ────────────────────────────────────────────
+  // Switching conversations: swap in that chat's draft. (The initial state
+  // above covers first mount; this covers navigating between chats without a
+  // remount.) `chatWid` is intentionally the only dependency — reacting to
+  // text/attachment here would clobber what the user is typing.
+  useEffect(() => {
+    setText(loadDraftText(chatWid));
+    const meta = loadDraftTemplateMeta(chatWid);
+    setAttachment(meta ? { kind: 'template', ...meta } : null);
+    let cancelled = false;
+    // A locally-picked file lives in IndexedDB (async). Only apply it if no
+    // template attachment claimed the slot and we're still on this chat.
+    void loadDraftFile(chatWid).then((file) => {
+      if (cancelled || !file || meta) return;
+      setAttachment({ kind: 'local', file });
+    });
+    return () => { cancelled = true; };
+  }, [chatWid]);
+
+  // Persist the text as it's typed (debounced — one write per pause, not per
+  // keystroke).
+  useEffect(() => {
+    const t = setTimeout(() => saveDraftText(chatWid, text), 300);
+    return () => clearTimeout(t);
+  }, [chatWid, text]);
+
+  // Persist the attachment whenever it changes. A local file goes to
+  // IndexedDB; a template attachment is just a reference in localStorage.
+  useEffect(() => {
+    if (!attachment) {
+      saveDraftTemplateMeta(chatWid, null);
+      void clearDraftFile(chatWid);
+      return;
+    }
+    if (attachment.kind === 'template') {
+      const { kind: _k, ...meta } = attachment;
+      saveDraftTemplateMeta(chatWid, meta);
+      void clearDraftFile(chatWid);
+    } else {
+      saveDraftTemplateMeta(chatWid, null);
+      void saveDraftFile(chatWid, attachment.file);
+    }
+  }, [chatWid, attachment]);
+
   const canSend =
     (text.trim().length > 0 || attachment !== null || projectImageFileIds.length > 0) && !sending && !disabled;
 
@@ -110,6 +164,10 @@ export default function Composer({
     setText('');
     setAttachment(null);
     setProjectImageFileIds([]);
+    // The message is on its way — drop the stored draft so it can't come back
+    // on the next visit. (The state resets above race the persistence effects,
+    // so clear the stores explicitly rather than relying on them.)
+    void clearDraft(chatWid);
     try {
       if (att?.kind === 'local') {
         // Upload first, then send. Spinner on the send button covers the wait.
@@ -581,28 +639,77 @@ function AttachmentChip({
       : mime?.startsWith('audio/')
         ? Mic
         : FileText;
+
+  // Preview the ACTUAL bytes before sending, so nobody fires off the wrong
+  // photo. Only a locally-picked file has bytes in the browser; a template
+  // attachment is a server-side reference and keeps the compact chip.
+  const localFile = attachment.kind === 'local' ? attachment.file : null;
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!localFile) { setPreviewUrl(null); return; }
+    const isPreviewable =
+      localFile.type.startsWith('image/') ||
+      localFile.type.startsWith('video/') ||
+      localFile.type.startsWith('audio/');
+    if (!isPreviewable) { setPreviewUrl(null); return; }
+    const url = URL.createObjectURL(localFile);
+    setPreviewUrl(url);
+    // Revoke on swap/unmount — object URLs leak the whole file otherwise.
+    return () => URL.revokeObjectURL(url);
+  }, [localFile]);
+
+  const sizeLabel = sizeBytes != null
+    ? sizeBytes >= 1024 * 1024
+      ? `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`
+      : `${(sizeBytes / 1024).toFixed(0)} KB`
+    : '';
+
   return (
-    <div className="flex items-center gap-2 bg-cream/60 rounded-lg px-2 py-1.5">
-      <div className="w-7 h-7 rounded-lg bg-charcoal/5 flex items-center justify-center shrink-0">
-        <Icon size={14} className="text-charcoal/60" />
+    <div className="bg-cream/60 rounded-lg p-2">
+      <div className="flex items-center gap-2">
+        <div className="w-7 h-7 rounded-lg bg-charcoal/5 flex items-center justify-center shrink-0">
+          <Icon size={14} className="text-charcoal/60" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-xs font-medium text-charcoal truncate">{name}</div>
+          <div className="text-[10px] text-charcoal/50">
+            {sizeLabel}
+            {attachment.kind === 'template' && (
+              <span className="ms-1 text-copper">· {isAr ? 'من قالب' : 'from template'}</span>
+            )}
+          </div>
+        </div>
+        <button
+          onClick={onRemove}
+          className="p-1 rounded text-charcoal/50 hover:text-red-600 hover:bg-red-50 transition-colors"
+          aria-label={isAr ? 'إزالة المرفق' : 'Remove attachment'}
+          type="button"
+        >
+          <X size={14} />
+        </button>
       </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-xs font-medium text-charcoal truncate">{name}</div>
-        <div className="text-[10px] text-charcoal/50">
-          {sizeBytes != null ? `${(sizeBytes / 1024).toFixed(0)} KB` : ''}
-          {attachment.kind === 'template' && (
-            <span className="ms-1 text-copper">· {isAr ? 'من قالب' : 'from template'}</span>
+
+      {previewUrl && localFile && (
+        <div className="mt-2">
+          {localFile.type.startsWith('image/') && (
+            <img
+              src={previewUrl}
+              alt={name}
+              className="max-h-40 w-auto max-w-full rounded-lg border border-sand/40 object-contain"
+            />
+          )}
+          {localFile.type.startsWith('video/') && (
+            <video
+              src={previewUrl}
+              controls
+              className="max-h-40 w-[260px] max-w-full rounded-lg border border-sand/40 bg-black"
+            />
+          )}
+          {localFile.type.startsWith('audio/') && (
+            <audio src={previewUrl} controls className="w-[260px] max-w-full" />
           )}
         </div>
-      </div>
-      <button
-        onClick={onRemove}
-        className="p-1 rounded text-charcoal/50 hover:text-red-600 hover:bg-red-50 transition-colors"
-        aria-label={isAr ? 'إزالة المرفق' : 'Remove attachment'}
-        type="button"
-      >
-        <X size={14} />
-      </button>
+      )}
     </div>
   );
 }
