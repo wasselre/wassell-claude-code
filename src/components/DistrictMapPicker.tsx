@@ -106,13 +106,20 @@ interface LandmarkRow {
   longitude: number | null;
 }
 
-/** Picker map style = the brand style MINUS Google's own neighborhood labels —
+/** Picker map style = the brand style MINUS Google's own district-name labels —
  *  we render every district's name ourselves at its centroid, so the basemap
- *  copy showed each name TWICE (live report 2026-07-13). Only the picker hides
- *  them; other maps keep Google's labels (they draw no labels of their own). */
+ *  copy showed each name TWICE (live report 2026-07-13). Google tags Saudi
+ *  district names under TWO feature classes: most are
+ *  administrative.neighborhood, but several major ones (الوادي، غرناطة،
+ *  النزهة…) are administrative.locality — hiding only the first left those
+ *  still duplicated (live report 2026-07-19), so both are off here. The picker
+ *  is city-scoped, so losing Google's locality (city-name) labels inside it
+ *  costs nothing. Only the picker hides them; other maps keep Google's labels
+ *  (they draw no labels of their own). */
 const PICKER_MAP_STYLE: google.maps.MapTypeStyle[] = [
   ...WASSEL_MAP_STYLE,
   { featureType: 'administrative.neighborhood', elementType: 'labels', stylers: [{ visibility: 'off' }] },
+  { featureType: 'administrative.locality', elementType: 'labels', stylers: [{ visibility: 'off' }] },
 ];
 
 /** GeoJSON Polygon/MultiPolygon → google.maps paths (outer + hole rings). */
