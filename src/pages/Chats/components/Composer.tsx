@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type KeyboardEvent } from 'react';
 import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
-import { uploadFile, listScheduledMessages, cancelScheduledMessage } from '@/lib/haberchat/client';
+import { uploadLocalFile, listScheduledMessages, cancelScheduledMessage } from '@/lib/haberchat/client';
 import {
   loadDraftText, saveDraftText,
   loadDraftTemplateMeta, saveDraftTemplateMeta,
@@ -179,7 +179,7 @@ export default function Composer({
         // surface in place. The REST fan out in the BACKGROUND so the composer
         // frees up immediately — each uploaded then sent, in order.
         const first = files[0]!;
-        const up0 = await uploadFile(first);
+        const up0 = await uploadLocalFile(first);
         await sendChatMessage(chatWid, {
           body: body || undefined,
           mediaFileId: up0.fileId,
@@ -195,7 +195,7 @@ export default function Composer({
             for (let i = 0; i < rest.length; i++) {
               const f = rest[i]!;
               try {
-                const up = await uploadFile(f);
+                const up = await uploadLocalFile(f);
                 // Immediate sends go out now (order preserved by sequential
                 // await); scheduled sends stagger +10s each so the queue keeps
                 // order (queue order within the same second isn't guaranteed).
@@ -295,11 +295,15 @@ export default function Composer({
     // Reset the input so re-picking the SAME file(s) fires onChange again.
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (picked.length === 0) return;
-    const ok = picked.filter((f) => f.size <= 10 * 1024 * 1024);
+    // 100 MB — files upload straight to storage now (no Vercel body limit), so
+    // real phone videos go through. WhatsApp will reject anything it considers
+    // too large on its own, surfaced as a per-file send error.
+    const MAX = 100 * 1024 * 1024;
+    const ok = picked.filter((f) => f.size <= MAX);
     const tooBig = picked.length - ok.length;
     if (tooBig > 0) {
       addToast(
-        isAr ? `تم تجاهل ${tooBig} ملف أكبر من 10 ميغابايت` : `${tooBig} file(s) over 10 MB were skipped`,
+        isAr ? `تم تجاهل ${tooBig} ملف أكبر من 100 ميغابايت` : `${tooBig} file(s) over 100 MB were skipped`,
         'error',
       );
     }

@@ -183,6 +183,31 @@ export async function patchChat(
   }
 }
 
+/**
+ * Upload a LOCAL outbound attachment straight to Supabase Storage (bypassing
+ * the ~4.5 MB Vercel body limit that blocked real phone videos), then return a
+ * `wt_<path>` ref that WAHA resolves to a signed download URL at send time.
+ *
+ * Two steps: mint a one-shot signed upload URL server-side, then PUT the bytes
+ * directly to storage with the browser's supabase client (the token authorizes
+ * the single upload — no bucket RLS grant needed). Returns the same shape as
+ * `uploadFile` so callers are interchangeable.
+ */
+export async function uploadLocalFile(
+  file: File,
+): Promise<{ fileId: string; mime: string | null; size: number | null; filename: string | null }> {
+  if (!supabase) throw new HaberchatClientError(500, 'Supabase is not configured');
+  const { path, token } = await post<{ path: string; token: string }>('/api/whatsapp/upload-url', {
+    filename: file.name,
+    mime: file.type,
+  });
+  const { error } = await supabase.storage
+    .from('wassel-files')
+    .uploadToSignedUrl(path, token, file, { contentType: file.type || undefined });
+  if (error) throw new HaberchatClientError(502, `Upload failed: ${error.message}`);
+  return { fileId: `wt_${path}`, mime: file.type || null, size: file.size, filename: file.name };
+}
+
 /** Upload a file to Haberchat (via proxy). Returns the Haberchat file id. */
 export async function uploadFile(
   file: File,
