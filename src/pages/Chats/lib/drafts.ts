@@ -120,28 +120,40 @@ async function withStore<T>(
   });
 }
 
-/** Persist the picked file so it survives a reload. Nothing is uploaded. */
-export async function saveDraftFile(wid: string, file: File): Promise<void> {
-  await withStore('readwrite', (s) =>
-    s.put({ blob: file, name: file.name, type: file.type }, wid) as IDBRequest<IDBValidKey>,
-  );
+interface StoredFile { blob: Blob; name: string; type: string }
+
+/** Persist the picked files so they survive a reload. Nothing is uploaded. */
+export async function saveDraftFiles(wid: string, files: File[]): Promise<void> {
+  if (files.length === 0) { await clearDraftFiles(wid); return; }
+  const payload: StoredFile[] = files.map((f) => ({ blob: f, name: f.name, type: f.type }));
+  await withStore('readwrite', (s) => s.put({ files: payload }, wid) as IDBRequest<IDBValidKey>);
 }
 
-/** Restore the picked file (rebuilt as a File so send treats it identically). */
-export async function loadDraftFile(wid: string): Promise<File | null> {
+/** Restore the picked files (rebuilt as File objects so send treats them identically). */
+export async function loadDraftFiles(wid: string): Promise<File[]> {
   const rec = (await withStore('readonly', (s) => s.get(wid) as IDBRequest<unknown>)) as
-    | { blob: Blob; name: string; type: string }
+    | { files?: StoredFile[] }
+    // Back-compat with the earlier single-file shape { blob, name, type }.
+    | { blob?: Blob; name?: string; type?: string }
     | undefined
     | null;
-  if (!rec?.blob) return null;
-  try {
-    return new File([rec.blob], rec.name || 'attachment', { type: rec.type || rec.blob.type });
-  } catch {
-    return null;
+  if (!rec) return [];
+  const list: StoredFile[] = Array.isArray((rec as { files?: StoredFile[] }).files)
+    ? (rec as { files: StoredFile[] }).files
+    : (rec as StoredFile).blob
+      ? [rec as StoredFile]
+      : [];
+  const out: File[] = [];
+  for (const r of list) {
+    if (!r?.blob) continue;
+    try {
+      out.push(new File([r.blob], r.name || 'attachment', { type: r.type || r.blob.type }));
+    } catch { /* skip an unrebuildable blob */ }
   }
+  return out;
 }
 
-export async function clearDraftFile(wid: string): Promise<void> {
+export async function clearDraftFiles(wid: string): Promise<void> {
   await withStore('readwrite', (s) => s.delete(wid) as IDBRequest<undefined>);
 }
 
@@ -149,5 +161,5 @@ export async function clearDraftFile(wid: string): Promise<void> {
 export async function clearDraft(wid: string): Promise<void> {
   saveDraftText(wid, '');
   saveDraftTemplateMeta(wid, null);
-  await clearDraftFile(wid);
+  await clearDraftFiles(wid);
 }

@@ -5,7 +5,7 @@ import { uploadFile, listScheduledMessages, cancelScheduledMessage } from '@/lib
 import {
   loadDraftText, saveDraftText,
   loadDraftTemplateMeta, saveDraftTemplateMeta,
-  loadDraftFile, saveDraftFile, clearDraftFile, clearDraft,
+  loadDraftFiles, saveDraftFiles, clearDraft,
 } from '../lib/drafts';
 import { sendProjectImageMessages } from '@/lib/projectMessageImages';
 import TemplatePickerModal from './TemplatePickerModal';
@@ -46,10 +46,13 @@ export default function Composer({
   // Draft restore is SYNCHRONOUS for text (lazy initial state) so a saved draft
   // paints on first render — no flash of an empty box before it appears.
   const [text, setText] = useState(() => loadDraftText(chatWid));
-  const [attachment, setAttachment] = useState<Attachment | null>(() => {
+  // A template attachment (single, pre-uploaded) and locally-picked FILES
+  // (0..N) are mutually exclusive — picking one path clears the other.
+  const [templateAtt, setTemplateAtt] = useState<TemplateAttachment | null>(() => {
     const meta = loadDraftTemplateMeta(chatWid);
     return meta ? { kind: 'template', ...meta } : null;
   });
+  const [localFiles, setLocalFiles] = useState<File[]>([]);
   // Templates can carry images that ride along as their own image messages
   // after the text/single-media send: a project template's gallery (CRM file
   // ids) or a listing template's cleaned photos (public URLs). Set when such
@@ -104,13 +107,14 @@ export default function Composer({
   useEffect(() => {
     setText(loadDraftText(chatWid));
     const meta = loadDraftTemplateMeta(chatWid);
-    setAttachment(meta ? { kind: 'template', ...meta } : null);
+    setTemplateAtt(meta ? { kind: 'template', ...meta } : null);
+    setLocalFiles([]);
     let cancelled = false;
-    // A locally-picked file lives in IndexedDB (async). Only apply it if no
+    // Locally-picked files live in IndexedDB (async). Only apply them if no
     // template attachment claimed the slot and we're still on this chat.
-    void loadDraftFile(chatWid).then((file) => {
-      if (cancelled || !file || meta) return;
-      setAttachment({ kind: 'local', file });
+    void loadDraftFiles(chatWid).then((files) => {
+      if (cancelled || files.length === 0 || meta) return;
+      setLocalFiles(files);
     });
     return () => { cancelled = true; };
   }, [chatWid]);
@@ -122,26 +126,24 @@ export default function Composer({
     return () => clearTimeout(t);
   }, [chatWid, text]);
 
-  // Persist the attachment whenever it changes. A local file goes to
-  // IndexedDB; a template attachment is just a reference in localStorage.
+  // Persist attachments whenever they change. A template attachment is just a
+  // reference in localStorage; local files go to IndexedDB.
   useEffect(() => {
-    if (!attachment) {
-      saveDraftTemplateMeta(chatWid, null);
-      void clearDraftFile(chatWid);
-      return;
-    }
-    if (attachment.kind === 'template') {
-      const { kind: _k, ...meta } = attachment;
+    if (templateAtt) {
+      const { kind: _k, ...meta } = templateAtt;
       saveDraftTemplateMeta(chatWid, meta);
-      void clearDraftFile(chatWid);
     } else {
       saveDraftTemplateMeta(chatWid, null);
-      void saveDraftFile(chatWid, attachment.file);
     }
-  }, [chatWid, attachment]);
+  }, [chatWid, templateAtt]);
+
+  useEffect(() => {
+    void saveDraftFiles(chatWid, localFiles);
+  }, [chatWid, localFiles]);
 
   const canSend =
-    (text.trim().length > 0 || attachment !== null || projectImageFileIds.length > 0) && !sending && !disabled;
+    (text.trim().length > 0 || localFiles.length > 0 || templateAtt !== null || projectImageFileIds.length > 0) &&
+    !sending && !disabled;
 
   const kindForLocalFile = (file: File): ChatMessage['kind'] => {
     if (file.type.startsWith('image/')) return 'image';
@@ -157,40 +159,83 @@ export default function Composer({
   const doSend = async (deliverAt?: string) => {
     if (!canSend) return;
     const body = text.trim();
-    const att = attachment;
+    const files = localFiles;
+    const tmpl = templateAtt;
     const projectImages = projectImageFileIds;
     setSending(true);
     setShowSchedule(false);
     setText('');
-    setAttachment(null);
+    setLocalFiles([]);
+    setTemplateAtt(null);
     setProjectImageFileIds([]);
     // The message is on its way — drop the stored draft so it can't come back
     // on the next visit. (The state resets above race the persistence effects,
     // so clear the stores explicitly rather than relying on them.)
     void clearDraft(chatWid);
     try {
-      if (att?.kind === 'local') {
-        // Upload first, then send. Spinner on the send button covers the wait.
-        const uploaded = await uploadFile(att.file);
+      if (files.length > 0) {
+        // Multiple files: the FIRST carries the text as its caption (like a
+        // WhatsApp album caption); it's awaited so recipient/device errors
+        // surface in place. The REST fan out in the BACKGROUND so the composer
+        // frees up immediately — each uploaded then sent, in order.
+        const first = files[0]!;
+        const up0 = await uploadFile(first);
         await sendChatMessage(chatWid, {
           body: body || undefined,
-          mediaFileId: uploaded.fileId,
+          mediaFileId: up0.fileId,
           mediaCaption: body || undefined,
-          kind: kindForLocalFile(att.file),
-          mediaMime: uploaded.mime ?? att.file.type,
-          mediaSize: uploaded.size ?? att.file.size,
+          kind: kindForLocalFile(first),
+          mediaMime: up0.mime ?? first.type,
+          mediaSize: up0.size ?? first.size,
           deliverAt,
         });
-      } else if (att?.kind === 'template') {
-        // Reuse the template's pre-uploaded Haberchat file — no upload needed.
-        const kind = (att.mediaKind as ChatMessage['kind']) || 'document';
+        const rest = files.slice(1);
+        if (rest.length > 0) {
+          void (async () => {
+            for (let i = 0; i < rest.length; i++) {
+              const f = rest[i]!;
+              try {
+                const up = await uploadFile(f);
+                // Immediate sends go out now (order preserved by sequential
+                // await); scheduled sends stagger +10s each so the queue keeps
+                // order (queue order within the same second isn't guaranteed).
+                const at = deliverAt
+                  ? new Date(new Date(deliverAt).getTime() + (i + 1) * 10_000).toISOString()
+                  : undefined;
+                await sendChatMessage(chatWid, {
+                  mediaFileId: up.fileId,
+                  kind: kindForLocalFile(f),
+                  mediaMime: up.mime ?? f.type,
+                  mediaSize: up.size ?? f.size,
+                  deliverAt: at,
+                });
+              } catch (e) {
+                addToast(
+                  isAr ? `تعذّر إرسال ${f.name}` : `Failed to send ${f.name}`,
+                  'error',
+                );
+                console.error('[composer] fan-out send failed:', e);
+              }
+            }
+            if (deliverAt) setScheduledRefreshKey((k) => k + 1);
+          })();
+          addToast(
+            isAr
+              ? `تُرسل ${rest.length} ملفات إضافية في الخلفية`
+              : `Sending ${rest.length} more file(s) in the background`,
+            'info',
+          );
+        }
+      } else if (tmpl) {
+        // Reuse the template's pre-uploaded file — no upload needed.
+        const kind = (tmpl.mediaKind as ChatMessage['kind']) || 'document';
         await sendChatMessage(chatWid, {
           body: body || undefined,
-          mediaFileId: att.fileId,
+          mediaFileId: tmpl.fileId,
           mediaCaption: body || undefined,
           kind,
-          mediaMime: att.mime,
-          mediaSize: att.size,
+          mediaMime: tmpl.mime,
+          mediaSize: tmpl.size,
           deliverAt,
         });
       } else if (body) {
@@ -230,7 +275,7 @@ export default function Composer({
       const msg = err instanceof Error ? err.message : String(err);
       // Immediate text sends are toasted by the store; attachment uploads
       // and scheduled sends surface here.
-      if (att || deliverAt) addToast(msg, 'error');
+      if (files.length > 0 || tmpl || deliverAt) addToast(msg, 'error');
     } finally {
       setSending(false);
       textareaRef.current?.focus();
@@ -246,15 +291,23 @@ export default function Composer({
   };
 
   const onFilePicked = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (f.size > 10 * 1024 * 1024) {
-      addToast(isAr ? 'حجم الملف أكبر من 10 ميغابايت' : 'File is larger than 10 MB', 'error');
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      return;
+    const picked = Array.from(e.target.files ?? []);
+    // Reset the input so re-picking the SAME file(s) fires onChange again.
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (picked.length === 0) return;
+    const ok = picked.filter((f) => f.size <= 10 * 1024 * 1024);
+    const tooBig = picked.length - ok.length;
+    if (tooBig > 0) {
+      addToast(
+        isAr ? `تم تجاهل ${tooBig} ملف أكبر من 10 ميغابايت` : `${tooBig} file(s) over 10 MB were skipped`,
+        'error',
+      );
     }
-    setAttachment({ kind: 'local', file: f });
-    setProjectImageFileIds([]); // a manually attached file replaces a template gallery
+    if (ok.length === 0) return;
+    // APPEND so the user can build up a set across several picks.
+    setLocalFiles((prev) => [...prev, ...ok]);
+    setTemplateAtt(null);          // a local file replaces a template attachment
+    setProjectImageFileIds([]);    // …and its ride-along gallery
     textareaRef.current?.focus();
   };
 
@@ -271,8 +324,9 @@ export default function Composer({
     // sending. If the user already had text, replace — the picker is an
     // explicit action, not an append.
     setText(picked.body);
+    setLocalFiles([]); // a template replaces any locally-picked files
     if (picked.mediaFileId) {
-      setAttachment({
+      setTemplateAtt({
         kind: 'template',
         fileId: picked.mediaFileId,
         mime: picked.mediaMime,
@@ -281,7 +335,7 @@ export default function Composer({
         mediaKind: picked.mediaKind,
       });
     } else {
-      setAttachment(null);
+      setTemplateAtt(null);
     }
     // Project gallery (if any) sends as separate image messages on Send.
     setProjectImageFileIds(picked.imageFileIds ?? []);
@@ -308,7 +362,17 @@ export default function Composer({
           isAr={isAr}
         />
 
-        {attachment && <AttachmentChip attachment={attachment} isAr={isAr} onRemove={() => setAttachment(null)} />}
+        {templateAtt && (
+          <AttachmentChip attachment={templateAtt} isAr={isAr} onRemove={() => setTemplateAtt(null)} />
+        )}
+        {localFiles.map((f, i) => (
+          <AttachmentChip
+            key={`${f.name}-${f.size}-${i}`}
+            attachment={{ kind: 'local', file: f }}
+            isAr={isAr}
+            onRemove={() => setLocalFiles((prev) => prev.filter((_, j) => j !== i))}
+          />
+        ))}
 
         {projectImageFileIds.length > 0 && (
           <div className="flex items-center gap-2 bg-copper/5 border border-copper/20 rounded-lg px-2 py-1.5">
@@ -359,6 +423,7 @@ export default function Composer({
           <input
             ref={fileInputRef}
             type="file"
+            multiple
             className="hidden"
             accept="image/*,video/*,audio/*,.pdf,.docx,.xlsx,.pptx,.zip,.txt"
             onChange={onFilePicked}
@@ -370,7 +435,7 @@ export default function Composer({
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder={
-              attachment
+              localFiles.length > 0 || templateAtt
                 ? (isAr ? 'أضف تعليقًا (اختياري)...' : 'Add a caption (optional)…')
                 : (isAr ? 'اكتب رسالتك...' : 'Type a message…')
             }
