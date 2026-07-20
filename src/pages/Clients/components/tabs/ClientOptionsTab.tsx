@@ -20,6 +20,7 @@ import AddOptionModal from '../AddOptionModal';
 import ClientOptionsMapView from '../ClientOptionsMapView';
 import ProjectWhatsAppFlow from '@/pages/Followups/components/ProjectWhatsAppFlow';
 import ListingWhatsAppFlow from '@/components/matching/ListingWhatsAppFlow';
+import PreferenceSummary from '@/pages/Followups/components/PreferenceSummary';
 
 interface Props {
   client: AppRecord;
@@ -252,6 +253,9 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
     return chips;
   }, [clientsModel, client, geoNames, isAr]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Inline preference editor (the same PreferenceSummary panel the Workspace
+  // sidebar uses) — expanded from the chips row's «تعديل التفضيلات» toggle.
+  const [editPrefs, setEditPrefs] = useState(false);
   const [editNotesId, setEditNotesId] = useState<string | null>(null);
   const [notesDraft, setNotesDraft] = useState('');
   const [eliminateTarget, setEliminateTarget] = useState<AppRecord | null>(null);
@@ -956,7 +960,8 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
         )}
 
         {/* Client preference chips — the INPUTS the options were found against.
-            Read-only context; editing stays on the Preferences tab / finder. */}
+            «تعديل التفضيلات» expands the same editable panel the Workspace
+            sidebar uses (PreferenceSummary) right here, saving to the client. */}
         <div className="flex flex-wrap items-center gap-1.5 border-t border-sand/20 pt-2">
           <SlidersHorizontal size={12} className="text-charcoal/40" />
           <span className="text-[10px] font-bold uppercase tracking-wider text-charcoal/45">{L('تفضيلات العميل', 'Client preferences')}</span>
@@ -969,7 +974,33 @@ export default function ClientOptionsTab({ client, isAr, canEdit, onFindMore }: 
               <span className="font-semibold">{p.value}</span>
             </span>
           ))}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => setEditPrefs((v) => !v)}
+              aria-expanded={editPrefs}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-bold transition ${
+                editPrefs
+                  ? 'border-copper bg-copper text-white hover:bg-terracotta'
+                  : 'border-copper/50 bg-white text-copper hover:bg-copper/10'
+              }`}
+            >
+              <Pencil size={11} /> {editPrefs ? L('إغلاق التعديل', 'Close editor') : L('تعديل التفضيلات', 'Edit preferences')}
+            </button>
+          )}
         </div>
+
+        {/* Inline preference editor — full matchable field set (location, type,
+            unit age, area, bedrooms, budget, amenities…), saved to the client
+            record with optimistic concurrency. The chips above refresh live. */}
+        {editPrefs && canEdit && (
+          <div className="border-t border-sand/20 pt-2">
+            <PreferenceSummary
+              clientId={client.id}
+              onEditFull={() => window.open(`/model/clients/${client.id}`, '_blank', 'noopener')}
+            />
+          </div>
+        )}
       </div>
 
       {/* Empty state */}
