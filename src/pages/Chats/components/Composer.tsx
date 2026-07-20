@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo, useCallback, type KeyboardEvent } from 'react';
-import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock } from 'lucide-react';
+import { Send, Loader2, Paperclip, X, Image as ImageIcon, FileText, Video, Mic, MessageSquare, Clock, Play, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { uploadFile, listScheduledMessages, cancelScheduledMessage } from '@/lib/haberchat/client';
 import {
@@ -365,14 +365,13 @@ export default function Composer({
         {templateAtt && (
           <AttachmentChip attachment={templateAtt} isAr={isAr} onRemove={() => setTemplateAtt(null)} />
         )}
-        {localFiles.map((f, i) => (
-          <AttachmentChip
-            key={`${f.name}-${f.size}-${i}`}
-            attachment={{ kind: 'local', file: f }}
+        {localFiles.length > 0 && (
+          <AttachmentTray
+            files={localFiles}
             isAr={isAr}
-            onRemove={() => setLocalFiles((prev) => prev.filter((_, j) => j !== i))}
+            onRemove={(i) => setLocalFiles((prev) => prev.filter((_, j) => j !== i))}
           />
-        ))}
+        )}
 
         {projectImageFileIds.length > 0 && (
           <div className="flex items-center gap-2 bg-copper/5 border border-copper/20 rounded-lg px-2 py-1.5">
@@ -684,6 +683,182 @@ function ScheduledStrip({
           {items.map(chip)}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Compact WhatsApp-style attachment tray: local files render as a row of small
+ * square thumbnails side by side (not one big card each). Clicking a thumbnail
+ * opens a full preview lightbox; the little × on each removes just that file.
+ */
+function AttachmentTray({
+  files,
+  isAr,
+  onRemove,
+}: {
+  files: File[];
+  isAr: boolean;
+  onRemove: (index: number) => void;
+}) {
+  // One object URL per file, revoked as the set changes / on unmount so large
+  // videos don't leak. Keyed by identity+size so re-picks don't churn URLs.
+  const urls = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
+  useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
+
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+
+  const tileKind = (f: File): 'image' | 'video' | 'audio' | 'document' => {
+    if (f.type.startsWith('image/')) return 'image';
+    if (f.type.startsWith('video/')) return 'video';
+    if (f.type.startsWith('audio/')) return 'audio';
+    return 'document';
+  };
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      {files.map((f, i) => {
+        const kind = tileKind(f);
+        const previewable = kind === 'image' || kind === 'video' || kind === 'audio';
+        return (
+          <div key={`${f.name}-${f.size}-${i}`} className="relative group">
+            <button
+              type="button"
+              onClick={() => previewable && setLightboxIndex(i)}
+              className={`w-16 h-16 rounded-lg border border-sand/50 overflow-hidden bg-charcoal/5 flex items-center justify-center ${previewable ? 'cursor-zoom-in' : 'cursor-default'}`}
+              title={f.name}
+              aria-label={f.name}
+            >
+              {kind === 'image' && (
+                <img src={urls[i]} alt={f.name} className="w-full h-full object-cover" />
+              )}
+              {kind === 'video' && (
+                <div className="relative w-full h-full">
+                  {/* muted video acts as a poster frame; the icon marks it playable */}
+                  <video src={urls[i]} muted className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/25">
+                    <Play size={18} className="text-white" fill="currentColor" />
+                  </div>
+                </div>
+              )}
+              {kind === 'audio' && <Mic size={20} className="text-charcoal/60" />}
+              {kind === 'document' && (
+                <div className="flex flex-col items-center gap-0.5 px-1">
+                  <FileText size={18} className="text-charcoal/60" />
+                  <span className="text-[8px] text-charcoal/50 truncate max-w-[56px]">{f.name}</span>
+                </div>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove(i)}
+              className="absolute -top-1.5 -end-1.5 w-5 h-5 rounded-full bg-charcoal text-white shadow flex items-center justify-center opacity-90 hover:bg-red-600 transition-colors"
+              aria-label={isAr ? `إزالة ${f.name}` : `Remove ${f.name}`}
+            >
+              <X size={11} />
+            </button>
+          </div>
+        );
+      })}
+
+      {lightboxIndex !== null && (
+        <AttachmentLightbox
+          files={files}
+          urls={urls}
+          index={lightboxIndex}
+          isAr={isAr}
+          onIndex={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Full-screen preview of one attachment, with prev/next across the set. */
+function AttachmentLightbox({
+  files,
+  urls,
+  index,
+  isAr,
+  onIndex,
+  onClose,
+}: {
+  files: File[];
+  urls: string[];
+  index: number;
+  isAr: boolean;
+  onIndex: (i: number) => void;
+  onClose: () => void;
+}) {
+  const f = files[index];
+  const url = urls[index];
+  const many = files.length > 1;
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+      else if (e.key === 'ArrowRight') onIndex((index + 1) % files.length);
+      else if (e.key === 'ArrowLeft') onIndex((index - 1 + files.length) % files.length);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [index, files.length, onIndex, onClose]);
+
+  if (!f || !url) return null;
+  const kind = f.type.startsWith('image/') ? 'image' : f.type.startsWith('video/') ? 'video' : f.type.startsWith('audio/') ? 'audio' : 'document';
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4"
+      onClick={onClose}
+      dir={isAr ? 'rtl' : 'ltr'}
+    >
+      <button
+        type="button"
+        onClick={onClose}
+        className="absolute top-4 end-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center"
+        aria-label={isAr ? 'إغلاق' : 'Close'}
+      >
+        <X size={20} />
+      </button>
+
+      {many && (
+        <>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onIndex((index - 1 + files.length) % files.length); }}
+            className="absolute start-4 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center"
+            aria-label={isAr ? 'السابق' : 'Previous'}
+          >
+            <ChevronLeft size={22} />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onIndex((index + 1) % files.length); }}
+            className="absolute end-16 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 text-white flex items-center justify-center"
+            aria-label={isAr ? 'التالي' : 'Next'}
+          >
+            <ChevronRight size={22} />
+          </button>
+        </>
+      )}
+
+      <div className="max-w-[90vw] max-h-[85vh] flex flex-col items-center gap-3" onClick={(e) => e.stopPropagation()}>
+        {kind === 'image' && <img src={url} alt={f.name} className="max-w-[90vw] max-h-[80vh] object-contain rounded-lg" />}
+        {kind === 'video' && <video src={url} controls autoPlay className="max-w-[90vw] max-h-[80vh] rounded-lg bg-black" />}
+        {kind === 'audio' && <audio src={url} controls autoPlay className="w-[80vw] max-w-md" />}
+        {kind === 'document' && (
+          <div className="bg-white rounded-lg p-8 flex flex-col items-center gap-2">
+            <FileText size={40} className="text-charcoal/60" />
+            <span className="text-sm text-charcoal">{f.name}</span>
+          </div>
+        )}
+        <div className="text-white/70 text-xs">
+          {f.name}
+          {many && <span className="ms-2">· {index + 1}/{files.length}</span>}
+        </div>
+      </div>
     </div>
   );
 }
