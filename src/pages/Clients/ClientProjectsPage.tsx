@@ -68,6 +68,10 @@ export default function ClientProjectsPage() {
       followupId={null}
       projectName={null}
       clientName={clientName}
+      // Land on the preference editor (hard/soft + ± bands) first — this page is
+      // reached from the Options tab's «تعديل التفضيلات», so the rep wants to
+      // review/adjust before searching, not fire one search then redo it.
+      editPrefsFirst
       onDone={onDone}
     />
   );
