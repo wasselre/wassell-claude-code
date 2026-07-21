@@ -29,11 +29,11 @@ import Anthropic from "npm:@anthropic-ai/sdk@0.35.0";
 const CLAUDE_MODEL = "claude-sonnet-4-6";
 const MAX_TOKENS = 8000;
 
-// Writing/translation routing (user decision 2026-07-18): Qwen3 30B on
-// Cloudflare Workers AI is the PRIMARY writer; Claude stays as the fallback
-// on any Qwen failure (quota/rate-limit/timeout/garbage). Mirrors
-// api/_lib/textLlm.ts (this Deno function can't import it). Kill switch:
-// TEXT_LLM_PROVIDER=anthropic.
+// Writing/translation routing (FINAL decision 2026-07-21): Claude is the
+// DEFAULT writer. Qwen3 30B on Cloudflare Workers AI is an OPT-IN for bulk
+// jobs, enabled only via TEXT_LLM_PROVIDER=qwen; on any Qwen failure Claude
+// runs as the fallback. Mirrors api/_lib/textLlm.ts (this Deno function can't
+// import it).
 const QWEN_MODEL_DEFAULT = "@cf/qwen/qwen3-30b-a3b-fp8";
 const QWEN_MAX_TOKENS = 4096;
 
@@ -289,7 +289,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const cfToken = Deno.env.get("CLOUDFLARE_API_TOKEN") ?? "";
     const qwenModel = Deno.env.get("CLOUDFLARE_AI_MODEL") || QWEN_MODEL_DEFAULT;
     const qwenOn =
-      (Deno.env.get("TEXT_LLM_PROVIDER") ?? "").trim().toLowerCase() !== "anthropic" &&
+      (Deno.env.get("TEXT_LLM_PROVIDER") ?? "").trim().toLowerCase() === "qwen" &&
       cfAccount !== "" && cfToken !== "";
     if (qwenOn) {
       try {

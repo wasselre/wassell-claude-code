@@ -1,23 +1,26 @@
 # Cloudflare Workers AI — Qwen provider
 
-**Status (updated 2026-07-18):** LIVE as the **primary provider for all
-writing/translation tasks** (user decision: "all writing and translation tasks
-route to it"). Every routed endpoint keeps its full Anthropic implementation as
-an automatic fallback — if Qwen fails for any reason (daily free quota, rate
-limit, timeout, unusable output), the request silently completes on Claude and
-the failure is logged loudly. Agentic flows (sales agent, copywriter tool-loop,
-builder/workflow agents, migration vision, decks, reel analysis) remain on
-Anthropic — they need tool-use loops/vision that this provider doesn't cover.
+**Status (FINAL decision 2026-07-21):** **Claude (Anthropic) is the default
+provider for all writing/translation tasks.** A measured cost comparison (the
+60-listing forced-Qwen run) confirmed the spend is trivial at production volume
+and Claude's writing quality + latency win, so writing runs on Claude — the
+Qwen swap trialled 2026-07-18 was reverted as the default. Qwen stays wired as
+an **opt-in** for the one case it earns its ~30× cost advantage: bulk /
+background generation across the whole catalogue. Agentic flows (sales agent,
+copywriter tool-loop, builder/workflow agents, migration vision, decks, reel
+analysis) were never routed here.
 
-**Routing lives in [`api/_lib/textLlm.ts`](../api/_lib/textLlm.ts).** Routed:
-`/api/translate`, `/api/transliterate-name`, `/api/doc-assist`,
-`/api/project-ai`, `/api/templates/listing-message`,
-`/api/templates/generate-from-description`, and the
-`project-details-ai-v2` Supabase Edge Function (own inline copy).
+**Routing lives in [`api/_lib/textLlm.ts`](../api/_lib/textLlm.ts).** Routed
+(opt-in) endpoints: `/api/translate`, `/api/transliterate-name`,
+`/api/doc-assist`, `/api/project-ai`, `/api/templates/listing-message`,
+`/api/templates/generate-from-description`, and the `project-details-ai-v2`
+Supabase Edge Function (own inline copy).
 
-**Kill switch:** set `TEXT_LLM_PROVIDER=anthropic` (Vercel env + Supabase
-function secrets) to revert every routed endpoint to Claude instantly — no
-deploy needed.
+**Provider switch:** default (unset `TEXT_LLM_PROVIDER`) is Claude everywhere.
+Set `TEXT_LLM_PROVIDER=qwen` (Vercel env + Supabase function secrets, plus the
+`CLOUDFLARE_*` env) to route those endpoints to Qwen for bulk work — Claude is
+still the automatic fallback on any Qwen failure. Any other value stays on
+Claude.
 
 ## What this is
 

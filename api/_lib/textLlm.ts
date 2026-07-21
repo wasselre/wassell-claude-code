@@ -1,9 +1,17 @@
 /**
  * textLlm — routing layer for WRITING and TRANSLATION tasks.
  *
- * User decision (2026-07-18): all writing/translation tasks route to Qwen3 30B
- * on Cloudflare Workers AI (api/_lib/cloudflareAi.ts) as the PRIMARY provider.
- * Every routed endpoint keeps its original Anthropic implementation as the
+ * FINAL decision (2026-07-21): all writing/translation tasks run on CLAUDE
+ * (Anthropic). A measured cost comparison (60-listing Qwen run) confirmed the
+ * spend is trivial at production volume and Claude's writing quality + latency
+ * win, so Anthropic is the DEFAULT provider in code — writing never silently
+ * reverts to Qwen if an env var is dropped.
+ *
+ * Qwen3 30B on Cloudflare Workers AI (api/_lib/cloudflareAi.ts) remains wired as
+ * an OPT-IN, for the one case where it earns its ~30× cost advantage: bulk /
+ * background generation across the whole catalogue. It is enabled ONLY when
+ * TEXT_LLM_PROVIDER=qwen is set explicitly AND the CLOUDFLARE_* env is present.
+ * Even then, every routed endpoint keeps its Anthropic implementation as the
  * FALLBACK: if the Qwen call fails for ANY reason (quota exhausted on the free
  * plan, rate limit, timeout, bad output), the endpoint logs loudly and runs the
  * unchanged Claude path — a user request never fails because Qwen did.
@@ -18,9 +26,9 @@
  *   /api/builder-agent, /api/workflow-agent, /api/migrate, /api/analyze-reel,
  *   decks. These stay Anthropic until separately approved.
  *
- * Kill switch: TEXT_LLM_PROVIDER=anthropic reverts ALL routed endpoints to
- * Claude instantly (env change, no deploy). Default is qwen whenever the
- * CLOUDFLARE_* env is present.
+ * Provider switch: default (unset TEXT_LLM_PROVIDER) is Claude for ALL routed
+ * endpoints. Set TEXT_LLM_PROVIDER=qwen to opt bulk/background traffic onto Qwen
+ * (requires CLOUDFLARE_* env). Any other value, or unset, stays on Claude.
  *
  * Qwen3 is a thinking model — completions may open with a <think>…</think>
  * block. stripThink() removes it; qwenJson() parses the first JSON object in
@@ -32,9 +40,13 @@ import { cloudflareChatCompletion } from './cloudflareAi.js';
 /** Default max_tokens for Qwen calls — thinking tokens count, so be generous. */
 const DEFAULT_QWEN_MAX_TOKENS = 2_000;
 
-/** True when writing/translation traffic should try Qwen first. */
+/**
+ * True when writing/translation traffic should try Qwen first. Claude is the
+ * default: Qwen is opt-in ONLY via TEXT_LLM_PROVIDER=qwen (and needs the
+ * CLOUDFLARE_* env). Unset — or any other value — stays on Claude.
+ */
 export function qwenRoutingEnabled(): boolean {
-  if ((process.env.TEXT_LLM_PROVIDER ?? '').trim().toLowerCase() === 'anthropic') return false;
+  if ((process.env.TEXT_LLM_PROVIDER ?? '').trim().toLowerCase() !== 'qwen') return false;
   return Boolean(process.env.CLOUDFLARE_ACCOUNT_ID?.trim() && process.env.CLOUDFLARE_API_TOKEN?.trim());
 }
 
