@@ -279,6 +279,24 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   description from a sibling unit in the SAME project with the same bedroom count (layouts repeat per
   bed count); tag the note '(المكونات منسوخة من وحدة مطابقة)'. Riva: 248/315 native, ~66 propagated.
 
+- **[2026-07-21] Project VIDEOS (`project_videos`, multi_video):** collect marketing videos for every
+  our_projects/riva_projects member into `all_projects.project_videos` (accepts BOTH `files.id` uuids
+  AND external URLs — YouTube/Vimeo links embed natively in the app; TikTok/Insta/page links do NOT, so
+  those must be DOWNLOADED via yt-dlp and uploaded as `files` rows kind='video'). Sources per project:
+  (1) developer API/page — Almajdiah API has a per-project `video_link` field; riva.sa pages embed
+  `youtube.com/embed/<id>`; (2) the developer's YouTube channel enumerated with
+  `yt-dlp --flat-playlist -J <channel>` (titles literally carry project names — channels: riva
+  UCcxqcvuBbSY6CI0-w4C4PEQ, alajlan UCmaKb3mY3e6t5S8sTLaMcmA, alramz UCzxPvU71posVsf4n6z2gSTA,
+  almajdiah UCgdKc9KtqtibNIJr_OOubXA, menaco @mena_development); (3) `ytsearch12:<project> <hint>` for
+  third-party coverage (منصة شأن, Bayut KSA, نبيل معافا, MAALYAMII cover Riyadh projects) — CURATE
+  search hits by hand (generic names collide: فيورا=LoL champion, نوار=weddings, مينا=port). Gotchas:
+  redirect yt-dlp output as JSON with PYTHONUTF8=1 (console redirect strips Arabic); Instagram/Snapchat
+  extractors are broken/blocked (need logged-in cookies); WhatsApp project messages send ONLY direct
+  video FILES from project_videos (`directVideoUrls` excludes page links) — download+upload when the
+  video must be WhatsApp-sendable; the workspace Media tab (`ProjectDetailPage`) lists only http URLs,
+  file-id entries render in the classic form. Bulk run 2026-07-21: 118 videos across 31/49 members
+  (backup `_backup_project_videos_20260721`). When migrating a NEW project, also grab its videos.
+
 ## Per-developer API/source adapters (document each site as you learn it)
 - **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
   no Browserbase needed.** Listing `/projects` renders 18 cards; page 2 (6 more) is Livewire pagination —
