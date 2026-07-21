@@ -93,6 +93,65 @@ export interface FollowupTask {
   priority: string | null;
   salesRep: string | null;
   bucket: DayBucket;
+  /** Task row creation time — drives the hot-lead 5-minute countdown. */
+  createdAtISO: string | null;
+  /** Client's current lifecycle stage (from the live client record). */
+  clientStage: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Priority stack (2026-07-21 — sales-process improvement plan, Workstream B)
+// ---------------------------------------------------------------------------
+
+/**
+ * Priority tier of a task within the Actions tab. Lower = hotter.
+ *  1 hot     — NEW lead's first booking call (client still جديد): call <5 min.
+ *  2 replied — customer replied / messaged: ball is in OUR court right now.
+ *  3 overdue — scheduled day strictly before today.
+ *  4 today   — due today.
+ *  5 quiet   — rating requests & undated leftovers.
+ */
+export type PriorityTier = 1 | 2 | 3 | 4 | 5;
+
+/** Window (ms) in which a first booking call counts as a HOT new lead. */
+export const HOT_LEAD_WINDOW_MS = 60 * 60 * 1000; // still hot for 1h; countdown targets 5 min
+export const HOT_LEAD_SLA_MS = 5 * 60 * 1000;
+
+export function isHotLead(t: FollowupTask, now: number): boolean {
+  if (t.typeKey !== 'appointment_booking_call') return false;
+  if (t.clientStage && t.clientStage !== 'جديد') return false;
+  const created = parseMs(t.createdAtISO);
+  if (created == null) return false;
+  return now - created <= HOT_LEAD_WINDOW_MS;
+}
+
+export function isCustomerTurn(t: FollowupTask): boolean {
+  return t.whatsappState === 'replied' || (!t.whatsappState && !!t.clientMessagedAt);
+}
+
+/** WhatsApp task parked with the customer — lives in the Waiting tab, not Actions. */
+export function isWaitingForCustomer(t: FollowupTask): boolean {
+  return t.whatsappState === 'message_sent_waiting_response';
+}
+
+export function priorityTier(t: FollowupTask, now: number): PriorityTier {
+  if (isHotLead(t, now)) return 1;
+  if (isCustomerTurn(t)) return 2;
+  if (t.bucket === 'late') return 3;
+  if (t.typeKey === 'rating_request' || !t.scheduledISO) return 5;
+  return 4;
+}
+
+/** Sort for the Actions tab: tier asc, then scheduled asc (oldest first). */
+export function byPriority(now: number) {
+  return (a: FollowupTask, b: FollowupTask): number => {
+    const ta = priorityTier(a, now);
+    const tb = priorityTier(b, now);
+    if (ta !== tb) return ta - tb;
+    const av = a.scheduledISO ? Date.parse(a.scheduledISO) : Infinity;
+    const bv = b.scheduledISO ? Date.parse(b.scheduledISO) : Infinity;
+    return av - bv;
+  };
 }
 
 function firstId(v: unknown): string | null {
@@ -150,9 +209,56 @@ export function buildFollowupTasks(
       priority: str(d.priority),
       salesRep: firstId(d.sales_rep),
       bucket,
+      createdAtISO: r.created_at ?? null,
+      clientStage: str(client?.client_stage),
     });
   }
   return out;
+}
+
+/**
+ * Build the WAITING-tab task list: WhatsApp tasks parked with the customer
+ * (message_sent_waiting_response), regardless of day bucket — including
+ * future-dated ones that buildFollowupTasks drops. Sorted by sent_at desc.
+ */
+export function buildWaitingTasks(
+  followups: AppRecord[],
+  clientsById: Map<string, Record<string, unknown>>,
+  now: number,
+): FollowupTask[] {
+  const out: FollowupTask[] = [];
+  for (const r of followups) {
+    const d = r.data as Record<string, unknown>;
+    const status = str(d.followup_status) ?? 'open';
+    if (isDoneFollowup(status)) continue;
+    if (str(d.whatsapp_state) !== 'message_sent_waiting_response') continue;
+    const clientId = firstId(d.client_id);
+    const client = clientId ? clientsById.get(clientId) : undefined;
+    const typeKey = readFollowupType(d);
+    out.push({
+      followupId: r.id,
+      clientId,
+      clientName: str(client?.client_name) ?? str(d.client_name) ?? '',
+      phone: str(client?.phone_number) ?? str(d.client_phone) ?? '',
+      typeKey,
+      channel: followupChannel(typeKey),
+      scheduledISO: str(d.scheduled_datetime),
+      followupStatus: status,
+      whatsappState: str(d.whatsapp_state),
+      clientMessagedAt: str(d.client_messaged_at),
+      result: str(d.call_result),
+      priority: str(d.priority),
+      salesRep: firstId(d.sales_rep),
+      bucket: followupDayBucket(str(d.scheduled_datetime), now),
+      createdAtISO: r.created_at ?? null,
+      clientStage: str(client?.client_stage),
+    });
+  }
+  return out.sort((a, b) => {
+    const av = typeof a.scheduledISO === 'string' ? Date.parse(a.scheduledISO) : 0;
+    const bv = typeof b.scheduledISO === 'string' ? Date.parse(b.scheduledISO) : 0;
+    return bv - av;
+  });
 }
 
 /** Scope a task list to a sales rep (sales_rep === userId). */

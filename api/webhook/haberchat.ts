@@ -378,16 +378,20 @@ async function bumpConversationRecord(args: {
   // the task (2026-07-18 fix). Best-effort: a failure here must not fail the
   // webhook (the message + chat bump are already persisted; the next inbound
   // retries).
+  // WhatsApp activity bridge (2026-07-21) — kept in lockstep with
+  // api/_lib/chatIngest.ts (WAHA path): inbound wraps mark_whatsapp_replied
+  // and guarantees an open task; outbound arms "waiting for customer".
   const clientLink = typeof prevData.client_link === 'string' ? prevData.client_link : null;
-  if (args.lastFlow === 'in' && clientLink && UUID_RE.test(clientLink)) {
+  if (clientLink && UUID_RE.test(clientLink)) {
+    const rpcName = args.lastFlow === 'in' ? 'reconcile_inbound_whatsapp' : 'reconcile_outbound_whatsapp';
     try {
-      const { error: rpcErr } = await supa.rpc('mark_whatsapp_replied', {
+      const { error: rpcErr } = await supa.rpc(rpcName, {
         p_client_id: clientLink,
         p_message_at: args.lastAt,
       });
-      if (rpcErr) console.error('[webhook.bumpRecord] mark_whatsapp_replied failed:', rpcErr.message);
+      if (rpcErr) console.error(`[webhook.bumpRecord] ${rpcName} failed:`, rpcErr.message);
     } catch (err) {
-      console.error('[webhook.bumpRecord] mark_whatsapp_replied threw:', err instanceof Error ? err.message : String(err));
+      console.error(`[webhook.bumpRecord] ${rpcName} threw:`, err instanceof Error ? err.message : String(err));
     }
   }
 }

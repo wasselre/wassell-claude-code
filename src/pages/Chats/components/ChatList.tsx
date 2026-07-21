@@ -23,7 +23,7 @@ import type { AppRecord } from '@/types';
  */
 
 type ChatTab = 'all' | 'clients' | 'advertisers' | 'other';
-type ClientFilter = 'open' | 'closed';
+type ClientFilter = 'open' | 'waiting' | 'closed';
 
 // `/model/chats` and `/model/chats/:recordId` are separate route entries, so
 // opening a chat REMOUNTS this component. Keep the last chosen tab/filter at
@@ -146,6 +146,33 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
   }, [chatRecords, search, clientOf, advertiserOf]);
 
   const clientChats = useMemo(() => searched.filter((r) => clientOf(r) !== null), [searched, clientOf]);
+
+  // Clients whose WhatsApp follow-up is parked WAITING on the customer
+  // (message_sent_waiting_response). Derived, never stored on the chat: the
+  // chat files under «بانتظار الرد» while the ball is with the customer and
+  // pops back to Open the moment the inbound reconciler flips the task.
+  // (2026-07-21 — sales-process improvement plan, Workstream C.)
+  const waitingClientIds = useMemo(() => {
+    const followupsModel = models.find((m) => m.name === 'followups');
+    const followups = followupsModel ? (records[followupsModel.id] ?? []) : [];
+    const out = new Set<string>();
+    for (const r of followups) {
+      const d = r.data as Record<string, unknown>;
+      const status = typeof d.followup_status === 'string' && d.followup_status ? d.followup_status : 'open';
+      if (['completed', 'cancelled', 'skipped'].includes(status)) continue;
+      if (d.whatsapp_state !== 'message_sent_waiting_response') continue;
+      const clientId = Array.isArray(d.client_id) ? d.client_id[0] : d.client_id;
+      if (typeof clientId === 'string' && clientId) out.add(clientId);
+    }
+    return out;
+  }, [models, records]);
+
+  /** Open-but-parked: the linked client's task is waiting on the customer. */
+  const isWaitingChat = useCallback((chat: AppRecord): boolean => {
+    if (isClosedChat(chat.data as Record<string, unknown>)) return false;
+    const client = clientOf(chat);
+    return client !== null && waitingClientIds.has(client.id);
+  }, [clientOf, waitingClientIds]);
   const advertiserChats = useMemo(
     () => searched.filter((r) => advertiserOf(r) !== null),
     [searched, advertiserOf],
@@ -161,9 +188,11 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     if (tab === 'advertisers') return advertiserChats;
     if (tab === 'other') return otherChats;
     if (tab !== 'clients') return searched;
-    const wantClosed = clientFilter === 'closed';
-    return clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>) === wantClosed);
-  }, [searched, clientChats, advertiserChats, otherChats, tab, clientFilter]);
+    if (clientFilter === 'closed') return clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>));
+    if (clientFilter === 'waiting') return clientChats.filter((r) => isWaitingChat(r));
+    // Open = needs us: not closed and not parked with the customer.
+    return clientChats.filter((r) => !isClosedChat(r.data as Record<string, unknown>) && !isWaitingChat(r));
+  }, [searched, clientChats, advertiserChats, otherChats, tab, clientFilter, isWaitingChat]);
 
   const deviceLabels = useMemo(() => {
     const map = new Map<string, string>();
@@ -185,8 +214,13 @@ export default function ChatList({ selectedRecordId }: { selectedRecordId: strin
     () => clientChats.filter((r) => isClosedChat(r.data as Record<string, unknown>)).length,
     [clientChats],
   );
+  const waitingCount = useMemo(
+    () => clientChats.filter((r) => isWaitingChat(r)).length,
+    [clientChats, isWaitingChat],
+  );
   const clientFilters: { id: ClientFilter; label: string; count: number }[] = [
-    { id: 'open', label: isAr ? 'مفتوحة' : 'Open', count: clientChats.length - closedCount },
+    { id: 'open', label: isAr ? 'مفتوحة' : 'Open', count: clientChats.length - closedCount - waitingCount },
+    { id: 'waiting', label: isAr ? 'بانتظار الرد' : 'Waiting for reply', count: waitingCount },
     { id: 'closed', label: isAr ? 'مغلقة' : 'Closed', count: closedCount },
   ];
 

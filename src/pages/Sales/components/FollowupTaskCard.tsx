@@ -1,5 +1,7 @@
-import { Phone, MessageCircle, AlertTriangle, Clock } from 'lucide-react';
-import type { FollowupTask } from '../lib/myWork';
+import { useEffect, useState } from 'react';
+import { Phone, MessageCircle, AlertTriangle, Clock, Flame, BellRing } from 'lucide-react';
+import type { FollowupTask, PriorityTier } from '../lib/myWork';
+import { HOT_LEAD_SLA_MS } from '../lib/myWork';
 import { telUrl, whatsappUrl } from '@/lib/phone';
 import { getFollowUpTypeConfig, getOutcome } from '@/lib/salesProcess';
 
@@ -10,6 +12,45 @@ interface Props {
   navigate: (to: string) => void;
   /** Opens the in-app WhatsApp popup (existing thread or composer). */
   onWhatsApp: (clientId: string | null, phone: string | null) => void;
+  /** Priority tier (1 hot … 5 quiet) — drives the stripe + badges. Optional so
+   * other consumers (Sales Queue) keep the legacy late/channel stripe. */
+  tier?: PriorityTier;
+}
+
+/** Tier → start-edge stripe color. Urgency reads before content. */
+const TIER_STRIPE: Record<PriorityTier, string> = {
+  1: '#DC2626', // hot lead — red
+  2: '#DC2626', // customer replied — red
+  3: '#D97706', // overdue — amber
+  4: '#B8734F', // due today — copper
+  5: '#9CA3AF', // quiet — muted
+};
+
+/** Live 5-minute countdown for a hot new lead (speed-to-lead SLA). */
+function HotCountdown({ createdAtISO, isAr }: { createdAtISO: string | null; isAr: boolean }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const created = createdAtISO ? Date.parse(createdAtISO) : NaN;
+  if (Number.isNaN(created)) return null;
+  const left = created + HOT_LEAD_SLA_MS - Date.now();
+  const over = left <= 0;
+  const abs = Math.abs(left);
+  const mm = Math.floor(abs / 60000);
+  const ss = Math.floor((abs % 60000) / 1000).toString().padStart(2, '0');
+  return (
+    <span
+      dir="ltr"
+      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-xs font-bold ${
+        over ? 'bg-[#DC2626] text-white' : 'bg-[#DC2626]/10 text-[#DC2626] animate-pulse'
+      }`}
+    >
+      <Flame size={11} />
+      {over ? (isAr ? `تجاوز ${mm}:${ss}` : `+${mm}:${ss} over`) : `${mm}:${ss}`}
+    </span>
+  );
 }
 
 const FOLLOWUP_STATUS_LABELS: Record<string, { ar: string; en: string }> = {
@@ -35,7 +76,7 @@ function fmt(iso: string | null, isAr: boolean): string {
  * A single follow-up task in the My Tasks queue. The left action button is the
  * channel (Call vs WhatsApp); a colored accent + pills give fast scanning.
  */
-export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWhatsApp }: Props) {
+export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWhatsApp, tier }: Props) {
   const cfg = getFollowUpTypeConfig(task.typeKey);
   const typeLabel = cfg ? (isAr ? cfg.label_ar : cfg.label_en) : (task.typeKey ?? '');
   const objective = cfg ? (isAr ? cfg.objective_ar : cfg.objective_en) : '';
@@ -43,6 +84,9 @@ export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWha
   const isWhatsApp = task.channel === 'whatsapp';
   const tel = telUrl(task.phone);
   const wa = whatsappUrl(task.phone);
+  const stripe = tier ? TIER_STRIPE[tier] : late ? '#B5462F' : isWhatsApp ? '#25D366' : '#B8734F';
+  const isHot = tier === 1;
+  const isReplied = tier === 2;
 
   const statusLabel = FOLLOWUP_STATUS_LABELS[task.followupStatus];
   const waState = task.whatsappState ? WHATSAPP_STATE_LABELS[task.whatsappState] : null;
@@ -55,7 +99,7 @@ export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWha
   return (
     <li
       className="card overflow-hidden p-0"
-      style={{ borderInlineStartWidth: 4, borderInlineStartColor: late ? '#B5462F' : isWhatsApp ? '#25D366' : '#B8734F' }}
+      style={{ borderInlineStartWidth: 4, borderInlineStartColor: stripe }}
     >
       <div className="flex flex-wrap items-stretch justify-between gap-3 p-4">
         {/* Channel action */}
@@ -94,7 +138,20 @@ export default function FollowupTaskCard({ task, isAr, returnTo, navigate, onWha
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-bold text-chocolate">{task.clientName || (isAr ? 'عميل' : 'Client')}</span>
             <span dir="ltr" className="text-sm text-terracotta">{task.phone}</span>
-            {late && (
+            {isHot && (
+              <>
+                <span className="inline-flex items-center gap-1 rounded-full bg-[#DC2626] px-2 py-0.5 text-xs font-bold text-white">
+                  <Flame size={11} /> {isAr ? 'عميل جديد — اتصل الآن' : 'HOT — call now'}
+                </span>
+                <HotCountdown createdAtISO={task.createdAtISO} isAr={isAr} />
+              </>
+            )}
+            {isReplied && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#DC2626] px-2 py-0.5 text-xs font-bold text-white">
+                <BellRing size={11} /> {isAr ? 'العميل رد — دورك' : 'Replied — your turn'}
+              </span>
+            )}
+            {late && !isHot && (
               <span className="inline-flex items-center gap-1 rounded-full bg-terracotta px-2 py-0.5 text-xs font-bold text-white">
                 <AlertTriangle size={11} /> {isAr ? 'متأخرة' : 'Overdue'}
               </span>

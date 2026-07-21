@@ -4,6 +4,7 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import GlobalChatComposer from '@/pages/Chats/components/GlobalChatComposer';
 import JobsIndicator from '@/components/JobsIndicator';
+import SalesNotifications from '@/components/SalesNotifications';
 
 export default function AppLayout() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -38,6 +39,9 @@ export default function AppLayout() {
       {/* Floating background-jobs circle + panel (listing messages, media
           fan-outs, …). Hidden until a job exists. */}
       <JobsIndicator />
+      {/* Pop-up notifications for hot new leads + customer replies (toast +
+          browser Notification). Renders nothing. */}
+      <SalesNotifications />
     </div>
   );
 }

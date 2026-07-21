@@ -121,19 +121,26 @@ export async function bumpConversationRecord(args: {
     }
   }
 
-  // Reply reconciliation (v2/v3): an inbound message on a client-linked chat
-  // marks that client's WAITING WhatsApp follow-up 'replied' and stamps the
-  // early-message indicator. Same RPC + posture as the Haberchat path.
+  // WhatsApp activity bridge (2026-07-21) — the follow-up engine tracks the
+  // real conversation on a client-linked chat:
+  //  * inbound  → reconcile_inbound_whatsapp: wraps mark_whatsapp_replied
+  //    (waiting→'replied' + early-message stamp) AND creates a "your turn"
+  //    task when the client has no open follow-up at all.
+  //  * outbound → reconcile_outbound_whatsapp: arms/creates the client's
+  //    WhatsApp task as "waiting for customer" (+24h deadline) and retires
+  //    stale reach-out tasks (booking / no-show-recovery calls).
+  // Both RPCs are idempotent — webhook retries re-stamp, never duplicate.
   const clientLink = typeof prevData.client_link === 'string' ? prevData.client_link : null;
-  if (args.lastFlow === 'in' && clientLink && UUID_RE.test(clientLink)) {
+  if (clientLink && UUID_RE.test(clientLink)) {
+    const rpcName = args.lastFlow === 'in' ? 'reconcile_inbound_whatsapp' : 'reconcile_outbound_whatsapp';
     try {
-      const { error: rpcErr } = await supa.rpc('mark_whatsapp_replied', {
+      const { error: rpcErr } = await supa.rpc(rpcName, {
         p_client_id: clientLink,
         p_message_at: args.lastAt,
       });
-      if (rpcErr) console.error('[chatIngest] mark_whatsapp_replied failed:', rpcErr.message);
+      if (rpcErr) console.error(`[chatIngest] ${rpcName} failed:`, rpcErr.message);
     } catch (err) {
-      console.error('[chatIngest] mark_whatsapp_replied threw:', err instanceof Error ? err.message : String(err));
+      console.error(`[chatIngest] ${rpcName} threw:`, err instanceof Error ? err.message : String(err));
     }
   }
 }

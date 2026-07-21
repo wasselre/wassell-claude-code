@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown, NotebookPen } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
 import MessageThread from './MessageThread';
 import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
+import LeadIntakeModal from './LeadIntakeModal';
+import LogInteractionModal from './LogInteractionModal';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 
@@ -90,6 +92,10 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   // "Complete WhatsApp Follow-Up" popup (shown when Done/Resolve is clicked and
   // an active WhatsApp follow-up exists for the linked client).
   const [showCompleteFollowup, setShowCompleteFollowup] = useState(false);
+  // Assisted lead capture (unlinked chat → propose + approve a client).
+  const [showLeadIntake, setShowLeadIntake] = useState(false);
+  // "Log an interaction" — record an off-task call/visit result.
+  const [showLogInteraction, setShowLogInteraction] = useState(false);
 
   // The linked client's active WhatsApp follow-up (open/in_progress). Resolving
   // the chat should complete THIS task through the normal follow-up path rather
@@ -263,15 +269,23 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                   <ListChecks size={12} />
                   {isAr ? 'خيارات العميل' : 'Client options'}
                 </button>
+                <button
+                  onClick={() => setShowLogInteraction(true)}
+                  className="inline-flex items-center gap-1 rounded-full border border-gold/40 bg-gold/10 px-2 py-0.5 font-medium text-[#8a6a2f] transition-colors hover:bg-gold/20"
+                  title={isAr ? 'تسجيل مكالمة أو تواصل خارج المهام' : 'Log a call or other interaction'}
+                >
+                  <NotebookPen size={12} />
+                  {isAr ? 'تسجيل تواصل' : 'Log interaction'}
+                </button>
               </>
             ) : (
               <button
-                onClick={() => navigate('/model/clients/new')}
-                className="inline-flex items-center gap-1.5 text-charcoal/60 hover:text-copper"
-                title={isAr ? 'إنشاء عميل جديد من هذا الرقم' : 'Create a client from this phone'}
+                onClick={() => setShowLeadIntake(true)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/20"
+                title={isAr ? 'إنشاء عميل من هذا الرقم وبدء المتابعة' : 'Create a client from this phone and start the follow-up'}
               >
                 <UserPlus size={12} />
-                {isAr ? 'لا يوجد عميل مرتبط — إنشاء' : 'No linked client — create'}
+                {isAr ? 'عميل محتمل؟ إنشاء وبدء المتابعة' : 'Potential lead? Create & start follow-up'}
               </button>
             )}
           </div>
@@ -340,6 +354,28 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           Finder embedded, without leaving the conversation. */}
       {showClientOptions && clientLinkId && (
         <ClientOptionsModal clientId={clientLinkId} onClose={() => setShowClientOptions(false)} />
+      )}
+
+      {/* Assisted lead capture — approve a proposed client from this chat,
+          then pick the first follow-up channel (call now vs WhatsApp). */}
+      {showLeadIntake && !clientLinkId && (
+        <LeadIntakeModal
+          phone={phone ?? ''}
+          suggestedName={name !== '—' ? name : ''}
+          lastInboundAt={(data?.last_message_flow === 'in' ? lastMessageAt : null)}
+          onClose={() => setShowLeadIntake(false)}
+        />
+      )}
+
+      {/* Log an interaction — record an off-task call/visit result; defaults
+          to completing the client's current open task. */}
+      {showLogInteraction && clientLinkId && (
+        <LogInteractionModal
+          clientId={clientLinkId}
+          clientName={linkedClientName ?? name}
+          chatRecordId={recordId}
+          onClose={() => setShowLogInteraction(false)}
+        />
       )}
 
       {/* Complete WhatsApp Follow-Up — records the outcome on the existing

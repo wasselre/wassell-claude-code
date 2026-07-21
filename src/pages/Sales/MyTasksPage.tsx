@@ -1,13 +1,18 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban } from 'lucide-react';
+import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban, Hourglass, CalendarDays, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import type { AppRecord } from '@/types';
 import { useIsAdmin, usePermission } from '@/hooks/usePermission';
 import { useClientWhatsApp } from '@/pages/Clients/lib/useClientWhatsApp';
-import { buildFollowupTasks, tasksForRep, type FollowupChannel, type FollowupTask } from './lib/myWork';
+import {
+  buildFollowupTasks, buildWaitingTasks, tasksForRep, byPriority, priorityTier, isWaitingForCustomer,
+  type FollowupChannel, type FollowupTask,
+} from './lib/myWork';
 import FollowupTaskCard from './components/FollowupTaskCard';
 
-type Section = 'today' | 'late' | 'preferences' | 'other';
+type Section = 'actions' | 'waiting' | 'appointments' | 'preferences' | 'other';
+type ApptBucket = 'today' | 'tomorrow' | 'future' | 'no_show';
 
 function ownerIdOf(v: unknown): string | null {
   if (Array.isArray(v)) {
@@ -25,12 +30,39 @@ function ownerIdOf(v: unknown): string | null {
   return typeof v === 'string' && v ? v : null;
 }
 
+function firstId(v: unknown): string | null {
+  if (Array.isArray(v)) return typeof v[0] === 'string' ? v[0] : null;
+  return typeof v === 'string' ? v : null;
+}
+
+function startOfDay(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 const RETURN_TO = '/sales/my-tasks';
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const APPT_STATUS_STYLE: Record<string, string> = {
+  scheduled: 'bg-sand/50 text-charcoal',
+  confirmed: 'bg-[#10B981]/15 text-[#0f7a52]',
+  rescheduled: 'bg-gold/20 text-[#8a6a2f]',
+  completed: 'bg-[#10B981]/15 text-[#0f7a52]',
+  no_show: 'bg-terracotta text-white',
+  cancelled: 'bg-charcoal/10 text-charcoal/60',
+};
 
 /**
- * My Tasks — the sales rep's daily work surface. Four sections: today's
- * follow-ups, late follow-ups (each split into Calls vs Conversations),
- * a placeholder for incomplete-preference tasks, and the rep's other Tasks.
+ * My Tasks — the sales rep's daily work surface (redesigned 2026-07-21,
+ * sales-process improvement plan Workstream B):
+ *  - Actions: ONE priority-stacked list (hot lead → replied → overdue → today
+ *    → quiet), each card striped by urgency. Waiting-on-customer tasks are
+ *    excluded — they live in their own tab.
+ *  - Waiting for customer: WhatsApp tasks parked with the client (the ball is
+ *    theirs); they come back to Actions on reply or on the 24h silence nudge.
+ *  - Appointments: Today / Tomorrow / Future / No-shows.
+ *  - Plus the existing Incomplete Preferences placeholder and Other Tasks.
  */
 export default function MyTasksPage() {
   const navigate = useNavigate();
@@ -45,39 +77,79 @@ export default function MyTasksPage() {
 
   const { openWhatsApp, whatsAppModals } = useClientWhatsApp();
 
-  const [section, setSection] = useState<Section>('today');
-  const [channel, setChannel] = useState<FollowupChannel>('call');
+  const [section, setSection] = useState<Section>('actions');
+  const [channel, setChannel] = useState<FollowupChannel | 'all'>('all');
+  const [apptBucket, setApptBucket] = useState<ApptBucket>('today');
   const [showAll, setShowAll] = useState(false); // manager-only: include all reps
 
   const now = Date.now();
 
   const followupsModel = models.find((m) => m.name === 'followups');
   const clientsModel = models.find((m) => m.name === 'clients');
+  const appointmentsModel = models.find((m) => m.name === 'appointments');
   const tasksModel = models.find((m) => m.name === 'tasks');
   const canCreateTask = usePermission(tasksModel?.id ?? '', 'create');
 
-  // Build the actionable follow-up tasks (today + late), scoped to the rep.
-  const followupTasks: FollowupTask[] = useMemo(() => {
-    const followups = followupsModel ? records[followupsModel.id] ?? [] : [];
+  const clientsById = useMemo(() => {
     const clients = clientsModel ? records[clientsModel.id] ?? [] : [];
-    const clientsById = new Map(clients.map((c) => [c.id, c.data as Record<string, unknown>]));
+    return new Map(clients.map((c) => [c.id, c.data as Record<string, unknown>]));
+  }, [clientsModel, records]);
+
+  // Actions = actionable tasks (today/late + replied promotions), minus the
+  // ones parked with the customer, sorted by the priority stack.
+  const actionTasks: FollowupTask[] = useMemo(() => {
+    const followups = followupsModel ? records[followupsModel.id] ?? [] : [];
     const all = buildFollowupTasks(followups, clientsById, now);
+    const scoped = isManager && showAll ? all : tasksForRep(all, currentUserId);
+    return scoped.filter((t) => !isWaitingForCustomer(t)).sort(byPriority(now));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [followupsModel, records, clientsById, currentUserId, isManager, showAll]);
+
+  // Waiting for customer — parked WhatsApp tasks, any day bucket.
+  const waitingTasks: FollowupTask[] = useMemo(() => {
+    const followups = followupsModel ? records[followupsModel.id] ?? [] : [];
+    const all = buildWaitingTasks(followups, clientsById, now);
     return isManager && showAll ? all : tasksForRep(all, currentUserId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [followupsModel, clientsModel, records, currentUserId, isManager, showAll]);
+  }, [followupsModel, records, clientsById, currentUserId, isManager, showAll]);
 
-  const today = useMemo(() => followupTasks.filter((t) => t.bucket === 'today'), [followupTasks]);
-  const late = useMemo(() => followupTasks.filter((t) => t.bucket === 'late'), [followupTasks]);
+  const channelTasks = channel === 'all' ? actionTasks : actionTasks.filter((t) => t.channel === channel);
+  const callCount = actionTasks.filter((t) => t.channel === 'call').length;
+  const waCount = actionTasks.filter((t) => t.channel === 'whatsapp').length;
 
-  const bySchedule = (a: FollowupTask, b: FollowupTask) => {
-    const av = a.scheduledISO ? Date.parse(a.scheduledISO) : 0;
-    const bv = b.scheduledISO ? Date.parse(b.scheduledISO) : 0;
-    return av - bv;
-  };
-  const sectionTasks = section === 'today' ? today : late;
-  const channelTasks = sectionTasks.filter((t) => t.channel === channel).slice().sort(bySchedule);
-  const callCount = sectionTasks.filter((t) => t.channel === 'call').length;
-  const waCount = sectionTasks.filter((t) => t.channel === 'whatsapp').length;
+  // Appointments, bucketed by calendar day + the No-shows worklist.
+  const appointments = useMemo(() => {
+    const empty: Record<ApptBucket, AppRecord[]> = { today: [], tomorrow: [], future: [], no_show: [] };
+    if (!appointmentsModel) return empty;
+    const rows = (records[appointmentsModel.id] ?? [])
+      .filter((r) => {
+        if (isManager && showAll) return true;
+        const rep = firstId((r.data as Record<string, unknown>).sales_rep);
+        return !rep || rep === currentUserId;
+      });
+    const t0 = startOfDay(now);
+    const out: Record<ApptBucket, AppRecord[]> = { today: [], tomorrow: [], future: [], no_show: [] };
+    for (const r of rows) {
+      const d = r.data as Record<string, unknown>;
+      const status = typeof d.appointment_status === 'string' && d.appointment_status ? d.appointment_status : 'scheduled';
+      if (status === 'no_show') { out.no_show.push(r); continue; }
+      if (status === 'completed' || status === 'cancelled') continue;
+      const at = typeof d.appointment_date === 'string' ? Date.parse(d.appointment_date) : NaN;
+      if (Number.isNaN(at)) continue;
+      const day = startOfDay(at);
+      if (day <= t0) out.today.push(r); // past-due un-updated appointments stay visible under Today
+      else if (day === t0 + DAY_MS) out.tomorrow.push(r);
+      else out.future.push(r);
+    }
+    const byDate = (a: AppRecord, b: AppRecord) => {
+      const av = typeof a.data.appointment_date === 'string' ? Date.parse(a.data.appointment_date) : 0;
+      const bv = typeof b.data.appointment_date === 'string' ? Date.parse(b.data.appointment_date) : 0;
+      return av - bv;
+    };
+    out.today.sort(byDate); out.tomorrow.sort(byDate); out.future.sort(byDate); out.no_show.sort(byDate);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appointmentsModel, records, currentUserId, isManager, showAll]);
 
   // Other Tasks — the rep's open tasks from the Tasks model.
   const otherTasks = useMemo(() => {
@@ -113,9 +185,16 @@ export default function MyTasksPage() {
     return opt ? (isAr ? opt.label_ar : opt.label_en) || value : value;
   };
 
-  const SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number }[] = [
-    { id: 'today', label: { ar: 'متابعات اليوم', en: "Today's Follow-ups" }, count: today.length },
-    { id: 'late', label: { ar: 'متابعات متأخرة', en: 'Late Follow-ups' }, count: late.length },
+  const apptStatusLabel = (value: string): string => {
+    const field = appointmentsModel?.schema.sections.flatMap((s) => s.fields).find((f) => f.name === 'appointment_status');
+    const opt = field?.options?.find((o) => o.value === value);
+    return opt ? (isAr ? opt.label_ar : opt.label_en) || value : value;
+  };
+
+  const SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number; danger?: boolean }[] = [
+    { id: 'actions', label: { ar: 'الإجراءات', en: 'Actions' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
+    { id: 'waiting', label: { ar: 'بانتظار العميل', en: 'Waiting for customer' }, count: waitingTasks.length },
+    { id: 'appointments', label: { ar: 'المواعيد', en: 'Appointments' }, count: appointments.today.length + appointments.tomorrow.length + appointments.future.length + appointments.no_show.length },
     { id: 'preferences', label: { ar: 'تفضيلات ناقصة', en: 'Incomplete Preferences' } },
     { id: 'other', label: { ar: 'مهام أخرى', en: 'Other Tasks' }, count: otherTasks.length },
   ];
@@ -124,43 +203,62 @@ export default function MyTasksPage() {
     return <div className="p-6 text-sm text-charcoal/50">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;
   }
 
-  const renderChannelTabs = () => (
-    <div className="mb-4 flex items-center gap-2">
-      <button
-        type="button"
-        onClick={() => setChannel('call')}
-        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition ${
-          channel === 'call' ? 'bg-copper text-white' : 'bg-white text-charcoal/70 hover:bg-cream'
-        }`}
-      >
-        <Phone size={14} /> {isAr ? 'مكالمات' : 'Calls'}
-        <span className={`rounded-full px-1.5 text-xs ${channel === 'call' ? 'bg-white/25' : 'bg-sand/60'}`}>{callCount}</span>
-      </button>
-      <button
-        type="button"
-        onClick={() => setChannel('whatsapp')}
-        className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition ${
-          channel === 'whatsapp' ? 'bg-[#25D366] text-white' : 'bg-white text-charcoal/70 hover:bg-cream'
-        }`}
-      >
-        <MessageCircle size={14} /> {isAr ? 'محادثات' : 'Conversations'}
-        <span className={`rounded-full px-1.5 text-xs ${channel === 'whatsapp' ? 'bg-white/25' : 'bg-sand/60'}`}>{waCount}</span>
-      </button>
-    </div>
+  const channelChip = (id: FollowupChannel | 'all', label: string, icon: React.ReactNode, count: number, activeCls: string) => (
+    <button
+      type="button"
+      onClick={() => setChannel(id)}
+      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition ${
+        channel === id ? activeCls : 'bg-white text-charcoal/70 hover:bg-cream'
+      }`}
+    >
+      {icon} {label}
+      <span className={`rounded-full px-1.5 text-xs ${channel === id ? 'bg-white/25' : 'bg-sand/60'}`}>{count}</span>
+    </button>
   );
 
-  const renderFollowups = () => (
+  const renderActions = () => (
     <>
-      {renderChannelTabs()}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {channelChip('all', isAr ? 'الكل' : 'All', <ClipboardList size={14} />, actionTasks.length, 'bg-copper text-white')}
+        {channelChip('call', isAr ? 'مكالمات' : 'Calls', <Phone size={14} />, callCount, 'bg-copper text-white')}
+        {channelChip('whatsapp', isAr ? 'محادثات' : 'Conversations', <MessageCircle size={14} />, waCount, 'bg-[#25D366] text-white')}
+      </div>
       {channelTasks.length === 0 ? (
         <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
-          {section === 'today'
-            ? isAr ? 'لا توجد متابعات لهذا اليوم في هذه القناة.' : 'No follow-ups for today in this channel.'
-            : isAr ? 'لا توجد متابعات متأخرة في هذه القناة.' : 'No late follow-ups in this channel.'}
+          {isAr ? 'لا توجد إجراءات مطلوبة الآن — كل شيء تحت السيطرة.' : 'Nothing needs you right now — all clear.'}
         </p>
       ) : (
         <ul className="space-y-3">
           {channelTasks.map((t) => (
+            <FollowupTaskCard
+              key={t.followupId}
+              task={t}
+              tier={priorityTier(t, now)}
+              isAr={isAr}
+              returnTo={RETURN_TO}
+              navigate={navigate}
+              onWhatsApp={(id, phone) => id && openWhatsApp(id, phone)}
+            />
+          ))}
+        </ul>
+      )}
+    </>
+  );
+
+  const renderWaiting = () => (
+    <>
+      <p className="mb-4 rounded-xl bg-[#D97706]/10 px-4 py-2.5 text-xs text-[#8a5a10]">
+        {isAr
+          ? 'رسائل مُرسلة والكرة الآن في ملعب العميل. تعود المهمة إلى «الإجراءات» تلقائيًا عند رد العميل أو بعد ٢٤ ساعة صمت.'
+          : 'Messages sent — the ball is with the customer. A task returns to Actions automatically when they reply or after 24h of silence.'}
+      </p>
+      {waitingTasks.length === 0 ? (
+        <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
+          {isAr ? 'لا توجد محادثات بانتظار رد العميل.' : 'No conversations waiting on a customer.'}
+        </p>
+      ) : (
+        <ul className="space-y-3">
+          {waitingTasks.map((t) => (
             <FollowupTaskCard
               key={t.followupId}
               task={t}
@@ -174,6 +272,88 @@ export default function MyTasksPage() {
       )}
     </>
   );
+
+  const APPT_TABS: { id: ApptBucket; label: { ar: string; en: string }; danger?: boolean }[] = [
+    { id: 'today', label: { ar: 'اليوم', en: 'Today' } },
+    { id: 'tomorrow', label: { ar: 'غدًا', en: 'Tomorrow' } },
+    { id: 'future', label: { ar: 'قادمة', en: 'Future' } },
+    { id: 'no_show', label: { ar: 'لم يحضروا', en: 'No-shows' }, danger: true },
+  ];
+
+  const renderAppointments = () => {
+    const rows = appointments[apptBucket];
+    return (
+      <>
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {APPT_TABS.map((t) => {
+            const on = apptBucket === t.id;
+            const count = appointments[t.id].length;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setApptBucket(t.id)}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-bold transition ${
+                  on ? (t.danger ? 'bg-terracotta text-white' : 'bg-copper text-white') : 'bg-white text-charcoal/70 hover:bg-cream'
+                }`}
+              >
+                {t.danger && <AlertTriangle size={13} />}
+                {isAr ? t.label.ar : t.label.en}
+                <span className={`rounded-full px-1.5 text-xs ${on ? 'bg-white/25' : 'bg-sand/60'}`}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+        {rows.length === 0 ? (
+          <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
+            {apptBucket === 'no_show'
+              ? isAr ? 'لا توجد مواعيد لم يحضرها العملاء. ممتاز!' : 'No missed appointments. Great!'
+              : isAr ? 'لا توجد مواعيد في هذه الفترة.' : 'No appointments in this window.'}
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {rows.map((r) => {
+              const d = r.data as Record<string, unknown>;
+              const clientId = firstId(d.client_id);
+              const client = clientId ? clientsById.get(clientId) : undefined;
+              const name = (typeof client?.client_name === 'string' && client.client_name)
+                || (typeof d.client_name === 'string' && d.client_name) || (isAr ? 'عميل' : 'Client');
+              const phone = (typeof client?.phone_number === 'string' && client.phone_number)
+                || (typeof d.phone_number === 'string' && d.phone_number) || '';
+              const at = typeof d.appointment_date === 'string' ? new Date(d.appointment_date) : null;
+              const status = typeof d.appointment_status === 'string' && d.appointment_status ? d.appointment_status : 'scheduled';
+              return (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/model/appointments/${r.id}?returnTo=${encodeURIComponent(RETURN_TO)}`)}
+                    className="card flex w-full flex-wrap items-center justify-between gap-3 p-4 text-start transition-colors hover:bg-cream/60"
+                    style={{ borderInlineStartWidth: 4, borderInlineStartColor: status === 'no_show' ? '#B5462F' : status === 'confirmed' ? '#10B981' : '#B8734F' }}
+                  >
+                    <span className="min-w-0">
+                      <span className="flex items-center gap-2">
+                        <CalendarDays size={15} className="shrink-0 text-copper" />
+                        <span className="truncate font-bold text-chocolate">{name}</span>
+                        <span dir="ltr" className="text-sm text-terracotta">{phone}</span>
+                      </span>
+                      <span className="mt-1 block text-xs text-charcoal/60">
+                        {at && !Number.isNaN(at.getTime())
+                          ? at.toLocaleString(isAr ? 'ar-SA' : 'en-US', { dateStyle: 'full', timeStyle: 'short' })
+                          : isAr ? 'بدون تاريخ' : 'No date'}
+                      </span>
+                    </span>
+                    <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${APPT_STATUS_STYLE[status] ?? 'bg-sand/50 text-charcoal'}`}>
+                      {apptStatusLabel(status)}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </>
+    );
+  };
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
@@ -198,7 +378,6 @@ export default function MyTasksPage() {
       <nav className="mb-5 flex flex-wrap gap-x-5 gap-y-1 border-b border-sand">
         {SECTIONS.map((s) => {
           const on = section === s.id;
-          const danger = s.id === 'late';
           return (
             <button
               key={s.id}
@@ -208,16 +387,20 @@ export default function MyTasksPage() {
                 on ? 'border-copper font-bold text-copper' : 'border-transparent text-charcoal hover:text-terracotta'
               }`}
             >
+              {s.id === 'waiting' && <Hourglass size={13} className="text-[#D97706]" />}
+              {s.id === 'appointments' && <CalendarDays size={13} />}
               {isAr ? s.label.ar : s.label.en}
               {s.count != null && s.count > 0 && (
-                <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${danger ? 'bg-terracotta text-white' : 'bg-sand text-charcoal'}`}>{s.count}</span>
+                <span className={`rounded-full px-1.5 py-0.5 text-xs font-bold ${s.danger ? 'bg-terracotta text-white' : 'bg-sand text-charcoal'}`}>{s.count}</span>
               )}
             </button>
           );
         })}
       </nav>
 
-      {(section === 'today' || section === 'late') && renderFollowups()}
+      {section === 'actions' && renderActions()}
+      {section === 'waiting' && renderWaiting()}
+      {section === 'appointments' && renderAppointments()}
 
       {section === 'preferences' && (
         <div className="card flex flex-col items-center gap-3 p-12 text-center">
