@@ -121,3 +121,39 @@ describe('preferred_max_unit_age → max_unit_age', () => {
     expect(draftToMatchRequirements({ clientsModel: null, prefDraft: {}, savedClientData: { preferred_max_unit_age: '2' } }).max_unit_age).toBe(2);
   });
 });
+
+describe('draftToMatchRequirements — preference_constraints (registered bands)', () => {
+  it('maps the persisted band object straight onto requirements.constraints', () => {
+    const pc = { area: { mode: 'hard', tolerance_pct: 0.1 }, budget: { mode: 'soft' } };
+    const out = draftToMatchRequirements({
+      clientsModel: null, prefDraft: { preference_constraints: pc }, savedClientData: null,
+    });
+    expect(out.constraints).toEqual(pc);
+  });
+  it('falls back to the SAVED client bands when the draft has none', () => {
+    const pc = { bedrooms: { mode: 'hard', tolerance_pct: 0 } };
+    const out = draftToMatchRequirements({
+      clientsModel: null, prefDraft: {}, savedClientData: { preference_constraints: pc },
+    });
+    expect(out.constraints).toEqual(pc);
+  });
+  it('an amenities band set to hard also fills required_amenities (the engine wire format)', () => {
+    const out = draftToMatchRequirements({
+      clientsModel: null,
+      prefDraft: { preferred_amenities: ['غرفة سائق', 'ملحق'], preference_constraints: { amenities: { mode: 'hard' } } },
+      savedClientData: null,
+    });
+    expect(out.required_amenities).toEqual(['غرفة سائق', 'ملحق']);
+  });
+  it('soft amenities does NOT fill required_amenities', () => {
+    const out = draftToMatchRequirements({
+      clientsModel: null,
+      prefDraft: { preferred_amenities: ['مسبح'], preference_constraints: { amenities: { mode: 'soft' } } },
+      savedClientData: null,
+    });
+    expect(out.required_amenities).toBeUndefined();
+  });
+  it('no band object → no constraints key', () => {
+    expect(draftToMatchRequirements({ clientsModel: null, prefDraft: {}, savedClientData: null }).constraints).toBeUndefined();
+  });
+});

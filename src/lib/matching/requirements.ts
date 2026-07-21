@@ -207,5 +207,17 @@ export function draftToMatchRequirements(args: DraftToRequirementsArgs): MatchRe
     if (list.length) out.amenities = list;
   }
 
+  // ── Per-field strictness bands, registered WITH the client's preferences
+  //    (persisted as `preference_constraints` on the client record, edited via
+  //    the band controls under each preference field). Draft-first like the rest.
+  //    An amenities band set to 'hard' also fills `required_amenities` — the
+  //    explicit wire format the engine's must-have gate reads. ──
+  const pc = pick('preference_constraints');
+  if (pc && typeof pc === 'object' && !Array.isArray(pc)) {
+    out.constraints = pc as RequirementConstraints;
+    const amenC = (pc as RequirementConstraints).amenities;
+    if (amenC?.mode === 'hard' && out.amenities?.length) out.required_amenities = out.amenities;
+  }
+
   return out;
 }

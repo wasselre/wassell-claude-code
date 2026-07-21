@@ -32,6 +32,8 @@ import {
 } from './DriveFieldInputs';
 import { VideoFieldInput, MultiVideoFieldInput } from './VideoField';
 import AttachmentFieldInput from './AttachmentFieldInput';
+import FieldConstraintControl from '@/components/matching/FieldConstraintControl';
+import { CONSTRAINT_BY_SLUG, type RequirementConstraints } from '@/lib/matching/constraints';
 import type { AttachmentRef, FieldOption, ModelField } from '@/types';
 
 // Rotating palette used when the user inline-creates a new dropdown /
@@ -716,8 +718,28 @@ export default function DynamicField({
     }
   };
 
+  // Per-field MATCH-STRICTNESS band, attached to the clients preference fields
+  // (budget, area, bedrooms, unit type, amenities, …). Rendered HERE so the band
+  // is captured wherever preferences are registered — the client profile form,
+  // the follow-up workspace, and the finder edit panels all render these fields
+  // through DynamicField with onPatch. Persisted as a sibling `preference_constraints`
+  // object on the client record (saved with data, like `location_items`), so it
+  // travels with the client and the finder reads it as the default. Gated exactly
+  // like the ClientLocationField special-case: clients model + onPatch present
+  // (bulk-edit / table inline-edit don't thread onPatch, so no band there).
+  const cField = CONSTRAINT_BY_SLUG[field.name];
+  const cOwner = modelId ? models.find((m) => m.id === modelId) : undefined;
+  const constraintControl = cField && cOwner?.name === 'clients' && onPatch ? (
+    <FieldConstraintControl
+      field={cField}
+      constraints={(recordData?.preference_constraints ?? {}) as RequirementConstraints}
+      onChange={(next) => onPatch({ preference_constraints: next })}
+      isAr={isAr}
+    />
+  ) : null;
+
   if (compact) {
-    return <>{renderInput()}</>;
+    return <>{renderInput()}{constraintControl}</>;
   }
 
   return (
@@ -727,6 +749,7 @@ export default function DynamicField({
         {field.required && <span className="text-red-500 ms-1">*</span>}
       </label>
       {renderInput()}
+      {constraintControl}
     </div>
   );
 }

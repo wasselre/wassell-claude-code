@@ -108,6 +108,21 @@ export function resolveConstraint(
   return { mode, tolerance_pct };
 }
 
+/** Compact bilingual summary of how many candidates each REQUIRED field excluded,
+ *  for the finder's "why is the list short" banner (highest count first). Empty
+ *  string when nothing was cut. */
+export function summarizeConstraintDrops(
+  drops: Partial<Record<ConstraintField, number>> | undefined,
+  isAr: boolean,
+): string {
+  if (!drops) return '';
+  const parts = (Object.entries(drops) as Array<[ConstraintField, number]>)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([f, n]) => `${isAr ? CONSTRAINT_LABELS[f].ar : CONSTRAINT_LABELS[f].en}: ${n}`);
+  return parts.join(isAr ? ' · ' : ', ');
+}
+
 /** True when the rep has changed a field away from its default (drives the
  *  "modified" affordance + the reset action). */
 export function isNonDefault(field: ConstraintField, c?: RequirementConstraints | null): boolean {

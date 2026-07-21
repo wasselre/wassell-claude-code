@@ -19,12 +19,11 @@ import {
   REFINE_DEFAULT, FETCH_FLOOR,
   type SortKey, type Refine, type DisplayTabKey,
 } from '@/lib/matching/finderRefine';
+import { summarizeConstraintDrops } from '@/lib/matching/constraints';
 import { setFinderHandoff } from '@/lib/matching/finderHandoff';
 import { saveFinderStash, loadFinderStash, clearFinderStash, type FinderStash } from '@/lib/matching/finderStash';
 import { setFormUnsaved } from '@/lib/staleBuild';
 import { startFreezeDetector, markActivity } from '@/lib/perf/freezeDetector';
-import FieldConstraintControl from '@/components/matching/FieldConstraintControl';
-import { CONSTRAINT_BY_SLUG, resolveConstraint, type RequirementConstraints } from '@/lib/matching/constraints';
 import FinderCard from './FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from './FinderRefinementBar';
 import FinderMapView from './FinderMapView';
@@ -140,10 +139,6 @@ export default function SuggestedProjectsView({
   // preferences, then search" start screen when editPrefsFirst defers it.
   const [hasSearched, setHasSearched] = useState(!editPrefsFirst);
   const [savingPrefs, setSavingPrefs] = useState(false);
-  // Per-field strictness (hard/soft + tolerance band). Only changed fields are
-  // stored; the rest resolve to DEFAULT_CONSTRAINTS in the engine. UI-only state —
-  // never written to the client record (unlike the preferences themselves).
-  const [constraints, setConstraints] = useState<RequirementConstraints>({});
   // The preferences-chips area (QA: collapsible so popup results get the height).
   const [showPrefs, setShowPrefs] = useState(!defaultPrefsCollapsed);
 
@@ -207,11 +202,9 @@ export default function SuggestedProjectsView({
     } else if (typeof pb === 'number' && pb > 0) {
       reqs.bedrooms = pb;
     }
-    if (Object.keys(constraints).length) reqs.constraints = constraints;
-    // Amenities set to «إلزامي» → the selected amenities become a hard gate.
-    if (resolveConstraint('amenities', constraints).mode === 'hard' && reqs.amenities?.length) {
-      reqs.required_amenities = reqs.amenities;
-    }
+    // Per-field strictness bands ride in the draft's `preference_constraints`
+    // (edited via the band control under each preference field) and are mapped by
+    // draftToMatchRequirements — nothing extra to wire here.
     return reqs;
   }
 
@@ -752,15 +745,8 @@ export default function SuggestedProjectsView({
                     recordId={clientRec?.id ?? undefined}
                     onPatch={(patch) => setEditDraft((d) => ({ ...d, ...patch }))}
                   />
-                  {CONSTRAINT_BY_SLUG[field.name] && (
-                    <FieldConstraintControl
-                      field={CONSTRAINT_BY_SLUG[field.name]!}
-                      constraints={constraints}
-                      onChange={setConstraints}
-                      isAr={isAr}
-                      droppedCount={resp?.metadata.constraint_drops?.[CONSTRAINT_BY_SLUG[field.name]!]}
-                    />
-                  )}
+                  {/* The band control renders inside DynamicField for eligible
+                      clients preference fields (writing preference_constraints). */}
                 </div>
               ))}
             </div>
@@ -848,6 +834,23 @@ export default function SuggestedProjectsView({
           )}
         </div>
       </div>
+
+      {/* Required-field exclusions — name the field(s) doing the cutting so a
+          short list isn't mistaken for "nothing available". */}
+      {summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr) && (
+        <div className="border-b border-amber-200 bg-amber-50">
+          <div className="mx-auto w-full max-w-6xl px-4 py-2 sm:px-6">
+            <div className="flex items-start gap-1.5 text-[11px] text-amber-800">
+              <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+              <span>
+                {L('حقول إلزامية استبعدت خيارات — ', 'Required fields excluded options — ')}
+                <span className="font-semibold">{summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr)}</span>
+                {L('. حوّل الحقل إلى «مفضّل» أو وسّع نطاقه لعرضها.', '. Switch the field to "Preferred" or widen its band to see them.')}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Market-source honesty notices */}
       {(market?.status === 'too_many' || market?.status === 'needs_district' || market?.status === 'unavailable') && (

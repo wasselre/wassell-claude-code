@@ -18,7 +18,7 @@ import {
   type SortKey, type Refine, type DisplayTabKey,
 } from '@/lib/matching/finderRefine';
 import FieldConstraintControl from '@/components/matching/FieldConstraintControl';
-import { CONSTRAINT_BY_SLUG, resolveConstraint, type RequirementConstraints } from '@/lib/matching/constraints';
+import { summarizeConstraintDrops, type RequirementConstraints } from '@/lib/matching/constraints';
 import FinderCard from '@/pages/Followups/components/FinderCard';
 import FinderRefinementBar, { type FinderViewMode } from '@/pages/Followups/components/FinderRefinementBar';
 import FinderMapView from '@/pages/Followups/components/FinderMapView';
@@ -105,10 +105,6 @@ export default function ProjectFinderPage() {
   // The structured preference buffer (same slug shape as the Follow-up draft).
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [bedrooms, setBedrooms] = useState<number | ''>('');
-  // Per-field strictness (hard/soft + tolerance band). Only the fields the rep
-  // actually changed are stored; everything else resolves to DEFAULT_CONSTRAINTS
-  // in the engine. UI-only state — never written to the client record.
-  const [constraints, setConstraints] = useState<RequirementConstraints>({});
   const [sources, setSources] = useState<Record<FinderSource, boolean>>({
     our_projects: true, all_projects: true, market_listings: false,
   });
@@ -246,12 +242,9 @@ export default function ProjectFinderPage() {
       clientsModel, prefDraft: draft, savedClientData: clientRec?.data ?? null, resolveLookupName,
     });
     if (typeof bedrooms === 'number' && bedrooms > 0) reqs.bedrooms = bedrooms;
-    if (Object.keys(constraints).length) reqs.constraints = constraints;
-    // Amenities set to «إلزامي» → the selected amenities become a hard gate.
-    // (required_amenities stays the explicit wire format the engine already reads.)
-    if (resolveConstraint('amenities', constraints).mode === 'hard' && reqs.amenities?.length) {
-      reqs.required_amenities = reqs.amenities;
-    }
+    // Per-field strictness bands come from the draft's `preference_constraints`
+    // (edited via the band control under each preference field, DynamicField-owned)
+    // and are mapped by draftToMatchRequirements — nothing extra to wire here.
     return reqs;
   }
 
@@ -259,7 +252,7 @@ export default function ProjectFinderPage() {
     const r = buildRequirements();
     return Object.keys(r).length > 0;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, bedrooms, constraints, resolveLookupName, clientRec]);
+  }, [draft, bedrooms, resolveLookupName, clientRec]);
 
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -317,9 +310,8 @@ export default function ProjectFinderPage() {
 
   function resetFilters() {
     controllerRef.current?.abort();
-    setDraft({});
+    setDraft({}); // clears preference_constraints too (they live in the draft now)
     setBedrooms('');
-    setConstraints({});
     setSources({ our_projects: true, all_projects: true, market_listings: false });
     setScoreThreshold(FETCH_FLOOR);
     setSortKey('score');
@@ -651,15 +643,9 @@ export default function ProjectFinderPage() {
                       recordId={selectedClientId ?? undefined}
                       onPatch={(patch) => setDraft((d) => ({ ...d, ...patch }))}
                     />
-                    {CONSTRAINT_BY_SLUG[field.name] && (
-                      <FieldConstraintControl
-                        field={CONSTRAINT_BY_SLUG[field.name]!}
-                        constraints={constraints}
-                        onChange={setConstraints}
-                        isAr={isAr}
-                        droppedCount={resp?.metadata.constraint_drops?.[CONSTRAINT_BY_SLUG[field.name]!]}
-                      />
-                    )}
+                    {/* The per-field band control renders INSIDE DynamicField for
+                        eligible clients preference fields (writing preference_constraints),
+                        so it isn't repeated here. */}
                   </div>
                 ))}
 
@@ -676,10 +662,13 @@ export default function ProjectFinderPage() {
                       <option key={n} value={n}>{n}{n === 6 ? '+' : ''}</option>
                     ))}
                   </select>
+                  {/* Bedrooms isn't a clients field here (it's a plain select), so
+                      its band control lives inline — writing the SAME
+                      preference_constraints object DynamicField uses. */}
                   <FieldConstraintControl
                     field="bedrooms"
-                    constraints={constraints}
-                    onChange={setConstraints}
+                    constraints={(draft.preference_constraints ?? {}) as RequirementConstraints}
+                    onChange={(next) => setDraft((d) => ({ ...d, preference_constraints: next }))}
                     isAr={isAr}
                     droppedCount={resp?.metadata.constraint_drops?.bedrooms}
                   />
@@ -842,6 +831,19 @@ export default function ProjectFinderPage() {
             )}
             {!loading && !error && refinedTotal > 0 && activeCount === 0 && (
               <div className="px-4 py-8 text-center text-sm text-charcoal/55">{L('لا نتائج في هذه المجموعة — جرّب تبويباً آخر.', 'Nothing in this group — try another tab.')}</div>
+            )}
+
+            {/* Required-field exclusions — so a short list points at the field
+                doing the cutting instead of reading as "nothing available". */}
+            {!loading && !error && summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr) && (
+              <div className="flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+                <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                <span>
+                  {L('حقول إلزامية استبعدت خيارات — ', 'Required fields excluded options — ')}
+                  <span className="font-semibold">{summarizeConstraintDrops(resp?.metadata.constraint_drops, isAr)}</span>
+                  {L('. حوّل الحقل إلى «مفضّل» أو وسّع نطاقه لعرضها.', '. Switch the field to "Preferred" or widen its band to see them.')}
+                </span>
+              </div>
             )}
 
             {/* Market-source honesty notice (we never silently drop listings). */}
