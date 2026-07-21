@@ -296,6 +296,34 @@ Run them from a scratch dir; they load the keys from `.env.local`.
   video must be WhatsApp-sendable; the workspace Media tab (`ProjectDetailPage`) lists only http URLs,
   file-id entries render in the classic form. Bulk run 2026-07-21: 118 videos across 31/49 members
   (backup `_backup_project_videos_20260721`). When migrating a NEW project, also grab its videos.
+- **[2026-07-21] STORE hosted videos as PUBLIC marketing-assets URLs, NOT private file-ids** (lesson from
+  the IG pass): a `project_videos` entry only surfaces on the WEBSITE (`ProjectDetailPage` filters
+  `/^https?/`), the workspace Media tab (http only), AND WhatsApp-to-client (`directVideoUrls` needs
+  `^https? … \.(mp4|m4v|webm|mov|3gp)$`) when it is an http `.mp4` URL. A private `wassel-files` file-id
+  plays ONLY in the classic record form (signed URL) — invisible everywhere else. So: download the reel/
+  short → upload to the PUBLIC `marketing-assets` bucket under `project-videos/<code>.mp4` (bucket is
+  `public=true`) → store `https://<proj>.supabase.co/storage/v1/object/public/marketing-assets/project-videos/<code>.mp4`.
+  Works on every surface, no `files` row needed. (YouTube stays as a link — embeds in-app + on site, but is
+  NOT WhatsApp-sendable; download it too if it must go to clients.)
+- **[2026-07-21] Instagram sweep recipe (Browserbase persistent context + yt-dlp cookies):** IG/Snap
+  extractors in yt-dlp are broken WITHOUT a login. Flow that works: (1) create a Browserbase CONTEXT
+  (`POST /v1/contexts`), open a session bound to it with `browserSettings.context.persist=true`, print the
+  live-view `debuggerFullscreenUrl` and have the USER type the password there (I can't enter credentials);
+  poll `ctx.cookies()` for `sessionid`; close to persist. (2) Reuse the context for a reels sweep: goto
+  `instagram.com/<handle>/reels/`, scroll, capture the clips XHR — BUT the reels-grid response yields only
+  `code`+`thumb`, NOT caption/video_url. (3) So export the context cookies to a Netscape `cookies.txt` and
+  run `yt-dlp --cookies cookies.txt --print "%(description)s" <reel_url>` per code for captions, and
+  `-f mp4/best` to download. Match captions with the same normalized-Arabic regex table as the YouTube pass
+  (hashtags: strip `_`). Rate-limit is gentle (~576 reels fine); one 429 → just retry. Developer IG handles:
+  @almajdiah, @riva_aqar (posts the yamam/zink sub-brand projects too), @alajlan_riviera, @alramzre,
+  @menaco_sa. **⚠ @yamam_sa is a CLOTHING brand, NOT the developer** — its reels are junk; get Yamam
+  projects from @riva_aqar. @zink_sa_ has embedding disabled (0 reels). IG run 2026-07-21: 576 reels swept,
+  132 caption-matched across 33 projects (+إلوفي/الماجدية 178/لورافيو/ريفييرا 58/يمام بارك 10 over the YT
+  set), all re-hosted public. Coverage after YT+IG = **36/49**. Thumbnail contact-sheets (montage the
+  unmatched reels' `thumb` URLs) confirmed the 13 remaining have NO dedicated reel on these accounts
+  (alajlan posts ريفييرا 41/38/25/19/15/12 — not our 51/52/57/59; menaco posts مينا 24/28 — not 52). Those
+  13 (الماجدية 183, فلل رفان, اوتوجراف 21, ريفييرا 51/52/57/59, نوار, مينا 52, يمام 15/16/بارك11/فلورز12)
+  are the TikTok pass's job. Video files land in the PUBLIC `marketing-assets/project-videos/` bucket.
 
 ## Per-developer API/source adapters (document each site as you learn it)
 - **ريفا العقارية (riva.sa)** → **Laravel + Livewire v3, fully SERVER-RENDERED — plain `fetch` + regex,
