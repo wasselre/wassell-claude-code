@@ -192,8 +192,10 @@ export default function MyTasksPage() {
   };
 
   const SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number; danger?: boolean }[] = [
-    { id: 'actions', label: { ar: 'الإجراءات', en: 'Actions' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
-    { id: 'waiting', label: { ar: 'بانتظار العميل', en: 'Waiting for customer' }, count: waitingTasks.length },
+    // «ملعبك / ملعب العميل» — the ball is either in YOUR court or the client's.
+    // One metaphor across both tabs (user-chosen naming, 2026-07-21).
+    { id: 'actions', label: { ar: 'ملعبك', en: 'Your court' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
+    { id: 'waiting', label: { ar: 'ملعب العميل', en: "Client's court" }, count: waitingTasks.length },
     { id: 'appointments', label: { ar: 'المواعيد', en: 'Appointments' }, count: appointments.today.length + appointments.tomorrow.length + appointments.future.length + appointments.no_show.length },
     { id: 'preferences', label: { ar: 'تفضيلات ناقصة', en: 'Incomplete Preferences' } },
     { id: 'other', label: { ar: 'مهام أخرى', en: 'Other Tasks' }, count: otherTasks.length },
@@ -249,8 +251,8 @@ export default function MyTasksPage() {
     <>
       <p className="mb-4 rounded-xl bg-[#D97706]/10 px-4 py-2.5 text-xs text-[#8a5a10]">
         {isAr
-          ? 'رسائل مُرسلة والكرة الآن في ملعب العميل. تعود المهمة إلى «الإجراءات» تلقائيًا عند رد العميل أو بعد ٢٤ ساعة صمت.'
-          : 'Messages sent — the ball is with the customer. A task returns to Actions automatically when they reply or after 24h of silence.'}
+          ? 'الكرة الآن في ملعب العميل. تعود المهمة إلى «ملعبك» تلقائيًا عند رد العميل أو بعد ٢٤ ساعة صمت.'
+          : "The ball is in the client's court. A task returns to Your court automatically when they reply or after 24h of silence."}
       </p>
       {waitingTasks.length === 0 ? (
         <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
