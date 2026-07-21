@@ -12,7 +12,7 @@ import {
 import FollowupTaskCard from './components/FollowupTaskCard';
 
 type Section = 'actions' | 'waiting' | 'appointments' | 'preferences' | 'other';
-type ApptBucket = 'today' | 'tomorrow' | 'future' | 'no_show';
+type ApptBucket = 'today' | 'tomorrow' | 'future' | 'last7' | 'older' | 'no_show';
 
 function ownerIdOf(v: unknown): string | null {
   if (Array.isArray(v)) {
@@ -118,8 +118,11 @@ export default function MyTasksPage() {
   const waCount = actionTasks.filter((t) => t.channel === 'whatsapp').length;
 
   // Appointments, bucketed by calendar day + the No-shows worklist.
+  // Past un-updated appointments split by recency (user request 2026-07-21):
+  // today / tomorrow / future / last-7-days / older, so a stale backlog from
+  // months ago never buries today's real schedule.
   const appointments = useMemo(() => {
-    const empty: Record<ApptBucket, AppRecord[]> = { today: [], tomorrow: [], future: [], no_show: [] };
+    const empty: Record<ApptBucket, AppRecord[]> = { today: [], tomorrow: [], future: [], last7: [], older: [], no_show: [] };
     if (!appointmentsModel) return empty;
     const rows = (records[appointmentsModel.id] ?? [])
       .filter((r) => {
@@ -128,7 +131,7 @@ export default function MyTasksPage() {
         return !rep || rep === currentUserId;
       });
     const t0 = startOfDay(now);
-    const out: Record<ApptBucket, AppRecord[]> = { today: [], tomorrow: [], future: [], no_show: [] };
+    const out: Record<ApptBucket, AppRecord[]> = { today: [], tomorrow: [], future: [], last7: [], older: [], no_show: [] };
     for (const r of rows) {
       const d = r.data as Record<string, unknown>;
       const status = typeof d.appointment_status === 'string' && d.appointment_status ? d.appointment_status : 'scheduled';
@@ -137,16 +140,21 @@ export default function MyTasksPage() {
       const at = typeof d.appointment_date === 'string' ? Date.parse(d.appointment_date) : NaN;
       if (Number.isNaN(at)) continue;
       const day = startOfDay(at);
-      if (day <= t0) out.today.push(r); // past-due un-updated appointments stay visible under Today
+      if (day === t0) out.today.push(r);
       else if (day === t0 + DAY_MS) out.tomorrow.push(r);
-      else out.future.push(r);
+      else if (day > t0) out.future.push(r);
+      else if (day >= t0 - 7 * DAY_MS) out.last7.push(r);
+      else out.older.push(r);
     }
     const byDate = (a: AppRecord, b: AppRecord) => {
       const av = typeof a.data.appointment_date === 'string' ? Date.parse(a.data.appointment_date) : 0;
       const bv = typeof b.data.appointment_date === 'string' ? Date.parse(b.data.appointment_date) : 0;
       return av - bv;
     };
-    out.today.sort(byDate); out.tomorrow.sort(byDate); out.future.sort(byDate); out.no_show.sort(byDate);
+    // Past buckets: most recent first (the freshest miss is the most actionable).
+    const byDateDesc = (a: AppRecord, b: AppRecord) => byDate(b, a);
+    out.today.sort(byDate); out.tomorrow.sort(byDate); out.future.sort(byDate);
+    out.last7.sort(byDateDesc); out.older.sort(byDateDesc); out.no_show.sort(byDateDesc);
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appointmentsModel, records, currentUserId, isManager, showAll]);
@@ -196,6 +204,8 @@ export default function MyTasksPage() {
     // One metaphor across both tabs (user-chosen naming, 2026-07-21).
     { id: 'actions', label: { ar: 'ملعبك', en: 'Your court' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
     { id: 'waiting', label: { ar: 'ملعب العميل', en: "Client's court" }, count: waitingTasks.length },
+    // Section badge counts only the LIVE schedule (today + tomorrow + future +
+    // no-shows) — the stale past buckets shouldn't inflate the headline number.
     { id: 'appointments', label: { ar: 'المواعيد', en: 'Appointments' }, count: appointments.today.length + appointments.tomorrow.length + appointments.future.length + appointments.no_show.length },
     { id: 'preferences', label: { ar: 'تفضيلات ناقصة', en: 'Incomplete Preferences' } },
     { id: 'other', label: { ar: 'مهام أخرى', en: 'Other Tasks' }, count: otherTasks.length },
@@ -279,6 +289,8 @@ export default function MyTasksPage() {
     { id: 'today', label: { ar: 'اليوم', en: 'Today' } },
     { id: 'tomorrow', label: { ar: 'غدًا', en: 'Tomorrow' } },
     { id: 'future', label: { ar: 'قادمة', en: 'Future' } },
+    { id: 'last7', label: { ar: 'آخر ٧ أيام', en: 'Last 7 days' } },
+    { id: 'older', label: { ar: 'ماضية', en: 'Older' } },
     { id: 'no_show', label: { ar: 'لم يحضروا', en: 'No-shows' }, danger: true },
   ];
 
@@ -306,6 +318,13 @@ export default function MyTasksPage() {
             );
           })}
         </div>
+        {(apptBucket === 'last7' || apptBucket === 'older') && rows.length > 0 && (
+          <p className="mb-3 rounded-xl bg-sand/30 px-4 py-2 text-xs text-charcoal/60">
+            {isAr
+              ? 'مواعيد فائتة لم تُحدَّث حالتها — سجّل زيارة أو حدّث الموعد (تمت / لم يحضر / أُلغيت).'
+              : 'Past appointments never updated — record a visit or set their status (completed / no-show / cancelled).'}
+          </p>
+        )}
         {rows.length === 0 ? (
           <p className="rounded-2xl bg-cream p-5 text-center text-sm text-charcoal/60">
             {apptBucket === 'no_show'
