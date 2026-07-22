@@ -266,6 +266,29 @@ export async function maybeScheduleWaha(
     p_user_id: userId,
   });
   if (error) throw new HaberchatError(502, `scheduled_whatsapp_enqueue failed: ${error.message}`);
+
+  // WhatsApp activity bridge (2026-07-22): SCHEDULING a message means the rep
+  // has handled this client NOW — arm the waiting-for-customer state at
+  // enqueue time (deadline anchored to the delivery time) instead of leaving
+  // the task in "your court" until the worker actually delivers. When the
+  // send really happens, the webhook reconciler re-arms with actual
+  // timestamps, so any drift self-corrects. Best-effort: a failure here must
+  // never fail the schedule (same posture as chatIngest).
+  try {
+    const { data: clientId, error: findErr } = await svc.rpc('find_client_id_by_phone', { p_phone: phone });
+    if (findErr) {
+      console.error('[wa-gateway] find_client_id_by_phone failed:', findErr.message);
+    } else if (typeof clientId === 'string' && clientId) {
+      const { error: recErr } = await svc.rpc('reconcile_outbound_whatsapp', {
+        p_client_id: clientId,
+        p_message_at: input.deliverAt,
+      });
+      if (recErr) console.error('[wa-gateway] schedule-time reconcile_outbound_whatsapp failed:', recErr.message);
+    }
+  } catch (err) {
+    console.error('[wa-gateway] schedule-time reconcile threw:', err instanceof Error ? err.message : String(err));
+  }
+
   return { wid: `scheduled:${data}`, status: 'scheduled', reference: input.reference ?? null };
 }
 
