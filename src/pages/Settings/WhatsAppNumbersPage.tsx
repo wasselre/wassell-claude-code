@@ -3,6 +3,7 @@ import { MessageCircle, RefreshCw, Star, Eye, EyeOff, Check, X } from 'lucide-re
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import BackToSettings from './components/BackToSettings';
+import WahaConnectionCard from './components/WahaConnectionCard';
 import type { HaberchatDevice, WhatsAppNumber } from '@/types';
 
 /**
@@ -58,6 +59,13 @@ export default function WhatsAppNumbersPage() {
   // overlay wins for friendly_name / default / active.
   const merged = useMemo(() => mergeDevicesAndOverlay(waDevicesLive, waDevices), [waDevicesLive, waDevices]);
 
+  // WAHA session powering the gateway — from the overlay row when present so a
+  // renamed session follows the DB; falls back to the deployed default.
+  const wahaSession = useMemo(
+    () => waDevices.find((d) => d.provider === 'waha' && d.session_name)?.session_name ?? 'wassel_main',
+    [waDevices],
+  );
+
   return (
     <div className="p-6 md:p-8 max-w-5xl mx-auto">
       <BackToSettings />
@@ -80,6 +88,8 @@ export default function WhatsAppNumbersPage() {
           {isAr ? 'تحديث' : 'Refresh'}
         </Button>
       </div>
+
+      <WahaConnectionCard session={wahaSession} />
 
       {refreshError && (
         <div className="card p-4 mb-4 border-red-300 bg-red-50">

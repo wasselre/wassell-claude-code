@@ -2317,6 +2317,10 @@ export interface WhatsAppNumber {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  /** Gateway backing this number. Rows created before the WAHA migration may omit both. */
+  provider?: 'haberchat' | 'waha' | null;
+  /** WAHA session name (e.g. 'wassel_main') when provider === 'waha'. */
+  session_name?: string | null;
 }
 
 /**
