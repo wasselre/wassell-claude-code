@@ -1,8 +1,12 @@
 # PRD: Marketing Operations (Template-Driven Design Generator)
 
-**Status:** Live
-**Last updated:** 2026-05-09
-**Related PRDs:** [templates-library.md](templates-library.md) (the design templates this module consumes), [record-management.md](record-management.md) (project lookup, section_mirror), [data-storage.md](data-storage.md) (Supabase + storage bucket)
+**Status:** ⛔ ARCHIVED (2026-07-22) — hidden from the UI in the dormant-module cleanup; data preserved
+**Last updated:** 2026-07-22
+**Related PRDs:** [templates-library.md](templates-library.md) (the design templates this module consumes — archived together), [record-management.md](record-management.md) (project lookup, section_mirror), [data-storage.md](data-storage.md) (Supabase + storage bucket)
+
+## ⛔ ARCHIVED (2026-07-22) — read first
+
+The Marketing Operations module was archived in the dormant-module cleanup (commit `203f410`): the `marketing_operations` model (along with its Designs-suite siblings `design_templates`, `image_presets`, `prompt_snippets`, `reel_scripts`, `competitors`) was added to `ARCHIVED_MODULE_MODELS` in `src/lib/featureFlags.ts`, hiding its sidebar entry and routing deep links to the "section archived" notice (`src/components/RetiredAssistantNotice.tsx`). **Non-destructive to data:** the model, all records, and the `marketing-assets` bucket contents remain in Supabase. Unlike the other archived modules, most of this module's code is **still in the repo** — the form fields live in the generic record form, and `api/marketing/generate.ts` + `api/_lib/imageGen.ts` are KEPT (they back the generic custom-button plumbing in `RecordFormPage` and are shared with icon generation). **Restore path:** `git revert 203f410` + remove `'marketing_operations'` from `ARCHIVED_MODULE_MODELS`. Everything below documents the feature as it existed when archived.
 
 ## What it is (in plain English)
 
@@ -71,8 +75,8 @@ The Competitors library — once an input to the agents — is preserved as a st
 | [src/pages/Records/components/DynamicField.tsx](../../src/pages/Records/components/DynamicField.tsx) | Image upload UI for `raw_photo` / `cleaned_photo` / `final_design`. |
 | [src/lib/imageUpload.ts](../../src/lib/imageUpload.ts) | Wraps Supabase Storage `marketing-assets` bucket. |
 | [src/lib/templateUtils.ts](../../src/lib/templateUtils.ts) | `substituteTemplate({{slug}})` + shared template-variable types. |
-| [api/marketing/generate.ts](../../api/marketing/generate.ts) | Two-phase orchestrator. Loads record + template + project, resolves variables, runs Higgsfield, writes results back via `record_save`. |
-| [api/_lib/higgsfield.ts](../../api/_lib/higgsfield.ts) | Cleanup + design adapters + status poller. Stub mode for offline dev. |
+| [api/marketing/generate.ts](../../api/marketing/generate.ts) | Two-phase orchestrator. Loads record + template + project, resolves variables, runs the image generation, writes results back via `record_save`. **KEPT after the 2026-07-22 archive** (generic custom-button plumbing). |
+| `api/_lib/higgsfield.ts` | **No longer exists** — the Higgsfield adapter was superseded by the fal.ai adapter `api/_lib/imageGen.ts` (KEPT; also used by icon generation). This PRD's Higgsfield prose predates that swap. |
 
 ## Open questions / known limitations
 

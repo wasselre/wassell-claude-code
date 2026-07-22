@@ -1,8 +1,12 @@
 # PRD: Decks (AI-generated PowerPoints)
 
-**Status:** Live (v2 — queue-based, refactored off Vercel Edge 2026-05-17)
-**Last updated:** 2026-06-10
+**Status:** ⛔ ARCHIVED (2026-07-22) — removed from the UI in the dormant-module cleanup; all data preserved
+**Last updated:** 2026-07-22
 **Related PRDs:** [navigation-layout.md](navigation-layout.md), [data-storage.md](data-storage.md), [record-management.md](record-management.md), [ai-agent.md](ai-agent.md), [logs.md](logs.md)
+
+## ⛔ ARCHIVED (2026-07-22) — read first
+
+The Decks module was archived in the dormant-module cleanup (commit `203f410`): the `decks` model was added to `ARCHIVED_MODULE_MODELS` in `src/lib/featureFlags.ts`, which hides its sidebar entry and routes any deep link to the "section archived" notice (`src/components/RetiredAssistantNotice.tsx`). The page + client code and the two API endpoints were **deleted**: `src/pages/Decks/**`, `src/lib/decks/**`, `api/generate-deck.ts`, `api/sign-deck-url.ts`, plus the `App.tsx` dispatcher branches. **Non-destructive to data:** the `decks` model, every deck record, the generated `.pptx` files in the `wassel-decks` bucket, and the `deck_jobs` queue table all remain in Supabase. The Fly.io worker's deck pipeline (`worker/src/runDeckJob.ts` + the poll loop) is also untouched — its queue simply stays empty. **Restore path:** `git revert 203f410` (brings back the deleted code) + remove `'decks'` from `ARCHIVED_MODULE_MODELS`. Everything below documents the feature as it existed when archived.
 
 ## What it is (in plain English)
 A page inside the Wassell app where any user can describe a presentation in plain Arabic or English ("a 6-slide capability deck for a partner meeting in Riyadh, brand-compliant, mostly visual"), click Generate, and a few minutes later download a finished, brand-compliant `.pptx` file. The deck is created by Claude in Anthropic's cloud — the user's machine doesn't need to be running. Past decks are listed on the left pane; the right pane shows the current generation's progress or the finished file.
@@ -80,11 +84,14 @@ v1 used a Vercel Edge function that held an SSE stream open for the entire Anthr
   - `storage.objects` (bucket `wassel-decks`) — one `.pptx` per successful generation at `{auth.uid()}/{record_id}/{filename}`.
 
 ## Key files
+
+> **Archive note (2026-07-22):** every `src/pages/Decks/**` and `src/lib/decks/**` row below, plus `api/generate-deck.ts` and `api/sign-deck-url.ts`, was **DELETED** in commit `203f410` (restore via `git revert`). The `worker/**`, `supabase/migrations/**`, skill-upload scripts, and seed rows still exist.
+
 | File | What it does |
 |---|---|
 | `src/data/seedModels.ts` | Defines the `decks` system model. Includes `size` field added 2026-05-10. The `phase` / `phase_detail` / `error_message` fields are written by the worker and read by the SPA but aren't declared in the seed schema — they live on `record.data` as ad-hoc string fields. |
 | `src/lib/schemaMigrations.ts` | `healDecksSchema` appends any missing-by-name fields from the seed shape on existing installs. |
-| `src/App.tsx` | Dispatchers: `modelName === 'decks'` in both list + detail routes → render `DecksPage`. |
+| `src/App.tsx` | The `modelName === 'decks'` dispatcher branches were removed 2026-07-22 — `isRetiredModel('decks')` now routes both list + detail to `RetiredAssistantNotice`. |
 | `src/pages/Decks/DecksPage.tsx` | Split-pane layout, deck list, new-deck button. |
 | `src/pages/Decks/components/DeckRightPane.tsx` | Toggles between BriefForm / GeneratingView / ReadyView / FailedView based on `record.data.status` (no SSE — Realtime drives all updates). Includes a 6-min "looks stuck → Try again" detector keyed off `record.updated_at` + a 15s heartbeat. BriefForm hosts the title/brief/language/model/size selectors, the attachment drop-zone, AND the "Choose from Files" button → `PickFromFilesModal` (`addFromLibrary` mirrors the local-upload `addFiles` flow). |
 | `src/pages/Decks/components/PickFromFilesModal.tsx` | Folder-navigating browser over the Files library for picking ONE deck-readable file to attach. Reads via the RLS-gated `listFolders`/`listFiles`; greys out unsupported types via `isDeckAttachableName`. Returns the chosen `FileRow` to the parent, which copies it into the deck. |

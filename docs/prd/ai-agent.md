@@ -1,11 +1,14 @@
 # PRD: AI Agent
 
-**Status:** ⛔ UNWIRED (retired under `PROJECT_FINDER_ONLY`) — code + data kept for rollback
-**Last updated:** 2026-06-28
+**Status:** ⛔ ARCHIVED (2026-07-22) — code deleted in the dormant-module cleanup; model + conversation records preserved
+**Last updated:** 2026-07-22
 **Related PRDs:** [project-matching-assistant.md](project-matching-assistant.md), [navigation-layout.md](navigation-layout.md), [data-storage.md](data-storage.md), [record-management.md](record-management.md), [chats.md](chats.md), [logs.md](logs.md)
 
-## Retired — read first (2026-06-28)
-The assistant direction was narrowed to a single deterministic **Project Finder** (see [project-matching-assistant.md](project-matching-assistant.md)). The broad conversational **AI sales agent** described here is **unwired**, not deleted: the static build flag `PROJECT_FINDER_ONLY` (`src/lib/featureFlags.ts`, currently `true`) hides the `ai_chats` model from the sidebar and routes its page to a `RetiredAssistantNotice`. The `/api/agent` endpoint, `api/_lib/aiAgent.ts`, the `ai_chats` model row, and all existing conversation records remain intact — a single flag flip to `false` restores the surface. Everything below describes the **dormant** feature for reference/rollback.
+## ⛔ ARCHIVED (2026-07-22) — read first
+
+The AI sales agent was first **unwired** on 2026-06-28 (the assistant direction was narrowed to the deterministic **Project Finder** — see [project-matching-assistant.md](project-matching-assistant.md)): the static build flag `PROJECT_FINDER_ONLY` (`src/lib/featureFlags.ts`) hid the `ai_chats` model from the sidebar and routed its page to `RetiredAssistantNotice`.
+
+On **2026-07-22** the dormant code was **deleted** in the module cleanup (commit `203f410`): `src/pages/AiAgent/**`, `src/lib/aiAgent/**`, `api/agent.ts`, and `api/_lib/aiAgent.ts` are gone, along with the `App.tsx` dispatcher branches. **Non-destructive to data:** the `ai_chats` model row and every conversation record remain in Supabase; deep links land on the "section archived" notice (`src/components/RetiredAssistantNotice.tsx`, copy generalized from "assistant retired" to "section archived"). **Restore path:** `git revert 203f410` + set `PROJECT_FINDER_ONLY = false` (a flag flip alone is no longer enough — the code must come back from git first). Everything below documents the feature as it existed when archived.
 
 ## What it is (in plain English)
 A chat-with-an-AI page inside the Wassell app. The AI plays the role of a Wassel sales assistant: it answers customer-style questions about the projects Wassel is marketing, asks clarifying questions, and — when the conversation is ripe — captures a lead into the `clients` model. Staff use this page to test and tune the agent today; the same brain will later be exposed to customers via Haberchat or ManyChat, unchanged.
@@ -63,15 +66,15 @@ Wassel's sales pipeline runs on WhatsApp. Reps spend a lot of time answering the
 ## Key files
 | File | What it does |
 |---|---|
-| `src/lib/featureFlags.ts` | `PROJECT_FINDER_ONLY` + `isRetiredAssistantModel('ai_chats')` — the flag that unwires this assistant. |
-| `src/components/RetiredAssistantNotice.tsx` | Rendered in place of the chat page when someone deep-links to `ai_chats` while the flag is on. |
+| `src/lib/featureFlags.ts` | `PROJECT_FINDER_ONLY` + `isRetiredAssistantModel('ai_chats')` + `isRetiredModel` — the flags that unwire this assistant. |
+| `src/components/RetiredAssistantNotice.tsx` | Rendered in place of the chat page when someone deep-links to `ai_chats` (copy: "this section has been archived"). |
 | `src/data/seedModels.ts` | Defines the `ai_chats` system model (registered in `SEED_MODELS`). |
-| `src/App.tsx` | Dispatchers: `modelName === 'ai_chats'` → render `AiAgentPage`, **but `isRetiredAssistantModel` short-circuits to `RetiredAssistantNotice` first** while `PROJECT_FINDER_ONLY` is on. `Sidebar.tsx` hides the nav item the same way. |
-| `src/pages/AiAgent/AiAgentPage.tsx` | Split-pane layout, conversation list, new-chat button. |
-| `src/pages/AiAgent/components/AiChatThread.tsx` | Right-pane transcript, streaming UI, send flow, persistence. |
-| `src/lib/aiAgent/client.ts` | Browser-side SSE fetch helper — decodes `data: <json>` events from `/api/agent`. |
-| `api/agent.ts` | Vercel Edge function — owns the Claude tool-use loop and the SSE stream back to the browser. |
-| `api/_lib/aiAgent.ts` | System prompt, tool schemas, `executeAgentTool` (the Supabase reads/writes that back each tool). |
+| `src/App.tsx` | Both dispatchers short-circuit via `isRetiredModel` → `RetiredAssistantNotice`; the `AiAgentPage` branches were removed 2026-07-22. `Sidebar.tsx` hides the nav item the same way. |
+| `src/pages/AiAgent/AiAgentPage.tsx` | **DELETED 2026-07-22** (commit `203f410`) — was: split-pane layout, conversation list, new-chat button. |
+| `src/pages/AiAgent/components/AiChatThread.tsx` | **DELETED 2026-07-22** — was: right-pane transcript, streaming UI, send flow, persistence. |
+| `src/lib/aiAgent/client.ts` | **DELETED 2026-07-22** — was: browser-side SSE fetch helper for `/api/agent`. |
+| `api/agent.ts` | **DELETED 2026-07-22** — was: the Vercel Edge function owning the Claude tool-use loop + SSE stream. |
+| `api/_lib/aiAgent.ts` | **DELETED 2026-07-22** — was: system prompt, tool schemas, `executeAgentTool`. |
 
 ## Open questions / known limitations
 - **Only `our_projects` is searched.** The other two project models (`all_projects`, `targeted_projects`) aren't exposed yet — customers only ask about what Wassel is actively marketing. Trivial to add when needed.
