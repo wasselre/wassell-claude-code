@@ -7,9 +7,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from '../env.js';
 import {
-  YouTube, parseTiktokVideo, parseInstagramPost, ProviderError,
+  YouTube, ProviderError,
   type NormalizedContentPost, type NormalizedMetrics, type ProviderKey,
 } from './providers.js';
+import { collectViaApify } from './apifyLifecycle.js';
 import {
   attributeCaption, shouldSnapshot, browserbaseFallbackEligible,
   type ProjectAlias, type Metrics,
@@ -100,6 +101,7 @@ async function ingestPost(
 export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stats: RunStats }> {
   const { supabase: sb, env, job } = ctx;
   const stats: RunStats = { received: 0, inserted: 0, updated: 0, skipped: 0, errors: [] };
+  let apifyCost: Record<string, unknown> | undefined;
 
   // account context
   const { data: acct } = job.social_account_id
@@ -136,12 +138,10 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       if (job.provider === 'youtube') {
         batch = await YouTube.collect({ platform: 'youtube', handle: acct!.handle as string, externalAccountId: acct!.external_account_id as string | undefined, cursor: (acct!.sync_cursor as string) ?? null, mode: job.kind as 'incremental' | 'backfill', limit });
       } else if (job.provider === 'apify') {
-        // Apify collection is invoked via api/_lib apify provider in the api layer;
-        // the worker path expects pre-fetched items in params.items (set by the
-        // apify-run webhook flow) OR raw dataset rows. Parse them here.
-        const items = Array.isArray(job.params.items) ? (job.params.items as Array<Record<string, unknown>>) : [];
-        const parse = platform === 'tiktok' ? parseTiktokVideo : parseInstagramPost;
-        batch = { posts: items.map((it) => parse(it, acct!.handle as string)).filter((p): p is NormalizedContentPost => p !== null), nextCursor: null };
+        // Full Apify lifecycle (start run → poll → dataset) — the ONE implementation.
+        const result = await collectViaApify(sb, { platform, handle: acct!.handle as string, limit });
+        apifyCost = result.cost;
+        batch = { posts: result.posts, nextCursor: null };
       } else {
         // browserbase fallback path: items pre-scraped into params.items
         const items = Array.isArray(job.params.items) ? (job.params.items as NormalizedContentPost[]) : [];
@@ -182,7 +182,7 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       stats.skipped = 1;
     }
 
-    await sb.rpc('mkt_ingestion_run_finish', { p_run_id: runId, p_status: stats.errors.length ? 'partial' : 'succeeded', p_received: stats.received, p_inserted: stats.inserted, p_updated: stats.updated, p_skipped: stats.skipped, p_errors: stats.errors.slice(0, 20) });
+    await sb.rpc('mkt_ingestion_run_finish', { p_run_id: runId, p_status: stats.errors.length ? 'partial' : 'succeeded', p_received: stats.received, p_inserted: stats.inserted, p_updated: stats.updated, p_skipped: stats.skipped, p_errors: stats.errors.slice(0, 20), p_cost: apifyCost ?? null });
     return { status: 'ok', stats };
   } catch (e) {
     const err = e instanceof ProviderError ? e : new ProviderError(e instanceof Error ? e.message : String(e));

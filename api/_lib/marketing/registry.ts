@@ -5,36 +5,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { MarketingIntelligenceProvider, ProviderKey, ProviderHealthResult } from './types';
 import { YouTubeProvider } from './providers/youtube';
-import { ApifyProvider, type ActorConfig } from './providers/apify';
+import { ApifyProvider } from './providers/apify';
 import { BrowserbaseProvider } from './providers/browserbase';
 
-/** Reads the DB actor registry (mkt_actor_configs) for the Apify provider. */
-function makeActorResolver(svc: SupabaseClient) {
-  return async (sourceType: string): Promise<ActorConfig | null> => {
-    const { data, error } = await svc
-      .from('mkt_actor_configs')
-      .select('source_type, actor_id, result_parser, is_enabled')
-      .eq('source_type', sourceType)
-      .order('is_enabled', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (error || !data) return null;
-    return {
-      sourceType: data.source_type as string,
-      actorId: data.actor_id as string,
-      resultParser: data.result_parser as string,
-      isEnabled: Boolean(data.is_enabled),
-    };
-  };
-}
-
-/** Build the provider for a key. `svc` (service-role) is needed by Apify to read
- *  its actor registry; the worker additionally injects the Browserbase scraper. */
-export function getProvider(key: ProviderKey, svc: SupabaseClient): MarketingIntelligenceProvider {
+/** Build the provider for a key. The API-side providers are HEALTH-ONLY for
+ *  Apify/Browserbase (collection runs in the worker); only YouTube collects here. */
+export function getProvider(key: ProviderKey, _svc: SupabaseClient): MarketingIntelligenceProvider {
   switch (key) {
     case 'youtube': return new YouTubeProvider();
-    case 'apify': return new ApifyProvider(makeActorResolver(svc));
-    case 'browserbase': return new BrowserbaseProvider(); // worker injects scrapeFn
+    case 'apify': return new ApifyProvider();          // health-only; lifecycle is worker-side
+    case 'browserbase': return new BrowserbaseProvider(); // health-only; worker injects scrapeFn
     default: throw new Error(`Unknown provider: ${key}`);
   }
 }

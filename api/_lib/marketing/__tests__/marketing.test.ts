@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { canonicalizeUrl, contentFingerprint, withDedupKeys, dedupeBatch } from '../normalize';
 import { YouTubeProvider } from '../providers/youtube';
-import { ApifyProvider, type ActorConfig } from '../providers/apify';
+import { ApifyProvider } from '../providers/apify';
 import { BrowserbaseProvider } from '../providers/browserbase';
 import { ProviderError, type NormalizedContentPost } from '../types';
 
@@ -57,8 +57,7 @@ describe('provider health — credentials not configured', () => {
 
   it('Apify reports not_configured without a token', async () => {
     vi.stubEnv('APIFY_API_TOKEN', '');
-    const resolve = async (): Promise<ActorConfig | null> => null;
-    const h = await new ApifyProvider(resolve).validateConnection();
+    const h = await new ApifyProvider().validateConnection();
     expect(h.health).toBe('not_configured');
   });
 
@@ -143,13 +142,9 @@ describe('YouTube provider — pagination + normalization', () => {
 describe('Apify + Browserbase fallback contracts', () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
-  it('Apify refuses a disabled actor config (config_invalid)', async () => {
-    vi.stubEnv('APIFY_API_TOKEN', 'tok');
-    const resolve = async (): Promise<ActorConfig> => ({
-      sourceType: 'tiktok_profile', actorId: 'clockworks/tiktok-scraper', resultParser: 'parseTiktokVideos', isEnabled: false,
-    });
-    await expect(new ApifyProvider(resolve).collectAccountContent({ platform: 'tiktok', handle: 'x', mode: 'incremental' }))
-      .rejects.toThrow(ProviderError);
+  it('Apify (API side) is health-only — collection throws "runs in worker"', async () => {
+    await expect(new ApifyProvider().collectAccountContent({ platform: 'tiktok', handle: 'x', mode: 'incremental' }))
+      .rejects.toThrow(/worker/i);
   });
 
   it('Browserbase fallback throws without an injected scraper (never fakes)', async () => {
