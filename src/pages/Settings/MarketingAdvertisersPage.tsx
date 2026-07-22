@@ -18,10 +18,12 @@ const CONF_CLS: Record<string, string> = {
   high: 'bg-green-100 text-green-800', medium: 'bg-amber-100 text-amber-800', low: 'bg-red-100 text-red-800', manual: 'bg-blue-100 text-blue-800',
 };
 
-function ReasonChips({ reasons, isAr }: { reasons: AdvertiserCandidate['reasons']; isAr: boolean }) {
+function ReasonChips({ reasons, isAr }: { reasons: AdvertiserCandidate['reasons'] | undefined; isAr: boolean }) {
+  const list = reasons ?? [];
+  if (list.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1 mt-1">
-      {reasons.map((r, i) => (
+      {list.map((r, i) => (
         <span key={i} className={`text-[11px] px-1.5 py-0.5 rounded-full ${r.delta >= 0 ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
           {isAr ? r.label_ar : r.label_en} {r.delta >= 0 ? '+' : ''}{r.delta}
         </span>
@@ -80,11 +82,21 @@ export default function MarketingAdvertisersPage() {
       <div className="space-y-4">
         {orgs.map((o) => {
           const name = isAr ? (o.name_ar ?? o.name_en) : (o.name_en ?? o.name_ar);
-          const cands = o.meta_candidates ?? [];
+          // Normalize candidates — older discovery runs stored bare {pageId,pageName,
+          // pageUrl} with no score/confidence/reasons; default them so the UI is robust.
+          const cands: AdvertiserCandidate[] = (o.meta_candidates ?? []).map((c) => ({
+            ...c,
+            score: typeof c.score === 'number' ? c.score : 0,
+            confidence: c.confidence ?? 'low',
+            isMarketplace: Boolean(c.isMarketplace),
+            reasons: Array.isArray(c.reasons) ? c.reasons : [],
+            landingDomains: Array.isArray(c.landingDomains) ? c.landingDomains : [],
+          }));
+          const audit = Array.isArray(o.audit) ? o.audit : [];
           const nonMkt = cands.filter((c) => !c.isMarketplace);
           const ambiguous = !o.meta_confirmed && nonMkt.length >= 2 && Math.abs((nonMkt[0]?.score ?? 0) - (nonMkt[1]?.score ?? 0)) < 25;
           const allThirdParty = !o.meta_confirmed && cands.length > 0 && nonMkt.every((c) => c.confidence === 'low');
-          const pageChanges = o.audit.filter((a) => a.event === 'page_id_changed');
+          const pageChanges = audit.filter((a) => a.event === 'page_id_changed');
           return (
             <section key={o.id} className="card p-4">
               <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
