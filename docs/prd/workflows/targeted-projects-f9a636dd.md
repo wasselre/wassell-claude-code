@@ -5,8 +5,8 @@
 # Workflow: Targeted Projects / المشاريع - المستهدفة
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-06-11
-**Workflow id:** `f9a636dd-f83c-4a07-8190-09ec1d886dd8`   ·   **Active:** yes
+**Last updated (from DB):** 2026-07-22
+**Workflow id:** `f9a636dd-f83c-4a07-8190-09ec1d886dd8`   ·   **Active:** no
 **Group:** Marketing
 **Trigger:** When a record is updated
 **Trigger model:** All Projects / جميع المشاريع `all_projects`
