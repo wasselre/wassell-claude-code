@@ -17,8 +17,8 @@ import type { AppRecord } from '@/types';
  * AI Project Message generator for the chat_templates editor. Flow:
  *   1. Select one or more our_projects records (search across the resolved
  *      facts — name / city / district / unit types / price).
- *   2. Generate one bilingual (ar + en) WhatsApp message PER project, in
- *      parallel, via /api/templates/generate-project-message.
+ *   2. Compose one bilingual (ar + en) WhatsApp message PER project,
+ *      client-side (deterministic — see composeProjectMessage below).
  *   3. Review each result (edit ar/en, regenerate, skip) and save it as a
  *      chat_templates record (language='both', linked to all_projects via
  *      `project_id`). Nothing is saved without the user pressing Save.

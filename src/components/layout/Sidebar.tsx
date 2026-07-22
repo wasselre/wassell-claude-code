@@ -49,7 +49,7 @@ import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import { hasPermission, canAccessPage, resolveEffectiveProfile } from '@/lib/permissions';
 import { CUSTOM_PAGES } from '@/lib/customPages';
-import { isRetiredAssistantModel } from '@/lib/featureFlags';
+import { isRetiredModel } from '@/lib/featureFlags';
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
 
@@ -157,11 +157,12 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   // user edits it via /settings/website rather than navigating to a model.
   const SETTINGS_ONLY_MODEL_NAMES = new Set(['site_settings', 'project_details']);
 
-  // Hide retired broad-assistant models under the Project-Finder-only direction
-  // (ai_chats / copywriter_chats / matching_chats). Non-destructive — the models
+  // Hide retired assistants (Project-Finder-only direction) AND archived
+  // modules (decks, image studio, data migration wizard, Designs suite — see
+  // ARCHIVED_MODULE_MODELS in featureFlags.ts). Non-destructive — the models
   // and their data still exist; they're just no longer surfaced in nav.
   const navHidden = (m: typeof models[number]) =>
-    SETTINGS_ONLY_MODEL_NAMES.has(m.name) || isRetiredAssistantModel(m.name);
+    SETTINGS_ONLY_MODEL_NAMES.has(m.name) || isRetiredModel(m.name);
 
   const ungroupedModels = models
     .filter((m) => !m.group_id && canView(m.id) && !navHidden(m))

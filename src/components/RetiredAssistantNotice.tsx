@@ -2,10 +2,12 @@ import { useTranslation } from 'react-i18next';
 import { Compass } from 'lucide-react';
 
 /**
- * Shown when someone deep-links to a retired broad-assistant model
- * (ai_chats / copywriter_chats / matching_chats) under PROJECT_FINDER_ONLY. The
- * assistant direction was narrowed to the deterministic Project Finder, so these
- * conversational AI surfaces are unwired. Non-destructive: the data still exists.
+ * Shown when someone deep-links to a retired or archived model — the retired
+ * broad-assistant models (ai_chats / copywriter_chats / matching_chats, under
+ * PROJECT_FINDER_ONLY) or any ARCHIVED_MODULE_MODELS entry (decks, image_chats,
+ * data_migration, the Designs suite…). Non-destructive: the models and their
+ * records still exist in the database; only the UI surfaces are unwired.
+ * See src/lib/featureFlags.ts for both lists.
  */
 export default function RetiredAssistantNotice() {
   const { i18n } = useTranslation();
@@ -16,12 +18,12 @@ export default function RetiredAssistantNotice() {
         <Compass size={32} />
       </div>
       <h2 className="text-xl font-semibold text-charcoal">
-        {isAr ? 'تم إيقاف هذا المساعد' : 'This assistant has been retired'}
+        {isAr ? 'تمت أرشفة هذا القسم' : 'This section has been archived'}
       </h2>
       <p className="max-w-md text-charcoal/60 leading-relaxed">
         {isAr
-          ? 'تم تركيز المنتج على «الباحث عن المشاريع» — أداة دقيقة لإيجاد وترتيب المشاريع المناسبة للعميل. استخدم زر «المشاريع المقترحة» في مساحة عمل المتابعة.'
-          : 'The product is now focused on the Project Finder — a precise tool that finds and ranks the right projects for a client. Use the “Suggested Projects” button in the Follow-up workspace.'}
+          ? 'هذا القسم لم يعد مستخدماً وتمت أرشفته — بياناته محفوظة ولم تُحذف. إذا احتجت الوصول إليه مجدداً تواصل مع مدير النظام.'
+          : 'This section is no longer in use and has been archived — its data is preserved, not deleted. If you need it again, contact your administrator.'}
       </p>
     </div>
   );

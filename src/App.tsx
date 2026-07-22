@@ -37,14 +37,8 @@ import ProjectDetailsListPage from '@/pages/Settings/ProjectDetailsListPage';
 import ProjectDetailsBridgePage from '@/pages/Settings/ProjectDetailsBridgePage';
 import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
-import AiAgentPage from '@/pages/AiAgent/AiAgentPage';
-import CopywriterPage from '@/pages/Copywriter/CopywriterPage';
-import MatchingPage from '@/pages/Matching/MatchingPage';
 import RetiredAssistantNotice from '@/components/RetiredAssistantNotice';
-import { isRetiredAssistantModel } from '@/lib/featureFlags';
-import AssistantInsightsPage from '@/pages/Matching/AssistantInsightsPage';
-import DecksPage from '@/pages/Decks/DecksPage';
-import DataMigrationPage from '@/pages/DataMigration/DataMigrationPage';
+import { isRetiredModel } from '@/lib/featureFlags';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
 import SuggestedProjectsPage from '@/pages/Followups/SuggestedProjectsPage';
 import ClientProjectsPage from '@/pages/Clients/ClientProjectsPage';
@@ -71,8 +65,6 @@ import SalesStudioHomePage from '@/pages/SalesStudio/SalesStudioHomePage';
 import ProcessJourneyPage from '@/pages/SalesStudio/ProcessJourneyPage';
 import ExperimentsPage from '@/pages/SalesStudio/ExperimentsPage';
 import ExperimentDetailPage from '@/pages/SalesStudio/ExperimentDetailPage';
-import ImageChatsPage from '@/pages/ImageChats/ImageChatsPage';
-import TemplatesLibraryPage from '@/pages/Templates/TemplatesLibraryPage';
 import FilesPage from '@/pages/Files/FilesPage';
 import DocumentEditorPage from '@/pages/Documents/DocumentEditorPage';
 import PublicShareFilePage from '@/pages/PublicShare/PublicShareFilePage';
@@ -120,8 +112,8 @@ function RecordFormPageRoute() {
 function RecordDetailDispatcher() {
   const { modelName, recordId } = useParams();
   const [searchParams] = useSearchParams();
-  // Retired broad-assistant models (Project-Finder-only direction) — unwired.
-  if (isRetiredAssistantModel(modelName)) return <RetiredAssistantNotice />;
+  // Retired assistants + archived modules — unwired (data preserved in DB).
+  if (isRetiredModel(modelName)) return <RetiredAssistantNotice />;
   if (modelName === 'followups' && searchParams.get('generic') !== '1') {
     // Custom guided "Follow-up Workspace" replaces the generic form. The
     // generic form stays reachable for advanced editing via ?generic=1 (the
@@ -153,37 +145,6 @@ function RecordDetailDispatcher() {
     // subscription doesn't flap, and the right-pane swap is keyed
     // internally.
     return <ChatsSplitPage />;
-  }
-  if (modelName === 'ai_chats') {
-    // AiAgentPage is a split-pane chat UI just like ChatsSplitPage — it
-    // reads :recordId from useParams and handles its own right-pane
-    // mount keying.
-    return <AiAgentPage />;
-  }
-  if (modelName === 'copywriter_chats') {
-    // CopywriterPage is the same split-pane chat UI as AiAgentPage — the
-    // real-estate copywriter agent (api/copywriter). Reads :recordId itself.
-    return <CopywriterPage />;
-  }
-  if (modelName === 'matching_chats') {
-    // MatchingPage is the same split-pane chat UI — the live-call Project
-    // Matching Assistant (api/match). Reads :recordId itself.
-    return <MatchingPage />;
-  }
-  if (modelName === 'decks') {
-    // DecksPage is a split-pane deck-builder UI — reads :recordId itself,
-    // handles brief form / progress / ready / failed states internally.
-    return <DecksPage />;
-  }
-  if (modelName === 'data_migration') {
-    // DataMigrationPage is a split-pane import wizard — reads :recordId
-    // itself and drives its own multi-step state machine off record.data.
-    return <DataMigrationPage />;
-  }
-  if (modelName === 'image_chats') {
-    // ImageChatsPage is a split-pane "mini Higgsfield" chat UI — reads
-    // :recordId itself, handles its own message-thread mount keying.
-    return <ImageChatsPage />;
   }
   if (modelName === 'chat_templates') {
     // Custom editor — generic record form doesn't handle the file upload
@@ -219,28 +180,10 @@ function RecordNewDispatcher() {
  */
 function RecordListDispatcher() {
   const { modelName } = useParams();
-  // Retired broad-assistant models (Project-Finder-only direction) — unwired.
-  if (isRetiredAssistantModel(modelName)) return <RetiredAssistantNotice />;
+  // Retired assistants + archived modules — unwired (data preserved in DB).
+  if (isRetiredModel(modelName)) return <RetiredAssistantNotice />;
   if (modelName === 'chats') {
     return <ChatsSplitPage />;
-  }
-  if (modelName === 'ai_chats') {
-    return <AiAgentPage />;
-  }
-  if (modelName === 'copywriter_chats') {
-    return <CopywriterPage />;
-  }
-  if (modelName === 'matching_chats') {
-    return <MatchingPage />;
-  }
-  if (modelName === 'decks') {
-    return <DecksPage />;
-  }
-  if (modelName === 'data_migration') {
-    return <DataMigrationPage />;
-  }
-  if (modelName === 'image_chats') {
-    return <ImageChatsPage />;
   }
   if (modelName === 'clients') {
     // Custom Clients cockpit (KPIs + filters + sales-prioritized list). Falls
@@ -256,13 +199,6 @@ function RecordListDispatcher() {
     // Curated sales portfolio dashboard over all_projects. Falls back to the
     // generic list when ?generic=1.
     return <OurProjectsPortfolioPage />;
-  }
-  if (modelName === 'design_templates') {
-    // Card-grid library instead of the generic record-list table — each
-    // template's reference image is its primary identifier, so a visual
-    // browse beats column rows. Edit + delete are still routed to the
-    // standard record form via /model/design_templates/<id>.
-    return <TemplatesLibraryPage />;
   }
   // Singleton-config models — the list view is meaningless (always exactly
   // one record) and confusing (looks like a normal model, but isn't). Punt
@@ -366,7 +302,6 @@ export default function App() {
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
-          <Route path="/sales/assistant-insights" element={<RequireAdmin><AssistantInsightsPage /></RequireAdmin>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           {/* Full-page Suggested Projects finder, scoped to a follow-up (same tab;

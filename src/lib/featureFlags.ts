@@ -29,9 +29,37 @@ export const PROJECT_FINDER_ONLY = true;
  *  (The models + their records remain in the DB — this only hides the surfaces.) */
 export const RETIRED_ASSISTANT_MODELS = ['ai_chats', 'copywriter_chats', 'matching_chats'] as const;
 
+/**
+ * ARCHIVED MODULES (2026-07-22): dormant product areas removed from the UI on
+ * the user's request — the deck builder, the in-app Data Migration wizard
+ * (superseded by the Claude-driven /migrate-project flow), the Image Studio,
+ * and the Designs/creative suite models. Like the retired assistants above,
+ * this is NON-DESTRUCTIVE: every model + record stays in the DB; nav hides the
+ * entries and deep links land on the archived-module notice. Restore = remove
+ * the name from this list (the page code itself was deleted — restore it from
+ * git history, see commit that introduced this list).
+ */
+export const ARCHIVED_MODULE_MODELS = [
+  'data_migration',
+  'decks',
+  'image_chats',
+  'design_templates',
+  'marketing_operations',
+  'image_presets',
+  'competitors',
+  'reel_scripts',
+  'prompt_snippets',
+] as const;
+
 /** True when `name` is a retired broad-assistant model AND the narrowing flag is on. */
 export function isRetiredAssistantModel(name: string | null | undefined): boolean {
   return PROJECT_FINDER_ONLY && !!name && (RETIRED_ASSISTANT_MODELS as readonly string[]).includes(name);
+}
+
+/** True when `name` is hidden from the UI — retired assistant OR archived module. */
+export function isRetiredModel(name: string | null | undefined): boolean {
+  if (isRetiredAssistantModel(name)) return true;
+  return !!name && (ARCHIVED_MODULE_MODELS as readonly string[]).includes(name);
 }
 
 let cache: Promise<Record<string, boolean>> | null = null;
