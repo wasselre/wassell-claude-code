@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin,
+  Globe, LayoutTemplate, FileText, MapPin, Activity,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -196,6 +196,17 @@ const CARDS: SettingsCard[] = [
     color: '#B8734F',
     bg: '#B8734F14',
     route: '/settings/geo-elements',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'مراقبة التسويق',
+    titleEn: 'Marketing Operations',
+    descAr: 'صحة التجميع، المزوّدون، قائمة المهام، التكلفة، والتنبيهات التشغيلية لنظام ذكاء التسويق',
+    descEn: 'Collection health, providers, queue, cost, and operational alerts for Marketing Intelligence',
+    icon: Activity,
+    color: '#8E4E3A',
+    bg: '#8E4E3A14',
+    route: '/settings/marketing-ops',
     adminOnly: true,
   },
 ];

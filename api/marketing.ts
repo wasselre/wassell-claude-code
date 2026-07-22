@@ -50,6 +50,12 @@ interface Body {
   organization_id?: string;
   limit?: number;
   page_id?: string;
+  // ops monitoring
+  alert_id?: string;
+  alert_status?: 'open' | 'acknowledged' | 'resolved';
+  status?: string;
+  metric?: string;
+  days?: number;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
@@ -380,6 +386,120 @@ export default async function handler(req: Request): Promise<Response> {
         if (!acc) return jsonError(400, 'account_id required');
         await svc.from('mkt_social_accounts').update({ collection_enabled: Boolean(body.collection_enabled) }).eq('id', acc);
         return jsonOk({ ok: true });
+      }
+
+      // ── Operations & Monitoring (admin-gated). All read via SECURITY DEFINER
+      // RPCs; the two writes (alert status, manual evaluate) are explicit admin
+      // actions. Data is operational/cost — kept behind the admin gate. ──────
+      case 'ops_dashboard':
+      case 'ops_provider_health':
+      case 'ops_org_health':
+      case 'ops_queue_health':
+      case 'ops_cost':
+      case 'ops_freshness':
+      case 'ops_alerts':
+      case 'ops_diagnostics':
+      case 'ops_metrics_history':
+      case 'ops_failed_jobs':
+      case 'ops_alert_status':
+      case 'ops_evaluate': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+
+        if (action === 'ops_dashboard') {
+          const { data, error } = await svc.rpc('mkt_ops_dashboard');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ dashboard: data });
+        }
+        if (action === 'ops_provider_health') {
+          const { data, error } = await svc.rpc('mkt_provider_health');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ providers: data ?? [] });
+        }
+        if (action === 'ops_org_health') {
+          const { data, error } = await svc.rpc('mkt_org_health');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ organizations: data ?? [] });
+        }
+        if (action === 'ops_queue_health') {
+          const { data, error } = await svc.rpc('mkt_queue_health');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ queue: data });
+        }
+        if (action === 'ops_cost') {
+          const { data, error } = await svc.rpc('mkt_cost_summary');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ cost: data });
+        }
+        if (action === 'ops_freshness') {
+          // read-only view of freshness-related open alerts (does not re-scan)
+          const { data, error } = await svc
+            .from('mkt_ops_alerts')
+            .select('id, kind, severity, subject_type, subject_id, title, body, evidence, status, occurrences, first_seen_at, last_seen_at')
+            .in('kind', ['org_stale', 'freshness_gap', 'provider_no_data', 'ads_stale', 'metrics_stale'])
+            .eq('status', 'open')
+            .order('last_seen_at', { ascending: false });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ alerts: data ?? [] });
+        }
+        if (action === 'ops_diagnostics') {
+          const { data, error } = await svc.from('mkt_diagnostics').select('*').order('check_name');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ checks: data ?? [] });
+        }
+        if (action === 'ops_alerts') {
+          const st = str(body.status);
+          let q = svc
+            .from('mkt_ops_alerts')
+            .select('id, kind, severity, subject_type, subject_id, title, body, evidence, status, occurrences, first_seen_at, last_seen_at, acknowledged_at, resolved_at')
+            .order('last_seen_at', { ascending: false })
+            .limit(200);
+          if (st && st !== 'all') q = q.eq('status', st);
+          const { data, error } = await q;
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ alerts: data ?? [] });
+        }
+        if (action === 'ops_metrics_history') {
+          const days = typeof body.days === 'number' ? Math.min(120, Math.max(1, body.days)) : 30;
+          const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+          const metric = str(body.metric);
+          let q = svc
+            .from('mkt_metric_daily')
+            .select('day, metric, provider, value')
+            .gte('day', since)
+            .order('day', { ascending: true });
+          if (metric) q = q.eq('metric', metric);
+          else q = q.eq('provider', 'all'); // default: the 'all'-provider KPI series
+          const { data, error } = await q;
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ rows: data ?? [] });
+        }
+        if (action === 'ops_failed_jobs') {
+          // global failed / retrying jobs across all accounts, for the queue panel's retry UI
+          const { data, error } = await svc
+            .from('mkt_collection_jobs')
+            .select('id, kind, provider, status, attempts, max_attempts, error_message, next_run_at, updated_at, social_account_id')
+            .in('status', ['failed', 'retrying'])
+            .order('updated_at', { ascending: false })
+            .limit(100);
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ jobs: data ?? [] });
+        }
+        if (action === 'ops_alert_status') {
+          const aid = str(body.alert_id);
+          const st = body.alert_status;
+          if (!aid || !st) return jsonError(400, 'alert_id + alert_status required');
+          const { error } = await svc.rpc('mkt_alert_set_status', { p_id: aid, p_status: st, p_user: user.userId });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ ok: true });
+        }
+        // ops_evaluate — manual on-demand run of the full evaluator (capture +
+        // diagnostics + freshness + alert generation). Same code the worker ticks.
+        const { data, error } = await svc.rpc('mkt_ops_evaluate');
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ result: data });
       }
 
       default:

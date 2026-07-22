@@ -117,3 +117,67 @@ export interface CostDashboard { total_usd: number; total_runs: number; failed_r
 export const fetchProjectInsights = (project_id: string) => call<{ insights: InsightRow[] }>('project_insights', { project_id });
 export const fetchProjectCampaigns = (project_id: string) => call<{ campaigns: CampaignRow[] }>('project_campaigns', { project_id });
 export const fetchCostDashboard = () => call<CostDashboard>('cost_dashboard');
+
+// ── Operations & Monitoring ────────────────────────────────────────────────
+export interface OpsProviderHealth {
+  provider: string; display_name: string | null; is_enabled: boolean;
+  health_status: string | null; health_detail: string | null; last_checked_at: string | null;
+  last_success: string | null; last_failure: string | null; consecutive_failures: number;
+  avg_run_duration_ms: number | null; avg_response_ms: number | null; runs_14d: number;
+  success_rate: number | null; error_rate: number | null; cost_today: number; cost_month: number;
+}
+export interface OpsQueueHealth {
+  queued: number; running: number; retrying: number; succeeded_24h: number; failed_24h: number;
+  retried_total: number; oldest_queued_at: string | null; longest_running_at: string | null;
+}
+export interface OpsOrgHealth {
+  organization_id: string; name_ar: string | null; name_en: string | null; org_type: string;
+  accounts: number; last_success_collection: string | null; last_metrics_update: string | null;
+  last_new_content: string | null; last_paid_ad: string | null; cadence: unknown;
+  next_scheduled_run: string | null; consecutive_failures: number; is_stale: boolean;
+}
+export interface OpsCost {
+  today_usd: number; month_usd: number; total_usd: number; runs_month: number; items_month: number;
+  avg_per_run: number; avg_per_item: number;
+  by_provider: Record<string, { usd: number; runs: number; items: number }>;
+  by_kind: Record<string, { usd: number; runs: number }>;
+  by_org: Array<{ organization_id: string; name: string | null; usd: number; runs: number }>;
+  spike: { is_spike: boolean; today_usd: number; avg7_usd: number };
+}
+export interface OpsAlert {
+  id: string; kind: string; severity: 'info' | 'warning' | 'critical'; subject_type: string | null;
+  subject_id: string | null; title: string; body: string | null; evidence: unknown; status: 'open' | 'acknowledged' | 'resolved';
+  occurrences: number; first_seen_at: string; last_seen_at: string; acknowledged_at?: string | null; resolved_at?: string | null;
+}
+export interface OpsDiagnostic { check_name: string; status: 'ok' | 'degraded' | 'down'; detail: string | null; latency_ms: number | null; checked_at: string }
+export interface OpsDashboard {
+  generated_at: string;
+  providers: OpsProviderHealth[];
+  provider_counts: { healthy: number; degraded: number; offline: number; total: number };
+  queue: OpsQueueHealth;
+  diagnostics: Record<string, { status: string; detail: string | null; checked_at: string }>;
+  heartbeats: Record<string, string>;
+  cost: OpsCost;
+  open_alerts: number; critical_alerts: number;
+  last_success_collection: string | null; last_failed_collection: string | null;
+  jobs_running: number; avg_collection_duration_ms: number | null;
+  collections_today: number; failures_today: number; collection_paused: boolean;
+}
+export interface OpsMetricRow { day: string; metric: string; provider: string; value: number }
+
+export const fetchOpsDashboard = () => call<{ dashboard: OpsDashboard }>('ops_dashboard');
+export const fetchOpsProviderHealth = () => call<{ providers: OpsProviderHealth[] }>('ops_provider_health');
+export const fetchOpsOrgHealth = () => call<{ organizations: OpsOrgHealth[] }>('ops_org_health');
+export const fetchOpsQueueHealth = () => call<{ queue: OpsQueueHealth }>('ops_queue_health');
+export const fetchOpsCost = () => call<{ cost: OpsCost }>('ops_cost');
+export const fetchOpsAlerts = (status: 'open' | 'acknowledged' | 'resolved' | 'all' = 'open') => call<{ alerts: OpsAlert[] }>('ops_alerts', { status });
+export const fetchOpsDiagnostics = () => call<{ checks: OpsDiagnostic[] }>('ops_diagnostics');
+export const fetchOpsMetricsHistory = (days = 30, metric?: string) => call<{ rows: OpsMetricRow[] }>('ops_metrics_history', { days, metric });
+export const setOpsAlertStatus = (alert_id: string, alert_status: 'open' | 'acknowledged' | 'resolved') => call<{ ok: boolean }>('ops_alert_status', { alert_id, alert_status });
+export const runOpsEvaluate = () => call<{ result: unknown }>('ops_evaluate');
+
+export interface OpsFailedJob {
+  id: string; kind: string; provider: string; status: string; attempts: number; max_attempts: number;
+  error_message: string | null; next_run_at: string | null; updated_at: string; social_account_id: string | null;
+}
+export const fetchOpsFailedJobs = () => call<{ jobs: OpsFailedJob[] }>('ops_failed_jobs');

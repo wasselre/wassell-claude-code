@@ -27,6 +27,7 @@ import RolesPage from '@/pages/Settings/RolesPage';
 import UsersPage from '@/pages/Settings/UsersPage';
 import AuditLogPage from '@/pages/Settings/AuditLogPage';
 import GeoElementsPage from '@/pages/Settings/GeoElementsPage';
+import MarketingOpsPage from '@/pages/Settings/MarketingOpsPage';
 import ProfilePage from '@/pages/ProfilePage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
@@ -374,6 +375,7 @@ export default function App() {
           <Route path="/settings/users" element={<RequireAdmin><UsersPage /></RequireAdmin>} />
           <Route path="/settings/audit-log" element={<RequireAdmin><AuditLogPage /></RequireAdmin>} />
           <Route path="/settings/geo-elements" element={<RequireAdmin><GeoElementsPage /></RequireAdmin>} />
+          <Route path="/settings/marketing-ops" element={<RequireAdmin><MarketingOpsPage /></RequireAdmin>} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
           <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />

@@ -123,6 +123,10 @@ let scheduledWaWakeRequested = false;
 // deploying this code is a no-op until a pilot account is explicitly turned on.
 let marketingBusy = false;
 let marketingWakeRequested = false;
+// Marketing Intelligence ops monitoring (heartbeat + self-diagnostics + freshness
+// + alert generation). ALWAYS-ON (independent of MARKETING_COLLECTION_ENABLED) so
+// we observe the platform's health even when collection is paused/disabled.
+let marketingOpsBusy = false;
 let wahaWatchdogBusy = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -1603,6 +1607,8 @@ async function marketingPollLoop(): Promise<void> {
         await supabase.rpc('mkt_jobs_watchdog');
         const { data: enq } = await supabase.rpc('mkt_enqueue_due_accounts');
         if (enq && Number(enq) > 0) console.log(`[worker] marketing scheduler enqueued ${enq} job(s)`);
+        // Scheduler heartbeat — ops monitoring flags it offline if this stops ticking.
+        await supabase.rpc('mkt_heartbeat', { p_component: 'scheduler', p_detail: { enqueued: enq ?? 0 } });
       } catch (e) {
         console.error('[worker] marketing maintenance error:', e instanceof Error ? e.message : e);
       }
@@ -1615,6 +1621,54 @@ async function marketingPollLoop(): Promise<void> {
     const wokeAt = Date.now();
     while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !marketingWakeRequested && !shuttingDown) {
       await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Marketing Intelligence OPS monitoring loop (always-on).
+// Every OPS_HEARTBEAT_MS: write the worker heartbeat + a live storage-availability
+// check (the one diagnostic that needs real I/O the SQL side can't do). Every
+// OPS_EVAL_MS: call mkt_ops_evaluate() — captures daily KPIs, runs SQL diagnostics,
+// scans freshness, and GENERATES (never sends) operational alerts. All idempotent;
+// a failure here is logged loudly and the loop keeps ticking (monitoring must not
+// crash the worker). This runs even when collection is disabled so "silently
+// stopped collecting" surfaces as org_stale / provider_no_data alerts.
+// ─────────────────────────────────────────────────────────────────────────
+const OPS_HEARTBEAT_MS = 60_000;
+const OPS_EVAL_MS = Math.max(env.WATCHDOG_INTERVAL_MS, 60_000);
+async function marketingOpsPollLoop(): Promise<void> {
+  let lastEval = 0;
+  while (!shuttingDown) {
+    marketingOpsBusy = true;
+    try {
+      await supabase.rpc('mkt_heartbeat', {
+        p_component: 'worker',
+        p_detail: { worker_id: env.WORKER_ID, uptime_s: Math.round(process.uptime()) },
+      });
+      // Live storage-availability check (SECURITY DEFINER SQL can't reach storage).
+      const t0 = Date.now();
+      const { error: stErr } = await supabase.storage
+        .from('marketing-assets')
+        .list('', { limit: 1 });
+      await supabase.rpc('mkt_diagnostic_set', {
+        p_check: 'storage_available',
+        p_status: stErr ? 'down' : 'ok',
+        p_detail: stErr ? stErr.message : 'reachable',
+        p_latency_ms: Date.now() - t0,
+      });
+      if (Date.now() - lastEval > OPS_EVAL_MS) {
+        lastEval = Date.now();
+        const { error: evErr } = await supabase.rpc('mkt_ops_evaluate');
+        if (evErr) console.error('[worker] marketing ops evaluate error:', evErr.message);
+      }
+    } catch (e) {
+      console.error('[worker] marketing ops loop error:', e instanceof Error ? e.message : e);
+    }
+    marketingOpsBusy = false;
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < OPS_HEARTBEAT_MS && !shuttingDown) {
+      await sleep(500);
     }
   }
 }
@@ -1645,6 +1699,9 @@ const server = http.createServer((req, res) => {
         workflow_busy: workflowBusy,
         rega_busy: regaBusy,
         rega_enabled: !!(env.BROWSERBASE_API_KEY && env.BROWSERBASE_PROJECT_ID),
+        marketing_busy: marketingBusy,
+        marketing_enabled: env.MARKETING_COLLECTION_ENABLED,
+        marketing_ops_busy: marketingOpsBusy,
         worker_id: env.WORKER_ID,
         uptime_s: Math.round(process.uptime()),
       }),
@@ -1853,6 +1910,7 @@ if (env.WORKFLOW_PROOF_ONLY) {
     documentPollLoop(),
     migrationPollLoop(),
     conflictWatchdogLoop(),
+    marketingOpsPollLoop(), // always-on: ops monitoring runs even when collection is disabled
   ];
   // Scheduled-reports loop only runs when the shared secret is set (feature on).
   if (env.REPORTS_RUNNER_SECRET) {
