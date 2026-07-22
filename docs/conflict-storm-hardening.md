@@ -274,3 +274,82 @@ Changes shipped in `2026-07-18_conflict_storm_sweep_attribution.sql`:
 
 Threshold left at 75/s — the true calm baseline is ~0/s (verified: rollbacks
 went to literally zero once the loops broke).
+
+---
+
+## 5. The 2026-07-19 → 2026-07-22 storm (#2) + same-day re-ignition (#3) — the listing-message pattern
+
+**Timeline (all UTC, from `conflict_rate_samples` hourly aggregation):** storm #1
+died 07-18 ~20:30 (noop blocks on 5 chat_templates drafts, blocked until
+2026-08-17). Calm until 07-19 ~05:45. Storm #2 then ran **continuously at
+~2,000 rollbacks/sec for ~82 hours** (~590M failed saves) until noop blocks on
+four Jul-19 chat_templates drafts (`52b57c9d`, `bc74a106`, `7afe6832`,
+`8d393de1`) landed 07-22 14:55. Calm for 22 minutes. At **15:17:01** a user
+started a fresh listing-message clean (draft `cbae54d2`, "@6488957", 11 photos);
+the storm **re-ignited at 15:17:18** (~1,200/sec) targeting that brand-new
+draft — while it was still mid-clean — and kept hammering it long after it
+completed successfully (v14, ready, 15:17:45). A noop block on `cbae54d2` at
+15:33 collapsed the rate to 0 instantly. A 50-second diagnostic flap (block
+deleted, rate watched, block re-inserted) showed **no resumption** — the loop
+died permanently on its first success, same semantics as storm #1. The block on
+`cbae54d2` was then removed for good (it is a live saved message; a lingering
+noop would silently swallow the user's edits — the §2.5 rule).
+
+**What was ruled out (verified live during the storm):**
+
+- **The Fly deck worker.** All 5 machines were fully replaced at 15:18-15:19
+  while the storm ran uninterrupted. The running bundle was also SSH-verified
+  to contain the `clean_text_entry_patch` fix (worker clean fills don't call
+  `record_save` at all).
+- **The generation-jobs system.** Every clean-text job for every storm draft
+  completed with `attempts=1`; zero queued/running jobs globally.
+- **The server workflow engine.** `workflow_jobs` was empty in every status.
+- **All committed retry loops.** Every `record_save` retry path in the repo —
+  at HEAD and at the storm-era builds (`8255467`, `cb6423e`) — is bounded
+  (api/worker `recordSaveWithRetry` 3 attempts; clean-text era opts 10
+  attempts/4 min; pending-sync 5; compress requeue 3; workflow_job_fail
+  max_attempts) and re-reads fresh state each attempt. No `while(true)` exists
+  in `api/` or `worker/src`.
+
+**What is established about the hammer (still unattributed to a code path):**
+
+- It watches for listing-message chat_templates drafts and starts hammering the
+  **newest draft within ~17s of creation**, mid-clean, with a **frozen stale
+  (data, version) snapshot** — the target's `updated_at`/`version` freeze
+  proves it never re-reads (a re-reading writer would immediately succeed).
+- role=service_role, node supabase-js via PostgREST. Storm-#2-era Postgres logs
+  attributed three long-lived clients: the deck-worker **v50 image**
+  (build ULID 01KXV3Y8… = 2026-07-18 17:21Z, commit ≈ `a8cff44`) and Vercel
+  function instances of the 07-19 deployments `8255467`/`cb6423e` — but the
+  same behavior re-appeared 07-22 on the **current** stack, so old builds are
+  not the cause, and hosted log lag (§4) makes log-line timestamps unreliable
+  under flood.
+- Retry-until-success, no backoff: only a SUCCESS response (mode='noop' block)
+  kills it. Reject blocks, worker restarts, machine replacement, and stopping
+  the WAHA POC apps all failed to stop it.
+
+**Next-ignition playbook (do this FIRST, while it burns):**
+
+1. Confirm + locate: latest `conflict_rate_samples` (or §2.1 direct
+   measurement); the target is virtually always the most recently created
+   `chat_templates` draft (model `4a70d8f1-2a6a-4ea7-b7ef-45c6e6af732b`).
+2. **Before killing it, capture the caller**: replace `record_save` with an
+   instrumented copy whose two `IF v_block_mode = 'noop' THEN RETURN p_id;`
+   branches first `INSERT INTO public._diag_noop_hits(rec, expected, headers,
+   claims) SELECT p_id, p_expected_version, nullif(current_setting(
+   'request.headers', true),'')::jsonb, v_claims` — noop'd transactions COMMIT,
+   so the capture survives and records the hammer's ip / x-wassel-build /
+   user-agent / jwt claims on its first (successful) hit. Sequence-counter
+   instrumentation in the version-mismatch branch (`PERFORM nextval(...)` per
+   candidate id — sequence bumps survive rollback) locates the record without
+   any log access.
+3. Noop-block the target → rate collapses → read `_diag_noop_hits` → restore
+   the stock `record_save` → chase the attributed process.
+4. If the target is a LIVE saved message the user still edits, lift the noop as
+   soon as the flap test (delete block, watch 45s, re-insert if needed) shows
+   the loop is dead.
+
+The 06-20 sampling loop for live SQL diagnosis (SQL editor, role postgres):
+`pg_stat_activity WHERE query ILIKE '%record_save%'` in a 40×150ms
+`pg_stat_clear_snapshot()` loop into a temp table — pg_locks tuple-lock
+sampling misses sub-ms locks; the activity sampler does not.
