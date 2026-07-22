@@ -181,3 +181,25 @@ export interface OpsFailedJob {
   error_message: string | null; next_run_at: string | null; updated_at: string; social_account_id: string | null;
 }
 export const fetchOpsFailedJobs = () => call<{ jobs: OpsFailedJob[] }>('ops_failed_jobs');
+
+// ── Advertiser discovery / confirmation ─────────────────────────────────────
+export interface ScoreReason { code: string; label_en: string; label_ar: string; delta: number }
+export interface AdvertiserCandidate {
+  pageId: string; pageName: string | null; pageUrl: string; adCount?: number;
+  landingDomains?: string[]; sampleHeadlines?: string[];
+  score: number; confidence: 'high' | 'medium' | 'low'; isMarketplace: boolean; reasons: ScoreReason[];
+}
+export interface AdvertiserAuditRow { event: string; old_page_id: string | null; new_page_id: string | null; created_at: string }
+export interface AdvertiserOrg {
+  id: string; name_ar: string | null; name_en: string | null; org_type: string; website: string | null;
+  meta_page_id: string | null; meta_page_url: string | null; meta_display_name: string | null;
+  meta_confirmed: boolean; meta_confirmed_at: string | null; meta_discovery_confidence: string | null;
+  meta_confirmation_evidence: { evidence?: ScoreReason[]; source?: string; score?: number } | null;
+  meta_candidates: AdvertiserCandidate[] | null;
+  ad_count: number; audit: AdvertiserAuditRow[];
+}
+export const fetchAdvertisers = () => call<{ organizations: AdvertiserOrg[] }>('advertiser_list');
+export const runAdvertiserDiscovery = (organization_id: string, advertiser: string) => call<{ job_id: string }>('discover_advertiser', { organization_id, advertiser });
+export const confirmAdvertiser = (organization_id: string, page_id: string, advertiser?: string) => call<{ ok: boolean }>('confirm_advertiser', { organization_id, page_id, advertiser });
+export const rejectCandidate = (organization_id: string, page_id: string) => call<{ ok: boolean; remaining: number }>('reject_candidate', { organization_id, page_id });
+export const runAdsPage = (organization_id: string, limit = 25) => call<{ job_id: string }>('run_ads_page', { organization_id, limit });

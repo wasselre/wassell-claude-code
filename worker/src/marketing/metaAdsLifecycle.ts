@@ -10,6 +10,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { runApifyActor, readActorConfig } from './apifyLifecycle.js';
 import { ProviderError } from './providers.js';
+import { registrableDomain } from './advertiserScoring.js';
 
 export interface NormalizedAd {
   platform: 'meta';
@@ -84,7 +85,12 @@ function buildPageAdsInput(pageId: string, country: string, limit: number): Reco
   return { startUrls: [{ url }], resultsLimit: limit };
 }
 
-export interface AdvertiserCandidate { pageId: string; pageName: string | null; pageUrl: string }
+// Richer candidate: carries the identity signals the scorer needs (landing
+// domains + ad count + sample headlines), aggregated across the page's ads.
+export interface AdvertiserCandidate {
+  pageId: string; pageName: string | null; pageUrl: string;
+  adCount: number; landingDomains: string[]; sampleHeadlines: string[];
+}
 
 /** DISCOVERY tool only: keyword-search → distinct advertiser pages behind the results. */
 export async function discoverAdvertiser(
@@ -93,12 +99,24 @@ export async function discoverAdvertiser(
   const cfg = await readActorConfig(sb, 'meta_ads');
   if (!cfg?.isEnabled) throw new ProviderError('meta_ads actor disabled', 'config_invalid');
   const { runId, rawItems, cost } = await runApifyActor(cfg.actorId, buildMetaAdsInput(input.advertiser, input.country ?? 'SA', input.limit ?? 30), input.limit ?? 30);
-  const byPage = new Map<string, AdvertiserCandidate>();
+  const byPage = new Map<string, { pageName: string | null; domains: Set<string>; count: number; headlines: string[] }>();
   for (const it of rawItems) {
     const ad = parseMetaAd(it);
-    if (ad?.pageId) byPage.set(ad.pageId, { pageId: ad.pageId, pageName: ad.advertiserName ?? null, pageUrl: `https://www.facebook.com/${ad.pageId}` });
+    if (!ad?.pageId) continue;
+    let e = byPage.get(ad.pageId);
+    if (!e) { e = { pageName: ad.advertiserName ?? null, domains: new Set(), count: 0, headlines: [] }; byPage.set(ad.pageId, e); }
+    e.count++;
+    if (!e.pageName && ad.advertiserName) e.pageName = ad.advertiserName;
+    const dom = registrableDomain(ad.landingUrl);
+    if (dom) e.domains.add(dom);
+    const hl = ad.headline ?? ad.body;
+    if (hl && e.headlines.length < 3 && !hl.includes('{{')) e.headlines.push(hl.slice(0, 80));
   }
-  return { candidates: [...byPage.values()], runId, cost };
+  const candidates: AdvertiserCandidate[] = [...byPage.entries()].map(([pageId, e]) => ({
+    pageId, pageName: e.pageName, pageUrl: `https://www.facebook.com/${pageId}`,
+    adCount: e.count, landingDomains: [...e.domains], sampleHeadlines: e.headlines,
+  }));
+  return { candidates, runId, cost };
 }
 
 /** PRODUCTION collection: a specific advertiser page's ads. */

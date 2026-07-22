@@ -14,6 +14,7 @@ import { collectViaApify } from './apifyLifecycle.js';
 import { collectMetaAdsByPage, discoverAdvertiser } from './metaAdsLifecycle.js';
 import { storeCreative } from './creativeStore.js';
 import { normalizeLandingUrl, campaignSignature, urlKey, insightKey } from './adIntel.js';
+import { scoreCandidates, decideAutoConfirm, type OrgIdentity } from './advertiserScoring.js';
 import {
   attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens,
   type ProjectAlias, type Metrics,
@@ -200,21 +201,58 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       }
       await sb.from('mkt_social_accounts').update({ last_metrics_at: new Date().toISOString() }).eq('id', acct!.id);
     } else if (job.kind === 'discover_advertiser') {
-      // Keyword search is the DISCOVERY tool only: find the advertiser's page(s),
-      // auto-confirm a single hit, else store candidates for human confirmation.
+      // Keyword search is the DISCOVERY tool only. Candidates are scored against
+      // the org's real identity (names, official domain, known FB URL, aliases)
+      // and auto-confirmed ONLY when a strong, unambiguous, non-marketplace
+      // anchor exists (decideAutoConfirm). Otherwise: store scored candidates for
+      // a human decision. This is what prevents another "Almajdiah → Bayut".
       const adOrgId = (job.params.organization_id as string) ?? orgId;
       const advertiser = (job.params.advertiser as string) ?? (acct?.handle as string);
       if (!adOrgId || !advertiser) throw new ProviderError('discover_advertiser needs organization_id + advertiser', 'config_invalid');
+
+      const { data: orgRow } = await sb.from('mkt_organizations')
+        .select('name_ar, name_en, website, org_type, metadata, meta_confirmed').eq('id', adOrgId).maybeSingle();
+      // known official Facebook page URLs from stored social accounts (identity anchor)
+      const { data: fbAccts } = await sb.from('mkt_social_accounts')
+        .select('profile_url').eq('organization_id', adOrgId).in('platform', ['facebook', 'meta']);
+      const meta = (orgRow?.metadata ?? {}) as Record<string, unknown>;
+      const orgIdentity: OrgIdentity = {
+        nameAr: (orgRow?.name_ar as string) ?? null, nameEn: (orgRow?.name_en as string) ?? null,
+        website: (orgRow?.website as string) ?? null, orgType: (orgRow?.org_type as string) ?? null,
+        aliases: Array.isArray(meta.aliases) ? (meta.aliases as string[]) : [],
+        facebookUrls: [
+          ...((fbAccts ?? []).map((a) => a.profile_url as string).filter(Boolean)),
+          ...(Array.isArray(meta.facebook_urls) ? (meta.facebook_urls as string[]) : []),
+        ],
+      };
+
       const disc = await discoverAdvertiser(sb, { advertiser, country: (job.params.country as string) ?? 'SA', limit: 30 });
       apifyCost = disc.cost;
-      stats.received = disc.candidates.length;
-      if (disc.candidates.length === 1) {
-        const c = disc.candidates[0]!;
-        await sb.rpc('mkt_org_set_advertiser', { p_org: adOrgId, p_page_id: c.pageId, p_advertiser_id: c.pageId, p_page_url: c.pageUrl, p_display_name: c.pageName, p_verification: null, p_confirmed: true, p_candidates: null });
+      const scored = scoreCandidates(disc.candidates, orgIdentity);
+      const decision = decideAutoConfirm(scored);
+      stats.received = scored.length;
+
+      // Never silently overwrite an already-confirmed identity from a discovery run.
+      if (orgRow?.meta_confirmed) {
+        stats.skipped = scored.length;
+        stats.errors.push('org already has a confirmed advertiser — discovery did not overwrite it');
+      } else if (decision.confirm && decision.winner) {
+        const w = decision.winner;
+        await sb.rpc('mkt_org_set_advertiser', {
+          p_org: adOrgId, p_page_id: w.pageId, p_advertiser_id: w.pageId, p_page_url: w.pageUrl,
+          p_display_name: w.pageName, p_confirmed: true,
+          p_verification: { source: 'auto', confidence: w.confidence, score: w.score, decision: decision.reason, evidence: w.reasons, confirmed_at: new Date().toISOString() },
+          p_candidates: scored,
+        });
         stats.inserted = 1;
       } else {
-        await sb.rpc('mkt_org_set_advertiser', { p_org: adOrgId, p_page_id: null, p_advertiser_id: null, p_page_url: null, p_display_name: null, p_verification: null, p_confirmed: false, p_candidates: disc.candidates });
-        stats.skipped = disc.candidates.length; // needs human confirm (0 or many)
+        await sb.rpc('mkt_org_set_advertiser', {
+          p_org: adOrgId, p_page_id: null, p_advertiser_id: null, p_page_url: null, p_display_name: null,
+          p_confirmed: false,
+          p_verification: { source: 'auto', decision: decision.reason, top_confidence: scored[0]?.confidence ?? null },
+          p_candidates: scored,
+        });
+        stats.skipped = scored.length; // needs a human decision (marketplace/ambiguous/low-confidence)
       }
     } else if (job.kind === 'paid_ads') {
       // PRODUCTION: collect a CONFIRMED advertiser PAGE (never keyword). Downloads

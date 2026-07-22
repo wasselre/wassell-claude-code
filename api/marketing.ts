@@ -324,6 +324,7 @@ export default async function handler(req: Request): Promise<Response> {
 
       case 'discover_advertiser':
       case 'confirm_advertiser':
+      case 'reject_candidate':
       case 'run_ads_page': {
         const svc = makeServiceClient('api:marketing');
         if (!svc) return jsonError(500, 'service unavailable');
@@ -341,8 +342,36 @@ export default async function handler(req: Request): Promise<Response> {
         if (action === 'confirm_advertiser') {
           const pageId = str(body.page_id);
           if (!pageId) return jsonError(400, 'page_id required');
-          await svc.rpc('mkt_org_set_advertiser', { p_org: org, p_page_id: pageId, p_advertiser_id: pageId, p_page_url: `https://www.facebook.com/${pageId}`, p_display_name: str(body.advertiser) ?? null, p_verification: null, p_confirmed: true, p_candidates: null });
+          // attach the stored candidate's score/evidence so a manual confirm is auditable
+          const { data: o } = await svc.from('mkt_organizations').select('meta_candidates').eq('id', org).maybeSingle();
+          const cands = Array.isArray(o?.meta_candidates) ? (o!.meta_candidates as Array<Record<string, unknown>>) : [];
+          const chosen = cands.find((c) => String(c.pageId) === pageId) ?? null;
+          const verification = {
+            source: 'manual', confirmed_by: user.userId,
+            confidence: (chosen?.confidence as string) ?? 'manual',
+            score: (chosen?.score as number) ?? null,
+            evidence: (chosen?.reasons as unknown) ?? [],
+            is_marketplace: (chosen?.isMarketplace as boolean) ?? null,
+            confirmed_at: new Date().toISOString(),
+          };
+          const { error } = await svc.rpc('mkt_org_set_advertiser', {
+            p_org: org, p_page_id: pageId, p_advertiser_id: pageId,
+            p_page_url: (chosen?.pageUrl as string) ?? `https://www.facebook.com/${pageId}`,
+            p_display_name: (chosen?.pageName as string) ?? str(body.advertiser) ?? null,
+            p_verification: verification, p_confirmed: true, p_candidates: null,
+          });
+          if (error) return jsonError(500, error.message);
           return jsonOk({ ok: true });
+        }
+        if (action === 'reject_candidate') {
+          const pageId = str(body.page_id);
+          if (!pageId) return jsonError(400, 'page_id required');
+          const { data: o } = await svc.from('mkt_organizations').select('meta_candidates').eq('id', org).maybeSingle();
+          const cands = Array.isArray(o?.meta_candidates) ? (o!.meta_candidates as Array<Record<string, unknown>>) : [];
+          const next = cands.filter((c) => String(c.pageId) !== pageId);
+          const { error } = await svc.from('mkt_organizations').update({ meta_candidates: next, updated_at: new Date().toISOString() }).eq('id', org);
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ ok: true, remaining: next.length });
         }
         // run_ads_page
         const lim = typeof body.limit === 'number' ? Math.min(200, Math.max(1, body.limit)) : 50;
@@ -401,6 +430,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'ops_diagnostics':
       case 'ops_metrics_history':
       case 'ops_failed_jobs':
+      case 'advertiser_list':
       case 'ops_alert_status':
       case 'ops_evaluate': {
         const svc = makeServiceClient('api:marketing');
@@ -475,6 +505,23 @@ export default async function handler(req: Request): Promise<Response> {
           const { data, error } = await q;
           if (error) return jsonError(500, error.message);
           return jsonOk({ rows: data ?? [] });
+        }
+        if (action === 'advertiser_list') {
+          // per-org advertiser identity state: confirmed identity + evidence, or
+          // scored candidates awaiting a human decision, + audit trail + ad count.
+          const { data: orgs, error } = await svc.from('mkt_organizations')
+            .select('id, name_ar, name_en, org_type, website, meta_page_id, meta_page_url, meta_display_name, meta_confirmed, meta_confirmed_at, meta_discovery_confidence, meta_confirmation_evidence, meta_candidates')
+            .order('name_en');
+          if (error) return jsonError(500, error.message);
+          const { data: audit } = await svc.from('mkt_advertiser_audit')
+            .select('organization_id, event, old_page_id, new_page_id, created_at').order('created_at', { ascending: false }).limit(100);
+          const { data: adCounts } = await svc.from('mkt_paid_ads').select('organization_id');
+          const counts: Record<string, number> = {};
+          for (const a of adCounts ?? []) { const k = a.organization_id as string; if (k) counts[k] = (counts[k] ?? 0) + 1; }
+          const auditByOrg: Record<string, unknown[]> = {};
+          for (const a of audit ?? []) { const k = a.organization_id as string; (auditByOrg[k] ??= []).push(a); }
+          const rows = (orgs ?? []).map((o) => ({ ...o, ad_count: counts[o.id as string] ?? 0, audit: auditByOrg[o.id as string] ?? [] }));
+          return jsonOk({ organizations: rows });
         }
         if (action === 'ops_failed_jobs') {
           // global failed / retrying jobs across all accounts, for the queue panel's retry UI

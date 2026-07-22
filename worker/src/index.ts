@@ -38,6 +38,7 @@ import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
+import { runCreativeCleanup } from './marketing/creativeCleanup.js';
 import { getSessionStatus, restartSession, type WahaSendConfig } from './waha.js';
 
 const env = loadEnv();
@@ -1637,8 +1638,10 @@ async function marketingPollLoop(): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────
 const OPS_HEARTBEAT_MS = 60_000;
 const OPS_EVAL_MS = Math.max(env.WATCHDOG_INTERVAL_MS, 60_000);
+const OPS_CLEANUP_MS = 86_400_000; // orphan-creative cleanup, dry-run, once/day
 async function marketingOpsPollLoop(): Promise<void> {
   let lastEval = 0;
+  let lastCleanup = 0;
   while (!shuttingDown) {
     marketingOpsBusy = true;
     try {
@@ -1661,6 +1664,15 @@ async function marketingOpsPollLoop(): Promise<void> {
         lastEval = Date.now();
         const { error: evErr } = await supabase.rpc('mkt_ops_evaluate');
         if (evErr) console.error('[worker] marketing ops evaluate error:', evErr.message);
+      }
+      // Orphaned-creative cleanup — DRY-RUN only in production (detects + records,
+      // never deletes). Flip WASSEL_CREATIVE_CLEANUP_DELETE=1 to enable deletion.
+      if (Date.now() - lastCleanup > OPS_CLEANUP_MS) {
+        lastCleanup = Date.now();
+        try {
+          const r = await runCreativeCleanup(supabase, { dryRun: process.env.WASSEL_CREATIVE_CLEANUP_DELETE !== '1', retentionDays: 7 });
+          console.log(`[worker] creative cleanup: scanned=${r.scanned} orphans=${r.orphans} deleted=${r.deleted} dryRun=${r.dryRun}`);
+        } catch (e) { console.error('[worker] creative cleanup error:', e instanceof Error ? e.message : e); }
       }
     } catch (e) {
       console.error('[worker] marketing ops loop error:', e instanceof Error ? e.message : e);

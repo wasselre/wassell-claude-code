@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin, Activity,
+  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -207,6 +207,17 @@ const CARDS: SettingsCard[] = [
     color: '#8E4E3A',
     bg: '#8E4E3A14',
     route: '/settings/marketing-ops',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'المعلنون المدفوعون',
+    titleEn: 'Paid Advertisers',
+    descAr: 'اكتشاف وتأكيد معلني Meta للمنافسين — مقارنة المرشّحين، الأدلّة، والحماية من الأسواق العقارية',
+    descEn: 'Discover & confirm competitor Meta advertisers — candidate comparison, evidence, and marketplace safety',
+    icon: Megaphone,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/settings/marketing-advertisers',
     adminOnly: true,
   },
 ];
