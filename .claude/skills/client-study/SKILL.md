@@ -189,3 +189,4 @@ using such a set for distances.
 - 2026-07-22 · Study #1 verdict pattern that landed well: "إحساسك دقيق
   جزئياً + النطاق المعتاد + وش يبرر الفرق + بديل صادق + توصية حسب الأولوية".
 - 2026-07-22 · Keep honest counter-rows (المطار أقرب للجبيلة) — user approved.
+- 2026-07-22 · Deployment decision: stays in Claude Code (user call). Revisit an in-app button + worker queue (deck-pipeline shape: study_jobs + SQL tool + Chrome-in-Docker + vision verify) only if study volume makes the rep wait on sessions.
