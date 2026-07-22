@@ -22,5 +22,8 @@
     "sourceMap": true
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  // Tests run via the ROOT vitest (which resolves `vitest` from the repo-root
+  // node_modules); the worker's own production `tsc` build must NOT compile them
+  // (vitest isn't a worker dependency) — same posture as the root tsconfig.
+  "exclude": ["node_modules", "dist", "src/**/*.test.ts", "src/**/__tests__/**"]
 }
