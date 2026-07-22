@@ -79,8 +79,8 @@ export default function WhatsAppNumbersPage() {
           </h1>
           <p className="text-sm text-charcoal/50 mt-0.5">
             {isAr
-              ? 'الأرقام المتصلة عبر Haberchat. اختر الرقم الافتراضي للمحادثات الجديدة.'
-              : 'Numbers connected via Haberchat. Pick the default for new conversations.'}
+              ? 'الأرقام المتصلة بالنظام. اختر الرقم الافتراضي للمحادثات الجديدة.'
+              : 'Numbers connected to the system. Pick the default for new conversations.'}
           </p>
         </div>
         <Button onClick={handleRefresh} disabled={refreshing}>
@@ -372,23 +372,29 @@ function mergeDevicesAndOverlay(live: HaberchatDevice[], overlay: WhatsAppNumber
 }
 
 function statusBadge(status: string | null): string {
-  switch (status) {
-    case 'online': return '#22c55e';
-    case 'offline': return '#f59e0b';
-    case 'disconnected': return '#ef4444';
+  switch ((status ?? '').toLowerCase()) {
+    case 'online': case 'working': return '#22c55e';
+    case 'offline': case 'starting': case 'scan_qr_code': return '#f59e0b';
+    case 'disconnected': case 'failed': case 'stopped': return '#ef4444';
     case 'pending': return '#6b7280';
     default: return '#6b7280';
   }
 }
 
 function statusLabel(status: string, isAr: boolean): string {
+  // Haberchat statuses (legacy rows) + WAHA session statuses.
   const map: Record<string, { ar: string; en: string }> = {
     online: { ar: 'متصل', en: 'Online' },
+    working: { ar: 'متصل', en: 'Connected' },
     offline: { ar: 'غير متصل', en: 'Offline' },
+    starting: { ar: 'جارٍ التشغيل', en: 'Starting' },
+    scan_qr_code: { ar: 'بانتظار مسح QR', en: 'Waiting for QR scan' },
     disconnected: { ar: 'منقطع', en: 'Disconnected' },
+    failed: { ar: 'منقطع', en: 'Disconnected' },
+    stopped: { ar: 'متوقف', en: 'Stopped' },
     pending: { ar: 'قيد التحقق', en: 'Pending' },
   };
-  const entry = map[status];
+  const entry = map[status.toLowerCase()];
   if (!entry) return status;
   return isAr ? entry.ar : entry.en;
 }
