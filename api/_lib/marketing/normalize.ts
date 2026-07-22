@@ -1,7 +1,7 @@
 // ============================================================================
 // Provider-agnostic normalization + deterministic dedup helpers (spec §6).
 // ============================================================================
-import { createHash } from 'node:crypto';
+import { sha256Hex } from './sha256';
 import type { NormalizedContentPost, Platform } from './types';
 
 /**
@@ -39,7 +39,7 @@ export function contentFingerprint(p: {
     .trim()
     .slice(0, 200);
   const basis = [p.platform, p.handle ?? '', p.publishedAt ?? '', norm, p.firstMediaUrl ?? ''].join('|');
-  return createHash('sha256').update(basis).digest('hex').slice(0, 32);
+  return sha256Hex(basis).slice(0, 32);
 }
 
 /** Attach canonicalUrl + contentHash to a normalized post (idempotent). */
