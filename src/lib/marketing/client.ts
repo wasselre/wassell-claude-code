@@ -33,6 +33,7 @@ export interface OverviewData {
 }
 export interface ContentRow {
   id: string; review_status: string; confidence: number; attribution_method: string;
+  evidence?: { matched?: string; snippet?: string } | null;
   mkt_content_posts: {
     id: string; platform: string; external_id: string; post_url: string | null;
     post_type: string | null; caption: string | null; published_at: string | null;
@@ -58,3 +59,34 @@ export const fetchMarketingAccounts = (project_id: string) =>
   call<{ links: unknown[] }>('accounts', { project_id });
 export const decideAttribution = (attribution_id: string, decision: 'confirm' | 'reject' | 'reassign', new_project_id?: string) =>
   call<{ ok: boolean }>('attribution_decide', { attribution_id, decision, new_project_id });
+
+export interface CollectionStatusData {
+  links: Array<{
+    organization_id: string;
+    mkt_organizations: {
+      name_ar: string | null; name_en: string | null;
+      mkt_social_accounts: Array<{
+        id: string; platform: string; handle: string; provider: string | null;
+        scrape_status: string; collection_enabled: boolean;
+        last_synced_at: string | null; last_incremental_at: string | null; last_metrics_at: string | null; followers: number | null;
+      }>;
+    };
+  }>;
+  runs: Array<{
+    source_account_id: string | null; provider: string; status: string;
+    started_at: string; finished_at: string | null;
+    items_received: number; items_inserted: number; items_updated: number; items_skipped: number; errors: unknown[];
+  }>;
+  jobs: Array<{
+    id: string; social_account_id: string | null; kind: string; status: string; attempts: number;
+    next_run_at: string | null; error_message: string | null; updated_at: string;
+  }>;
+}
+export const fetchCollectionStatus = (project_id: string) => call<CollectionStatusData>('collection_status', { project_id });
+export const runCollection = (account_id: string, provider: string, kind = 'incremental') =>
+  call<{ job_id: string }>('run_collection', { account_id, provider, kind });
+export const retryJob = (job_id: string) => call<{ ok: boolean }>('retry_job', { job_id });
+export const setAccountCollection = (account_id: string, collection_enabled: boolean) =>
+  call<{ ok: boolean }>('set_account_collection', { account_id, collection_enabled });
+export const setCollectionPaused = (paused: boolean) => call<{ ok: boolean; paused: boolean }>('set_collection_paused', { paused });
+export const refreshProviderHealthNow = () => call<{ providers: ProviderRow[] }>('refresh_provider_health');

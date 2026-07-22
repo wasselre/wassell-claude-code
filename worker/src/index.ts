@@ -37,6 +37,7 @@ import { runMigrationJob, type MigrationJob } from './runMigrationJob.js';
 import { runPreviewJob, type PreviewJob } from './runPreviewJob.js';
 import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
+import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
 import { getSessionStatus, restartSession, type WahaSendConfig } from './waha.js';
 
 const env = loadEnv();
@@ -117,6 +118,11 @@ let regaWakeRequested = false;
 // is dead-but-"WORKING" (eval §4b). Both gated on the WAHA secrets.
 let scheduledWaBusy = false;
 let scheduledWaWakeRequested = false;
+// Marketing Intelligence collection (mkt_collection_jobs). Gated on
+// MARKETING_COLLECTION_ENABLED=1 AND the DB global pause / per-account enable, so
+// deploying this code is a no-op until a pilot account is explicitly turned on.
+let marketingBusy = false;
+let marketingWakeRequested = false;
 let wahaWatchdogBusy = false;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -1540,6 +1546,80 @@ async function workflowPollLoop(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Marketing Intelligence — mkt_collection_jobs queue. Claim one job, run the
+// collect→normalize→dedup→attribute→snapshot pipeline, complete/fail with backoff.
+// The loop also ticks the scheduler (mkt_enqueue_due_accounts) + watchdog.
+// ─────────────────────────────────────────────────────────────────────────
+async function claimAndRunOneMarketing(): Promise<boolean> {
+  const { data, error } = await supabase.rpc('mkt_job_claim_next', {
+    p_worker_id: env.WORKER_ID,
+    p_lease_seconds: 600,
+  });
+  if (error) {
+    console.error(`[worker] marketing claim failed: ${error.message}`);
+    return false;
+  }
+  const rows = (data ?? []) as Array<{
+    job_id: string; kind: string; provider: CollectionJob['provider'];
+    social_account_id: string | null; params: Record<string, unknown>;
+    attempts: number; max_attempts: number;
+  }>;
+  if (rows.length === 0) return false;
+  const row = rows[0]!;
+  const job: CollectionJob = {
+    id: row.job_id, kind: row.kind, provider: row.provider,
+    social_account_id: row.social_account_id, params: row.params ?? {},
+    attempts: row.attempts, max_attempts: row.max_attempts,
+  };
+  console.log(`[worker] claimed marketing job=${job.id} kind=${job.kind} provider=${job.provider} attempts=${job.attempts}`);
+  try {
+    const { stats } = await runCollectionJob({ supabase, env, job });
+    await supabase.rpc('mkt_job_complete', { p_job_id: job.id, p_result: stats });
+    console.log(`[worker] marketing job=${job.id} ok: received=${stats.received} inserted=${stats.inserted} updated=${stats.updated} skipped=${stats.skipped}`);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const { data: outcome } = await supabase.rpc('mkt_job_fail', { p_job_id: job.id, p_error: msg });
+    console.error(`[worker] marketing job=${job.id} failed (${outcome}): ${msg}`);
+  }
+  return true;
+}
+
+async function marketingPollLoop(): Promise<void> {
+  let lastMaint = 0;
+  while (!shuttingDown) {
+    marketingBusy = true;
+    let didClaim = false;
+    try {
+      didClaim = await claimAndRunOneMarketing();
+    } catch (err) {
+      console.error('[worker] marketing poll iteration error:', err);
+    }
+    marketingBusy = false;
+
+    // Watchdog (reclaim stale leases) + scheduler (enqueue due pilot accounts).
+    if (Date.now() - lastMaint > env.WATCHDOG_INTERVAL_MS) {
+      lastMaint = Date.now();
+      try {
+        await supabase.rpc('mkt_jobs_watchdog');
+        const { data: enq } = await supabase.rpc('mkt_enqueue_due_accounts');
+        if (enq && Number(enq) > 0) console.log(`[worker] marketing scheduler enqueued ${enq} job(s)`);
+      } catch (e) {
+        console.error('[worker] marketing maintenance error:', e instanceof Error ? e.message : e);
+      }
+    }
+
+    if (didClaim || marketingWakeRequested) {
+      marketingWakeRequested = false;
+      continue;
+    }
+    const wokeAt = Date.now();
+    while (Date.now() - wokeAt < env.POLL_INTERVAL_MS && !marketingWakeRequested && !shuttingDown) {
+      await sleep(200);
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // HTTP server: /healthz for Fly health checks, /wake for API ping.
 // ─────────────────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
@@ -1586,6 +1666,7 @@ const server = http.createServer((req, res) => {
     workflowWakeRequested = true;
     regaWakeRequested = true;
     scheduledWaWakeRequested = true;
+    marketingWakeRequested = true;
     res.writeHead(202, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, ack: true }));
     return;
@@ -1606,7 +1687,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   server.close();
   const deadline = Date.now() + 60_000;
-  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy) && Date.now() < deadline) {
+  while ((busy || imageBusy || cleanBusy || previewBusy || compressBusy || documentBusy || migrationBusy || reportsBusy || workflowBusy || regaBusy || scheduledWaBusy || marketingBusy) && Date.now() < deadline) {
     await sleep(500);
   }
   console.log('[worker] exiting');
@@ -1805,6 +1886,15 @@ if (env.WORKFLOW_PROOF_ONLY) {
     loops.push(scheduledWhatsappPollLoop());
   } else {
     console.log('[worker] scheduled-WhatsApp (WAHA) loop disabled (WAHA_URL / WAHA_API_KEY unset)');
+  }
+  // Marketing collection loop — gated on MARKETING_COLLECTION_ENABLED. Even when
+  // on, the DB global pause (mkt_settings.collection_paused) + per-account enable
+  // keep it inert until a pilot account is explicitly turned on.
+  if (env.MARKETING_COLLECTION_ENABLED) {
+    console.log('[worker] marketing collection loop enabled (DB pause/enable still gate actual runs)');
+    loops.push(marketingPollLoop());
+  } else {
+    console.log('[worker] marketing collection loop disabled (MARKETING_COLLECTION_ENABLED != 1)');
   }
 }
 Promise.all(loops).catch((err) => {

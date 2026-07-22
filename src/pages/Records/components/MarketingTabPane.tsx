@@ -3,8 +3,9 @@ import { useAppStore } from '@/stores/appStore';
 import { useIsAdmin } from '@/hooks/usePermission';
 import {
   fetchProjectOverview, fetchProjectContent, fetchProjectMarketers,
-  fetchProviderHealth, decideAttribution,
-  type OverviewData, type ContentRow, type MarketerRow, type ProviderRow,
+  fetchProviderHealth, decideAttribution, fetchCollectionStatus,
+  runCollection, retryJob, setAccountCollection, setCollectionPaused, refreshProviderHealthNow,
+  type OverviewData, type ContentRow, type MarketerRow, type ProviderRow, type CollectionStatusData,
 } from '@/lib/marketing/client';
 
 interface Props { projectId: string }
@@ -52,6 +53,7 @@ export default function MarketingTabPane({ projectId }: Props) {
   const [content, setContent] = useState<ContentRow[]>([]);
   const [marketers, setMarketers] = useState<MarketerRow[]>([]);
   const [providers, setProviders] = useState<ProviderRow[]>([]);
+  const [status, setStatus] = useState<CollectionStatusData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +65,10 @@ export default function MarketingTabPane({ projectId }: Props) {
       else if (sub === 'marketer') {
         setMarketers((await fetchProjectMarketers(projectId)).marketers);
         setContent((await fetchProjectContent(projectId, 'marketer')).rows);
-      } else if (sub === 'collection') setProviders((await fetchProviderHealth()).providers);
+      } else if (sub === 'collection') {
+        setProviders((await fetchProviderHealth()).providers);
+        setStatus(await fetchCollectionStatus(projectId));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setLoading(false); }
@@ -155,20 +160,52 @@ export default function MarketingTabPane({ projectId }: Props) {
 
       {/* COLLECTION STATUS */}
       {sub === 'collection' && !loading && (
-        <div className="grid gap-3 md:grid-cols-3">
-          {providers.map((p) => {
-            const h = HEALTH_LABEL[p.health_status] ?? { ar: p.health_status, cls: 'bg-charcoal/10 text-charcoal' };
-            return (
-              <div key={p.provider_key} className="card p-4">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold">{p.display_name}</span>
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${h.cls}`}>{isAr ? h.ar : p.health_status}</span>
-                </div>
-                {p.health_detail && <div className="text-xs text-charcoal/40 mt-1">{p.health_detail}</div>}
-                <div className="text-xs text-charcoal/40 mt-1">{L('آخر فحص:', 'Checked:')} {timeAgo(p.last_checked_at, isAr)}</div>
+        <div className="space-y-5">
+          {/* provider health */}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-bold text-charcoal/70">{L('صحة المزوّدين', 'Provider health')}</h3>
+              {isAdmin && (
+                <button type="button" className="text-xs px-2 py-1 rounded bg-copper/10 text-copper"
+                  onClick={async () => { try { setProviders((await refreshProviderHealthNow()).providers); addToast(L('تم الفحص', 'Checked'), 'success'); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }}>
+                  {L('إعادة الفحص', 'Re-check')}
+                </button>
+              )}
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              {providers.map((p) => {
+                const h = HEALTH_LABEL[p.health_status] ?? { ar: p.health_status, cls: 'bg-charcoal/10 text-charcoal' };
+                return (
+                  <div key={p.provider_key} className="card p-4">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold">{p.display_name}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${h.cls}`}>{isAr ? h.ar : p.health_status}</span>
+                    </div>
+                    {p.health_detail && <div className="text-xs text-charcoal/40 mt-1">{p.health_detail}</div>}
+                    <div className="text-xs text-charcoal/40 mt-1">{L('آخر فحص:', 'Checked:')} {timeAgo(p.last_checked_at, isAr)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* per-account collection status */}
+          <div>
+            <h3 className="text-sm font-bold text-charcoal/70 mb-2">{L('حالة التجميع لكل حساب', 'Per-account collection')}</h3>
+            {status && <AccountStatusTable status={status} isAr={isAr} isAdmin={isAdmin} L={L} timeAgo={timeAgo}
+              onRun={async (acc, prov) => { try { await runCollection(acc, prov); addToast(L('تم جدولة التجميع', 'Collection queued'), 'success'); void load(); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }}
+              onRetry={async (jid) => { try { await retryJob(jid); addToast(L('تمت إعادة المحاولة', 'Retried'), 'success'); void load(); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }}
+              onToggle={async (acc, en) => { try { await setAccountCollection(acc, en); addToast(L('تم', 'Done'), 'success'); void load(); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }}
+            />}
+            {isAdmin && (
+              <div className="mt-3 text-xs text-charcoal/50">
+                {L('المفتاح العام للتجميع:', 'Global collection switch:')}{' '}
+                <button type="button" className="underline text-copper" onClick={async () => { try { await setCollectionPaused(false); addToast(L('تم التفعيل', 'Resumed'), 'success'); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }}>{L('تفعيل', 'Resume')}</button>
+                {' · '}
+                <button type="button" className="underline text-copper" onClick={async () => { try { await setCollectionPaused(true); addToast(L('تم الإيقاف', 'Paused'), 'success'); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }}>{L('إيقاف', 'Pause')}</button>
               </div>
-            );
-          })}
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -194,14 +231,28 @@ function ContentGrid({ rows, isAr, isAdmin, onDecide, L, timeAgo: ago }: {
                 : <div className="w-full h-full flex items-center justify-center text-white/40 text-xs">{PLATFORM_LABEL[p.platform] ?? p.platform}</div>}
             </a>
             <div className="p-2.5 space-y-1">
-              <div className="flex items-center gap-1.5 text-xs">
+              <div className="flex items-center gap-1.5 text-xs flex-wrap">
                 <span className="px-1.5 py-0.5 rounded bg-copper/10 text-copper">{PLATFORM_LABEL[p.platform] ?? p.platform}</span>
                 {org && <span className="text-charcoal/60 truncate">{isAr ? org.name_ar : org.name_en}</span>}
+                {org && <span className="text-[10px] text-charcoal/40">{org.org_type === 'developer' ? L('مطوّر', 'developer') : L('مسوّق', 'marketer')}</span>}
               </div>
-              {typeof views === 'number' && <div className="text-xs text-charcoal/50">{views.toLocaleString()} {L('مشاهدة', 'views')}</div>}
-              <div className="text-[11px] text-charcoal/35">
-                {L('جُمع', 'synced')} {ago(p.last_seen_at, isAr)} · {p.first_provider}
-                {r.review_status === 'candidate' && <span className="text-amber-700"> · {L('مبدئي', 'candidate')}</span>}
+              {p.caption && <div className="text-[11px] text-charcoal/60 line-clamp-2" dir="rtl">{p.caption}</div>}
+              <div className="flex items-center gap-2 text-[11px] text-charcoal/50">
+                {typeof views === 'number' && <span>{views.toLocaleString()} {L('مشاهدة', 'views')}</span>}
+                {p.published_at && <span>{new Date(p.published_at).toLocaleDateString()}</span>}
+              </div>
+              <div className="text-[11px] text-charcoal/35 flex items-center gap-1 flex-wrap">
+                {p.post_url && <a href={p.post_url} target="_blank" rel="noreferrer" className="underline">{L('الأصل', 'source')}</a>}
+                <span>· {L('جُمع', 'synced')} {ago(p.last_seen_at, isAr)}</span>
+                <span>· {p.first_provider}</span>
+              </div>
+              <div className="text-[11px]">
+                {r.review_status === 'candidate'
+                  ? <span className="text-amber-700">{L('مبدئي', 'candidate')} · {Math.round((r.confidence ?? 0) * 100)}%</span>
+                  : r.review_status === 'confirmed'
+                    ? <span className="text-green-700">{L('مؤكَّد', 'confirmed')}</span>
+                    : <span className="text-charcoal/40">{L('مقبول تلقائيًا', 'auto')} · {Math.round((r.confidence ?? 0) * 100)}%</span>}
+                {r.evidence?.matched && <span className="text-charcoal/35" title={r.evidence.snippet ?? ''}> · «{r.evidence.matched}»</span>}
               </div>
               {isAdmin && r.review_status === 'candidate' && (
                 <div className="flex gap-1 pt-1">
@@ -213,6 +264,81 @@ function ContentGrid({ rows, isAr, isAdmin, onDecide, L, timeAgo: ago }: {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function AccountStatusTable({ status, isAr, isAdmin, L, timeAgo: ago, onRun, onRetry, onToggle }: {
+  status: CollectionStatusData; isAr: boolean; isAdmin: boolean;
+  L: (ar: string, en: string) => string; timeAgo: (iso: string | null, isAr: boolean) => string;
+  onRun: (accountId: string, provider: string) => void;
+  onRetry: (jobId: string) => void;
+  onToggle: (accountId: string, enabled: boolean) => void;
+}) {
+  // flatten accounts across linked orgs
+  const accounts = status.links.flatMap((l) =>
+    (l.mkt_organizations?.mkt_social_accounts ?? []).map((a) => ({ ...a, org: l.mkt_organizations })));
+  const runsByAcct = new Map<string, CollectionStatusData['runs']>();
+  for (const r of status.runs) {
+    if (!r.source_account_id) continue;
+    const arr = runsByAcct.get(r.source_account_id) ?? []; arr.push(r); runsByAcct.set(r.source_account_id, arr);
+  }
+  const jobsByAcct = new Map<string, CollectionStatusData['jobs']>();
+  for (const j of status.jobs) {
+    if (!j.social_account_id) continue;
+    const arr = jobsByAcct.get(j.social_account_id) ?? []; arr.push(j); jobsByAcct.set(j.social_account_id, arr);
+  }
+  if (accounts.length === 0) return <div className="text-sm text-charcoal/40">{L('لا توجد حسابات مرتبطة بهذا المشروع بعد.', 'No accounts linked to this project yet.')}</div>;
+
+  return (
+    <div className="card p-0 overflow-x-auto">
+      <table className="w-full text-xs">
+        <thead><tr className="text-charcoal/50 border-b border-sand/40">
+          <th className="text-start p-2.5">{L('الحساب', 'Account')}</th>
+          <th className="p-2.5">{L('المزوّد', 'Provider')}</th>
+          <th className="p-2.5">{L('الحالة', 'Health')}</th>
+          <th className="p-2.5">{L('آخر نجاح', 'Last success')}</th>
+          <th className="p-2.5">{L('آخر فشل', 'Last fail')}</th>
+          <th className="p-2.5">{L('العناصر (استلام/إدراج/تحديث/تخطّي)', 'Items (rcv/ins/upd/skip)')}</th>
+          <th className="p-2.5">{L('التالي', 'Next')}</th>
+          {isAdmin && <th className="p-2.5">{L('إجراءات', 'Actions')}</th>}
+        </tr></thead>
+        <tbody>
+          {accounts.map((a) => {
+            const runs = (runsByAcct.get(a.id) ?? []);
+            const lastOk = runs.find((r) => r.status === 'succeeded' || r.status === 'partial');
+            const lastFail = runs.find((r) => r.status === 'failed');
+            const jobs = jobsByAcct.get(a.id) ?? [];
+            const failedJob = jobs.find((j) => j.status === 'failed');
+            const queued = jobs.find((j) => j.status === 'queued' || j.status === 'running');
+            return (
+              <tr key={a.id} className="border-b border-sand/20 align-top">
+                <td className="p-2.5 font-bold">@{a.handle}<div className="text-[10px] text-charcoal/40">{a.platform}</div></td>
+                <td className="p-2.5 text-center">{a.provider ?? '—'}</td>
+                <td className="p-2.5 text-center">
+                  <span className={`px-1.5 py-0.5 rounded-full ${a.scrape_status === 'ok' ? 'bg-green-100 text-green-800' : a.scrape_status === 'idle' ? 'bg-charcoal/10 text-charcoal' : 'bg-red-100 text-red-800'}`}>{a.scrape_status}</span>
+                  {!a.collection_enabled && <div className="text-[10px] text-charcoal/40 mt-0.5">{L('التجميع موقوف', 'collection off')}</div>}
+                </td>
+                <td className="p-2.5 text-center">{ago(lastOk?.started_at ?? null, isAr)}</td>
+                <td className="p-2.5 text-center text-red-700">{lastFail ? ago(lastFail.started_at, isAr) : '—'}</td>
+                <td className="p-2.5 text-center">{lastOk ? `${lastOk.items_received}/${lastOk.items_inserted}/${lastOk.items_updated}/${lastOk.items_skipped}` : '—'}
+                  {(lastFail?.errors?.length || failedJob?.error_message) ? <div className="text-[10px] text-red-600 truncate max-w-[180px]">{failedJob?.error_message ?? JSON.stringify(lastFail?.errors?.[0])}</div> : null}
+                </td>
+                <td className="p-2.5 text-center">{queued ? `${queued.kind} · ${queued.status}` : (a.collection_enabled ? ago(a.last_incremental_at, isAr) : '—')}</td>
+                {isAdmin && (
+                  <td className="p-2.5">
+                    <div className="flex flex-col gap-1 items-start">
+                      <button type="button" className="text-[11px] px-2 py-0.5 rounded bg-copper/10 text-copper" onClick={() => onRun(a.id, a.provider ?? 'browserbase')}>{L('تجميع الآن', 'Run now')}</button>
+                      {failedJob && <button type="button" className="text-[11px] px-2 py-0.5 rounded bg-amber-100 text-amber-800" onClick={() => onRetry(failedJob.id)}>{L('أعد المحاولة', 'Retry')}</button>}
+                      <button type="button" className="text-[11px] px-2 py-0.5 rounded bg-charcoal/10" onClick={() => onToggle(a.id, !a.collection_enabled)}>{a.collection_enabled ? L('إيقاف', 'Disable') : L('تفعيل', 'Enable')}</button>
+                    </div>
+                  </td>
+                )}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }

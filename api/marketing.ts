@@ -37,6 +37,13 @@ interface Body {
   attribution_id?: string;
   decision?: 'confirm' | 'reject' | 'reassign';
   new_project_id?: string;
+  // collection ops
+  account_id?: string;
+  kind?: string;
+  provider?: string;
+  job_id?: string;
+  paused?: boolean;
+  collection_enabled?: boolean;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
@@ -108,7 +115,7 @@ export default async function handler(req: Request): Promise<Response> {
         const size = Math.min(100, Math.max(1, Math.floor(body.page_size ?? 30)));
         const from = (page - 1) * size;
         let q = sb.from('mkt_content_attributions')
-          .select('id, review_status, confidence, attribution_method, mkt_content_posts!inner(id, platform, external_id, post_url, post_type, caption, published_at, thumbnail_ref, engagement, last_seen_at, providers, first_provider, organization_id, mkt_organizations(name_ar, name_en, org_type))', { count: 'exact' })
+          .select('id, review_status, confidence, attribution_method, evidence, mkt_content_posts!inner(id, platform, external_id, post_url, post_type, caption, published_at, thumbnail_ref, engagement, last_seen_at, providers, first_provider, organization_id, mkt_organizations(name_ar, name_en, org_type))', { count: 'exact' })
           .eq('project_id', pid).neq('review_status', 'rejected');
         if (body.source === 'developer') q = q.eq('mkt_content_posts.mkt_organizations.org_type', 'developer');
         else if (body.source === 'marketer') q = q.neq('mkt_content_posts.mkt_organizations.org_type', 'developer');
@@ -187,6 +194,60 @@ export default async function handler(req: Request): Promise<Response> {
         if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
         const results = await refreshAllProviderHealth(svc);
         return jsonOk({ providers: results });
+      }
+
+      case 'collection_status': {
+        // Per-account status: accounts linked to the project + their latest run + latest job.
+        const pid = str(body.project_id);
+        if (!pid) return jsonError(400, 'project_id required');
+        const { data: links } = await sb.from('mkt_project_organizations')
+          .select('organization_id, mkt_organizations!inner(name_ar, name_en, mkt_social_accounts(id, platform, handle, provider, scrape_status, collection_enabled, last_synced_at, last_incremental_at, last_metrics_at, followers))')
+          .eq('project_id', pid);
+        // Latest ingestion run + queued/failed job per account (recent runs table).
+        const { data: runs } = await sb.from('mkt_ingestion_runs')
+          .select('source_account_id, provider, status, started_at, finished_at, items_received, items_inserted, items_updated, items_skipped, errors')
+          .order('started_at', { ascending: false }).limit(50);
+        const { data: jobs } = await sb.from('mkt_collection_jobs')
+          .select('id, social_account_id, kind, status, attempts, next_run_at, error_message, updated_at')
+          .order('updated_at', { ascending: false }).limit(50);
+        return jsonOk({ links: links ?? [], runs: runs ?? [], jobs: jobs ?? [] });
+      }
+
+      case 'run_collection':
+      case 'retry_job':
+      case 'set_collection_paused':
+      case 'set_account_collection': {
+        // admin-gated writes
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+
+        if (action === 'run_collection') {
+          const acc = str(body.account_id); const kind = str(body.kind) ?? 'incremental'; const prov = str(body.provider);
+          if (!acc || !prov) return jsonError(400, 'account_id + provider required');
+          const { data, error } = await svc.rpc('mkt_job_enqueue', {
+            p_kind: kind, p_provider: prov, p_social_account_id: acc,
+            p_params: { reason: 'manual' }, p_priority: 50, p_requested_by: user.userId, p_fallback_of: null,
+          });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ job_id: data });
+        }
+        if (action === 'retry_job') {
+          const jid = str(body.job_id);
+          if (!jid) return jsonError(400, 'job_id required');
+          await svc.rpc('mkt_job_retry', { p_job_id: jid, p_requested_by: user.userId });
+          return jsonOk({ ok: true });
+        }
+        if (action === 'set_collection_paused') {
+          await svc.from('mkt_settings').update({ value: Boolean(body.paused), updated_at: new Date().toISOString() }).eq('key', 'collection_paused');
+          return jsonOk({ ok: true, paused: Boolean(body.paused) });
+        }
+        // set_account_collection
+        const acc = str(body.account_id);
+        if (!acc) return jsonError(400, 'account_id required');
+        await svc.from('mkt_social_accounts').update({ collection_enabled: Boolean(body.collection_enabled) }).eq('id', acc);
+        return jsonOk({ ok: true });
       }
 
       default:

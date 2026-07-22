@@ -81,6 +81,16 @@ export interface WorkerEnv {
    *  Set BOTH via `fly secrets set` to turn them on. */
   WAHA_URL: string | null;
   WAHA_API_KEY: string | null;
+  /** Marketing Intelligence collection providers (mkt_collection_jobs queue).
+   *  When BOTH are UNSET the worker's marketing loop still runs but only
+   *  browserbase jobs are eligible; each provider self-reports not_configured.
+   *  Set via `fly secrets set` to enable the corresponding provider. */
+  APIFY_API_TOKEN: string | null;
+  YOUTUBE_DATA_API_KEY: string | null;
+  /** Master switch for the marketing collection loop. Default OFF — the loop
+   *  only drains mkt_collection_jobs when '1'. (The DB also has a global pause +
+   *  per-account enable; this is the worker-process-level gate.) */
+  MARKETING_COLLECTION_ENABLED: boolean;
 }
 
 export function loadEnv(): WorkerEnv {
@@ -113,5 +123,8 @@ export function loadEnv(): WorkerEnv {
     BROWSERBASE_PROJECT_ID: process.env.BROWSERBASE_PROJECT_ID ?? null,
     WAHA_URL: process.env.WAHA_URL ?? null,
     WAHA_API_KEY: process.env.WAHA_API_KEY ?? null,
+    APIFY_API_TOKEN: process.env.APIFY_API_TOKEN ?? null,
+    YOUTUBE_DATA_API_KEY: process.env.YOUTUBE_DATA_API_KEY ?? null,
+    MARKETING_COLLECTION_ENABLED: process.env.MARKETING_COLLECTION_ENABLED === '1',
   };
 }
