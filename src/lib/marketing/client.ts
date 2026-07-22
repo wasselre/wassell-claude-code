@@ -90,3 +90,23 @@ export const setAccountCollection = (account_id: string, collection_enabled: boo
   call<{ ok: boolean }>('set_account_collection', { account_id, collection_enabled });
 export const setCollectionPaused = (paused: boolean) => call<{ ok: boolean; paused: boolean }>('set_collection_paused', { paused });
 export const refreshProviderHealthNow = () => call<{ providers: ProviderRow[] }>('refresh_provider_health');
+
+export interface AdRow {
+  id: string; review_status: string; confidence: number; evidence?: { matched?: string } | null;
+  mkt_paid_ads: {
+    id: string; platform: string; external_ad_id: string; advertiser_name: string | null;
+    creative_media_ref: string | null; creative_type: string | null; headline: string | null;
+    body: string | null; description: string | null; cta: string | null; landing_url: string | null;
+    languages: string[] | null; is_active: boolean; first_seen_at: string | null; last_seen_at: string | null;
+    platform_started_at: string | null; platform_ended_at: string | null; providers: string[];
+    organization_id: string | null; mkt_organizations: { name_ar: string | null; name_en: string | null; org_type: string } | null;
+  };
+}
+export interface AdTimelineEvent {
+  change_type: string; observed_at: string; field: string | null; old_value: unknown; new_value: unknown;
+  mkt_paid_ads: { external_ad_id: string; advertiser_name: string | null };
+}
+export const fetchProjectAds = (project_id: string, active?: boolean) => call<{ rows: AdRow[]; total: number }>('project_ads', { project_id, active });
+export const fetchAdTimeline = (project_id: string) => call<{ events: AdTimelineEvent[] }>('ad_timeline', { project_id });
+export const runAdsCollection = (organization_id: string, advertiser: string, limit = 25) =>
+  call<{ job_id: string }>('run_ads_collection', { organization_id, advertiser, limit });

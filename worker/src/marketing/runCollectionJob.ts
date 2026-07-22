@@ -11,6 +11,7 @@ import {
   type NormalizedContentPost, type NormalizedMetrics, type ProviderKey,
 } from './providers.js';
 import { collectViaApify } from './apifyLifecycle.js';
+import { collectMetaAds } from './metaAdsLifecycle.js';
 import {
   attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens,
   type ProjectAlias, type Metrics,
@@ -196,6 +197,61 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         stats.skipped = stats.received;
       }
       await sb.from('mkt_social_accounts').update({ last_metrics_at: new Date().toISOString() }).eq('id', acct!.id);
+    } else if (job.kind === 'paid_ads') {
+      // Meta Ad Library collection for one advertiser (org). Dedicated provider;
+      // dedup + change-history + attribution + removed-detection.
+      // The job monitors a TARGET developer (adOrgId): ad TEXT is attributed to that
+      // developer's projects. But each ad's own organization_id = its REAL advertiser
+      // (Meta pageName → tracked org if known, else null) — a marketer's ad about the
+      // developer's project is stored under the marketer, attributed to the project.
+      const adOrgId = (job.params.organization_id as string) ?? orgId; // target/monitored org
+      const advertiser = (job.params.advertiser as string) ?? (acct?.handle as string);
+      if (!adOrgId || !advertiser) throw new ProviderError('paid_ads job needs organization_id + advertiser', 'config_invalid');
+      const limit = typeof job.params.limit === 'number' ? Math.min(100, Math.max(1, job.params.limit)) : 30;
+      const result = await collectMetaAds(sb, { advertiser, country: (job.params.country as string) ?? 'SA', limit });
+      apifyCost = result.cost;
+      const pubProjects = await publisherProjectIds(sb, adOrgId); // attribute to the monitored developer's projects
+      const index = await loadProjectIndex(sb, pubProjects);
+      const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
+      const orgCache = new Map<string, string | null>();
+      const resolveAdvertiserOrg = async (name?: string): Promise<string | null> => {
+        if (!name) return null;
+        if (orgCache.has(name)) return orgCache.get(name)!;
+        const { data } = await sb.from('mkt_organizations').select('id').or(`name_en.ilike.%${name}%,name_ar.ilike.%${name}%`).limit(1).maybeSingle();
+        const id = (data?.id as string) ?? null; orgCache.set(name, id); return id;
+      };
+      const seen: string[] = [];
+      stats.received = result.ads.length;
+      for (const ad of result.ads) {
+        try {
+          const advertiserOrg = await resolveAdvertiserOrg(ad.advertiserName);
+          const rawId = (await sb.rpc('mkt_raw_ingestion_insert', { p_provider: 'apify', p_source_type: 'ad', p_external_identity: ad.externalAdId, p_payload: ad.raw as object, p_dedup_key: `meta:${ad.externalAdId}`, p_run_id: runId })).data as string;
+          const up = (await sb.rpc('mkt_paid_ad_upsert', {
+            p_platform: 'meta', p_external_ad_id: ad.externalAdId, p_provider: 'apify', p_organization_id: advertiserOrg,
+            p_advertiser_name: ad.advertiserName ?? advertiser, p_creative_media_ref: ad.creativeMediaRef ?? null,
+            p_creative_type: ad.creativeType ?? null, p_headline: ad.headline ?? null, p_body: ad.body ?? null,
+            p_description: ad.description ?? null, p_cta: ad.cta ?? null, p_landing_url: ad.landingUrl ?? null,
+            p_languages: ad.languages ?? [], p_platform_started_at: ad.platformStartedAt ?? null, p_is_active: ad.isActive,
+            p_reach_info: ad.reachInfo ?? {}, p_raw_ref: rawId, p_run_id: runId,
+          })).data as Array<{ id: string; was_inserted: boolean; changes: string[] }> | null;
+          const row = up?.[0];
+          if (!row) { stats.errors.push(`ad upsert failed ${ad.externalAdId}`); continue; }
+          if (row.was_inserted) stats.inserted++; else stats.updated++;
+          seen.push(ad.externalAdId);
+          const text = [ad.headline, ad.body, ad.description].filter(Boolean).join(' ');
+          for (const c of attributeCaption(text, index, { publisherProjectIds: pubProjects, commonTokens })) {
+            await sb.rpc('mkt_ad_attribution_upsert', { p_paid_ad_id: row.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence, p_evidence: c.evidence, p_auto_accept: c.autoAccept });
+          }
+        } catch (e) { stats.errors.push(`${ad.externalAdId}: ${e instanceof Error ? e.message : String(e)}`); }
+      }
+      // Removed-detection only for a COMPLETE single-advertiser page scan
+      // (params.page_scan + params.advertiser_org_id) — a fuzzy keyword search
+      // returns a partial cross-advertiser set and must NOT mass-mark removed.
+      const scanOrg = job.params.page_scan ? (job.params.advertiser_org_id as string) : null;
+      if (scanOrg && seen.length > 0) {
+        const removed = (await sb.rpc('mkt_ad_mark_removed', { p_organization_id: scanOrg, p_platform: 'meta', p_seen_ids: seen, p_run_id: runId })).data as number;
+        stats.skipped = Number(removed ?? 0); // report removed count via skipped
+      }
     } else if (job.kind === 'attribution' || job.kind === 'reprocess') {
       const { data: posts } = await sb.from('mkt_content_posts').select('id, caption, organization_id').limit(500);
       stats.received = posts?.length ?? 0;

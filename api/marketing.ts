@@ -44,6 +44,11 @@ interface Body {
   job_id?: string;
   paused?: boolean;
   collection_enabled?: boolean;
+  // paid ads
+  active?: boolean;
+  advertiser?: string;
+  organization_id?: string;
+  limit?: number;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
@@ -196,6 +201,38 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ providers: results });
       }
 
+      case 'project_ads': {
+        const pid = str(body.project_id);
+        if (!pid) return jsonError(400, 'project_id required');
+        const activeFilter = body.active; // true | false | undefined
+        let q = sb.from('mkt_ad_attributions')
+          .select('id, review_status, confidence, evidence, mkt_paid_ads!inner(id, platform, external_ad_id, advertiser_name, creative_media_ref, creative_type, headline, body, description, cta, landing_url, languages, is_active, first_seen_at, last_seen_at, platform_started_at, platform_ended_at, providers, organization_id, mkt_organizations(name_ar, name_en, org_type))', { count: 'exact' })
+          .eq('project_id', pid)
+          .neq('review_status', 'rejected')
+          .order('last_seen_at', { referencedTable: 'mkt_paid_ads', ascending: false })
+          .limit(200);
+        if (activeFilter === true || activeFilter === false) q = q.eq('mkt_paid_ads.is_active', activeFilter);
+        const { data, error, count } = await q;
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ rows: data ?? [], total: count ?? 0 });
+      }
+
+      case 'ad_timeline': {
+        const pid = str(body.project_id);
+        if (!pid) return jsonError(400, 'project_id required');
+        // the project's attributed ad ids, then their change history (newest first)
+        const { data: attribs } = await sb.from('mkt_ad_attributions').select('paid_ad_id').eq('project_id', pid).neq('review_status', 'rejected');
+        const adIds = [...new Set((attribs ?? []).map((a) => a.paid_ad_id as string))];
+        if (adIds.length === 0) return jsonOk({ events: [] });
+        const { data: hist, error } = await sb.from('mkt_ad_history')
+          .select('change_type, observed_at, field, old_value, new_value, mkt_paid_ads!inner(external_ad_id, advertiser_name)')
+          .in('paid_ad_id', adIds)
+          .order('observed_at', { ascending: false })
+          .limit(200);
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ events: hist ?? [] });
+      }
+
       case 'collection_status': {
         // Per-account status: accounts linked to the project + their latest run + latest job.
         const pid = str(body.project_id);
@@ -211,6 +248,23 @@ export default async function handler(req: Request): Promise<Response> {
           .select('id, social_account_id, kind, status, attempts, next_run_at, error_message, updated_at')
           .order('updated_at', { ascending: false }).limit(50);
         return jsonOk({ links: links ?? [], runs: runs ?? [], jobs: jobs ?? [] });
+      }
+
+      case 'run_ads_collection': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+        const org = str(body.organization_id); const advertiser = str(body.advertiser);
+        if (!org || !advertiser) return jsonError(400, 'organization_id + advertiser required');
+        const lim = typeof body.limit === 'number' ? Math.min(100, Math.max(1, body.limit)) : 25;
+        const { data, error } = await svc.rpc('mkt_job_enqueue', {
+          p_kind: 'paid_ads', p_provider: 'apify', p_social_account_id: null,
+          p_params: { advertiser, organization_id: org, country: 'SA', limit: lim, reason: 'manual' },
+          p_priority: 60, p_requested_by: user.userId, p_fallback_of: null,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ job_id: data });
       }
 
       case 'run_collection':

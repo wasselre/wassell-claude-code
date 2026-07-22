@@ -5,7 +5,9 @@ import {
   fetchProjectOverview, fetchProjectContent, fetchProjectMarketers,
   fetchProviderHealth, decideAttribution, fetchCollectionStatus,
   runCollection, retryJob, setAccountCollection, setCollectionPaused, refreshProviderHealthNow,
+  fetchProjectAds, fetchAdTimeline,
   type OverviewData, type ContentRow, type MarketerRow, type ProviderRow, type CollectionStatusData,
+  type AdRow, type AdTimelineEvent,
 } from '@/lib/marketing/client';
 
 interface Props { projectId: string }
@@ -54,6 +56,8 @@ export default function MarketingTabPane({ projectId }: Props) {
   const [marketers, setMarketers] = useState<MarketerRow[]>([]);
   const [providers, setProviders] = useState<ProviderRow[]>([]);
   const [status, setStatus] = useState<CollectionStatusData | null>(null);
+  const [ads, setAds] = useState<AdRow[]>([]);
+  const [adEvents, setAdEvents] = useState<AdTimelineEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,6 +69,9 @@ export default function MarketingTabPane({ projectId }: Props) {
       else if (sub === 'marketer') {
         setMarketers((await fetchProjectMarketers(projectId)).marketers);
         setContent((await fetchProjectContent(projectId, 'marketer')).rows);
+      } else if (sub === 'ads') {
+        const [a, t] = await Promise.all([fetchProjectAds(projectId), fetchAdTimeline(projectId)]);
+        setAds(a.rows); setAdEvents(t.events);
       } else if (sub === 'collection') {
         setProviders((await fetchProviderHealth()).providers);
         setStatus(await fetchCollectionStatus(projectId));
@@ -151,11 +158,9 @@ export default function MarketingTabPane({ projectId }: Props) {
       )}
 
       {/* PAID ADS — empty state (ingestion is Phase 2) */}
-      {sub === 'ads' && (
-        <div className="card p-6 text-sm text-charcoal/50">
-          {L('تتبّع الإعلانات المدفوعة (مكتبة إعلانات ميتا) يأتي في المرحلة التالية. التغطية في السعودية أفضل جهد ممكن — واجهة ميتا الرسمية لا تُعيد الإعلانات التجارية خارج الاتحاد الأوروبي.',
-             'Paid-ad tracking (Meta Ad Library) lands in the next phase. KSA coverage is best-effort — Meta\'s official API does not return commercial ads outside the EU.')}
-        </div>
+      {sub === 'ads' && !loading && (
+        <PaidAdsView ads={ads} events={adEvents} isAr={isAr} isAdmin={isAdmin} L={L} timeAgo={timeAgo}
+          onDecide={async (id, d) => { try { await decideAttribution(id, d); addToast(L('تم', 'Done'), 'success'); void load(); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }} />
       )}
 
       {/* COLLECTION STATUS */}
@@ -339,6 +344,96 @@ function AccountStatusTable({ status, isAr, isAdmin, L, timeAgo: ago, onRun, onR
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+const CHANGE_LABEL: Record<string, { ar: string; en: string; cls: string }> = {
+  new: { ar: 'إعلان جديد', en: 'New ad', cls: 'bg-green-100 text-green-800' },
+  removed: { ar: 'أُزيل', en: 'Removed', cls: 'bg-red-100 text-red-800' },
+  creative_change: { ar: 'تغيير التصميم', en: 'Creative changed', cls: 'bg-blue-100 text-blue-800' },
+  cta_change: { ar: 'تغيير CTA', en: 'CTA changed', cls: 'bg-amber-100 text-amber-800' },
+  landing_change: { ar: 'تغيير الرابط', en: 'Landing changed', cls: 'bg-amber-100 text-amber-800' },
+  status_change: { ar: 'تغيير الحالة', en: 'Status changed', cls: 'bg-charcoal/10 text-charcoal' },
+  text_change: { ar: 'تغيير النص', en: 'Text changed', cls: 'bg-blue-100 text-blue-800' },
+};
+
+function PaidAdsView({ ads, events, isAr, isAdmin, L, timeAgo: ago, onDecide }: {
+  ads: AdRow[]; events: AdTimelineEvent[]; isAr: boolean; isAdmin: boolean;
+  L: (ar: string, en: string) => string; timeAgo: (iso: string | null, isAr: boolean) => string;
+  onDecide: (attributionId: string, decision: 'confirm' | 'reject') => void;
+}) {
+  return (
+    <div className="space-y-5">
+      <div className="card p-3 text-xs text-charcoal/50">
+        {L('إعلانات ميتا العامة (مكتبة الإعلانات) — تغطية أفضل جهد. لا نعرض الإنفاق أو مقاييس خاصة (غير متاحة).',
+           'Public Meta ads (Ad Library) — best-effort coverage. No spend or private metrics (unavailable).')}
+      </div>
+
+      {/* CHANGE TIMELINE — competitor campaign activity over time */}
+      {events.length > 0 && (
+        <div>
+          <h3 className="text-sm font-bold text-charcoal/70 mb-2">{L('سجل نشاط الإعلانات', 'Ad activity timeline')}</h3>
+          <div className="card p-0 divide-y divide-sand/20 max-h-72 overflow-y-auto">
+            {events.map((e, i) => {
+              const c = CHANGE_LABEL[e.change_type] ?? { ar: e.change_type, en: e.change_type, cls: 'bg-charcoal/10 text-charcoal' };
+              return (
+                <div key={i} className="flex items-center gap-2 px-3 py-2 text-xs">
+                  <span className={`px-1.5 py-0.5 rounded-full ${c.cls}`}>{isAr ? c.ar : c.en}</span>
+                  <span className="text-charcoal/60 truncate flex-1">{e.mkt_paid_ads?.advertiser_name}</span>
+                  <span className="text-charcoal/35">{ago(e.observed_at, isAr)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* AD CARDS */}
+      {ads.length === 0
+        ? <div className="text-sm text-charcoal/40">{L('لا توجد إعلانات مُسندة لهذا المشروع بعد.', 'No ads attributed to this project yet.')}</div>
+        : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {ads.map((r) => {
+              const a = r.mkt_paid_ads; const org = a.mkt_organizations;
+              return (
+                <div key={r.id} className="card p-0 overflow-hidden">
+                  {a.creative_media_ref
+                    ? (a.creative_type === 'video'
+                        ? <video src={a.creative_media_ref} controls preload="metadata" className="w-full aspect-video bg-black object-cover" />
+                        : <img src={a.creative_media_ref} alt="" className="w-full aspect-video object-cover bg-sand/20" />)
+                    : <div className="w-full aspect-video bg-sand/20 flex items-center justify-center text-charcoal/30 text-xs">{L('بدون تصميم', 'no creative')}</div>}
+                  <div className="p-2.5 space-y-1">
+                    <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                      <span className={`px-1.5 py-0.5 rounded-full ${a.is_active ? 'bg-green-100 text-green-800' : 'bg-charcoal/10 text-charcoal/60'}`}>{a.is_active ? L('نشط', 'active') : L('متوقف', 'inactive')}</span>
+                      {org && <span className="text-charcoal/60 truncate">{isAr ? org.name_ar : org.name_en}</span>}
+                    </div>
+                    {a.headline && <div className="text-xs font-bold" dir="rtl">{a.headline}</div>}
+                    {a.body && <div className="text-[11px] text-charcoal/60 line-clamp-2" dir="rtl">{a.body}</div>}
+                    <div className="flex items-center gap-2 text-[11px] text-charcoal/50 flex-wrap">
+                      {a.cta && <span className="px-1.5 py-0.5 rounded bg-copper/10 text-copper">{a.cta}</span>}
+                      {a.landing_url && <a href={a.landing_url} target="_blank" rel="noreferrer" className="underline truncate max-w-[120px]">{L('الوجهة', 'landing')}</a>}
+                    </div>
+                    <div className="text-[11px] text-charcoal/35">
+                      {L('أول ظهور', 'first')} {ago(a.first_seen_at, isAr)} · {L('آخر', 'last')} {ago(a.last_seen_at, isAr)} · {a.providers?.[0]}
+                    </div>
+                    <div className="text-[11px]">
+                      {r.review_status === 'candidate'
+                        ? <span className="text-amber-700">{L('إسناد مبدئي', 'candidate')} · {Math.round((r.confidence ?? 0) * 100)}%</span>
+                        : <span className="text-green-700">{r.review_status === 'confirmed' ? L('مؤكَّد', 'confirmed') : L('تلقائي', 'auto')}</span>}
+                    </div>
+                    {isAdmin && r.review_status === 'candidate' && (
+                      <div className="flex gap-1 pt-1">
+                        <button type="button" onClick={() => onDecide(r.id, 'confirm')} className="text-[11px] px-2 py-0.5 rounded bg-green-100 text-green-800">{L('تأكيد', 'Confirm')}</button>
+                        <button type="button" onClick={() => onDecide(r.id, 'reject')} className="text-[11px] px-2 py-0.5 rounded bg-red-100 text-red-800">{L('رفض', 'Reject')}</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
     </div>
   );
 }

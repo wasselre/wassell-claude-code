@@ -94,18 +94,37 @@ async function pollRun(runId: string, timeoutMs: number): Promise<ApifyRun['data
   throw new ProviderError('Apify run poll timeout (aborted)', 'unavailable');
 }
 
-export interface ApifyCollectResult {
-  posts: NormalizedContentPost[];
+export interface ApifyActorResult {
   runId: string;
   rawItems: Array<Record<string, unknown>>;
   cost: Record<string, unknown>; // provider-reported usage only (never estimated)
 }
+export interface ApifyCollectResult extends ApifyActorResult { posts: NormalizedContentPost[] }
 
 /**
- * Full lifecycle: config → input → START one run → poll (with timeout+abort) →
- * dataset → parse. `limit` bounds posts (validation caps at 10–20). Returns raw
- * items so the caller stores raw ingestion records before normalizing.
+ * SHARED lifecycle primitive: START one run → poll (timeout+abort) → dataset.
+ * Both organic collection (collectViaApify) and the Meta Ad Library provider use
+ * this — one implementation of the Apify run flow. `limit` bounds dataset items.
  */
+export async function runApifyActor(
+  actorId: string, input: Record<string, unknown>, limit: number, timeoutMs = 180000,
+): Promise<ApifyActorResult> {
+  const started = await apify<ApifyRun>('POST', `/acts/${actorId.replace('/', '~')}/runs`, input);
+  const runId = started.data.id;
+  const finished = await pollRun(runId, timeoutMs);
+  if (finished.status !== 'SUCCEEDED') throw new ProviderError(`Apify run ${finished.status} (run ${runId})`, 'unavailable');
+  const datasetId = finished.defaultDatasetId;
+  if (!datasetId) throw new ProviderError('Apify run has no dataset', 'unavailable');
+  const rawItems = await apify<Array<Record<string, unknown>>>('GET', `/datasets/${datasetId}/items?clean=true&limit=${limit}`);
+  return {
+    runId, rawItems,
+    cost: { run_id: runId, dataset_items: rawItems.length,
+      compute_units: (finished.stats as { computeUnits?: number } | undefined)?.computeUnits ?? null,
+      usage_total_usd: finished.usageTotalUsd ?? null },
+  };
+}
+
+/** Organic collection: config → input → runApifyActor → parse. */
 export async function collectViaApify(
   sb: SupabaseClient,
   input: { platform: Platform; handle: string; limit: number; timeoutMs?: number },
@@ -116,24 +135,8 @@ export async function collectViaApify(
   if (!cfg.isEnabled) throw new ProviderError(`Actor for ${sourceType} is disabled (vet + enable in mkt_actor_configs)`, 'config_invalid');
   const parser = PARSERS[cfg.resultParser];
   if (!parser) throw new ProviderError(`No parser named "${cfg.resultParser}"`, 'config_invalid');
-
   const runInput = buildInput(sourceType, input.handle, input.limit);
-  // START one run (async — no sync-timeout ceiling).
-  const started = await apify<ApifyRun>('POST', `/acts/${cfg.actorId.replace('/', '~')}/runs`, runInput);
-  const runId = started.data.id;
-  const finished = await pollRun(runId, input.timeoutMs ?? 180000);
-  if (finished.status !== 'SUCCEEDED') {
-    throw new ProviderError(`Apify run ${finished.status} (run ${runId})`, 'unavailable');
-  }
-  const datasetId = finished.defaultDatasetId;
-  if (!datasetId) throw new ProviderError('Apify run has no dataset', 'unavailable');
-  const rawItems = await apify<Array<Record<string, unknown>>>('GET', `/datasets/${datasetId}/items?clean=true&limit=${input.limit}`);
+  const { runId, rawItems, cost } = await runApifyActor(cfg.actorId, runInput, input.limit, input.timeoutMs);
   const posts = rawItems.map((it) => parser(it, input.handle)).filter((p): p is NormalizedContentPost => p !== null);
-  const cost: Record<string, unknown> = {
-    run_id: runId,
-    dataset_items: rawItems.length,
-    compute_units: (finished.stats as { computeUnits?: number } | undefined)?.computeUnits ?? null,
-    usage_total_usd: finished.usageTotalUsd ?? null,
-  };
   return { posts, runId, rawItems, cost };
 }
