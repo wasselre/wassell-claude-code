@@ -42,7 +42,16 @@ export const config = {
   maxDuration: 300,
 };
 
-const MAX_ITEMS = 30;
+/** Largest batch the inline (send-now) loop can finish within maxDuration —
+ *  WAHA downloads + converts each item, so ~10s/item worst case. Batches
+ *  bigger than this are NOT rejected: they auto-upgrade to the scheduled
+ *  queue (deliverAt = now), which the Fly worker drains with no time limit.
+ *  (A 33-image project gallery used to 400 the whole batch here — the text
+ *  went out and zero media followed; live incident 2026-07-22.) */
+const INLINE_MAX_ITEMS = 30;
+/** Hard sanity ceiling — a gallery beyond this is almost certainly a caller
+ *  bug, and per the no-silent-caps rule it fails LOUDLY rather than trimming. */
+const MAX_ITEMS = 120;
 /** Scheduled items are staggered after the caller's text message so the queue
  *  delivers text → media1 → media2 in order (same spacing the client used). */
 const STAGGER_MS = 10_000;
@@ -107,6 +116,10 @@ async function runBatch(req: Request): Promise<Response> {
     if (deliverAt) {
       baseDeliverMs = new Date(deliverAt).getTime();
       if (Number.isNaN(baseDeliverMs)) return jsonError(400, 'deliverAt must be a valid ISO 8601 datetime');
+    } else if (refs.length > INLINE_MAX_ITEMS) {
+      // Send-now batch too big for the inline loop → deliver via the scheduled
+      // queue starting now. Same stagger, same order; the worker owns the sends.
+      baseDeliverMs = Date.now();
     }
 
     const deviceId = (typeof body.deviceId === 'string' && body.deviceId ? body.deviceId : null)
