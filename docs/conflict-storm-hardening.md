@@ -353,3 +353,17 @@ The 06-20 sampling loop for live SQL diagnosis (SQL editor, role postgres):
 `pg_stat_activity WHERE query ILIKE '%record_save%'` in a 40×150ms
 `pg_stat_clear_snapshot()` loop into a temp table — pg_locks tuple-lock
 sampling misses sub-ms locks; the activity sampler does not.
+
+**CORRECTION (2026-07-22 ~16:00 UTC, learned the hard way):** "the loop dies
+permanently on first success" is WRONG. After the 15:33 noop kill and a calm
+flap test, the storm re-ignited by 15:52 at ~1,100/s while the user actively
+worked (two more listing cleans at 15:41 and 15:50), and this later wave did
+NOT stop when every recent chat_templates draft was noop-blocked — the hammer
+**re-acquires new targets dynamically and the target had moved beyond
+chat_templates candidates**. Treat the hammer as a persistent driver attached
+to the user's active working environment (tab(s)/API instances) that spawns a
+new stale-snapshot loop per touched record. Blocks are per-record whack-a-mole;
+the §5 step-2 capture (instrumented noop branch → `_diag_noop_hits`) is the
+only path to the driver, OR sample `pg_stat_activity`/locks live while it
+burns. A noop block on a record that is NOT the current target has pure
+downside (silent write loss) — flap-verify before leaving any noop in place.
