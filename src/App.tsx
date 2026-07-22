@@ -39,6 +39,8 @@ import ChatsSplitPage from '@/pages/Chats/ChatsSplitPage';
 import ChatTemplateFormPage from '@/pages/Chats/ChatTemplateFormPage';
 import RetiredAssistantNotice from '@/components/RetiredAssistantNotice';
 import { isRetiredModel } from '@/lib/featureFlags';
+import { useDeepLinkRecordPending } from '@/hooks/useDeepLinkRecord';
+import { Loader2 } from 'lucide-react';
 import FollowUpWorkspacePage from '@/pages/Followups/FollowUpWorkspacePage';
 import SuggestedProjectsPage from '@/pages/Followups/SuggestedProjectsPage';
 import ClientProjectsPage from '@/pages/Clients/ClientProjectsPage';
@@ -109,11 +111,30 @@ function RecordFormPageRoute() {
  * on recordId remounts the page when the URL flips between chats for
  * clean local-state resets (same rationale as RecordFormPageRoute).
  */
+/** Boot-time loading state for a deep-linked record detail page. */
+function RecordBootLoading() {
+  const isAr = useAppStore((s) => s.language) === 'ar';
+  return (
+    <div className="flex h-[60vh] items-center justify-center gap-2 text-charcoal/50">
+      <Loader2 size={18} className="animate-spin" />
+      <span className="text-sm">{isAr ? 'جارٍ تحميل السجل…' : 'Loading record…'}</span>
+    </div>
+  );
+}
+
 function RecordDetailDispatcher() {
   const { modelName, recordId } = useParams();
   const [searchParams] = useSearchParams();
+  // Deep-link fast path: on a hard load the records tail lands seconds after
+  // first paint, so a directly-opened record page would flash "not found".
+  // The hook fires a targeted single-row fetch (lands in ~one round-trip) and
+  // tells us to show a loading state until the record is in the store (or the
+  // tail finishes, for ids that genuinely don't exist). Hook stays ABOVE the
+  // conditional returns (React #310 — see reference_followup_deeplink_hooks_crash).
+  const recordPending = useDeepLinkRecordPending(modelName, recordId);
   // Retired assistants + archived modules — unwired (data preserved in DB).
   if (isRetiredModel(modelName)) return <RetiredAssistantNotice />;
+  if (recordPending) return <RecordBootLoading />;
   if (modelName === 'followups' && searchParams.get('generic') !== '1') {
     // Custom guided "Follow-up Workspace" replaces the generic form. The
     // generic form stays reachable for advanced editing via ?generic=1 (the
