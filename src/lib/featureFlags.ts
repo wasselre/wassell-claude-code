@@ -49,6 +49,13 @@ export const ARCHIVED_MODULE_MODELS = [
   'competitors',
   'reel_scripts',
   'prompt_snippets',
+  // Stale models archived 2026-07-22 (second pass, user request). Note:
+  // `targeted_projects` still RECEIVES writes from the «المشاريع - المستهدفة»
+  // workflow + api/research-project — archiving only hides the UI surface.
+  // `tasks` also hides the "Other Tasks" tab in MyTasksPage (gated on this list).
+  'contacts',
+  'targeted_projects',
+  'tasks',
 ] as const;
 
 /** True when `name` is a retired broad-assistant model AND the narrowing flag is on. */

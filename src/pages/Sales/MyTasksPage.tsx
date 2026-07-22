@@ -4,6 +4,7 @@ import { ClipboardList, Phone, MessageCircle, Plus, Sparkles, FolderKanban, Hour
 import { useAppStore } from '@/stores/appStore';
 import type { AppRecord } from '@/types';
 import { useIsAdmin, usePermission } from '@/hooks/usePermission';
+import { isRetiredModel } from '@/lib/featureFlags';
 import { useClientWhatsApp } from '@/pages/Clients/lib/useClientWhatsApp';
 import {
   buildFollowupTasks, buildWaitingTasks, tasksForRep, byPriority, priorityTier, isWaitingForCustomer,
@@ -199,7 +200,7 @@ export default function MyTasksPage() {
     return opt ? (isAr ? opt.label_ar : opt.label_en) || value : value;
   };
 
-  const SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number; danger?: boolean }[] = [
+  const ALL_SECTIONS: { id: Section; label: { ar: string; en: string }; count?: number; danger?: boolean }[] = [
     // «ملعبك / ملعب العميل» — the ball is either in YOUR court or the client's.
     // One metaphor across both tabs (user-chosen naming, 2026-07-21).
     { id: 'actions', label: { ar: 'ملعبك', en: 'Your court' }, count: actionTasks.length, danger: actionTasks.some((t) => priorityTier(t, now) <= 2) },
@@ -210,6 +211,10 @@ export default function MyTasksPage() {
     { id: 'preferences', label: { ar: 'تفضيلات ناقصة', en: 'Incomplete Preferences' } },
     { id: 'other', label: { ar: 'مهام أخرى', en: 'Other Tasks' }, count: otherTasks.length },
   ];
+  // The Other Tasks tab is backed by the `tasks` model — drop it entirely
+  // when that model is archived (ARCHIVED_MODULE_MODELS) so the tab's "new
+  // task" button can't route into the archived-section notice.
+  const SECTIONS = ALL_SECTIONS.filter((s) => s.id !== 'other' || !isRetiredModel('tasks'));
 
   if (!initialized) {
     return <div className="p-6 text-sm text-charcoal/50">{isAr ? 'جارٍ التحميل…' : 'Loading…'}</div>;
