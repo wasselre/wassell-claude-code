@@ -331,6 +331,10 @@ CREATE TABLE IF NOT EXISTS users (
   profile_id UUID REFERENCES profiles(id) ON DELETE SET NULL,
   role_assignments JSONB NOT NULL DEFAULT '[]'::jsonb,
   is_active BOOLEAN NOT NULL DEFAULT true,
+  -- Per-user grant for the "preview app as another profile" switcher.
+  -- OFF by default; enabled from Settings → Users. Client-side perspective
+  -- only — RLS always evaluates the real auth.uid().
+  can_preview_profiles BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -339,6 +343,8 @@ CREATE TABLE IF NOT EXISTS users (
 -- doesn't fail on workspaces that predate the RLS migration.
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS auth_uid UUID;
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS can_preview_profiles BOOLEAN NOT NULL DEFAULT false;
 DO $$ BEGIN
   -- Add the unique constraint separately so it's safe to re-run; CREATE
   -- UNIQUE INDEX IF NOT EXISTS is the idempotent equivalent of UNIQUE

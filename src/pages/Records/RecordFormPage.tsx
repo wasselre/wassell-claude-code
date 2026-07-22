@@ -80,6 +80,7 @@ export default function RecordFormPage() {
     currentUserId,
     users,
     profiles,
+    previewProfileId,
     recordNavContext,
   } = useAppStore();
   const isAr = language === 'ar';
@@ -1369,7 +1370,7 @@ export default function RecordFormPage() {
            *  to act on). */}
           {existingRecord && (model.schema.custom_buttons ?? [])
             .filter((b: CustomButton) => b.enabled !== false && b.locations.includes('record_form'))
-            .filter((b: CustomButton) => isButtonVisible(currentUserId, users, profiles, b.id))
+            .filter((b: CustomButton) => isButtonVisible(currentUserId, users, profiles, b.id, previewProfileId))
             .map((btn: CustomButton) => {
               const Icon = resolveLucideIcon(btn.icon);
               const running = runningButtonId === btn.id;

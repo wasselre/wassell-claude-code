@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAppStore } from '@/stores/appStore';
 import { isAuthAvailable } from '@/lib/auth';
-import { Languages, Menu, User, LogOut, Loader2 } from 'lucide-react';
+import { Languages, Menu, User, LogOut, Loader2, Eye, X } from 'lucide-react';
 
 interface HeaderProps {
   onMenuClick?: () => void;
@@ -16,8 +16,11 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
     setLanguage,
     models,
     users,
+    profiles,
     currentUserId,
     setCurrentUser,
+    previewProfileId,
+    setPreviewProfile,
     authEmail,
     signOutAndClear,
   } = useAppStore();
@@ -32,6 +35,21 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
   const displayName = currentUser
     ? (isAr ? currentUser.name_ar : currentUser.name_en)
     : (authEmail ?? (isAr ? 'بدون صلاحية' : 'No access'));
+
+  // ── Profile preview ("view app as") ─────────────────────────────────
+  // Gated on the REAL user's explicit grant — never on the previewed
+  // profile — so the switcher and exit control stay reachable while a
+  // restricted profile is being previewed.
+  const canPreview = currentUser?.can_preview_profiles === true;
+  const realProfile = currentUser ? profiles.find((p) => p.id === currentUser.profile_id) ?? null : null;
+  const previewProfile =
+    canPreview && previewProfileId ? profiles.find((p) => p.id === previewProfileId) ?? null : null;
+  // Non-admin grantees can't preview an admin profile — the server would
+  // reject everything anyway (RLS runs as the real user); hiding the
+  // option avoids a broken half-admin UI.
+  const previewOptions = profiles.filter(
+    (p) => p.id !== currentUser?.profile_id && (realProfile?.is_admin === true || !p.is_admin),
+  );
 
   const toggleLanguage = (): void => {
     const newLang = language === 'ar' ? 'en' : 'ar';
@@ -94,6 +112,30 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
           </h1>
         </div>
         <div className="flex items-center gap-2 md:gap-3 shrink-0">
+          {/* ── Profile preview switcher (explicit per-user grant only) ── */}
+          {canPreview && previewOptions.length > 0 && (
+            <div
+              className={`flex items-center gap-1.5 pill ${previewProfile ? 'bg-gold/20 ring-1 ring-gold/50' : ''}`}
+              title={isAr ? 'معاينة التطبيق بصلاحيات ملف شخصي آخر' : 'Preview the app as another profile'}
+            >
+              <Eye size={14} className={previewProfile ? 'text-terracotta' : 'text-charcoal/40'} />
+              <select
+                value={previewProfileId ?? ''}
+                onChange={(e) => setPreviewProfile(e.target.value || null)}
+                className="bg-transparent border-0 text-sm font-bold text-charcoal focus:ring-0 focus:outline-none cursor-pointer pe-5 appearance-none max-w-[9.5rem] truncate"
+                style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%234A4E54' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")", backgroundRepeat: 'no-repeat', backgroundPosition: isAr ? '4px center' : 'calc(100% - 4px) center' }}
+                aria-label={isAr ? 'معاينة كملف شخصي' : 'Preview as profile'}
+              >
+                <option value="">{isAr ? 'صلاحياتي' : 'My profile'}</option>
+                {previewOptions.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {isAr ? p.label_ar : p.label_en}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* ── Current user ──────────────────────────────────────── */}
           {authOn ? (
             /* Production: clickable pill that takes the user to /profile. */
@@ -150,6 +192,31 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
           </button>
         </div>
       </div>
+
+      {/* ── Profile-preview banner — always visible while previewing, so
+             the user can never get "stuck" inside a restricted profile
+             (the exit button doesn't depend on any previewed permission). */}
+      {previewProfile && (
+        <div className="flex items-center justify-between gap-3 px-4 md:px-8 py-2 bg-gold/25 border-y border-gold/40">
+          <span className="flex items-center gap-2 text-sm text-chocolate min-w-0">
+            <Eye size={15} className="text-terracotta shrink-0" />
+            <span className="truncate">
+              {isAr ? (
+                <>وضع المعاينة: أنت ترى التطبيق بصلاحيات «<b>{previewProfile.label_ar}</b>» — العرض فقط، وتبقى صلاحيات البيانات الفعلية كما هي.</>
+              ) : (
+                <>Preview mode: you are viewing the app as “<b>{previewProfile.label_en}</b>” — UI only; your real data access is unchanged.</>
+              )}
+            </span>
+          </span>
+          <button
+            onClick={() => setPreviewProfile(null)}
+            className="flex items-center gap-1 text-sm font-bold text-terracotta hover:text-chocolate shrink-0"
+          >
+            <X size={14} />
+            {isAr ? 'إنهاء المعاينة' : 'Exit preview'}
+          </button>
+        </div>
+      )}
     </header>
   );
 }

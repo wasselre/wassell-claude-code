@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import { useTranslation } from 'react-i18next';
 import { useAppStore } from '@/stores/appStore';
 import { inviteUser, deleteAuthUser, isAuthAvailable } from '@/lib/auth';
-import { Users as UsersIcon, Plus, Pencil, Trash2, Shield, Mail, Loader2 } from 'lucide-react';
+import { Users as UsersIcon, Plus, Pencil, Trash2, Shield, Mail, Loader2, Eye } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
@@ -33,6 +33,8 @@ export default function UsersPage() {
   const [email, setEmail] = useState('');
   const [profileId, setProfileId] = useState('');
   const [roleAssignments, setRoleAssignments] = useState<UserRoleAssignment[]>([]);
+  // "Preview app as another profile" grant — deliberately OFF by default.
+  const [canPreviewProfiles, setCanPreviewProfiles] = useState(false);
 
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
   const [deactivatingUser, setDeactivatingUser] = useState<User | null>(null);
@@ -47,6 +49,7 @@ export default function UsersPage() {
     setEmail('');
     setProfileId(profiles[0]?.id ?? '');
     setRoleAssignments([]);
+    setCanPreviewProfiles(false);
     setSendInvite(isAuthAvailable());
     setShowModal(true);
   };
@@ -58,6 +61,7 @@ export default function UsersPage() {
     setProfileId(user.profile_id);
     // Deep-copy so local edits don't mutate store state
     setRoleAssignments(user.role_assignments.map((ra) => ({ role_id: ra.role_id, field_values: { ...ra.field_values } })));
+    setCanPreviewProfiles(user.can_preview_profiles === true);
     setShowModal(true);
   };
 
@@ -80,6 +84,7 @@ export default function UsersPage() {
       profile_id: profileId,
       role_assignments: roleAssignments,
       is_active: editing?.is_active ?? true,
+      can_preview_profiles: canPreviewProfiles,
       created_at: editing?.created_at ?? new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
@@ -240,6 +245,15 @@ export default function UsersPage() {
                       const role = roles.find((r) => r.id === ra.role_id);
                       return role ? <Badge key={ra.role_id} label={isAr ? role.label_ar : role.label_en} color="#14B8A6" /> : null;
                     })}
+                    {user.can_preview_profiles === true && (
+                      <span
+                        className="flex items-center gap-1 text-xs text-terracotta bg-gold/15 px-2 py-0.5 rounded-full font-bold"
+                        title={isAr ? 'يستطيع معاينة التطبيق بصلاحيات ملفات شخصية أخرى' : 'Can preview the app as other profiles'}
+                      >
+                        <Eye size={10} />
+                        {isAr ? 'معاينة الصلاحيات' : 'Profile preview'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -340,6 +354,27 @@ export default function UsersPage() {
               ))}
             </select>
           </div>
+
+          {/* Profile-preview grant — explicit per-user opt-in, never default */}
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={canPreviewProfiles}
+              onChange={(e) => setCanPreviewProfiles(e.target.checked)}
+              className="w-4 h-4 mt-0.5 rounded border-sand text-copper focus:ring-copper/30"
+            />
+            <span className="text-sm text-charcoal">
+              <span className="font-bold flex items-center gap-1.5">
+                <Eye size={14} className="text-terracotta" />
+                {isAr ? 'السماح بمعاينة الملفات الشخصية' : 'Allow profile preview'}
+              </span>
+              <span className="text-xs text-charcoal/50 block">
+                {isAr
+                  ? 'يظهر للمستخدم مبدّل في الشريط العلوي لعرض التطبيق بصلاحيات ملف شخصي آخر (واجهة فقط — لا يغيّر صلاحيات البيانات الفعلية).'
+                  : 'Shows a header switcher to view the app as another profile (UI only — real data access is unchanged).'}
+              </span>
+            </span>
+          </label>
 
           {/* Roles — checkboxes with inline field editors */}
           <div>

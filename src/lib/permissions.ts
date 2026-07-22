@@ -55,13 +55,37 @@ function resolveActiveProfile(
   currentUserId: string | null,
   users: User[],
   profiles: Profile[],
+  previewProfileId?: string | null,
 ): ResolvedProfile | null {
   if (currentUserId === null) return null;
   const user = users.find((u) => u.id === currentUserId);
   if (!user || !user.is_active) return null;
-  const profile = profiles.find((p) => p.id === user.profile_id);
+  const profile = resolveEffectiveProfile(user, profiles, previewProfileId);
   if (!profile) return null;
   return { user, profile };
+}
+
+/**
+ * The profile the permission layer evaluates for a user, honoring the
+ * "preview app as another profile" override. The override applies ONLY
+ * when the user carries the explicit `can_preview_profiles` grant —
+ * a stray previewProfileId for anyone else is ignored, so this helper
+ * can never change permissions for users without the grant. A preview
+ * id that doesn't resolve (deleted profile) falls back to the user's
+ * own profile instead of failing closed, so a stale persisted preview
+ * can't lock the user out.
+ */
+export function resolveEffectiveProfile(
+  user: User | null | undefined,
+  profiles: Profile[],
+  previewProfileId?: string | null,
+): Profile | null {
+  if (!user) return null;
+  if (previewProfileId && user.can_preview_profiles === true) {
+    const preview = profiles.find((p) => p.id === previewProfileId);
+    if (preview) return preview;
+  }
+  return profiles.find((p) => p.id === user.profile_id) ?? null;
 }
 
 function modelEntryFor(
@@ -91,9 +115,10 @@ export function hasPermission(
   profiles: Profile[],
   modelId: string,
   permission: ModelPermission,
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return false;
   if (resolved.profile.is_admin) return true;
   const entry = modelEntryFor(resolved.profile, modelId);
@@ -110,9 +135,10 @@ export function isAdmin(
   currentUserId: string | null,
   users: User[],
   profiles: Profile[],
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   return resolved?.profile.is_admin === true;
 }
 
@@ -137,9 +163,10 @@ export function canAccessPage(
   users: User[],
   profiles: Profile[],
   pageId: string,
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return false;
   if (resolved.profile.is_admin) return true;
   const explicit = resolved.profile.page_access?.[pageId];
@@ -165,9 +192,10 @@ export function canViewWorkflows(
   currentUserId: string | null,
   users: User[],
   profiles: Profile[],
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return false;
   if (resolved.profile.is_admin) return true;
   return resolved.profile.can_view_workflows === true;
@@ -183,9 +211,10 @@ export function getModelPermissions(
   users: User[],
   profiles: Profile[],
   modelId: string,
+  previewProfileId?: string | null,
 ): Set<ModelPermission> {
   if (currentUserId === null) return new Set(ALL_PERMISSIONS);
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return new Set();
   if (resolved.profile.is_admin) return new Set(ALL_PERMISSIONS);
   const entry = modelEntryFor(resolved.profile, modelId);
@@ -222,9 +251,10 @@ export function canViewRecord(
   roles: Role[],
   model: AppModel,
   record: AppRecord,
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return false;
   if (resolved.profile.is_admin) return true;
   const entry = modelEntryFor(resolved.profile, model.id);
@@ -245,9 +275,10 @@ export function canEditRecord(
   roles: Role[],
   model: AppModel,
   record: AppRecord,
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return false;
   if (resolved.profile.is_admin) return true;
   const entry = modelEntryFor(resolved.profile, model.id);
@@ -271,9 +302,10 @@ export function applyViewScopeToRecords(
   roles: Role[],
   model: AppModel,
   records: AppRecord[],
+  previewProfileId?: string | null,
 ): AppRecord[] {
   if (currentUserId === null) return records;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return [];
   if (resolved.profile.is_admin) return records;
   const entry = modelEntryFor(resolved.profile, model.id);
@@ -310,10 +342,11 @@ export function getFieldPermission(
   profiles: Profile[],
   modelId: string,
   field: ModelField,
+  previewProfileId?: string | null,
 ): FieldPermission {
   if (isComputedField(field)) return 'readonly';
   if (currentUserId === null) return 'editable';
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return 'hidden';
   if (resolved.profile.is_admin) return 'editable';
   const entry = modelEntryFor(resolved.profile, modelId);
@@ -333,10 +366,11 @@ export function getFieldPermissionByIds(
   profiles: Profile[],
   model: AppModel,
   fieldId: string,
+  previewProfileId?: string | null,
 ): FieldPermission {
   const field = modelFieldsFor(model).find((f) => f.id === fieldId);
   if (!field) return 'hidden';
-  return getFieldPermission(currentUserId, users, profiles, model.id, field);
+  return getFieldPermission(currentUserId, users, profiles, model.id, field, previewProfileId);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -362,11 +396,12 @@ export function isViewVisible(
   users: User[],
   profiles: Profile[],
   view: ModelView,
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
   // Author always sees their own views.
   if (view.user_id === currentUserId) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return false;
   if (resolved.profile.is_admin) return true;
   const hidden = resolved.profile.hidden_view_ids ?? [];
@@ -382,9 +417,10 @@ export function applyVisibleViews(
   users: User[],
   profiles: Profile[],
   views: ModelView[],
+  previewProfileId?: string | null,
 ): ModelView[] {
   if (currentUserId === null) return views;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return [];
   if (resolved.profile.is_admin) return views;
   const hidden = new Set(resolved.profile.hidden_view_ids ?? []);
@@ -401,9 +437,10 @@ export function isButtonVisible(
   users: User[],
   profiles: Profile[],
   buttonId: string,
+  previewProfileId?: string | null,
 ): boolean {
   if (currentUserId === null) return true;
-  const resolved = resolveActiveProfile(currentUserId, users, profiles);
+  const resolved = resolveActiveProfile(currentUserId, users, profiles, previewProfileId);
   if (!resolved) return false;
   if (resolved.profile.is_admin) return true;
   const hidden = resolved.profile.hidden_button_ids ?? [];

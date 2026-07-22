@@ -47,7 +47,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
-import { hasPermission, canAccessPage } from '@/lib/permissions';
+import { hasPermission, canAccessPage, resolveEffectiveProfile } from '@/lib/permissions';
 import { CUSTOM_PAGES } from '@/lib/customPages';
 import { isRetiredAssistantModel } from '@/lib/featureFlags';
 import type { ComponentType } from 'react';
@@ -103,9 +103,11 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { models, groups, language, currentUserId, users, profiles } = useAppStore();
+  const { models, groups, language, currentUserId, users, profiles, previewProfileId } = useAppStore();
   const currentUser = users.find((u) => u.id === currentUserId);
-  const currentProfile = currentUser?.profile_id ? profiles.find((p) => p.id === currentUser.profile_id) : null;
+  // Preview-aware: when "view app as" is active the sidebar reflects the
+  // previewed profile (incl. its admin flag), not the user's own.
+  const currentProfile = resolveEffectiveProfile(currentUser, profiles, previewProfileId);
   const isAdmin = !!currentProfile?.is_admin;
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [railCollapsed, setRailCollapsed] = useState<boolean>(() => {
@@ -132,9 +134,9 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
 
   // Filter nav by `view` permission. hasPermission returns true when
   // currentUserId is null (pre-init fallback) so nothing flickers.
-  const canView = (modelId: string) => hasPermission(currentUserId, users, profiles, modelId, 'view');
+  const canView = (modelId: string) => hasPermission(currentUserId, users, profiles, modelId, 'view', previewProfileId);
   // Per-profile gate for the custom Sales Operations pages (not models).
-  const canPage = (pageId: string) => canAccessPage(currentUserId, users, profiles, pageId);
+  const canPage = (pageId: string) => canAccessPage(currentUserId, users, profiles, pageId, previewProfileId);
 
   // Helpers to sort by the optional `order` field, with a stable fallback
   // to the array position for records that haven't been assigned an order yet.
@@ -439,17 +441,21 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
 
         {/* Bottom user area */}
         <div className={`border-t border-sand/20 ${railCollapsed ? 'p-2' : 'p-4'}`}>
-          <button
-            onClick={() => navigate('/builder')}
-            className={`w-full flex items-center justify-center gap-2 rounded-xl bg-copper text-white hover:bg-terracotta transition-colors text-sm font-bold ${
-              railCollapsed ? 'px-2 py-2' : 'px-4 py-2.5'
-            }`}
-            title={railCollapsed ? t('nav.new_model') : undefined}
-            aria-label={railCollapsed ? t('nav.new_model') : undefined}
-          >
-            <Plus size={16} />
-            {!railCollapsed && t('nav.new_model')}
-          </button>
+          {/* Builder shortcut — /builder is RequireAdmin-guarded, so showing
+              the button to non-admins (real or previewed) is a dead-end. */}
+          {isAdmin && (
+            <button
+              onClick={() => navigate('/builder')}
+              className={`w-full flex items-center justify-center gap-2 rounded-xl bg-copper text-white hover:bg-terracotta transition-colors text-sm font-bold ${
+                railCollapsed ? 'px-2 py-2' : 'px-4 py-2.5'
+              }`}
+              title={railCollapsed ? t('nav.new_model') : undefined}
+              aria-label={railCollapsed ? t('nav.new_model') : undefined}
+            >
+              <Plus size={16} />
+              {!railCollapsed && t('nav.new_model')}
+            </button>
+          )}
           <div className={`flex items-center gap-3 mt-3 ${railCollapsed ? 'justify-center' : 'px-2'}`}>
             <div
               className="w-8 h-8 rounded-full bg-copper/10 flex items-center justify-center text-xs font-bold text-copper shrink-0"

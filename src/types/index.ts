@@ -2272,6 +2272,13 @@ export interface User {
   profile_id: string;
   role_assignments: UserRoleAssignment[];
   is_active: boolean;
+  /**
+   * Grants the "preview app as another profile" switcher (Header pill +
+   * banner). OFF by default — an admin enables it per-user from
+   * Settings → Users. The permission layer ignores any preview override
+   * for users without this flag, so it can never widen access by itself.
+   */
+  can_preview_profiles?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -2540,6 +2547,14 @@ export interface AppState {
   roles: Role[];
   fieldTemplates: FieldTemplate[];
   currentUserId: string | null;
+  /**
+   * Profile-preview override ("view app as"). When set AND the current
+   * user carries `can_preview_profiles`, the client permission layer
+   * evaluates this profile instead of the user's own. Pure UI perspective:
+   * RLS still runs against the real signed-in user, so data can only
+   * narrow, never widen.
+   */
+  previewProfileId: string | null;
 
   // Auth (Supabase Auth session state)
   /** Email of the currently signed-in auth user, or null if signed out. */
@@ -2766,6 +2781,7 @@ export interface AppState {
   saveUser: (user: User) => StoreMutationResult;
   deleteUser: (userId: string) => StoreMutationResult;
   setCurrentUser: (userId: string | null) => void;
+  setPreviewProfile: (profileId: string | null) => void;
 
   // Profiles
   saveProfile: (profile: Profile) => void;

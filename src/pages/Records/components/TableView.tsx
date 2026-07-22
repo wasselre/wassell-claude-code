@@ -64,14 +64,14 @@ interface TableViewProps {
 
 export default function TableView({ model, records, onRowClick, onDelete, view, selectedIds, onToggleSelect, onToggleSelectAll, readOnly = false, sortField: controlledSortField, sortDir: controlledSortDir, onToggleSort }: TableViewProps) {
   const { t } = useTranslation();
-  const { language, records: allRecords, saveRecord, addToast, models, currentUserId, users, profiles, roles } = useAppStore();
+  const { language, records: allRecords, saveRecord, addToast, models, currentUserId, users, profiles, roles, previewProfileId } = useAppStore();
   const isAr = language === 'ar';
   // Edit eligibility per row (canEditRecord = model.edit perm AND view_scope AND
   // edit_scope). Per-field permission for each cell. Both bypass for admins.
   const canEditFor = (record: AppRecord): boolean =>
-    canEditRecord(currentUserId, users, profiles, roles, model, record);
+    canEditRecord(currentUserId, users, profiles, roles, model, record, previewProfileId);
   const fieldPermFor = (field: ModelField) =>
-    getFieldPermission(currentUserId, users, profiles, model.id, field);
+    getFieldPermission(currentUserId, users, profiles, model.id, field, previewProfileId);
 
   // Build column list from the expanded field set (local + virtual mirrored children).
   // With view: use view.field_ids in order (skipping any fields removed from the model).

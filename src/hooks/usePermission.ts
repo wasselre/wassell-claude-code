@@ -12,6 +12,7 @@ import {
   hasPermission,
   isAdmin,
   isButtonVisible,
+  resolveEffectiveProfile,
 } from '@/lib/permissions';
 import type {
   AppModel,
@@ -22,19 +23,23 @@ import type {
   ModelView,
 } from '@/types';
 
+// Every hook forwards `previewProfileId` — the "view app as another
+// profile" override. The permission layer only honors it for users
+// carrying the explicit `can_preview_profiles` grant.
+
 export function usePermission(modelId: string, permission: ModelPermission): boolean {
-  const { currentUserId, users, profiles } = useAppStore();
-  return hasPermission(currentUserId, users, profiles, modelId, permission);
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  return hasPermission(currentUserId, users, profiles, modelId, permission, previewProfileId);
 }
 
 export function useModelPermissions(modelId: string): Set<ModelPermission> {
-  const { currentUserId, users, profiles } = useAppStore();
-  return getModelPermissions(currentUserId, users, profiles, modelId);
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  return getModelPermissions(currentUserId, users, profiles, modelId, previewProfileId);
 }
 
 export function useIsAdmin(): boolean {
-  const { currentUserId, users, profiles } = useAppStore();
-  return isAdmin(currentUserId, users, profiles);
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  return isAdmin(currentUserId, users, profiles, previewProfileId);
 }
 
 /**
@@ -43,8 +48,8 @@ export function useIsAdmin(): boolean {
  * links and the `RequirePageAccess` route guard.
  */
 export function useCanAccessPage(pageId: string): boolean {
-  const { currentUserId, users, profiles } = useAppStore();
-  return canAccessPage(currentUserId, users, profiles, pageId);
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  return canAccessPage(currentUserId, users, profiles, pageId, previewProfileId);
 }
 
 /**
@@ -52,8 +57,8 @@ export function useCanAccessPage(pageId: string): boolean {
  * Editing the Workflow Builder stays admin-only regardless.
  */
 export function useCanViewWorkflows(): boolean {
-  const { currentUserId, users, profiles } = useAppStore();
-  return canViewWorkflows(currentUserId, users, profiles);
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  return canViewWorkflows(currentUserId, users, profiles, previewProfileId);
 }
 
 /**
@@ -61,9 +66,9 @@ export function useCanViewWorkflows(): boolean {
  * Cheaper than running `useApplyViewScope` when you have a single record in hand.
  */
 export function useCanViewRecord(model: AppModel | null | undefined, record: AppRecord | null | undefined): boolean {
-  const { currentUserId, users, profiles, roles } = useAppStore();
+  const { currentUserId, users, profiles, roles, previewProfileId } = useAppStore();
   if (!model || !record) return false;
-  return canViewRecord(currentUserId, users, profiles, roles, model, record);
+  return canViewRecord(currentUserId, users, profiles, roles, model, record, previewProfileId);
 }
 
 /**
@@ -71,9 +76,9 @@ export function useCanViewRecord(model: AppModel | null | undefined, record: App
  * The record form uses this to flip into read-only mode for in-scope-but-not-editable rows.
  */
 export function useCanEditRecord(model: AppModel | null | undefined, record: AppRecord | null | undefined): boolean {
-  const { currentUserId, users, profiles, roles } = useAppStore();
+  const { currentUserId, users, profiles, roles, previewProfileId } = useAppStore();
   if (!model || !record) return false;
-  return canEditRecord(currentUserId, users, profiles, roles, model, record);
+  return canEditRecord(currentUserId, users, profiles, roles, model, record, previewProfileId);
 }
 
 /**
@@ -82,8 +87,8 @@ export function useCanEditRecord(model: AppModel | null | undefined, record: App
  * render normally. Computed field types are forced to `readonly`.
  */
 export function useFieldPermission(modelId: string, field: ModelField): FieldPermission {
-  const { currentUserId, users, profiles } = useAppStore();
-  return getFieldPermission(currentUserId, users, profiles, modelId, field);
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  return getFieldPermission(currentUserId, users, profiles, modelId, field, previewProfileId);
 }
 
 /**
@@ -92,14 +97,14 @@ export function useFieldPermission(modelId: string, field: ModelField): FieldPer
  * to hand the resolution down into a child (e.g. SectionBlock) that walks
  * fields itself — calling the per-field hook in a loop violates rules of hooks.
  * The callback closes over the current store state; it re-derives whenever
- * `currentUserId`, `users`, or `profiles` change.
+ * `currentUserId`, `users`, `profiles`, or `previewProfileId` change.
  */
 export function useFieldPermissionResolver(modelId: string): (field: ModelField) => FieldPermission {
-  const { currentUserId, users, profiles } = useAppStore();
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
   return useMemo(
     () => (field: ModelField) =>
-      getFieldPermission(currentUserId, users, profiles, modelId, field),
-    [currentUserId, users, profiles, modelId],
+      getFieldPermission(currentUserId, users, profiles, modelId, field, previewProfileId),
+    [currentUserId, users, profiles, modelId, previewProfileId],
   );
 }
 
@@ -123,9 +128,10 @@ export function useApplyViewScope(
   model: AppModel | null | undefined,
   records: AppRecord[],
 ): AppRecord[] {
-  const { currentUserId, users, profiles, roles } = useAppStore();
+  const { currentUserId, users, profiles, roles, previewProfileId } = useAppStore();
   const me = users.find((u) => u.id === currentUserId) ?? null;
-  const myProfile = me ? profiles.find((p) => p.id === me.profile_id) ?? null : null;
+  // Preview-aware: the effective profile is what the scope walk evaluates.
+  const myProfile = resolveEffectiveProfile(me, profiles, previewProfileId);
   // Cheap version marker for the roles collection. Identity changes only
   // when a role is added/removed; field-value resolution still re-walks
   // user.role_assignments which lives on `me`.
@@ -133,9 +139,9 @@ export function useApplyViewScope(
   return useMemo(() => {
     if (!model) return records;
     // Bail-out fast paths short-circuit before the scope walk.
-    return applyViewScopeToRecords(currentUserId, users, profiles, roles, model, records);
+    return applyViewScopeToRecords(currentUserId, users, profiles, roles, model, records, previewProfileId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentUserId, me, myProfile, rolesVersion, model, records]);
+  }, [currentUserId, me, myProfile, rolesVersion, model, records, previewProfileId]);
 }
 
 /**
@@ -144,15 +150,15 @@ export function useApplyViewScope(
  * their own; profile rules only affect shared views from other authors.
  */
 export function useApplyVisibleViews(views: ModelView[]): ModelView[] {
-  const { currentUserId, users, profiles } = useAppStore();
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
   return useMemo(
-    () => applyVisibleViews(currentUserId, users, profiles, views),
-    [currentUserId, users, profiles, views],
+    () => applyVisibleViews(currentUserId, users, profiles, views, previewProfileId),
+    [currentUserId, users, profiles, views, previewProfileId],
   );
 }
 
 /** Whether the current user can see / click a specific custom button. */
 export function useIsButtonVisible(buttonId: string): boolean {
-  const { currentUserId, users, profiles } = useAppStore();
-  return isButtonVisible(currentUserId, users, profiles, buttonId);
+  const { currentUserId, users, profiles, previewProfileId } = useAppStore();
+  return isButtonVisible(currentUserId, users, profiles, buttonId, previewProfileId);
 }

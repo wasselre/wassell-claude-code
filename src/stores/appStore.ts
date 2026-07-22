@@ -1650,6 +1650,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   whiteboards: [],
   whiteboardFolders: [],
   currentUserId: loadLocal<string>('wassell_current_user_id') ?? null,
+  // Profile-preview override ("view app as"). Persisted so a reload keeps
+  // the preview; the permission layer ignores it unless the current user
+  // carries `can_preview_profiles`, so a stale value is inert.
+  previewProfileId: loadLocal<string>('wassell_preview_profile_id') || null,
   authEmail: null,
   authUid: null,
   authReady: false,
@@ -4438,7 +4442,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setCurrentUser: (userId: string | null) => {
     saveLocal('wassell_current_user_id', userId);
-    set({ currentUserId: userId });
+    // Switching identity ends any profile preview — the preview grant and
+    // perspective belong to the previous user.
+    saveLocal('wassell_preview_profile_id', '');
+    set({ currentUserId: userId, previewProfileId: null });
+  },
+  setPreviewProfile: (profileId: string | null) => {
+    saveLocal('wassell_preview_profile_id', profileId ?? '');
+    set({ previewProfileId: profileId });
   },
 
   // --- Profiles ---
@@ -4689,8 +4700,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     // authEmail is cleared by the onAuthChange callback in bindAuth, but we
     // also do it synchronously here so the UI updates without waiting for the
     // subscription round-trip.
-    set({ authEmail: null, authUid: null, currentUserId: null });
+    set({ authEmail: null, authUid: null, currentUserId: null, previewProfileId: null });
     saveLocal('wassell_current_user_id', '');
+    saveLocal('wassell_preview_profile_id', '');
     if (prevEmail) {
       activityLogger.signOut(prevEmail, prevUserId);
     }

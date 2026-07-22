@@ -12,6 +12,7 @@ import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import { LineChart, RefreshCw, Building2, Users, MapPin, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { fetchOverview, recomputeBenchmarks } from '@/lib/market/client';
+import { resolveEffectiveProfile } from '@/lib/permissions';
 import type { MarketOverview } from '@/lib/market/types';
 import BenchmarkTab from './components/BenchmarkTab';
 import DemandSupplyTab from './components/DemandSupplyTab';
@@ -23,10 +24,11 @@ type Tab = 'overview' | 'benchmarks' | 'demand' | 'opportunities' | 'pricing';
 
 export default function MarketIntelligencePage() {
   const { t } = useTranslation();
-  const { language, currentUserId, users, profiles, addToast } = useAppStore();
+  const { language, currentUserId, users, profiles, previewProfileId, addToast } = useAppStore();
   const isAr = language === 'ar';
   const currentUser = users.find((u) => u.id === currentUserId);
-  const currentProfile = currentUser?.profile_id ? profiles.find((p) => p.id === currentUser.profile_id) : null;
+  // Preview-aware: honors the "view app as" override for granted users.
+  const currentProfile = resolveEffectiveProfile(currentUser, profiles, previewProfileId);
   const isAdmin = !!currentProfile?.is_admin;
 
   const [tab, setTab] = useState<Tab>('overview');
