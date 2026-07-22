@@ -40,7 +40,7 @@ function aliasTokens(a: ProjectAlias): string[] {
 }
 
 /**
- * Document frequency of each token across the whole index. Tokens shared by ≥2
+ * Document frequency of each token across a project set. Tokens shared by ≥2
  * projects (the developer/series name, e.g. "الماجديه", "ريفييرا", "يمام") are
  * NOT distinctive and must not trigger a match on their own — only the number or
  * a project-unique word does. This is what stops a brand post from being assigned
@@ -53,6 +53,20 @@ function tokenDocFreq(index: ProjectAlias[]): Map<string, number> {
 }
 
 /**
+ * Non-distinctive tokens = those appearing in ≥2 projects across the FULL catalog
+ * (developer/series names). Compute this over ALL projects, then match only within
+ * a publisher's own projects — otherwise a series name that happens to be unique
+ * inside a small scoped set (e.g. only 1 of a developer's 6 projects contains
+ * "الماجديه") would wrongly become "distinctive". Numbers are always allowed.
+ */
+export function computeCommonTokens(catalog: ProjectAlias[]): Set<string> {
+  const df = tokenDocFreq(catalog);
+  const common = new Set<string>();
+  for (const [tok, n] of df) if (n >= 2 && !/^\d+$/.test(tok)) common.add(tok);
+  return common;
+}
+
+/**
  * Attribute a caption to projects by NAME/NUMBER content only. Account ownership
  * (publisherProjectIds) RAISES confidence but never creates a match on its own —
  * a caption with no project reference returns [] (stays organization-level).
@@ -61,27 +75,36 @@ function tokenDocFreq(index: ProjectAlias[]): Map<string, number> {
 export function attributeCaption(
   caption: string,
   index: ProjectAlias[],
-  opts: { publisherProjectIds?: string[] } = {},
+  opts: { publisherProjectIds?: string[]; commonTokens?: Set<string> } = {},
 ): AttributionCandidate[] {
   const nt = normalizeAr(caption);
   if (!nt.trim()) return [];
   const pub = new Set(opts.publisherProjectIds ?? []);
-  const df = tokenDocFreq(index);
+  // Distinctiveness: prefer a GLOBAL common-token set (computed over the full
+  // catalog); fall back to local doc-frequency when not supplied (unit tests).
+  const common = opts.commonTokens;
+  const df = common ? null : tokenDocFreq(index);
   const hits: AttributionCandidate[] = [];
 
+  const isCommon = (w: string) => (common ? common.has(w) : (df!.get(w) ?? 0) > 1);
   for (const a of index) {
-    // Only DISTINCTIVE tokens count: a number, or a word unique to this project.
-    const tokens = aliasTokens(a).filter((tok) => /^\d+$/.test(tok) || (df.get(tok) ?? 0) === 1);
-    const matched = tokens.filter((tok) => {
-      if (/^\d+$/.test(tok)) {
-        // number must appear standalone so 5 doesn't match 51/52
-        return new RegExp(`(^|\\D)${tok}(\\D|$)`).test(nt);
-      }
-      return nt.includes(tok);
-    });
+    const toks = aliasTokens(a);
+    const nums = toks.filter((t) => /^\d+$/.test(t));
+    const words = toks.filter((t) => !/^\d+$/.test(t));
+    const distinctiveWords = words.filter((w) => !isCommon(w));
+    const commonWords = words.filter((w) => isCommon(w)); // the series/developer name
+    const matched: string[] = [];
+    // 1. a project-unique word
+    for (const w of distinctiveWords) if (nt.includes(w)) matched.push(w);
+    // 2. a LONG number (≥3 digits) standalone — distinctive on its own (174, 163)
+    for (const num of nums) if (num.length >= 3 && new RegExp(`(^|\\D)${num}(\\D|$)`).test(nt)) matched.push(num);
+    // 3. a SHORT number (1–2 digits) ONLY as a phrase with its series word ("ريفييرا 44",
+    //    "المشرقية 2") — never alone, so a stray "2" in another caption can't match.
+    for (const num of nums) if (num.length < 3) for (const cw of commonWords) {
+      if (new RegExp(`${cw}\\s*${num}(\\D|$)`).test(nt)) matched.push(`${cw} ${num}`);
+    }
     if (matched.length === 0) continue;
-    // Strength: a number OR a distinctive (≥4-char) word is a strong signal.
-    const strong = matched.some((m) => /^\d+$/.test(m) || m.length >= 4);
+    const strong = matched.some((m) => /\d/.test(m) || m.length >= 4);
     let confidence = strong ? 0.85 : 0.5; // distinctive number/unique word = deterministic
     if (pub.has(a.projectId)) confidence = Math.min(0.95, confidence + 0.1); // ownership boosts, doesn't prove
     hits.push({

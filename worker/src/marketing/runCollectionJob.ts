@@ -12,7 +12,7 @@ import {
 } from './providers.js';
 import { collectViaApify } from './apifyLifecycle.js';
 import {
-  attributeCaption, shouldSnapshot, browserbaseFallbackEligible,
+  attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens,
   type ProjectAlias, type Metrics,
 } from './pipeline.js';
 
@@ -23,12 +23,30 @@ export interface CollectionJob {
 interface Ctx { supabase: SupabaseClient; env: WorkerEnv; job: CollectionJob }
 interface RunStats { received: number; inserted: number; updated: number; skipped: number; errors: string[] }
 
-// ── project index (cached per run) ──────────────────────────────────────────
-async function loadProjectIndex(sb: SupabaseClient): Promise<ProjectAlias[]> {
+// ── project index, SCOPED to a set of project ids ───────────────────────────
+// A publisher's post is only attributed to projects that publisher is linked to
+// (a developer posts about ITS projects). Matching against all 980 all_projects
+// produced hundreds of number-collision false candidates — scoping fixes both the
+// noise and the correctness ("don't assign a post to unrelated projects").
+async function loadProjectIndex(sb: SupabaseClient, projectIds: string[]): Promise<ProjectAlias[]> {
+  if (projectIds.length === 0) return [];
   const { data } = await sb
     .from('unified_records')
     .select('id, data')
-    .eq('model_id', '220c49b9-de57-492d-9eca-c0d9f54fd40f'); // all_projects
+    .eq('model_id', '220c49b9-de57-492d-9eca-c0d9f54fd40f') // all_projects
+    .in('id', projectIds);
+  return (data ?? []).map((r) => {
+    const d = (r.data ?? {}) as Record<string, unknown>;
+    return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] };
+  }).filter((p) => p.nameAr || p.nameEn);
+}
+
+/** ALL project names — used only to compute the global common-token set. */
+async function loadAllProjectNames(sb: SupabaseClient): Promise<ProjectAlias[]> {
+  const { data } = await sb
+    .from('unified_records')
+    .select('id, data')
+    .eq('model_id', '220c49b9-de57-492d-9eca-c0d9f54fd40f');
   return (data ?? []).map((r) => {
     const d = (r.data ?? {}) as Record<string, unknown>;
     return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] };
@@ -56,6 +74,7 @@ function toMetricsJson(m?: NormalizedMetrics): Metrics {
 async function ingestPost(
   ctx: Ctx, post: NormalizedContentPost, orgId: string | null, accountId: string | null,
   runId: string, index: ProjectAlias[], pubProjects: string[], minIntervalHours: number, stats: RunStats,
+  commonTokens: Set<string>,
 ): Promise<void> {
   const sb = ctx.supabase;
   const rawId = (await sb.rpc('mkt_raw_ingestion_insert', {
@@ -88,7 +107,7 @@ async function ingestPost(
   }
 
   // attribution (caption-based; ownership boosts, never proves)
-  const candidates = attributeCaption(post.caption ?? '', index, { publisherProjectIds: pubProjects });
+  const candidates = attributeCaption(post.caption ?? '', index, { publisherProjectIds: pubProjects, commonTokens });
   for (const c of candidates) {
     await sb.rpc('mkt_attribution_upsert', {
       p_content_post_id: row.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence,
@@ -99,7 +118,7 @@ async function ingestPost(
 
 // ── main ────────────────────────────────────────────────────────────────────
 export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stats: RunStats }> {
-  const { supabase: sb, env, job } = ctx;
+  const { supabase: sb, job } = ctx;
   const stats: RunStats = { received: 0, inserted: 0, updated: 0, skipped: 0, errors: [] };
   let apifyCost: Record<string, unknown> | undefined;
 
@@ -129,14 +148,22 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         stats.errors.push(`discover not implemented for ${job.provider} (handle already known)`);
       }
     } else if (job.kind === 'incremental' || job.kind === 'backfill') {
-      const index = await loadProjectIndex(sb);
       const pubProjects = await publisherProjectIds(sb, orgId);
-      const limit = job.kind === 'backfill' ? Number(env ? (await sb.from('mkt_settings').select('value').eq('key', 'default_backfill_limit').maybeSingle()).data?.value ?? 30 : 30) : 30;
+      const index = await loadProjectIndex(sb, pubProjects);
+      const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
+      // Explicit params.limit wins (capped 50) — used for bounded validation runs;
+      // else backfill uses the settings default, incremental a fixed recent window.
+      const paramLimit = typeof job.params.limit === 'number' ? Math.min(50, Math.max(1, job.params.limit)) : null;
+      const limit = paramLimit ?? (job.kind === 'backfill' ? Number((await sb.from('mkt_settings').select('value').eq('key', 'default_backfill_limit').maybeSingle()).data?.value ?? 30) : 30);
       const platform = acct!.platform as NormalizedContentPost['platform'];
 
+      // INCREMENTAL always fetches the newest page (cursor null) so repeat runs
+      // re-see recent posts and dedup UPDATES them — idempotent. Only BACKFILL
+      // walks pages via the stored cursor.
+      const useCursor = job.kind === 'backfill' ? ((acct!.sync_cursor as string) ?? null) : null;
       let batch: { posts: NormalizedContentPost[]; nextCursor?: string | null };
       if (job.provider === 'youtube') {
-        batch = await YouTube.collect({ platform: 'youtube', handle: acct!.handle as string, externalAccountId: acct!.external_account_id as string | undefined, cursor: (acct!.sync_cursor as string) ?? null, mode: job.kind as 'incremental' | 'backfill', limit });
+        batch = await YouTube.collect({ platform: 'youtube', handle: acct!.handle as string, externalAccountId: acct!.external_account_id as string | undefined, cursor: useCursor, mode: job.kind as 'incremental' | 'backfill', limit });
       } else if (job.provider === 'apify') {
         // Full Apify lifecycle (start run → poll → dataset) — the ONE implementation.
         const result = await collectViaApify(sb, { platform, handle: acct!.handle as string, limit });
@@ -149,10 +176,12 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       }
       stats.received = batch.posts.length;
       for (const post of batch.posts) {
-        try { await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, pubProjects, minIntervalHours, stats); }
+        try { await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, pubProjects, minIntervalHours, stats, commonTokens); }
         catch (e) { stats.errors.push(`${post.externalId}: ${e instanceof Error ? e.message : String(e)}`); }
       }
-      await sb.from('mkt_social_accounts').update({ sync_cursor: batch.nextCursor ?? null, last_incremental_at: new Date().toISOString(), scrape_status: 'ok', last_synced_at: new Date().toISOString() }).eq('id', acct!.id);
+      // Only backfill advances the page cursor; incremental leaves it untouched.
+      const cursorUpdate = job.kind === 'backfill' ? { sync_cursor: batch.nextCursor ?? null } : {};
+      await sb.from('mkt_social_accounts').update({ ...cursorUpdate, last_incremental_at: new Date().toISOString(), scrape_status: 'ok', last_synced_at: new Date().toISOString() }).eq('id', acct!.id);
     } else if (job.kind === 'post_metrics') {
       // refresh metrics for this account's known posts (YouTube batch stats).
       const { data: posts } = await sb.from('mkt_content_posts').select('id, external_id').eq('social_account_id', acct!.id).eq('availability', 'available').limit(200);
@@ -168,12 +197,16 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       }
       await sb.from('mkt_social_accounts').update({ last_metrics_at: new Date().toISOString() }).eq('id', acct!.id);
     } else if (job.kind === 'attribution' || job.kind === 'reprocess') {
-      const index = await loadProjectIndex(sb);
       const { data: posts } = await sb.from('mkt_content_posts').select('id, caption, organization_id').limit(500);
       stats.received = posts?.length ?? 0;
+      const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
+      const indexCache = new Map<string, ProjectAlias[]>();
       for (const p of posts ?? []) {
-        const pub = await publisherProjectIds(sb, (p.organization_id as string) ?? null);
-        for (const c of attributeCaption((p.caption as string) ?? '', index, { publisherProjectIds: pub })) {
+        const org = (p.organization_id as string) ?? '';
+        const pub = await publisherProjectIds(sb, org || null);
+        let index = indexCache.get(org);
+        if (!index) { index = await loadProjectIndex(sb, pub); indexCache.set(org, index); }
+        for (const c of attributeCaption((p.caption as string) ?? '', index, { publisherProjectIds: pub, commonTokens })) {
           await sb.rpc('mkt_attribution_upsert', { p_content_post_id: p.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence, p_evidence: c.evidence, p_matched_aliases: c.matchedAliases, p_auto_accept: c.autoAccept });
         }
       }

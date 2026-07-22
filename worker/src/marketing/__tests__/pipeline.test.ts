@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  attributeCaption, shouldSnapshot, browserbaseFallbackEligible, normalizeAr,
+  attributeCaption, shouldSnapshot, browserbaseFallbackEligible, normalizeAr, computeCommonTokens,
   type ProjectAlias,
 } from '../pipeline';
 
@@ -51,6 +51,43 @@ describe('attribution (spec §9)', () => {
 
   it('normalizeAr folds hamza/taa-marbuta/tatweel', () => {
     expect(normalizeAr('أدوار الــماجدية')).toBe('ادوار الماجديه');
+  });
+
+  it('GLOBAL common-token set excludes the developer name even when the match index is scoped to 1 project', () => {
+    // Full catalog: "الماجديه" appears in 2+ projects → common. Scoped index (what the
+    // developer publishes) has only 1 project containing it — without the global set it
+    // would look distinctive and wrongly match every brand post.
+    const catalog: ProjectAlias[] = [
+      { projectId: 'p174', nameAr: 'الماجدية 174', nameEn: null, tokens: [] },
+      { projectId: 'p163', nameAr: 'الماجدية 163', nameEn: null, tokens: [] },
+      { projectId: 'pmakana', nameAr: 'مكانة', nameEn: null, tokens: [] },
+    ];
+    const common = computeCommonTokens(catalog);
+    expect(common.has('الماجديه')).toBe(true);
+    const scoped: ProjectAlias[] = [
+      { projectId: 'p174', nameAr: 'الماجدية 174', nameEn: null, tokens: [] }, // only 1 with الماجديه
+      { projectId: 'pmakana', nameAr: 'مكانة', nameEn: null, tokens: [] },
+    ];
+    // brand post → no distinctive token → unattributed
+    expect(attributeCaption('مشاريعنا أقرب لكم من الماجدية', scoped, { commonTokens: common })).toEqual([]);
+    // a real project mention still matches by its distinctive word
+    expect(attributeCaption('برج مكانة تجربة سكنية', scoped, { commonTokens: common }).map((h) => h.projectId)).toEqual(['pmakana']);
+    // and by number
+    expect(attributeCaption('الماجدية 174 عرض', scoped, { commonTokens: common }).map((h) => h.projectId)).toEqual(['p174']);
+  });
+
+  it('a SHORT (1–2 digit) project number never matches alone — only as a series phrase', () => {
+    const catalog: ProjectAlias[] = [
+      { projectId: 'pm2', nameAr: 'المشرقية 2', nameEn: null, tokens: [] },
+      { projectId: 'pm1', nameAr: 'المشرقية 1', nameEn: null, tokens: [] }, // makes "مشرقيه" common
+      { projectId: 'p174', nameAr: 'الماجدية 174', nameEn: null, tokens: [] },
+    ];
+    const common = computeCommonTokens(catalog);
+    const scoped = catalog.filter((p) => p.projectId === 'pm2');
+    // a caption with a stray "2" (different project) must NOT match المشرقية 2
+    expect(attributeCaption('الماجدية 150 حي عرقة', scoped, { commonTokens: common })).toEqual([]);
+    // but the project's own caption (series word + number, adjacent) DOES match
+    expect(attributeCaption('المشرقية 2 | حي القدس', scoped, { commonTokens: common }).map((h) => h.projectId)).toEqual(['pm2']);
   });
 });
 
