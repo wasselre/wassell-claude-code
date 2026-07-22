@@ -42,7 +42,8 @@ import RelatedRecordsPanel from './components/RelatedRecordsPanel';
 import RecordTabBar, { type RecordTab } from './components/RecordTabBar';
 import ClientDetailsTabPane from './components/ClientDetailsTabPane';
 import UnitsTabPane from './components/UnitsTabPane';
-import { Users, Home } from 'lucide-react';
+import MarketingTabPane from './components/MarketingTabPane';
+import { Users, Home, Megaphone } from 'lucide-react';
 import { useAutoLink } from './hooks/useAutoLink';
 import { useAutoFill } from './hooks/useAutoFill';
 import { useFieldDefaults } from './hooks/useFieldDefaults';
@@ -450,7 +451,9 @@ export default function RecordFormPage() {
       ? 'client'
       : tabParam === 'units' && projectCandidateIds.length > 0
         ? 'units'
-        : 'form';
+        : tabParam === 'marketing' && projectCandidateIds.length > 0
+          ? 'marketing'
+          : 'form';
   const activeClientId = (() => {
     const param = searchParams.get('client');
     if (param && clientCandidateIds.includes(param)) return param;
@@ -480,6 +483,12 @@ export default function RecordFormPage() {
         label_en: 'Units',
         icon: <Home size={14} />,
       });
+      out.push({
+        id: 'marketing',
+        label_ar: 'التسويق',
+        label_en: 'Marketing',
+        icon: <Megaphone size={14} />,
+      });
     }
     return out;
   }, [clientCandidateIds, projectCandidateIds]);
@@ -495,6 +504,9 @@ export default function RecordFormPage() {
       if (activeClientId) sp.set('client', activeClientId);
     } else if (next === 'units') {
       sp.set('tab', 'units');
+      if (activeProjectId) sp.set('project', activeProjectId);
+    } else if (next === 'marketing') {
+      sp.set('tab', 'marketing');
       if (activeProjectId) sp.set('project', activeProjectId);
     }
     setSearchParams(sp, { replace: true });
@@ -1488,6 +1500,8 @@ export default function RecordFormPage() {
         <ClientDetailsTabPane clientId={activeClientId} />
       ) : activeTab === 'units' && activeProjectId ? (
         <UnitsTabPane projectId={activeProjectId} />
+      ) : activeTab === 'marketing' && activeProjectId ? (
+        <MarketingTabPane projectId={activeProjectId} />
       ) : (
       /* Sections */
       <div className="space-y-6">
