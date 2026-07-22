@@ -5,9 +5,9 @@ import {
   fetchProjectOverview, fetchProjectContent, fetchProjectMarketers,
   fetchProviderHealth, decideAttribution, fetchCollectionStatus,
   runCollection, retryJob, setAccountCollection, setCollectionPaused, refreshProviderHealthNow,
-  fetchProjectAds, fetchAdTimeline,
+  fetchProjectAds, fetchAdTimeline, fetchProjectInsights,
   type OverviewData, type ContentRow, type MarketerRow, type ProviderRow, type CollectionStatusData,
-  type AdRow, type AdTimelineEvent,
+  type AdRow, type AdTimelineEvent, type InsightRow,
 } from '@/lib/marketing/client';
 
 interface Props { projectId: string }
@@ -58,6 +58,7 @@ export default function MarketingTabPane({ projectId }: Props) {
   const [status, setStatus] = useState<CollectionStatusData | null>(null);
   const [ads, setAds] = useState<AdRow[]>([]);
   const [adEvents, setAdEvents] = useState<AdTimelineEvent[]>([]);
+  const [insights, setInsights] = useState<InsightRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,8 +71,8 @@ export default function MarketingTabPane({ projectId }: Props) {
         setMarketers((await fetchProjectMarketers(projectId)).marketers);
         setContent((await fetchProjectContent(projectId, 'marketer')).rows);
       } else if (sub === 'ads') {
-        const [a, t] = await Promise.all([fetchProjectAds(projectId), fetchAdTimeline(projectId)]);
-        setAds(a.rows); setAdEvents(t.events);
+        const [a, t, i] = await Promise.all([fetchProjectAds(projectId), fetchAdTimeline(projectId), fetchProjectInsights(projectId)]);
+        setAds(a.rows); setAdEvents(t.events); setInsights(i.insights);
       } else if (sub === 'collection') {
         setProviders((await fetchProviderHealth()).providers);
         setStatus(await fetchCollectionStatus(projectId));
@@ -159,7 +160,7 @@ export default function MarketingTabPane({ projectId }: Props) {
 
       {/* PAID ADS — empty state (ingestion is Phase 2) */}
       {sub === 'ads' && !loading && (
-        <PaidAdsView ads={ads} events={adEvents} isAr={isAr} isAdmin={isAdmin} L={L} timeAgo={timeAgo}
+        <PaidAdsView ads={ads} events={adEvents} insights={insights} isAr={isAr} isAdmin={isAdmin} L={L} timeAgo={timeAgo}
           onDecide={async (id, d) => { try { await decideAttribution(id, d); addToast(L('تم', 'Done'), 'success'); void load(); } catch (e) { addToast(e instanceof Error ? e.message : 'error', 'error'); } }} />
       )}
 
@@ -358,8 +359,10 @@ const CHANGE_LABEL: Record<string, { ar: string; en: string; cls: string }> = {
   text_change: { ar: 'تغيير النص', en: 'Text changed', cls: 'bg-blue-100 text-blue-800' },
 };
 
-function PaidAdsView({ ads, events, isAr, isAdmin, L, timeAgo: ago, onDecide }: {
-  ads: AdRow[]; events: AdTimelineEvent[]; isAr: boolean; isAdmin: boolean;
+const INSIGHT_SEV: Record<string, string> = { info: 'bg-blue-100 text-blue-800', opportunity: 'bg-green-100 text-green-800', warning: 'bg-amber-100 text-amber-800' };
+
+function PaidAdsView({ ads, events, insights, isAr, isAdmin, L, timeAgo: ago, onDecide }: {
+  ads: AdRow[]; events: AdTimelineEvent[]; insights: InsightRow[]; isAr: boolean; isAdmin: boolean;
   L: (ar: string, en: string) => string; timeAgo: (iso: string | null, isAr: boolean) => string;
   onDecide: (attributionId: string, decision: 'confirm' | 'reject') => void;
 }) {
@@ -369,6 +372,23 @@ function PaidAdsView({ ads, events, isAr, isAdmin, L, timeAgo: ago, onDecide }: 
         {L('إعلانات ميتا العامة (مكتبة الإعلانات) — تغطية أفضل جهد. لا نعرض الإنفاق أو مقاييس خاصة (غير متاحة).',
            'Public Meta ads (Ad Library) — best-effort coverage. No spend or private metrics (unavailable).')}
       </div>
+
+      {/* INTELLIGENCE (deterministic, generated events) */}
+      {insights.length > 0 && (
+        <div>
+          <h3 className="text-sm font-bold text-charcoal/70 mb-2">{L('استخبارات', 'Intelligence')}</h3>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {insights.slice(0, 8).map((i) => (
+              <div key={i.id} className="card p-2.5 flex items-start gap-2">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${INSIGHT_SEV[i.severity] ?? 'bg-charcoal/10 text-charcoal'}`}>{i.kind}</span>
+                <div className="min-w-0"><div className="text-xs font-bold truncate" dir="rtl">{i.title}</div>
+                  {i.body && <div className="text-[11px] text-charcoal/50 truncate" dir="rtl">{i.body}</div>}
+                  <div className="text-[10px] text-charcoal/35">{ago(i.generated_at, isAr)}</div></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* CHANGE TIMELINE — competitor campaign activity over time */}
       {events.length > 0 && (

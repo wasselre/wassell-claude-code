@@ -110,3 +110,10 @@ export const fetchProjectAds = (project_id: string, active?: boolean) => call<{ 
 export const fetchAdTimeline = (project_id: string) => call<{ events: AdTimelineEvent[] }>('ad_timeline', { project_id });
 export const runAdsCollection = (organization_id: string, advertiser: string, limit = 25) =>
   call<{ job_id: string }>('run_ads_collection', { organization_id, advertiser, limit });
+
+export interface InsightRow { id: string; kind: string; severity: string; title: string; body: string | null; evidence: unknown; generated_at: string; campaign_id: string | null }
+export interface CampaignRow { id: string; advertiser_name: string | null; primary_cta: string | null; primary_headline: string | null; ad_count: number; active_ad_count: number; is_active: boolean; first_seen_at: string | null; last_seen_at: string | null; ended_at: string | null }
+export interface CostDashboard { total_usd: number; total_runs: number; failed_runs: number; avg_usd_per_run: number; by_provider: Record<string, { runs: number; usd: number; compute: number; failed: number }>; by_day: Record<string, number> }
+export const fetchProjectInsights = (project_id: string) => call<{ insights: InsightRow[] }>('project_insights', { project_id });
+export const fetchProjectCampaigns = (project_id: string) => call<{ campaigns: CampaignRow[] }>('project_campaigns', { project_id });
+export const fetchCostDashboard = () => call<CostDashboard>('cost_dashboard');

@@ -11,7 +11,9 @@ import {
   type NormalizedContentPost, type NormalizedMetrics, type ProviderKey,
 } from './providers.js';
 import { collectViaApify } from './apifyLifecycle.js';
-import { collectMetaAds } from './metaAdsLifecycle.js';
+import { collectMetaAdsByPage, discoverAdvertiser } from './metaAdsLifecycle.js';
+import { storeCreative } from './creativeStore.js';
+import { normalizeLandingUrl, campaignSignature, urlKey, insightKey } from './adIntel.js';
 import {
   attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens,
   type ProjectAlias, type Metrics,
@@ -197,60 +199,127 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         stats.skipped = stats.received;
       }
       await sb.from('mkt_social_accounts').update({ last_metrics_at: new Date().toISOString() }).eq('id', acct!.id);
-    } else if (job.kind === 'paid_ads') {
-      // Meta Ad Library collection for one advertiser (org). Dedicated provider;
-      // dedup + change-history + attribution + removed-detection.
-      // The job monitors a TARGET developer (adOrgId): ad TEXT is attributed to that
-      // developer's projects. But each ad's own organization_id = its REAL advertiser
-      // (Meta pageName → tracked org if known, else null) — a marketer's ad about the
-      // developer's project is stored under the marketer, attributed to the project.
-      const adOrgId = (job.params.organization_id as string) ?? orgId; // target/monitored org
+    } else if (job.kind === 'discover_advertiser') {
+      // Keyword search is the DISCOVERY tool only: find the advertiser's page(s),
+      // auto-confirm a single hit, else store candidates for human confirmation.
+      const adOrgId = (job.params.organization_id as string) ?? orgId;
       const advertiser = (job.params.advertiser as string) ?? (acct?.handle as string);
-      if (!adOrgId || !advertiser) throw new ProviderError('paid_ads job needs organization_id + advertiser', 'config_invalid');
-      const limit = typeof job.params.limit === 'number' ? Math.min(100, Math.max(1, job.params.limit)) : 30;
-      const result = await collectMetaAds(sb, { advertiser, country: (job.params.country as string) ?? 'SA', limit });
+      if (!adOrgId || !advertiser) throw new ProviderError('discover_advertiser needs organization_id + advertiser', 'config_invalid');
+      const disc = await discoverAdvertiser(sb, { advertiser, country: (job.params.country as string) ?? 'SA', limit: 30 });
+      apifyCost = disc.cost;
+      stats.received = disc.candidates.length;
+      if (disc.candidates.length === 1) {
+        const c = disc.candidates[0]!;
+        await sb.rpc('mkt_org_set_advertiser', { p_org: adOrgId, p_page_id: c.pageId, p_advertiser_id: c.pageId, p_page_url: c.pageUrl, p_display_name: c.pageName, p_verification: null, p_confirmed: true, p_candidates: null });
+        stats.inserted = 1;
+      } else {
+        await sb.rpc('mkt_org_set_advertiser', { p_org: adOrgId, p_page_id: null, p_advertiser_id: null, p_page_url: null, p_display_name: null, p_verification: null, p_confirmed: false, p_candidates: disc.candidates });
+        stats.skipped = disc.candidates.length; // needs human confirm (0 or many)
+      }
+    } else if (job.kind === 'paid_ads') {
+      // PRODUCTION: collect a CONFIRMED advertiser PAGE (never keyword). Downloads
+      // creatives permanently, fingerprints them, groups ads into campaigns, tracks
+      // landing pages, and emits deterministic intelligence + notification events.
+      const adOrgId = (job.params.organization_id as string) ?? orgId;
+      if (!adOrgId) throw new ProviderError('paid_ads needs organization_id', 'config_invalid');
+      const { data: orgRow } = await sb.from('mkt_organizations').select('meta_page_id, meta_confirmed, name_en, name_ar').eq('id', adOrgId).maybeSingle();
+      if (!orgRow?.meta_page_id || !orgRow.meta_confirmed) throw new ProviderError('advertiser page not confirmed — run discover_advertiser first', 'config_invalid');
+      const advertiserLabel = (orgRow.name_en as string) ?? (orgRow.name_ar as string) ?? 'advertiser';
+      const limit = typeof job.params.limit === 'number' ? Math.min(200, Math.max(1, job.params.limit)) : 50;
+      const result = await collectMetaAdsByPage(sb, { pageId: orgRow.meta_page_id as string, country: (job.params.country as string) ?? 'SA', limit });
       apifyCost = result.cost;
-      const pubProjects = await publisherProjectIds(sb, adOrgId); // attribute to the monitored developer's projects
+      const pubProjects = await publisherProjectIds(sb, adOrgId);
       const index = await loadProjectIndex(sb, pubProjects);
       const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
-      const orgCache = new Map<string, string | null>();
-      const resolveAdvertiserOrg = async (name?: string): Promise<string | null> => {
-        if (!name) return null;
-        if (orgCache.has(name)) return orgCache.get(name)!;
-        const { data } = await sb.from('mkt_organizations').select('id').or(`name_en.ilike.%${name}%,name_ar.ilike.%${name}%`).limit(1).maybeSingle();
-        const id = (data?.id as string) ?? null; orgCache.set(name, id); return id;
-      };
       const seen: string[] = [];
+      const touchedCampaigns = new Set<string>();
+      const newCampaignIds = new Set<string>();
+      const fpCounts = new Map<string, number>();
+      let newLandings = 0;
       stats.received = result.ads.length;
       for (const ad of result.ads) {
         try {
-          const advertiserOrg = await resolveAdvertiserOrg(ad.advertiserName);
+          if (!ad.externalAdId) { stats.errors.push('malformed ad (no id)'); continue; }
           const rawId = (await sb.rpc('mkt_raw_ingestion_insert', { p_provider: 'apify', p_source_type: 'ad', p_external_identity: ad.externalAdId, p_payload: ad.raw as object, p_dedup_key: `meta:${ad.externalAdId}`, p_run_id: runId })).data as string;
-          const up = (await sb.rpc('mkt_paid_ad_upsert', {
-            p_platform: 'meta', p_external_ad_id: ad.externalAdId, p_provider: 'apify', p_organization_id: advertiserOrg,
-            p_advertiser_name: ad.advertiserName ?? advertiser, p_creative_media_ref: ad.creativeMediaRef ?? null,
+          // permanent creative: reuse if the creative URL-key is unchanged (no re-download)
+          const { data: existing } = await sb.from('mkt_paid_ads').select('creative_original_url, creative_stored_url, creative_fingerprint, creative_phash').eq('platform', 'meta').eq('external_ad_id', ad.externalAdId).maybeSingle();
+          let stored: { storedUrl: string; fingerprint: string | null; phash: string | null } | null = null;
+          if (ad.creativeMediaRef) {
+            if (existing?.creative_stored_url && urlKey(existing.creative_original_url as string) === urlKey(ad.creativeMediaRef)) {
+              stored = { storedUrl: existing.creative_stored_url as string, fingerprint: existing.creative_fingerprint as string, phash: existing.creative_phash as string };
+            } else {
+              stored = await storeCreative(ad.creativeMediaRef);
+            }
+          }
+          // landing page (normalized)
+          const ln = normalizeLandingUrl(ad.landingUrl);
+          let landingId: string | null = null;
+          if (ln.canonical) {
+            const before = (await sb.from('mkt_landing_pages').select('id').eq('canonical_url', ln.canonical).maybeSingle()).data;
+            landingId = (await sb.rpc('mkt_landing_upsert', { p_canonical_url: ln.canonical, p_destination_domain: ln.domain, p_project_id: null, p_organization_id: adOrgId })).data as string;
+            if (!before) newLandings++;
+          }
+          // campaign grouping
+          const sig = campaignSignature({ organizationId: adOrgId, advertiserName: ad.advertiserName, landingCanonical: ln.canonical, cta: ad.cta, headline: ad.headline });
+          const camp = ((await sb.rpc('mkt_campaign_upsert', { p_signature: sig, p_organization_id: adOrgId, p_advertiser_name: ad.advertiserName ?? advertiserLabel, p_landing_page_id: landingId, p_cta: ad.cta ?? null, p_headline: ad.headline ?? null, p_run_id: runId })).data as Array<{ id: string; was_inserted: boolean }>)[0]!;
+          touchedCampaigns.add(camp.id);
+          if (camp.was_inserted) newCampaignIds.add(camp.id);
+          // core upsert (dedup + change history)
+          const up = ((await sb.rpc('mkt_paid_ad_upsert', {
+            p_platform: 'meta', p_external_ad_id: ad.externalAdId, p_provider: 'apify', p_organization_id: adOrgId,
+            p_advertiser_name: ad.advertiserName ?? advertiserLabel, p_creative_media_ref: ad.creativeMediaRef ?? null,
             p_creative_type: ad.creativeType ?? null, p_headline: ad.headline ?? null, p_body: ad.body ?? null,
             p_description: ad.description ?? null, p_cta: ad.cta ?? null, p_landing_url: ad.landingUrl ?? null,
             p_languages: ad.languages ?? [], p_platform_started_at: ad.platformStartedAt ?? null, p_is_active: ad.isActive,
             p_reach_info: ad.reachInfo ?? {}, p_raw_ref: rawId, p_run_id: runId,
-          })).data as Array<{ id: string; was_inserted: boolean; changes: string[] }> | null;
-          const row = up?.[0];
-          if (!row) { stats.errors.push(`ad upsert failed ${ad.externalAdId}`); continue; }
-          if (row.was_inserted) stats.inserted++; else stats.updated++;
+          })).data as Array<{ id: string; was_inserted: boolean; changes: string[] }> | null)?.[0];
+          if (!up) { stats.errors.push(`ad upsert failed ${ad.externalAdId}`); continue; }
+          if (up.was_inserted) stats.inserted++; else stats.updated++;
           seen.push(ad.externalAdId);
+          // intel fields (not in the core RPC)
+          await sb.from('mkt_paid_ads').update({ campaign_id: camp.id, landing_page_id: landingId, creative_original_url: ad.creativeMediaRef ?? null, creative_stored_url: stored?.storedUrl ?? null, creative_fingerprint: stored?.fingerprint ?? null, creative_phash: stored?.phash ?? null }).eq('id', up.id);
+          if (stored?.fingerprint) fpCounts.set(stored.fingerprint, (fpCounts.get(stored.fingerprint) ?? 0) + 1);
+          // attribution (ad text → monitored developer's projects)
           const text = [ad.headline, ad.body, ad.description].filter(Boolean).join(' ');
           for (const c of attributeCaption(text, index, { publisherProjectIds: pubProjects, commonTokens })) {
-            await sb.rpc('mkt_ad_attribution_upsert', { p_paid_ad_id: row.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence, p_evidence: c.evidence, p_auto_accept: c.autoAccept });
+            await sb.rpc('mkt_ad_attribution_upsert', { p_paid_ad_id: up.id, p_project_id: c.projectId, p_method: c.method, p_confidence: c.confidence, p_evidence: c.evidence, p_auto_accept: c.autoAccept });
+          }
+          // per-new-creative insight + notification
+          if (up.was_inserted) {
+            const iid = (await sb.rpc('mkt_insight_emit', { p_kind: 'new_creative', p_dedup_key: insightKey('new_creative', ad.externalAdId), p_title: `إعلان جديد — ${advertiserLabel}`, p_body: ad.headline ?? null, p_severity: 'info', p_organization_id: adOrgId, p_project_id: null, p_campaign_id: camp.id, p_evidence: { ad: ad.externalAdId } })).data as string | null;
+            if (iid) await sb.rpc('mkt_notification_emit', { p_insight_id: iid, p_kind: 'new_creative', p_dedup_key: insightKey('notif', 'new_creative', ad.externalAdId), p_organization_id: adOrgId, p_project_id: null, p_payload: { advertiser: advertiserLabel } });
           }
         } catch (e) { stats.errors.push(`${ad.externalAdId}: ${e instanceof Error ? e.message : String(e)}`); }
       }
-      // Removed-detection only for a COMPLETE single-advertiser page scan
-      // (params.page_scan + params.advertiser_org_id) — a fuzzy keyword search
-      // returns a partial cross-advertiser set and must NOT mass-mark removed.
-      const scanOrg = job.params.page_scan ? (job.params.advertiser_org_id as string) : null;
-      if (scanOrg && seen.length > 0) {
-        const removed = (await sb.rpc('mkt_ad_mark_removed', { p_organization_id: scanOrg, p_platform: 'meta', p_seen_ids: seen, p_run_id: runId })).data as number;
-        stats.skipped = Number(removed ?? 0); // report removed count via skipped
+      // page scan → removed-detection over THIS org's ads
+      if (seen.length > 0) {
+        const removed = (await sb.rpc('mkt_ad_mark_removed', { p_organization_id: adOrgId, p_platform: 'meta', p_seen_ids: seen, p_run_id: runId })).data as number;
+        stats.skipped = Number(removed ?? 0);
+      }
+      // refresh campaign rollups + campaign-ended (competitor inactive) insights
+      for (const cid of touchedCampaigns) {
+        await sb.rpc('mkt_campaign_refresh', { p_campaign: cid });
+        const { data: c } = await sb.from('mkt_ad_campaigns').select('is_active, ended_at, primary_headline').eq('id', cid).maybeSingle();
+        if (c && !c.is_active && c.ended_at) {
+          const iid = (await sb.rpc('mkt_insight_emit', { p_kind: 'campaign_ended', p_dedup_key: insightKey('campaign_ended', cid), p_title: `توقّفت حملة — ${advertiserLabel}`, p_body: (c.primary_headline as string) ?? null, p_severity: 'warning', p_organization_id: adOrgId, p_project_id: null, p_campaign_id: cid, p_evidence: {} })).data as string | null;
+          if (iid) await sb.rpc('mkt_notification_emit', { p_insight_id: iid, p_kind: 'campaign_ended', p_dedup_key: insightKey('notif', 'campaign_ended', cid), p_organization_id: adOrgId, p_project_id: null, p_payload: {} });
+        }
+      }
+      // deterministic run-level insights
+      for (const cid of newCampaignIds) {
+        await sb.rpc('mkt_insight_emit', { p_kind: 'new_campaign', p_dedup_key: insightKey('new_campaign', cid), p_title: `حملة جديدة — ${advertiserLabel}`, p_body: null, p_severity: 'opportunity', p_organization_id: adOrgId, p_project_id: null, p_campaign_id: cid, p_evidence: {} });
+      }
+      for (const [fp, n] of fpCounts) if (n >= 2) {
+        await sb.rpc('mkt_insight_emit', { p_kind: 'creative_reused', p_dedup_key: insightKey('creative_reused', fp), p_title: `تصميم مُعاد استخدامه (${n}) — ${advertiserLabel}`, p_body: null, p_severity: 'info', p_organization_id: adOrgId, p_project_id: null, p_campaign_id: null, p_evidence: { fingerprint: fp, count: n } });
+      }
+      if (newLandings > 0) {
+        const dk = insightKey('new_landing', adOrgId, new Date().toISOString().slice(0, 10));
+        await sb.rpc('mkt_insight_emit', { p_kind: 'new_landing_page', p_dedup_key: dk, p_title: `صفحات هبوط جديدة (${newLandings}) — ${advertiserLabel}`, p_body: null, p_severity: 'info', p_organization_id: adOrgId, p_project_id: null, p_campaign_id: null, p_evidence: { count: newLandings } });
+      }
+      if (stats.inserted >= 5) {
+        const dk = insightKey('burst', adOrgId, new Date().toISOString().slice(0, 10));
+        const iid = (await sb.rpc('mkt_insight_emit', { p_kind: 'creative_burst', p_dedup_key: dk, p_title: `${advertiserLabel} أطلق ${stats.inserted} إعلانًا اليوم`, p_body: null, p_severity: 'opportunity', p_organization_id: adOrgId, p_project_id: null, p_campaign_id: null, p_evidence: { count: stats.inserted } })).data as string | null;
+        if (iid) await sb.rpc('mkt_notification_emit', { p_insight_id: iid, p_kind: 'creative_burst', p_dedup_key: insightKey('notif', dk), p_organization_id: adOrgId, p_project_id: null, p_payload: { count: stats.inserted } });
       }
     } else if (job.kind === 'attribution' || job.kind === 'reprocess') {
       const { data: posts } = await sb.from('mkt_content_posts').select('id, caption, organization_id').limit(500);

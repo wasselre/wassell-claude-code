@@ -49,6 +49,7 @@ interface Body {
   advertiser?: string;
   organization_id?: string;
   limit?: number;
+  page_id?: string;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
@@ -217,6 +218,54 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ rows: data ?? [], total: count ?? 0 });
       }
 
+      case 'project_insights': {
+        const pid = str(body.project_id);
+        if (!pid) return jsonError(400, 'project_id required');
+        // insights for the developer orgs linked to this project
+        const { data: links } = await sb.from('mkt_project_organizations').select('organization_id').eq('project_id', pid);
+        const orgIds = [...new Set((links ?? []).map((l) => l.organization_id as string))];
+        if (orgIds.length === 0) return jsonOk({ insights: [] });
+        const { data, error } = await sb.from('mkt_insights')
+          .select('id, kind, severity, title, body, evidence, generated_at, dismissed, campaign_id')
+          .in('organization_id', orgIds).eq('dismissed', false)
+          .order('generated_at', { ascending: false }).limit(100);
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ insights: data ?? [] });
+      }
+
+      case 'project_campaigns': {
+        const pid = str(body.project_id);
+        if (!pid) return jsonError(400, 'project_id required');
+        const { data: links } = await sb.from('mkt_project_organizations').select('organization_id').eq('project_id', pid);
+        const orgIds = [...new Set((links ?? []).map((l) => l.organization_id as string))];
+        if (orgIds.length === 0) return jsonOk({ campaigns: [] });
+        const { data, error } = await sb.from('mkt_ad_campaigns')
+          .select('id, advertiser_name, primary_cta, primary_headline, ad_count, active_ad_count, is_active, first_seen_at, last_seen_at, ended_at, landing_page_id')
+          .in('organization_id', orgIds).order('last_seen_at', { ascending: false }).limit(100);
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ campaigns: data ?? [] });
+      }
+
+      case 'cost_dashboard': {
+        // provider usage/cost + reliability from ingestion runs. No estimation.
+        const { data: runs } = await sb.from('mkt_ingestion_runs')
+          .select('provider, status, started_at, provider_cost, source_account_id').order('started_at', { ascending: false }).limit(1000);
+        const byProvider: Record<string, { runs: number; usd: number; compute: number; failed: number }> = {};
+        const byDay: Record<string, number> = {};
+        let totalUsd = 0, totalRuns = 0, failed = 0;
+        for (const r of runs ?? []) {
+          const p = (r.provider as string) ?? 'unknown';
+          const cost = (r.provider_cost ?? {}) as { usage_total_usd?: number; compute_units?: number };
+          const usd = Number(cost.usage_total_usd ?? 0);
+          byProvider[p] ??= { runs: 0, usd: 0, compute: 0, failed: 0 };
+          byProvider[p].runs++; byProvider[p].usd += usd; byProvider[p].compute += Number(cost.compute_units ?? 0);
+          if (r.status === 'failed') { byProvider[p].failed++; failed++; }
+          totalUsd += usd; totalRuns++;
+          if (r.started_at) { const d = (r.started_at as string).slice(0, 10); byDay[d] = (byDay[d] ?? 0) + usd; }
+        }
+        return jsonOk({ total_usd: totalUsd, total_runs: totalRuns, failed_runs: failed, avg_usd_per_run: totalRuns ? totalUsd / totalRuns : 0, by_provider: byProvider, by_day: byDay });
+      }
+
       case 'ad_timeline': {
         const pid = str(body.project_id);
         if (!pid) return jsonError(400, 'project_id required');
@@ -263,6 +312,35 @@ export default async function handler(req: Request): Promise<Response> {
           p_params: { advertiser, organization_id: org, country: 'SA', limit: lim, reason: 'manual' },
           p_priority: 60, p_requested_by: user.userId, p_fallback_of: null,
         });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ job_id: data });
+      }
+
+      case 'discover_advertiser':
+      case 'confirm_advertiser':
+      case 'run_ads_page': {
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+        const org = str(body.organization_id);
+        if (!org) return jsonError(400, 'organization_id required');
+        if (action === 'discover_advertiser') {
+          const advertiser = str(body.advertiser);
+          if (!advertiser) return jsonError(400, 'advertiser required');
+          const { data, error } = await svc.rpc('mkt_job_enqueue', { p_kind: 'discover_advertiser', p_provider: 'apify', p_social_account_id: null, p_params: { advertiser, organization_id: org, country: 'SA', reason: 'manual' }, p_priority: 55, p_requested_by: user.userId, p_fallback_of: null });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ job_id: data });
+        }
+        if (action === 'confirm_advertiser') {
+          const pageId = str(body.page_id);
+          if (!pageId) return jsonError(400, 'page_id required');
+          await svc.rpc('mkt_org_set_advertiser', { p_org: org, p_page_id: pageId, p_advertiser_id: pageId, p_page_url: `https://www.facebook.com/${pageId}`, p_display_name: str(body.advertiser) ?? null, p_verification: null, p_confirmed: true, p_candidates: null });
+          return jsonOk({ ok: true });
+        }
+        // run_ads_page
+        const lim = typeof body.limit === 'number' ? Math.min(200, Math.max(1, body.limit)) : 50;
+        const { data, error } = await svc.rpc('mkt_job_enqueue', { p_kind: 'paid_ads', p_provider: 'apify', p_social_account_id: null, p_params: { organization_id: org, country: 'SA', limit: lim, reason: 'manual' }, p_priority: 60, p_requested_by: user.userId, p_fallback_of: null });
         if (error) return jsonError(500, error.message);
         return jsonOk({ job_id: data });
       }

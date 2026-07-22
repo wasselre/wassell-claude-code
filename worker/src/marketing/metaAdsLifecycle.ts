@@ -78,6 +78,39 @@ function buildMetaAdsInput(advertiser: string, country: string, limit: number): 
   // apify/facebook-ads-scraper: startUrls (Ad Library search URLs) + resultsLimit.
   return { startUrls: [{ url }], resultsLimit: limit };
 }
+// PRODUCTION path: collect by a specific advertiser PAGE (not a keyword).
+function buildPageAdsInput(pageId: string, country: string, limit: number): Record<string, unknown> {
+  const url = `https://www.facebook.com/ads/library/?active_status=all&ad_type=all&country=${country}&view_all_page_id=${pageId}`;
+  return { startUrls: [{ url }], resultsLimit: limit };
+}
+
+export interface AdvertiserCandidate { pageId: string; pageName: string | null; pageUrl: string }
+
+/** DISCOVERY tool only: keyword-search → distinct advertiser pages behind the results. */
+export async function discoverAdvertiser(
+  sb: SupabaseClient, input: { advertiser: string; country?: string; limit?: number },
+): Promise<{ candidates: AdvertiserCandidate[]; runId: string; cost: Record<string, unknown> }> {
+  const cfg = await readActorConfig(sb, 'meta_ads');
+  if (!cfg?.isEnabled) throw new ProviderError('meta_ads actor disabled', 'config_invalid');
+  const { runId, rawItems, cost } = await runApifyActor(cfg.actorId, buildMetaAdsInput(input.advertiser, input.country ?? 'SA', input.limit ?? 30), input.limit ?? 30);
+  const byPage = new Map<string, AdvertiserCandidate>();
+  for (const it of rawItems) {
+    const ad = parseMetaAd(it);
+    if (ad?.pageId) byPage.set(ad.pageId, { pageId: ad.pageId, pageName: ad.advertiserName ?? null, pageUrl: `https://www.facebook.com/${ad.pageId}` });
+  }
+  return { candidates: [...byPage.values()], runId, cost };
+}
+
+/** PRODUCTION collection: a specific advertiser page's ads. */
+export async function collectMetaAdsByPage(
+  sb: SupabaseClient, input: { pageId: string; country?: string; limit: number; timeoutMs?: number },
+): Promise<MetaAdsCollectResult> {
+  const cfg = await readActorConfig(sb, 'meta_ads');
+  if (!cfg?.isEnabled) throw new ProviderError('meta_ads actor disabled', 'config_invalid');
+  const { runId, rawItems, cost } = await runApifyActor(cfg.actorId, buildPageAdsInput(input.pageId, input.country ?? 'SA', input.limit), input.limit, input.timeoutMs);
+  const ads = rawItems.map(parseMetaAd).filter((a): a is NormalizedAd => a !== null);
+  return { ads, runId, rawItems, cost };
+}
 
 export interface MetaAdsCollectResult { ads: NormalizedAd[]; runId: string; rawItems: Array<Record<string, unknown>>; cost: Record<string, unknown> }
 
