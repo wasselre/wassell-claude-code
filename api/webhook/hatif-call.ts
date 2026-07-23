@@ -116,14 +116,27 @@ export default async function handler(req: Request): Promise<Response> {
   }
 
   // Parse AFTER auth passes — avoid wasting cycles on unauthenticated payloads.
-  let event: HatifCallEvent;
+  let parsed: unknown;
   try {
-    event = JSON.parse(rawBody) as HatifCallEvent;
+    parsed = JSON.parse(rawBody);
   } catch {
+    console.error('[hatif-webhook] 400 invalid JSON body; preview:', bodyPreview(rawBody));
     return json({ error: 'invalid JSON body' }, 400);
   }
 
-  if (!event.callId || !event.channelId) {
+  // Hatif changed its post-call payload shape (calls silently dropped since
+  // 2026-07-09 — every event 400'd here). `coerceHatifEvent` is now
+  // shape-tolerant: it unwraps a wrapping envelope ({data}/{payload}/{event}/…)
+  // and reads each field from camelCase, snake_case, or a known alias, so both
+  // the legacy flat shape and the current one map to the same HatifCallEvent.
+  // The full untouched payload is still stored in `call_logs.raw_event`, so any
+  // field this mapping misses can be recovered without re-plumbing the webhook.
+  const event = coerceHatifEvent(parsed);
+  if (!event) {
+    console.error(
+      '[hatif-webhook] 400 unrecognized payload shape (no callId/channelId found); preview:',
+      bodyPreview(rawBody),
+    );
     return json({ error: 'missing required fields callId/channelId' }, 400);
   }
 
@@ -437,6 +450,130 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** First non-null value read from `obj` under any of `keys`. */
+function pick(obj: Record<string, unknown>, ...keys: string[]): unknown {
+  for (const k of keys) {
+    const v = obj[k];
+    if (v !== undefined && v !== null) return v;
+  }
+  return undefined;
+}
+function pickStr(obj: Record<string, unknown>, ...keys: string[]): string | null {
+  const v = pick(obj, ...keys);
+  return typeof v === 'string' ? v : v == null ? null : String(v);
+}
+function pickNum(obj: Record<string, unknown>, ...keys: string[]): number | null {
+  const v = pick(obj, ...keys);
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
+  return null;
+}
+
+/** Truncated, single-line preview of a webhook body for the function log. */
+function bodyPreview(raw: string): string {
+  const s = raw.replace(/\s+/g, ' ').trim();
+  return s.length > 1500 ? `${s.slice(0, 1500)}… (${s.length} bytes)` : s;
+}
+
+/**
+ * Locate the object that actually carries the call fields. Hatif (or any
+ * webhook provider) commonly wraps the event in an envelope, so we probe the
+ * payload itself first, then the usual wrapper keys, returning the first object
+ * that has both a call id and a channel id (under any known alias).
+ */
+function locateEventObject(parsed: unknown): Record<string, unknown> | null {
+  if (!isPlainObject(parsed)) return null;
+  const candidates: unknown[] = [
+    parsed,
+    parsed.data,
+    parsed.payload,
+    parsed.event,
+    parsed.call,
+    parsed.callData,
+    parsed.result,
+    parsed.body,
+    isPlainObject(parsed.data) ? (parsed.data as Record<string, unknown>).call : undefined,
+    isPlainObject(parsed.payload) ? (parsed.payload as Record<string, unknown>).call : undefined,
+  ];
+  for (const c of candidates) {
+    if (
+      isPlainObject(c) &&
+      pick(c, 'callId', 'call_id', 'callID', 'id') != null &&
+      pick(c, 'channelId', 'channel_id', 'channelID') != null
+    ) {
+      return c;
+    }
+  }
+  return null;
+}
+
+/**
+ * Map an arbitrary Hatif payload (any envelope, camelCase or snake_case field
+ * names) onto the canonical HatifCallEvent shape the rest of the handler uses.
+ * Returns null when no call id / channel id can be found at all — the one hard
+ * requirement, since callId is the call_logs primary key. Every field falls
+ * back through its known aliases; unknown fields survive verbatim in
+ * `call_logs.raw_event`.
+ */
+function coerceHatifEvent(parsed: unknown): HatifCallEvent | null {
+  const o = locateEventObject(parsed);
+  if (!o) return null;
+
+  const callId = pickStr(o, 'callId', 'call_id', 'callID', 'id');
+  const channelId = pickStr(o, 'channelId', 'channel_id', 'channelID');
+  if (!callId || !channelId) return null;
+
+  const selectedOptionRaw = pick(o, 'selectedOption', 'selected_option');
+  const selectedOption = isPlainObject(selectedOptionRaw)
+    ? {
+        digit: pickStr(selectedOptionRaw, 'digit') ?? undefined,
+        label: pickStr(selectedOptionRaw, 'label') ?? undefined,
+      }
+    : null;
+  const userRaw = pick(o, 'user');
+  const user = isPlainObject(userRaw)
+    ? {
+        email: pickStr(userRaw, 'email'),
+        userName: pickStr(userRaw, 'userName', 'user_name', 'name'),
+      }
+    : null;
+
+  return {
+    callId,
+    channelId,
+    workspaceId: pickStr(o, 'workspaceId', 'workspace_id') ?? undefined,
+    creationTime:
+      pickStr(o, 'creationTime', 'creation_time', 'createdAt', 'created_at', 'startTime', 'start_time', 'timestamp') ??
+      new Date().toISOString(),
+    status: pickNum(o, 'status') ?? 0,
+    type: pickNum(o, 'type', 'callType', 'call_type') ?? 0,
+    callerNumber: pickStr(o, 'callerNumber', 'caller_number', 'from', 'fromNumber', 'from_number'),
+    calleeNumber: pickStr(o, 'calleeNumber', 'callee_number', 'to', 'toNumber', 'to_number'),
+    pickupTime: pickStr(o, 'pickupTime', 'pickup_time', 'answeredAt', 'answered_at'),
+    hangupTime: pickStr(o, 'hangupTime', 'hangup_time', 'endedAt', 'ended_at'),
+    callLength: pickStr(o, 'callLength', 'call_length', 'duration', 'durationSeconds', 'duration_seconds', 'length'),
+    userId: pickStr(o, 'userId', 'user_id', 'agentId', 'agent_id'),
+    userName: pickStr(o, 'userName', 'user_name', 'agentName', 'agent_name'),
+    userEmail: pickStr(o, 'userEmail', 'user_email'),
+    agentEmail: pickStr(o, 'agentEmail', 'agent_email'),
+    userPrincipalName: pickStr(o, 'userPrincipalName', 'user_principal_name', 'upn'),
+    user,
+    contactId: pickStr(o, 'contactId', 'contact_id'),
+    contactNumber: pickStr(o, 'contactNumber', 'contact_number', 'contactPhone', 'contact_phone'),
+    aiAgentId: pickStr(o, 'aiAgentId', 'ai_agent_id'),
+    recordingUrl: pickStr(o, 'recordingUrl', 'recording_url', 'recording'),
+    transcription: pick(o, 'transcription', 'transcript'),
+    summary: pickStr(o, 'summary', 'aiSummary', 'ai_summary'),
+    sentiment: pickNum(o, 'sentiment'),
+    evaluationCriteriaResult: pick(o, 'evaluationCriteriaResult', 'evaluation_criteria_result'),
+    selectedDigit: pickStr(o, 'selectedDigit', 'selected_digit'),
+    digit: pickStr(o, 'digit'),
+    selectedOption,
+    optionDigit: pickStr(o, 'optionDigit', 'option_digit'),
+    optionLabel: pickStr(o, 'optionLabel', 'option_label'),
+  };
 }
 
 function safeJsonParse(s: string): unknown {
