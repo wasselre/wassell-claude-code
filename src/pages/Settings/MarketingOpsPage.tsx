@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Play, Activity, AlertTriangle, CheckCircle2, XCircle, RotateCw } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import BackToSettings from './components/BackToSettings';
+import DiscoveryPanel from './components/DiscoveryPanel';
 import {
   fetchOpsDashboard, fetchOpsOrgHealth, fetchOpsAlerts, fetchOpsMetricsHistory, fetchOpsFailedJobs,
   setOpsAlertStatus, runOpsEvaluate, retryJob,
@@ -171,6 +172,9 @@ export default function MarketingOpsPage() {
               <AlertTriangle size={16} /> {L('التجميع متوقف مؤقتًا (إيقاف عام)', 'Collection is globally paused')}
             </div>
           )}
+
+          {/* Automated identity discovery */}
+          <DiscoveryPanel orgs={orgs} />
 
           {/* Diagnostics */}
           <section className="card p-4 mb-4">

@@ -81,7 +81,6 @@ export function scoreIdentity(c: IdentityCandidateInput, org: OrgIdentity): Scor
   if (c.siteLinksToThis) add('site_links_to_account', 'The organization’s website links to this account', 'موقع المؤسسة الرسمي يرتبط بهذا الحساب');
   const linksBack = !!orgDomain && bioDomains.some((d) => sameDomain(d, orgDomain));
   if (linksBack) add('account_links_to_domain', 'The account bio links back to the official domain', 'الحساب يرتبط بنطاق المؤسسة الرسمي في نبذته');
-  else if (!!orgDomain && bioDomains.length > 0) add('official_domain_match', 'Bio links to the official website', 'نبذة الحساب تشير للموقع الرسمي', 0); // neutral placeholder; real domain match handled above
 
   // ── name / alias ──
   if (arname(org) && candNorm && normalizeName(org.nameAr) === candNorm) add('exact_ar_name', 'Exact Arabic-name match', 'مطابقة تامة للاسم العربي');

@@ -134,7 +134,7 @@ export async function runOrganizationDiscovery(sb: SupabaseClient, env: WorkerEn
       await sb.rpc('mkt_identity_candidate_upsert', {
         p_org: orgId, p_platform: s.platform, p_handle: s.handle, p_account_id: s.accountId, p_url: s.url,
         p_class: s.accountClass, p_score: s.score, p_confidence: s.confidence, p_is_marketplace: s.isMarketplace,
-        p_reasons: JSON.stringify(s.reasons), p_evidence: JSON.stringify({ sources: s.sources }),
+        p_reasons: s.reasons, p_evidence: { sources: s.sources },
         p_status: status, p_verification_method: isWinner ? dec.reason : null, p_run: runId,
       });
       // auto-confirmed COLLECTABLE account → create a social account (disabled; a human/next step enables collection)

@@ -199,6 +199,25 @@ export interface AdvertiserOrg {
   ad_count: number; audit: AdvertiserAuditRow[];
 }
 export const fetchAdvertisers = () => call<{ organizations: AdvertiserOrg[] }>('advertiser_list');
+
+// ── Automated identity discovery (Browserbase engine) ───────────────────────
+export interface DiscoveryRun {
+  id: string; organization_id: string; status: string; trigger: string;
+  sources_used: string[]; queries_count: number; evidence_count: number;
+  candidates_count: number; confirmed_count: number; cost_usd: number | string;
+  error: string | null; summary: { confirm_decisions?: Record<string, string>; platforms?: string[] } | null;
+  started_at: string; finished_at: string | null;
+}
+export interface IdentityCandidate {
+  id: string; platform: string; handle: string; account_id: string | null; url: string | null;
+  account_class: string; score: number | string; confidence: 'high' | 'medium' | 'low';
+  is_marketplace: boolean; reasons: ScoreReason[]; evidence: { sources?: string[] } | null;
+  status: 'candidate' | 'confirmed' | 'rejected' | 'stale'; rejection_reason: string | null;
+  verification_method: string | null; discovery_run_id: string | null; updated_at: string;
+}
+export const fetchDiscoveryRuns = (organization_id?: string) => call<{ runs: DiscoveryRun[] }>('discovery_runs', organization_id ? { organization_id } : {});
+export const fetchDiscoveryCandidates = (organization_id: string) => call<{ candidates: IdentityCandidate[] }>('discovery_candidates', { organization_id });
+export const runOrganizationDiscovery = (organization_id: string) => call<{ job_id: string }>('run_discovery', { organization_id });
 export const runAdvertiserDiscovery = (organization_id: string, advertiser: string) => call<{ job_id: string }>('discover_advertiser', { organization_id, advertiser });
 export const confirmAdvertiser = (organization_id: string, page_id: string, advertiser?: string) => call<{ ok: boolean }>('confirm_advertiser', { organization_id, page_id, advertiser });
 export const rejectCandidate = (organization_id: string, page_id: string) => call<{ ok: boolean; remaining: number }>('reject_candidate', { organization_id, page_id });
