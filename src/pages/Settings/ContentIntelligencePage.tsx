@@ -3,7 +3,7 @@
 // text/OCR, extracted prices/offers/locations, project attribution + evidence,
 // processing status, and costs. Filters + overview metrics. All data comes from
 // live production via /api/marketing content_* actions (admin-gated).
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, Play, Film, ImageIcon, Layers, FileText, MapPin, Tag, X, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import BackToSettings from './components/BackToSettings';
