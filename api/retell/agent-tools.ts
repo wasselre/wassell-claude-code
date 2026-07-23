@@ -80,6 +80,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'save_lead_info':         return json(await saveLeadInfo(call, args));
       case 'find_matching_projects': return json(await findProjects(call, args));
       case 'set_next_action':        return json(await setNextAction(call, args));
+      case 'debug_finder':           return json(await debugFinder());
       default:
         return json({ error: `unknown tool: ${name}` }, 400);
     }
@@ -495,6 +496,30 @@ async function setNextAction(
     الموعد: dueAt,
     ...(mapped ? {} : { ملاحظة: `نوع الإجراء "${action}" غير معروف — سُجّل الموعد فقط` }),
   };
+}
+
+// ─── debug_finder (temporary diagnostic — not registered as an LLM tool) ──
+async function debugFinder(): Promise<Record<string, unknown>> {
+  const supa = getServiceSupabase();
+  const { data: ctx, error: ctxErr } = await supa.rpc('wassell_debug_ctx');
+  const { data: model } = await supa.from('models').select('id').eq('name', 'all_projects').maybeSingle();
+  let rpcRows: number | string = 'model not found';
+  let directRows: number | string = 'model not found';
+  let scope: unknown = null;
+  if (model?.id) {
+    const { data, error } = await supa.rpc('wassell_model_records_json', {
+      p_model_id: model.id, p_fields: ['project_name'],
+    });
+    rpcRows = error ? `error: ${error.message}` : Array.isArray(data) ? data.length : typeof data;
+    const { count, error: cErr } = await supa
+      .from('unified_records').select('id', { count: 'exact', head: true }).eq('model_id', model.id);
+    directRows = cErr ? `error: ${cErr.message}` : (count ?? -1);
+    const { data: sc, error: scErr } = await supa.rpc('wassell_view_scope_class', {
+      auth_user_id: null, the_model_id: model.id,
+    });
+    scope = scErr ? `error: ${scErr.message}` : sc;
+  }
+  return { ctx: ctxErr ? `error: ${ctxErr.message}` : ctx, rpcRows, directRows, scope };
 }
 
 // ─── plumbing ──────────────────────────────────────────────────────
