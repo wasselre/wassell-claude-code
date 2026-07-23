@@ -150,6 +150,42 @@ function geojsonToLinePaths(g: { type: string; coordinates: unknown }): google.m
   return [];
 }
 
+/** Andrew's monotone-chain convex hull over [lng,lat] points → a CLOSED ring
+ *  (first point repeated at the end). Used to turn the vertices of several
+ *  selected roads into one polygon that spans the area between them — the shape
+ *  a customer means by "projects between road A and road B". Returns [] if fewer
+ *  than 3 distinct points. Collinear points are dropped (strict `<= 0`). */
+function convexHull(points: [number, number][]): [number, number][] {
+  const pts = points.filter((p) => Array.isArray(p) && p.length >= 2).slice()
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  // De-dupe identical coords so collinear runs don't wedge the chain.
+  const uniq: [number, number][] = [];
+  for (const p of pts) {
+    const last = uniq[uniq.length - 1];
+    if (!last || last[0] !== p[0] || last[1] !== p[1]) uniq.push(p);
+  }
+  if (uniq.length < 3) return [];
+  const cross = (o: [number, number], a: [number, number], b: [number, number]) =>
+    (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [];
+  for (const p of uniq) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2]!, lower[lower.length - 1]!, p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: [number, number][] = [];
+  for (let i = uniq.length - 1; i >= 0; i--) {
+    const p = uniq[i]!;
+    while (upper.length >= 2 && cross(upper[upper.length - 2]!, upper[upper.length - 1]!, p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop();
+  upper.pop();
+  const hull = lower.concat(upper);
+  if (hull.length < 3) return [];
+  hull.push(hull[0]!); // close the ring
+  return hull;
+}
+
 /** Ray-cast point-in-ring on [lng,lat] pairs (closed or open ring). */
 function pointInRing(lng: number, lat: number, ring: [number, number][]): boolean {
   let inside = false;
@@ -335,38 +371,64 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     return () => { cancelled = true; };
   }, []);
 
-  // The road whose line is currently highlighted (from a road search pick). One
-  // at a time; a new pick replaces it. Drawn + fit-to by the effect below.
-  const [roadHighlight, setRoadHighlight] = useState<{ geojson: { type: string; coordinates: unknown }; name: string } | null>(null);
+  // Roads picked from search, each with its FULL line geometry (from the
+  // wassell_geo_element_shapes RPC — never a centroid). Selecting roads
+  // accumulates them: one shows you where a road runs; two or more can be turned
+  // into a single "area between the roads" polygon (convex hull) that then edits
+  // like any drawn shape. Deduped by external_id.
+  interface SelectedRoad { externalId: string; name: string; geojson: { type: string; coordinates: unknown } }
+  const [selectedRoads, setSelectedRoads] = useState<SelectedRoad[]>([]);
 
-  // Draw the highlighted road as a bold terracotta line + fit the map to it, so
-  // "where is this road?" is answered literally. Display-only; cleared/redrawn
-  // when the highlight changes.
+  // Draw every selected road as a bold terracotta line + label, and fit the map
+  // to all of them (so picking a 2nd road frames both). Display-only; the shape
+  // itself is created explicitly via the "area between roads" button.
   useEffect(() => {
-    if (!map || !isLoaded || !roadHighlight || !window.google) return;
+    if (!map || !isLoaded || !window.google || selectedRoads.length === 0) return;
     const overlays: Array<google.maps.Polyline | google.maps.Marker> = [];
     const bounds = new google.maps.LatLngBounds();
-    let mid: google.maps.LatLngLiteral | null = null;
-    for (const line of geojsonToLinePaths(roadHighlight.geojson)) {
-      if (line.length < 2) continue;
-      overlays.push(new google.maps.Polyline({
-        map, path: line, strokeColor: TERRACOTTA, strokeOpacity: 0.95, strokeWeight: 5, zIndex: 8, clickable: false,
-      }));
-      for (const p of line) bounds.extend(p);
-      if (!mid) mid = line[Math.floor(line.length / 2)]!;
+    for (const r of selectedRoads) {
+      let mid: google.maps.LatLngLiteral | null = null;
+      for (const line of geojsonToLinePaths(r.geojson)) {
+        if (line.length < 2) continue;
+        overlays.push(new google.maps.Polyline({
+          map, path: line, strokeColor: TERRACOTTA, strokeOpacity: 0.95, strokeWeight: 5, zIndex: 8, clickable: false,
+        }));
+        for (const p of line) bounds.extend(p);
+        if (!mid) mid = line[Math.floor(line.length / 2)]!;
+      }
+      if (mid && r.name) {
+        overlays.push(new google.maps.Marker({
+          map, position: mid,
+          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
+          clickable: false,
+          label: { text: r.name, color: TERRACOTTA, fontSize: '12px', fontWeight: '700' },
+          zIndex: 9,
+        }));
+      }
     }
-    if (!bounds.isEmpty()) map.fitBounds(bounds, 60);
-    if (mid && roadHighlight.name) {
-      overlays.push(new google.maps.Marker({
-        map, position: mid,
-        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
-        clickable: false,
-        label: { text: roadHighlight.name, color: TERRACOTTA, fontSize: '12px', fontWeight: '700' },
-        zIndex: 9,
-      }));
-    }
+    if (!bounds.isEmpty()) map.fitBounds(bounds, 80);
     return () => overlays.forEach((o) => o.setMap(null));
-  }, [map, isLoaded, roadHighlight]);
+  }, [map, isLoaded, selectedRoads]);
+
+  // Build one editable polygon spanning the selected roads: the convex hull of
+  // ALL their vertices → a drawn_area include item (same as a hand-drawn shape,
+  // so it can be reshaped by dragging its handles). Clears the road selection.
+  const createAreaBetweenRoads = () => {
+    const pts: [number, number][] = [];
+    for (const r of selectedRoads) {
+      for (const line of geojsonToLinePaths(r.geojson)) {
+        for (const p of line) pts.push([round6(p.lng), round6(p.lat)]);
+      }
+    }
+    const hull = convexHull(pts);
+    if (hull.length < 4) return; // degenerate (roads collinear) — nothing to build
+    const names = selectedRoads.map((r) => r.name).filter(Boolean);
+    const head = names.slice(0, 3).join(isAr ? '، ' : ', ');
+    const more = names.length > 3 ? ` +${names.length - 3}` : '';
+    const label = `${isAr ? 'منطقة بين الطرق' : 'Area between roads'}: ${head}${more}`;
+    setDrawnItems((prev) => [...prev, newDrawnAreaItem(hull, label, 'include')]);
+    setSelectedRoads([]);
+  };
 
   // ELEMENT RULES — editable HERE (resize via the chip steppers, delete via the
   // chip ×; re-emitted on Apply). Their compiled shapes come from the REAL
@@ -997,21 +1059,25 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     } else if (hit.type === 'landmark' && map && hit.lat != null && hit.lng != null) {
       map.panTo({ lat: hit.lat, lng: hit.lng });
       map.setZoom(Math.max(map.getZoom() ?? 0, LANDMARK_NAMES_MIN_ZOOM));
-    } else if (hit.type === 'road' && map && hit.externalId) {
-      // Pan to the road's representative point right away for responsiveness,
-      // then fetch + draw its full line (fit-to happens in the highlight effect).
-      if (hit.lat != null && hit.lng != null) {
+    } else if (hit.type === 'road' && hit.externalId) {
+      const extId = hit.externalId;
+      // Pan to the road's representative point right away for responsiveness;
+      // the selection effect reframes to the full line(s) once geometry loads.
+      if (map && hit.lat != null && hit.lng != null) {
         map.panTo({ lat: hit.lat, lng: hit.lng });
         map.setZoom(Math.max(map.getZoom() ?? 0, LANDMARK_NAMES_MIN_ZOOM));
       }
-      if (supabase) {
+      if (supabase && !selectedRoads.some((r) => r.externalId === extId)) {
         supabase
-          .rpc('wassell_geo_element_shapes', { p_external_ids: [hit.externalId] })
+          .rpc('wassell_geo_element_shapes', { p_external_ids: [extId] })
           .then(({ data, error }) => {
-            // Fall back to the pan above if geometry can't be fetched.
             if (error) { console.error('[DistrictMapPicker] road shape fetch failed:', error.message); return; }
             const row = Array.isArray(data) ? (data[0] as { geojson?: { type: string; coordinates: unknown } | null } | undefined) : undefined;
-            if (row?.geojson) setRoadHighlight({ geojson: row.geojson, name: hit.name });
+            if (row?.geojson) {
+              setSelectedRoads((prev) => prev.some((r) => r.externalId === extId)
+                ? prev
+                : [...prev, { externalId: extId, name: hit.name, geojson: row.geojson! }]);
+            }
           });
       }
     }
@@ -1205,6 +1271,55 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                           );
                         })
                       )}
+                    </div>
+                  )}
+                  {/* Selected roads staging: pick 2+ roads → build one editable
+                      polygon spanning the area between them. */}
+                  {selectedRoads.length > 0 && (
+                    <div className="mt-1.5 rounded-xl border border-sand/50 bg-white/97 p-2 shadow-lg ring-1 ring-black/5 backdrop-blur">
+                      <div className="mb-1.5 flex flex-wrap gap-1">
+                        {selectedRoads.map((r) => (
+                          <span
+                            key={r.externalId}
+                            className="inline-flex max-w-[200px] items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold"
+                            style={{ backgroundColor: `${TERRACOTTA}1F`, color: TERRACOTTA }}
+                          >
+                            <Route size={11} className="shrink-0" />
+                            <span className="truncate">{r.name}</span>
+                            <button
+                              type="button"
+                              onClick={() => setSelectedRoads((prev) => prev.filter((x) => x.externalId !== r.externalId))}
+                              className="shrink-0 hover:opacity-60"
+                              aria-label={L('حذف', 'Remove')}
+                            >
+                              <X size={11} />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={createAreaBetweenRoads}
+                          disabled={selectedRoads.length < 2}
+                          className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-copper px-3 py-1.5 text-xs font-bold text-white transition hover:bg-terracotta disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <PenLine size={13} />
+                          {L(`أنشئ منطقة بين الطرق (${selectedRoads.length})`, `Area between roads (${selectedRoads.length})`)}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRoads([])}
+                          className="shrink-0 rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-xs font-bold text-charcoal/60 transition hover:bg-cream"
+                        >
+                          {L('مسح', 'Clear')}
+                        </button>
+                      </div>
+                      <p className="mt-1 text-[10px] leading-tight text-charcoal/50">
+                        {selectedRoads.length < 2
+                          ? L('اختر طريقاً آخر لإنشاء منطقة بينهما.', 'Pick another road to build an area between them.')
+                          : L('تُنشأ منطقة تغطي ما بين الطرق، ثم عدّلها بسحب مقابضها.', 'Builds an area spanning the roads — then drag its handles to refine.')}
+                      </p>
                     </div>
                   )}
                 </div>
