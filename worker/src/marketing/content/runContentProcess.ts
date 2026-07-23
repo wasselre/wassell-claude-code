@@ -193,10 +193,11 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   //    without its video/transcript. ──
   const videoStored = storedRefs.some((r) => r.kind === 'video' && r.bytes);
   const videoUnavailable = isVideoPostType && !videoStored;
-  if (videoUnavailable && post.platform !== 'youtube') {
-    // YouTube already recorded a classified failed video row above; TikTok (no
-    // video descriptor: re-collect with shouldDownloadVideos, or URL expired)
-    // and any other video-type post with no obtainable video get one here.
+  // Only write a generic "not present" row when NO video was even attempted (no
+  // descriptor). If a descriptor WAS attempted and failed, the media-download
+  // loop already recorded the REAL classified reason — never overwrite it.
+  const videoAttempted = descriptors.some((d) => d.kind === 'video') || (post.platform === 'youtube');
+  if (videoUnavailable && !videoAttempted && post.platform !== 'youtube') {
     const reason = post.platform === 'tiktok' ? 'tiktok video bytes not present (re-collect with shouldDownloadVideos, or the no-watermark URL expired before download)' : 'no downloadable video url in payload';
     await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: null, p_bucket: null, p_path: null, p_url: null, p_mime: null, p_bytes: null, p_width: null, p_height: null, p_duration_ms: null, p_checksum: null, p_phash: null, p_status: 'failed', p_failure: reason });
     stats.errors.push(`video_unavailable: ${reason}`);

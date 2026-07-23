@@ -28,10 +28,19 @@ function extFor(url: string, mime: string | null, kind: string): string {
   return 'jpg';
 }
 
+/** Apify key-value-store record URLs (where clockworks stores downloaded TikTok
+ *  videos) are PRIVATE — 403 without the account token. Authorize them. */
+function authorizeUrl(url: string): string {
+  if (/(^|\.)api\.apify\.com\//.test(url) && process.env.APIFY_API_TOKEN && !url.includes('token=')) {
+    return url + (url.includes('?') ? '&' : '?') + `token=${process.env.APIFY_API_TOKEN}`;
+  }
+  return url;
+}
+
 /** Raw bytes for a URL. Rejects oversized bodies via Content-Length BEFORE
  *  buffering (so a huge video can't OOM the 512 MB machine mid-download). */
 export async function fetchBytes(url: string, timeoutMs = 60_000, maxBytes = VIDEO_MAX_BYTES): Promise<{ bytes: Buffer; mime: string | null }> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+  const res = await fetch(authorizeUrl(url), { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`fetch ${res.status}`);
   const mime = res.headers.get('content-type');
   const declared = Number(res.headers.get('content-length') ?? '0');
