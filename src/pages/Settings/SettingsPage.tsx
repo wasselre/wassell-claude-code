@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone,
+  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -207,6 +207,17 @@ const CARDS: SettingsCard[] = [
     color: '#8E4E3A',
     bg: '#8E4E3A14',
     route: '/settings/marketing-ops',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'ذكاء المحتوى',
+    titleEn: 'Content Intelligence',
+    descAr: 'الوسائط الدائمة، التفريغ الصوتي، النص المرئي، الإثراء، وإسناد المشاريع لكل منشور تم جمعه',
+    descEn: 'Permanent media, transcripts, visual text, enrichment, and project attribution per collected post',
+    icon: Film,
+    color: '#4A2C2A',
+    bg: '#4A2C2A14',
+    route: '/settings/content-intelligence',
     adminOnly: true,
   },
   {

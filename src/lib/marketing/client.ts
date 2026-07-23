@@ -215,6 +215,32 @@ export interface IdentityCandidate {
   status: 'candidate' | 'confirmed' | 'rejected' | 'stale'; rejection_reason: string | null;
   verification_method: string | null; discovery_run_id: string | null; updated_at: string;
 }
+// ── Content intelligence ────────────────────────────────────────────────────
+export interface ContentMetrics {
+  total: number; videos: number; images: number; carousels: number;
+  processed: number; partial: number; failed: number;
+  media_stored: number; media_failed: number; media_success_rate: number | null;
+  transcribed: number; transcribe_failed: number;
+  enriched: number; attributed: number; unattributed: number; cost_usd: number;
+}
+export interface ContentMediaRow { id: string; carousel_index: number; media_kind: string; stored_url: string | null; download_status: string; duration_ms: number | null; bytes: number | null; failure_reason: string | null }
+export interface TranscriptRow { id: string; language: string | null; status: string; text: string | null; segments: Array<{ start_ms: number; end_ms: number; text: string }>; duration_ms: number | null }
+export interface VisualTextRow { id: string; source: string; frame_ts_ms: number | null; text: string | null; structured: Record<string, unknown> }
+export interface ContentEnrichmentRow { primary_project_id: string | null; result: Record<string, unknown>; status: string; candidate_projects: Array<{ projectId: string; nameAr: string | null; nameEn: string | null; confidence: number }> }
+export interface ContentAttributionRow { project_id: string; confidence: number; review_status: string; evidence: Record<string, unknown> }
+export interface ContentItem {
+  id: string; platform: string; external_id: string; post_url: string | null; post_type: string | null;
+  caption: string | null; published_at: string | null; thumbnail_ref: string | null;
+  processing_status: string; media_count: number; processed_at: string | null; hashtags: string[] | null; engagement: Record<string, number>;
+  mkt_content_media: ContentMediaRow[]; mkt_transcripts: TranscriptRow[]; mkt_content_enrichment: ContentEnrichmentRow[];
+  mkt_content_attributions: ContentAttributionRow[]; mkt_visual_text: VisualTextRow[];
+}
+export const fetchContentMetrics = (organization_id?: string) => call<ContentMetrics>('content_metrics', organization_id ? { organization_id } : {});
+export const fetchContentItems = (organization_id: string, opts: { page?: number; platform?: string; post_type?: string; processing_status?: string } = {}) =>
+  call<{ items: ContentItem[]; total: number; page: number; page_size: number }>('content_items', { organization_id, ...opts });
+export const runContentProcessing = (organization_id: string, limit = 50, force = false) =>
+  call<{ enqueued: number }>('run_content_processing', { organization_id, limit, force });
+
 export const fetchDiscoveryRuns = (organization_id?: string) => call<{ runs: DiscoveryRun[] }>('discovery_runs', organization_id ? { organization_id } : {});
 export const fetchDiscoveryCandidates = (organization_id: string) => call<{ candidates: IdentityCandidate[] }>('discovery_candidates', { organization_id });
 export const runOrganizationDiscovery = (organization_id: string) => call<{ job_id: string }>('run_discovery', { organization_id });

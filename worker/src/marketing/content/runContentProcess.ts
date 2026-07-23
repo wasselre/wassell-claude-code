@@ -92,7 +92,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
             const checksum = ref.checksum ?? sha256Hex(audio);
             const audioUp = await uploadBytes(audio, 'content/audio', checksum, 'm4a', 'audio/mp4');
             const tx = await transcribeAudioUrl(audioUp.storedUrl, durationMs);
-            await sb.rpc('mkt_transcript_upsert', { p_media: ref.mediaId, p_post: contentPostId, p_provider: tx.provider, p_model: tx.model, p_language: tx.language, p_text: tx.text, p_segments: JSON.stringify(tx.segments), p_duration_ms: durationMs, p_confidence: null, p_cost: tx.costUsd, p_status: 'done', p_failure: null, p_source_checksum: checksum, p_raw: JSON.stringify(tx.raw) });
+            await sb.rpc('mkt_transcript_upsert', { p_media: ref.mediaId, p_post: contentPostId, p_provider: tx.provider, p_model: tx.model, p_language: tx.language, p_text: tx.text, p_segments: tx.segments, p_duration_ms: durationMs, p_confidence: null, p_cost: tx.costUsd, p_status: 'done', p_failure: null, p_source_checksum: checksum, p_raw: tx.raw });
             transcriptText += ' ' + tx.text; stats.transcribed++; stats.cost_usd += tx.costUsd;
           } catch (e) {
             const reason = e instanceof Error ? e.message : String(e);
@@ -122,7 +122,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
         const inp = batch[r.index]; if (!inp) continue;
         visualTextBlob += ' ' + (r.fields.visible_text ?? '');
         if (inp.source === 'frame') stats.frames_analyzed++; else stats.images_analyzed++;
-        await sb.rpc('mkt_visual_text_upsert', { p_media: inp.mediaId, p_post: contentPostId, p_source: inp.source, p_frame_ts_ms: inp.frameTsMs, p_model: process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6', p_text: r.fields.visible_text ?? '', p_structured: JSON.stringify(r.fields), p_confidence: null, p_cost: 0, p_status: 'done', p_failure: null, p_raw: null });
+        await sb.rpc('mkt_visual_text_upsert', { p_media: inp.mediaId, p_post: contentPostId, p_source: inp.source, p_frame_ts_ms: inp.frameTsMs, p_model: process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6', p_text: r.fields.visible_text ?? '', p_structured: r.fields, p_confidence: null, p_cost: 0, p_status: 'done', p_failure: null, p_raw: null });
       }
     } catch (e) { stats.errors.push(`vision: ${e instanceof Error ? e.message : String(e)}`); }
   }
@@ -138,25 +138,39 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     const acctIdentity = await accountIdentity(sb, post.social_account_id as string | null);
     const enr = await enrichContent({ accountIdentity: acctIdentity, platform: post.platform as string, caption: post.caption ?? '', transcript: transcriptText, visualText: visualTextBlob, candidates });
     stats.cost_usd += enr.costUsd; stats.enriched = true; stats.primary_project = enr.primaryProjectId;
-    await sb.rpc('mkt_enrichment_upsert', { p_post: contentPostId, p_model: enr.model, p_rule_version: RULE_VERSION, p_org: post.organization_id, p_developer: null, p_marketer: null, p_primary_project: enr.primaryProjectId, p_candidates: JSON.stringify(enr.candidates), p_result: JSON.stringify(enr.result), p_cost: enr.costUsd, p_status: 'done', p_failure: null });
+    await sb.rpc('mkt_enrichment_upsert', { p_post: contentPostId, p_model: enr.model, p_rule_version: RULE_VERSION, p_org: post.organization_id, p_developer: null, p_marketer: null, p_primary_project: enr.primaryProjectId, p_candidates: enr.candidates, p_result: enr.result, p_cost: enr.costUsd, p_status: 'done', p_failure: null });
 
     // ── attribution: primary project + strong deterministic candidates ──
     if (enr.primaryProjectId) {
-      await sb.rpc('mkt_attribution_upsert', { p_content_post_id: contentPostId, p_project_id: enr.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: JSON.stringify({ matched: 'enrichment', snippet: combined.slice(0, 160) }), p_matched_aliases: [], p_auto_accept: true });
+      await sb.rpc('mkt_attribution_upsert', { p_content_post_id: contentPostId, p_project_id: enr.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: 'enrichment', snippet: combined.slice(0, 160) }, p_matched_aliases: [], p_auto_accept: true });
       stats.attributions++;
     }
     for (const c of candidates) {
       if (c.projectId === enr.primaryProjectId) continue;
-      if (c.confidence >= 0.8) { await sb.rpc('mkt_attribution_upsert', { p_content_post_id: contentPostId, p_project_id: c.projectId, p_method: 'caption', p_confidence: c.confidence, p_evidence: JSON.stringify({ matched: c.matchedAliases.join(','), snippet: combined.slice(0, 160) }), p_matched_aliases: c.matchedAliases, p_auto_accept: false }); stats.attributions++; }
+      if (c.confidence >= 0.8) { await sb.rpc('mkt_attribution_upsert', { p_content_post_id: contentPostId, p_project_id: c.projectId, p_method: 'caption', p_confidence: c.confidence, p_evidence: { matched: c.matchedAliases.join(','), snippet: combined.slice(0, 160) }, p_matched_aliases: c.matchedAliases, p_auto_accept: false }); stats.attributions++; }
     }
   } catch (e) {
     await sb.rpc('mkt_enrichment_upsert', { p_post: contentPostId, p_model: null, p_rule_version: RULE_VERSION, p_org: post.organization_id, p_developer: null, p_marketer: null, p_primary_project: null, p_candidates: '[]', p_result: '{}', p_cost: 0, p_status: 'failed', p_failure: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
     stats.errors.push(`enrich: ${e instanceof Error ? e.message : String(e)}`);
   }
 
+  // ── explicit terminal state for video posts whose video bytes were not
+  //    collectable (TikTok Apify config returns empty mediaUrls; YouTube has no
+  //    direct mp4). Record it so a "video" post is never silently "processed"
+  //    without its video/transcript. ──
+  const isVideoPost = ['video', 'reel', 'short'].includes((post.post_type as string) ?? '');
+  const videoStored = storedRefs.some((r) => r.kind === 'video' && r.bytes);
+  let videoUnavailable = false;
+  if (isVideoPost && !videoStored) {
+    videoUnavailable = true;
+    const reason = post.platform === 'tiktok' ? 'video bytes not in collection (enable Apify TikTok video download)' : post.platform === 'youtube' ? 'youtube has no direct video url (needs yt-dlp)' : 'no downloadable video url in payload';
+    await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: null, p_bucket: null, p_path: null, p_url: null, p_mime: null, p_bytes: null, p_width: null, p_height: null, p_duration_ms: null, p_checksum: null, p_phash: null, p_status: 'failed', p_failure: reason });
+    stats.errors.push(`video_unavailable: ${reason}`);
+  }
+
   // ── roll-up status ──
   const anyStored = stats.media_stored > 0;
-  const allMediaOk = stats.media_failed === 0 && stats.transcribe_failed === 0;
+  const allMediaOk = stats.media_failed === 0 && stats.transcribe_failed === 0 && !videoUnavailable;
   stats.status = !anyStored ? 'failed' : (allMediaOk && stats.enriched) ? 'processed' : 'partial';
   await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: stats.status, p_media_count: stats.media_stored });
   stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;

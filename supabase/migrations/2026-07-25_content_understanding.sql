@@ -132,6 +132,11 @@ ALTER TABLE public.mkt_collection_jobs DROP CONSTRAINT IF EXISTS mkt_collection_
 ALTER TABLE public.mkt_collection_jobs ADD CONSTRAINT mkt_collection_jobs_provider_check CHECK (provider = ANY (ARRAY[
   'apify','youtube','browserbase','internal'
 ]));
+-- mkt_job_claim_next JOINs mkt_providers and requires is_enabled + max_concurrency,
+-- so the 'internal' provider MUST have a row or content_process jobs never claim.
+INSERT INTO public.mkt_providers (provider_key, display_name, is_enabled, max_concurrency, max_backfill_posts)
+VALUES ('internal','Internal (content understanding)', true, 5, 200)
+ON CONFLICT (provider_key) DO UPDATE SET is_enabled=true, max_concurrency=EXCLUDED.max_concurrency;
 
 -- ── 7. RLS (authenticated read; writes via SECURITY DEFINER RPCs / service role) ─
 ALTER TABLE public.mkt_content_media      ENABLE ROW LEVEL SECURITY;

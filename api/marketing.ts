@@ -276,6 +276,65 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ candidates: data ?? [] });
       }
 
+      case 'content_metrics': {
+        // Content-understanding overview for an org (or all). Measured counts.
+        const org = str(body.organization_id);
+        let base = sb.from('mkt_content_posts').select('post_type, processing_status', { count: 'exact' });
+        if (org) base = base.eq('organization_id', org);
+        const { data: posts } = await base.limit(5000);
+        const rows = posts ?? [];
+        const isVideo = (t: string | null) => ['video', 'reel', 'short'].includes(t ?? '');
+        const isImage = (t: string | null) => ['image', 'photo'].includes(t ?? '');
+        const total = rows.length;
+        const videos = rows.filter((r) => isVideo(r.post_type as string)).length;
+        const images = rows.filter((r) => isImage(r.post_type as string)).length;
+        const carousels = rows.filter((r) => ['carousel', 'sidecar', 'album'].includes((r.post_type as string) ?? '')).length;
+        const processed = rows.filter((r) => r.processing_status === 'processed').length;
+        const partial = rows.filter((r) => r.processing_status === 'partial').length;
+        const failed = rows.filter((r) => r.processing_status === 'failed').length;
+        // media + transcript + attribution roll-ups (scoped to the org via joins)
+        const orgFilter = org ? { organization_id: org } : {};
+        const mediaCount = async (status: string): Promise<number> => {
+          let mq = sb.from('mkt_content_media').select('id, mkt_content_posts!inner(organization_id)', { count: 'exact', head: true }).eq('download_status', status);
+          if (org) mq = mq.eq('mkt_content_posts.organization_id', org);
+          return Number((await mq).count ?? 0);
+        };
+        const mediaStored = await mediaCount('stored');
+        const mediaFailed = await mediaCount('failed');
+        const { count: txDone } = await sb.from('mkt_transcripts').select('id', { count: 'exact', head: true }).eq('status', 'done');
+        const { count: txFailed } = await sb.from('mkt_transcripts').select('id', { count: 'exact', head: true }).eq('status', 'failed');
+        const { data: enr } = await sb.from('mkt_content_enrichment').select('primary_project_id, cost_usd').match(orgFilter).limit(5000);
+        const attributed = (enr ?? []).filter((e) => e.primary_project_id).length;
+        const enrichCost = (enr ?? []).reduce((s, e) => s + Number(e.cost_usd ?? 0), 0);
+        const { data: txCostRows } = await sb.from('mkt_transcripts').select('cost_usd').limit(5000);
+        const txCost = (txCostRows ?? []).reduce((s, e) => s + Number(e.cost_usd ?? 0), 0);
+        const ms = Number(mediaStored ?? 0), mf = Number(mediaFailed ?? 0);
+        return jsonOk({
+          total, videos, images, carousels, processed, partial, failed,
+          media_stored: ms, media_failed: mf, media_success_rate: ms + mf ? ms / (ms + mf) : null,
+          transcribed: Number(txDone ?? 0), transcribe_failed: Number(txFailed ?? 0),
+          enriched: (enr ?? []).length, attributed, unattributed: (enr ?? []).length - attributed,
+          cost_usd: Math.round((enrichCost + txCost) * 10000) / 10000,
+        });
+      }
+
+      case 'content_items': {
+        // List content items with embedded media/transcript/enrichment/attribution.
+        const org = str(body.organization_id);
+        if (!org) return jsonError(400, 'organization_id required');
+        const page = typeof body.page === 'number' ? Math.max(1, body.page) : 1;
+        const size = 24; const from = (page - 1) * size;
+        let q = sb.from('mkt_content_posts')
+          .select('id, platform, external_id, post_url, post_type, caption, published_at, thumbnail_ref, processing_status, media_count, processed_at, hashtags, engagement, mkt_content_media(id,carousel_index,media_kind,stored_url,download_status,duration_ms,bytes,failure_reason), mkt_transcripts(id,language,status,text,segments,duration_ms), mkt_content_enrichment(primary_project_id,result,status,candidate_projects), mkt_content_attributions(project_id,confidence,review_status,evidence), mkt_visual_text(id,source,frame_ts_ms,text,structured)', { count: 'exact' })
+          .eq('organization_id', org).order('published_at', { ascending: false }).range(from, from + size - 1);
+        const platform = str(body.platform); if (platform) q = q.eq('platform', platform);
+        const ptype = str(body.post_type); if (ptype) q = q.eq('post_type', ptype);
+        const pstatus = str(body.processing_status); if (pstatus) q = q.eq('processing_status', pstatus);
+        const { data, error, count } = await q;
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ items: data ?? [], total: count ?? 0, page, page_size: size });
+      }
+
       case 'cost_dashboard': {
         // provider usage/cost + reliability from ingestion runs. No estimation.
         const { data: runs } = await sb.from('mkt_ingestion_runs')
@@ -350,6 +409,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'confirm_advertiser':
       case 'reject_candidate':
       case 'run_discovery':
+      case 'run_content_processing':
       case 'run_ads_page': {
         const svc = makeServiceClient('api:marketing');
         if (!svc) return jsonError(500, 'service unavailable');
@@ -365,6 +425,14 @@ export default async function handler(req: Request): Promise<Response> {
           });
           if (error) return jsonError(500, error.message);
           return jsonOk({ job_id: data });
+        }
+        if (action === 'run_content_processing') {
+          // Enqueue content_process jobs for the org's not-yet-processed posts (bounded).
+          const lim = typeof body.limit === 'number' ? Math.min(200, Math.max(1, body.limit)) : 50;
+          const force = body.force === true;
+          const { data, error } = await svc.rpc('mkt_enqueue_content_processing', { p_org: org, p_limit: lim, p_force: force });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ enqueued: data });
         }
         if (action === 'discover_advertiser') {
           const advertiser = str(body.advertiser);

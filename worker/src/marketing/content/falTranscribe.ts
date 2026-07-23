@@ -37,6 +37,14 @@ function falEnv() {
   };
 }
 
+// Whisper emits these on silent / music-only audio (no real speech). Treated as
+// "no meaningful speech" so a music reel isn't stored as a bogus English line.
+const HALLUCINATIONS = new Set(['you', 'thank you', 'thank you.', 'thanks for watching', 'thanks for watching!', 'bye', 'bye.', '.', '..', '...', 'subscribe', 'the end']);
+export function isMeaninglessTranscript(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[!.?،]/g, '').trim();
+  return t.length < 3 || HALLUCINATIONS.has(t) || HALLUCINATIONS.has(text.trim().toLowerCase());
+}
+
 /** Detect ar / en / mixed from the transcript text (Whisper doesn't always label). */
 export function detectLanguage(text: string, inferred?: string[]): string | null {
   if (inferred && inferred.length > 1) return 'mixed';
@@ -78,14 +86,19 @@ export async function transcribeAudioUrl(audioUrl: string, durationMs: number | 
     const rr = await fetch(s.response_url, { headers: { Authorization: `Key ${env.apiKey}` } });
     if (!rr.ok) throw new Error(`wizper result ${rr.status}`);
     const j = (await rr.json()) as { text?: string; chunks?: Array<{ timestamp?: [number, number]; text?: string }>; inferred_languages?: string[] };
-    const text = (j.text ?? '').trim();
+    const rawText = (j.text ?? '').trim();
+    const costUsd = durationMs ? Math.round((durationMs / 60000) * 0.01 * 10000) / 10000 : 0;
+    // Music-only / silent reels → Whisper hallucinates "you"/"thanks for watching".
+    // Store an explicit no-speech transcript rather than a bogus line.
+    if (isMeaninglessTranscript(rawText)) {
+      return { text: '', segments: [], language: 'none', model: env.model, provider: 'fal', costUsd, raw: j };
+    }
     const segments: TranscriptSegment[] = (j.chunks ?? []).map((c) => ({
       start_ms: Math.round((c.timestamp?.[0] ?? 0) * 1000),
       end_ms: Math.round((c.timestamp?.[1] ?? 0) * 1000),
       text: (c.text ?? '').trim(),
     })).filter((sg) => sg.text);
-    const costUsd = durationMs ? Math.round((durationMs / 60000) * 0.01 * 10000) / 10000 : 0;
-    return { text, segments, language: detectLanguage(text, j.inferred_languages), model: env.model, provider: 'fal', costUsd, raw: j };
+    return { text: rawText, segments, language: detectLanguage(rawText, j.inferred_languages), model: env.model, provider: 'fal', costUsd, raw: j };
   }
   throw new Error('wizper poll timed out');
 }

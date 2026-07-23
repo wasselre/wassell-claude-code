@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { extractMedia } from '../mediaExtract';
-import { detectLanguage } from '../falTranscribe';
+import { detectLanguage, isMeaninglessTranscript } from '../falTranscribe';
 
 describe('media extraction from raw payloads', () => {
   it('instagram reel → video + thumbnail with duration', () => {
@@ -48,4 +48,14 @@ describe('transcript language detection (ar / en / mixed)', () => {
   it('detects mixed code-switching', () => expect(detectLanguage('مشروع Riviera الآن available today احجز')).toBe('mixed'));
   it('honors multiple inferred languages as mixed', () => expect(detectLanguage('...', ['ar', 'en'])).toBe('mixed'));
   it('empty text with no inference is null', () => expect(detectLanguage('')).toBeNull());
+});
+
+describe('whisper hallucination guard (music-only reels)', () => {
+  it('flags the classic silent-audio hallucinations', () => {
+    for (const h of ['you', 'You', 'Thank you.', 'thanks for watching!', '.', 'bye']) expect(isMeaninglessTranscript(h)).toBe(true);
+  });
+  it('keeps real speech', () => {
+    expect(isMeaninglessTranscript('وصل ريفييرا عرض خاص لفترة محدودة')).toBe(false);
+    expect(isMeaninglessTranscript('Book your unit now')).toBe(false);
+  });
 });
