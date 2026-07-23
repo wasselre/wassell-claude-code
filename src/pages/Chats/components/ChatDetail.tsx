@@ -9,6 +9,7 @@ import Composer from './Composer';
 import CompleteWhatsAppFollowupModal from './CompleteWhatsAppFollowupModal';
 import LeadIntakeModal from './LeadIntakeModal';
 import LogInteractionModal from './LogInteractionModal';
+import StudyJobCard from './StudyJobCard';
 import { readFollowupType } from '@/pages/Followups/lib/followupContext';
 import { buildDetailedClientPrefChips, buildGeoNameMap, type ClientPrefDetailChip } from '../lib/prefChips';
 
@@ -332,6 +333,10 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
           onChange={requestStatusChange}
         />
       </div>
+
+      {/* App-triggered client study (claude_jobs) — button + status/review
+          strip. Client-linked chats only: a study is a client deliverable. */}
+      {clientLinkId && <StudyJobCard chatRecordId={recordId} />}
 
       {/* Thread (scrolls within its own card) */}
       <div className="flex-1 min-h-0 overflow-hidden px-3 pt-3">

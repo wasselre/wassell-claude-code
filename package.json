@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "sync:prds": "node scripts/sync-model-workflow-prds.mjs",
     "backfill:reels": "node scripts/backfill-reel-analysis.mjs",
-    "typecheck:api": "tsc --noEmit -p tsconfig.api.json"
+    "typecheck:api": "tsc --noEmit -p tsconfig.api.json",
+    "study-runner": "node scripts/claude-study-runner.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",
