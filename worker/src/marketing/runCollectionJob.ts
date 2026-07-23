@@ -19,6 +19,7 @@ import {
   attributeCaption, shouldSnapshot, browserbaseFallbackEligible, computeCommonTokens,
   type ProjectAlias, type Metrics,
 } from './pipeline.js';
+import { runOrganizationDiscovery } from './discovery/discoveryEngine.js';
 
 export interface CollectionJob {
   id: string; kind: string; provider: ProviderKey; social_account_id: string | null;
@@ -254,6 +255,18 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         });
         stats.skipped = scored.length; // needs a human decision (marketplace/ambiguous/low-confidence)
       }
+    } else if (job.kind === 'organization_discovery') {
+      // Automated identity discovery: one Browserbase session crawls the org's
+      // site + runs structured Google searches + inspects candidate profiles,
+      // stores ALL evidence, scores deterministically, and auto-confirms ONLY
+      // link-back-anchored non-marketplace winners. Replaces manual browsing.
+      const discOrgId = (job.params.organization_id as string) ?? orgId;
+      if (!discOrgId) throw new ProviderError('organization_discovery needs organization_id', 'config_invalid');
+      const res = await runOrganizationDiscovery(sb, ctx.env, discOrgId, (job.params.trigger as string) ?? 'queue');
+      stats.received = res.candidates;
+      stats.inserted = res.confirmed;
+      stats.skipped = Math.max(0, res.candidates - res.confirmed);
+      if (res.candidates === 0) stats.errors.push('discovery found no candidate accounts (site + search returned nothing linkable)');
     } else if (job.kind === 'paid_ads') {
       // PRODUCTION: collect a CONFIRMED advertiser PAGE (never keyword). Downloads
       // creatives permanently, fingerprints them, groups ads into campaigns, tracks

@@ -252,6 +252,30 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ campaigns: data ?? [] });
       }
 
+      case 'discovery_runs': {
+        // Recent automated identity-discovery runs (optionally for one org).
+        const org = str(body.organization_id);
+        let q = sb.from('mkt_discovery_runs')
+          .select('id, organization_id, status, trigger, sources_used, queries_count, evidence_count, candidates_count, confirmed_count, cost_usd, error, summary, started_at, finished_at')
+          .order('started_at', { ascending: false }).limit(20);
+        if (org) q = q.eq('organization_id', org);
+        const { data, error } = await q;
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ runs: data ?? [] });
+      }
+
+      case 'discovery_candidates': {
+        // Every scored identity candidate for an org, newest-run first, with the
+        // full reason breakdown so a human can audit each auto-confirm/reject.
+        const org = str(body.organization_id);
+        if (!org) return jsonError(400, 'organization_id required');
+        const { data, error } = await sb.from('mkt_identity_candidates')
+          .select('id, platform, handle, account_id, url, account_class, score, confidence, is_marketplace, reasons, evidence, status, rejection_reason, verification_method, discovery_run_id, updated_at')
+          .eq('organization_id', org).order('score', { ascending: false });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ candidates: data ?? [] });
+      }
+
       case 'cost_dashboard': {
         // provider usage/cost + reliability from ingestion runs. No estimation.
         const { data: runs } = await sb.from('mkt_ingestion_runs')
@@ -325,6 +349,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'discover_advertiser':
       case 'confirm_advertiser':
       case 'reject_candidate':
+      case 'run_discovery':
       case 'run_ads_page': {
         const svc = makeServiceClient('api:marketing');
         if (!svc) return jsonError(500, 'service unavailable');
@@ -332,6 +357,15 @@ export default async function handler(req: Request): Promise<Response> {
         if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
         const org = str(body.organization_id);
         if (!org) return jsonError(400, 'organization_id required');
+        if (action === 'run_discovery') {
+          // Automated identity discovery via the Browserbase-backed worker engine.
+          const { data, error } = await svc.rpc('mkt_job_enqueue', {
+            p_kind: 'organization_discovery', p_provider: 'browserbase', p_social_account_id: null,
+            p_params: { organization_id: org, trigger: 'manual' }, p_priority: 50, p_requested_by: user.userId, p_fallback_of: null,
+          });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ job_id: data });
+        }
         if (action === 'discover_advertiser') {
           const advertiser = str(body.advertiser);
           if (!advertiser) return jsonError(400, 'advertiser required');
