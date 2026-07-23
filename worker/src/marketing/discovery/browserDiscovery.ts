@@ -142,35 +142,77 @@ export async function crawlSite(page: Page, website: string): Promise<EvidenceIt
   return out;
 }
 
-/** Real Google search → platform account result URLs + title + snippet. */
-export async function googleSearch(page: Page, query: string, wantPlatforms: string[]): Promise<EvidenceItem[]> {
-  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}&hl=ar&num=20`;
-  try {
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await page.waitForTimeout(1400);
-  } catch { return []; }
-  const hosts = wantPlatforms.map((p) => PLATFORM_HOSTS[p]).filter(Boolean);
-  const rows = (await page.evaluate((hostList: string[]) => {
-    const doc = (globalThis as unknown as { document: { querySelectorAll(s: string): ArrayLike<{ getAttribute(n: string): string | null; closest(s: string): { innerText?: string } | null }> } }).document;
+/** Extract platform-account result links from whatever search-results page is
+ *  currently loaded. Engine-agnostic: scans every anchor, unwraps Bing/DDG
+ *  redirect wrappers, and keeps only real profile URLs on the wanted hosts. */
+async function extractSearchResults(page: Page, hosts: string[]): Promise<Array<{ url: string; title: string; snippet: string }>> {
+  return (await page.evaluate((hostList: string[]) => {
+    const doc = (globalThis as unknown as { document: { querySelectorAll(s: string): ArrayLike<{ getAttribute(n: string): string | null; closest(s: string): { innerText?: string } | null; textContent?: string }> } }).document;
+    const g = globalThis as unknown as { atob(s: string): string; decodeURIComponent(s: string): string };
+    // Unwrap a search engine's redirect wrapper to the real destination URL.
+    const unwrap = (href: string): string => {
+      try {
+        // Bing: /ck/a?...&u=a1<base64url>  (the 'a1' prefix precedes the encoded URL)
+        const m = href.match(/[?&]u=a1([A-Za-z0-9_-]+)/);
+        if (m && /bing\.com/.test(href)) {
+          const b64 = m[1]!.replace(/-/g, '+').replace(/_/g, '/');
+          return g.atob(b64 + '==='.slice((b64.length + 3) % 4));
+        }
+        // DuckDuckGo: /l/?uddg=<encoded>
+        const d = href.match(/[?&]uddg=([^&]+)/);
+        if (d) return g.decodeURIComponent(d[1]!);
+      } catch { /* not a wrapper — fall through */ }
+      return href;
+    };
     const anchors = doc.querySelectorAll('a[href]');
     const res: Array<{ url: string; title: string; snippet: string }> = [];
+    const seen = new Set<string>();
     for (let i = 0; i < anchors.length; i++) {
       const a = anchors[i]!;
-      const href = a.getAttribute('href') || '';
+      const raw = a.getAttribute('href') || '';
+      const href = unwrap(raw);
       if (!hostList.some((h) => href.includes(h))) continue;
-      if (/\/(p|reel|reels|explore|status|watch)\b/.test(href)) continue;
-      const block = a.closest('div[data-hveid]') || a.closest('div.g');
-      const t = (block?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 180);
-      res.push({ url: href.split('&')[0]!, title: t.slice(0, 70), snippet: t });
-      if (res.length >= 15) break;
+      if (/\/(p|reel|reels|explore|status|watch|hashtag|tags)\b/.test(href)) continue;
+      const clean = href.split('#')[0]!.split('?')[0]!;
+      if (seen.has(clean)) continue; seen.add(clean);
+      const block = a.closest('li') || a.closest('div');
+      const t = ((block?.innerText ?? a.textContent) || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+      res.push({ url: clean, title: t.slice(0, 70), snippet: t });
+      if (res.length >= 20) break;
     }
     return res;
   }, hosts)) as Array<{ url: string; title: string; snippet: string }>;
+}
+
+/** Web search across multiple engines (Bing → DuckDuckGo → Google) until one
+ *  yields platform-account results. Google is last because it most aggressively
+ *  serves a consent interstitial to datacenter/proxy sessions (a Browserbase run
+ *  gets 0 results behind it); Bing + DDG return parseable results without a wall.
+ *  The engine that produced each hit is the evidence `source`. */
+export async function webSearch(page: Page, query: string, wantPlatforms: string[]): Promise<EvidenceItem[]> {
+  const hosts = wantPlatforms.map((p) => PLATFORM_HOSTS[p]).filter(Boolean);
+  const engines: Array<{ source: string; url: string }> = [
+    { source: 'bing', url: `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=30&setlang=en` },
+    { source: 'duckduckgo', url: `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}` },
+    { source: 'google', url: `https://www.google.com/search?q=${encodeURIComponent(query)}&num=20&hl=en` },
+  ];
   const out: EvidenceItem[] = [];
-  for (const r of rows) {
-    const ph = platformHandle(r.url);
-    if (!ph) continue;
-    out.push({ source: 'google', kind: 'search_result', platform: ph.platform, handle: ph.handle, url: r.url, title: r.title, snippet: r.snippet, extracted: {} });
+  const seen = new Set<string>();
+  for (const eng of engines) {
+    let rows: Array<{ url: string; title: string; snippet: string }> = [];
+    try {
+      await page.goto(eng.url, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+      await page.waitForTimeout(1400);
+      rows = await extractSearchResults(page, hosts);
+    } catch { continue; }
+    for (const r of rows) {
+      const ph = platformHandle(r.url);
+      if (!ph) continue;
+      const key = `${ph.platform}:${ph.handle}`;
+      if (seen.has(key)) continue; seen.add(key);
+      out.push({ source: eng.source, kind: 'search_result', platform: ph.platform, handle: ph.handle, url: r.url, title: r.title, snippet: r.snippet, extracted: {} });
+    }
+    if (out.length > 0) break; // this engine answered — don't burn time on the rest
   }
   return out;
 }

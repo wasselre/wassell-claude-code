@@ -15,7 +15,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { WorkerEnv } from '../../env.js';
 import {
-  chromium, createDiscoverySession, crawlSite, googleSearch, inspectProfile,
+  chromium, createDiscoverySession, crawlSite, webSearch, inspectProfile,
   type EvidenceItem,
 } from './browserDiscovery.js';
 import { scoreIdentity, decideIdentityAutoConfirm, type OrgIdentity, type IdentityCandidateInput, type ScoredIdentity } from './identityScoring.js';
@@ -60,15 +60,18 @@ export async function runOrganizationDiscovery(sb: SupabaseClient, env: WorkerEn
       queriesCount++;
     }
 
-    // 2. structured Google searches (broad, all platforms per query — cost-efficient)
+    // 2. structured web searches (broad, all platforms per query — cost-efficient).
+    //    webSearch tries Bing → DuckDuckGo → Google; each hit's source records
+    //    which engine actually answered.
     const queries: string[] = [];
     if (identity.nameAr) queries.push(`${identity.nameAr} العقارية انستقرام تيك توك يوتيوب`);
     if (identity.nameEn) queries.push(`${identity.nameEn} real estate Saudi instagram tiktok youtube`);
     if (orgDomain) queries.push(`"${orgDomain}" instagram OR tiktok OR youtube`);
     for (const q of queries) {
-      const ev = await googleSearch(page, q, PLATFORMS);
-      allEvidence.push(...ev); sourcesUsed.add('google');
-      await sb.rpc('mkt_discovery_query_log', { p_run: runId, p_org: orgId, p_source: 'google', p_query: q, p_results: ev.length });
+      const ev = await webSearch(page, q, PLATFORMS);
+      allEvidence.push(...ev);
+      for (const e of ev) sourcesUsed.add(e.source);
+      await sb.rpc('mkt_discovery_query_log', { p_run: runId, p_org: orgId, p_source: 'web_search', p_query: q, p_results: ev.length });
       queriesCount++;
     }
 
