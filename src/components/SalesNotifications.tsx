@@ -103,7 +103,32 @@ export default function SalesNotifications() {
         const type = Array.isArray(d.followup_type) ? d.followup_type[0] : d.followup_type;
         const stage = clientStage(firstId(d.client_id));
         const ageMs = Date.now() - Date.parse(r.created_at);
-        if (type === 'appointment_booking_call' && (!stage || stage === 'جديد') && ageMs < 10 * 60 * 1000) {
+        const clientId = firstId(d.client_id);
+        // A re-escalated OLD lead (WhatsApp chain exhausted → auto call task) also
+        // lands as a fresh appointment_booking_call on a client still tagged جديد,
+        // so type + stage + age alone can't tell it apart from a genuine new inbound
+        // lead. Two extra gates ensure we only ping for a TRUE first-touch lead:
+        //   1. the task carries no escalation marker (escalation_reason /
+        //      previous_followup_id — both stamped by the escalation engine), and
+        //   2. it's the client's FIRST booking-call task (no earlier one exists).
+        const isEscalation =
+          (typeof d.escalation_reason === 'string' && !!d.escalation_reason) ||
+          (typeof d.previous_followup_id === 'string' && !!d.previous_followup_id);
+        const hasEarlierBookingCall = !!clientId && followups.some((o) => {
+          if (o.id === r.id) return false;
+          const od = o.data as Record<string, unknown>;
+          if (firstId(od.client_id) !== clientId) return false;
+          const ot = Array.isArray(od.followup_type) ? od.followup_type[0] : od.followup_type;
+          if (ot !== 'appointment_booking_call') return false;
+          return Date.parse(o.created_at) <= Date.parse(r.created_at);
+        });
+        if (
+          type === 'appointment_booking_call' &&
+          (!stage || stage === 'جديد') &&
+          ageMs < 10 * 60 * 1000 &&
+          !isEscalation &&
+          !hasEarlierBookingCall
+        ) {
           const name = typeof d.client_name === 'string' && d.client_name ? d.client_name : (isAr ? 'عميل جديد' : 'New lead');
           notify(
             isAr ? '🔥 عميل جديد — اتصل خلال ٥ دقائق' : '🔥 New lead — call within 5 minutes',
