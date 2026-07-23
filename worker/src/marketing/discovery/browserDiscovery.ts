@@ -53,8 +53,9 @@ export function platformHandle(url: string): { platform: string; handle: string 
     return null;
   }
   if (/(^|\.)facebook\.com$/.test(host)) {
-    if (!seg[0] || ['sharer', 'plugins', 'tr', 'dialog'].includes(seg[0])) return null;
-    if (seg[0] === 'profile.php') return { platform: 'facebook', handle: (u.searchParams.get('id') ?? '') };
+    const fbReserved = ['sharer', 'plugins', 'tr', 'dialog', 'login', 'login.php', 'recover', 'recover.php', 'help', 'watch', 'story.php', 'events', 'groups', 'marketplace', 'gaming', 'reel', 'photo.php', 'permalink.php'];
+    if (!seg[0] || fbReserved.includes(seg[0].toLowerCase())) return null;
+    if (seg[0] === 'profile.php') { const id = u.searchParams.get('id'); return id ? { platform: 'facebook', handle: id } : null; }
     return { platform: 'facebook', handle: seg[0].toLowerCase() };
   }
   if (/(^|\.)x\.com$/.test(host) || /(^|\.)twitter\.com$/.test(host)) {

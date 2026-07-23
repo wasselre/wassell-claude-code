@@ -19,6 +19,13 @@ describe('platformHandle URL parsing', () => {
     expect(platformHandle('https://instagram.com/p/Cabc123/')).toBeNull(); // a post, not a profile
     expect(platformHandle('https://instagram.com/explore/tags/x')).toBeNull();
   });
+  it('rejects facebook login / utility redirects (not real accounts)', () => {
+    expect(platformHandle('https://www.facebook.com/login.php/')).toBeNull();
+    expect(platformHandle('https://secure.facebook.com/login/')).toBeNull();
+    expect(platformHandle('https://www.facebook.com/sharer/sharer.php')).toBeNull();
+    expect(platformHandle('https://www.facebook.com/YamamInvestment')).toEqual({ platform: 'facebook', handle: 'yamaminvestment' });
+    expect(platformHandle('https://www.facebook.com/profile.php?id=123')).toEqual({ platform: 'facebook', handle: '123' });
+  });
   it('hostOf strips www', () => {
     expect(hostOf('https://www.ocean.com.sa/about')).toBe('ocean.com.sa');
   });
