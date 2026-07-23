@@ -15,13 +15,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { probeDurationMs, cleanup } from './ffmpegMedia.js';
 
-export type YtFailureKind = 'private' | 'unavailable' | 'age_restricted' | 'region_blocked' | 'too_large' | 'too_long' | 'no_output' | 'error';
+export type YtFailureKind = 'private' | 'unavailable' | 'age_restricted' | 'region_blocked' | 'too_large' | 'too_long' | 'bot_check' | 'no_output' | 'error';
 export class YtDownloadError extends Error {
   constructor(public kind: YtFailureKind, message: string) { super(message); this.name = 'YtDownloadError'; }
 }
 
 function classify(stderr: string): YtFailureKind {
   const s = stderr.toLowerCase();
+  if (/not a bot|confirm you.?re not a bot|--cookies|cookies-from-browser|sign in to confirm you/.test(s)) return 'bot_check';
   if (/private video/.test(s)) return 'private';
   if (/sign in to confirm your age|age-restricted|confirm your age/.test(s)) return 'age_restricted';
   if (/available in your country|geo-restrict|geo.?block|blocked it in your country|not available from your location/.test(s)) return 'region_blocked';
@@ -42,6 +43,10 @@ export async function downloadYouTube(videoId: string, opts: { maxHeight?: numbe
   const dir = await mkdtemp(join(tmpdir(), 'mkt-yt-'));
   const url = `https://www.youtube.com/watch?v=${videoId}`;
   const args = [
+    // player_client=android/ios/tv avoids YouTube's web bot-check + PO-token
+    // requirement that blocks datacenter IPs (Fly). Not guaranteed forever;
+    // a bot_check failure is recorded explicitly when even these are blocked.
+    '--extractor-args', 'youtube:player_client=android,ios,tv,web_safari',
     '-f', `b[height<=${maxHeight}][ext=mp4]/b[height<=${maxHeight}]/bv*[height<=${maxHeight}]+ba/b`,
     '--max-filesize', `${maxMb}M`,
     '--match-filter', `duration < ${maxDur}`,
