@@ -60,15 +60,25 @@ export async function runOrganizationDiscovery(sb: SupabaseClient, env: WorkerEn
       queriesCount++;
     }
 
-    // 2. structured web searches (broad, all platforms per query — cost-efficient).
-    //    webSearch tries Bing → DuckDuckGo → Google; each hit's source records
-    //    which engine actually answered.
-    const queries: string[] = [];
-    if (identity.nameAr) queries.push(`${identity.nameAr} العقارية انستقرام تيك توك يوتيوب`);
-    if (identity.nameEn) queries.push(`${identity.nameEn} real estate Saudi instagram tiktok youtube`);
-    if (orgDomain) queries.push(`"${orgDomain}" instagram OR tiktok OR youtube`);
-    for (const q of queries) {
-      const ev = await webSearch(page, q, PLATFORMS);
+    // 2. structured web searches. webSearch tries Bing → DuckDuckGo → Google;
+    //    each hit's source records which engine answered. Two families:
+    //    (a) BROAD queries across all platforms (cheap, catches whatever ranks),
+    //    (b) SITE-SCOPED per-platform queries (`<name> site:instagram.com`) that
+    //        force the search engine to surface THAT platform's profile — this is
+    //        what recovers the hard cases whose account isn't on their own site
+    //        and doesn't top a broad query (e.g. Yamam's IG under a LinkedIn hit).
+    const name = identity.nameAr ?? identity.nameEn;
+    const queries: Array<{ q: string; platforms: string[] }> = [];
+    if (identity.nameAr) queries.push({ q: `${identity.nameAr} العقارية انستقرام تيك توك يوتيوب`, platforms: PLATFORMS });
+    if (identity.nameEn) queries.push({ q: `${identity.nameEn} real estate Saudi instagram tiktok youtube`, platforms: PLATFORMS });
+    if (orgDomain) queries.push({ q: `"${orgDomain}" instagram OR tiktok OR youtube`, platforms: PLATFORMS });
+    if (name) {
+      for (const [plat, host] of [['instagram', 'instagram.com'], ['tiktok', 'tiktok.com'], ['youtube', 'youtube.com']] as const) {
+        queries.push({ q: `${name} site:${host}`, platforms: [plat] });
+      }
+    }
+    for (const { q, platforms } of queries) {
+      const ev = await webSearch(page, q, platforms);
       allEvidence.push(...ev);
       for (const e of ev) sourcesUsed.add(e.source);
       await sb.rpc('mkt_discovery_query_log', { p_run: runId, p_org: orgId, p_source: 'web_search', p_query: q, p_results: ev.length });
