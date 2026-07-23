@@ -115,6 +115,31 @@ export default async function handler(req: Request): Promise<Response> {
       if (typeof v === 'string' && v.trim()) { clientName = v.trim(); break; }
     }
 
+    // Known-client context — a short Arabic summary the agent's prompt reads
+    // as {{client_context}} so سعد doesn't re-ask what the CRM already knows.
+    const contextParts: string[] = [];
+    const range = (v: unknown, label: string, unit = '') => {
+      if (!v || typeof v !== 'object') return;
+      const r = v as { min?: unknown; max?: unknown };
+      if (r.min == null && r.max == null) return;
+      contextParts.push(`${label}: ${r.min ?? '؟'} إلى ${r.max ?? '؟'}${unit}`);
+    };
+    range(data.budget, 'الميزانية', ' ريال');
+    range(data.preferred_bedrooms, 'غرف النوم');
+    range(data.preferred_area, 'المساحة', ' م²');
+    if (Array.isArray(data.preferred_unit_type) && data.preferred_unit_type.length) {
+      contextParts.push(`نوع الوحدة: ${(data.preferred_unit_type as unknown[]).join('، ')}`);
+    }
+    if (typeof data.preferred_location_notes === 'string' && data.preferred_location_notes.trim()) {
+      contextParts.push(`الموقع: ${data.preferred_location_notes.trim().slice(-300)}`);
+    }
+    if (typeof data.preference_notes === 'string' && data.preference_notes.trim()) {
+      contextParts.push(`ملاحظات: ${data.preference_notes.trim().slice(-300)}`);
+    }
+    const clientContext = contextParts.length
+      ? contextParts.join(' | ').slice(0, 1200)
+      : 'لا توجد معلومات محفوظة عن هذا العميل بعد';
+
     const payload: Record<string, unknown> = {
       from_number: process.env.RETELL_FROM_NUMBER ?? DEFAULT_FROM_NUMBER,
       to_number: toNumber,
@@ -124,7 +149,10 @@ export default async function handler(req: Request): Promise<Response> {
         triggered_by_user_id: user.userId,
         source: 'ai_call_button',
       },
-      ...(clientName ? { retell_llm_dynamic_variables: { client_name: clientName } } : {}),
+      retell_llm_dynamic_variables: {
+        client_name: clientName ?? 'غير معروف',
+        client_context: clientContext,
+      },
     };
 
     const res = await fetch('https://api.retellai.com/v2/create-phone-call', {
