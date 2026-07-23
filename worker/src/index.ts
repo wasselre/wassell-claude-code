@@ -1783,6 +1783,35 @@ interface ScheduledWaRow {
   attempts: number;
 }
 
+// Retry posture (added 2026-07-23 after the 10:00 batch died on one attempt):
+// a WAHA-level 5xx / network failure is TRANSIENT (zombie session, WAHA restart,
+// WhatsApp server hiccup — e.g. "server returned error 463"), so the job is
+// requeued with backoff up to 3 total attempts instead of failing permanently.
+// App-level errors (bad media ref, partial send) still fail on the first try.
+const SCHEDULED_WA_MAX_ATTEMPTS = 3;
+function isTransientWahaSendError(msg: string): boolean {
+  return /^WAHA \/api\/\w+ failed: 5\d\d/.test(msg) || /fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up/i.test(msg);
+}
+
+// A send failing with a WAHA 5xx is strong evidence the session is a zombie
+// (dead-but-'WORKING' — the state the status watchdog deliberately only logs),
+// so kick a restart before the retry lands. Debounced per session so a burst of
+// failing jobs triggers ONE restart, not one per job.
+const WAHA_RESTART_DEBOUNCE_MS = 10 * 60_000;
+const lastWahaRestartAt = new Map<string, number>();
+async function maybeRestartWahaSessionAfterSendFailure(session: string): Promise<void> {
+  if (!wahaSend) return;
+  const last = lastWahaRestartAt.get(session) ?? 0;
+  if (Date.now() - last < WAHA_RESTART_DEBOUNCE_MS) return;
+  lastWahaRestartAt.set(session, Date.now());
+  try {
+    await restartSession(wahaSend, session);
+    console.warn(`[worker] restarted WAHA session '${session}' after a 5xx send failure`);
+  } catch (err) {
+    console.error(`[worker] WAHA session restart '${session}' failed:`, err instanceof Error ? err.message : String(err));
+  }
+}
+
 async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
   if (!wahaSend) return false;
   const { data, error } = await supabase.rpc('scheduled_whatsapp_claim_due', {
@@ -1814,7 +1843,18 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
       if (doneErr) console.error(`[worker] scheduled_whatsapp_complete failed: ${doneErr.message}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[worker] scheduled WhatsApp job=${job.id} FAILED:`, msg);
+      console.error(`[worker] scheduled WhatsApp job=${job.id} FAILED (attempt ${job.attempts}):`, msg);
+      if (isTransientWahaSendError(msg) && job.attempts < SCHEDULED_WA_MAX_ATTEMPTS) {
+        await maybeRestartWahaSessionAfterSendFailure(job.deviceId);
+        const delayS = 120 * job.attempts; // 2 min, then 4 min
+        const { error: rqErr } = await supabase.rpc('scheduled_whatsapp_requeue', { p_job_id: job.id, p_error: msg, p_delay_s: delayS });
+        if (!rqErr) {
+          console.warn(`[worker] scheduled WhatsApp job=${job.id} requeued (+${delayS}s)`);
+          continue;
+        }
+        // Requeue RPC missing/failed → fall through to a loud permanent fail.
+        console.error(`[worker] scheduled_whatsapp_requeue failed: ${rqErr.message}`);
+      }
       const { error: failErr } = await supabase.rpc('scheduled_whatsapp_fail', { p_job_id: job.id, p_error: msg });
       if (failErr) console.error(`[worker] scheduled_whatsapp_fail failed: ${failErr.message}`);
     }

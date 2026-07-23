@@ -83,13 +83,27 @@ function kindFor(item: ScheduledMediaItem): NonNullable<ScheduledMediaItem['kind
   return EXT_KIND[ext] ?? 'document';
 }
 
+const STORAGE_SIGNED_URL_RE = /\/storage\/v1\/object\/sign\/([^/]+)\/([^?]+)/;
+
+async function signTempPath(cfg: WahaSendConfig, path: string): Promise<{ url: string; filename?: string }> {
+  const { data, error } = await cfg.supabase.storage.from(OUTBOUND_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_S);
+  if (error || !data?.signedUrl) throw new Error(`temp media signed-url failed: ${error?.message ?? 'no url'}`);
+  return { url: data.signedUrl, filename: path.split('/').pop() };
+}
+
 async function resolveMediaUrl(cfg: WahaSendConfig, item: ScheduledMediaItem): Promise<{ url: string; filename?: string }> {
   if (item.url) return { url: item.url };
-  if (item.fileId && item.fileId.startsWith(TEMP_REF)) {
-    const path = item.fileId.slice(TEMP_REF.length);
-    const { data, error } = await cfg.supabase.storage.from(OUTBOUND_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_S);
-    if (error || !data?.signedUrl) throw new Error(`temp media signed-url failed: ${error?.message ?? 'no url'}`);
-    return { url: data.signedUrl, filename: path.split('/').pop() };
+  const ref = item.fileId ?? '';
+  if (ref.startsWith(TEMP_REF)) return signTempPath(cfg, ref.slice(TEMP_REF.length));
+  if (/^https?:\/\//.test(ref)) {
+    // Legacy rows (enqueued before 2026-07-23) stored the raw URL in fileId.
+    // A signed wassel-files URL has certainly expired by delivery time — re-sign
+    // its storage path; any other URL (public buckets, external) sends as-is.
+    const m = ref.match(STORAGE_SIGNED_URL_RE);
+    if (m && decodeURIComponent(m[1]!) === OUTBOUND_BUCKET) {
+      return signTempPath(cfg, decodeURIComponent(m[2]!));
+    }
+    return { url: ref };
   }
   throw new Error(`unresolvable scheduled media item: ${JSON.stringify(item).slice(0, 80)}`);
 }

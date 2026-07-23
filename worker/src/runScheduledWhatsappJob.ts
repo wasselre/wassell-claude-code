@@ -28,11 +28,20 @@ export async function runScheduledWhatsappJob(cfg: WahaSendConfig, job: Schedule
   const chatId = job.chatWid;
   const sentIds: string[] = [];
 
-  if (job.body && job.body.trim()) {
-    sentIds.push(await sendText(cfg, job.deviceId, chatId, job.body));
-  }
-  for (const item of job.media ?? []) {
-    sentIds.push(await sendMedia(cfg, job.deviceId, chatId, item));
+  // A failure after ANY part was delivered must not be retried (a requeue would
+  // re-send the delivered part), so it is re-thrown with a marker the poll
+  // loop's transient-error matcher can never match.
+  try {
+    if (job.body && job.body.trim()) {
+      sentIds.push(await sendText(cfg, job.deviceId, chatId, job.body));
+    }
+    for (const item of job.media ?? []) {
+      sentIds.push(await sendMedia(cfg, job.deviceId, chatId, item));
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (sentIds.length > 0) throw new Error(`partial send (${sentIds.length} part(s) already delivered, not retryable): ${msg}`);
+    throw err;
   }
 
   if (sentIds.length === 0) {

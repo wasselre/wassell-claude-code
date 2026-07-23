@@ -234,6 +234,38 @@ export async function patchChat(
     : haberchat.patchChat(deviceId, chatWid, patch));
 }
 
+// Must match OUTBOUND_BUCKET / TEMP_REF in api/_lib/waha.ts AND the worker's
+// copy in worker/src/waha.ts — the wt_ ref is signed against this bucket.
+const WA_TEMP_BUCKET = 'wassel-files';
+const STORAGE_SIGNED_URL_RE = /\/storage\/v1\/object\/sign\/([^/]+)\/([^?]+)/;
+
+/**
+ * Normalize a mediaFileId into the shape the WORKER's resolver understands:
+ * `{fileId: 'wt_<path>'}` (re-signed at send time) or `{url}` (sendable as-is).
+ * A signed URL is only valid for minutes while delivery can be hours away, so
+ * a signed wassel-files URL is converted back to its re-signable wt_ ref; a
+ * signed URL on any other bucket cannot be re-signed by the worker and is
+ * rejected loudly at schedule time instead of silently failing at delivery.
+ */
+function scheduledMediaItem(
+  mediaFileId: string,
+  caption: string | null,
+): { fileId?: string; url?: string; caption: string | null } {
+  if (mediaFileId.startsWith('wt_')) return { fileId: mediaFileId, caption };
+  if (/^https?:\/\//.test(mediaFileId)) {
+    const m = mediaFileId.match(STORAGE_SIGNED_URL_RE);
+    if (m) {
+      const bucket = decodeURIComponent(m[1]!);
+      if (bucket !== WA_TEMP_BUCKET) {
+        throw new HaberchatError(400, `Cannot schedule media from a signed '${bucket}' URL — it expires before delivery`);
+      }
+      return { fileId: `wt_${decodeURIComponent(m[2]!)}`, caption };
+    }
+    return { url: mediaFileId, caption };
+  }
+  throw new HaberchatError(400, `Unschedulable media ref for WAHA: ${mediaFileId.slice(0, 24)}`);
+}
+
 /**
  * If this is a SCHEDULED send on a WAHA number, enqueue it into the Wassell-
  * owned scheduled_whatsapp_jobs queue (WAHA has no native deliverAt) and return
@@ -253,7 +285,7 @@ export async function maybeScheduleWaha(
   const digits = phone.replace(/\D/g, '');
   const chatWid = `${digits}@c.us`;
   const media = input.mediaFileId
-    ? [{ fileId: input.mediaFileId, caption: input.mediaCaption ?? null }]
+    ? [scheduledMediaItem(input.mediaFileId, input.mediaCaption ?? null)]
     : [];
   const { data, error } = await svc.rpc('scheduled_whatsapp_enqueue', {
     p_device_id: input.deviceId,
