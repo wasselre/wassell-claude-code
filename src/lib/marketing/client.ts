@@ -241,6 +241,25 @@ export const fetchContentItems = (organization_id: string, opts: { page?: number
 export const runContentProcessing = (organization_id: string, limit = 50, force = false) =>
   call<{ enqueued: number }>('run_content_processing', { organization_id, limit, force });
 
+// ── Cross-platform campaigns ────────────────────────────────────────────────
+export interface Campaign {
+  id: string; signature: string; project_id: string | null; label: string | null; manual_label: string | null;
+  objective: string | null; platforms: string[]; is_active: boolean; first_seen_at: string | null; last_seen_at: string | null;
+  member_count: number; organic_count: number; paid_count: number; offers: string[]; payment_plans: string[]; ctas: string[];
+  key_message: string | null; reused_creatives: number; confidence: number; evidence: Record<string, unknown>;
+}
+export interface CampaignMember {
+  id: string; member_type: 'content' | 'ad'; content_post_id: string | null; paid_ad_id: string | null;
+  signals: Record<string, unknown>; status: string;
+  mkt_content_posts: { platform: string; post_type: string | null; caption: string | null; post_url: string | null; thumbnail_ref: string | null; published_at: string | null } | null;
+  mkt_paid_ads: { external_ad_id: string; headline: string | null; cta: string | null; creative_stored_url: string | null; landing_url: string | null } | null;
+}
+export interface CampaignEvent { kind: string; payload: Record<string, unknown>; at: string }
+export const fetchCampaigns = (organization_id: string) => call<{ campaigns: Campaign[] }>('campaigns', { organization_id });
+export const fetchCampaignDetail = (campaign_id: string) => call<{ members: CampaignMember[]; events: CampaignEvent[] }>('campaign_detail', { campaign_id });
+export const runCampaignGrouping = (organization_id: string) => call<{ job_id: string }>('run_campaign_grouping', { organization_id });
+export const campaignCorrect = (op: 'move' | 'status' | 'rename' | 'merge', payload: Record<string, unknown>) => call<{ ok: boolean }>('campaign_correct', { op, ...payload });
+
 export const fetchDiscoveryRuns = (organization_id?: string) => call<{ runs: DiscoveryRun[] }>('discovery_runs', organization_id ? { organization_id } : {});
 export const fetchDiscoveryCandidates = (organization_id: string) => call<{ candidates: IdentityCandidate[] }>('discovery_candidates', { organization_id });
 export const runOrganizationDiscovery = (organization_id: string) => call<{ job_id: string }>('run_discovery', { organization_id });

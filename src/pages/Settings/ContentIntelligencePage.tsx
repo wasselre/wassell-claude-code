@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, Play, Film, ImageIcon, Layers, FileText, MapPin, Tag, X, AlertTriangle } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import BackToSettings from './components/BackToSettings';
+import CampaignsPanel from './components/CampaignsPanel';
 import {
   fetchOpsOrgHealth, fetchContentMetrics, fetchContentItems, runContentProcessing,
   type OpsOrgHealth, type ContentMetrics, type ContentItem,
@@ -40,6 +41,7 @@ export default function ContentIntelligencePage() {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [detail, setDetail] = useState<ContentItem | null>(null);
+  const [view, setView] = useState<'content' | 'campaigns'>('content');
 
   useEffect(() => { void fetchOpsOrgHealth().then((r) => { setOrgs(r.organizations); if (!orgId && r.organizations[0]) setOrgId(r.organizations[0].organization_id); }).catch(() => {}); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
 
@@ -84,6 +86,16 @@ export default function ContentIntelligencePage() {
         </div>
       </div>
 
+      <div className="flex gap-1 mb-4 border-b border-sand/50">
+        {(['content', 'campaigns'] as const).map((v) => (
+          <button key={v} type="button" onClick={() => setView(v)} className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 ${view === v ? 'border-copper text-copper' : 'border-transparent text-charcoal/50 hover:text-charcoal'}`}>
+            {v === 'content' ? L('المحتوى', 'Content') : L('الحملات', 'Campaigns')}
+          </button>
+        ))}
+      </div>
+
+      {view === 'campaigns' ? (orgId ? <CampaignsPanel orgId={orgId} /> : null) : (
+      <>
       {metrics && (
         <div className="grid grid-cols-3 md:grid-cols-6 gap-2 mb-4">
           <Metric label={L('إجمالي', 'Total')} value={metrics.total} />
@@ -149,6 +161,8 @@ export default function ContentIntelligencePage() {
       )}
 
       {detail && <DetailModal item={detail} onClose={() => setDetail(null)} L={L} />}
+      </>
+      )}
     </div>
   );
 }

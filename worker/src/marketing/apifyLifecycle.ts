@@ -64,7 +64,11 @@ function sourceTypeFor(platform: Platform): string {
 function buildInput(sourceType: string, handle: string, limit: number): Record<string, unknown> {
   switch (sourceType) {
     case 'instagram_profile': return { directUrls: [`https://www.instagram.com/${handle}/`], resultsType: 'posts', resultsLimit: limit };
-    case 'tiktok_profile': return { profiles: [handle], resultsPerPage: limit, shouldDownloadVideos: false, shouldDownloadCovers: false };
+    // shouldDownloadVideos:true makes clockworks return no-watermark mediaUrls +
+    // cover URLs (empty otherwise → we could never transcribe TikTok). These URLs
+    // are ephemeral, so a TikTok collection MUST be followed promptly by
+    // content_process (params.process_content) before they expire.
+    case 'tiktok_profile': return { profiles: [handle], resultsPerPage: limit, shouldDownloadVideos: true, shouldDownloadCovers: true };
     case 'facebook_posts': return { startUrls: [{ url: `https://www.facebook.com/${handle}` }], maxPosts: limit };
     default: return { handle, limit };
   }

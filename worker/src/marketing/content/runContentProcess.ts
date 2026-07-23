@@ -11,7 +11,9 @@ import { computeCommonTokens, type ProjectAlias } from '../pipeline.js';
 import { extractMedia } from './mediaExtract.js';
 import { downloadAndStore, fetchBytes, uploadBytes } from './contentStore.js';
 import { toTempFile, cleanup, probeDurationMs, extractAudio, sampleFrames } from './ffmpegMedia.js';
+import { downloadYouTube, YtDownloadError } from './ytdlp.js';
 import { transcribeAudioUrl } from './falTranscribe.js';
+import { readFile } from 'node:fs/promises';
 import { extractVisualText, MAX_IMAGES } from './vision.js';
 import { narrowProjects, enrichContent, RULE_VERSION, type NarrowedCandidate } from './enrich.js';
 import { sha256Hex } from '../adIntel.js';
@@ -74,6 +76,36 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
   }
 
+  // ── YouTube: no direct media url — fetch a bounded copy with yt-dlp, store it,
+  //    then let the standard video path (audio→transcribe, frames→OCR) run. ──
+  const isVideoPostType = ['video', 'reel', 'short'].includes((post.post_type as string) ?? '');
+  if (post.platform === 'youtube' && isVideoPostType && !storedRefs.some((r) => r.kind === 'video')) {
+    // reuse an already-stored YouTube video across reprocesses
+    const { data: existingVid } = await sb.from('mkt_content_media').select('id, download_status, stored_url, checksum_sha256, duration_ms').eq('content_post_id', contentPostId).eq('carousel_index', 0).eq('media_kind', 'video').maybeSingle();
+    if (existingVid?.download_status === 'stored' && existingVid.stored_url) {
+      let bytes: Buffer | null = null;
+      try { bytes = (await fetchBytes(existingVid.stored_url as string, 90_000)).bytes; } catch { /* skip */ }
+      storedRefs.push({ mediaId: existingVid.id as string, kind: 'video', carouselIndex: 0, bytes, storedUrl: existingVid.stored_url as string, durationMs: (existingVid.duration_ms as number) ?? undefined, checksum: (existingVid.checksum_sha256 as string) ?? null });
+      stats.media_stored++;
+    } else {
+      try {
+        const yt = await downloadYouTube(post.external_id as string);
+        try {
+          const bytes = await readFile(yt.path);
+          const checksum = sha256Hex(bytes);
+          const stored = await uploadBytes(bytes, 'content/video', checksum, yt.ext === 'mp4' ? 'mp4' : yt.ext, 'video/mp4');
+          const up = (await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: `https://www.youtube.com/watch?v=${post.external_id}`, p_bucket: stored.bucket, p_path: stored.path, p_url: stored.storedUrl, p_mime: 'video/mp4', p_bytes: stored.bytes, p_width: null, p_height: null, p_duration_ms: yt.durationMs, p_checksum: checksum, p_phash: null, p_status: 'stored', p_failure: null })).data as Array<{ id: string }> | null;
+          const mediaId = up?.[0]?.id;
+          if (mediaId) { storedRefs.push({ mediaId, kind: 'video', carouselIndex: 0, bytes, storedUrl: stored.storedUrl, durationMs: yt.durationMs ?? undefined, checksum }); stats.media_stored++; }
+        } finally { await cleanup(yt.dir); }
+      } catch (e) {
+        const reason = e instanceof YtDownloadError ? `${e.kind}: ${e.message}` : (e instanceof Error ? e.message : String(e));
+        await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: `https://www.youtube.com/watch?v=${post.external_id}`, p_bucket: null, p_path: null, p_url: null, p_mime: null, p_bytes: null, p_width: null, p_height: null, p_duration_ms: null, p_checksum: null, p_phash: null, p_status: 'failed', p_failure: reason.slice(0, 300) });
+        stats.media_failed++; stats.errors.push(`youtube: ${reason}`);
+      }
+    }
+  }
+
   // ── videos: audio → transcribe; sample frames for vision ──
   const visionInputs: Array<{ mediaId: string; source: 'image' | 'frame' | 'thumbnail'; frameTsMs: number | null; buffer: Buffer; mime: string | null }> = [];
   let transcriptText = '';
@@ -118,11 +150,12 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     try {
       const { results, costUsd } = await extractVisualText(batch.map((v) => ({ buffer: v.buffer, mime: v.mime })));
       stats.cost_usd += costUsd;
+      const perRowCost = results.length > 0 ? Math.round((costUsd / results.length) * 1e6) / 1e6 : 0; // split the single vision-call cost across its rows
       for (const r of results) {
         const inp = batch[r.index]; if (!inp) continue;
         visualTextBlob += ' ' + (r.fields.visible_text ?? '');
         if (inp.source === 'frame') stats.frames_analyzed++; else stats.images_analyzed++;
-        await sb.rpc('mkt_visual_text_upsert', { p_media: inp.mediaId, p_post: contentPostId, p_source: inp.source, p_frame_ts_ms: inp.frameTsMs, p_model: process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6', p_text: r.fields.visible_text ?? '', p_structured: r.fields, p_confidence: null, p_cost: 0, p_status: 'done', p_failure: null, p_raw: null });
+        await sb.rpc('mkt_visual_text_upsert', { p_media: inp.mediaId, p_post: contentPostId, p_source: inp.source, p_frame_ts_ms: inp.frameTsMs, p_model: process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6', p_text: r.fields.visible_text ?? '', p_structured: r.fields, p_confidence: null, p_cost: perRowCost, p_status: 'done', p_failure: null, p_raw: null });
       }
     } catch (e) { stats.errors.push(`vision: ${e instanceof Error ? e.message : String(e)}`); }
   }
@@ -158,12 +191,13 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   //    collectable (TikTok Apify config returns empty mediaUrls; YouTube has no
   //    direct mp4). Record it so a "video" post is never silently "processed"
   //    without its video/transcript. ──
-  const isVideoPost = ['video', 'reel', 'short'].includes((post.post_type as string) ?? '');
   const videoStored = storedRefs.some((r) => r.kind === 'video' && r.bytes);
-  let videoUnavailable = false;
-  if (isVideoPost && !videoStored) {
-    videoUnavailable = true;
-    const reason = post.platform === 'tiktok' ? 'video bytes not in collection (enable Apify TikTok video download)' : post.platform === 'youtube' ? 'youtube has no direct video url (needs yt-dlp)' : 'no downloadable video url in payload';
+  const videoUnavailable = isVideoPostType && !videoStored;
+  if (videoUnavailable && post.platform !== 'youtube') {
+    // YouTube already recorded a classified failed video row above; TikTok (no
+    // video descriptor: re-collect with shouldDownloadVideos, or URL expired)
+    // and any other video-type post with no obtainable video get one here.
+    const reason = post.platform === 'tiktok' ? 'tiktok video bytes not present (re-collect with shouldDownloadVideos, or the no-watermark URL expired before download)' : 'no downloadable video url in payload';
     await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: null, p_bucket: null, p_path: null, p_url: null, p_mime: null, p_bytes: null, p_width: null, p_height: null, p_duration_ms: null, p_checksum: null, p_phash: null, p_status: 'failed', p_failure: reason });
     stats.errors.push(`video_unavailable: ${reason}`);
   }

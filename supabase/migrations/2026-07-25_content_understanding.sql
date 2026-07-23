@@ -134,8 +134,10 @@ ALTER TABLE public.mkt_collection_jobs ADD CONSTRAINT mkt_collection_jobs_provid
 ]));
 -- mkt_job_claim_next JOINs mkt_providers and requires is_enabled + max_concurrency,
 -- so the 'internal' provider MUST have a row or content_process jobs never claim.
+-- max_concurrency 3 (< the 5 Fly machines) so heavy content_process jobs can
+-- never occupy every machine and starve routine collection/discovery.
 INSERT INTO public.mkt_providers (provider_key, display_name, is_enabled, max_concurrency, max_backfill_posts)
-VALUES ('internal','Internal (content understanding)', true, 5, 200)
+VALUES ('internal','Internal (content understanding)', true, 3, 200)
 ON CONFLICT (provider_key) DO UPDATE SET is_enabled=true, max_concurrency=EXCLUDED.max_concurrency;
 
 -- ── 7. RLS (authenticated read; writes via SECURITY DEFINER RPCs / service role) ─

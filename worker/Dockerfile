@@ -44,8 +44,14 @@ ENV NODE_ENV=production
 # ffmpeg — converts listing HLS video streams (Aqar = Cloudflare Stream .m3u8)
 # to WhatsApp-sendable .mp4 (runVideoConvertJob.ts). Copy-remux first, one
 # 720p re-encode fallback under the ~16 MB WhatsApp cap.
+# yt-dlp — downloads YouTube videos/Shorts for transcription + frame OCR
+# (YouTube gives no direct mp4 URL). Pinned deterministically by the Alpine
+# release of the node:22-alpine base tag; ffmpeg (already installed) is used
+# by yt-dlp for muxing. The exact version is captured at build via
+# `yt-dlp --version` and reported. python3 comes in as a yt-dlp dependency.
 RUN apk add --no-cache \
     ffmpeg \
+    yt-dlp \
     poppler-utils \
     ghostscript \
     libreoffice-writer \
@@ -56,6 +62,7 @@ RUN apk add --no-cache \
     font-noto \
     ttf-dejavu \
     font-liberation
+RUN yt-dlp --version
 
 # Amiri TTFs (OFL-licensed) from the google/fonts repo — ADD fetches the
 # files at build time; fc-cache registers them so soffice can use them.

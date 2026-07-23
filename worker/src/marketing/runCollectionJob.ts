@@ -21,6 +21,7 @@ import {
 } from './pipeline.js';
 import { runOrganizationDiscovery } from './discovery/discoveryEngine.js';
 import { runContentProcess } from './content/runContentProcess.js';
+import { runCampaignGroup } from './content/runCampaignGroup.js';
 
 export interface CollectionJob {
   id: string; kind: string; provider: ProviderKey; social_account_id: string | null;
@@ -81,7 +82,7 @@ async function ingestPost(
   ctx: Ctx, post: NormalizedContentPost, orgId: string | null, accountId: string | null,
   runId: string, index: ProjectAlias[], pubProjects: string[], minIntervalHours: number, stats: RunStats,
   commonTokens: Set<string>,
-): Promise<void> {
+): Promise<string | null> {
   const sb = ctx.supabase;
   const rawId = (await sb.rpc('mkt_raw_ingestion_insert', {
     p_provider: ctx.job.provider, p_source_type: 'post', p_external_identity: post.externalId,
@@ -98,7 +99,7 @@ async function ingestPost(
     p_engagement: {}, p_content_hash: post.contentHash ?? null,
   })).data as Array<{ id: string; was_inserted: boolean }> | null;
   const row = up?.[0];
-  if (!row) { stats.errors.push(`upsert failed ${post.externalId}`); return; }
+  if (!row) { stats.errors.push(`upsert failed ${post.externalId}`); return null; }
   if (row.was_inserted) stats.inserted++; else stats.updated++;
 
   // snapshot with suppression
@@ -120,6 +121,7 @@ async function ingestPost(
       p_evidence: c.evidence, p_matched_aliases: c.matchedAliases, p_auto_accept: c.autoAccept,
     });
   }
+  return row.id;
 }
 
 // ── main ────────────────────────────────────────────────────────────────────
@@ -181,9 +183,19 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         batch = { posts: items, nextCursor: null };
       }
       stats.received = batch.posts.length;
+      const ingestedIds: string[] = [];
       for (const post of batch.posts) {
-        try { await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, pubProjects, minIntervalHours, stats, commonTokens); }
+        try { const id = await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, pubProjects, minIntervalHours, stats, commonTokens); if (id) ingestedIds.push(id); }
         catch (e) { stats.errors.push(`${post.externalId}: ${e instanceof Error ? e.message : String(e)}`); }
+      }
+      // Prompt content processing (params.process_content): enqueue content_process
+      // for each freshly-collected post RIGHT NOW, so ephemeral media URLs (TikTok
+      // no-watermark links expire fast) are downloaded within minutes. Higher
+      // priority than routine collection so the download wins the race.
+      if (job.params.process_content === true && orgId) {
+        for (const pid of ingestedIds) {
+          await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: pid, organization_id: orgId, from: 'collection' }, p_priority: 30, p_requested_by: null, p_fallback_of: null });
+        }
       }
       // Only backfill advances the page cursor; incremental leaves it untouched.
       const cursorUpdate = job.kind === 'backfill' ? { sync_cursor: batch.nextCursor ?? null } : {};
@@ -267,6 +279,13 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       stats.skipped = r.media_failed + r.transcribe_failed;
       if (r.errors.length) stats.errors.push(...r.errors.slice(0, 10));
       apifyCost = { usage_total_usd: r.cost_usd, status: r.status, transcribed: r.transcribed, images: r.images_analyzed, frames: r.frames_analyzed, primary_project: r.primary_project };
+    } else if (job.kind === 'campaign_group') {
+      // Deterministic cross-platform campaign grouping for one org (organic + paid).
+      const cgOrgId = (job.params.organization_id as string) ?? orgId;
+      if (!cgOrgId) throw new ProviderError('campaign_group needs organization_id', 'config_invalid');
+      const r = await runCampaignGroup(sb, cgOrgId);
+      stats.received = r.members; stats.inserted = r.new_campaigns; stats.skipped = r.campaigns - r.new_campaigns;
+      apifyCost = { campaigns: r.campaigns, new_campaigns: r.new_campaigns, reused_creatives: r.reused_creatives, organic_to_paid: r.organic_to_paid, ended: r.ended };
     } else if (job.kind === 'organization_discovery') {
       // Automated identity discovery: one Browserbase session crawls the org's
       // site + runs structured Google searches + inspects candidate profiles,

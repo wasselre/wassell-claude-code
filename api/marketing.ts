@@ -56,6 +56,19 @@ interface Body {
   status?: string;
   metric?: string;
   days?: number;
+  // content intelligence
+  platform?: string;
+  post_type?: string;
+  processing_status?: string;
+  force?: boolean;
+  // campaigns
+  campaign_id?: string;
+  op?: 'move' | 'status' | 'rename' | 'merge';
+  member_id?: string;
+  to_campaign_id?: string;
+  label?: string;
+  src_campaign_id?: string;
+  dst_campaign_id?: string;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() !== '' ? v.trim() : undefined);
@@ -335,6 +348,28 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ items: data ?? [], total: count ?? 0, page, page_size: size });
       }
 
+      case 'campaigns': {
+        // Cross-platform campaigns for an org (organic + paid), newest-active first.
+        const org = str(body.organization_id);
+        if (!org) return jsonError(400, 'organization_id required');
+        const { data, error } = await sb.from('mkt_campaigns')
+          .select('id, signature, project_id, label, manual_label, objective, platforms, is_active, first_seen_at, last_seen_at, member_count, organic_count, paid_count, offers, payment_plans, ctas, key_message, reused_creatives, confidence, evidence')
+          .eq('organization_id', org).order('last_seen_at', { ascending: false }).limit(200);
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ campaigns: data ?? [] });
+      }
+
+      case 'campaign_detail': {
+        const cid = str(body.campaign_id);
+        if (!cid) return jsonError(400, 'campaign_id required');
+        const [members, events] = await Promise.all([
+          sb.from('mkt_campaign_members').select('id, member_type, content_post_id, paid_ad_id, signals, status, mkt_content_posts(platform, post_type, caption, post_url, thumbnail_ref, published_at), mkt_paid_ads(external_ad_id, headline, cta, creative_stored_url, landing_url)').eq('campaign_id', cid),
+          sb.from('mkt_campaign_events').select('kind, payload, at').eq('campaign_id', cid).order('at', { ascending: false }).limit(100),
+        ]);
+        if (members.error) return jsonError(500, members.error.message);
+        return jsonOk({ members: members.data ?? [], events: events.data ?? [] });
+      }
+
       case 'cost_dashboard': {
         // provider usage/cost + reliability from ingestion runs. No estimation.
         const { data: runs } = await sb.from('mkt_ingestion_runs')
@@ -405,11 +440,27 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ job_id: data });
       }
 
+      case 'campaign_correct': {
+        // Manual campaign correction: move member / merge / rename / set member status.
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const isAdmin = await svc.rpc('wassell_is_admin', { auth_user_id: user.userId });
+        if (isAdmin.error || !isAdmin.data) return jsonError(403, 'admin only');
+        const op = str(body.op);
+        if (op === 'move') { const e = (await svc.rpc('mkt_campaign_move_member', { p_member: str(body.member_id), p_to_campaign: str(body.to_campaign_id), p_actor: user.userId })).error; if (e) return jsonError(500, e.message); }
+        else if (op === 'status') { const e = (await svc.rpc('mkt_campaign_set_member_status', { p_member: str(body.member_id), p_status: str(body.status), p_actor: user.userId })).error; if (e) return jsonError(500, e.message); }
+        else if (op === 'rename') { const e = (await svc.rpc('mkt_campaign_rename', { p_campaign: str(body.campaign_id), p_label: str(body.label), p_actor: user.userId })).error; if (e) return jsonError(500, e.message); }
+        else if (op === 'merge') { const e = (await svc.rpc('mkt_campaign_merge', { p_src: str(body.src_campaign_id), p_dst: str(body.dst_campaign_id), p_actor: user.userId })).error; if (e) return jsonError(500, e.message); }
+        else return jsonError(400, 'unknown op');
+        return jsonOk({ ok: true });
+      }
+
       case 'discover_advertiser':
       case 'confirm_advertiser':
       case 'reject_candidate':
       case 'run_discovery':
       case 'run_content_processing':
+      case 'run_campaign_grouping':
       case 'run_ads_page': {
         const svc = makeServiceClient('api:marketing');
         if (!svc) return jsonError(500, 'service unavailable');
@@ -433,6 +484,11 @@ export default async function handler(req: Request): Promise<Response> {
           const { data, error } = await svc.rpc('mkt_enqueue_content_processing', { p_org: org, p_limit: lim, p_force: force });
           if (error) return jsonError(500, error.message);
           return jsonOk({ enqueued: data });
+        }
+        if (action === 'run_campaign_grouping') {
+          const { data, error } = await svc.rpc('mkt_job_enqueue', { p_kind: 'campaign_group', p_provider: 'internal', p_social_account_id: null, p_params: { organization_id: org }, p_priority: 50, p_requested_by: user.userId, p_fallback_of: null });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ job_id: data });
         }
         if (action === 'discover_advertiser') {
           const advertiser = str(body.advertiser);
