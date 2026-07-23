@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Ban, Check, Loader2, Map as MapIcon, MapPin, Minus, PenLine, Plus, RotateCcw, Search, TriangleAlert, X } from 'lucide-react';
+import { Ban, Check, Loader2, Map as MapIcon, MapPin, Minus, PenLine, Plus, RotateCcw, Route, Search, TriangleAlert, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE } from '@/lib/locationUtils';
@@ -83,6 +83,10 @@ const TERRACOTTA = '#8E4E3A'; // landmark pins + element-rule areas
  *  anchors (all curated + verified in geo_elements). Roads/metro/parks are
  *  deliberately left out: too dense to read at city zoom. */
 const LANDMARK_TYPES = ['landmarks', 'malls', 'universities', 'airports_transport'];
+/** Road-like element types — SEARCHABLE but never drawn as pins (too dense to
+ *  read at city zoom). Picking one from search draws its actual line so the user
+ *  can see where it runs. Roads/ring roads/metro lines are all MultiLineString. */
+const ROAD_TYPES = ['roads_major', 'ring_roads', 'metro_lines'];
 /** District name labels + landmark pins appear from this zoom in (city-wide
  *  view stays clean); landmark NAMES appear once close enough to read. */
 const LABELS_MIN_ZOOM = 11;
@@ -306,6 +310,63 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       });
     return () => { cancelled = true; };
   }, []);
+
+  // Roads (major/ring/metro) — loaded SEARCH-ONLY (not rendered as pins). Same
+  // authenticated SELECT as landmarks. Picking one from search draws its line.
+  const [roads, setRoads] = useState<LandmarkRow[]>([]);
+  useEffect(() => {
+    if (!supabase) return;
+    let cancelled = false;
+    supabase
+      .from('geo_elements')
+      .select('external_id, display_name, name_ar, element_type, latitude, longitude')
+      .in('element_type', ROAD_TYPES)
+      .eq('is_active', true)
+      .eq('is_searchable', true)
+      .neq('review_status', 'rejected')
+      .not('latitude', 'is', null)
+      .limit(400)
+      .then(({ data, error }) => {
+        if (cancelled) return;
+        // Search aid — a load failure only costs road search, never the picker.
+        if (error) { console.error('[DistrictMapPicker] roads load failed:', error.message); return; }
+        setRoads((data ?? []) as LandmarkRow[]);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // The road whose line is currently highlighted (from a road search pick). One
+  // at a time; a new pick replaces it. Drawn + fit-to by the effect below.
+  const [roadHighlight, setRoadHighlight] = useState<{ geojson: { type: string; coordinates: unknown }; name: string } | null>(null);
+
+  // Draw the highlighted road as a bold terracotta line + fit the map to it, so
+  // "where is this road?" is answered literally. Display-only; cleared/redrawn
+  // when the highlight changes.
+  useEffect(() => {
+    if (!map || !isLoaded || !roadHighlight || !window.google) return;
+    const overlays: Array<google.maps.Polyline | google.maps.Marker> = [];
+    const bounds = new google.maps.LatLngBounds();
+    let mid: google.maps.LatLngLiteral | null = null;
+    for (const line of geojsonToLinePaths(roadHighlight.geojson)) {
+      if (line.length < 2) continue;
+      overlays.push(new google.maps.Polyline({
+        map, path: line, strokeColor: TERRACOTTA, strokeOpacity: 0.95, strokeWeight: 5, zIndex: 8, clickable: false,
+      }));
+      for (const p of line) bounds.extend(p);
+      if (!mid) mid = line[Math.floor(line.length / 2)]!;
+    }
+    if (!bounds.isEmpty()) map.fitBounds(bounds, 60);
+    if (mid && roadHighlight.name) {
+      overlays.push(new google.maps.Marker({
+        map, position: mid,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
+        clickable: false,
+        label: { text: roadHighlight.name, color: TERRACOTTA, fontSize: '12px', fontWeight: '700' },
+        zIndex: 9,
+      }));
+    }
+    return () => overlays.forEach((o) => o.setMap(null));
+  }, [map, isLoaded, roadHighlight]);
 
   // ELEMENT RULES — editable HERE (resize via the chip steppers, delete via the
   // chip ×; re-emitted on Apply). Their compiled shapes come from the REAL
@@ -901,27 +962,34 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   // resolved display name), capped so the dropdown stays readable.
   interface SearchHit {
     key: string;
-    type: 'district' | 'landmark';
+    type: 'district' | 'landmark' | 'road';
     name: string;
     districtId?: string;
+    externalId?: string;
     lat?: number;
     lng?: number;
   }
   const searchHits = useMemo<SearchHit[]>(() => {
     const q = normSearch(search);
     if (q.length < 1) return [];
+    const nameOf = (l: LandmarkRow) => (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '';
     const districtHits: SearchHit[] = (shapes ?? [])
       .filter((s) => normSearch(s.name).includes(q))
       .slice(0, 8)
       .map((s) => ({ key: `d:${s.district_id}`, type: 'district', name: s.name, districtId: s.district_id }));
+    const roadHits: SearchHit[] = roads
+      .map((l) => ({ l, name: nameOf(l) }))
+      .filter(({ name }) => name && normSearch(name).includes(q))
+      .slice(0, 6)
+      .map(({ l, name }) => ({ key: `r:${l.external_id}`, type: 'road' as const, name, externalId: l.external_id, lat: l.latitude ?? undefined, lng: l.longitude ?? undefined }));
     const landmarkHits: SearchHit[] = landmarks
       .filter((l) => l.latitude != null && l.longitude != null)
-      .map((l) => ({ l, name: (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '' }))
+      .map((l) => ({ l, name: nameOf(l) }))
       .filter(({ name }) => name && normSearch(name).includes(q))
       .slice(0, 6)
       .map(({ l, name }) => ({ key: `l:${l.external_id}`, type: 'landmark' as const, name, lat: l.latitude!, lng: l.longitude! }));
-    return [...districtHits, ...landmarkHits];
-  }, [search, shapes, landmarks, isAr]);
+    return [...districtHits, ...roadHits, ...landmarkHits];
+  }, [search, shapes, landmarks, roads, isAr]);
 
   const runSearchHit = (hit: SearchHit) => {
     if (hit.type === 'district' && hit.districtId) {
@@ -929,6 +997,23 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     } else if (hit.type === 'landmark' && map && hit.lat != null && hit.lng != null) {
       map.panTo({ lat: hit.lat, lng: hit.lng });
       map.setZoom(Math.max(map.getZoom() ?? 0, LANDMARK_NAMES_MIN_ZOOM));
+    } else if (hit.type === 'road' && map && hit.externalId) {
+      // Pan to the road's representative point right away for responsiveness,
+      // then fetch + draw its full line (fit-to happens in the highlight effect).
+      if (hit.lat != null && hit.lng != null) {
+        map.panTo({ lat: hit.lat, lng: hit.lng });
+        map.setZoom(Math.max(map.getZoom() ?? 0, LANDMARK_NAMES_MIN_ZOOM));
+      }
+      if (supabase) {
+        supabase
+          .rpc('wassell_geo_element_shapes', { p_external_ids: [hit.externalId] })
+          .then(({ data, error }) => {
+            // Fall back to the pan above if geometry can't be fetched.
+            if (error) { console.error('[DistrictMapPicker] road shape fetch failed:', error.message); return; }
+            const row = Array.isArray(data) ? (data[0] as { geojson?: { type: string; coordinates: unknown } | null } | undefined) : undefined;
+            if (row?.geojson) setRoadHighlight({ geojson: row.geojson, name: hit.name });
+          });
+      }
     }
     setSearch('');
     setSearchFocused(false);
@@ -1076,7 +1161,7 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                         if (e.key === 'Enter' && searchHits[0]) { e.preventDefault(); runSearchHit(searchHits[0]); }
                         else if (e.key === 'Escape') { setSearch(''); (e.target as HTMLInputElement).blur(); }
                       }}
-                      placeholder={L('ابحث عن حي أو معلم…', 'Search a district or landmark…')}
+                      placeholder={L('ابحث عن حي أو طريق أو معلم…', 'Search a district, road, or landmark…')}
                       className="min-w-0 flex-1 bg-transparent text-sm text-charcoal outline-none placeholder:text-charcoal/40"
                     />
                     {search && (
@@ -1108,10 +1193,13 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                             >
                               {hit.type === 'district'
                                 ? <MapIcon size={14} className="shrink-0 text-copper" />
-                                : <MapPin size={14} className="shrink-0" style={{ color: TERRACOTTA }} />}
+                                : hit.type === 'road'
+                                  ? <Route size={14} className="shrink-0" style={{ color: TERRACOTTA }} />
+                                  : <MapPin size={14} className="shrink-0" style={{ color: TERRACOTTA }} />}
                               <span className="min-w-0 flex-1 truncate font-semibold">{hit.name}</span>
                               {isExcluded && <span className="shrink-0 text-[11px] font-bold" style={{ color: RED }}>{L('مستثنى', 'Excluded')}</span>}
                               {isSelected && <Check size={14} className="shrink-0 text-copper" />}
+                              {hit.type === 'road' && <span className="shrink-0 text-[11px] text-charcoal/40">{L('طريق', 'Road')}</span>}
                               {hit.type === 'landmark' && <span className="shrink-0 text-[11px] text-charcoal/40">{L('معلم', 'Landmark')}</span>}
                             </button>
                           );
