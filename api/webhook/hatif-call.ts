@@ -131,13 +131,23 @@ export default async function handler(req: Request): Promise<Response> {
   // the legacy flat shape and the current one map to the same HatifCallEvent.
   // The full untouched payload is still stored in `call_logs.raw_event`, so any
   // field this mapping misses can be recovered without re-plumbing the webhook.
+  // Hatif's post-call webhook URL also receives conversation-lifecycle events
+  // (e.g. eventType 'LastEventUpdated') that carry NO call fields. ACK those so
+  // Hatif stops retrying — they are not calls and must never become call_logs
+  // rows. Anything else that fails coercion is logged IN FULL and 400'd (loud,
+  // retried) so its schema can be pinned — never silently dropped.
+  const eventType = readEventType(parsed);
+  if (eventType && NON_CALL_HATIF_EVENTS.has(eventType)) {
+    return json({ ok: true, ignored: eventType });
+  }
+
   const event = coerceHatifEvent(parsed);
   if (!event) {
     console.error(
-      '[hatif-webhook] 400 unrecognized payload shape (no callId/channelId found); preview:',
+      `[hatif-webhook] 400 unrecognized payload (eventType=${eventType ?? 'none'}); preview:`,
       bodyPreview(rawBody),
     );
-    return json({ error: 'missing required fields callId/channelId' }, 400);
+    return json({ error: 'missing required fields callId/channelId', eventType }, 400);
   }
 
   let handlerError: string | undefined;
@@ -450,6 +460,19 @@ async function upsertPhoneCallRecord(event: HatifCallEvent) {
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/**
+ * Hatif event types that arrive on the post-call webhook URL but are NOT calls
+ * (conversation/contact lifecycle). ACKed with 200 so Hatif stops retrying.
+ */
+const NON_CALL_HATIF_EVENTS = new Set<string>(['LastEventUpdated']);
+
+/** Read the event-type discriminator off a Hatif envelope, if present. */
+function readEventType(parsed: unknown): string | null {
+  if (!isPlainObject(parsed)) return null;
+  const v = pick(parsed, 'eventType', 'event_type', 'event', 'type');
+  return typeof v === 'string' ? v : null;
 }
 
 /** First non-null value read from `obj` under any of `keys`. */
