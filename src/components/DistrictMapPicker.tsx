@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
-import { Ban, Check, Loader2, Map as MapIcon, Minus, PenLine, Plus, RotateCcw, TriangleAlert, X } from 'lucide-react';
+import { Ban, Check, Loader2, Map as MapIcon, MapPin, Minus, PenLine, Plus, RotateCcw, Search, TriangleAlert, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
 import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE } from '@/lib/locationUtils';
@@ -160,6 +160,19 @@ function pointInRing(lng: number, lat: number, ring: [number, number][]): boolea
 
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 
+/** Forgiving text normalizer for search: lowercase, strip Arabic diacritics +
+ *  tatweel, unify alef/ya/ta-marbuta variants, drop the leading "ال". So typing
+ *  "نرجس" matches "النرجس" and "الرياض" matches "الریاض". */
+const normSearch = (s: string): string =>
+  (s || '')
+    .toLowerCase()
+    .replace(/[ً-ْـ]/g, '') // tashkeel + tatweel
+    .replace(/[أإآ]/g, 'ا')
+    .replace(/[ىي]/g, 'ي')
+    .replace(/ة/g, 'ه')
+    .replace(/^ال/, '')
+    .trim();
+
 export default function DistrictMapPicker({ cityId, items, onApply, onClose, isAr }: Props) {
   const L = (ar: string, en: string) => (isAr ? ar : en);
   const { isLoaded, loadError } = useJsApiLoader(getMapsLoaderOptions(isAr ? 'ar' : 'en'));
@@ -169,6 +182,13 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const [shapes, setShapes] = useState<DistrictShape[] | null>(null);
   const [shapesError, setShapesError] = useState<string | null>(null);
   const [hoverName, setHoverName] = useState<string | null>(null);
+
+  // Map search — jump to a district (and select it) or a landmark by name.
+  const [search, setSearch] = useState('');
+  const [searchFocused, setSearchFocused] = useState(false);
+  /** Pan/zoom to a district AND select it (same effect as tapping its polygon);
+   *  wired inside the main polygon effect where the per-district metas live. */
+  const focusDistrictRef = useRef<(id: string) => void>(() => {});
 
   // Districts saved as EXCLUDE rules — shown red, not toggleable from the map.
   const excludedIds = useMemo(
@@ -477,7 +497,28 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     }
     if (!bounds.isEmpty()) map.fitBounds(bounds, 24);
 
+    // Search → focus a district: zoom to its boundary and select it (same
+    // enter-editable behavior as a polygon tap). Already-excluded districts are
+    // only focused (they're managed from the chips, not toggled here).
+    focusDistrictRef.current = (id: string) => {
+      const s = shapes.find((x) => x.district_id === id);
+      const meta = metas.get(id);
+      if (!s || !meta) return;
+      const b = new google.maps.LatLngBounds();
+      for (const path of meta.fullPaths) for (const p of path) b.extend(p);
+      if (!b.isEmpty()) map.fitBounds(b, 48);
+      if (excludedIds.has(id)) return;
+      setSelected((prev) => {
+        if (prev.has(id)) return prev; // already selected — just re-centered
+        const next = new Set(prev);
+        next.add(id);
+        enterEditable(s, meta);
+        return next;
+      });
+    };
+
     return () => {
+      focusDistrictRef.current = () => {};
       metas.forEach((m) => clearPathListeners(m));
       metas.clear();
       polys.forEach((p) => p.setMap(null));
@@ -856,6 +897,43 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
 
   const selectedNames = [...selected].map((id) => nameById.get(id) ?? null).filter((n): n is string => !!n);
 
+  // Search results: matching districts first, then landmarks (each with a
+  // resolved display name), capped so the dropdown stays readable.
+  interface SearchHit {
+    key: string;
+    type: 'district' | 'landmark';
+    name: string;
+    districtId?: string;
+    lat?: number;
+    lng?: number;
+  }
+  const searchHits = useMemo<SearchHit[]>(() => {
+    const q = normSearch(search);
+    if (q.length < 1) return [];
+    const districtHits: SearchHit[] = (shapes ?? [])
+      .filter((s) => normSearch(s.name).includes(q))
+      .slice(0, 8)
+      .map((s) => ({ key: `d:${s.district_id}`, type: 'district', name: s.name, districtId: s.district_id }));
+    const landmarkHits: SearchHit[] = landmarks
+      .filter((l) => l.latitude != null && l.longitude != null)
+      .map((l) => ({ l, name: (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '' }))
+      .filter(({ name }) => name && normSearch(name).includes(q))
+      .slice(0, 6)
+      .map(({ l, name }) => ({ key: `l:${l.external_id}`, type: 'landmark' as const, name, lat: l.latitude!, lng: l.longitude! }));
+    return [...districtHits, ...landmarkHits];
+  }, [search, shapes, landmarks, isAr]);
+
+  const runSearchHit = (hit: SearchHit) => {
+    if (hit.type === 'district' && hit.districtId) {
+      focusDistrictRef.current(hit.districtId);
+    } else if (hit.type === 'landmark' && map && hit.lat != null && hit.lng != null) {
+      map.panTo({ lat: hit.lat, lng: hit.lng });
+      map.setZoom(Math.max(map.getZoom() ?? 0, LANDMARK_NAMES_MIN_ZOOM));
+    }
+    setSearch('');
+    setSearchFocused(false);
+  };
+
   return (
     <div
       role="dialog"
@@ -981,6 +1059,66 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
               {hoverName && (
                 <div className="pointer-events-none absolute top-3 z-10 rounded-lg bg-white/95 px-3 py-1.5 text-sm font-bold text-chocolate shadow ring-1 ring-black/5" style={{ insetInlineStart: '0.75rem' }}>
                   {hoverName}
+                </div>
+              )}
+              {/* Search: jump to a district (and select it) or a landmark */}
+              {!drawMode && (
+                <div className="absolute top-3 left-1/2 z-20 w-[min(88%,22rem)] -translate-x-1/2">
+                  <div className="flex items-center gap-2 rounded-xl border border-sand/50 bg-white/95 px-3 py-2 shadow ring-1 ring-black/5 backdrop-blur">
+                    <Search size={16} className="shrink-0 text-charcoal/50" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      onFocus={() => setSearchFocused(true)}
+                      onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && searchHits[0]) { e.preventDefault(); runSearchHit(searchHits[0]); }
+                        else if (e.key === 'Escape') { setSearch(''); (e.target as HTMLInputElement).blur(); }
+                      }}
+                      placeholder={L('ابحث عن حي أو معلم…', 'Search a district or landmark…')}
+                      className="min-w-0 flex-1 bg-transparent text-sm text-charcoal outline-none placeholder:text-charcoal/40"
+                    />
+                    {search && (
+                      <button
+                        type="button"
+                        onClick={() => setSearch('')}
+                        className="shrink-0 text-charcoal/40 transition-colors hover:text-charcoal"
+                        aria-label={L('مسح', 'Clear')}
+                      >
+                        <X size={15} />
+                      </button>
+                    )}
+                  </div>
+                  {searchFocused && search.trim() && (
+                    <div className="mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-sand/50 bg-white/97 shadow-lg ring-1 ring-black/5 backdrop-blur">
+                      {searchHits.length === 0 ? (
+                        <div className="px-3 py-2.5 text-sm text-charcoal/50">{L('لا نتائج', 'No matches')}</div>
+                      ) : (
+                        searchHits.map((hit) => {
+                          const isSelected = hit.type === 'district' && !!hit.districtId && selected.has(hit.districtId);
+                          const isExcluded = hit.type === 'district' && !!hit.districtId && excludedIds.has(hit.districtId);
+                          return (
+                            <button
+                              key={hit.key}
+                              type="button"
+                              // onMouseDown so it fires before the input's blur closes the list
+                              onMouseDown={(e) => { e.preventDefault(); runSearchHit(hit); }}
+                              className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm text-charcoal transition-colors hover:bg-cream"
+                            >
+                              {hit.type === 'district'
+                                ? <MapIcon size={14} className="shrink-0 text-copper" />
+                                : <MapPin size={14} className="shrink-0" style={{ color: TERRACOTTA }} />}
+                              <span className="min-w-0 flex-1 truncate font-semibold">{hit.name}</span>
+                              {isExcluded && <span className="shrink-0 text-[11px] font-bold" style={{ color: RED }}>{L('مستثنى', 'Excluded')}</span>}
+                              {isSelected && <Check size={14} className="shrink-0 text-copper" />}
+                              {hit.type === 'landmark' && <span className="shrink-0 text-[11px] text-charcoal/40">{L('معلم', 'Landmark')}</span>}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </>
