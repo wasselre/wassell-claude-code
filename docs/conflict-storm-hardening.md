@@ -367,3 +367,42 @@ the §5 step-2 capture (instrumented noop branch → `_diag_noop_hits`) is the
 only path to the driver, OR sample `pg_stat_activity`/locks live while it
 burns. A noop block on a record that is NOT the current target has pure
 downside (silent write loss) — flap-verify before leaving any noop in place.
+
+### 5.1 CLOSED 2026-07-23: zombie Vercel function instances, proven end-to-end
+
+The 2026-07-23 03:20 post-expiry wave was diagnosed to ground truth with a
+**non-transactional logical-WAL capture** (`pg_logical_emit_message(false, …)`
+added temporarily to `record_save`'s conflict branch + a `test_decoding` slot —
+non-transactional messages survive the aborted transaction, making them the ONLY
+durable capture channel while hosted logs lag 13h+). Result, unambiguous:
+
+- **One sender**: a Vercel function instance in `iad1`, `x-wassel-service=api:files`
+  (the shared service client that `api/templates/clean-listing-images.ts` uses),
+  `x-wassel-build=794a74d` (a docs-only deploy!), ip `44.197.133.1`, resending ONE
+  frozen `(data, version)` payload (`exp=13`) for the listing draft it was serving
+  when it was spawned (`976b559b`, "@6717645", created 15:58Z Jul 22, mid-clean
+  snapshot) at **~500–1,500/s for 13+ hours**, ignoring every response.
+- **Every storm since Jul 5 fits this species**: an instance serving a
+  listing-message clean freezes a mid-clean snapshot and resends it forever. The
+  three storm-#2 senders (v50 worker image + Vercel builds 8255467/cb6423e) were
+  the same thing on Jul-19 infra. All committed retry code is bounded and
+  re-reads fresh — the frozen version proves the replay happens BELOW the app
+  loop (runtime/instance-level request replay; exact Fluid-runtime mechanism
+  still unproven, but it is NOT a code loop in this repo).
+- **Kills that work**: `vercel remove` of the sender's deployment (the two
+  Jul-19 Vercel senders died within ~2 min of deletion on 2026-07-23; the
+  794a74d sender survived at least ~10 min post-deletion — its hot loop seems
+  to dodge idle reaping — so ALSO noop-block its target record for cheap
+  containment until the instance is reaped). The old worker-image sender died
+  with the deck-worker machine replacements. **Reject blocks, restarts, and
+  success responses do NOT stop these senders — they ignore everything.**
+- **Standing recipe** (all via the Supabase MCP `apply_migration`/`execute_sql`,
+  fully autonomous): (1) add the WAL emit to the conflict branch, (2) create the
+  `storm_diag` slot, (3) read `pg_logical_slot_get_changes` → rec/build/svc/ip,
+  (4) `vercel ls --meta githubCommitSha=<build>` → `vercel remove <url>`,
+  (5) noop-block the target, (6) **restore stock record_save and DROP THE SLOT**
+  (an unread slot retains WAL forever).
+- **Open item**: why a Fluid instance replays a frozen request indefinitely —
+  needs Vercel support / instance-level introspection. Until understood, any
+  listing-message clean can spawn a new zombie on the then-current deployment;
+  the sweep alert + this recipe is the response.
