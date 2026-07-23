@@ -147,12 +147,12 @@ BEGIN
     END IF;
     IF v_existing.campaign_id <> p_campaign THEN v_moved := true; END IF;
     UPDATE public.mkt_campaign_members SET campaign_id=p_campaign, signals=COALESCE(p_signals,'{}'::jsonb)
-     WHERE id=v_existing.id RETURNING id INTO v_id;
+     WHERE mkt_campaign_members.id=v_existing.id RETURNING mkt_campaign_members.id INTO v_id;
     RETURN QUERY SELECT v_id, false, v_moved; RETURN;
   END IF;
   INSERT INTO public.mkt_campaign_members(campaign_id,member_type,content_post_id,paid_ad_id,signals,status)
   VALUES (p_campaign,p_member_type,p_content_post,p_paid_ad,COALESCE(p_signals,'{}'::jsonb),'auto')
-  RETURNING id INTO v_id; v_ins := true;
+  RETURNING mkt_campaign_members.id INTO v_id; v_ins := true;
   RETURN QUERY SELECT v_id, v_ins, false;
 END $$;
 

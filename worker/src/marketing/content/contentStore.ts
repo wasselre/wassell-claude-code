@@ -31,7 +31,7 @@ function extFor(url: string, mime: string | null, kind: string): string {
 /** Apify key-value-store record URLs (where clockworks stores downloaded TikTok
  *  videos) are PRIVATE — 403 without the account token. Authorize them. */
 function authorizeUrl(url: string): string {
-  if (/(^|\.)api\.apify\.com\//.test(url) && process.env.APIFY_API_TOKEN && !url.includes('token=')) {
+  if (url.includes('api.apify.com/') && process.env.APIFY_API_TOKEN && !url.includes('token=')) {
     return url + (url.includes('?') ? '&' : '?') + `token=${process.env.APIFY_API_TOKEN}`;
   }
   return url;
