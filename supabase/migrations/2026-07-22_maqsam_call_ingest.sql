@@ -28,15 +28,18 @@ CREATE INDEX IF NOT EXISTS idx_call_logs_provider ON public.call_logs (provider)
 --    play the recording without Maqsam credentials (same posture as Hatif,
 --    whose recording URLs are already public). Recordings are keyed
 --    maqsam/<callId>.mp3 and immutable.
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+-- No mime allowlist: providers serve recordings with generic types (Retell's
+-- CloudFront sends binary/octet-stream — verified live 2026-07-24, it broke
+-- the original allowlist). The ingest normalizes contentType to audio/* on
+-- upload; writes are service-role-only, so the allowlist bought nothing.
+INSERT INTO storage.buckets (id, name, public, file_size_limit)
 VALUES (
   'call-recordings',
   'call-recordings',
   true,
-  100 * 1024 * 1024,  -- 100 MB max per recording
-  ARRAY['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg']
+  100 * 1024 * 1024  -- 100 MB max per recording
 )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET allowed_mime_types = NULL;
 
 -- Public read; writes only via service role (the ingest). No user-facing
 -- INSERT/UPDATE/DELETE policies on purpose.

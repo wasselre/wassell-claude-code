@@ -229,7 +229,12 @@ async function rehostRecording(retellCallId: string, sourceUrl: string): Promise
     const bytes = await res.arrayBuffer();
     const supa = getServiceSupabase();
     const path = `retell/${retellCallId}.wav`;
-    const contentType = res.headers.get('content-type') ?? 'audio/wav';
+    // Retell's CloudFront serves recordings as binary/octet-stream (verified
+    // live 2026-07-24) — that generic type broke the bucket's mime allowlist
+    // (since removed) and would make <audio> playback browser-dependent.
+    // The file IS a wav (.../recording.wav), so pin the real type.
+    const headerType = res.headers.get('content-type') ?? '';
+    const contentType = headerType.startsWith('audio/') ? headerType : 'audio/wav';
     const { error } = await supa.storage
       .from(RECORDINGS_BUCKET)
       .upload(path, bytes, { contentType, upsert: true });
