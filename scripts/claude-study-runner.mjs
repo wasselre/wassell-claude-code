@@ -108,7 +108,8 @@ async function handleClientStudy(job) {
     'so make every decision autonomously per the skill. When the study is done',
     'and visually verified, write a JSON file to exactly this path:',
     `  ${sentinel}`,
-    'with keys: "pdf_path" (absolute path of the final PDF), "title" (short',
+    'with keys: "pdf_path" (absolute path of the final PDF — FORWARD slashes,',
+    'e.g. C:/Users/..., never raw backslashes), "title" (short',
     'Arabic study title), "whatsapp_draft" (the Arabic message for the client),',
     '"summary" (2-3 sentences for the rep, Arabic), "heads_ups" (array of',
     'private notes for the rep, may be empty). Writing this file is the LAST',
@@ -120,7 +121,21 @@ async function handleClientStudy(job) {
     if (!existsSync(sentinel)) {
       throw new Error(`session ended (code ${code}) without result sentinel: ${(err || out).slice(-600)}`);
     }
-    const result = JSON.parse(readFileSync(sentinel, 'utf-8'));
+    const rawSentinel = readFileSync(sentinel, 'utf-8');
+    let result;
+    try {
+      result = JSON.parse(rawSentinel);
+    } catch {
+      // Lenient pass: sessions sometimes write Windows paths with raw
+      // backslashes ("C:\Users\...") — invalid JSON escapes. Double every
+      // backslash not already part of a valid escape and retry; if it still
+      // fails, surface the sentinel head for diagnosis.
+      try {
+        result = JSON.parse(rawSentinel.replace(/\\(?!["\\/bfnrtu])/g, '\\\\'));
+      } catch (e2) {
+        throw new Error(`sentinel JSON invalid (${e2.message}): ${rawSentinel.slice(0, 300)}`);
+      }
+    }
     if (!result.pdf_path || !existsSync(result.pdf_path)) {
       throw new Error(`sentinel pdf_path missing or file not found: ${result.pdf_path}`);
     }

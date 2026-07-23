@@ -33,6 +33,24 @@ study is worse than no study — the data-trap checklist below is not optional.
 - The chat record's `data.wid` gives the `chat_messages.chat_wid`;
   `data.client_link` gives the client record id.
 
+## Headless runs (app-triggered via claude_jobs — read this FIRST when headless)
+
+When this skill runs from the runner daemon (`scripts/claude-study-runner.mjs`)
+there is NO human and NO authenticated Supabase MCP (it needs a claude.ai
+OAuth flow that cannot happen headless). Rules for that mode:
+
+- **All DB reads go through the bundled helper** (service-role, read-only):
+  `node .claude/skills/client-study/assets/db_query.mjs "SELECT ..."` — one
+  statement per call, rows come back as JSON. Try the Supabase MCP first if it
+  responds; on ANY auth/availability error switch to the helper immediately —
+  do not retry the MCP or print OAuth URLs.
+- **Never wait for input.** Make every judgment call autonomously per this
+  skill; put anything you would have asked the rep into `heads_ups`.
+- **The result sentinel is a hard contract**: valid strict JSON, and every
+  path (`pdf_path`) written with FORWARD slashes (C:/Users/...) — raw
+  backslashes are invalid JSON escapes and break the runner's parser.
+- Skip the copy-to-Downloads step; the runner uploads the PDF itself.
+
 ## Step 1 — Read EVERYTHING first (never skip)
 
 1. Chat record → wid, client_link.
@@ -190,3 +208,4 @@ using such a set for distances.
   جزئياً + النطاق المعتاد + وش يبرر الفرق + بديل صادق + توصية حسب الأولوية".
 - 2026-07-22 · Keep honest counter-rows (المطار أقرب للجبيلة) — user approved.
 - 2026-07-22 · Deployment decision: stays in Claude Code (user call). Revisit an in-app button + worker queue (deck-pipeline shape: study_jobs + SQL tool + Chrome-in-Docker + vision verify) only if study volume makes the rep wait on sessions.
+- 2026-07-23 · Headless lessons from acceptance runs #1/#2: the Supabase MCP is unauthenticated in runner sessions (prints an OAuth URL and dies) → added `assets/db_query.mjs` + `claude_runner_sql` read-only RPC; sentinel JSON broke on Windows backslash paths → forward slashes required + runner parses leniently.
