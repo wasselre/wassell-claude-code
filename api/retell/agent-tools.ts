@@ -414,13 +414,24 @@ async function findProjects(
     perGroup: 3,
     sources: ['our_projects', 'all_projects'],
   });
-  if (!out.ok) return { خطأ: `تعذر البحث: ${out.error}` };
+  if (!out.ok) {
+    console.error('[retell-tools] finder error:', out.error, 'req:', JSON.stringify(req));
+    return { خطأ: `تعذر البحث: ${out.error}` };
+  }
 
   // Flatten groups in engine priority order; keep it voice-sized.
   const flat = FINDER_GROUP_KEYS.flatMap((g) => out.result.groups[g] ?? []).slice(0, 4);
   if (flat.length === 0) {
+    // Surface the engine's own diagnostics — tells the agent (and our logs)
+    // WHY nothing matched instead of a blind "no results".
+    const meta = out.result.metadata;
+    console.error('[retell-tools] finder empty:', JSON.stringify({ req, meta }));
     return {
       نتائج: [],
+      عدد_المرشحين: meta.total_candidates,
+      نواقص: meta.missing_required_preferences,
+      قيود_مستبعدة: meta.constraint_drops,
+      ملاحظات_المحرك: meta.notes,
       ملاحظة: 'لا توجد مشاريع مطابقة بهذه الشروط — جرّب توسيع الميزانية أو الأحياء',
     };
   }
