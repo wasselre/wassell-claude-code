@@ -78,6 +78,7 @@ export async function enrichContent(input: {
     `\nTranscript:\n${input.transcript.slice(0, 4000)}`,
     `\nVisible text from images/frames:\n${input.visualText.slice(0, 3000)}`,
     `\nStructure this content. Only choose a primary_project_index that appears in the candidate list above; if the evidence does not clearly point to one of them, return -1 (general branding). Do not invent projects, prices, or offers not present in the evidence.`,
+    `IMPORTANT: national days (يوم التأسيس / اليوم الوطني / Founding Day), sports/match support, leadership/allegiance, quality certifications, and pure brand-value posts are GENERAL BRANDING (primary_project_index = -1, is_general_branding = true) EVEN IF a candidate project name appears in the media. Many developers name their projects after their own brand, so a brand logo or tagline that merely echoes the developer's name (as in "${input.accountIdentity}") is NOT evidence of a specific numbered project — require a CONCRETE project reference (a project-specific name that is not just the brand word, a unit/price/offer/payment plan, or a district tied to that project) before choosing a primary_project_index.`,
   ].join('\n');
 
   const msg = await client.messages.create({
