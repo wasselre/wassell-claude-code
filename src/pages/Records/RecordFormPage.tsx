@@ -718,6 +718,8 @@ export default function RecordFormPage() {
    *     Higgsfield orchestration on marketing_operations records).
    *   - `analyze_reel`      → POST /api/analyze-reel (clean + analyze one
    *     competitor reel transcript on the Competitor Library).
+   *   - `ai_call`           → POST /api/retell/create-call (AI voice agent
+   *     calls the customer phone on this record via the Hatif SIP trunk).
    *
    * After either succeeds we re-read the record via `unified_records` so
    * the form reflects whatever the server wrote without a full reload.
@@ -898,6 +900,41 @@ export default function RecordFormPage() {
           isAr ? 'تم تنظيف النص وتحليله' : 'Transcript cleaned and analyzed',
           'success',
         );
+      } else if (button.action.type === 'ai_call') {
+        // AI voice agent (Retell over the Hatif SIP trunk) calls the customer
+        // on this record. The server resolves the phone from the record and
+        // stamps metadata.client_record_id, so when the call completes the
+        // webhook writes a phone_calls record already linked back here. No
+        // re-read needed — the call result arrives minutes later via its own
+        // pipeline, not on this record.
+        const res = await fetch('/api/retell/create-call', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...authHeader },
+          body: JSON.stringify({
+            record_id: existingRecord.id,
+            model_id: model.id,
+            ...(button.action.phone_field ? { phone_field: button.action.phone_field } : {}),
+          }),
+        });
+        const resBody = (await res.json().catch(() => null)) as
+          | { error?: string; to_number?: string }
+          | null;
+        if (!res.ok) {
+          addToast(
+            isAr
+              ? `فشل بدء المكالمة: ${resBody?.error ?? `(${res.status})`}`
+              : `AI call failed to start: ${resBody?.error ?? `(${res.status})`}`,
+            'error',
+          );
+          return;
+        }
+        addToast(
+          isAr
+            ? `المساعد الذكي يتصل الآن بـ ${resBody?.to_number ?? ''} — ستظهر المكالمة في سجل المكالمات بعد انتهائها`
+            : `AI agent is calling ${resBody?.to_number ?? ''} — the call will appear in Call History once it ends`,
+          'success',
+        );
+        return;
       } else {
         addToast(
           isAr ? 'إجراء الزر غير مدعوم' : 'Unsupported button action',

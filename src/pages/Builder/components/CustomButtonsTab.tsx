@@ -143,9 +143,11 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
           ? (isAr ? '(توليد تصميم)' : '(generate design)')
           : btn.action.type === 'analyze_reel'
             ? (isAr ? '(تنظيف وتحليل)' : '(clean & analyze)')
-            : wf
-              ? (isAr ? wf.label_ar : wf.label_en) || wf.id
-              : isAr ? '(بدون سير عمل)' : '(no workflow)';
+            : btn.action.type === 'ai_call'
+              ? (isAr ? '(مكالمة بالذكاء الاصطناعي)' : '(AI call)')
+              : wf
+                ? (isAr ? wf.label_ar : wf.label_en) || wf.id
+                : isAr ? '(بدون سير عمل)' : '(no workflow)';
         return (
           <div
             key={btn.id}
@@ -313,6 +315,12 @@ export default function CustomButtonsTab({ model, onChange, readOnly = false }: 
                       {isAr
                         ? 'هذا الزر مرتبط بأداة تنظيف وتحليل الريلز النظامية ولا يستخدم سير عمل.'
                         : 'This button is wired to the built-in reel clean & analyze tool and does not use a workflow.'}
+                    </div>
+                  ) : btn.action.type === 'ai_call' ? (
+                    <div className="form-input bg-sand/5 text-charcoal/60 italic cursor-not-allowed">
+                      {isAr
+                        ? 'هذا الزر يطلب من المساعد الذكي الاتصال برقم العميل في هذا السجل — لا يستخدم سير عمل.'
+                        : 'This button has the AI voice agent call the customer phone on this record — no workflow involved.'}
                     </div>
                   ) : (
                     // create_record / find_or_create_record — Builder UI for these

@@ -541,6 +541,7 @@ export type CustomButtonActionType =
   | 'trigger_workflow'
   | 'generate_design'
   | 'analyze_reel'
+  | 'ai_call'
   | 'create_record'
   | 'find_or_create_record';
 
@@ -568,6 +569,18 @@ export interface CustomButtonActionGenerateDesign {
  */
 export interface CustomButtonActionAnalyzeReel {
   type: 'analyze_reel';
+}
+
+/**
+ * Fires `/api/retell/create-call` for the current record: the AI voice agent
+ * (Retell over the Hatif SIP trunk) calls the customer phone on the record.
+ * The server resolves the phone (explicit `phone_field` slug, else the first
+ * phone-type field) and stamps `metadata.client_record_id`, so the resulting
+ * phone_calls record auto-links back to this record when the call completes.
+ */
+export interface CustomButtonActionAiCall {
+  type: 'ai_call';
+  phone_field?: string;
 }
 
 /**
@@ -617,6 +630,7 @@ export type CustomButtonAction =
   | CustomButtonActionTriggerWorkflow
   | CustomButtonActionGenerateDesign
   | CustomButtonActionAnalyzeReel
+  | CustomButtonActionAiCall
   | CustomButtonActionCreateRecord
   | CustomButtonActionFindOrCreateRecord;
 
