@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { campaignSignature, distinguishingSignal, groupingConfidence, normalizeSignal } from '../campaignSignature';
+import { campaignSignature, distinguishingSignal, groupingConfidence, normalizeSignal, firstEmbed } from '../campaignSignature';
 import { classifyYtError } from '../ytdlp';
 
 const ORG = '8b531cca-f882-4c4c-9d5c-93465213b793';
@@ -41,6 +41,19 @@ describe('campaign signature (deterministic, not project-alone)', () => {
   });
   it('normalizeSignal strips punctuation + tatweel + collapses ws', () => {
     expect(normalizeSignal('  عرض،  خاص!!  ')).toBe('عرض خاص');
+  });
+});
+
+describe('firstEmbed — PostgREST to-one object vs to-many array', () => {
+  it('reads a to-ONE object embed (the mkt_content_enrichment bug that skipped all organic posts)', () => {
+    expect(firstEmbed<{ x: number }>({ x: 1 })).toEqual({ x: 1 });
+  });
+  it('reads a to-many array embed', () => {
+    expect(firstEmbed<{ x: number }>([{ x: 2 }, { x: 3 }])).toEqual({ x: 2 });
+  });
+  it('handles null / empty array', () => {
+    expect(firstEmbed(null)).toBeNull();
+    expect(firstEmbed([])).toBeNull();
   });
 });
 

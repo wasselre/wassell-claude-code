@@ -345,7 +345,13 @@ export default async function handler(req: Request): Promise<Response> {
         const pstatus = str(body.processing_status); if (pstatus) q = q.eq('processing_status', pstatus);
         const { data, error, count } = await q;
         if (error) return jsonError(500, error.message);
-        return jsonOk({ items: data ?? [], total: count ?? 0, page, page_size: size });
+        // mkt_content_enrichment has UNIQUE(content_post_id) → PostgREST embeds it
+        // as a to-ONE OBJECT. The UI expects an array; normalize so [0] works.
+        const items = (data ?? []).map((it) => {
+          const e = (it as Record<string, unknown>).mkt_content_enrichment;
+          return { ...it, mkt_content_enrichment: e == null ? [] : Array.isArray(e) ? e : [e] };
+        });
+        return jsonOk({ items, total: count ?? 0, page, page_size: size });
       }
 
       case 'campaigns': {

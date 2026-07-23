@@ -9,6 +9,15 @@
 // ============================================================================
 import { sha256Hex } from '../adIntel.js';
 
+/** Return the first row of a PostgREST embed that may be a to-ONE object OR a
+ *  to-many array (a UNIQUE fk column makes it an object; else an array). This
+ *  bit us on mkt_content_enrichment (UNIQUE content_post_id → object), which the
+ *  grouper read as `[0]` → undefined → every organic post silently skipped. */
+export function firstEmbed<T>(x: unknown): T | null {
+  if (x == null) return null;
+  return (Array.isArray(x) ? (x[0] ?? null) : x) as T | null;
+}
+
 /** Normalize a free-text signal for stable hashing (lowercase, strip punctuation, collapse ws). */
 export function normalizeSignal(s: string | null | undefined): string {
   return (s ?? '')

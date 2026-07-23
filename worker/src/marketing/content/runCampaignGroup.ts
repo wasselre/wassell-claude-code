@@ -7,7 +7,7 @@
 // Human corrections (member status confirmed/rejected/moved) are never undone.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { campaignSignature, groupingConfidence, type EnrichmentLike } from './campaignSignature.js';
+import { campaignSignature, groupingConfidence, firstEmbed, type EnrichmentLike } from './campaignSignature.js';
 
 const ALL_PROJECTS_MODEL = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
 const ACTIVE_DAYS = 30;
@@ -41,7 +41,9 @@ export async function runCampaignGroup(sb: SupabaseClient, orgId: string): Promi
     .eq('organization_id', orgId).eq('processing_status', 'processed');
   const items: Item[] = [];
   for (const p of posts ?? []) {
-    const enr = (p.mkt_content_enrichment as Array<{ primary_project_id: string | null; result: Record<string, unknown> }> | null)?.[0];
+    // mkt_content_enrichment has UNIQUE(content_post_id) → PostgREST returns it as
+    // a to-ONE OBJECT, not an array. firstEmbed handles both shapes.
+    const enr = firstEmbed<{ primary_project_id: string | null; result: Record<string, unknown> }>(p.mkt_content_enrichment);
     if (!enr) continue;
     const result = (enr.result ?? {}) as Record<string, unknown>;
     items.push({

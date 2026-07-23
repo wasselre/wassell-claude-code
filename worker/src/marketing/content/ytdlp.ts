@@ -22,9 +22,9 @@ export class YtDownloadError extends Error {
 
 function classify(stderr: string): YtFailureKind {
   const s = stderr.toLowerCase();
-  if (/not a bot|confirm you.?re not a bot|--cookies|cookies-from-browser|sign in to confirm you/.test(s)) return 'bot_check';
-  if (/private video/.test(s)) return 'private';
   if (/sign in to confirm your age|age-restricted|confirm your age/.test(s)) return 'age_restricted';
+  if (/not a bot|--cookies|cookies-from-browser/.test(s)) return 'bot_check';
+  if (/private video/.test(s)) return 'private';
   if (/available in your country|geo-restrict|geo.?block|blocked it in your country|not available from your location/.test(s)) return 'region_blocked';
   if (/larger than.*max-filesize|file is larger/.test(s)) return 'too_large';
   if (/video unavailable|this video is (not|no longer) available|has been removed|account.*terminated/.test(s)) return 'unavailable';
@@ -47,6 +47,10 @@ export async function downloadYouTube(videoId: string, opts: { maxHeight?: numbe
     // requirement that blocks datacenter IPs (Fly). Not guaranteed forever;
     // a bot_check failure is recorded explicitly when even these are blocked.
     '--extractor-args', 'youtube:player_client=android,ios,tv,web_safari',
+    // Optional egress proxy. YouTube's googlevideo CDN 403s Fly datacenter IPs
+    // even after the bot-check bypass; a residential/ISP proxy fixes it. No-op
+    // until YT_DLP_PROXY is set — so enabling YouTube is a one-secret change.
+    ...(process.env.YT_DLP_PROXY ? ['--proxy', process.env.YT_DLP_PROXY] : []),
     '-f', `b[height<=${maxHeight}][ext=mp4]/b[height<=${maxHeight}]/bv*[height<=${maxHeight}]+ba/b`,
     '--max-filesize', `${maxMb}M`,
     '--match-filter', `duration < ${maxDur}`,
