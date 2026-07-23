@@ -62,8 +62,16 @@ function runClaude(prompt, cwd) {
     // Prompt goes via STDIN (not argv): multiline Arabic prompts survive
     // Windows shell quoting, and the CLI's "no stdin" warning goes away.
     const args = ['-p', '--dangerously-skip-permissions', '--output-format', 'text'];
+    // The child session must authenticate with THIS MACHINE'S Claude login
+    // (the owner's account — explicit decision 2026-07-22). .env.local's
+    // ANTHROPIC_API_KEY is the app's server-side key and is NOT valid for the
+    // CLI — if it leaks into the child env the CLI prefers it and 401s.
+    const env = { ...process.env };
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_BASE_URL;
     const child = spawn('claude', args, {
-      cwd, shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+      cwd, shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env,
     });
     let out = '', err = '';
     const timer = setTimeout(() => {
