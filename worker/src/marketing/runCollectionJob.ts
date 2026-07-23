@@ -20,6 +20,7 @@ import {
   type ProjectAlias, type Metrics,
 } from './pipeline.js';
 import { runOrganizationDiscovery } from './discovery/discoveryEngine.js';
+import { runContentProcess } from './content/runContentProcess.js';
 
 export interface CollectionJob {
   id: string; kind: string; provider: ProviderKey; social_account_id: string | null;
@@ -255,6 +256,17 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         });
         stats.skipped = scored.length; // needs a human decision (marketplace/ambiguous/low-confidence)
       }
+    } else if (job.kind === 'content_process') {
+      // Per-post content understanding: permanent media → transcribe videos →
+      // sample frames + OCR images → enrich → attribute. Idempotent.
+      const postId = job.params.content_post_id as string | undefined;
+      if (!postId) throw new ProviderError('content_process needs content_post_id', 'config_invalid');
+      const r = await runContentProcess(sb, postId);
+      stats.received = r.media_total;
+      stats.inserted = r.media_stored;
+      stats.skipped = r.media_failed + r.transcribe_failed;
+      if (r.errors.length) stats.errors.push(...r.errors.slice(0, 10));
+      apifyCost = { usage_total_usd: r.cost_usd, status: r.status, transcribed: r.transcribed, images: r.images_analyzed, frames: r.frames_analyzed, primary_project: r.primary_project };
     } else if (job.kind === 'organization_discovery') {
       // Automated identity discovery: one Browserbase session crawls the org's
       // site + runs structured Google searches + inspects candidate profiles,
