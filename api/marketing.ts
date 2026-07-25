@@ -467,6 +467,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'run_discovery':
       case 'run_content_processing':
       case 'run_campaign_grouping':
+      case 'run_intelligence':
       case 'run_ads_page': {
         const svc = makeServiceClient('api:marketing');
         if (!svc) return jsonError(500, 'service unavailable');
@@ -495,6 +496,14 @@ export default async function handler(req: Request): Promise<Response> {
           const { data, error } = await svc.rpc('mkt_job_enqueue', { p_kind: 'campaign_group', p_provider: 'internal', p_social_account_id: null, p_params: { organization_id: org }, p_priority: 50, p_requested_by: user.userId, p_fallback_of: null });
           if (error) return jsonError(500, error.message);
           return jsonOk({ job_id: data });
+        }
+        if (action === 'run_intelligence') {
+          // Batch awaiting-intelligence posts into claude_jobs for the Claude Code
+          // runner (paid subscription) — replaces the Anthropic enrichment API.
+          const batch = typeof body.limit === 'number' ? Math.min(30, Math.max(3, body.limit)) : 15;
+          const { data, error } = await svc.rpc('mkt_enqueue_intelligence', { p_org: org, p_batch: batch, p_max_jobs: 20 });
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ jobs_created: data });
         }
         if (action === 'discover_advertiser') {
           const advertiser = str(body.advertiser);

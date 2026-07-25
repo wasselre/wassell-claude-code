@@ -25,10 +25,16 @@
  */
 import { createClient } from '@supabase/supabase-js';
 import { spawn } from 'node:child_process';
-import { readFileSync, existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateEnrichmentResults, isSubscriptionLimit } from './lib/mkt-enrichment-validate.mjs';
+
+// Thrown when Claude reports a subscription/usage limit — the runner parks the
+// job (claude_job_block) and cools down instead of failing/retrying it.
+class RateLimitError extends Error {}
+const ENRICH_RULE_VERSION = 'enrich-runner-v1';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const POLL_MS = 10_000;
@@ -166,13 +172,93 @@ async function handleClientStudy(job) {
   }
 }
 
+// ── marketing content-enrichment (replaces the Anthropic enrichment API) ─────
+// Reads a scoped evidence package for the batch, runs the content-enrichment
+// Skill, VALIDATES the JSON (schema + business rules), and persists via the same
+// scoped upsert RPCs the deterministic pipeline uses. Claude never writes to the
+// DB directly. Uses THIS machine's paid Claude login — zero Anthropic API spend.
+async function handleMktContentEnrichment(job) {
+  const postIds = Array.isArray(job.payload?.post_ids) ? job.payload.post_ids : [];
+  if (postIds.length === 0) throw new Error('payload.post_ids is required');
+
+  const { data: evidence, error: evErr } = await supa.rpc('mkt_intelligence_evidence', { p_post_ids: postIds });
+  if (evErr) throw new Error(`evidence rpc failed: ${evErr.message}`);
+  if (!Array.isArray(evidence) || evidence.length === 0) throw new Error('no evidence returned');
+
+  const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-enrich-'));
+  const evidenceFile = path.join(workDir, 'evidence.json').replace(/\\/g, '/');
+  const resultFile = path.join(workDir, 'result.json').replace(/\\/g, '/');
+  writeFileSync(evidenceFile, JSON.stringify(evidence));
+
+  try {
+    const prompt = [
+      `/content-enrichment ${evidenceFile} ${resultFile}`,
+      '',
+      'Run headless — decide autonomously per the skill and write ONLY the result',
+      'JSON file. Do not ask questions. Do not print the JSON to stdout.',
+    ].join('\n');
+
+    // one skill run, then one retry if the output is unusable
+    let validated = null, lastErr = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { code, out, err } = await runClaude(prompt, ROOT);
+      const combined = `${out}\n${err}`;
+      if (isSubscriptionLimit(combined)) throw new RateLimitError('Claude subscription/usage limit reached');
+      if (!existsSync(resultFile)) { lastErr = `session ended (code ${code}) without result file: ${combined.slice(-400)}`; continue; }
+      let parsed;
+      try { parsed = JSON.parse(readFileSync(resultFile, 'utf-8')); }
+      catch (e) { lastErr = `result JSON parse failed: ${e.message}`; continue; }
+      const { valid, errors } = validateEnrichmentResults(parsed, evidence);
+      if (valid.length === 0) { lastErr = `validation produced 0 valid rows: ${errors.slice(0, 3).join('; ')}`; continue; }
+      validated = { valid, errors };
+      break;
+    }
+    if (!validated) throw new Error(`content-enrichment failed after retry: ${lastErr}`);
+
+    // persist each validated post via the scoped upsert RPCs
+    let processed = 0;
+    for (const v of validated.valid) {
+      const ev = evidence.find((e) => e.post_id === v.postId);
+      await supa.rpc('mkt_enrichment_upsert', {
+        p_post: v.postId, p_model: 'claude-runner:content-enrichment', p_rule_version: ENRICH_RULE_VERSION,
+        p_org: ev?.organization_id ?? null, p_developer: null, p_marketer: null,
+        p_primary_project: v.primaryProjectId, p_candidates: v.candidates, p_result: v.result,
+        p_cost: 0, p_status: 'done', p_failure: null,
+      });
+      if (v.primaryProjectId) {
+        await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: v.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: 'claude-runner', snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: [], p_auto_accept: true });
+      }
+      for (const s of v.secondary) {
+        await supa.rpc('mkt_attribution_upsert', { p_content_post_id: v.postId, p_project_id: s.projectId, p_method: 'caption', p_confidence: s.confidence, p_evidence: { matched: s.matched.join(','), snippet: (ev?.snippet ?? '').slice(0, 160) }, p_matched_aliases: s.matched, p_auto_accept: false });
+      }
+      await supa.rpc('mkt_content_set_status', { p_post: v.postId, p_status: v.deterministicPartial ? 'partial' : 'processed', p_media_count: null });
+      processed++;
+    }
+    return { batch: postIds.length, evidence: evidence.length, processed, validation_errors: validated.errors.slice(0, 10) };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
 // ── main loop ───────────────────────────────────────────────────────────────
 let lastWatchdog = 0;
+let cooldownUntil = 0;
+const HANDLERS = {
+  ping: handlePing,
+  client_study: handleClientStudy,
+  mkt_content_enrichment: handleMktContentEnrichment,
+};
+
 async function tick() {
+  // Cooling down after a subscription-limit hit — don't hammer Claude.
+  if (Date.now() < cooldownUntil) return;
+
   if (Date.now() - lastWatchdog > 5 * 60_000) {
     lastWatchdog = Date.now();
     const { error } = await supa.rpc('claude_jobs_watchdog');
     if (error) console.error('[runner] watchdog rpc failed:', error.message);
+    // requeue anything parked by a prior limit — the cooldown has passed
+    await supa.rpc('claude_jobs_unblock').catch(() => {});
   }
 
   const { data: jobs, error } = await supa.rpc('claude_job_claim_next', { p_worker: WORKER });
@@ -181,12 +267,19 @@ async function tick() {
   if (!job) return;
 
   console.log(`[runner] claimed ${job.kind} job=${job.id}`);
+  const handler = HANDLERS[job.kind] ?? handleClientStudy; // default keeps legacy behavior
   try {
-    const result = job.kind === 'ping' ? await handlePing(job) : await handleClientStudy(job);
+    const result = await handler(job);
     const { error: doneErr } = await supa.rpc('claude_job_complete', { p_job_id: job.id, p_result: result });
     if (doneErr) console.error('[runner] complete rpc failed:', doneErr.message);
     else console.log(`[runner] job=${job.id} READY`);
   } catch (e) {
+    if (e instanceof RateLimitError) {
+      cooldownUntil = Date.now() + 30 * 60_000; // 30-min cooldown
+      console.warn(`[runner] job=${job.id} BLOCKED (subscription limit) — cooling down 30m`);
+      await supa.rpc('claude_job_block', { p_job_id: job.id, p_error: e.message }).catch((err) => console.error('[runner] block rpc failed:', err));
+      return;
+    }
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[runner] job=${job.id} FAILED: ${msg}`);
     const { error: failErr } = await supa.rpc('claude_job_fail', { p_job_id: job.id, p_error: msg });

@@ -15,7 +15,7 @@ import { downloadYouTube, YtDownloadError } from './ytdlp.js';
 import { transcribeAudioUrl } from './falTranscribe.js';
 import { readFile } from 'node:fs/promises';
 import { extractVisualText, MAX_IMAGES } from './vision.js';
-import { narrowProjects, enrichContent, RULE_VERSION, type NarrowedCandidate } from './enrich.js';
+import { narrowProjects, RULE_VERSION, type NarrowedCandidate } from './enrich.js';
 import { sha256Hex } from '../adIntel.js';
 
 const ALL_PROJECTS_MODEL = '220c49b9-de57-492d-9eca-c0d9f54fd40f';
@@ -143,9 +143,16 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     }
   }
 
-  // ── visual text (one Claude call across up to MAX_IMAGES inputs) ──
+  // ── visual text (OCR generation) ──
+  // Idempotency: if this post already has visual_text, REUSE it and skip the
+  // vision call (a reprocess shouldn't re-pay for OCR — and lets us re-run the
+  // downstream intelligence handoff without re-spending on vision).
   let visualTextBlob = '';
-  if (visionInputs.length > 0) {
+  const { data: existingVt } = await sb.from('mkt_visual_text').select('text').eq('content_post_id', contentPostId);
+  if (existingVt && existingVt.length > 0) {
+    visualTextBlob = existingVt.map((v) => (v.text as string) ?? '').filter(Boolean).join(' ');
+    stats.images_analyzed = existingVt.length;
+  } else if (visionInputs.length > 0) {
     const batch = visionInputs.slice(0, MAX_IMAGES);
     try {
       const { results, costUsd } = await extractVisualText(batch.map((v) => ({ buffer: v.buffer, mime: v.mime })));
@@ -160,7 +167,31 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     } catch (e) { stats.errors.push(`vision: ${e instanceof Error ? e.message : String(e)}`); }
   }
 
-  // ── enrichment (deterministic narrowing → Claude structure/choose) ──
+  // ── explicit terminal state for video posts whose video bytes were not
+  //    collectable (TikTok empty mediaUrls; YouTube datacenter block). Compute the
+  //    deterministic partial-ness here so the runner can roll the post up to
+  //    'partial' vs 'processed' after it makes the intelligence decision. ──
+  const videoStored = storedRefs.some((r) => r.kind === 'video' && r.bytes);
+  const videoUnavailable = isVideoPostType && !videoStored;
+  const videoAttempted = descriptors.some((d) => d.kind === 'video') || (post.platform === 'youtube');
+  if (videoUnavailable && !videoAttempted && post.platform !== 'youtube') {
+    const reason = post.platform === 'tiktok' ? 'tiktok video bytes not present (re-collect with shouldDownloadVideos, or the no-watermark URL expired before download)' : 'no downloadable video url in payload';
+    await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: null, p_bucket: null, p_path: null, p_url: null, p_mime: null, p_bytes: null, p_width: null, p_height: null, p_duration_ms: null, p_checksum: null, p_phash: null, p_status: 'failed', p_failure: reason });
+    stats.errors.push(`video_unavailable: ${reason}`);
+  }
+  const deterministicPartial = stats.media_failed > 0 || stats.transcribe_failed > 0 || videoUnavailable;
+
+  // ── intelligence handoff: deterministic narrowing → PENDING enrichment (no
+  //    Anthropic API). The Claude Code runner (paid subscription) reads the
+  //    scoped evidence, decides project/general-branding, and writes the final
+  //    enrichment + attribution + processed/partial status. ──
+  const anyStored = stats.media_stored > 0;
+  if (!anyStored) {
+    stats.status = 'failed';
+    await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'failed', p_media_count: 0 });
+    stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
+    return stats;
+  }
   const pubProjects = await publisherProjectIds(sb, post.organization_id as string | null);
   const index = await loadProjectIndex(sb, pubProjects);
   const commonTokens = computeCommonTokens(await loadAllProjectNames(sb));
@@ -169,45 +200,18 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   try {
     candidates = narrowProjects(combined, index, pubProjects, commonTokens);
     const acctIdentity = await accountIdentity(sb, post.social_account_id as string | null);
-    const enr = await enrichContent({ accountIdentity: acctIdentity, platform: post.platform as string, caption: post.caption ?? '', transcript: transcriptText, visualText: visualTextBlob, candidates });
-    stats.cost_usd += enr.costUsd; stats.enriched = true; stats.primary_project = enr.primaryProjectId;
-    await sb.rpc('mkt_enrichment_upsert', { p_post: contentPostId, p_model: enr.model, p_rule_version: RULE_VERSION, p_org: post.organization_id, p_developer: null, p_marketer: null, p_primary_project: enr.primaryProjectId, p_candidates: enr.candidates, p_result: enr.result, p_cost: enr.costUsd, p_status: 'done', p_failure: null });
-
-    // ── attribution: primary project + strong deterministic candidates ──
-    if (enr.primaryProjectId) {
-      await sb.rpc('mkt_attribution_upsert', { p_content_post_id: contentPostId, p_project_id: enr.primaryProjectId, p_method: 'caption', p_confidence: 0.9, p_evidence: { matched: 'enrichment', snippet: combined.slice(0, 160) }, p_matched_aliases: [], p_auto_accept: true });
-      stats.attributions++;
-    }
-    for (const c of candidates) {
-      if (c.projectId === enr.primaryProjectId) continue;
-      if (c.confidence >= 0.8) { await sb.rpc('mkt_attribution_upsert', { p_content_post_id: contentPostId, p_project_id: c.projectId, p_method: 'caption', p_confidence: c.confidence, p_evidence: { matched: c.matchedAliases.join(','), snippet: combined.slice(0, 160) }, p_matched_aliases: c.matchedAliases, p_auto_accept: false }); stats.attributions++; }
-    }
+    await sb.rpc('mkt_enrichment_upsert', {
+      p_post: contentPostId, p_model: null, p_rule_version: RULE_VERSION, p_org: post.organization_id,
+      p_developer: null, p_marketer: null, p_primary_project: null, p_candidates: candidates,
+      p_result: { account_identity: acctIdentity, deterministic_partial: deterministicPartial, snippet: combined.slice(0, 160) },
+      p_cost: 0, p_status: 'pending', p_failure: null,
+    });
+    stats.enriched = true; // pending row written; runner completes the decision
   } catch (e) {
-    await sb.rpc('mkt_enrichment_upsert', { p_post: contentPostId, p_model: null, p_rule_version: RULE_VERSION, p_org: post.organization_id, p_developer: null, p_marketer: null, p_primary_project: null, p_candidates: '[]', p_result: '{}', p_cost: 0, p_status: 'failed', p_failure: (e instanceof Error ? e.message : String(e)).slice(0, 300) });
-    stats.errors.push(`enrich: ${e instanceof Error ? e.message : String(e)}`);
+    stats.errors.push(`narrow: ${e instanceof Error ? e.message : String(e)}`);
   }
-
-  // ── explicit terminal state for video posts whose video bytes were not
-  //    collectable (TikTok Apify config returns empty mediaUrls; YouTube has no
-  //    direct mp4). Record it so a "video" post is never silently "processed"
-  //    without its video/transcript. ──
-  const videoStored = storedRefs.some((r) => r.kind === 'video' && r.bytes);
-  const videoUnavailable = isVideoPostType && !videoStored;
-  // Only write a generic "not present" row when NO video was even attempted (no
-  // descriptor). If a descriptor WAS attempted and failed, the media-download
-  // loop already recorded the REAL classified reason — never overwrite it.
-  const videoAttempted = descriptors.some((d) => d.kind === 'video') || (post.platform === 'youtube');
-  if (videoUnavailable && !videoAttempted && post.platform !== 'youtube') {
-    const reason = post.platform === 'tiktok' ? 'tiktok video bytes not present (re-collect with shouldDownloadVideos, or the no-watermark URL expired before download)' : 'no downloadable video url in payload';
-    await sb.rpc('mkt_content_media_upsert', { p_post: contentPostId, p_carousel_index: 0, p_kind: 'video', p_original_url: null, p_bucket: null, p_path: null, p_url: null, p_mime: null, p_bytes: null, p_width: null, p_height: null, p_duration_ms: null, p_checksum: null, p_phash: null, p_status: 'failed', p_failure: reason });
-    stats.errors.push(`video_unavailable: ${reason}`);
-  }
-
-  // ── roll-up status ──
-  const anyStored = stats.media_stored > 0;
-  const allMediaOk = stats.media_failed === 0 && stats.transcribe_failed === 0 && !videoUnavailable;
-  stats.status = !anyStored ? 'failed' : (allMediaOk && stats.enriched) ? 'processed' : 'partial';
-  await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: stats.status, p_media_count: stats.media_stored });
+  stats.status = 'awaiting_intelligence';
+  await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence', p_media_count: stats.media_stored });
   stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
   return stats;
 }
