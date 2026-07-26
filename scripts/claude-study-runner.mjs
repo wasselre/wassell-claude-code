@@ -185,17 +185,14 @@ async function handleMktContentEnrichment(job) {
   if (evErr) throw new Error(`evidence rpc failed: ${evErr.message}`);
   if (!Array.isArray(evidenceRaw) || evidenceRaw.length === 0) throw new Error('no evidence returned');
 
-  // A post with NO narrowed candidates cannot be decided — the Skill would be
-  // forced to answer -1 for it, silently producing "no project" that looks like a
-  // real judgement. That state means deterministic narrowing is missing (e.g. a
-  // legacy failure wiped candidate_projects), so skip those posts here and leave
-  // them awaiting_intelligence for a content_process re-run to re-narrow.
-  const evidence = evidenceRaw.filter((e) => Array.isArray(e.candidates) && e.candidates.length > 0);
-  const skippedNoCandidates = evidenceRaw.length - evidence.length;
-  if (evidence.length === 0) {
-    return { batch: postIds.length, evidence: 0, processed: 0, skipped_no_candidates: skippedNoCandidates,
-      note: 'all posts lack narrowed candidates — re-run content_process to re-narrow before deciding' };
-  }
+  // A post with NO narrowed candidates is still worth deciding: the Skill extracts
+  // the structured fields and the general-branding flag, and -1 (no project) is the
+  // CORRECT answer when nothing was narrowed — most brand posts genuinely mention
+  // no project. We only surface the count, because a high no-candidate rate can
+  // also mean narrowing was skipped/wiped upstream and needs a content_process
+  // re-run. (Never skip them here — that would strand brand posts forever.)
+  const evidence = evidenceRaw;
+  const noCandidates = evidenceRaw.filter((e) => !Array.isArray(e.candidates) || e.candidates.length === 0).length;
 
   const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-enrich-'));
   const evidenceFile = path.join(workDir, 'evidence.json').replace(/\\/g, '/');
@@ -246,7 +243,7 @@ async function handleMktContentEnrichment(job) {
       await supa.rpc('mkt_content_set_status', { p_post: v.postId, p_status: v.deterministicPartial ? 'partial' : 'processed', p_media_count: null });
       processed++;
     }
-    return { batch: postIds.length, evidence: evidence.length, processed, skipped_no_candidates: skippedNoCandidates, validation_errors: validated.errors.slice(0, 10) };
+    return { batch: postIds.length, evidence: evidence.length, processed, posts_without_candidates: noCandidates, validation_errors: validated.errors.slice(0, 10) };
   } finally {
     try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }
