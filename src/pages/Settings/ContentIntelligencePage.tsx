@@ -173,6 +173,16 @@ function DetailModal({ item, onClose, L }: { item: ContentItem; onClose: () => v
   const media = (item.mkt_content_media ?? []).filter((m) => m.stored_url).sort((a, b) => a.carousel_index - b.carousel_index);
   const struct = (item.mkt_visual_text ?? []).map((v) => v.structured as Record<string, unknown>);
   const collect = (k: string) => [...new Set(struct.flatMap((s) => (Array.isArray(s[k]) ? (s[k] as string[]) : [])))].filter(Boolean);
+  // Attribution used to render as a bare UUID prefix, which made it impossible
+  // to tell WHICH project a post had been attributed to — the one thing a
+  // reviewer is here to check. The narrowing step already stored each
+  // candidate's names on the enrichment row, and the primary is always chosen
+  // from that list, so the name resolves locally. A manual re-assignment to a
+  // project outside the candidate set still falls back to the id.
+  const projectName = (id: string): string => {
+    const c = (enr?.candidate_projects ?? []).find((x) => x.projectId === id);
+    return (L(c?.nameAr ?? '', c?.nameEn ?? '') || c?.nameEn || c?.nameAr) ?? `${id.slice(0, 8)}…`;
+  };
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-cream rounded-2xl max-w-3xl w-full max-h-[88vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
@@ -218,8 +228,8 @@ function DetailModal({ item, onClose, L }: { item: ContentItem; onClose: () => v
           <div className="grid grid-cols-2 gap-3">
             <div>
               <div className="text-[11px] text-charcoal/40 mb-1 flex items-center gap-1"><Tag size={12} /> {L('الإسناد', 'Attribution')}</div>
-              {enr?.primary_project_id ? <div className="text-sm text-copper font-medium">{L('مشروع رئيسي', 'Primary project')}: {enr.primary_project_id.slice(0, 8)}…</div> : <div className="text-sm text-charcoal/40">{L('محتوى علامة عام (غير مُسنَد)', 'General branding (unattributed)')}</div>}
-              {(item.mkt_content_attributions ?? []).map((a, i) => <div key={i} className="text-[11px] text-charcoal/50">{a.project_id.slice(0, 8)}… · {Math.round(a.confidence * 100)}%</div>)}
+              {enr?.primary_project_id ? <div className="text-sm text-copper font-medium">{L('مشروع رئيسي', 'Primary project')}: {projectName(enr.primary_project_id)}</div> : <div className="text-sm text-charcoal/40">{L('محتوى علامة عام (غير مُسنَد)', 'General branding (unattributed)')}</div>}
+              {(item.mkt_content_attributions ?? []).map((a, i) => <div key={i} className="text-[11px] text-charcoal/50">{projectName(a.project_id)} · {Math.round(a.confidence * 100)}%</div>)}
             </div>
             <div>
               <div className="text-[11px] text-charcoal/40 mb-1 flex items-center gap-1"><MapPin size={12} /> {L('الإثراء', 'Enrichment')}</div>

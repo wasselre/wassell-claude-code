@@ -1,9 +1,20 @@
 #!/usr/bin/env node
 /**
  * claude-study-runner — drains the `claude_jobs` queue by running FULL headless
- * Claude Code sessions on this machine.
+ * Claude Code sessions.
  *
- *   node scripts/claude-study-runner.mjs          (or: npm run study-runner)
+ * PRODUCTION HOME (since 2026-07-26): the Fly app **wassel-claude-runner**
+ * (`runner/Dockerfile` + `runner/fly.toml`, region sin, one machine + a standby).
+ * It is always-on and does NOT depend on any developer machine. Deploy with:
+ *   flyctl deploy --config runner/fly.toml --dockerfile runner/Dockerfile \
+ *                 --app wassel-claude-runner
+ * Health: `select claude_runner_health();` or the Runner card in Marketing
+ * Operations. Logs: `flyctl logs --app wassel-claude-runner`.
+ *
+ * Running it locally (`npm run study-runner`) is now REFUSED unless
+ * RUNNER_ALLOW_LOCAL=1 — see the dev-mode gate at the bottom. A laptop runner
+ * would contend for the same production lease and could take ownership, which
+ * is precisely the dependency the Fly deployment removes.
  *
  * For each pending job (ONE at a time — sequential by design, so the runner
  * never competes with the owner's interactive Claude sessions for rate limit):
@@ -16,8 +27,16 @@
  *                          job with { pdf_signed_url, whatsapp_draft, ... }.
  *
  * Credentials: SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY from .env.local/.env
- * (same auto-load posture as scripts/sync-model-workflow-prds.mjs). The Claude
- * CLI uses whatever account this machine is logged into.
+ * (same auto-load posture as scripts/sync-model-workflow-prds.mjs); on Fly they
+ * arrive as runtime secrets, never baked into an image layer.
+ *
+ * Claude auth: the PAID SUBSCRIPTION, via CLAUDE_CODE_OAUTH_TOKEN in the
+ * environment (on a laptop, the machine's own `claude` login also works). This
+ * is not an Anthropic API key and produces NO incremental per-token API charge —
+ * the work is included within the existing Claude subscription and is subject to
+ * that subscription's shared capacity. ANTHROPIC_API_KEY is deliberately deleted
+ * from the child env (see runClaude) and is absent from the Fly runner entirely,
+ * so the runner cannot silently fall back to metered API billing.
  *
  * Sessions run with --dangerously-skip-permissions: this runner executes ONLY
  * on a trusted machine against our own repo. Do not point it at untrusted
@@ -47,11 +66,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateEnrichmentResults, isSubscriptionLimit } from './lib/mkt-enrichment-validate.mjs';
+import { validateCampaignSummaries } from './lib/mkt-campaign-summary-validate.mjs';
 
 // Thrown when Claude reports a subscription/usage limit — the runner parks the
 // job (claude_job_block) and cools down instead of failing/retrying it.
 class RateLimitError extends Error {}
 const ENRICH_RULE_VERSION = 'enrich-runner-v1';
+const CAMPAIGN_SUMMARY_VERSION = 'campaign-summary-v1';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const POLL_MS = 10_000;
@@ -293,10 +314,79 @@ async function handleMktContentEnrichment(job) {
 // ── main loop ───────────────────────────────────────────────────────────────
 let lastWatchdog = 0;
 let cooldownUntil = 0;
+// The SECOND intelligence Skill on the runner. Same shape as enrichment —
+// scoped evidence RPC → Skill session → pure validator → scoped upsert — because
+// a second bespoke pattern would be a second thing to operate.
+async function handleMktCampaignSummary(job) {
+  const campaignIds = Array.isArray(job.payload?.campaign_ids) ? job.payload.campaign_ids : [];
+  if (campaignIds.length === 0) throw new Error('payload.campaign_ids is required');
+
+  const { data: evidence, error: evErr } = await supa.rpc('mkt_campaign_evidence', { p_campaign_ids: campaignIds });
+  if (evErr) throw new Error(`campaign evidence rpc failed: ${evErr.message}`);
+  if (!Array.isArray(evidence) || evidence.length === 0) throw new Error('no campaign evidence returned');
+
+  const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-campaign-'));
+  const evidenceFile = path.join(workDir, 'evidence.json').replace(/\\/g, '/');
+  const resultFile = path.join(workDir, 'result.json').replace(/\\/g, '/');
+  writeFileSync(evidenceFile, JSON.stringify(evidence));
+
+  try {
+    const prompt = [
+      `/campaign-summary ${evidenceFile} ${resultFile}`,
+      '',
+      'Run headless — decide autonomously per the skill and write ONLY the result',
+      'JSON file. Do not ask questions. Do not print the JSON to stdout.',
+    ].join('\n');
+
+    let validated = null, lastErr = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { code, out, err } = await runClaude(prompt, ROOT);
+      const combined = `${out}\n${err}`;
+      if (isSubscriptionLimit(combined)) throw new RateLimitError('Claude subscription/usage limit reached');
+      if (!existsSync(resultFile)) { lastErr = `session ended (code ${code}) without result file: ${combined.slice(-400)}`; continue; }
+      let parsed;
+      try { parsed = JSON.parse(readFileSync(resultFile, 'utf-8')); }
+      catch (e) { lastErr = `result JSON parse failed: ${e.message}`; continue; }
+      const { valid, errors } = validateCampaignSummaries(parsed, evidence);
+      if (valid.length === 0) { lastErr = `validation produced 0 valid rows: ${errors.slice(0, 3).join('; ')}`; continue; }
+      validated = { valid, errors };
+      break;
+    }
+    if (!validated) throw new Error(`campaign-summary failed after retry: ${lastErr}`);
+
+    let summarised = 0;
+    for (const v of validated.valid) {
+      const ev = evidence.find((e) => e.campaign_id === v.campaignId);
+      const { error } = await supa.rpc('mkt_campaign_summary_upsert', {
+        p_campaign: v.campaignId,
+        p_org: job.payload?.organization_id ?? null,
+        p_model: 'claude-runner:campaign-summary',
+        p_skill_version: CAMPAIGN_SUMMARY_VERSION,
+        p_result: v.result,
+        p_evidence_refs: v.evidenceRefs,
+        p_confidence: v.confidence,
+        p_cost: 0, p_status: 'done', p_failure: null,
+      });
+      if (error) throw new Error(`summary upsert failed for ${v.campaignId}: ${error.message}`);
+      summarised++;
+      void ev;
+    }
+    return {
+      batch: campaignIds.length,
+      evidence: evidence.length,
+      summarised,
+      validation_errors: validated.errors.slice(0, 10),
+    };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
 const HANDLERS = {
   ping: handlePing,
   client_study: handleClientStudy,
   mkt_content_enrichment: handleMktContentEnrichment,
+  mkt_campaign_summary: handleMktCampaignSummary,
 };
 
 async function tick() {
@@ -378,13 +468,58 @@ async function shutdown(signal) {
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, () => { void shutdown(sig); });
 
+// ── boot: dev-mode gate ─────────────────────────────────────────────────────
+// Production runs on Fly (RUNNER_ENV=fly, baked into the image). A developer
+// laptop that still has .env.local would otherwise be one `node` away from
+// taking the production lease the moment the Fly runner restarts — and then
+// production intelligence would silently depend on that laptop staying awake,
+// which is the exact dependency this deployment removes. The DB lease prevents
+// CONCURRENT runners; this gate prevents an unintended OWNER.
+if (process.env.RUNNER_ENV !== 'fly' && process.env.RUNNER_ALLOW_LOCAL !== '1') {
+  console.error(
+    '[runner] refusing to start: this is not the deployed runner (RUNNER_ENV != "fly").\n' +
+    '         Production runs on the Fly app "wassel-claude-runner".\n' +
+    '         To run locally on purpose (debugging), set RUNNER_ALLOW_LOCAL=1 — but note\n' +
+    '         it will contend for the SAME production lease and can take ownership.',
+  );
+  process.exit(0);
+}
+
 // ── boot: singleton gate, then the sequential loop ──────────────────────────
-const first = await acquireLease();
+// Do NOT give up on the first refusal. After an unclean stop (SIGKILL, machine
+// loss) the lease is still held by our own DEAD predecessor until its TTL runs
+// out — and a machine that restarts inside that window would exit 0, which Fly
+// treats as success and does not restart. That took the always-on runner down
+// permanently in testing (verified 2026-07-26: hard kill → reboot 2s later →
+// "another runner owns the lease" → both machines stopped for ~25 minutes).
+//
+// So wait out the TTL before concluding someone else genuinely owns it. A LIVE
+// owner keeps renewing and we still exit cleanly; a dead one expires and we take
+// over within seconds of the TTL.
+const LEASE_WAIT_MS = (LEASE_TTL_S + 60) * 1000;
+let first = await acquireLease();
 if (!first.acquired) {
-  console.error(`[runner] another runner owns the lease (${first.current_owner}) — exiting cleanly`);
+  const deadline = Date.now() + LEASE_WAIT_MS;
+  console.warn(`[runner] lease held by ${first.current_owner} — waiting up to ${Math.round(LEASE_WAIT_MS / 1000)}s for it to expire`);
+  while (!first.acquired && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 10_000));
+    first = await acquireLease();
+  }
+}
+if (!first.acquired) {
+  console.error(`[runner] another runner still owns the lease (${first.current_owner}) after waiting — exiting cleanly`);
   process.exit(0);
 }
 console.log(`[runner] ${WORKER} holds the ${LEASE} lease — polling every ${POLL_MS / 1000}s — repo: ${ROOT}`);
+
+// Winning the lease proves the previous owner stopped heartbeating for a full
+// TTL, so anything still 'running' under a different owner is abandoned. Hand
+// it back to the queue now instead of waiting out the 45-minute watchdog.
+try {
+  const { data: recovered, error: recErr } = await supa.rpc('claude_jobs_recover_orphaned', { p_owner: WORKER });
+  if (recErr) console.error('[runner] orphan recovery failed:', recErr.message);
+  else for (const r of recovered ?? []) console.warn(`[runner] recovered ${r.kind} job=${r.job_id} from ${r.prior_owner} → ${r.action}`);
+} catch (e) { console.error('[runner] orphan recovery threw:', e); }
 heartbeatTimer = setInterval(() => {
   acquireLease().then((r) => {
     if (!r.acquired && !shuttingDown) {

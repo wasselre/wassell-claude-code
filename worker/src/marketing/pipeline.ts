@@ -72,6 +72,41 @@ export function computeCommonTokens(catalog: ProjectAlias[]): Set<string> {
  * a caption with no project reference returns [] (stays organization-level).
  * Auto-accept only a single, high-confidence, distinctive match.
  */
+/**
+ * A snippet that actually CONTAINS the matched text, centred on the first match
+ * rather than taken from the head of the caption.
+ *
+ * The old `caption.slice(0, 140)` was a head preview: when a project was named
+ * late in a caption — after the hook, emoji block, or several lines of ad copy —
+ * the stored snippet did not contain the evidence for its own match. That
+ * snippet is shown to reviewers AND fed back into the enrichment evidence
+ * package, so a correct attribution looked unsupported. (A real review call was
+ * reversed on exactly this: judged from the first 45 characters, while the
+ * caption named the project further in.)
+ *
+ * Matching itself has always scanned the full text — this only fixes what gets
+ * QUOTED as the reason.
+ */
+export function matchSnippet(caption: string, matched: string[], radius = 90): string {
+  const text = caption ?? '';
+  if (!text) return '';
+  const nt = normalizeAr(text);
+  // Find the earliest position of any matched token in the normalized text.
+  // normalizeAr preserves length (it only substitutes/removes diacritics), so
+  // indexes map closely enough for a human-readable window.
+  let at = -1;
+  for (const m of matched) {
+    const needle = normalizeAr(m).split(/\s+/)[0]; // phrase matches: anchor on the first word
+    if (!needle) continue;
+    const i = nt.indexOf(needle);
+    if (i >= 0 && (at === -1 || i < at)) at = i;
+  }
+  if (at === -1) return text.slice(0, radius * 2); // no locatable match — head is all we have
+  const start = Math.max(0, at - radius);
+  const end = Math.min(text.length, at + radius);
+  return (start > 0 ? '…' : '') + text.slice(start, end).trim() + (end < text.length ? '…' : '');
+}
+
 export function attributeCaption(
   caption: string,
   index: ProjectAlias[],
@@ -111,7 +146,7 @@ export function attributeCaption(
       projectId: a.projectId,
       method: 'caption',
       confidence,
-      evidence: { matched: matched.join(','), snippet: caption.slice(0, 140) },
+      evidence: { matched: matched.join(','), snippet: matchSnippet(caption, matched) },
       matchedAliases: matched,
       autoAccept: false,
     });

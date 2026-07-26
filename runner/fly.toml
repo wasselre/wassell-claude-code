@@ -1,0 +1,36 @@
+# Always-on Claude Code runner for marketing intelligence.
+#
+# ONE machine by design — Claude sessions are sequential and the DB singleton
+# lease is the hard guarantee (a second machine would exit cleanly at boot).
+# Secrets (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, CLAUDE_CODE_OAUTH_TOKEN) are
+# set with `fly secrets set` — never in this file, never in an image layer.
+app = 'wassel-claude-runner'
+
+# MUST stay above the runner's SHUTDOWN_GRACE_MS (60s). Fly's default is 5s,
+# which would SIGKILL the process mid-shutdown — the in-flight Claude session
+# would be orphaned and its job left 'running' until the 45-min watchdog.
+kill_timeout = '90s'
+# sin, not bom: the deck worker's region had no capacity for a 1 GB machine
+# (2026-07-26). Region is latency-only here — all work is DB-queued, no user
+# request is ever waiting on this process.
+primary_region = 'sin'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  POLL_MS = '10000'
+  RUNNER_ENV = 'fly'
+
+# No [http_service]: the runner exposes no public surface. Liveness is the DB
+# heartbeat (claude_runner_lease.heartbeat_at), visible in Marketing Operations.
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'   # Claude CLI sessions are heavier than the deck worker's jobs
+
+# Restart (don't recreate) so a crash resumes quickly; the lease TTL covers the gap.
+[deploy]
+  strategy = 'immediate'
+
+[processes]
+  app = 'node scripts/claude-study-runner.mjs'

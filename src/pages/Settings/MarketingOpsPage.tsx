@@ -8,10 +8,12 @@ import { RefreshCw, Play, Activity, AlertTriangle, CheckCircle2, XCircle, Rotate
 import { useAppStore } from '@/stores/appStore';
 import BackToSettings from './components/BackToSettings';
 import DiscoveryPanel from './components/DiscoveryPanel';
+import RunnerHealthCard from './components/RunnerHealthCard';
 import {
   fetchOpsDashboard, fetchOpsOrgHealth, fetchOpsAlerts, fetchOpsMetricsHistory, fetchOpsFailedJobs,
-  setOpsAlertStatus, runOpsEvaluate, retryJob,
+  fetchOpsRunnerHealth, setOpsAlertStatus, runOpsEvaluate, retryJob,
   type OpsDashboard, type OpsOrgHealth, type OpsAlert, type OpsMetricRow, type OpsFailedJob,
+  type RunnerHealth,
 } from '@/lib/marketing/client';
 import {
   providerBucket, providerCounts, overallSystemStatus, sortAlerts, isStale,
@@ -69,6 +71,7 @@ export default function MarketingOpsPage() {
   const [alerts, setAlerts] = useState<OpsAlert[]>([]);
   const [metrics, setMetrics] = useState<OpsMetricRow[]>([]);
   const [failedJobs, setFailedJobs] = useState<OpsFailedJob[]>([]);
+  const [runner, setRunner] = useState<RunnerHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [providerFilter, setProviderFilter] = useState<string>('all');
@@ -77,10 +80,12 @@ export default function MarketingOpsPage() {
   const load = useCallback(async (aFilter = alertFilter) => {
     setLoading(true);
     try {
-      const [d, o, a, m, fj] = await Promise.all([
+      const [d, o, a, m, fj, rh] = await Promise.all([
         fetchOpsDashboard(), fetchOpsOrgHealth(), fetchOpsAlerts(aFilter), fetchOpsMetricsHistory(30), fetchOpsFailedJobs(),
+        fetchOpsRunnerHealth(),
       ]);
       setDash(d.dashboard); setOrgs(o.organizations); setAlerts(a.alerts); setMetrics(m.rows); setFailedJobs(fj.jobs);
+      setRunner(rh.runner);
     } catch (e) {
       addToast(e instanceof Error ? e.message : L('فشل تحميل بيانات المراقبة', 'Failed to load monitoring data'), 'error');
     } finally { setLoading(false); }
@@ -152,6 +157,14 @@ export default function MarketingOpsPage() {
           </button>
         </div>
       </div>
+
+      {/* Intelligence runner — its own card because it is a distinct always-on
+          process (Fly) whose health is invisible to the provider/queue panels. */}
+      <RunnerHealthCard
+        health={runner}
+        busy={loading}
+        onRefresh={() => { void fetchOpsRunnerHealth().then((r) => setRunner(r.runner)).catch((e) => addToast(e instanceof Error ? e.message : 'error', 'error')); }}
+      />
 
       {dash && (
         <>

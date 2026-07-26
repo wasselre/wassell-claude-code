@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  attributeCaption, shouldSnapshot, browserbaseFallbackEligible, normalizeAr, computeCommonTokens,
+  attributeCaption, matchSnippet, shouldSnapshot, browserbaseFallbackEligible, normalizeAr, computeCommonTokens,
   type ProjectAlias,
 } from '../pipeline';
 
@@ -128,5 +128,64 @@ describe('browserbase fallback eligibility (spec §8)', () => {
   it('eligible on explicit manual request or unsupported source', () => {
     expect(browserbaseFallbackEligible({ primaryHealth: 'auth_failed', attemptsExhausted: false, manualRequest: true }).eligible).toBe(true);
     expect(browserbaseFallbackEligible({ primaryHealth: 'connected', attemptsExhausted: false, unsupportedSource: true }).eligible).toBe(true);
+  });
+});
+
+describe('late project references — evidence must never be judged from a preview', () => {
+  // A caption whose hook, emoji block and ad copy occupy the opening — the
+  // project is named well past the first 45 characters. Reviewing only the head
+  // of such a caption once produced a WRONG verdict (a correct attribution was
+  // called a false positive), which is why both the match and the quoted
+  // evidence must come from the full text.
+  const LEAD = 'ابدأ حكايتك اليوم واغتنم الفرصة قبل نفاد الوحدات المتاحة لدينا الآن — عرض محدود';
+  const LATE_CAPTION = `${LEAD} في مشروع الماجدية 174 بحي القدس`;
+
+  it('the project reference sits beyond the first 45 characters (test premise)', () => {
+    expect(LATE_CAPTION.indexOf('174')).toBeGreaterThan(45);
+    // and would be invisible to a head-preview reviewer
+    expect(LATE_CAPTION.slice(0, 45)).not.toContain('174');
+  });
+
+  it('still attributes the project when the reference appears late', () => {
+    const r = attributeCaption(LATE_CAPTION, INDEX);
+    expect(r).toHaveLength(1);
+    expect(r[0]!.projectId).toBe('p174');
+    expect(r[0]!.autoAccept).toBe(true);
+  });
+
+  it('the stored snippet CONTAINS the matched evidence, not just the caption head', () => {
+    const r = attributeCaption(LATE_CAPTION, INDEX);
+    expect(r[0]!.evidence.snippet).toContain('174');
+  });
+
+  it('finds a reference placed far into a long caption', () => {
+    const filler = 'نبني لكم مساكن تليق بتطلعاتكم وتفاصيل مدروسة بعناية. '.repeat(12);
+    const r = attributeCaption(`${filler} تفضلوا بزيارة ديارا مشارف`, INDEX);
+    expect(r.map((x) => x.projectId)).toEqual(['pdiara']);
+    expect(r[0]!.evidence.snippet).toContain('ديارا');
+  });
+});
+
+describe('matchSnippet', () => {
+  it('centres the window on the match and marks both elisions', () => {
+    const text = `${'ا'.repeat(300)} الماجدية 174 ${'ب'.repeat(300)}`;
+    const s = matchSnippet(text, ['174']);
+    expect(s).toContain('174');
+    expect(s.startsWith('…')).toBe(true);
+    expect(s.endsWith('…')).toBe(true);
+    expect(s.length).toBeLessThan(text.length);
+  });
+
+  it('anchors a phrase match on its first word', () => {
+    const text = `${'x'.repeat(200)} شقق سدن 52 هنا`;
+    expect(matchSnippet(text, ['شقق سدن 52'])).toContain('شقق سدن');
+  });
+
+  it('falls back to the head when the match cannot be located', () => {
+    expect(matchSnippet('نص قصير بدون تطابق', ['zzz'])).toContain('نص قصير');
+  });
+
+  it('returns empty for empty input rather than throwing', () => {
+    expect(matchSnippet('', ['174'])).toBe('');
   });
 });

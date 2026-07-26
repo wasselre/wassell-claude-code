@@ -3,6 +3,15 @@
 > **Status:** **Phase 0 foundation BUILT + pilot imported (2026-07-22).** The
 > design below stands; this header records what is now live vs. still ahead.
 > **Author:** Claude, 2026-07-22. **Reviewer:** r.abanumay@wassel.re.
+>
+> **⚠️ Execution layer moved (2026-07-26).** Intelligence *judgement* work
+> (content enrichment, campaign summaries) no longer runs on the Anthropic API —
+> it runs as Claude Code Skills on an always-on Fly runner authenticated with the
+> paid subscription. Deployment, authentication, the singleton lease, crash
+> recovery, operational health, the visual-processing benchmark, and the cost
+> position are documented in **[claude-code-runner.md](claude-code-runner.md)** —
+> read that before changing anything in `scripts/claude-study-runner.mjs`,
+> `.claude/skills/*`, or the `claude_jobs` queue.
 
 ## ✅ Phase 0 — implemented & verified (2026-07-22)
 

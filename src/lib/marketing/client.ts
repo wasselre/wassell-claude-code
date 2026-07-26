@@ -182,6 +182,32 @@ export interface OpsFailedJob {
 }
 export const fetchOpsFailedJobs = () => call<{ jobs: OpsFailedJob[] }>('ops_failed_jobs');
 
+// ── Claude Code runner health (Fly app "wassel-claude-runner") ──────────────
+// Shape mirrors the claude_runner_health() RPC. Identifiers/states/counts only —
+// no OAuth token, credentials, job payloads or customer evidence cross this API.
+export interface RunnerLease {
+  name: string; owner_id: string; host: string | null; pid: number | null;
+  acquired_at: string; heartbeat_at: string; expires_at: string; released_at: string | null;
+  is_live: boolean; heartbeat_age_seconds: number;
+}
+export interface RunnerCurrentJob {
+  id: string; kind: string; started_at: string; claimed_by: string | null;
+  attempts: number; running_seconds: number;
+}
+export interface RunnerFailureGroup { kind: string; n: number; last_error: string }
+export interface RunnerHealth {
+  checked_at: string;
+  lease: RunnerLease | null;
+  queue: Partial<Record<'pending' | 'running' | 'ready' | 'failed' | 'cancelled', number>>;
+  oldest_pending_age_seconds: number | null;
+  current_job: RunnerCurrentJob | null;
+  failures_24h: RunnerFailureGroup[];
+  blocked_count: number;
+  last_completed_at: string | null;
+  awaiting_intelligence_posts: number;
+}
+export const fetchOpsRunnerHealth = () => call<{ runner: RunnerHealth }>('ops_runner_health');
+
 // ── Advertiser discovery / confirmation ─────────────────────────────────────
 export interface ScoreReason { code: string; label_en: string; label_ar: string; delta: number }
 export interface AdvertiserCandidate {

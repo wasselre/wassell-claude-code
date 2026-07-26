@@ -14,10 +14,23 @@ Read `<evidence_file>` — a JSON **array**. Each element is one post:
 ```
 { "post_id": "uuid", "platform": "instagram|tiktok|youtube", "post_type": "...",
   "account": "@handle (platform)", "caption": "...", "transcript": "...",
-  "ocr_text": "...", "candidates": [ { "projectId": "uuid", "nameAr": "...", "nameEn": "...", "confidence": 0.0 } ] }
+  "ocr_text": "...", "candidates": [ { "projectId": "uuid", "nameAr": "...", "nameEn": "...", "confidence": 0.0 } ],
+  "evidence_lengths": { "caption": 804, "transcript": 1081, "ocr_text": 1360 },
+  "evidence_truncated": { "caption": false, "transcript": false, "ocr_text": false } }
 ```
 
 `candidates` is the ONLY set of projects you may attribute to. It was narrowed deterministically upstream. **You may NOT invent or reference any project outside this list.**
+
+## Read the WHOLE evidence, never a preview
+A project reference frequently appears **late** in a caption — after the hook, the
+emoji block, or several lines of ad copy. Judging from the opening words alone
+produces confident, wrong answers (a real review once mis-called a correct
+attribution a false positive after reading only the first 45 characters).
+
+- Evaluate the **entire** `caption`, `transcript` and `ocr_text` before deciding.
+- If any `evidence_truncated` flag is `true`, the text you were given is
+  incomplete. Decide from what you have, but be conservative: prefer `-1` over a
+  guess, and say so in `reasoning` (e.g. "caption truncated at 8000 chars").
 
 ## Your job — per post
 Combine caption + transcript + ocr_text and decide:

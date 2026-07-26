@@ -603,6 +603,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'ops_diagnostics':
       case 'ops_metrics_history':
       case 'ops_failed_jobs':
+      case 'ops_runner_health':
       case 'advertiser_list':
       case 'ops_alert_status':
       case 'ops_evaluate': {
@@ -706,6 +707,15 @@ export default async function handler(req: Request): Promise<Response> {
             .limit(100);
           if (error) return jsonError(500, error.message);
           return jsonOk({ jobs: data ?? [] });
+        }
+        if (action === 'ops_runner_health') {
+          // Claude Code runner (Fly app "wassel-claude-runner") — lease owner,
+          // heartbeat freshness, current job, queue depth, recent failures.
+          // The RPC returns identifiers/states/counts only: no OAuth token, no
+          // credentials, no job payloads, no customer evidence.
+          const { data, error } = await svc.rpc('claude_runner_health');
+          if (error) return jsonError(500, error.message);
+          return jsonOk({ runner: data });
         }
         if (action === 'ops_alert_status') {
           const aid = str(body.alert_id);

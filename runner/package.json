@@ -1,0 +1,13 @@
+{
+  "name": "wassel-claude-runner",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Always-on Claude Code runner — drains claude_jobs using the paid subscription (no Anthropic API credits).",
+  "scripts": {
+    "start": "node scripts/claude-study-runner.mjs"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1"
+  }
+}
