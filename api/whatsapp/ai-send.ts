@@ -29,8 +29,14 @@
 import { getServiceSupabase } from '../_lib/supabaseServer.js';
 import { sendMessage, resolveDefaultDeviceId } from '../_lib/whatsappGateway.js';
 
+// EDGE, not nodejs: this handler is Web-API shaped (Request in, Response out).
+// Vercel's nodejs runtime hands the function (IncomingMessage, ServerResponse)
+// and ignores a returned Response — the request then hangs until the gateway
+// times out (verified live 2026-07-26: 20s, no response). Either adapt like
+// api/whatsapp/send-media-batch.ts, or run on edge. Edge is right here — the
+// work is one gate check + one fetch, no Node APIs.
 export const config = {
-  runtime: 'nodejs',
+  runtime: 'edge',
 };
 
 interface Body {
