@@ -37,8 +37,29 @@ Then the linked client, if any:
 node /app/wa-agent/tools/db.mjs "SELECT r.id, r.data->>'client_name' AS name, r.data->'budget' AS budget, r.data->'preferred_unit_type' AS unit_types, r.data->'preferred_bedrooms' AS bedrooms, r.data->>'preferred_location_notes' AS location_notes, r.data->>'preference_notes' AS notes FROM records r WHERE r.id = (SELECT data->>'client_link' FROM records WHERE id = '<chatRecordId>')::uuid"
 ```
 
-**Read the whole history before replying.** Never re-ask something the customer
-already answered — that is the fastest way to look like a bot.
+**Then the PHONE CALLS — this is mandatory, not optional:**
+
+```bash
+node /app/wa-agent/tools/db.mjs "SELECT direction, status, duration_seconds, agent_name, creation_time, summary FROM call_logs WHERE contact_phone = '<+phone>' ORDER BY creation_time DESC LIMIT 5"
+```
+
+Most of what matters is said on the phone, not typed. The AI-generated `summary`
+of each call carries the real budget, the financing situation, which property
+was discussed, and — critically — **«الخطوات التالية»: what the rep PROMISED to
+do next.**
+
+A customer who has gone quiet is usually waiting on a promise, not losing
+interest. If the last call ended with «الوكيل سيرسل / سيدرس / سيقارن …», your
+reply MUST address that promise before anything else. Asking them to book a
+visit while they wait on something you owe them reads as ignoring them.
+
+Where the call and the client record disagree (e.g. the record says budget 4M but
+on the call he said under 2.5M), **trust the call** — it is more recent and more
+specific — and note the discrepancy in your summary so a human can fix the record.
+
+**Read the whole history before replying** — chat AND calls. Never re-ask
+something the customer already answered on either channel; that is the fastest
+way to look like a bot.
 
 ## Step 2 — decide what to say
 
