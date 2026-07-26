@@ -17,6 +17,11 @@ FROM node:22-slim
 # (without it, the shutdown handler never fires and jobs are orphaned).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git ca-certificates tini \
+      # client_study renders a branded PDF: headless Chromium + python3 (the
+      # skill's render_study.py, stdlib only) + Amiri/Noto for Arabic glyphs.
+      # Text-only jobs (enrichment, campaign-summary, whatsapp-reply) don't use
+      # these, but the runner is shared so the browser must be present.
+      chromium python3 fonts-hosny-amiri fonts-noto-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Pin the Claude Code CLI version so a silent upstream change can't alter
@@ -43,6 +48,9 @@ USER runner
 ENV HOME=/home/runner \
     NODE_ENV=production \
     RUNNER_ENV=fly \
+    # render_study.py resolves the browser from CHROME_BIN first (Debian's
+    # package installs /usr/bin/chromium).
+    CHROME_BIN=/usr/bin/chromium \
     # Fly's own init is PID 1, so tini runs as a child and cannot reap orphans
     # by default (it warns about exactly this at boot). The Claude CLI spawns
     # grandchildren; without subreaper mode a killed session can leave zombies

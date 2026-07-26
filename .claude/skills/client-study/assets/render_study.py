@@ -30,10 +30,41 @@ Logo path is resolved from the repo's "Wassel Branding" folder.
 """
 import base64
 import os
+import shutil
 import subprocess
 import sys
 
-CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+def find_chrome() -> str:
+    """Locate a Chrome/Chromium binary cross-platform.
+
+    Honors CHROME_BIN first (set it on headless Linux/Fly), then PATH, then the
+    usual per-OS install locations. Raises with a clear message if none found —
+    the render step is useless without a browser.
+    """
+    env = os.environ.get("CHROME_BIN")
+    if env and os.path.exists(env):
+        return env
+    for name in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome"):
+        p = shutil.which(name)
+        if p:
+            return p
+    candidates = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    raise FileNotFoundError(
+        "No Chrome/Chromium found. Set CHROME_BIN, or install chromium "
+        "(apt-get install -y chromium on Linux)."
+    )
+
+
+CHROME = find_chrome()
 
 COPPER = "#B8734F"; CHARCOAL = "#4A4E54"; CHOC = "#4A2C2A"
 SAND = "#D4B896"; CREAM = "#F5EDE0"; GOLD = "#C09B5F"; TERRA = "#8E4E3A"
@@ -128,10 +159,14 @@ def build(body_path: str, out_name: str) -> None:
     html_path = os.path.abspath(out_name + ".html")
     open(html_path, "w", encoding="utf-8").write(html)
 
+    # Container/root Chromium refuses its sandbox — required on Linux/Fly, inert
+    # on Windows/macOS desktop Chrome.
+    linux_flags = ["--no-sandbox", "--disable-dev-shm-usage"] if sys.platform.startswith("linux") else []
+
     pdf_path = os.path.abspath(out_name + ".pdf")
     url = "file:///" + html_path.replace("\\", "/")
     r = subprocess.run(
-        [CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+        [CHROME, "--headless=new", "--disable-gpu", *linux_flags, "--no-pdf-header-footer",
          "--print-to-pdf=" + pdf_path, "--virtual-time-budget=15000", url],
         capture_output=True, text=True, timeout=120,
     )
@@ -142,7 +177,7 @@ def build(body_path: str, out_name: str) -> None:
     pages = body.count('class="page"')
     shot_path = os.path.abspath(out_name + "_preview.png")
     subprocess.run(
-        [CHROME, "--headless=new", "--disable-gpu", f"--screenshot={shot_path}",
+        [CHROME, "--headless=new", "--disable-gpu", *linux_flags, f"--screenshot={shot_path}",
          f"--window-size=794,{1123 * max(pages, 1)}", "--virtual-time-budget=15000", url],
         capture_output=True, text=True, timeout=120,
     )
