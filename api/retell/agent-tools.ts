@@ -80,7 +80,6 @@ export default async function handler(req: Request): Promise<Response> {
       case 'save_lead_info':         return json(await saveLeadInfo(call, args));
       case 'find_matching_projects': return json(await findProjects(call, args));
       case 'set_next_action':        return json(await setNextAction(call, args));
-      case 'debug_finder':           return json(await debugFinder());
       default:
         return json({ error: `unknown tool: ${name}` }, 400);
     }
@@ -411,41 +410,68 @@ async function findProjects(
   const amax = num(args.area_max) ?? savedArea.max; if (amax != null) req.area_max = amax;
   const beds = num(args.bedrooms) ?? savedBeds.min; if (beds != null) req.bedrooms = beds;
 
-  const out = await findMatchingProjects(supa, req, {
-    perGroup: 3,
-    sources: ['our_projects', 'all_projects'],
-  });
-  if (!out.ok) {
-    console.error('[retell-tools] finder error:', out.error, 'req:', JSON.stringify(req));
-    return { خطأ: `تعذر البحث: ${out.error}` };
+  // PROGRESSIVE RELAXATION — what a human rep does on the phone.
+  //
+  // The engine's hard constraints are correct for the SPA (a salesperson SEES
+  // which field cut the list and adjusts). On a live call an empty result is
+  // dead air, so we retry down a ladder and TELL the agent what was relaxed:
+  //   1. exactly what the client asked
+  //   2. drop property_type (stock is often typed differently than spoken)
+  //   3. widen the budget +25% and drop the bedroom filter
+  //   4. budget ceiling only
+  // Ranking inside each attempt stays 100% the engine's — we only choose which
+  // requirements to send, never the order that comes back.
+  const attempts: Array<{ req: MatchRequirements; relaxed: string | null }> = [{ req, relaxed: null }];
+  if (req.property_type) {
+    const { property_type: _pt, ...rest } = req;
+    attempts.push({ req: rest as MatchRequirements, relaxed: 'نوع الوحدة' });
+  }
+  if (req.budget_max != null || req.bedrooms != null || req.area_min != null) {
+    const wide: MatchRequirements = { ...req };
+    delete wide.property_type;
+    delete wide.bedrooms;
+    delete wide.area_min;
+    delete wide.area_max;
+    delete wide.budget_min;
+    if (wide.budget_max != null) wide.budget_max = Math.round(wide.budget_max * 1.25);
+    attempts.push({ req: wide, relaxed: 'الميزانية والمواصفات' });
   }
 
-  // Flatten groups in engine priority order; keep it voice-sized.
-  const flat = FINDER_GROUP_KEYS.flatMap((g) => out.result.groups[g] ?? []).slice(0, 4);
-  if (flat.length === 0) {
-    // Surface the engine's own diagnostics — tells the agent (and our logs)
-    // WHY nothing matched instead of a blind "no results".
-    const meta = out.result.metadata;
-    console.error('[retell-tools] finder empty:', JSON.stringify({ req, meta }));
-    return {
-      نتائج: [],
-      عدد_المرشحين: meta.total_candidates,
-      نواقص: meta.missing_required_preferences,
-      قيود_مستبعدة: meta.constraint_drops,
-      ملاحظات_المحرك: meta.notes,
-      ملاحظة: 'لا توجد مشاريع مطابقة بهذه الشروط — جرّب توسيع الميزانية أو الأحياء',
-    };
+  let lastConstraintDrops: Record<string, number> | null = null;
+  for (const attempt of attempts) {
+    const out = await findMatchingProjects(supa, attempt.req, {
+      perGroup: 3,
+      sources: ['our_projects', 'all_projects'],
+      locale: 'ar',                 // voice agent speaks Arabic — so must the explanations
+    });
+    if (!out.ok) {
+      console.error('[retell-tools] finder error:', out.error, 'req:', JSON.stringify(attempt.req));
+      return { خطأ: `تعذر البحث: ${out.error}` };
+    }
+    lastConstraintDrops = out.result.metadata.constraint_drops as Record<string, number>;
+    const flat = FINDER_GROUP_KEYS.flatMap((g) => out.result.groups[g] ?? []).slice(0, 4);
+    if (flat.length > 0) {
+      return {
+        نتائج: flat.map((m) => ({
+          المشروع: m.project_name,
+          الشرح: m.explanation,
+          ...(m.distance_km != null && m.nearest_ref_name
+            ? { المسافة: `${Math.round(m.distance_km)} كم من ${m.nearest_ref_name}` }
+            : {}),
+        })),
+        ...(attempt.relaxed
+          ? { تنبيه: `ما فيه مطابق تماماً — هذي أقرب الخيارات بعد التوسّع في ${attempt.relaxed}. وضّح ذلك للعميل بصراحة.` }
+          : {}),
+        تعليمات: 'اعرض مشروعاً أو مشروعين فقط بصيغة مختصرة، واعرض إرسال التفاصيل واتساب',
+      };
+    }
   }
+
+  console.error('[retell-tools] finder empty after relaxation:', JSON.stringify({ req, lastConstraintDrops }));
   return {
-    نتائج: flat.map((m) => ({
-      المشروع: m.project_name,
-      الشرح: m.explanation,
-      ...(m.distance_km != null && m.nearest_ref_name
-        ? { المسافة: `${Math.round(m.distance_km)} كم من ${m.nearest_ref_name}` }
-        : {}),
-    })),
-    العدد_الكلي: out.result.metadata.total_candidates,
-    تعليمات: 'اعرض مشروعاً أو مشروعين فقط بصيغة مختصرة، واعرض إرسال التفاصيل واتساب',
+    نتائج: [],
+    ...(lastConstraintDrops ? { قيود_مستبعدة: lastConstraintDrops } : {}),
+    ملاحظة: 'ما فيه شي متاح حالياً بهذي المواصفات — اعتذر للعميل، واعرض تسجيل طلبه والتواصل معه أول ما ينزل شي مناسب',
   };
 }
 
@@ -496,30 +522,6 @@ async function setNextAction(
     الموعد: dueAt,
     ...(mapped ? {} : { ملاحظة: `نوع الإجراء "${action}" غير معروف — سُجّل الموعد فقط` }),
   };
-}
-
-// ─── debug_finder (temporary diagnostic — not registered as an LLM tool) ──
-async function debugFinder(): Promise<Record<string, unknown>> {
-  const supa = getServiceSupabase();
-  const { data: ctx, error: ctxErr } = await supa.rpc('wassell_debug_ctx');
-  const { data: model } = await supa.from('models').select('id').eq('name', 'all_projects').maybeSingle();
-  let rpcRows: number | string = 'model not found';
-  let directRows: number | string = 'model not found';
-  let scope: unknown = null;
-  if (model?.id) {
-    const { data, error } = await supa.rpc('wassell_model_records_json', {
-      p_model_id: model.id, p_fields: ['project_name'],
-    });
-    rpcRows = error ? `error: ${error.message}` : Array.isArray(data) ? data.length : typeof data;
-    const { count, error: cErr } = await supa
-      .from('unified_records').select('id', { count: 'exact', head: true }).eq('model_id', model.id);
-    directRows = cErr ? `error: ${cErr.message}` : (count ?? -1);
-    const { data: sc, error: scErr } = await supa.rpc('wassell_view_scope_class', {
-      auth_user_id: null, the_model_id: model.id,
-    });
-    scope = scErr ? `error: ${scErr.message}` : sc;
-  }
-  return { ctx: ctxErr ? `error: ${ctxErr.message}` : ctx, rpcRows, directRows, scope };
 }
 
 // ─── plumbing ──────────────────────────────────────────────────────
