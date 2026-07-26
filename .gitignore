@@ -82,3 +82,4 @@ Desktop.ini
 .vercel
 .env*.local
 tmp/
+dbq.tmp.mjs
