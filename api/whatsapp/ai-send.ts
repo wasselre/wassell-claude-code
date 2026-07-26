@@ -95,15 +95,33 @@ export default async function handler(req: Request): Promise<Response> {
   const deviceId = input.device_id || (await resolveDefaultDeviceId());
   if (!deviceId) return json({ error: 'no WhatsApp device configured' }, 500);
 
-  let wid: string;
-  try {
-    const res = await sendMessage({ deviceId, phone: `+${digits}`, body: text });
-    wid = res.wid;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error('[whatsapp-ai-send] send failed:', msg);
-    return json({ error: `send failed: ${msg}` }, 502);
+  // Send via the SCHEDULED QUEUE, not a direct WAHA call.
+  //
+  // WAHA refuses Vercel's egress with 403 while accepting the Fly worker and
+  // operator machines (verified live 2026-07-26: identical API key, direct call
+  // 200, from a Vercel function 403 — it is network-level, not credentials).
+  // The worker drains this queue every few seconds and owns the only working
+  // path to WAHA, so an AI reply lands within ~5s instead of failing outright.
+  // If the firewall is ever opened to Vercel, this can go back to a direct
+  // sendMessage() — the import is kept for that day.
+  void sendMessage;
+  const { data: schedId, error: schedErr } = await supa.rpc('scheduled_whatsapp_enqueue', {
+    p_device_id: deviceId,
+    p_chat_wid: chatWid,
+    p_phone: `+${digits}`,
+    p_body: text,
+    p_media: null,
+    p_reference: `ai:${input.job_id ?? 'manual'}:${Date.now()}`,
+    p_deliver_at: new Date().toISOString(),
+    p_user_id: null,
+  });
+  if (schedErr) {
+    console.error('[whatsapp-ai-send] enqueue failed:', schedErr.message);
+    return json({ error: `enqueue failed: ${schedErr.message}` }, 502);
   }
+  // The real message id only exists once the worker sends; the audit row is
+  // keyed by the queue job and matched to the outbound echo on (chat, body).
+  const wid = `sched:${String(schedId)}`;
 
   // Audit + the human-vs-AI discriminator. Best-effort: a failed insert must
   // not make the session think the message never went out (it did) — but it
