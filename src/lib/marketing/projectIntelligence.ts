@@ -68,3 +68,46 @@ export function factsPresent(d: ProjectIntelligence): PIFactType[] {
 export function isTruncated(list: { total: number; shown: number }): boolean {
   return list.total > list.shown;
 }
+
+// ── Organization Intelligence helpers ───────────────────────────────────────
+import type { OrganizationIntelligence } from './client';
+
+export type Trend = 'up' | 'down' | 'flat' | 'unknown';
+
+export interface OrganizationIntelligenceSummary {
+  /** Roles the org actually holds, e.g. ['developer','authorized_marketer'].
+   *  An org can hold several — 9 do in production. */
+  roles: string[];
+  projectCount: number;
+  postingTrend: Trend;
+  postingChangePct: number | null;
+  activeAds: number;
+  /** null when growth is not yet measurable — NEVER 0, which would read as
+   *  "flat" when the truth is "we cannot see it yet". */
+  followerChange: number | null;
+  growthMeasurable: boolean;
+  dominantPlatform: { platform: string; share_pct: number } | null;
+  /** True when content exists but has not been through OCR/enrichment, so an
+   *  empty facts section is a processing gap, not advertiser silence. */
+  hasUnprocessedContent: boolean;
+}
+
+export function organizationIntelligenceSummary(d: OrganizationIntelligence): OrganizationIntelligenceSummary {
+  const pct = d.posting_frequency.change_pct;
+  let postingTrend: Trend = 'unknown';
+  if (pct != null) postingTrend = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat';
+
+  const top = [...d.trends.platforms].sort((a, b) => (b.share_pct ?? 0) - (a.share_pct ?? 0))[0];
+
+  return {
+    roles: Object.keys(d.roles ?? {}).filter((r) => (d.roles[r] ?? 0) > 0),
+    projectCount: d.projects.total,
+    postingTrend,
+    postingChangePct: pct,
+    activeAds: d.ads.active,
+    followerChange: d.audience.growth_measurable ? d.audience.net_change : null,
+    growthMeasurable: d.audience.growth_measurable,
+    dominantPlatform: top ? { platform: top.platform, share_pct: top.share_pct ?? 0 } : null,
+    hasUnprocessedContent: d.coverage.content_unprocessed_posts > 0,
+  };
+}

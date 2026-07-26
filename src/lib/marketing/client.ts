@@ -296,6 +296,82 @@ export const fetchProjectIntelligence = (
   opts: { from?: string; to?: string; limit?: number } = {},
 ) => call<{ intelligence: ProjectIntelligence }>('project_intelligence', { project_id, ...opts });
 
+// ── Organization Intelligence ───────────────────────────────────────────────
+// Mirrors mkt_organization_intelligence(). Serves developers AND marketing
+// companies from one shape — role is per-project, never a property of the org.
+export interface OIProject {
+  project_id: string; name: string | null; city: string | null; status: string | null;
+  role: string; human_confirmed: boolean | null;
+  post_count: number; candidate_post_count: number; fact_count: number;
+  last_activity_at: string | null;
+  min_advertised_price: number | null; max_advertised_price: number | null;
+}
+export interface OIAudience {
+  current_followers: number | null;
+  history_points: number;
+  /** False means we cannot SEE growth yet (fewer than 2 observations) — which is
+   *  a different claim from "no growth". The UI must not render 0%. */
+  growth_measurable: boolean;
+  net_change: number | null;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
+  series: Array<{ day: string; followers: number }>;
+}
+export interface OIPostingFrequency {
+  total_posts: number;
+  months_active: number;
+  avg_posts_per_active_month: number | null;
+  last_3_months: number;
+  prior_3_months: number;
+  /** NULL when there is no prior baseline — a percentage against zero history
+   *  would be a fabricated claim. */
+  change_pct: number | null;
+}
+export interface OICoverage {
+  has_content: boolean; has_facts: boolean; has_ads: boolean;
+  content_processed_posts: number; content_unprocessed_posts: number;
+  note: string;
+}
+export interface OrganizationIntelligence {
+  generated_at: string;
+  window: { from: string | null; to: string | null };
+  organization: {
+    id: string; name: string | null; name_ar: string | null; name_en: string | null;
+    website: string | null; hq_city: string | null; status: string | null;
+    followers_cached: number | null; meta_page_url: string | null;
+    meta_confirmed: boolean | null; developer_record_id: string | null;
+  } | null;
+  /** Project counts per relationship_type, e.g. { developer: 19, authorized_marketer: 10 }. */
+  roles: Record<string, number>;
+  projects: { total: number; shown: number; items: OIProject[] };
+  social_accounts: Array<{
+    id: string; platform: string; handle: string | null; profile_url: string | null;
+    followers: number | null; verified: boolean | null;
+    collection_enabled: boolean | null; last_synced_at: string | null;
+  }>;
+  audience: OIAudience;
+  posting_frequency: OIPostingFrequency;
+  ads: { total: number; active: number; shown: number; recent: PIAd[] };
+  facts: Partial<Record<PIFactType | 'content_type' | 'objective', PIFactValue[]>>;
+  trends: { activity: PIActivityPoint[]; price: PIPricePoint[]; platforms: PIPlatformSlice[] };
+  share_of_voice: Array<{
+    period_start: string; period_end: string; scope: string; scope_key: string;
+    post_count: number; ad_count: number; engagement_total: number; share_pct: number;
+  }>;
+  campaigns: { total: number; active: number; shown: number; items: PICampaign[] };
+  insights: Array<{
+    id: string; kind: string; severity: string; title: string;
+    body: string | null; evidence: Record<string, unknown> | null; generated_at: string;
+  }>;
+  /** What this page cannot answer yet, and why. Show it — an empty facts
+   *  section with unprocessed content is not "the advertiser says nothing". */
+  coverage: OICoverage;
+}
+export const fetchOrganizationIntelligence = (
+  organization_id: string,
+  opts: { from?: string; to?: string; limit?: number } = {},
+) => call<{ intelligence: OrganizationIntelligence }>('organization_intelligence', { organization_id, ...opts });
+
 // ── Advertiser discovery / confirmation ─────────────────────────────────────
 export interface ScoreReason { code: string; label_en: string; label_ar: string; delta: number }
 export interface AdvertiserCandidate {

@@ -376,6 +376,28 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ intelligence: data });
       }
 
+      case 'organization_intelligence': {
+        // The Organization Intelligence page in ONE round trip. Serves both
+        // developers and marketing companies without a variant — the role is
+        // read per-project from mkt_project_organizations, because an org can be
+        // (and 9 in production are) both at once.
+        const oid = str(body.organization_id);
+        if (!oid) return jsonError(400, 'organization_id required');
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { data, error } = await svc.rpc('mkt_organization_intelligence', {
+          p_org_id: oid,
+          p_from: str(body.from) || null,
+          p_to: str(body.to) || null,
+          p_limit: typeof body.limit === 'number' ? Math.min(50, Math.max(1, body.limit)) : 10,
+        });
+        if (error) return jsonError(500, error.message);
+        if (!data || !(data as Record<string, unknown>).organization) {
+          return jsonError(404, 'organization not found');
+        }
+        return jsonOk({ intelligence: data });
+      }
+
       case 'campaigns': {
         // Cross-platform campaigns for an org (organic + paid), newest-active first.
         const org = str(body.organization_id);
