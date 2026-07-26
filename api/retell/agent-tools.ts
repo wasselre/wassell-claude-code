@@ -477,18 +477,44 @@ async function findProjects(
 
 // ─── set_next_action ───────────────────────────────────────────────
 
+/**
+ * Book the next step by CREATING A FOLLOW-UP — not by writing the client's
+ * next_action_* fields.
+ *
+ * Those fields are DERIVED: the `records_fill_client_next_action` trigger
+ * recomputes them from the client's open follow-ups on every write, so a
+ * direct write is silently overwritten (verified live 2026-07-24 — the tool
+ * reported one datetime while the record kept another). Follow-ups are the
+ * Sales-OS source of truth, so creating one is also what makes the task show
+ * up in My Tasks / the Workspace for a human rep.
+ */
+const FOLLOWUP_TYPE_BY_ACTION: Record<string, string> = {
+  call: 'appointment_booking_call',
+  اتصال: 'appointment_booking_call',
+  مكالمة: 'appointment_booking_call',
+  whatsapp: 'whatsapp_follow_up',
+  واتساب: 'whatsapp_follow_up',
+  visit: 'appointment_booking_call',
+  زيارة: 'appointment_booking_call',
+  موعد: 'appointment_booking_call',
+};
+
 async function setNextAction(
   call: RetellToolCall,
   args: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const row = await resolveClient(call);
   if (!row) return { خطأ: 'العميل غير مسجل — احفظ معلوماته أولاً عبر save_client_info' };
-  const { id: modelId, schema } = await clientsModel();
   const supa = getServiceSupabase();
 
-  const action = typeof args.action === 'string' ? args.action : '';
-  const opts = fieldOptions(schema, 'next_action_type');
-  const mapped = action ? mapOption(opts, action) : null;
+  const { data: fuModel } = await supa.from('models').select('id').eq('name', 'followups').maybeSingle();
+  if (!fuModel?.id) throw new Error('followups model not found');
+
+  const action = (typeof args.action === 'string' ? args.action : '').trim().toLowerCase();
+  const followupType =
+    FOLLOWUP_TYPE_BY_ACTION[action] ??
+    FOLLOWUP_TYPE_BY_ACTION[normalizeAr(action)] ??
+    'appointment_booking_call';
 
   let dueAt: string | null = null;
   if (typeof args.due_at === 'string' && args.due_at.trim()) {
@@ -501,27 +527,23 @@ async function setNextAction(
     dueAt = t.toISOString();
   }
   const note = typeof args.note === 'string' && args.note.trim() ? args.note.trim() : null;
+  const stamp = new Date().toISOString().slice(0, 10);
 
-  const patch: Record<string, unknown> = { next_action_due_at: dueAt };
-  if (mapped) patch.next_action_type = mapped;
-  if (note) {
-    const stamp = new Date().toISOString().slice(0, 10);
-    const prev = (row.data.preference_notes as string | undefined) ?? '';
-    patch.preference_notes = `${prev ? `${prev}\n` : ''}[مكالمة AI ${stamp}] متابعة: ${note}`;
-  }
-  const { error } = await supa.rpc('record_save', {
-    p_model_id: modelId,
-    p_id: row.id,
-    p_data: { ...row.data, ...patch },
-    p_created_by: null,
-    p_expected_version: row.version,
-  });
-  if (error) throw new Error(`set_next_action failed: ${error.message}`);
-  return {
-    تم: true,
-    الموعد: dueAt,
-    ...(mapped ? {} : { ملاحظة: `نوع الإجراء "${action}" غير معروف — سُجّل الموعد فقط` }),
+  const followupId = crypto.randomUUID();
+  const data: Record<string, unknown> = {
+    client_id: row.id,
+    followup_type: followupType,
+    followup_status: 'open',
+    scheduled_datetime: dueAt,
+    notes: `[مكالمة المساعد الذكي ${stamp}] ${note ?? 'متابعة بعد مكالمة الوكيل'}`,
   };
+  const { error } = await supa.rpc('record_save', {
+    p_model_id: fuModel.id,
+    p_id: followupId,
+    p_data: data,
+  });
+  if (error) throw new Error(`set_next_action (followup create) failed: ${error.message}`);
+  return { تم: true, الموعد: dueAt, نوع_المتابعة: followupType };
 }
 
 // ─── plumbing ──────────────────────────────────────────────────────
