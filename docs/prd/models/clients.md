@@ -5,7 +5,7 @@
 # Model: Clients / العملاء  `clients`
 
 **Status:** Auto-generated (do not hand-edit) — reflects live Supabase
-**Last updated (from DB):** 2026-07-19
+**Last updated (from DB):** 2026-07-23
 **Model id:** `2e86f197-385f-4853-908f-b4cb7237f7d8`
 **Storage:** unified records (JSONB)
 **Group:** New Group
@@ -17,7 +17,7 @@
 - Fields: **38**
 - Section-selector field: none
 - Duplicate-check field: Mobile Number (`phone_number`)
-- Custom buttons: 0
+- Custom buttons: 1
 
 ## Card view
 - Title: Client Name (`client_name`)
@@ -240,3 +240,8 @@
 | API name (slug) | Label (EN / AR) | Type | Required | Width | In table | Details |
 | --- | --- | --- | --- | --- | --- | --- |
 | `call_history` | Call History / سجل المكالمات | Call history | no | full | no |  |
+
+## Custom buttons
+
+- **AI Call / اتصال المساعد الذكي** — icon `phone-outgoing`, shows in: record_form
+  - action: `ai_call`

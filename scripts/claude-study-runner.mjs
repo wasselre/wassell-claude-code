@@ -181,9 +181,21 @@ async function handleMktContentEnrichment(job) {
   const postIds = Array.isArray(job.payload?.post_ids) ? job.payload.post_ids : [];
   if (postIds.length === 0) throw new Error('payload.post_ids is required');
 
-  const { data: evidence, error: evErr } = await supa.rpc('mkt_intelligence_evidence', { p_post_ids: postIds });
+  const { data: evidenceRaw, error: evErr } = await supa.rpc('mkt_intelligence_evidence', { p_post_ids: postIds });
   if (evErr) throw new Error(`evidence rpc failed: ${evErr.message}`);
-  if (!Array.isArray(evidence) || evidence.length === 0) throw new Error('no evidence returned');
+  if (!Array.isArray(evidenceRaw) || evidenceRaw.length === 0) throw new Error('no evidence returned');
+
+  // A post with NO narrowed candidates cannot be decided — the Skill would be
+  // forced to answer -1 for it, silently producing "no project" that looks like a
+  // real judgement. That state means deterministic narrowing is missing (e.g. a
+  // legacy failure wiped candidate_projects), so skip those posts here and leave
+  // them awaiting_intelligence for a content_process re-run to re-narrow.
+  const evidence = evidenceRaw.filter((e) => Array.isArray(e.candidates) && e.candidates.length > 0);
+  const skippedNoCandidates = evidenceRaw.length - evidence.length;
+  if (evidence.length === 0) {
+    return { batch: postIds.length, evidence: 0, processed: 0, skipped_no_candidates: skippedNoCandidates,
+      note: 'all posts lack narrowed candidates — re-run content_process to re-narrow before deciding' };
+  }
 
   const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-enrich-'));
   const evidenceFile = path.join(workDir, 'evidence.json').replace(/\\/g, '/');
@@ -234,7 +246,7 @@ async function handleMktContentEnrichment(job) {
       await supa.rpc('mkt_content_set_status', { p_post: v.postId, p_status: v.deterministicPartial ? 'partial' : 'processed', p_media_count: null });
       processed++;
     }
-    return { batch: postIds.length, evidence: evidence.length, processed, validation_errors: validated.errors.slice(0, 10) };
+    return { batch: postIds.length, evidence: evidence.length, processed, skipped_no_candidates: skippedNoCandidates, validation_errors: validated.errors.slice(0, 10) };
   } finally {
     try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
   }

@@ -9,6 +9,11 @@
 -- JSON, and writes results via the existing scoped upsert RPCs.
 -- ============================================================================
 
+-- the runner is now the intelligence engine for marketing content, not just studies
+ALTER TABLE public.claude_jobs DROP CONSTRAINT IF EXISTS claude_jobs_kind_check;
+ALTER TABLE public.claude_jobs ADD CONSTRAINT claude_jobs_kind_check
+  CHECK (kind = ANY (ARRAY['ping','client_study','mkt_content_enrichment']));
+
 ALTER TABLE public.mkt_content_posts DROP CONSTRAINT IF EXISTS mkt_content_posts_processing_status_check;
 ALTER TABLE public.mkt_content_posts ADD CONSTRAINT mkt_content_posts_processing_status_check
   CHECK (processing_status IN ('collected','processing','awaiting_intelligence','processed','partial','failed'));
