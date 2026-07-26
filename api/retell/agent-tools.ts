@@ -532,7 +532,11 @@ async function setNextAction(
   const followupId = crypto.randomUUID();
   const data: Record<string, unknown> = {
     client_id: row.id,
-    followup_type: followupType,
+    // section_selector fields store an ARRAY — every existing follow-up row
+    // does, and the record form reads it as one to decide which sections show.
+    // (The SQL side tolerates both via _followup_next_action_type, but the UI
+    // does not.)
+    followup_type: [followupType],
     followup_status: 'open',
     scheduled_datetime: dueAt,
     notes: `[مكالمة المساعد الذكي ${stamp}] ${note ?? 'متابعة بعد مكالمة الوكيل'}`,
