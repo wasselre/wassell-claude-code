@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileText, Loader2, Copy, ExternalLink, RefreshCw, AlertTriangle } from 'lucide-react';
+import { FileText, Loader2, Copy, ExternalLink, RefreshCw, AlertTriangle, X, Plus, Check } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import {
   enqueueClientStudy,
@@ -9,11 +9,13 @@ import {
 
 /**
  * «توليد دراسة» — enqueues a claude_jobs client_study for this chat and shows
- * the latest job's status strip: just the button when no job has run yet,
- * a progress strip while the runner works (a full headless Claude Code
- * session, ~10–20 min), and a review card when ready (open PDF + copy the
- * WhatsApp draft). The rep always reviews before sending — nothing goes to
- * the client automatically.
+ * the latest job's status strip. Rep flow:
+ *  - optional NOTES box → what to focus on / avoid (fed to the Claude session);
+ *  - a progress strip while the runner works (a full headless Claude Code
+ *    session, ~10–20 min);
+ *  - a review card when ready: open the PDF (also auto-attached to the client's
+ *    files), copy the WhatsApp draft, dismiss the summary (X), or generate a
+ *    fresh study. Nothing is sent to the client automatically.
  */
 export default function StudyJobCard({ chatRecordId }: { chatRecordId: string }) {
   const isAr = useAppStore((s) => s.language === 'ar');
@@ -22,14 +24,24 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
 
   const [job, setJob] = useState<ClaudeJob | null>(null);
   const [busy, setBusy] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [summaryDismissed, setSummaryDismissed] = useState(false);
   const jobRef = useRef<ClaudeJob | null>(null);
   jobRef.current = job;
+
+  // Per-job "summary dismissed" flag, persisted so it stays hidden across reloads.
+  const dismissKey = (id: string) => `wassell_study_summary_dismissed_${id}`;
 
   const refresh = useCallback(async () => {
     try {
       const j = await fetchLatestStudyJob(chatRecordId);
       setJob(j);
-      // Announce the pending→ready flip once.
+      if (j) {
+        try {
+          setSummaryDismissed(localStorage.getItem(dismissKey(j.id)) === '1');
+        } catch { /* private mode — treat as not dismissed */ }
+      }
       const prev = jobRef.current;
       if (j && prev && prev.id === j.id && prev.status !== 'ready' && j.status === 'ready') {
         addToast(
@@ -38,12 +50,10 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
         );
       }
     } catch (err) {
-      // Table read failing is worth a console trace but not a toast loop.
       console.error('[StudyJobCard] fetch failed:', err);
     }
   }, [chatRecordId, addToast]);
 
-  // Initial load + poll while a job is active.
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -57,11 +67,13 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
   const start = async () => {
     setBusy(true);
     try {
-      await enqueueClientStudy(chatRecordId, currentUserId);
+      await enqueueClientStudy(chatRecordId, currentUserId, notes);
       addToast(
         isAr ? 'بدأنا الدراسة — تاخذ عادة ١٠–٢٠ دقيقة' : 'Study started — usually takes 10–20 minutes',
         'success',
       );
+      setNotes('');
+      setNotesOpen(false);
       await refresh();
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -83,27 +95,64 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
     }
   };
 
+  const dismissSummary = () => {
+    if (!job) return;
+    try { localStorage.setItem(dismissKey(job.id), '1'); } catch { /* ignore */ }
+    setSummaryDismissed(true);
+  };
+
   const active = job && (job.status === 'pending' || job.status === 'running');
+  const ready = job?.status === 'ready' && !!job.result;
+
+  // The generate control is a fresh-study button once one already exists.
+  const generateLabel = ready
+    ? (isAr ? 'توليد دراسة جديدة' : 'Generate a new study')
+    : (isAr ? 'توليد دراسة' : 'Generate study');
 
   return (
     <div className="px-3 pt-2 shrink-0">
-      {/* Trigger button — hidden while a job is in flight */}
+      {/* Trigger + notes — hidden only while a job is in flight */}
       {!active && (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={start}
-            disabled={busy}
-            className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2.5 py-1 text-[11px] font-medium text-copper transition-colors hover:bg-copper/20 disabled:opacity-50"
-            title={isAr ? 'دراسة سوق مخصصة لسؤال هذا العميل — تُنشأ بالذكاء الاصطناعي وتراجعها قبل الإرسال' : 'AI market study for this client’s question — you review before sending'}
-          >
-            {busy ? <Loader2 size={12} className="animate-spin" /> : <FileText size={12} />}
-            {isAr ? 'توليد دراسة' : 'Generate study'}
-          </button>
-          {job?.status === 'failed' && (
-            <span className="inline-flex items-center gap-1 text-[11px] text-red-600" title={job.error ?? undefined}>
-              <AlertTriangle size={12} />
-              {isAr ? 'فشلت آخر دراسة — جرّب من جديد' : 'Last study failed — try again'}
-            </span>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={start}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2.5 py-1 text-[11px] font-medium text-copper transition-colors hover:bg-copper/20 disabled:opacity-50"
+              title={isAr ? 'دراسة سوق مخصصة لسؤال هذا العميل — تُنشأ بالذكاء الاصطناعي وتراجعها قبل الإرسال' : 'AI market study for this client’s question — you review before sending'}
+            >
+              {busy ? <Loader2 size={12} className="animate-spin" /> : ready ? <Plus size={12} /> : <FileText size={12} />}
+              {generateLabel}
+            </button>
+            <button
+              onClick={() => setNotesOpen((v) => !v)}
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium transition-colors ${
+                notes.trim() ? 'border-copper bg-copper/10 text-copper' : 'border-charcoal/20 text-charcoal/60 hover:bg-charcoal/5'
+              }`}
+              title={isAr ? 'ملاحظات لكلود قبل التوليد (اختياري)' : 'Notes for Claude before generating (optional)'}
+            >
+              {isAr ? 'ملاحظات لكلود' : 'Notes for Claude'}
+              {notes.trim() ? <Check size={11} /> : null}
+            </button>
+            {job?.status === 'failed' && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-red-600" title={job.error ?? undefined}>
+                <AlertTriangle size={12} />
+                {isAr ? 'فشلت آخر دراسة — جرّب من جديد' : 'Last study failed — try again'}
+              </span>
+            )}
+          </div>
+          {notesOpen && (
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={2}
+              dir="auto"
+              placeholder={isAr
+                ? 'مثال: ركّز على الشقق تحت مليون في الياسمين فقط، وتجاهل العروض القديمة، وقارن بمشروع كذا…'
+                : 'e.g. Focus only on apartments under 1M in Al-Yasmin, ignore old listings, compare against project X…'}
+              className="input w-full text-[12px] leading-relaxed"
+              disabled={busy}
+            />
           )}
         </div>
       )}
@@ -128,7 +177,7 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
       )}
 
       {/* Ready — review card */}
-      {job?.status === 'ready' && job.result && (
+      {ready && job.result && (
         <div className="mt-2 rounded-xl border border-gold/50 bg-white px-3 py-2.5">
           <div className="flex items-center gap-2 flex-wrap">
             <FileText size={14} className="text-copper shrink-0" />
@@ -156,8 +205,25 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
               </button>
             )}
           </div>
-          {job.result.summary && (
-            <p className="mt-1.5 text-[11px] leading-relaxed text-charcoal/70">{job.result.summary}</p>
+          {/* Saved-to-client note */}
+          {job.result.attached_file_id && (
+            <p className="mt-1 inline-flex items-center gap-1 text-[10.5px] text-charcoal/45">
+              <Check size={10} className="text-green-600" />
+              {isAr ? 'محفوظة في ملفات العميل' : 'Saved to the client’s files'}
+            </p>
+          )}
+          {/* Summary — dismissable with X */}
+          {job.result.summary && !summaryDismissed && (
+            <div className="mt-1.5 flex items-start gap-1.5">
+              <p className="flex-1 text-[11px] leading-relaxed text-charcoal/70">{job.result.summary}</p>
+              <button
+                onClick={dismissSummary}
+                className="shrink-0 mt-0.5 text-charcoal/30 hover:text-red-500 transition-colors"
+                title={isAr ? 'إزالة الملخص' : 'Remove summary'}
+              >
+                <X size={12} />
+              </button>
+            </div>
           )}
           {(job.result.heads_ups?.length ?? 0) > 0 && (
             <ul className="mt-1 space-y-0.5">

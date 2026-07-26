@@ -11,6 +11,8 @@ export interface ClaudeJobResult {
   title?: string;
   pdf_signed_url?: string;
   pdf_storage_path?: string;
+  /** files.id of the PDF attached to the client record (null if attach failed). */
+  attached_file_id?: string | null;
   whatsapp_draft?: string;
   summary?: string;
   heads_ups?: string[];
@@ -29,13 +31,18 @@ export interface ClaudeJob {
 
 export class ClaudeJobsError extends Error {}
 
-export async function enqueueClientStudy(chatRecordId: string, requestedByUserId: string | null): Promise<string> {
+export async function enqueueClientStudy(
+  chatRecordId: string,
+  requestedByUserId: string | null,
+  notes?: string,
+): Promise<string> {
   if (!supabase) throw new ClaudeJobsError('Supabase غير متصل');
+  const trimmed = (notes ?? '').trim();
   const { data, error } = await supabase
     .from('claude_jobs')
     .insert({
       kind: 'client_study',
-      payload: { chat_record_id: chatRecordId },
+      payload: { chat_record_id: chatRecordId, ...(trimmed ? { notes: trimmed } : {}) },
       requested_by_user_id: requestedByUserId,
     })
     .select('id')

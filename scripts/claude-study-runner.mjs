@@ -163,15 +163,62 @@ async function handlePing(job) {
   return { pong_at: new Date().toISOString(), echo: out.trim().slice(0, 100) };
 }
 
+// Attach the generated PDF to the chat's linked client as a `files` row
+// (kind='pdf', bucket wassel-files). Returns the new files.id, or null if the
+// chat has no client link / anything fails. Best-effort by contract.
+async function attachStudyToClient({ chatRecordId, storagePath, sizeBytes, title, ownerUserId }) {
+  try {
+    const { data: chatRows, error: chatErr } = await supa
+      .from('records').select('data').eq('id', chatRecordId).limit(1);
+    if (chatErr) throw chatErr;
+    const clientId = chatRows?.[0]?.data?.client_link;
+    if (!clientId || typeof clientId !== 'string') return null; // unlinked chat → nothing to attach to
+
+    const { data: modelRows, error: modelErr } = await supa
+      .from('models').select('id').eq('name', 'clients').limit(1);
+    if (modelErr) throw modelErr;
+    const clientsModelId = modelRows?.[0]?.id;
+    if (!clientsModelId) return null;
+
+    const fileRow = {
+      model_id: clientsModelId,
+      record_id: clientId,
+      uploaded_by_user_id: ownerUserId,
+      original_name: `${title}.pdf`,
+      mime_type: 'application/pdf',
+      size_bytes: sizeBytes,
+      storage_bucket: 'wassel-files',
+      storage_path: storagePath,
+      kind: 'pdf',
+    };
+    const { data: inserted, error: insErr } = await supa
+      .from('files').insert(fileRow).select('id').single();
+    if (insErr) throw insErr;
+    return inserted?.id ?? null;
+  } catch (e) {
+    console.error('[runner] attach-to-client failed (non-fatal):', e.message ?? e);
+    return null;
+  }
+}
+
 async function handleClientStudy(job) {
   const chatId = job.payload?.chat_record_id;
   if (!chatId) throw new Error('payload.chat_record_id is required');
+
+  const notes = typeof job.payload?.notes === 'string' ? job.payload.notes.trim() : '';
 
   const workDir = mkdtempSync(path.join(tmpdir(), 'claude-study-'));
   const sentinel = path.join(workDir, 'result.json');
   const prompt = [
     `/client-study https://app.wassel.re/model/chats/${chatId}`,
     '',
+    ...(notes ? [
+      'The rep gave these NOTES — treat them as priority instructions for scope,',
+      'focus, framing, or what to avoid (they override the skill defaults where',
+      `they conflict):`,
+      `«${notes}»`,
+      '',
+    ] : []),
     'You are running HEADLESS from the app queue — no one can answer questions,',
     'so make every decision autonomously per the skill. When the study is done',
     'and visually verified, write a JSON file to exactly this path:',
@@ -218,11 +265,20 @@ async function handleClientStudy(job) {
       .createSignedUrl(storagePath, 7 * 24 * 3600);
     if (signErr) throw new Error(`signed url failed: ${signErr.message}`);
 
+    // Attach the PDF to the linked client's files (files.model_id+record_id IS
+    // the primary attachment). Best-effort — a broken attach must not fail the
+    // whole study; the signed URL is still returned.
+    const attachedFileId = await attachStudyToClient({
+      chatRecordId: chatId, storagePath, sizeBytes: pdfBytes.length,
+      title: result.title ?? 'دراسة عقارية', ownerUserId: job.requested_by_user_id ?? null,
+    });
+
     return {
       title: result.title ?? 'دراسة عقارية',
       pdf_storage_path: storagePath,
       pdf_signed_url: signed.signedUrl,
       pdf_bytes: pdfBytes.length,
+      attached_file_id: attachedFileId,
       whatsapp_draft: result.whatsapp_draft ?? '',
       summary: result.summary ?? '',
       heads_ups: Array.isArray(result.heads_ups) ? result.heads_ups : [],
