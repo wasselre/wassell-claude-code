@@ -79,6 +79,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'save_client_info':       return json(await saveClientInfo(call, args));
       case 'save_lead_info':         return json(await saveLeadInfo(call, args));
       case 'find_matching_projects': return json(await findProjects(call, args));
+      case 'get_project_details':    return json(await getProjectDetails(args));
       case 'set_next_action':        return json(await setNextAction(call, args));
       default:
         return json({ error: `unknown tool: ${name}` }, 400);
@@ -495,6 +496,100 @@ async function findProjects(
     نتائج: [],
     ...(lastConstraintDrops ? { قيود_مستبعدة: lastConstraintDrops } : {}),
     ملاحظة: 'ما فيه شي متاح حالياً بهذي المواصفات — اعتذر للعميل، واعرض تسجيل طلبه والتواصل معه أول ما ينزل شي مناسب',
+  };
+}
+
+// ─── get_project_details ───────────────────────────────────────────
+// Live call 2026-07-26: the customer asked "وش تفاصيل الوحدات المتاحة؟" and
+// the agent had nothing — find_matching_projects returns a summary only, so it
+// fell back to "أرسلها لك على الواتساب" and the customer pushed back ("وش
+// فايدتك إذا ما تعرف"). The facts ARE on the project record (area/bedroom/
+// bathroom ranges, availability, per-m² price, construction status); this tool
+// reads them for ONE project by name.
+
+async function getProjectDetails(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const wanted = typeof args.project_name === 'string' ? args.project_name.trim() : '';
+  if (!wanted) return { خطأ: 'اسم المشروع مطلوب' };
+
+  const supa = getServiceSupabase();
+  const { data: model } = await supa.from('models').select('id').eq('name', 'all_projects').maybeSingle();
+  if (!model?.id) throw new Error('all_projects model not found');
+
+  // Name match: exact → contains, both on the Arabic-normalized form (spoken
+  // names drop hamza/ta-marbuta and Retell's ASR renders digits as words).
+  const { data: rows, error } = await supa.rpc('wassell_model_records_json', {
+    p_model_id: model.id,
+    p_fields: [
+      'project_name', 'city_name', 'latitude', 'longitude',
+      'area_range', 'available_area_range', 'price_range', 'available_price_range',
+      'bedroom_range', 'bathroom_range', 'unit_types', 'unit_count',
+      'available_units', 'sold_units', 'construction_status', 'project_status',
+      'avg_price_per_m2',
+    ],
+  });
+  if (error) throw new Error(`project load failed: ${error.message}`);
+  const list = (Array.isArray(rows) ? rows : []) as Array<{ id: string; data: Record<string, unknown> }>;
+
+  const target = normalizeAr(wanted);
+  const nameOf = (r: { data: Record<string, unknown> }) => normalizeAr(String(r.data.project_name ?? ''));
+  const match =
+    list.find((r) => nameOf(r) === target) ??
+    list.find((r) => nameOf(r).includes(target)) ??
+    list.find((r) => target.includes(nameOf(r)) && nameOf(r).length > 3);
+  if (!match) {
+    return { وجد: false, ملاحظة: `ما لقيت مشروع بهذا الاسم (${wanted}) — اسأل العميل يعيد الاسم أو اعرض البحث من جديد` };
+  }
+
+  const d = match.data;
+  const range = (v: unknown): string | null => {
+    if (!v || typeof v !== 'object') return null;
+    const r = v as { min?: unknown; max?: unknown };
+    if (r.min == null && r.max == null) return null;
+    return r.min === r.max ? `${r.min}` : `${r.min ?? '؟'}–${r.max ?? '؟'}`;
+  };
+  const STATUS_AR: Record<string, string> = {
+    ready: 'جاهز للتسليم', under_construction: 'تحت الإنشاء', off_plan: 'على الخارطة',
+  };
+
+  // District isn't stored on projects — resolve the containing district from
+  // coordinates via the same PostGIS RPC the finder uses.
+  let district: string | null = null;
+  const lat = Number(d.latitude);
+  const lng = Number(d.longitude);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) {
+    const { data: dp } = await supa.rpc('districts_for_points', {
+      p_points: [{ id: match.id, lat, lng }],
+    });
+    const hit = (dp as Array<{ district_record_id: string | null }> | null)?.[0];
+    if (hit?.district_record_id) {
+      const { data: drec } = await supa
+        .from('unified_records').select('data').eq('id', hit.district_record_id).maybeSingle();
+      const dd = (drec?.data ?? {}) as Record<string, unknown>;
+      district = (dd.display_name as string) ?? (dd.name_ar as string) ?? null;
+    }
+  }
+
+  const avail = Number(d.available_units ?? 0);
+  return {
+    وجد: true,
+    المشروع: d.project_name,
+    الحي: district ?? 'غير محدد',
+    المدينة: d.city_name ?? 'الرياض',
+    الوحدات_المتاحة: avail,
+    إجمالي_الوحدات: d.unit_count ?? null,
+    نوع_الوحدات: Array.isArray(d.unit_types) ? d.unit_types : null,
+    // Prefer the AVAILABLE ranges — quoting a sold unit's price/area to a
+    // customer is the classic error (see the projects-rollup rule).
+    نطاق_السعر: range(d.available_price_range) ?? range(d.price_range),
+    نطاق_المساحة: range(d.available_area_range) ?? range(d.area_range),
+    غرف_النوم: range(d.bedroom_range),
+    دورات_المياه: range(d.bathroom_range),
+    حالة_البناء: STATUS_AR[String(d.construction_status ?? '')] ?? d.construction_status ?? null,
+    متوسط_سعر_المتر: d.avg_price_per_m2 ? Math.round(Number(d.avg_price_per_m2)) : null,
+    تعليمات:
+      avail > 0
+        ? 'اذكر المساحة وعدد الغرف والسعر بشكل طبيعي منطوق. لا تذكر أي معلومة غير موجودة هنا — إذا سأل عن مخططات أو صور، اعرض إرسالها واتساب.'
+        : 'هذا المشروع مباع بالكامل — لا تعرضه، واقترح بديلاً عبر find_matching_projects.',
   };
 }
 
