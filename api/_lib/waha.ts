@@ -394,7 +394,12 @@ export function mapWahaMessage(m: WahaMessageRaw, fallbackChatWid: string, sessi
     body: m.body ?? null,
     fromPhone,
     toPhone,
-    ack: mapAck(m.ackName ?? m.ack),
+    // Ack is a DELIVERY receipt for messages WE sent. The NOWEB engine reports
+    // ack -1 / "ERROR" on INBOUND messages (there is no delivery state to
+    // report on someone else's message), which the UI rendered as a red
+    // "failed" bubble on perfectly-delivered client messages. Only trust ack
+    // on outbound. (Seen live 2026-07-26 after the NOWEB cutover.)
+    ack: flow === 'out' ? mapAck(m.ackName ?? m.ack) : null,
     date,
     mediaFileId,
     mediaMime: mime,

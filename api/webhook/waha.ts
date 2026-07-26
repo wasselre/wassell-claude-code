@@ -182,7 +182,10 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     body: p.body ?? null,
     from_phone: flow === 'in' ? counterpartyPhone : null,
     to_phone: flow === 'out' ? counterpartyPhone : null,
-    ack: mapAck(p.ackName ?? p.ack) ?? (flow === 'out' ? 'sent' : null),
+    // Ack is a delivery receipt for messages WE sent. NOWEB reports -1/"ERROR"
+    // on INBOUND messages, which rendered delivered client messages as red
+    // "failed" bubbles. Only trust ack on outbound. (Live 2026-07-26.)
+    ack: flow === 'out' ? (mapAck(p.ackName ?? p.ack) ?? 'sent') : null,
     date,
     media_file_id: mediaFileId,
     media_mime: mime,
