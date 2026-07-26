@@ -451,18 +451,41 @@ async function findProjects(
     lastConstraintDrops = out.result.metadata.constraint_drops as Record<string, number>;
     const flat = FINDER_GROUP_KEYS.flatMap((g) => out.result.groups[g] ?? []).slice(0, 4);
     if (flat.length > 0) {
+      const asStr = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+      const rangeText = (v: unknown): string | null => {
+        if (!v || typeof v !== 'object') return null;
+        const r = v as { min?: unknown; max?: unknown };
+        if (r.min == null && r.max == null) return null;
+        return `${r.min ?? '؟'}–${r.max ?? '؟'}`;
+      };
       return {
         نتائج: flat.map((m) => ({
           المشروع: m.project_name,
+          // The DISTRICT is what customers actually ask for ("وش الأحياء؟").
+          // facts.district is the PostGIS-verified containing district — the
+          // stored records have no district field, so this is the only source.
+          الحي: asStr(m.facts.district) ?? 'غير محدد',
+          المدينة: asStr(m.facts.city) ?? 'الرياض',
+          نطاق_السعر: rangeText(m.facts.price_range),
+          الوحدات_المتاحة: m.facts.available_units ?? null,
           الشرح: m.explanation,
           ...(m.distance_km != null && m.nearest_ref_name
             ? { المسافة: `${Math.round(m.distance_km)} كم من ${m.nearest_ref_name}` }
             : {}),
         })),
         ...(attempt.relaxed
-          ? { تنبيه: `ما فيه مطابق تماماً — هذي أقرب الخيارات بعد التوسّع في ${attempt.relaxed}. وضّح ذلك للعميل بصراحة.` }
+          ? {
+              // Be PRECISE about what was widened. A vague "not an exact match"
+              // made the agent tell a customer the PRICES didn't match when
+              // only the district/type had been relaxed (live call 2026-07-26).
+              تنبيه:
+                `هذي النتائج ضمن الميزانية المطلوبة، لكن تم التوسّع في: ${attempt.relaxed}. ` +
+                `وضّح للعميل بدقة إن السعر مطابق وإن الاختلاف في ${attempt.relaxed} فقط — لا تقل إن الأسعار غير مطابقة.`,
+            }
           : {}),
-        تعليمات: 'اعرض مشروعاً أو مشروعين فقط بصيغة مختصرة، واعرض إرسال التفاصيل واتساب',
+        تعليمات:
+          'اذكر اسم المشروع + الحي + السعر الابتدائي لمشروعين كحد أقصى. ' +
+          'إذا سأل العميل عن الأحياء، أجب من حقل "الحي" في النتائج. ثم اعرض إرسال التفاصيل واتساب.',
       };
     }
   }
