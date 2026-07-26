@@ -17,9 +17,14 @@
 -- ============================================================================
 
 -- ── 1. New job kind ─────────────────────────────────────────────────────────
+-- ⚠️ This DROP + ADD was a MISTAKE — see 2026-08-03_restore_whatsapp_reply_kind.
+-- `claude_jobs.kind` is a SHARED enumeration; a concurrent feature had already
+-- added 'whatsapp_reply' and this rewrite silently removed it. The corrected,
+-- full list lives in that later migration. Adding a kind must be ADDITIVE.
 ALTER TABLE public.claude_jobs DROP CONSTRAINT IF EXISTS claude_jobs_kind_check;
 ALTER TABLE public.claude_jobs ADD CONSTRAINT claude_jobs_kind_check
-  CHECK (kind = ANY (ARRAY['ping','client_study','mkt_content_enrichment','mkt_campaign_summary']));
+  CHECK (kind = ANY (ARRAY['ping','client_study','mkt_content_enrichment',
+                           'mkt_campaign_summary','whatsapp_reply']));
 
 -- ── 2. Summary storage ──────────────────────────────────────────────────────
 -- Separate table (not columns on mkt_campaigns) so a re-run never touches the
