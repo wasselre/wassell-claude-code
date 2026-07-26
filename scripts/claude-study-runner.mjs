@@ -22,6 +22,23 @@
  * Sessions run with --dangerously-skip-permissions: this runner executes ONLY
  * on a trusted machine against our own repo. Do not point it at untrusted
  * repos or prompts.
+ *
+ * SINGLETON: ownership is enforced by a DB lease (claude_runner_lease), not by
+ * operator discipline — two runners raced during the first live validation. A
+ * second process exits cleanly at boot; the owner renews every 30s and the lease
+ * expires 120s after the last heartbeat, so a crashed runner is taken over
+ * automatically. All expiry comparisons use the DATABASE clock, so client clock
+ * skew cannot produce two owners.
+ *
+ * SHUTDOWN: SIGINT/SIGTERM/SIGBREAK stop new claims, give the in-flight session
+ * a 60s grace period, then group-kill the Claude child, requeue the job via
+ * claude_job_interrupt (compare-and-set: only the claiming owner, only while
+ * still 'running'), and release the lease — so a clean stop never leaves a job
+ * stuck until the 45-minute crash watchdog.
+ *   PLATFORM CAVEAT: Node on Windows cannot reliably receive SIGTERM from an
+ *   external `kill` (verified — the handler does not run). On Windows the lease
+ *   TTL + watchdog are the recovery path; on Linux/Fly (the production target)
+ *   the container runtime delivers the signal and the graceful path runs.
  */
 import { createClient } from '@supabase/supabase-js';
 import { spawn } from 'node:child_process';
@@ -39,7 +56,8 @@ const ENRICH_RULE_VERSION = 'enrich-runner-v1';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const POLL_MS = 10_000;
 const SESSION_TIMEOUT_MS = 35 * 60 * 1000;
-const WORKER = `runner:${process.env.COMPUTERNAME || process.env.HOSTNAME || 'local'}:${process.pid}`;
+const HOSTNAME = process.env.COMPUTERNAME || process.env.HOSTNAME || process.env.FLY_MACHINE_ID || 'local';
+const WORKER = `runner:${HOSTNAME}:${process.pid}`;
 
 // ── env (auto-load .env.local / .env, no dotenv dep) ────────────────────────
 function loadEnvFile(p) {
@@ -62,6 +80,27 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 }
 const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+// ── singleton lease + graceful shutdown state ───────────────────────────────
+const LEASE = 'marketing_intelligence';
+const LEASE_TTL_S = 120;          // lease dies 120s after the last heartbeat
+const HEARTBEAT_MS = 30_000;      // renew every 30s (4x margin)
+const SHUTDOWN_GRACE_MS = 60_000; // let the in-flight Claude session finish
+let shuttingDown = false;
+let currentJobId = null;
+let currentChild = null;          // the live `claude` child (for group-kill)
+let heartbeatTimer = null;
+
+/** Kill the Claude child as a process GROUP (house posture — the CLI spawns
+ *  children; killing only the parent leaves orphans holding the session). */
+function killClaudeChild() {
+  const child = currentChild;
+  if (!child || child.killed) return;
+  try {
+    if (process.platform === 'win32') spawn('taskkill', ['/pid', String(child.pid), '/f', '/t'], { windowsHide: true });
+    else process.kill(-child.pid, 'SIGKILL');
+  } catch { /* already gone */ }
+}
+
 // ── claude CLI session ──────────────────────────────────────────────────────
 function runClaude(prompt, cwd) {
   return new Promise((resolve) => {
@@ -78,7 +117,9 @@ function runClaude(prompt, cwd) {
     delete env.ANTHROPIC_BASE_URL;
     const child = spawn('claude', args, {
       cwd, shell: true, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'], env,
+      detached: process.platform !== 'win32', // POSIX: own process group so we can group-kill
     });
+    currentChild = child;
     let out = '', err = '';
     const timer = setTimeout(() => {
       try { child.kill(); } catch { /* already dead */ }
@@ -88,8 +129,8 @@ function runClaude(prompt, cwd) {
     child.stdin.end();
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    child.on('close', (code) => { clearTimeout(timer); resolve({ code, out, err }); });
-    child.on('error', (e) => { clearTimeout(timer); resolve({ code: -2, out, err: String(e) }); });
+    child.on('close', (code) => { clearTimeout(timer); currentChild = null; resolve({ code, out, err }); });
+    child.on('error', (e) => { clearTimeout(timer); currentChild = null; resolve({ code: -2, out, err: String(e) }); });
   });
 }
 
@@ -267,7 +308,7 @@ async function tick() {
     const { error } = await supa.rpc('claude_jobs_watchdog');
     if (error) console.error('[runner] watchdog rpc failed:', error.message);
     // requeue anything parked by a prior limit — the cooldown has passed
-    await supa.rpc('claude_jobs_unblock').catch(() => {});
+    try { await supa.rpc('claude_jobs_unblock'); } catch (e) { console.error('[runner] unblock rpc failed:', e); }
   }
 
   const { data: jobs, error } = await supa.rpc('claude_job_claim_next', { p_worker: WORKER });
@@ -276,6 +317,7 @@ async function tick() {
   if (!job) return;
 
   console.log(`[runner] claimed ${job.kind} job=${job.id}`);
+  currentJobId = job.id;
   const handler = HANDLERS[job.kind] ?? handleClientStudy; // default keeps legacy behavior
   try {
     const result = await handler(job);
@@ -286,20 +328,75 @@ async function tick() {
     if (e instanceof RateLimitError) {
       cooldownUntil = Date.now() + 30 * 60_000; // 30-min cooldown
       console.warn(`[runner] job=${job.id} BLOCKED (subscription limit) — cooling down 30m`);
-      await supa.rpc('claude_job_block', { p_job_id: job.id, p_error: e.message }).catch((err) => console.error('[runner] block rpc failed:', err));
+      try { await supa.rpc('claude_job_block', { p_job_id: job.id, p_error: e.message }); } catch (err) { console.error('[runner] block rpc failed:', err); }
       return;
     }
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`[runner] job=${job.id} FAILED: ${msg}`);
     const { error: failErr } = await supa.rpc('claude_job_fail', { p_job_id: job.id, p_error: msg });
     if (failErr) console.error('[runner] fail rpc failed:', failErr.message);
+  } finally {
+    currentJobId = null;
   }
 }
 
-console.log(`[runner] ${WORKER} polling every ${POLL_MS / 1000}s — repo: ${ROOT}`);
+// ── singleton lease ─────────────────────────────────────────────────────────
+async function acquireLease() {
+  const { data, error } = await supa.rpc('claude_runner_lease_acquire', {
+    p_lease: LEASE, p_owner: WORKER, p_host: HOSTNAME, p_pid: process.pid, p_ttl_seconds: LEASE_TTL_S,
+  });
+  if (error) { console.error('[runner] lease rpc failed:', error.message); return { acquired: false, current_owner: null }; }
+  return data?.[0] ?? { acquired: false, current_owner: null };
+}
+
+/** Clean shutdown: stop claiming, let the in-flight session finish within a
+ *  bounded grace period, else group-kill it and hand the job straight back to
+ *  the queue (so it is NOT stuck 'running' until the 45-min crash watchdog). */
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[runner] ${signal} — shutting down (no new jobs)`);
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+
+  if (currentJobId) {
+    const deadline = Date.now() + SHUTDOWN_GRACE_MS;
+    while (currentJobId && Date.now() < deadline) await new Promise((r) => setTimeout(r, 500));
+    if (currentJobId) {
+      console.warn(`[runner] grace expired — terminating session and requeueing job=${currentJobId}`);
+      killClaudeChild();
+      try {
+        await supa.rpc('claude_job_interrupt', {
+          p_job_id: currentJobId, p_owner: WORKER,
+          p_reason: `interrupted by runner shutdown (${signal}) — requeued`,
+        });
+      } catch (e) { console.error('[runner] interrupt rpc failed:', e); }
+    }
+  }
+  try { await supa.rpc('claude_runner_lease_release', { p_lease: LEASE, p_owner: WORKER }); } catch (e) { console.error('[runner] lease release failed:', e); }
+  console.log('[runner] lease released — bye');
+  process.exit(0);
+}
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGBREAK']) process.on(sig, () => { void shutdown(sig); });
+
+// ── boot: singleton gate, then the sequential loop ──────────────────────────
+const first = await acquireLease();
+if (!first.acquired) {
+  console.error(`[runner] another runner owns the lease (${first.current_owner}) — exiting cleanly`);
+  process.exit(0);
+}
+console.log(`[runner] ${WORKER} holds the ${LEASE} lease — polling every ${POLL_MS / 1000}s — repo: ${ROOT}`);
+heartbeatTimer = setInterval(() => {
+  acquireLease().then((r) => {
+    if (!r.acquired && !shuttingDown) {
+      console.error(`[runner] LOST the lease to ${r.current_owner} — shutting down`);
+      void shutdown('lease-lost');
+    }
+  });
+}, HEARTBEAT_MS);
+
 // Sequential forever-loop: one job fully finishes before the next claim.
-// eslint-disable-next-line no-constant-condition
-while (true) {
+while (!shuttingDown) {
   try { await tick(); } catch (e) { console.error('[runner] tick crashed:', e); }
+  if (shuttingDown) break;
   await new Promise((r) => setTimeout(r, POLL_MS));
 }
