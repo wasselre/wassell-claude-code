@@ -101,14 +101,32 @@ export default async function handler(req: Request): Promise<Response> {
   const urlSecret = url.searchParams.get('secret') ?? '';
   const sig = req.headers.get('x-voxa-signature') ?? '';
 
+  // EITHER mode may authenticate — the signature is tried first, but a failed
+  // signature falls through to the URL secret instead of rejecting outright.
+  //
+  // Why: an admin can enable HMAC signing self-service in Hatif's dashboard
+  // ("إنشاء مفتاح" per channel). Hatif then signs with a key WE don't have yet,
+  // so a signature-first-and-only check would 401 every webhook and silently
+  // stop ALL call logging until someone noticed. Falling back to the URL secret
+  // — already a fully accepted auth mode on this endpoint — keeps calls flowing
+  // while the new key is put into HATIF_WEBHOOK_SECRET. A mismatched signature
+  // is logged loudly so the drift is visible rather than silent.
   let authed = false;
   if (sig) {
     try {
       authed = await verifyHatifSignature(rawBody, sig, secret);
+      if (!authed) {
+        console.error(
+          '[hatif-webhook] X-Voxa-Signature did not match HATIF_WEBHOOK_SECRET — ' +
+          'a channel signing key was probably generated in Hatif without updating our env. ' +
+          'Falling back to the ?secret= URL check.',
+        );
+      }
     } catch (err) {
       console.error('[hatif-webhook] signature verification threw:', err);
     }
-  } else if (urlSecret) {
+  }
+  if (!authed && urlSecret) {
     authed = constantTimeEqual(urlSecret, secret);
   }
   if (!authed) {
