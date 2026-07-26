@@ -372,10 +372,76 @@ rewriting the jsonb payloads are all destructive and must follow a period of the
 new tables being live and trusted. All three are marked in the database with
 `COMMENT ON` so the intent survives.
 
-The extraction pipeline still writes only to the jsonb payloads — **facts are
-currently backfill-only**. Wiring `content_process` and the enrichment Skill to
-write `mkt_observed_facts` directly is the next step, and is deliberately left
-out of this pass so that the schema lands before behaviour changes.
+~~The extraction pipeline still writes only to the jsonb payloads — facts are
+currently backfill-only.~~ **Done 2026-07-26** — see §7 below.
+
+---
+
+## 7. Phase 1 — live fact extraction (implemented 2026-07-26)
+
+```
+before:  content → OCR/enrichment → JSON → (manual backfill) → facts
+after:   content → OCR/enrichment → JSON + facts, at write time
+```
+
+Migration: `supabase/migrations/2026-08-06_mkt_live_fact_extraction.sql`.
+Regression guard: `supabase/tests/mkt_fact_extraction_test.sql` (safe against
+production — every test rolls back).
+
+### Why extraction lives in SQL, not application code
+
+`mkt_enrichment_upsert` has **two callers in two separate npm packages** —
+`worker/src/marketing/content/runContentProcess.ts` and
+`scripts/claude-study-runner.mjs` — which cannot import from one another. This
+repo already maintains `worker/src/imageGen.ts` as a hand-copied duplicate for
+exactly that reason.
+
+Extraction in application code would mean two implementations that drift, plus a
+third (the backfill) that must stay byte-identical or *the same content yields
+different facts depending on when it was processed*. One SQL implementation
+invoked by `AFTER INSERT OR UPDATE` triggers removes the whole class of problem,
+and additionally covers direct-SQL writers and any future service. It is the
+house pattern already proven by `records_fill_project_rollups`.
+
+**No application code changed.** The triggers fire on the tables the existing
+RPCs already write to, so the worker and the runner emit facts with zero edits.
+
+| Emitter | Source | Extractor |
+|---|---|---|
+| `mkt_emit_facts_visual_text` | `mkt_visual_text.structured` | `ocr` |
+| `mkt_emit_facts_enrichment` | `mkt_content_enrichment.result` | `skill` |
+| `mkt_emit_facts_paid_ad` | `mkt_paid_ads` cta/landing_url/headline | `deterministic` |
+
+**Transcripts deliberately have no direct emitter.** Transcript text is free-form
+speech; the enrichment Skill already reads it and produces structured output, so
+transcript-derived claims arrive as `extractor='skill'` facts. Adding a second
+path would duplicate them.
+
+### Guarantees, all verified in production
+
+| Property | Evidence |
+|---|---|
+| Parity with the backfill | Re-emitting everything reproduced **exactly** 1 825 OCR + 1 369 enrichment = 3 194 facts, matching per `fact_type` |
+| New coverage | +22 facts from paid ads, which the backfill never touched (3 216 total) |
+| Live emission, no backfill | INSERT of new OCR emitted 5 facts immediately; price `1,234,000` parsed; two spellings of one phone collapsed to 1 |
+| Production RPC path works | Deleted a row's facts, called `mkt_enrichment_upsert` (the exact RPC worker + runner call) → all 7 regenerated |
+| Idempotent | Re-emit twice: 3 216 → 3 216, **0** duplicate groups |
+| Re-extraction replaces stale facts | UPDATE to a different price left exactly 1 fact at the new value |
+| A broken extractor cannot lose an artifact | Simulated extractor exception → artifact saved, 0 facts, warning logged |
+
+### The one deliberate exception swallow
+
+An exception in an `AFTER` trigger aborts the whole write, so a fact-extraction
+bug would prevent the OCR/enrichment row itself from being stored — permanently
+losing collected content that cost real money. Facts are *fully recoverable* at
+any time via `mkt_reemit_all_facts()` because extraction is deterministic and
+idempotent. So `mkt_tg_emit_facts` catches, `RAISE WARNING`s with the table, row
+id, message and SQLSTATE (reaching the Postgres logs), and lets the artifact
+write succeed. This is a narrow, documented catch with an asymmetric-cost
+justification — not a silent swallow.
+
+`mkt_reemit_all_facts()` supersedes the one-off backfill in
+`2026-08-04_mkt_observed_facts.sql`, which must not be run again.
 
 ---
 
