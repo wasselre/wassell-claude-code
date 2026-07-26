@@ -486,7 +486,9 @@ async function findProjects(
           : {}),
         تعليمات:
           'اذكر اسم المشروع + الحي + السعر الابتدائي لمشروعين كحد أقصى. ' +
-          'إذا سأل العميل عن الأحياء، أجب من حقل "الحي" في النتائج. ثم اعرض إرسال التفاصيل واتساب.',
+          'إذا سأل العميل عن الأحياء، أجب من حقل "الحي" في النتائج. ' +
+          'إذا سأل عن المطور أو تفاصيل أكثر، استدعِ get_project_details. ' +
+          'ثم اعرض إرسال التفاصيل واتساب.',
       };
     }
   }
@@ -524,7 +526,7 @@ async function getProjectDetails(args: Record<string, unknown>): Promise<Record<
       'area_range', 'available_area_range', 'price_range', 'available_price_range',
       'bedroom_range', 'bathroom_range', 'unit_types', 'unit_count',
       'available_units', 'sold_units', 'construction_status', 'project_status',
-      'avg_price_per_m2',
+      'avg_price_per_m2', 'developer', 'delivery_date',
     ],
   });
   if (error) throw new Error(`project load failed: ${error.message}`);
@@ -569,10 +571,25 @@ async function getProjectDetails(args: Record<string, unknown>): Promise<Record<
     }
   }
 
+  // Developer name — the record stores a lookup id into the `developers` model.
+  // Customers ask "مين المطور؟" constantly (live call 2026-07-26) and the agent
+  // had to answer "الاسم ما عنديه"; resolve it here.
+  let developerName: string | null = null;
+  const devId = typeof d.developer === 'string' ? d.developer : null;
+  if (devId) {
+    const { data: devRow } = await supa
+      .from('unified_records').select('data').eq('id', devId).maybeSingle();
+    const dd = (devRow?.data ?? {}) as Record<string, unknown>;
+    developerName =
+      (typeof dd.name === 'string' && dd.name.trim() ? dd.name.trim() : null) ??
+      (typeof dd.developer_name === 'string' && dd.developer_name.trim() ? dd.developer_name.trim() : null);
+  }
+
   const avail = Number(d.available_units ?? 0);
   return {
     وجد: true,
     المشروع: d.project_name,
+    المطور: developerName,
     الحي: district ?? 'غير محدد',
     المدينة: d.city_name ?? 'الرياض',
     الوحدات_المتاحة: avail,
