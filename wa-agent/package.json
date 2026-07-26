@@ -1,0 +1,8 @@
+{
+  "name": "wassel-wa-agent",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "description": "Headless Claude Code sessions that answer WhatsApp for Wassel",
+  "dependencies": { "@supabase/supabase-js": "^2.45.0" }
+}

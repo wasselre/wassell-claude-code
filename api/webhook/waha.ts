@@ -204,6 +204,30 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
     incrementUnread: flow === 'in' && isNew,
     // No reopen push-back for WAHA — chat status is fully CRM-owned.
   });
+
+  // AI auto-reply (outside working hours only). The RPC is the single gate —
+  // it decides enabled / working-hours / human-active / reply-cap and debounces
+  // to ONE live job per chat, so a customer firing three messages produces one
+  // session that sees all three. Returns null when it declines.
+  //
+  // Fire-and-forget by design: this webhook must stay fast (WAHA retries on
+  // slow responses) and a missed auto-reply is far better than a duplicated
+  // one. The actual reply is written by a real Claude Code session on the
+  // wa-agent worker, not here.
+  if (flow === 'in' && isNew) {
+    try {
+      const { error } = await getServiceSupabase().rpc('whatsapp_ai_enqueue', {
+        p_chat_wid: chatWid,
+        p_chat_record_id: uuidV5FromWidSync(chatWid),
+        p_phone: counterpartyPhone,
+        p_device_id: session,
+        p_trigger_message: row.body ?? null,
+      });
+      if (error) console.error('[waha-webhook] whatsapp_ai_enqueue failed:', error.message);
+    } catch (err) {
+      console.error('[waha-webhook] whatsapp_ai_enqueue threw:', err);
+    }
+  }
 }
 
 /**

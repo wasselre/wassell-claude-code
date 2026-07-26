@@ -1,0 +1,32 @@
+app = 'wassel-wa-agent'
+primary_region = 'bom'
+
+[build]
+
+[env]
+  NODE_ENV = 'production'
+  PORT = '8080'
+  POLL_INTERVAL_MS = '5000'
+  SESSION_TIMEOUT_MS = '480000'
+  APP_URL = 'https://app.wassel.re'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  # EXACTLY ONE machine. A second would spawn a second Claude session for the
+  # same customer. The DB lease (claude_runner_lease) is the real guarantee;
+  # this is the belt to its braces.
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = '30s'
+    timeout = '5s'
+    grace_period = '20s'
+    method = 'GET'
+    path = '/'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
