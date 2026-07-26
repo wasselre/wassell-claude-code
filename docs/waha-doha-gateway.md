@@ -18,6 +18,7 @@ the manual re-pairing from the phone. A Gulf IP removes the mismatch.
 |---|---|
 | VM | `wassel-waha`, project `instant-medium-503214-f9`, zone `me-central1-a` |
 | IP | `34.18.15.250` (Doha, QA) |
+| URL | **`https://34-18-15-250.sslip.io`** (Caddy + Let's Encrypt, auto-renew) |
 | Size | e2-medium / 30 GB |
 | Image | `devlikeapro/waha:latest`, `--restart always` |
 | Engine | **NOWEB** |
@@ -56,8 +57,27 @@ inactive for history.
 - Enable the Compute API per project first
   (`gcloud services enable compute.googleapis.com`).
 
+## HTTPS is REQUIRED, not just nice-to-have
+
+The CRM endpoints that talk to the gateway (`api/whatsapp/session.ts`,
+`api/haberchat/messages.ts`, `api/haberchat/chats.ts`, …) run on the **Vercel
+Edge runtime**, which refuses a plain-HTTP `fetch` to a bare IP — it surfaces as
+a confusing **403** (`WAHA GET /api/sessions/sales failed: 403`) even though the
+API key is correct. WAHA itself answers **401** for a bad key and never 403, and
+nothing appears in its logs, which is how you tell the two apart.
+
+Fix in place: **Caddy** on the VM reverse-proxies `localhost:3000` and
+auto-provisions a Let's Encrypt cert for **`34-18-15-250.sslip.io`** (sslip.io
+resolves any IP-embedded hostname, so no DNS control is needed). Ports 80/443
+are open via the `allow-waha-web` firewall rule.
+
+> `wassel.re` is on **Hostinger** nameservers (`ns1/ns2.dns-parking.com`), NOT
+> Vercel — records added via `vercel dns` do nothing. To move to a nicer
+> `waha.wassel.re`, add the A record at Hostinger and change the Caddyfile.
+
 ## Open follow-ups
 
-- Port 3000 is plain HTTP protected only by the API key — put HTTPS/a tunnel in
-  front, or restrict the source range to Vercel egress.
-- Migrate the ops/bridge number (+966554620315) off the laptop onto this VM too.
+- Consider `waha.wassel.re` (A record at Hostinger) instead of the sslip.io
+  hostname — sslip.io is a free third-party resolver.
+- Port 3000 is still reachable directly over plain HTTP; consider restricting
+  the firewall to 80/443 only now that Caddy fronts it.
