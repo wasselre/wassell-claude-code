@@ -1097,22 +1097,30 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     lng?: number;
   }
   const searchHits = useMemo<SearchHit[]>(() => {
-    const q = normSearch(search);
-    if (q.length < 1) return [];
+    // ALL-WORDS matching, not one contiguous substring: real road names carry
+    // words between the ones people type («طريق تركي» vs the official
+    // «طريق الأمير تركي بن عبدالعزيز الأول»), so every query word just has to
+    // appear somewhere in the normalized name, in any order.
+    const tokens = normSearch(search).split(/\s+/).filter(Boolean);
+    if (!tokens.length) return [];
+    const hit = (name: string) => {
+      const n = normSearch(name);
+      return tokens.every((t) => n.includes(t));
+    };
     const nameOf = (l: LandmarkRow) => (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '';
     const districtHits: SearchHit[] = (shapes ?? [])
-      .filter((s) => normSearch(s.name).includes(q))
+      .filter((s) => hit(s.name))
       .slice(0, 8)
       .map((s) => ({ key: `d:${s.district_id}`, type: 'district', name: s.name, districtId: s.district_id }));
     const roadHits: SearchHit[] = roads
       .map((l) => ({ l, name: nameOf(l) }))
-      .filter(({ name }) => name && normSearch(name).includes(q))
+      .filter(({ name }) => name && hit(name))
       .slice(0, 6)
       .map(({ l, name }) => ({ key: `r:${l.external_id}`, type: 'road' as const, name, externalId: l.external_id, lat: l.latitude ?? undefined, lng: l.longitude ?? undefined }));
     const landmarkHits: SearchHit[] = landmarks
       .filter((l) => l.latitude != null && l.longitude != null)
       .map((l) => ({ l, name: nameOf(l) }))
-      .filter(({ name }) => name && normSearch(name).includes(q))
+      .filter(({ name }) => name && hit(name))
       .slice(0, 6)
       .map(({ l, name }) => ({ key: `l:${l.external_id}`, type: 'landmark' as const, name, lat: l.latitude!, lng: l.longitude! }));
     return [...districtHits, ...roadHits, ...landmarkHits];
@@ -1285,7 +1293,11 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                     <input
                       type="text"
                       value={search}
-                      onChange={(e) => setSearch(e.target.value)}
+                      // Typing ALWAYS reopens the list. Picking a result closes it
+                      // via setSearchFocused(false), but the result's mousedown
+                      // preventDefault keeps DOM focus on the input — so no fresh
+                      // onFocus would ever fire and the list stayed stuck shut.
+                      onChange={(e) => { setSearch(e.target.value); setSearchFocused(true); }}
                       onFocus={() => setSearchFocused(true)}
                       onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
                       onKeyDown={(e) => {
