@@ -130,20 +130,28 @@ __BODY__
 
 
 def find_logo() -> str:
-    """Resolve the full Wassel logo from the repo's branding folder."""
+    """Resolve the full Wassel logo.
+
+    Prefers the logo BUNDLED with this skill (assets/wassel_logo.png) — it's the
+    only copy guaranteed to exist everywhere the skill runs (Fly runner, any
+    worktree), because the repo's top-level "Wassel Branding/" folder is
+    gitignored and never reaches a build context. Falls back to that folder for
+    local convenience.
+    """
     here = os.path.abspath(os.path.dirname(__file__))
-    # walk up until we find "Wassel Branding" (repo root or worktree root)
+    bundled = os.path.join(here, "wassel_logo.png")
+    if os.path.exists(bundled):
+        return bundled
     d = here
     for _ in range(8):
         cand = os.path.join(d, "Wassel Branding", "الشعار كامل.png")
         if os.path.exists(cand):
             return cand
         d = os.path.dirname(d)
-    # main-checkout fallback
     fallback = r"C:\Users\rayan\Claude\wassell-claude-code\Wassel Branding\الشعار كامل.png"
     if os.path.exists(fallback):
         return fallback
-    raise FileNotFoundError("Wassel logo (الشعار كامل.png) not found")
+    raise FileNotFoundError("Wassel logo not found (expected assets/wassel_logo.png)")
 
 
 def build(body_path: str, out_name: str) -> None:
