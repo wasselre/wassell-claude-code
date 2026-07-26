@@ -221,7 +221,20 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   const [map, setMap] = useState<google.maps.Map | null>(null);
   const [shapes, setShapes] = useState<DistrictShape[] | null>(null);
   const [shapesError, setShapesError] = useState<string | null>(null);
-  const [hoverName, setHoverName] = useState<string | null>(null);
+  // PERF: the hovered-district chip is written straight to the DOM instead of
+  // going through React state. Panning drags the cursor across many districts,
+  // and a state update per crossing re-rendered this whole component mid-drag.
+  const hoverElRef = useRef<HTMLDivElement | null>(null);
+  const hoverNameRef = useRef<string | null>(null);
+  const setHoverName = (next: string | null | ((prev: string | null) => string | null)) => {
+    const value = typeof next === 'function' ? next(hoverNameRef.current) : next;
+    if (value === hoverNameRef.current) return;
+    hoverNameRef.current = value;
+    const el = hoverElRef.current;
+    if (!el) return;
+    el.textContent = value ?? '';
+    el.style.display = value ? '' : 'none';
+  };
 
   // Map search — jump to a district (and select it) or a landmark by name.
   const [search, setSearch] = useState('');
@@ -658,55 +671,107 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   useEffect(() => {
     if (!map || !isLoaded || !shapes || !window.google) return;
     const invisible: google.maps.Symbol = { path: google.maps.SymbolPath.CIRCLE, scale: 0 };
-    const labelMarkers: google.maps.Marker[] = [];
+    /** A marker plus the state needed to attach/detach it WITHOUT redundant work. */
+    interface MarkerEntry {
+      marker: google.maps.Marker;
+      position: google.maps.LatLngLiteral;
+      name?: string;
+      /** Whether it's currently attached to the map — so we only call setMap on a real change. */
+      on: boolean;
+    }
+    const labelEntries: MarkerEntry[] = [];
     for (const s of shapes) {
       let ring: google.maps.LatLngLiteral[] = [];
       for (const p of geojsonToPaths(s.geojson)) if (p.length > ring.length) ring = p;
       if (ring.length < 3) continue;
       const lat = ring.reduce((a, p) => a + p.lat, 0) / ring.length;
       const lng = ring.reduce((a, p) => a + p.lng, 0) / ring.length;
-      labelMarkers.push(new google.maps.Marker({
+      labelEntries.push({
+        marker: new google.maps.Marker({
+          position: { lat, lng },
+          icon: invisible,
+          clickable: false,
+          label: { text: s.name, color: CHARCOAL, fontSize: '11px', fontWeight: '700' },
+        }),
         position: { lat, lng },
-        icon: invisible,
-        clickable: false,
-        label: { text: s.name, color: CHARCOAL, fontSize: '11px', fontWeight: '700' },
-      }));
+        on: false,
+      });
     }
-    const lmMarkers = landmarks
+    const lmEntries: MarkerEntry[] = landmarks
       .filter((l) => l.latitude != null && l.longitude != null)
       .map((l) => {
         const name = (isAr ? l.name_ar || l.display_name : l.display_name || l.name_ar) ?? '';
-        const marker = new google.maps.Marker({
-          position: { lat: l.latitude!, lng: l.longitude! },
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE, scale: 4.5,
-            fillColor: TERRACOTTA, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 1.5,
-            labelOrigin: new google.maps.Point(0, 3),
-          },
-          title: name,
-          clickable: true, // hover shows the name even below the label zoom
-          zIndex: 5,
-        });
-        return { marker, name };
+        const position = { lat: l.latitude!, lng: l.longitude! };
+        return {
+          marker: new google.maps.Marker({
+            position,
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE, scale: 4.5,
+              fillColor: TERRACOTTA, fillOpacity: 1, strokeColor: '#fff', strokeWeight: 1.5,
+              labelOrigin: new google.maps.Point(0, 3),
+            },
+            title: name,
+            clickable: true, // hover shows the name even below the label zoom
+            zIndex: 5,
+          }),
+          position,
+          name,
+          on: false,
+        };
       });
-    landmarkMarkersRef.current = lmMarkers.map((x) => x.marker);
-    const applyZoom = () => {
+    const entries = [...labelEntries, ...lmEntries];
+    landmarkMarkersRef.current = lmEntries.map((e) => e.marker);
+
+    // PERF (2026-07-24): this used to run on every `zoom_changed` and blindly
+    // setMap() all ~400 markers (+ setLabel() on every landmark) — ~580 marker
+    // ops per zoom tick, and Google fires zoom_changed repeatedly through a
+    // single scroll/pinch zoom. That made zooming stutter and panning feel
+    // heavy. Two fixes:
+    //   1. Drive off `idle` (fires ONCE after a pan/zoom settles) instead of
+    //      every zoom tick.
+    //   2. Only attach markers inside the PADDED viewport, and only call
+    //      setMap/setLabel when the value actually changes — so a settle that
+    //      changes nothing costs zero marker ops.
+    // Labels only show at zoom >= LABELS_MIN_ZOOM, where a handful of districts
+    // are on screen; we were attaching all 219 regardless.
+    let namesApplied: boolean | null = null;
+    const syncMarkers = () => {
       const z = map.getZoom() ?? 0;
-      const show = z >= LABELS_MIN_ZOOM;
-      labelMarkers.forEach((m) => m.setMap(show ? map : null));
-      lmMarkers.forEach(({ marker, name }) => {
-        marker.setMap(show ? map : null);
-        marker.setLabel(z >= LANDMARK_NAMES_MIN_ZOOM && name
-          ? { text: name, color: TERRACOTTA, fontSize: '10px', fontWeight: '700' }
-          : null);
-      });
+      if (z < LABELS_MIN_ZOOM) {
+        for (const e of entries) if (e.on) { e.marker.setMap(null); e.on = false; }
+        return;
+      }
+      // Pad the viewport by 25% so markers are already attached just before
+      // they scroll into view (no pop-in at the edges).
+      let south = -90, north = 90, west = -180, east = 180;
+      const b = map.getBounds();
+      if (b) {
+        const ne = b.getNorthEast(), sw = b.getSouthWest();
+        const padLat = (ne.lat() - sw.lat()) * 0.25;
+        const padLng = (ne.lng() - sw.lng()) * 0.25;
+        south = sw.lat() - padLat; north = ne.lat() + padLat;
+        west = sw.lng() - padLng; east = ne.lng() + padLng;
+      }
+      for (const e of entries) {
+        const inView = e.position.lat >= south && e.position.lat <= north
+          && e.position.lng >= west && e.position.lng <= east;
+        if (inView !== e.on) { e.marker.setMap(inView ? map : null); e.on = inView; }
+      }
+      const names = z >= LANDMARK_NAMES_MIN_ZOOM;
+      if (names !== namesApplied) {
+        namesApplied = names;
+        for (const e of lmEntries) {
+          e.marker.setLabel(names && e.name
+            ? { text: e.name, color: TERRACOTTA, fontSize: '10px', fontWeight: '700' }
+            : null);
+        }
+      }
     };
-    applyZoom();
-    const zl = map.addListener('zoom_changed', applyZoom);
+    syncMarkers();
+    const il = map.addListener('idle', syncMarkers);
     return () => {
-      google.maps.event.removeListener(zl);
-      labelMarkers.forEach((m) => m.setMap(null));
-      lmMarkers.forEach(({ marker }) => marker.setMap(null));
+      google.maps.event.removeListener(il);
+      entries.forEach((e) => e.marker.setMap(null));
       landmarkMarkersRef.current = [];
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1206,12 +1271,12 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
                   clickableIcons: false,
                 }}
               />
-              {/* Hovered district name */}
-              {hoverName && (
-                <div className="pointer-events-none absolute top-3 z-10 rounded-lg bg-white/95 px-3 py-1.5 text-sm font-bold text-chocolate shadow ring-1 ring-black/5" style={{ insetInlineStart: '0.75rem' }}>
-                  {hoverName}
-                </div>
-              )}
+              {/* Hovered district name — content set imperatively (see setHoverName). */}
+              <div
+                ref={hoverElRef}
+                className="pointer-events-none absolute top-3 z-10 rounded-lg bg-white/95 px-3 py-1.5 text-sm font-bold text-chocolate shadow ring-1 ring-black/5"
+                style={{ insetInlineStart: '0.75rem', display: 'none' }}
+              />
               {/* Search: jump to a district (and select it) or a landmark */}
               {!drawMode && (
                 <div className="absolute top-3 left-1/2 z-20 w-[min(88%,22rem)] -translate-x-1/2">
