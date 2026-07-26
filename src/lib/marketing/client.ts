@@ -208,6 +208,94 @@ export interface RunnerHealth {
 }
 export const fetchOpsRunnerHealth = () => call<{ runner: RunnerHealth }>('ops_runner_health');
 
+// ── Project Intelligence ────────────────────────────────────────────────────
+// Mirrors the mkt_project_intelligence() RPC. Composed server-side so the page
+// is one round trip against a consistent snapshot.
+//
+// EVERY list is capped and the cap is REPORTED (`shown` alongside `total`) — a
+// silently truncated list reads as "that is all there is".
+export interface PIFactValue {
+  value: string; key: string; observations: number; posts: number;
+  first_seen: string | null; last_seen: string | null; share_pct: number | null;
+}
+/** Fact families surfaced on the page. `campaign_message`/`selling_point` are
+ *  the "hooks" — there is no separate hook type; adding one would duplicate. */
+export type PIFactType =
+  | 'price' | 'offer' | 'cta' | 'campaign_message' | 'selling_point' | 'phone'
+  | 'payment_plan' | 'delivery_date' | 'unit_type' | 'district' | 'financing'
+  | 'amenity' | 'audience';
+
+export interface PIOrganization {
+  organization_id: string; name: string | null;
+  role: 'developer' | 'authorized_marketer' | 'observed_marketer' | string;
+  confidence: number | null; human_confirmed: boolean | null;
+  first_observed_at: string | null; last_observed_at: string | null; is_active: boolean | null;
+}
+export interface PIPost {
+  post_id: string; platform: string; post_type: string | null; url: string | null;
+  published_at: string | null; caption_preview: string; caption_full_length: number;
+  engagement: Record<string, number> | null;
+  attribution_method: string | null; attribution_confidence: number | null;
+}
+export interface PIAd {
+  ad_id: string; platform: string; headline: string | null; cta: string | null;
+  landing_url: string | null; is_active: boolean | null;
+  started_at: string | null; ended_at: string | null; creative_url: string | null;
+}
+export interface PIActivityPoint {
+  bucket: string; posts: number; ads: number; platforms: number; engagement: number;
+}
+export interface PIPricePoint {
+  bucket: string; observations: number; min: number | null; max: number | null; avg: number | null;
+}
+export interface PIPlatformSlice {
+  platform: string; posts: number; share_pct: number | null; engagement: number | null;
+}
+export interface PICampaign {
+  campaign_id: string; label: string | null; objective: string | null;
+  platforms: string[]; is_active: boolean; member_count: number;
+  first_seen_at: string | null; last_seen_at: string | null;
+  summary: { confidence: number; summary_ar: string | null; summary_en: string | null } | null;
+}
+export interface ProjectIntelligence {
+  generated_at: string;
+  window: { from: string | null; to: string | null };
+  project: {
+    id: string; name: string | null; city: string | null; status: string | null;
+    type: string | null; page_url: string | null;
+    developer: { record_id: string; name: string | null } | null;
+  } | null;
+  organizations: PIOrganization[];
+  social_accounts: Array<{
+    id: string; platform: string; handle: string | null; profile_url: string | null;
+    followers: number | null; organization_id: string;
+    collection_enabled: boolean | null; last_synced_at: string | null;
+  }>;
+  content: { total: number; shown: number; recent: PIPost[] };
+  paid_ads: { total: number; shown: number; recent: PIAd[] };
+  facts: Partial<Record<PIFactType, PIFactValue[]>>;
+  trends: { activity: PIActivityPoint[]; price: PIPricePoint[]; platforms: PIPlatformSlice[] };
+  share_of_voice: Array<{
+    organization_id: string; name: string | null; period_start: string; period_end: string;
+    scope: string; post_count: number; ad_count: number; share_pct: number;
+  }>;
+  timeline: {
+    campaigns: PICampaign[];
+    org_first_seen: Array<{ organization_id: string; name: string | null; role: string; first_observed_at: string }>;
+  };
+  state: Record<string, unknown> | null;
+  insights: Array<{
+    id: string; kind: string; severity: string; title: string; body: string | null;
+    evidence: Record<string, unknown> | null; generated_at: string; dismissed: boolean;
+  }>;
+  /** What the page is deliberately EXCLUDING, and why. Show this — do not hide it. */
+  attribution_quality: { confirmed_posts: number; speculative_posts: number; note: string };
+}
+export const fetchProjectIntelligence = (
+  project_id: string,
+  opts: { from?: string; to?: string; limit?: number } = {},
+) => call<{ intelligence: ProjectIntelligence }>('project_intelligence', { project_id, ...opts });
+
 // ── Advertiser discovery / confirmation ─────────────────────────────────────
 export interface ScoreReason { code: string; label_en: string; label_ar: string; delta: number }
 export interface AdvertiserCandidate {

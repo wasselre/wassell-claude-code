@@ -354,6 +354,28 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ items, total: count ?? 0, page, page_size: size });
       }
 
+      case 'project_intelligence': {
+        // The Project Intelligence page in ONE round trip against a consistent
+        // snapshot. All composition happens in mkt_project_intelligence (SQL);
+        // this endpoint only validates input and passes the window through.
+        // Not admin-gated — this is product surface, not operations.
+        const pid = str(body.project_id);
+        if (!pid) return jsonError(400, 'project_id required');
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { data, error } = await svc.rpc('mkt_project_intelligence', {
+          p_project_id: pid,
+          p_from: str(body.from) || null,
+          p_to: str(body.to) || null,
+          p_limit: typeof body.limit === 'number' ? Math.min(50, Math.max(1, body.limit)) : 10,
+        });
+        if (error) return jsonError(500, error.message);
+        if (!data || !(data as Record<string, unknown>).project) {
+          return jsonError(404, 'project not found');
+        }
+        return jsonOk({ intelligence: data });
+      }
+
       case 'campaigns': {
         // Cross-platform campaigns for an org (organic + paid), newest-active first.
         const org = str(body.organization_id);
