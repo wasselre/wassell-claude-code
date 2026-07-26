@@ -89,12 +89,22 @@ Three layers, because each catches something the others cannot:
    production owner.
 2. **Lease acquisition** — a second process waits out the TTL, then exits 0 if a
    live owner still holds it.
-3. **`claude_job_claim_next` requires the lease** (2026-08-02) — a worker that
-   does not own a live lease is **refused with an exception naming the real
-   owner**. This is the layer that matters: the lease previously only governed
-   *our* process, and on 2026-07-26 an unrelated Fly app (`wassel-wa-agent`,
-   worker id `wa-agent-48e71eea972308`) claimed a `mkt_campaign_summary` job
-   directly while the runner was down. The invariant now lives in the database.
+3. **`claude_job_claim_next` hides the marketing kinds from non-owners**
+   (2026-08-02). This is the layer that matters: the lease previously governed
+   only *our* process, and on 2026-07-26 an unrelated Fly app
+   (`wassel-wa-agent`, worker id `wa-agent-48e71eea972308`, which runs the
+   `/whatsapp-reply` skill) claimed a `mkt_campaign_summary` job directly while
+   the runner was down — it claims with no kind filter, so it took whatever was
+   pending. A worker without the lease can no longer *see*
+   `ping` / `client_study` / `mkt_content_enrichment` / `mkt_campaign_summary`,
+   so the cross-claim is impossible by construction rather than by good
+   behaviour.
+
+   The guard is deliberately **scoped**: requiring the lease for *every* kind
+   would break that sibling feature, which is a separate product legitimately
+   running its own Claude Code sessions. Filtering rather than raising is right
+   for the same reason — a sibling worker polling this queue is expected, not an
+   error.
 
 ### Proven behaviours (2026-07-26)
 
@@ -105,7 +115,8 @@ Three layers, because each catches something the others cannot:
 | Expiry takeover (A holds → B refused → A expires → B acquires → A refused) | All four assertions passed |
 | Restart **during** a job | Grace period let the session finish; job `ready`, `attempts=1`, no duplicate run |
 | Hard `SIGKILL` (machine loss) | Auto-reboot, lease reacquired within seconds |
-| Non-owner calling `claude_job_claim_next` | Exception `42501` naming the owner |
+| Non-owner claiming while a marketing job is pending | Claimed nothing; job stayed `pending` |
+| Lease holder claiming the same job | Claimed and completed it (`PONG`) |
 
 ### Two bugs this testing exposed (both fixed)
 
