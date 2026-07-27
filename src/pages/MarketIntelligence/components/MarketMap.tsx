@@ -91,6 +91,16 @@ export default function MarketMap({
   }, [districts]);
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
 
+  // The map + its listeners are created ONCE, but the listeners must read the
+  // CURRENT districts and callback. Closing over them directly meant the click
+  // handler captured the empty lookup from first render (the fetch had not
+  // resolved yet) and every district click silently did nothing — the effect
+  // cannot re-attach, because it bails on mapRef.current being set.
+  const byIdRef = useRef(byId);
+  const onClickRef = useRef(onDistrictClick);
+  useEffect(() => { byIdRef.current = byId; }, [byId]);
+  useEffect(() => { onClickRef.current = onDistrictClick; }, [onDistrictClick]);
+
   // ── Map init (once) ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!isLoaded || !divRef.current || mapRef.current) return;
@@ -109,17 +119,17 @@ export default function MarketMap({
     dataRef.current = data;
     data.addListener('click', (e: google.maps.Data.MouseEvent) => {
       const id = e.feature.getProperty('district_id') as string;
-      const d = byId.get(id);
-      if (d) onDistrictClick(d);
+      const d = byIdRef.current.get(id);
+      if (d) onClickRef.current(d);
     });
     data.addListener('mouseover', (e: google.maps.Data.MouseEvent) => {
       const id = e.feature.getProperty('district_id') as string;
-      setHover(byId.get(id) ?? null);
+      setHover(byIdRef.current.get(id) ?? null);
     });
     data.addListener('mouseout', () => setHover(null));
 
     areaDataRef.current = new google.maps.Data({ map });
-  }, [isLoaded, byId, onDistrictClick]);
+  }, [isLoaded]);
 
   // ── Choropleth features ───────────────────────────────────────────────────
   useEffect(() => {
