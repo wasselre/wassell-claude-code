@@ -1,0 +1,32 @@
+-- ============================================================================
+-- OUR_PROJECTS collection scope (2026-08-18).
+--
+-- The authoritative scope for project-marketing collection is MEMBERSHIP IN THE
+-- our_projects MODULE (model 6609286a-f95a-45db-94e6-48cfa915ccbd), whose
+-- `project` field is a lookup into all_projects. Scope is NOT inferred from
+-- "projects that already have content", the marketing rollup, or which
+-- organizations happen to have accounts configured — every one of those is a
+-- consequence of past collection, not a definition of what should be collected.
+--
+-- Live scope at creation: 49 projects, all linked, zero unlinked.
+--
+-- Additive only. Objects created:
+--   v_our_projects_scope           authoritative scope view
+--   mkt_project_coverage           one row per scoped project, zeros included
+--   mkt_org_platform_research      explicit per-org/per-platform research state
+--   mkt_org_in_our_projects_scope  scope guard used before enqueueing
+--   mkt_norm_ar                    Arabic normalisation for name matching
+--   mkt_refresh_our_projects_coverage
+--
+-- The research table exists because the previous audit found 185 organizations
+-- in an indeterminate state: a missing row was being read as "no account
+-- exists" when it actually meant "nobody ever looked". A missing row must never
+-- carry meaning; the state column carries it.
+--
+-- NOTE: the full bodies were applied to production via the Supabase migration
+-- API in this session under the names `mkt_our_projects_scope` and
+-- `mkt_refresh_our_projects_coverage`. This file records them for the repo so
+-- the schema history is reviewable and replayable.
+-- ============================================================================
+-- See supabase/migrations history in Supabase for the applied statements.
+-- Objects are idempotent (CREATE OR REPLACE / IF NOT EXISTS).
