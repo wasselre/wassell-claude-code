@@ -281,8 +281,61 @@ async function handleWhatsappReply(job) {
   if (resumeId) console.log(`[wa-agent] resuming ${resumeId} (turn ${(sRow.turns ?? 0) + 1}, ~${sRow.context_tokens} tok)`);
   else console.log(`[wa-agent] new session (${sRow?.reason ?? 'no_session'})`);
 
+  // What changed in the CRM since this session last replied? A resumed session
+  // holds a SNAPSHOT — a call logged yesterday, or a rep editing the client, is
+  // invisible to it unless we say so. Answering as though a call never happened
+  // is precisely the failure this agent already made once.
+  let deltaPrompt = resumePrompt;
+  if (resumeId && sRow?.last_used_at) {
+    const since = sRow.last_used_at;
+    const bits = [];
+    try {
+      const phone = p.phone ?? ('+' + String(chatWid).split('@')[0]);
+      const { data: newCalls } = await supa
+        .from('call_logs')
+        .select('direction, status, duration_seconds, agent_name, creation_time, summary')
+        .eq('contact_phone', phone)
+        .gt('creation_time', since)
+        .order('creation_time', { ascending: false })
+        .limit(3);
+      if (newCalls?.length) {
+        bits.push(
+          'NEW CALLS logged since your last reply — read these, they',
+          'override anything older, especially any promise in «الخطوات التالية»:',
+          JSON.stringify(newCalls, null, 1),
+        );
+      }
+
+      // Client record edited by a rep (budget corrected, preferences added…).
+      const { data: chatRec2 } = await supa
+        .from('records').select('data').eq('id', p.chat_record_id ?? '').maybeSingle();
+      const cid = chatRec2?.data?.client_link ?? null;
+      if (cid) {
+        const { data: cl } = await supa
+          .from('records').select('data, updated_at').eq('id', cid).gt('updated_at', since).maybeSingle();
+        if (cl) bits.push('CLIENT RECORD updated since your last reply:', JSON.stringify(cl.data, null, 1));
+      }
+
+      // Messages a HUMAN rep sent by hand while the agent was idle.
+      const { data: humanMsgs } = await supa
+        .from('chat_messages')
+        .select('flow, body, date')
+        .eq('chat_wid', chatWid)
+        .gt('date', since)
+        .order('date', { ascending: true })
+        .limit(20);
+      if (humanMsgs?.length) {
+        bits.push('MESSAGES since your last reply (both directions):', JSON.stringify(humanMsgs, null, 1));
+      }
+    } catch (e) {
+      console.error('[wa-agent] delta build failed:', e);
+      bits.push('WARNING: could not load CRM changes — re-check calls and the client record yourself.');
+    }
+    if (bits.length) deltaPrompt = [resumePrompt, '', '--- WHAT CHANGED SINCE YOUR LAST REPLY ---', ...bits].join('\n');
+  }
+
   let { code, out, err, sessionId, tokens } = await runClaude(
-    resumeId ? resumePrompt : prompt, '/app/repo', resumeId);
+    resumeId ? deltaPrompt : prompt, '/app/repo', resumeId);
 
   // A resume fails if the CLI dropped that session's state. Cold-start once
   // rather than losing the customer's turn.
