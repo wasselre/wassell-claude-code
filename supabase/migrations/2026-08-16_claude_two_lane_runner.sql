@@ -196,3 +196,53 @@ AS $function$
 $function$;
 
 GRANT EXECUTE ON FUNCTION public.claude_runner_health(text) TO service_role, authenticated;
+
+-- ── Orphan recovery must respect OTHER live lanes ───────────────────────────
+-- Applied as 2026-08-16b. The old rule ("running, claimed by someone else,
+-- older than 3 minutes") was sound while one lease existed — winning it proved
+-- the prior owner had stopped heartbeating for a full TTL. With two lanes it is
+-- false: at 07:45:34 on 2026-07-27 the new interactive runner requeued a
+-- client_study the marketing runner was actively executing and ran a duplicate
+-- Claude session for it. The correct test is liveness of the CLAIMER.
+CREATE OR REPLACE FUNCTION public.claude_jobs_recover_orphaned(
+  p_owner text, p_min_age_seconds integer DEFAULT 180, p_max_attempts integer DEFAULT 3)
+RETURNS TABLE(job_id uuid, kind text, prior_owner text, action text)
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+BEGIN
+  RETURN QUERY
+  WITH orphaned AS (
+    SELECT j.id, j.kind AS j_kind, j.claimed_by, j.attempts
+    FROM public.claude_jobs j
+    WHERE j.status = 'running'
+      AND j.claimed_by IS DISTINCT FROM p_owner
+      AND j.started_at < now() - make_interval(secs => p_min_age_seconds)
+      AND NOT EXISTS (
+        SELECT 1 FROM public.claude_runner_lease l
+        WHERE l.owner_id = j.claimed_by
+          AND l.released_at IS NULL
+          AND l.expires_at > now()
+      )
+    FOR UPDATE
+  ),
+  requeued AS (
+    UPDATE public.claude_jobs j
+    SET status = 'pending', claimed_by = NULL, started_at = NULL,
+        error = format('recovered: runner %s died mid-job (attempt %s)', o.claimed_by, o.attempts)
+    FROM orphaned o
+    WHERE j.id = o.id AND o.attempts < p_max_attempts
+    RETURNING j.id, o.j_kind, o.claimed_by, 'requeued'::text AS act
+  ),
+  failed AS (
+    UPDATE public.claude_jobs j
+    SET status = 'failed', finished_at = now(),
+        error = format('recovered: runner %s died mid-job %s times — not retried', o.claimed_by, o.attempts)
+    FROM orphaned o
+    WHERE j.id = o.id AND o.attempts >= p_max_attempts
+    RETURNING j.id, o.j_kind, o.claimed_by, 'failed'::text AS act
+  )
+  SELECT r.id, r.j_kind, r.claimed_by, r.act FROM requeued r
+  UNION ALL
+  SELECT f.id, f.j_kind, f.claimed_by, f.act FROM failed f;
+END;
+$function$;
