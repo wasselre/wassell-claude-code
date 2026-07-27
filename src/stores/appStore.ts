@@ -4788,7 +4788,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       const { id: deviceId, chats } = r.value;
       for (const chat of chats) {
-        const prev = byId.get(mergeChatIntoRecord(null, chat, deviceId, chatsModel.id).id) ?? null;
+        const candidate = mergeChatIntoRecord(null, chat, deviceId, chatsModel.id);
+        const prev = byId.get(candidate.id) ?? null;
+        // A gateway chat addressed by LID is the SAME human as an existing
+        // phone-keyed chat, under WhatsApp's other identity. Minting a record
+        // for it produced a duplicate of every client conversation — 266 empty
+        // shells against 292 real chats, so the rep saw each client twice and
+        // the copy they opened had no history (live 2026-07-26).
+        //
+        // Only track a LID chat we already know: conversations still appear the
+        // moment a message arrives, because the webhook creates the record then
+        // — and it resolves the phone when WhatsApp gives us one.
+        if (!prev && String(chat.wid ?? '').endsWith('@lid')) continue;
         const next = mergeChatIntoRecord(prev, chat, deviceId, chatsModel.id);
         byId.set(next.id, next);
         changed = true;

@@ -33,6 +33,18 @@ const OUTBOUND_BUCKET = 'wassel-files';
 const OUTBOUND_PREFIX = 'waha-outbound';
 const TEMP_REF = 'wt_'; // temp-uploaded outbound media (Supabase Storage)
 const WAHA_REF = 'wf_'; // WAHA-hosted media (session/filename under /api/files)
+/**
+ * Mirrored inbound/outbound media (Supabase Storage) — `wm_<session>/<file>`.
+ *
+ * WAHA keeps media on the GATEWAY's disk, so a media_file_id is only as durable
+ * as the box that served it. Retiring the Fly gateway orphaned 293 messages
+ * (their bytes lived under session `wassel_main`), and every re-pair or
+ * container restart threatens the rest. Mirroring into our own bucket makes the
+ * bytes outlive any gateway. `wf_` refs stay readable: downloadFile falls back
+ * to the mirror, and populates it on the way through.
+ */
+const MIRROR_REF = 'wm_';
+const MIRROR_PREFIX = 'whatsapp-media';
 const SIGNED_URL_TTL_S = 600;
 
 export class WahaError extends Error {
@@ -506,6 +518,12 @@ async function resolveMediaFile(mediaFileId: string): Promise<{ url: string; mim
     if (error || !data?.signedUrl) throw new WahaError(502, `WAHA media temp signed-url failed: ${error?.message ?? 'no url'}`);
     return { url: data.signedUrl, filename: path.split('/').pop(), mimetype: mimeFromRef(path) };
   }
+  if (mediaFileId.startsWith(MIRROR_REF)) {
+    const path = `${MIRROR_PREFIX}/${mediaFileId.slice(MIRROR_REF.length)}`;
+    const { data, error } = await svc().storage.from(OUTBOUND_BUCKET).createSignedUrl(path, SIGNED_URL_TTL_S);
+    if (error || !data?.signedUrl) throw new WahaError(502, `WAHA mirrored media signed-url failed: ${error?.message ?? 'no url'}`);
+    return { url: data.signedUrl, filename: path.split('/').pop(), mimetype: mimeFromRef(path) };
+  }
   throw new WahaError(400, `Unresolvable mediaFileId for WAHA: ${mediaFileId.slice(0, 24)}`);
 }
 
@@ -545,15 +563,52 @@ export async function downloadFile(fileId: string, _deviceId?: string): Promise<
     return new Response(data, { headers: { 'Content-Type': data.type || 'application/octet-stream' } });
   }
 
+  // Mirrored media `wm_<session>/<filename>` → our own bucket, gateway-independent.
+  if (fileId.startsWith(MIRROR_REF)) {
+    const path = fileId.slice(MIRROR_REF.length);
+    return mirrorResponse(path);
+  }
+
   // WAHA-hosted media `wf_<session>/<filename>` → fetch WAHA's file endpoint
   // with the API key (the browser can't send the key, so we proxy it).
   const path = fileId.startsWith(WAHA_REF) ? fileId.slice(WAHA_REF.length) : fileId;
   const res = await fetch(`${wahaUrl()}/api/files/${path}`, { headers: { 'X-Api-Key': wahaKey() } });
   if (!res.ok) {
+    // The gateway no longer has it (retired host, re-pair, restart — WAHA's file
+    // dir is per-gateway). Serve the mirror if we took a copy; only report the
+    // gateway's failure when we have no copy either, so a stale `wf_` ref keeps
+    // working instead of rendering as a broken bubble.
     const preview = await res.text().catch(() => '');
-    throw new WahaError(res.status, `WAHA file download failed: ${res.status} ${preview.slice(0, 120)}`);
+    try {
+      return await mirrorResponse(path);
+    } catch {
+      throw new WahaError(res.status, `WAHA file download failed: ${res.status} ${preview.slice(0, 120)}`);
+    }
   }
-  return res;
+
+  // Cache-through: keep a copy so this media survives the gateway that served
+  // it. Buffered because the body can only be consumed once. Never fatal — a
+  // mirroring failure must not break the download the user asked for.
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const contentType = res.headers.get('content-type') || 'application/octet-stream';
+  void svc().storage.from(OUTBOUND_BUCKET)
+    .upload(`${MIRROR_PREFIX}/${path}`, bytes, { contentType, upsert: false })
+    .then(({ error }) => {
+      // "already exists" is the steady state once mirrored, not a problem.
+      if (error && !/exists/i.test(error.message)) {
+        console.error('[waha.downloadFile] mirror upload failed for', path, error.message);
+      }
+    });
+  return new Response(bytes, { headers: { 'Content-Type': contentType } });
+}
+
+/** Stream mirrored bytes for `<session>/<filename>`; throws if we hold no copy. */
+async function mirrorResponse(path: string): Promise<Response> {
+  const { data, error } = await svc().storage.from(OUTBOUND_BUCKET).download(`${MIRROR_PREFIX}/${path}`);
+  if (error || !data) throw new WahaError(404, `mirrored media not found: ${error?.message ?? path}`);
+  return new Response(data, {
+    headers: { 'Content-Type': data.type || mimeFromRef(path) || 'application/octet-stream' },
+  });
 }
 
 // ─── Chat status / labels ────────────────────────────────────────────

@@ -152,12 +152,25 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   if (!counterpartyPhone && rawChat.endsWith('@lid')) {
     counterpartyPhone = await resolveLidToPhone(session, rawChat);
   }
+  // NEVER drop a message we cannot identify. This used to `return`, which threw
+  // away every message from a LID-only contact — WhatsApp's LID map is populated
+  // by the contact sync at pairing time and covers a minority of chats (16 of
+  // 264 after the 2026-07-24 re-pair), so real client messages vanished with
+  // nothing but a console warning. Two of them were a client standing at a
+  // property asking who would open the door (2026-07-25).
+  //
+  // Fall back to keying the conversation by its LID. The thread is preserved and
+  // visible; only the phone link is missing, and it heals by itself once the LID
+  // map fills in. Losing the message is never the better trade.
+  const digits = counterpartyPhone?.replace(/\D/g, '') ?? '';
+  const chatWid = digits ? `${digits}@c.us` : rawChat;
   if (!counterpartyPhone) {
-    console.warn('[webhook.waha] could not resolve counterparty phone for', p.id, 'rawChat=', rawChat);
-    return;
+    if (!rawChat) {
+      console.error('[webhook.waha] no chat identity at all for', p.id, '— cannot store');
+      return;
+    }
+    console.warn('[webhook.waha] unresolved phone for', p.id, '— storing under LID', rawChat);
   }
-  const digits = counterpartyPhone.replace(/\D/g, '');
-  const chatWid = `${digits}@c.us`;
 
   const mime = p.media?.mimetype ?? null;
   const kind = (p.hasMedia || p.media) ? kindFromMime(mime, p._data?.Info?.MediaType) : 'text';
@@ -217,7 +230,10 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // slow responses) and a missed auto-reply is far better than a duplicated
   // one. The actual reply is written by a real Claude Code session on the
   // wa-agent worker, not here.
-  if (flow === 'in' && isNew) {
+  // Requires a phone: the agent qualifies the lead against the client record,
+  // which is matched by number. A LID-only chat has nothing to match on, so
+  // storing the message (above) is the whole job here.
+  if (flow === 'in' && isNew && counterpartyPhone) {
     try {
       const { error } = await getServiceSupabase().rpc('whatsapp_ai_enqueue', {
         p_chat_wid: chatWid,
