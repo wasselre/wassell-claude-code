@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileText, Loader2, Copy, ExternalLink, RefreshCw, AlertTriangle, X, Plus, Check } from 'lucide-react';
+import { FileText, Loader2, Copy, ExternalLink, RefreshCw, AlertTriangle, X, Plus, Check, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import {
   enqueueClientStudy,
@@ -27,6 +27,16 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
   const [notes, setNotes] = useState('');
   const [notesOpen, setNotesOpen] = useState(false);
   const [summaryDismissed, setSummaryDismissed] = useState(false);
+  // Collapse the whole study section to reclaim chat height. Persisted GLOBALLY
+  // (one preference across all chats) so it stays how the rep left it.
+  const COLLAPSE_KEY = 'wassell_study_card_collapsed';
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return localStorage.getItem(COLLAPSE_KEY) === '1'; } catch { return false; }
+  });
+  const setCollapsedPersist = (v: boolean) => {
+    try { localStorage.setItem(COLLAPSE_KEY, v ? '1' : '0'); } catch { /* ignore */ }
+    setCollapsed(v);
+  };
   const jobRef = useRef<ClaudeJob | null>(null);
   jobRef.current = job;
 
@@ -109,8 +119,36 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
     ? (isAr ? 'توليد دراسة جديدة' : 'Generate a new study')
     : (isAr ? 'توليد دراسة' : 'Generate study');
 
+  // Collapsed → a slim one-line bar that reclaims the chat height; a dot marks
+  // a ready study waiting behind it. Expanding restores the full section.
+  if (collapsed) {
+    return (
+      <div className="px-3 pt-1 shrink-0">
+        <button
+          onClick={() => setCollapsedPersist(false)}
+          className="w-full flex items-center justify-center gap-1 rounded-md border border-sand/60 bg-cream/40 py-0.5 text-[10px] text-charcoal/45 hover:text-copper hover:border-copper/40 transition-colors"
+          title={isAr ? 'إظهار قسم الدراسة' : 'Show study section'}
+        >
+          <ChevronDown size={11} />
+          {isAr ? 'الدراسة' : 'Study'}
+          {ready ? <span className="text-copper font-bold">•</span> : null}
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="px-3 pt-2 shrink-0">
+      {/* Collapse toggle — hide the whole section for a bigger chat. */}
+      <div className="flex justify-end -mt-1 -mb-0.5">
+        <button
+          onClick={() => setCollapsedPersist(true)}
+          className="text-charcoal/30 hover:text-copper transition-colors"
+          title={isAr ? 'إخفاء قسم الدراسة (لتكبير المحادثة)' : 'Hide study section for a bigger chat'}
+        >
+          <ChevronUp size={14} />
+        </button>
+      </div>
       {/* Trigger + notes — hidden only while a job is in flight */}
       {!active && (
         <div className="flex flex-col gap-1.5">
