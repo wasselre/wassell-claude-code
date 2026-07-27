@@ -3,7 +3,7 @@ import { GoogleMap, useJsApiLoader } from '@react-google-maps/api';
 import { Ban, Check, Loader2, Map as MapIcon, MapPin, Minus, PenLine, Plus, RotateCcw, Route, Search, TriangleAlert, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { getMapsLoaderOptions, isMapsKeyConfigured } from '@/lib/mapsLoader';
-import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE } from '@/lib/locationUtils';
+import { DEFAULT_MAP_CENTER, WASSEL_MAP_STYLE, buildPillIcon } from '@/lib/locationUtils';
 import {
   DIRECTION_DEFAULT_M, describeLocationItem, isDirectionRule, newDistrictItem, newDrawnAreaItem,
   type DistrictLocationItem, type DrawnAreaLocationItem, type ElementCondition, type ElementRuleLocationItem,
@@ -78,6 +78,11 @@ const CHARCOAL = '#4A4E54';
 const RED = '#B91C1C';
 const GOLD = '#C09B5F'; // drawn areas — distinct from the copper district fill
 const TERRACOTTA = '#8E4E3A'; // landmark pins + element-rule areas
+/** Selected-road highlight. Deliberately NOT terracotta/copper: WASSEL_MAP_STYLE
+ *  paints highway fills #B8734F and their casings #8E4E3A, so those colours are
+ *  invisible against the basemap (live report 2026-07-27). Rich Chocolate Brown
+ *  is the darkest brand colour and nothing else on this map comes close to it. */
+const ROAD_HIGHLIGHT = '#4A2C2A';
 
 /** Element types shown as landmark pins on the picker — the sales-relevant
  *  anchors (all curated + verified in geo_elements). Roads/metro/parks are
@@ -392,35 +397,63 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
   interface SelectedRoad { externalId: string; name: string; geojson: { type: string; coordinates: unknown } }
   const [selectedRoads, setSelectedRoads] = useState<SelectedRoad[]>([]);
 
-  // Draw every selected road as a bold terracotta line + label, and fit the map
-  // to all of them (so picking a 2nd road frames both). Display-only; the shape
-  // itself is created explicitly via the "area between roads" button.
+  // Draw every selected road and fit the map to all of them (so picking a 2nd
+  // road frames both). Display-only; the shape itself is created explicitly via
+  // the "area between roads" button.
+  //
+  // HIGHLIGHT TREATMENT (2026-07-27): the old style was a TERRACOTTA line — the
+  // exact colour WASSEL_MAP_STYLE paints every highway casing with
+  // (road.highway geometry.stroke = #8E4E3A), so a picked road vanished into the
+  // basemap. It's now drawn as a two-layer "route" treatment:
+  //   • a wide WHITE casing underneath, which separates the road from its copper
+  //     neighbours no matter what colour they are, and
+  //   • a near-black CHOCOLATE core on top — the highest-contrast brand colour
+  //     against the cream/copper basemap (nothing else on the map is this dark).
+  // The name rides in a filled pill instead of bare text, so it's readable over
+  // a busy city view.
+  //
+  // Rendered via google.maps.Data (ONE feature per road) rather than one
+  // Polyline per line part: a merged road like الدائري الشمالي has 155 parts,
+  // which would otherwise mean 310 Polylines for the casing + core.
   useEffect(() => {
     if (!map || !isLoaded || !window.google || selectedRoads.length === 0) return;
-    const overlays: Array<google.maps.Polyline | google.maps.Marker> = [];
+    const layers: google.maps.Data[] = [];
+    const markers: google.maps.Marker[] = [];
     const bounds = new google.maps.LatLngBounds();
+
     for (const r of selectedRoads) {
-      let mid: google.maps.LatLngLiteral | null = null;
+      const feature = { type: 'Feature' as const, geometry: r.geojson, properties: {} };
+      const casing = new google.maps.Data({ map });
+      casing.addGeoJson(feature);
+      casing.setStyle({ strokeColor: '#FFFFFF', strokeWeight: 13, strokeOpacity: 1, zIndex: 7, clickable: false });
+      const core = new google.maps.Data({ map });
+      core.addGeoJson(feature);
+      core.setStyle({ strokeColor: ROAD_HIGHLIGHT, strokeWeight: 6, strokeOpacity: 1, zIndex: 8, clickable: false });
+      layers.push(casing, core);
+
+      // Label the LONGEST part's midpoint — on a many-part road the first part
+      // can be a stub anywhere along it.
+      let longest: google.maps.LatLngLiteral[] = [];
       for (const line of geojsonToLinePaths(r.geojson)) {
         if (line.length < 2) continue;
-        overlays.push(new google.maps.Polyline({
-          map, path: line, strokeColor: TERRACOTTA, strokeOpacity: 0.95, strokeWeight: 5, zIndex: 8, clickable: false,
-        }));
         for (const p of line) bounds.extend(p);
-        if (!mid) mid = line[Math.floor(line.length / 2)]!;
+        if (line.length > longest.length) longest = line;
       }
-      if (mid && r.name) {
-        overlays.push(new google.maps.Marker({
-          map, position: mid,
-          icon: { path: google.maps.SymbolPath.CIRCLE, scale: 0 },
+      if (longest.length && r.name) {
+        markers.push(new google.maps.Marker({
+          map,
+          position: longest[Math.floor(longest.length / 2)]!,
+          icon: buildPillIcon(r.name, ROAD_HIGHLIGHT) as google.maps.Icon | undefined,
           clickable: false,
-          label: { text: r.name, color: TERRACOTTA, fontSize: '12px', fontWeight: '700' },
           zIndex: 9,
         }));
       }
     }
     if (!bounds.isEmpty()) map.fitBounds(bounds, 80);
-    return () => overlays.forEach((o) => o.setMap(null));
+    return () => {
+      layers.forEach((l) => l.setMap(null));
+      markers.forEach((m) => m.setMap(null));
+    };
   }, [map, isLoaded, selectedRoads]);
 
   // Build one editable polygon spanning the selected roads: the convex hull of
