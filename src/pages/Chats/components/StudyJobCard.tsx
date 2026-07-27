@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FileText, Loader2, Copy, ExternalLink, RefreshCw, AlertTriangle, X, Plus, Check, ChevronUp, ChevronDown } from 'lucide-react';
+import { FileText, Loader2, Copy, ExternalLink, RefreshCw, AlertTriangle, X, Check, ChevronUp, ChevronDown } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import {
   enqueueClientStudy,
@@ -25,7 +25,6 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
   const [job, setJob] = useState<ClaudeJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [notes, setNotes] = useState('');
-  const [notesOpen, setNotesOpen] = useState(false);
   const [summaryDismissed, setSummaryDismissed] = useState(false);
   // Collapse the whole study section to reclaim chat height. Persisted GLOBALLY
   // (one preference across all chats) so it stays how the rep left it.
@@ -74,16 +73,18 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
     return () => clearInterval(t);
   }, [job, refresh]);
 
-  const start = async () => {
+  // Start a study. When a ready study already exists this is a feedback-driven
+  // REGENERATE — the typed text is passed as feedback and the prior job id as
+  // revision_of, so the runner tells the session to address the feedback.
+  const start = async (regenerateOf?: string) => {
     setBusy(true);
     try {
-      await enqueueClientStudy(chatRecordId, currentUserId, notes);
+      await enqueueClientStudy(chatRecordId, currentUserId, notes, regenerateOf ?? null);
       addToast(
         isAr ? 'بدأنا الدراسة — تاخذ عادة ١٠–٢٠ دقيقة' : 'Study started — usually takes 10–20 minutes',
         'success',
       );
       setNotes('');
-      setNotesOpen(false);
       await refresh();
     } catch (err) {
       addToast(err instanceof Error ? err.message : String(err), 'error');
@@ -113,11 +114,6 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
 
   const active = job && (job.status === 'pending' || job.status === 'running');
   const ready = job?.status === 'ready' && !!job.result;
-
-  // The generate control is a fresh-study button once one already exists.
-  const generateLabel = ready
-    ? (isAr ? 'توليد دراسة جديدة' : 'Generate a new study')
-    : (isAr ? 'توليد دراسة' : 'Generate study');
 
   // Collapsed → a slim one-line bar that reclaims the chat height; a dot marks
   // a ready study waiting behind it. Expanding restores the full section.
@@ -149,52 +145,6 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
           <ChevronUp size={14} />
         </button>
       </div>
-      {/* Trigger + notes — hidden only while a job is in flight */}
-      {!active && (
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={start}
-              disabled={busy}
-              className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2.5 py-1 text-[11px] font-medium text-copper transition-colors hover:bg-copper/20 disabled:opacity-50"
-              title={isAr ? 'دراسة سوق مخصصة لسؤال هذا العميل — تُنشأ بالذكاء الاصطناعي وتراجعها قبل الإرسال' : 'AI market study for this client’s question — you review before sending'}
-            >
-              {busy ? <Loader2 size={12} className="animate-spin" /> : ready ? <Plus size={12} /> : <FileText size={12} />}
-              {generateLabel}
-            </button>
-            <button
-              onClick={() => setNotesOpen((v) => !v)}
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-medium transition-colors ${
-                notes.trim() ? 'border-copper bg-copper/10 text-copper' : 'border-charcoal/20 text-charcoal/60 hover:bg-charcoal/5'
-              }`}
-              title={isAr ? 'ملاحظات لكلود قبل التوليد (اختياري)' : 'Notes for Claude before generating (optional)'}
-            >
-              {isAr ? 'ملاحظات لكلود' : 'Notes for Claude'}
-              {notes.trim() ? <Check size={11} /> : null}
-            </button>
-            {job?.status === 'failed' && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-red-600" title={job.error ?? undefined}>
-                <AlertTriangle size={12} />
-                {isAr ? 'فشلت آخر دراسة — جرّب من جديد' : 'Last study failed — try again'}
-              </span>
-            )}
-          </div>
-          {notesOpen && (
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              dir="auto"
-              placeholder={isAr
-                ? 'مثال: ركّز على الشقق تحت مليون في الياسمين فقط، وتجاهل العروض القديمة، وقارن بمشروع كذا…'
-                : 'e.g. Focus only on apartments under 1M in Al-Yasmin, ignore old listings, compare against project X…'}
-              className="input w-full text-[12px] leading-relaxed"
-              disabled={busy}
-            />
-          )}
-        </div>
-      )}
-
       {/* In-flight strip */}
       {active && (
         <div className="flex items-center gap-2 rounded-xl border border-sand bg-cream/70 px-3 py-2 text-[12px] text-charcoal/70">
@@ -273,6 +223,55 @@ export default function StudyJobCard({ chatRecordId }: { chatRecordId: string })
               ))}
             </ul>
           )}
+        </div>
+      )}
+
+      {/* Instructions (first run) OR feedback → regenerate (after a study is
+          ready). One always-visible field; the label, placeholder, and button
+          switch on whether a ready study exists. Hidden only mid-run. */}
+      {!active && (
+        <div className="flex flex-col gap-1 mt-2">
+          {ready && (
+            <span className="text-[10.5px] font-medium text-copper">
+              {isAr ? 'ملاحظاتك لتحسين الدراسة (اختياري)' : 'Your feedback to improve the study (optional)'}
+            </span>
+          )}
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={2}
+            dir="auto"
+            placeholder={ready
+              ? (isAr
+                  ? 'مثال: ركّز أكثر على العروض الجديدة، أضف صفحة مسافات، اجعلها صفحة واحدة…'
+                  : 'e.g. Focus more on new listings, add a distances page, keep it to one page…')
+              : (isAr
+                  ? 'تعليمات الدراسة (اختياري) — مثال: قارن فقط بالشقق تحت مليون في الياسمين، وتجاهل العروض القديمة…'
+                  : 'Study instructions (optional) — e.g. compare only apartments under 1M in Al-Yasmin, ignore old listings…')}
+            className="input w-full text-[12px] leading-relaxed"
+            disabled={busy}
+          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => start(ready ? job!.id : undefined)}
+              disabled={busy}
+              className="inline-flex items-center gap-1.5 rounded-full border border-copper/40 bg-copper/10 px-2.5 py-1 text-[11px] font-medium text-copper transition-colors hover:bg-copper/20 disabled:opacity-50"
+              title={ready
+                ? (isAr ? 'إعادة توليد الدراسة مع ملاحظاتك' : 'Regenerate the study with your feedback')
+                : (isAr ? 'دراسة سوق مخصصة لسؤال هذا العميل — تُنشأ بالذكاء الاصطناعي وتراجعها قبل الإرسال' : 'AI market study for this client’s question — you review before sending')}
+            >
+              {busy ? <Loader2 size={12} className="animate-spin" /> : ready ? <RefreshCw size={12} /> : <FileText size={12} />}
+              {ready
+                ? (isAr ? 'إعادة التوليد' : 'Regenerate')
+                : (isAr ? 'توليد دراسة' : 'Generate study')}
+            </button>
+            {job?.status === 'failed' && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-red-600" title={job.error ?? undefined}>
+                <AlertTriangle size={12} />
+                {isAr ? 'فشلت آخر دراسة — جرّب من جديد' : 'Last study failed — try again'}
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>

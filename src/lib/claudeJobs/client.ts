@@ -35,6 +35,9 @@ export async function enqueueClientStudy(
   chatRecordId: string,
   requestedByUserId: string | null,
   notes?: string,
+  /** Prior job id when this is a feedback-driven regenerate — the runner tells
+   *  the session it's a revision addressing the rep's feedback. */
+  revisionOf?: string | null,
 ): Promise<string> {
   if (!supabase) throw new ClaudeJobsError('Supabase غير متصل');
   const trimmed = (notes ?? '').trim();
@@ -42,7 +45,11 @@ export async function enqueueClientStudy(
     .from('claude_jobs')
     .insert({
       kind: 'client_study',
-      payload: { chat_record_id: chatRecordId, ...(trimmed ? { notes: trimmed } : {}) },
+      payload: {
+        chat_record_id: chatRecordId,
+        ...(trimmed ? { notes: trimmed } : {}),
+        ...(revisionOf ? { revision_of: revisionOf } : {}),
+      },
       requested_by_user_id: requestedByUserId,
     })
     .select('id')

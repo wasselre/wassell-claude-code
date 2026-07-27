@@ -206,16 +206,23 @@ async function handleClientStudy(job) {
   if (!chatId) throw new Error('payload.chat_record_id is required');
 
   const notes = typeof job.payload?.notes === 'string' ? job.payload.notes.trim() : '';
+  const isRevision = typeof job.payload?.revision_of === 'string' && job.payload.revision_of.length > 0;
 
   const workDir = mkdtempSync(path.join(tmpdir(), 'claude-study-'));
   const sentinel = path.join(workDir, 'result.json');
   const prompt = [
     `/client-study https://app.wassel.re/model/chats/${chatId}`,
     '',
-    ...(notes ? [
-      'The rep gave these NOTES — treat them as priority instructions for scope,',
-      'focus, framing, or what to avoid (they override the skill defaults where',
-      `they conflict):`,
+    ...(isRevision && notes ? [
+      'This is a REVISION. The rep already received a study for this client,',
+      'reviewed it, and gave this feedback — regenerate the study fully',
+      'addressing it (keep what worked, fix what they flagged):',
+      `«${notes}»`,
+      '',
+    ] : notes ? [
+      'The rep gave these STUDY INSTRUCTIONS — treat them as priority guidance',
+      'for scope, focus, framing, or what to avoid (they override the skill',
+      `defaults where they conflict):`,
       `«${notes}»`,
       '',
     ] : []),
