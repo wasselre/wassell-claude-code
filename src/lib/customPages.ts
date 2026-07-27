@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, ClipboardList as ClipboardListIcon } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -35,7 +35,8 @@ export type CustomPageId =
   | 'sales_studio'
   | 'market_intelligence'
   | 'posts_content'
-  | 'marketing_intelligence';
+  | 'marketing_intelligence'
+  | 'marketing_management';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -142,6 +143,16 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     // (listing/price data) and from 'posts_content' (writes OUR copy). This one
     // only OBSERVES competitors, hence Radar rather than another Megaphone.
     // Arabic keeps the first pair apart: ذكاء التسويق here vs ذكاء السوق there.
+    id: 'marketing_management',
+    route: '/marketing-management',
+    // إدارة التسويق = OUR execution pipeline. Distinct from ذكاء التسويق below,
+    // which watches competitors. Different verb, different data, different job.
+    label_ar: 'إدارة التسويق',
+    label_en: 'Marketing Management',
+    icon: ClipboardListIcon,
+    default_access: 'admin',
+  },
+  {
     id: 'marketing_intelligence',
     route: '/marketing-intelligence',
     label_ar: 'ذكاء التسويق',
