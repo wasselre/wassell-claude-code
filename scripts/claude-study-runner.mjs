@@ -102,7 +102,15 @@ if (!SUPABASE_URL || !SERVICE_KEY) {
 const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
 // ── singleton lease + graceful shutdown state ───────────────────────────────
-const LEASE = 'marketing_intelligence';
+// Which LANE this process serves. Each lane is its own singleton — exactly one
+// session per lease, same compare-and-set guarantee as before; there are simply
+// two leases now so a rep's client_study no longer queues behind a long
+// marketing backfill (see 2026-08-16_claude_two_lane_runner.sql).
+//   'marketing_intelligence' → mkt_content_enrichment, mkt_campaign_summary
+//   'interactive'            → ping, client_study
+// The DB decides what each lane may claim; this process keeps every handler so
+// it can ADOPT the other lane's work if that lease goes unheld.
+const LEASE = process.env.RUNNER_LEASE || 'marketing_intelligence';
 const LEASE_TTL_S = 120;          // lease dies 120s after the last heartbeat
 const HEARTBEAT_MS = 30_000;      // renew every 30s (4x margin)
 const SHUTDOWN_GRACE_MS = 60_000; // let the in-flight Claude session finish
@@ -452,6 +460,30 @@ const HANDLERS = {
   mkt_campaign_summary: handleMktCampaignSummary,
 };
 
+// Upper bound on ONE job. Must sit ABOVE the slowest legitimate session
+// (whatsapp_reply and client_study have both run ~14 min) and BELOW the DB
+// watchdog's 45-minute sweep, so the runner resolves its own hangs rather than
+// leaving the lane blocked until the database intervenes.
+const MAX_JOB_MS = Number(process.env.MAX_JOB_MS || 25 * 60_000);
+
+async function withJobTimeout(promise, job) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          console.error(`[runner] job=${job.id} (${job.kind}) exceeded ${Math.round(MAX_JOB_MS / 60000)}m — killing the session`);
+          killClaudeChild(); // process GROUP kill; the CLI spawns children
+          reject(new Error(`job exceeded ${Math.round(MAX_JOB_MS / 60000)}m and was terminated by the runner`));
+        }, MAX_JOB_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function tick() {
   // Cooling down after a subscription-limit hit — don't hammer Claude.
   if (Date.now() < cooldownUntil) return;
@@ -473,7 +505,17 @@ async function tick() {
   currentJobId = job.id;
   const handler = HANDLERS[job.kind] ?? handleClientStudy; // default keeps legacy behavior
   try {
-    const result = await handler(job);
+    // HARD CEILING on a single job. A Claude session can finish its work — even
+    // write its result and mark the job ready — and then never exit; observed
+    // 2026-07-27, where a client_study completed at 07:47:01 but the CLI child
+    // hung, so `await handler(job)` never returned and the lane sat idle-looking-
+    // busy for 8 minutes. Nothing caught it: the lease kept heartbeating (own
+    // timer), the loop looked legitimately occupied (currentJobId set), and the
+    // DB watchdog only sweeps at 45 minutes.
+    //
+    // Bounding the AWAIT is the only thing that closes it — the child is killed
+    // as a process group and the job fails loudly into the normal retry path.
+    const result = await withJobTimeout(handler(job), job);
     const { error: doneErr } = await supa.rpc('claude_job_complete', { p_job_id: job.id, p_result: result });
     if (doneErr) console.error('[runner] complete rpc failed:', doneErr.message);
     else console.log(`[runner] job=${job.id} READY`);
@@ -583,7 +625,24 @@ try {
   if (recErr) console.error('[runner] orphan recovery failed:', recErr.message);
   else for (const r of recovered ?? []) console.warn(`[runner] recovered ${r.kind} job=${r.job_id} from ${r.prior_owner} → ${r.action}`);
 } catch (e) { console.error('[runner] orphan recovery threw:', e); }
+// Liveness of the LANE is "the poll loop is going round", not "a timer fires".
+// The heartbeat runs on its own interval so it survives a 14-minute job — which
+// also means a wedged poll loop keeps renewing the lease and holds the lane
+// hostage while processing nothing. That happened the first time two lanes ran
+// (2026-07-27): the interactive runner completed a job, its loop never came
+// back, and the lease stayed green for 6+ minutes with a pending job untouched.
+// A dead runner is recoverable (lease expires, another takes over); a wedged one
+// that still heartbeats is invisible. So: if the loop stops advancing while NO
+// job is running, stop pretending to be alive and exit non-zero so Fly restarts.
+let lastTickAt = Date.now();
+const STALL_MS = 5 * 60_000; // >> POLL_MS (10s); only fires on a genuine wedge
+
 heartbeatTimer = setInterval(() => {
+  if (!shuttingDown && !currentJobId && Date.now() - lastTickAt > STALL_MS) {
+    console.error(`[runner] poll loop STALLED — no tick for ${Math.round((Date.now() - lastTickAt) / 1000)}s with no job running. `
+      + 'Exiting non-zero so the platform restarts us; the lease will expire and another machine can take this lane.');
+    process.exit(1); // deliberately NOT exit(0) — Fly does not restart on 0
+  }
   acquireLease().then((r) => {
     if (!r.acquired && !shuttingDown) {
       console.error(`[runner] LOST the lease to ${r.current_owner} — shutting down`);
@@ -594,6 +653,7 @@ heartbeatTimer = setInterval(() => {
 
 // Sequential forever-loop: one job fully finishes before the next claim.
 while (!shuttingDown) {
+  lastTickAt = Date.now();
   try { await tick(); } catch (e) { console.error('[runner] tick crashed:', e); }
   if (shuttingDown) break;
   await new Promise((r) => setTimeout(r, POLL_MS));

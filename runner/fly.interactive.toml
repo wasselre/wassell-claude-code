@@ -1,0 +1,48 @@
+# Second Claude Code runner — the INTERACTIVE lane.
+#
+# Same image and same code as wassel-claude-runner; the only difference is
+# RUNNER_LEASE, which decides what this process is allowed to claim:
+#
+#   wassel-claude-runner      lease 'marketing_intelligence' → mkt_content_enrichment,
+#                                                              mkt_campaign_summary
+#   wassel-claude-interactive lease 'interactive'            → ping, client_study
+#
+# Why it exists: the two lanes used to share one process, so a rep's
+# client_study queued behind whatever backfill was running. Priority tiers
+# (2026-08-15) made that ordering fair but could not add capacity — a study
+# still waited for the current job to finish. A second lane runs them
+# concurrently.
+#
+# The singleton guarantee is NOT weakened, it is applied PER LANE: still exactly
+# one Claude session per lease, same compare-and-set lease, so a second machine
+# in EITHER app still exits cleanly at boot. What changed is that there are two
+# leases. See supabase/migrations/2026-08-16_claude_two_lane_runner.sql.
+#
+# Deploy from the repo root (build context must include scripts/ and .claude/):
+#   flyctl deploy --config runner/fly.interactive.toml --app wassel-claude-interactive
+app = 'wassel-claude-interactive'
+
+# MUST stay above the runner's SHUTDOWN_GRACE_MS (60s) — same reason as the
+# marketing lane: Fly's 5s default would SIGKILL mid-shutdown and orphan the
+# in-flight session.
+kill_timeout = '90s'
+primary_region = 'sin'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  POLL_MS = '10000'
+  RUNNER_ENV = 'fly'
+  # The whole point of this app.
+  RUNNER_LEASE = 'interactive'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+
+[deploy]
+  strategy = 'immediate'
+
+[processes]
+  app = 'node scripts/claude-study-runner.mjs'
