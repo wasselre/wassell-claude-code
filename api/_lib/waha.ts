@@ -53,23 +53,57 @@ export class WahaError extends Error {
   }
 }
 
+/**
+ * WAHA base URL — the PROXY when one is configured.
+ *
+ * WAHA refuses Vercel's egress with 403 while accepting the Fly worker
+ * (verified live 2026-07-26: identical API key, 200 from the worker, 403 from a
+ * Vercel function — network-level, not credentials). Setting WAHA_PROXY_URL
+ * routes every call in this module through `wassel-wa-agent`, which forwards it
+ * with the real key. Unset it and we go direct again, unchanged.
+ *
+ * The proxy mounts WAHA under `/waha`, so paths stay identical.
+ */
+function usingProxy(): boolean {
+  return Boolean(process.env.WAHA_PROXY_URL);
+}
+
 function wahaUrl(): string {
+  const proxy = process.env.WAHA_PROXY_URL;
+  if (proxy) return `${proxy.replace(/\/+$/, '')}/waha`;
   const u = process.env.WAHA_URL;
   if (!u) throw new WahaError(500, 'WAHA_URL is not set');
   return u.replace(/\/+$/, '');
 }
 
+/**
+ * Auth header value. Direct calls carry the WAHA API key; proxied calls carry
+ * the shared proxy secret instead (the worker attaches the real key), so the
+ * gateway credential never has to exist in Vercel's environment.
+ */
 function wahaKey(): string {
+  if (usingProxy()) {
+    const s = process.env.WHATSAPP_AI_SECRET;
+    if (!s) throw new WahaError(500, 'WHATSAPP_AI_SECRET is not set (required for the WAHA proxy)');
+    return s;
+  }
   const k = process.env.WAHA_API_KEY;
   if (!k) throw new WahaError(500, 'WAHA_API_KEY is not set');
   return k;
+}
+
+/** Header name differs: the proxy authenticates callers, WAHA authenticates us. */
+function wahaAuthHeaders(): Record<string, string> {
+  return usingProxy()
+    ? { 'x-wassel-proxy-secret': wahaKey() }
+    : { 'X-Api-Key': wahaKey() };
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${wahaUrl()}${path}`, {
     ...init,
     headers: {
-      'X-Api-Key': wahaKey(),
+      ...wahaAuthHeaders(),
       'Content-Type': 'application/json',
       ...(init.headers ?? {}),
     },
@@ -290,7 +324,7 @@ export async function getQr(session: string): Promise<{ value: string | null }> 
 /** Raw QR image bytes (PNG) for the in-app pairing screen. */
 export async function getQrImage(session: string): Promise<Response> {
   const res = await fetch(`${wahaUrl()}/api/${encodeURIComponent(session)}/auth/qr?format=image`, {
-    headers: { 'X-Api-Key': wahaKey() },
+    headers: wahaAuthHeaders(),
   });
   if (!res.ok) {
     const preview = await res.text().catch(() => '');
@@ -572,7 +606,7 @@ export async function downloadFile(fileId: string, _deviceId?: string): Promise<
   // WAHA-hosted media `wf_<session>/<filename>` → fetch WAHA's file endpoint
   // with the API key (the browser can't send the key, so we proxy it).
   const path = fileId.startsWith(WAHA_REF) ? fileId.slice(WAHA_REF.length) : fileId;
-  const res = await fetch(`${wahaUrl()}/api/files/${path}`, { headers: { 'X-Api-Key': wahaKey() } });
+  const res = await fetch(`${wahaUrl()}/api/files/${path}`, { headers: wahaAuthHeaders() });
   if (!res.ok) {
     // The gateway no longer has it (retired host, re-pair, restart — WAHA's file
     // dir is per-gateway). Serve the mirror if we took a copy; only report the

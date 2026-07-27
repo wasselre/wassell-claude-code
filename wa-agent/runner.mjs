@@ -41,10 +41,64 @@ let stopping = false;
 let currentChild = null;
 let haveLease = false;
 
-// ── health endpoint (Fly checks) ────────────────────────────────────────────
-http.createServer((_req, res) => {
-  res.writeHead(200, { 'Content-Type': 'application/json' });
-  res.end(JSON.stringify({ ok: true, worker: WORKER, lease: haveLease }));
+// ── HTTP: health + WAHA proxy ───────────────────────────────────────────────
+//
+// WAHA refuses Vercel's egress with 403 while accepting this worker (verified
+// live 2026-07-26: identical API key, 200 from here, 403 from a Vercel
+// function). Rather than punch a firewall hole for Vercel's whole dynamic IP
+// range, the app calls WAHA *through* this machine: `/waha/<path>` is forwarded
+// verbatim with the real API key attached.
+//
+// Auth is the shared WHATSAPP_AI_SECRET — without it this would be an open
+// relay to the WhatsApp gateway.
+const WAHA_URL = (process.env.WAHA_URL || '').replace(/\/+$/, '');
+const WAHA_API_KEY = process.env.WAHA_API_KEY || '';
+
+http.createServer(async (req, res) => {
+  const url = new URL(req.url || '/', 'http://localhost');
+
+  if (!url.pathname.startsWith('/waha/')) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, worker: WORKER, lease: haveLease, proxy: Boolean(WAHA_URL) }));
+    return;
+  }
+
+  const secret = process.env.WHATSAPP_AI_SECRET || '';
+  if (!secret || req.headers['x-wassel-proxy-secret'] !== secret) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'unauthorized' }));
+    return;
+  }
+  if (!WAHA_URL || !WAHA_API_KEY) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'WAHA_URL / WAHA_API_KEY not set on the worker' }));
+    return;
+  }
+
+  const target = `${WAHA_URL}${url.pathname.slice('/waha'.length)}${url.search}`;
+  try {
+    const chunks = [];
+    for await (const c of req) chunks.push(c);
+    const body = chunks.length ? Buffer.concat(chunks) : undefined;
+
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers: {
+        'X-Api-Key': WAHA_API_KEY,
+        ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
+      },
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
+    });
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.writeHead(upstream.status, {
+      'Content-Type': upstream.headers.get('content-type') || 'application/octet-stream',
+    });
+    res.end(buf);
+  } catch (err) {
+    console.error('[wa-agent] proxy error:', err);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: `proxy failed: ${err instanceof Error ? err.message : String(err)}` }));
+  }
 }).listen(Number(process.env.PORT || 8080));
 
 // ── singleton lease ─────────────────────────────────────────────────────────
