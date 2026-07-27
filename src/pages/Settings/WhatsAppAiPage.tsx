@@ -131,8 +131,8 @@ export default function WhatsAppAiPage() {
           </h1>
           <p className="text-sm text-charcoal/60">
             {isAr
-              ? 'يرد على العملاء خارج ساعات عمل الفريق فقط.'
-              : 'Answers customers outside the team’s working hours only.'}
+              ? 'هذه الإعدادات تتحكم في الرد التلقائي فقط. التحويل اليدوي من داخل المحادثة يعمل دائماً.'
+              : 'These settings govern automatic replies only. A manual handover from a conversation always works.'}
           </p>
         </div>
       </div>
@@ -168,12 +168,12 @@ export default function WhatsAppAiPage() {
           />
           <div>
             <div className="font-semibold text-charcoal">
-              {isAr ? 'تفعيل المساعد الذكي' : 'Enable the AI agent'}
+              {isAr ? 'الرد التلقائي على العملاء' : 'Automatic replies to customers'}
             </div>
             <div className="text-sm text-charcoal/60">
               {isAr
-                ? 'عند الإيقاف لن يرد المساعد على أي عميل، حتى لو تم تحويل محادثة إليه يدوياً.'
-                : 'When off, the agent replies to nobody — even a manual handover does nothing.'}
+                ? 'عند الإيقاف لن يرد المساعد من نفسه على أي عميل. يظل بإمكانك تشغيله يدوياً من أي محادثة بزر «رد بالمساعد الذكي».'
+                : 'When off, the agent never replies on its own. You can still run it manually from any conversation with the «AI reply» button.'}
             </div>
           </div>
         </label>

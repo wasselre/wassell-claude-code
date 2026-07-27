@@ -3,8 +3,9 @@
  *
  * "Let the AI handle this chat" — the button in the chat header. A rep is
  * explicitly inviting the agent in, so this enqueues with `force`, which skips
- * the working-hours and human-active gates (those exist to stop the AI acting
- * UNINVITED). The kill switch and the per-chat reply cap still apply.
+ * EVERY policy gate: schedule, human-active, reply cap, and the automatic-reply
+ * switch itself. Those settings govern when the agent acts on its OWN; none of
+ * them gets a vote on a human asking for a reply right now.
  *
  * Body: { chat_wid }  — or { chat_record_id }.
  *
@@ -55,11 +56,11 @@ export default async function handler(req: Request): Promise<Response> {
     });
     if (rpcErr) return jsonError(500, `enqueue failed: ${rpcErr.message}`);
     if (!jobId) {
-      // Null means the kill switch is off or the chat hit its reply cap — both
-      // are normal states the rep needs told, not errors.
+      // Forced enqueues bypass every policy gate, so the only way back is the
+      // debounce returning nothing — i.e. something is already running.
       return jsonOk({
         queued: false,
-        reason: 'المساعد الذكي متوقف أو وصل الحد الأقصى للردود في هذه المحادثة',
+        reason: 'المساعد يعمل على هذه المحادثة بالفعل',
       });
     }
     return jsonOk({ queued: true, job_id: jobId });
