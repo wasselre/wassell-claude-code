@@ -92,8 +92,29 @@ export default async function handler(req: Request): Promise<Response> {
   const digits = chatWid.split('@')[0] ?? '';
   if (!/^\d{8,15}$/.test(digits)) return json({ error: `unsupported chat_wid: ${chatWid}` }, 400);
 
-  const deviceId = input.device_id || (await resolveDefaultDeviceId());
-  if (!deviceId) return json({ error: 'no WhatsApp device configured' }, 500);
+  // NEVER trust the device id we were handed. A stale one is worse than none:
+  // an old `wassel_main` gateway is still delivering webhooks for this number
+  // alongside the live `sales` session, so jobs get created carrying a device
+  // that the gateway we send through does not have — the reply then dies with
+  // `422 Session "wassel_main" does not exist` while the agent believes it sent
+  // (verified live 2026-07-27). Only an ACTIVE device may be used; anything
+  // else falls back to the configured default.
+  const requested = input.device_id?.trim() || null;
+  let deviceId: string | null = null;
+  if (requested) {
+    const { data: dev } = await supa
+      .from('whatsapp_numbers')
+      .select('device_id')
+      .eq('device_id', requested)
+      .eq('is_active', true)
+      .maybeSingle();
+    deviceId = dev?.device_id ?? null;
+    if (!deviceId) {
+      console.warn(`[whatsapp-ai-send] ignoring inactive/unknown device "${requested}" — using the default`);
+    }
+  }
+  deviceId = deviceId ?? (await resolveDefaultDeviceId());
+  if (!deviceId) return json({ error: 'no active WhatsApp device configured' }, 500);
 
   // Send via the SCHEDULED QUEUE, not a direct WAHA call.
   //
