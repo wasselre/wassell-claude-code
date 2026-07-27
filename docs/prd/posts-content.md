@@ -44,7 +44,9 @@ Checking for digits is not sufficient: "مع مسبح خاص وحديقة" conta
 
 A rejected generation is retried **once** with the violation (and the list of valid ids) fed back, then reported as a failure for that post alone. Nothing that fails a gate is ever published.
 
-The deterministic spec block may contain only: unit type, location, available area range, available price range, top features, top guarantees, and the project link.
+The deterministic spec block may contain only: unit type, location, available area range, available price range, top features and top guarantees. It ends on the price line.
+
+**No project link — deliberately.** The block first ended with «الرابط: https://wassel.re/project?id=&lt;uuid&gt;», carried over from `composeProjectMessage` (the WhatsApp project message). That is one-to-one messaging where the recipient can tap the link. These are social captions: Instagram doesn't linkify captions at all, a raw UUID is unreadable and reads as bot output, and it wrapped over two lines and swamped the card. The client's own 15 templates end at القيمة. `websiteUnitsLink` is still resolved on the facts object for future use, but never enters a post body — there is a test asserting no post contains `http`.
 
 ### 4. Available-only pricing (QA-003)
 

@@ -246,9 +246,15 @@ export function composeSpecBlock(
     const label = tone === 'long' ? L('القيمة الاستثمارية', 'Investment value') : L('القيمة', 'Price');
     lines.push(`${label}: ${L('تبدأ من', 'from')} ${price}`);
   }
-  if (facts.websiteUnitsLink) {
-    lines.push(`${L('الرابط', 'Link')}: ${facts.websiteUnitsLink}`);
-  }
+  // NO LINK LINE — deliberate, and it must stay that way.
+  //
+  // The block originally ended with «الرابط: https://wassel.re/project?id=<uuid>»,
+  // carried over from composeProjectMessage (projectMessageFacts.ts). That is a
+  // WhatsApp message to ONE client, who can tap it. These are social captions:
+  // Instagram doesn't linkify captions at all, the raw UUID is unreadable and
+  // untrustworthy, it wrapped over two lines and swamped the card, and ending on
+  // a machine-shaped URL undercuts the copy above it. The CTA on those channels
+  // is the bio link or a DM. The user's own 15 templates end at القيمة.
   return lines.join('\n');
 }
 

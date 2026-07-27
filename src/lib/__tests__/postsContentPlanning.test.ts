@@ -286,13 +286,29 @@ describe('guarantee parsing', () => {
 });
 
 describe('composeSpecBlock — available-only pricing', () => {
-  it('renders the type, area, warranties, price and link', () => {
+  it('renders the type, area, warranties and price', () => {
     const spec = composeSpecBlock(richFacts(), 'short', 'ar');
     expect(spec).toContain('نوع العقار: شقة');
     expect(spec).toContain('المساحة: 82 - 117 م²');
     expect(spec).toContain('الضمانات:');
     expect(spec).toContain('1,066,964 ر.س');
-    expect(spec).toContain('https://wassel.re/project?id=ap-1#units');
+  });
+
+  it('NEVER appends a project link — these are social captions, not WhatsApp', () => {
+    for (const tone of ['short', 'long'] as const) {
+      for (const lang of ['ar', 'en'] as const) {
+        const spec = composeSpecBlock(richFacts(), tone, lang);
+        expect(spec).not.toContain('wassel.re');
+        expect(spec).not.toContain('http');
+        expect(spec).not.toContain('الرابط');
+        expect(spec).not.toContain('Link:');
+      }
+    }
+  });
+
+  it('ends on the price line', () => {
+    const lines = composeSpecBlock(richFacts(), 'short', 'ar').split('\n');
+    expect(lines.at(-1)).toContain('القيمة');
   });
 
   it('adds location and highlights only in the long tone', () => {

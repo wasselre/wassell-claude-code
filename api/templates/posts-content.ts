@@ -294,7 +294,8 @@ export async function resolveFacts(
   if (!facts.priceRange) missing.push('price');
   if (facts.features.length === 0) missing.push('features');
   if (facts.guarantees.length === 0) missing.push('guarantees');
-  if (!facts.websiteUnitsLink) missing.push('link');
+  // `websiteUnitsLink` is resolved but NOT part of a post (see composeSpecBlock),
+  // so its absence is not a gap worth warning about.
   facts.missing = missing;
 
   return { facts };
