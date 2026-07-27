@@ -67,6 +67,7 @@ import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage'
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
 import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
 import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
+import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
 import SalesStudioHomePage from '@/pages/SalesStudio/SalesStudioHomePage';
 import ProcessJourneyPage from '@/pages/SalesStudio/ProcessJourneyPage';
 import ExperimentsPage from '@/pages/SalesStudio/ExperimentsPage';
@@ -327,6 +328,8 @@ export default function App() {
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
+          {/* Marketing content writer — project-grounded social/brochure posts. */}
+          <Route path="/marketing/posts" element={<RequirePageAccess pageId="posts_content"><PostsContentPage /></RequirePageAccess>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />
           <Route path="/model/:modelName/new" element={<RecordNewDispatcher />} />
           {/* Full-page Suggested Projects finder, scoped to a follow-up (same tab;

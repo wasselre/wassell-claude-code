@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -33,7 +33,8 @@ export type CustomPageId =
   | 'sales_process'
   | 'sales_manager'
   | 'sales_studio'
-  | 'market_intelligence';
+  | 'market_intelligence'
+  | 'posts_content';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -111,6 +112,16 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_ar: 'ذكاء السوق',
     label_en: 'Market Intelligence',
     icon: LineChart,
+    default_access: 'admin',
+  },
+  {
+    id: 'posts_content',
+    route: '/marketing/posts',
+    label_ar: 'كاتب المحتوى',
+    label_en: 'Content Writer',
+    icon: Megaphone,
+    // Opt-in: writes marketing copy against live project data and spends model
+    // tokens, so an admin grants it per profile in Settings → Profiles.
     default_access: 'admin',
   },
 ];
