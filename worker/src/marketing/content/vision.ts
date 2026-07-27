@@ -99,6 +99,33 @@ const TOOL: Anthropic.Tool = {
   },
 };
 
+/**
+ * Classify a thrown vision error.
+ *
+ * `infrastructure` means the cause is our account or the transport — it will hit
+ * EVERY subsequent post identically, so it must be loud rather than absorbed as
+ * this one post's bad luck. Exhausted Anthropic credits hid behind an absorbed
+ * vision error for four days across 66 jobs, every one of which reported
+ * `succeeded`. Callers treat BOTH kinds as fatal for the post (a post with no
+ * OCR has lost its largest evidence source); the distinction exists so the
+ * operator reading the queue can tell "top up the account" apart from "this
+ * creative is unreadable".
+ */
+export function classifyVisionError(e: unknown): { kind: 'infrastructure' | 'data'; message: string } {
+  const err = e as { status?: number; message?: string } | null;
+  const message = err?.message ?? String(e);
+  const status = typeof err?.status === 'number' ? err.status : null;
+  const m = message.toLowerCase();
+  const infrastructure =
+    status === 401 || status === 403 || status === 429 || (status !== null && status >= 500)
+    || m.includes('credit balance')   // "Your credit balance is too low to access the API"
+    || m.includes('quota') || m.includes('billing')
+    || m.includes('rate limit') || m.includes('overloaded')
+    || m.includes('authentication') || m.includes('api key')
+    || m.includes('econnreset') || m.includes('etimedout') || m.includes('fetch failed');
+  return { kind: infrastructure ? 'infrastructure' : 'data', message };
+}
+
 function mediaType(mime: string | null): 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif' {
   if (mime?.includes('png')) return 'image/png';
   if (mime?.includes('webp')) return 'image/webp';

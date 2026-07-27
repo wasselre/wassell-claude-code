@@ -377,6 +377,61 @@ currently backfill-only.~~ **Done 2026-07-26** — see §7 below.
 
 ---
 
+## 6c. Silent-success monitoring (fixed 2026-08-12)
+
+Two defects of one family — a green signal produced by not looking. Both were
+found by asking "what would this system look like if it were broken?" rather
+than by anything reporting an error.
+
+**`content_process` jobs reported `succeeded` when their core step had died.**
+The orchestrator caught a failed OCR call, appended the message to `errors`, and
+returned normally; the caller then called `mkt_job_complete`. Measured on
+production before the fix: **684 succeeded, 0 failed**, and **67 of those
+successes carried a `vision:` error** — four days of exhausted Anthropic credits
+during which every post came out with no visual text, invisible because the
+queue never went red. Two further paths did the same: a post with no stored
+media, and a post whose candidate-narrowing threw (leaving it at
+`awaiting_intelligence` with no pending enrichment row, so the runner could
+never claim it — stranded forever, reported as success).
+
+The fix splits errors into **fatal** (`fatal_errors` → the caller throws → job
+fails → bounded backoff retry → a terminal `failed` row) and **degraded**
+(`errors` + a `degraded` flag → job succeeds, but countable). The split matters:
+276 of those 684 jobs were degradation that *retrying cannot fix* — an expired
+TikTok no-watermark URL, a datacenter-blocked YouTube download. Throwing on
+those would have converted a silent-success bug into a retry storm.
+
+| Class | Count | Treatment |
+|---|---|---|
+| `vision:` | 67 | fatal — no OCR means the largest evidence source is gone |
+| `narrow:` | — | fatal — the post is unroutable, nothing will ever claim it |
+| no media stored | — | fatal — nothing was processed |
+| `youtube:` / `video_unavailable:` / `media:` / `transcribe:` | 276 | degraded — retry cannot fix it |
+| `enrich:` | 33 | legacy, pre-`ab51ae6` direct-API era |
+
+**The queue-backlog alert could never fire.** `mkt_ops_evaluate` counted
+`status='pending'` — a value the `mkt_collection_jobs` CHECK constraint does not
+permit (the vocabulary is `queued|running|succeeded|failed|cancelled`). A
+167-job backlog was live and silent. Repaired by patching the deployed function
+body via `pg_get_functiondef` + `replace` rather than re-typing 3 KB of live SQL
+to change one word.
+
+New `mkt_check_processing_health()` runs on the existing ops cadence (injected
+into `mkt_ops_evaluate`, same posture as the trend engine — no new scheduler):
+
+- **`processing_infrastructure`** — *critical*, no sample threshold. One
+  `vision(infrastructure)` failure is enough, because that class (credit balance,
+  auth, rate limit, 5xx, transport) hits every subsequent post identically. This
+  is the check that would have caught the credit exhaustion in hours.
+- **`processing_failures`** — *critical* past `ops_processing_failure_alert` (3).
+- **`processing_degraded`** — *warning* past `ops_processing_degraded_ratio`
+  (0.5) on a minimum sample of 10. Warning on purpose: degradation is often
+  legitimate, and an alert that cries wolf is worse than none.
+
+Verified live: the alert fires `critical`, then auto-resolves once the cause
+clears. Guarded by `supabase/tests/mkt_processing_health_test.sql`, which
+asserts the alert *fires* — an alert that cannot fire is the bug being fixed.
+
 ## 7. Phase 1 — live fact extraction (implemented 2026-07-26)
 
 ```

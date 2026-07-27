@@ -278,7 +278,20 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       stats.inserted = r.media_stored;
       stats.skipped = r.media_failed + r.transcribe_failed;
       if (r.errors.length) stats.errors.push(...r.errors.slice(0, 10));
-      apifyCost = { usage_total_usd: r.cost_usd, status: r.status, transcribed: r.transcribed, images: r.images_analyzed, frames: r.frames_analyzed, primary_project: r.primary_project };
+      apifyCost = { usage_total_usd: r.cost_usd, status: r.status, transcribed: r.transcribed, images: r.images_analyzed, frames: r.frames_analyzed, primary_project: r.primary_project, degraded: r.degraded };
+      // A post that produced nothing usable, lost its whole OCR step, or was left
+      // unroutable is NOT a succeeded job. Until this throw existed, every one of
+      // those returned normally and index.ts called mkt_job_complete — which is
+      // how four days of exhausted Anthropic credits read as 66 green jobs.
+      // Throwing routes it to mkt_job_fail: bounded exponential-backoff retries
+      // (media/OCR writes are idempotent, so a retry is cheap and re-uses what
+      // already landed), then a terminal `failed` row the queue actually shows.
+      // Degradation that retrying cannot fix — an expired TikTok URL, a
+      // datacenter-blocked YouTube download — stays in `errors` and does NOT
+      // throw, so those never become a retry storm.
+      if (r.fatal_errors.length > 0) {
+        throw new ProviderError(`content_process ${postId} did not complete: ${r.fatal_errors.slice(0, 3).join('; ')}`);
+      }
     } else if (job.kind === 'campaign_group') {
       // Deterministic cross-platform campaign grouping for one org (organic + paid).
       const cgOrgId = (job.params.organization_id as string) ?? orgId;
@@ -426,7 +439,10 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
     return { status: 'ok', stats };
   } catch (e) {
     const err = e instanceof ProviderError ? e : new ProviderError(e instanceof Error ? e.message : String(e));
-    await sb.rpc('mkt_ingestion_run_finish', { p_run_id: runId, p_status: 'failed', p_received: stats.received, p_inserted: stats.inserted, p_updated: stats.updated, p_skipped: stats.skipped, p_errors: [err.message] });
+    // Carry the cost through on the failure path too — spend that already happened
+    // is still spend, and dropping it here would under-report the cost dashboard
+    // for exactly the runs most worth accounting for.
+    await sb.rpc('mkt_ingestion_run_finish', { p_run_id: runId, p_status: 'failed', p_received: stats.received, p_inserted: stats.inserted, p_updated: stats.updated, p_skipped: stats.skipped, p_errors: [err.message], p_cost: apifyCost ?? null });
     await sb.from('mkt_social_accounts').update({ scrape_status: err.health === 'auth_failed' ? 'auth_failed' : err.health === 'rate_limited' ? 'rate_limited' : 'error' }).eq('id', job.social_account_id ?? '00000000-0000-0000-0000-000000000000');
 
     // Browserbase fallback — only when eligible per the strict rules.

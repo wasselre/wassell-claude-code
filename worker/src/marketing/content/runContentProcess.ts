@@ -14,7 +14,7 @@ import { toTempFile, cleanup, probeDurationMs, extractAudio, sampleFrames } from
 import { downloadYouTube, YtDownloadError } from './ytdlp.js';
 import { transcribeAudioUrl } from './falTranscribe.js';
 import { readFile } from 'node:fs/promises';
-import { extractVisualText, MAX_IMAGES } from './vision.js';
+import { extractVisualText, classifyVisionError, MAX_IMAGES } from './vision.js';
 import { narrowProjects, RULE_VERSION, type NarrowedCandidate } from './enrich.js';
 import { sha256Hex } from '../adIntel.js';
 
@@ -26,6 +26,15 @@ export interface ContentProcessStats {
   images_analyzed: number; frames_analyzed: number; enriched: boolean;
   primary_project: string | null; attributions: number; status: string;
   cost_usd: number; errors: string[];
+  /**
+   * Errors that mean the post did NOT get processed — its OCR step died, or it
+   * was left unroutable. The caller MUST fail the job on these. `errors` alone
+   * is degradation (one media of five expired, a datacenter-blocked YouTube
+   * download) which retrying cannot fix and which must not cause a retry storm.
+   */
+  fatal_errors: string[];
+  /** True when the post completed but incompletely. Surfaced in the job result so a health query can count green-but-thin runs instead of reading them as clean. */
+  degraded: boolean;
 }
 
 async function loadProjectIndex(sb: SupabaseClient, projectIds: string[]): Promise<ProjectAlias[]> {
@@ -39,7 +48,18 @@ async function loadAllProjectNames(sb: SupabaseClient): Promise<ProjectAlias[]> 
 }
 
 export async function runContentProcess(sb: SupabaseClient, contentPostId: string): Promise<ContentProcessStats> {
-  const stats: ContentProcessStats = { post_id: contentPostId, media_total: 0, media_stored: 0, media_failed: 0, videos: 0, transcribed: 0, transcribe_failed: 0, images_analyzed: 0, frames_analyzed: 0, enriched: false, primary_project: null, attributions: 0, status: 'processing', cost_usd: 0, errors: [] };
+  const stats: ContentProcessStats = { post_id: contentPostId, media_total: 0, media_stored: 0, media_failed: 0, videos: 0, transcribed: 0, transcribe_failed: 0, images_analyzed: 0, frames_analyzed: 0, enriched: false, primary_project: null, attributions: 0, status: 'processing', cost_usd: 0, errors: [], fatal_errors: [], degraded: false };
+
+  // Terminal "this post did not process" exit. Marks the post failed rather than
+  // advancing it, so a post with a dead OCR step is never handed to the runner
+  // as if its evidence were complete.
+  const failPost = async (): Promise<ContentProcessStats> => {
+    stats.status = 'failed';
+    stats.degraded = true;
+    await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'failed', p_media_count: stats.media_stored });
+    stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
+    return stats;
+  };
 
   const { data: post } = await sb.from('mkt_content_posts').select('id, platform, external_id, social_account_id, organization_id, post_type, caption').eq('id', contentPostId).maybeSingle();
   if (!post) throw new Error(`content post not found: ${contentPostId}`);
@@ -164,8 +184,19 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
         if (inp.source === 'frame') stats.frames_analyzed++; else stats.images_analyzed++;
         await sb.rpc('mkt_visual_text_upsert', { p_media: inp.mediaId, p_post: contentPostId, p_source: inp.source, p_frame_ts_ms: inp.frameTsMs, p_model: process.env.MKT_VISION_MODEL ?? 'claude-sonnet-4-6', p_text: r.fields.visible_text ?? '', p_structured: r.fields, p_confidence: null, p_cost: perRowCost, p_status: 'done', p_failure: null, p_raw: null });
       }
-    } catch (e) { stats.errors.push(`vision: ${e instanceof Error ? e.message : String(e)}`); }
+    } catch (e) {
+      // FATAL, not degradation. This post had images to read and the read died,
+      // so it has no visual text at all — and OCR is the largest evidence source
+      // for a real-estate creative (price/offer/phone overlays live in pixels,
+      // not the caption). Absorbing this is what let exhausted Anthropic credits
+      // pass as 66 `succeeded` jobs over four days.
+      const c = classifyVisionError(e);
+      stats.fatal_errors.push(`vision(${c.kind}): ${c.message}`);
+    }
   }
+  // Stop before the project index scan + intelligence handoff — no point paying
+  // for either when the evidence package would be missing its OCR half.
+  if (stats.fatal_errors.length > 0) return failPost();
 
   // ── explicit terminal state for video posts whose video bytes were not
   //    collectable (TikTok empty mediaUrls; YouTube datacenter block). Compute the
@@ -187,10 +218,8 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
   //    enrichment + attribution + processed/partial status. ──
   const anyStored = stats.media_stored > 0;
   if (!anyStored) {
-    stats.status = 'failed';
-    await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'failed', p_media_count: 0 });
-    stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
-    return stats;
+    stats.fatal_errors.push('no media stored — nothing to process');
+    return failPost();
   }
   const pubProjects = await publisherProjectIds(sb, post.organization_id as string | null);
   const index = await loadProjectIndex(sb, pubProjects);
@@ -208,8 +237,14 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     });
     stats.enriched = true; // pending row written; runner completes the decision
   } catch (e) {
-    stats.errors.push(`narrow: ${e instanceof Error ? e.message : String(e)}`);
+    // FATAL: without the pending enrichment row the runner has nothing to claim,
+    // so the post would sit at `awaiting_intelligence` forever with no owner —
+    // invisible, because the job that stranded it reported success.
+    stats.fatal_errors.push(`narrow: ${e instanceof Error ? e.message : String(e)}`);
   }
+  if (stats.fatal_errors.length > 0) return failPost();
+
+  stats.degraded = deterministicPartial || stats.errors.length > 0;
   stats.status = 'awaiting_intelligence';
   await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'awaiting_intelligence', p_media_count: stats.media_stored });
   stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;

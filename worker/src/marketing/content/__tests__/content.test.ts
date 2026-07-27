@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { extractMedia } from '../mediaExtract';
 import { detectLanguage, isMeaninglessTranscript } from '../falTranscribe';
+import { classifyVisionError } from '../vision';
 
 describe('media extraction from raw payloads', () => {
   it('instagram reel → video + thumbnail with duration', () => {
@@ -57,5 +58,43 @@ describe('whisper hallucination guard (music-only reels)', () => {
   it('keeps real speech', () => {
     expect(isMeaninglessTranscript('وصل ريفييرا عرض خاص لفترة محدودة')).toBe(false);
     expect(isMeaninglessTranscript('Book your unit now')).toBe(false);
+  });
+});
+
+// ============================================================================
+// Silent-success guard. A content_process job used to report `succeeded` even
+// when its OCR step died: 66 jobs across four days read green while Anthropic
+// credits were exhausted and every post came out with no visual text. These
+// tests pin the classifier that tells "our account broke" apart from "this
+// creative is unreadable" — both fatal for the post, different for the operator.
+// ============================================================================
+describe('vision error classification (silent-success guard)', () => {
+  it('the real credit-exhaustion message classifies as infrastructure', () => {
+    const c = classifyVisionError(new Error('Your credit balance is too low to access the Anthropic API'));
+    expect(c.kind).toBe('infrastructure');
+    expect(c.message).toContain('credit balance');
+  });
+
+  it.each([
+    ['401 auth', Object.assign(new Error('unauthorized'), { status: 401 })],
+    ['429 rate limit', Object.assign(new Error('too many requests'), { status: 429 })],
+    ['500 upstream', Object.assign(new Error('internal'), { status: 503 })],
+    ['overloaded', new Error('Overloaded')],
+    ['transport', new Error('fetch failed')],
+  ])('%s → infrastructure (it will hit every post, not just this one)', (_label, err) => {
+    expect(classifyVisionError(err).kind).toBe('infrastructure');
+  });
+
+  it('a genuine per-post problem is data, not infrastructure', () => {
+    expect(classifyVisionError(new Error('could not process image: unsupported dimensions')).kind).toBe('data');
+  });
+
+  it('a 400 that is not about billing stays data-class', () => {
+    expect(classifyVisionError(Object.assign(new Error('invalid_request_error'), { status: 400 })).kind).toBe('data');
+  });
+
+  it('survives a non-Error throw without losing the message', () => {
+    expect(classifyVisionError('boom').message).toBe('boom');
+    expect(classifyVisionError(null).message).toBe('null');
   });
 });
