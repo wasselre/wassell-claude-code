@@ -66,6 +66,7 @@ import MyTasksPage from '@/pages/Sales/MyTasksPage';
 import SalesProcessStudioPage from '@/pages/SalesProcess/SalesProcessStudioPage';
 import SalesManagerPage from '@/pages/Sales/SalesManagerPage';
 import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligencePage';
+import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIntelligencePage';
 import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
 import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
 import SalesStudioHomePage from '@/pages/SalesStudio/SalesStudioHomePage';
@@ -326,6 +327,7 @@ export default function App() {
           <Route path="/sales/process" element={<RequirePageAccess pageId="sales_process"><SalesProcessStudioPage /></RequirePageAccess>} />
           <Route path="/sales/manager" element={<RequirePageAccess pageId="sales_manager"><SalesManagerPage /></RequirePageAccess>} />
           <Route path="/market-intelligence" element={<RequirePageAccess pageId="market_intelligence"><MarketIntelligencePage /></RequirePageAccess>} />
+          <Route path="/marketing-intelligence" element={<RequirePageAccess pageId="marketing_intelligence"><MarketingIntelligencePage /></RequirePageAccess>} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
           {/* Marketing content writer — project-grounded social/brochure posts. */}

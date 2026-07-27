@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -34,7 +34,8 @@ export type CustomPageId =
   | 'sales_manager'
   | 'sales_studio'
   | 'market_intelligence'
-  | 'posts_content';
+  | 'posts_content'
+  | 'marketing_intelligence';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -122,6 +123,18 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     icon: Megaphone,
     // Opt-in: writes marketing copy against live project data and spends model
     // tokens, so an admin grants it per profile in Settings → Profiles.
+    default_access: 'admin',
+  },
+  {
+    // Competitor MARKETING intelligence — distinct from 'market_intelligence'
+    // (listing/price data) and from 'posts_content' (writes OUR copy). This one
+    // only OBSERVES competitors, hence Radar rather than another Megaphone.
+    // Arabic keeps the first pair apart: ذكاء التسويق here vs ذكاء السوق there.
+    id: 'marketing_intelligence',
+    route: '/marketing-intelligence',
+    label_ar: 'ذكاء التسويق',
+    label_en: 'Marketing Intelligence',
+    icon: Radar,
     default_access: 'admin',
   },
 ];

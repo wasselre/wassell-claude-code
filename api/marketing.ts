@@ -376,6 +376,34 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ intelligence: data });
       }
 
+      case 'intelligence_index': {
+        // The Marketing Intelligence page SHELL in one round trip: the global
+        // insight feed plus both pickers plus the coverage block, against a
+        // single consistent snapshot. Not admin-gated — product surface.
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { data, error } = await svc.rpc('mkt_intelligence_index', {
+          p_limit: typeof body.limit === 'number' ? Math.min(500, Math.max(1, body.limit)) : 60,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ index: data });
+      }
+
+      case 'insight_dismiss': {
+        // Clear a handled insight from the feed. Sets a flag — never deletes,
+        // because the evidence trail is the point of the insight engine.
+        const iid = str(body.insight_id);
+        if (!iid) return jsonError(400, 'insight_id required');
+        const svc = makeServiceClient('api:marketing');
+        if (!svc) return jsonError(500, 'service unavailable');
+        const { error } = await svc.rpc('mkt_insight_set_dismissed', {
+          p_insight_id: iid,
+          p_dismissed: body.dismissed !== false,
+        });
+        if (error) return jsonError(500, error.message);
+        return jsonOk({ ok: true });
+      }
+
       case 'organization_intelligence': {
         // The Organization Intelligence page in ONE round trip. Serves both
         // developers and marketing companies without a variant — the role is

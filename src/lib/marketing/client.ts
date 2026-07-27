@@ -457,3 +457,57 @@ export const runAdvertiserDiscovery = (organization_id: string, advertiser: stri
 export const confirmAdvertiser = (organization_id: string, page_id: string, advertiser?: string) => call<{ ok: boolean }>('confirm_advertiser', { organization_id, page_id, advertiser });
 export const rejectCandidate = (organization_id: string, page_id: string) => call<{ ok: boolean; remaining: number }>('reject_candidate', { organization_id, page_id });
 export const runAdsPage = (organization_id: string, limit = 25) => call<{ job_id: string }>('run_ads_page', { organization_id, limit });
+
+// ── Marketing Intelligence index ────────────────────────────────────────────
+// Mirrors mkt_intelligence_index(). One round trip for the page shell: the
+// global insight feed + both pickers + coverage.
+export interface MIIndexInsight {
+  id: string; kind: string; severity: string; title: string; body: string | null;
+  evidence: Record<string, unknown> | null; generated_at: string;
+  project_id: string | null; project_name: string | null;
+  organization_id: string | null; organization_name: string | null;
+}
+export interface MIIndexProject {
+  project_id: string; name: string | null; city: string | null;
+  /** CONFIRMED attributions only. Never add candidate_post_count to this. */
+  post_count: number;
+  candidate_post_count: number;
+  ad_count: number; fact_count: number; org_count: number;
+  platform_count: number; platforms: string[] | null;
+  min_advertised_price: number | null; max_advertised_price: number | null;
+  last_activity_at: string | null;
+}
+export interface MIIndexOrganization {
+  organization_id: string; name: string | null; name_ar: string | null; name_en: string | null;
+  hq_city: string | null; status: string | null; website: string | null;
+  project_count: number; post_count: number; fact_count: number;
+  last_activity_at: string | null;
+}
+/** What the page does NOT know. Render it — every number above is bounded by this. */
+export interface MICoverage {
+  posts_total: number;
+  posts_processed: number;
+  /** Media + OCR + facts are DONE for these; only the runner's project decision
+   *  is outstanding. This is not the same as "unprocessed" and must not be
+   *  displayed as a failure. */
+  posts_awaiting_intelligence: number;
+  posts_failed: number;
+  posts_by_status: Record<string, number>;
+  posts_without_ocr: number;
+  facts_total: number;
+  orgs_total: number;
+  orgs_with_facts: number;
+  attribution: { confirmed: number; speculative: number };
+  note: string;
+}
+export interface IntelligenceIndex {
+  generated_at: string;
+  insights: { shown: number; total: number; rows: MIIndexInsight[] };
+  projects: { shown: number; total: number; rows: MIIndexProject[] };
+  organizations: { shown: number; total: number; rows: MIIndexOrganization[] };
+  coverage: MICoverage;
+}
+export const fetchIntelligenceIndex = (limit = 60) =>
+  call<{ index: IntelligenceIndex }>('intelligence_index', { limit });
+export const dismissInsight = (insight_id: string, dismissed = true) =>
+  call<{ ok: boolean }>('insight_dismiss', { insight_id, dismissed });
