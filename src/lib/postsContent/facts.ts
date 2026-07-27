@@ -19,8 +19,9 @@
  * Neither check alone is sufficient; both are enforced server-side.
  */
 
-import type { PostTone } from './templates';
-import type { PostLanguage } from './planning';
+// `.js` extensions are required — see the note in planning.ts.
+import type { PostTone } from './templates.js';
+import type { PostLanguage } from './planning.js';
 
 export interface Bilingual {
   ar: string;

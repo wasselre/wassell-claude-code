@@ -8,7 +8,13 @@
  * what the user asked for.
  */
 
-import { POST_ANGLES, matchAngleEvidence, type PostAngle, type UnitTypeValue } from './templates';
+// NOTE the `.js` extension. These modules are imported by BOTH the browser and
+// the Vercel serverless function (api/templates/posts-content.ts). Vite and
+// vitest resolve an extensionless relative import fine, but the deployed Node
+// ESM bundle does NOT — an extensionless import crashed the live function with
+// ERR_MODULE_NOT_FOUND on first deploy. Keep the extension on every relative
+// import in this folder.
+import { POST_ANGLES, matchAngleEvidence, type PostAngle, type UnitTypeValue } from './templates.js';
 
 /** Safety ceiling for one generation run — see PLAN_LIMITS in the PRD. */
 export const MAX_POSTS_PER_BATCH = 60;

@@ -9,9 +9,10 @@
  */
 
 import { supabase } from '@/lib/supabase';
-import type { PostTone } from './templates';
-import { assignAngles, type AngleScore, type PostLanguage } from './planning';
-import type { GeneratedPost, PostsProjectFacts } from './facts';
+// `.js` extensions are required — see the note in planning.ts.
+import type { PostTone } from './templates.js';
+import { assignAngles, type AngleScore, type PostLanguage } from './planning.js';
+import type { GeneratedPost, PostsProjectFacts } from './facts.js';
 
 const ITEMS_PER_REQUEST = 4;
 const MAX_IN_FLIGHT = 3;
