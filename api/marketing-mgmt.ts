@@ -254,6 +254,37 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ item: data });
       }
 
+      // ── Cross-item queues (Calendar / Publishing / Approvals / Performance)
+      // These exist because those screens are NOT per-item: a calendar that can
+      // only read one content item at a time is a mock, not a calendar.
+      case 'publication_list': {
+        let q = sb.from('mkt_publications')
+          .select('*, mkt_content_items(id,content_number,title,content_type,status)');
+        if (str(body.status))      q = q.eq('status', body.status!);
+        if (str(body.platform))    q = q.eq('platform', body.platform!);
+        if (str(body.campaign_id)) q = q.eq('campaign_id', body.campaign_id!);
+        const { data, error } = await q
+          .order('scheduled_for', { ascending: true, nullsFirst: false })
+          .limit(cap(body.limit, 300, 1000));
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ publications: data ?? [] });
+      }
+      case 'approval_list': {
+        let q = sb.from('mkt_approvals').select('*');
+        if (str(body.status)) q = q.eq('decision', body.status!);
+        const { data, error } = await q.order('created_at', { ascending: false }).limit(cap(body.limit, 200, 500));
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ approvals: data ?? [] });
+      }
+      case 'performance_list': {
+        let q = sb.from('mkt_performance_snapshots').select('*');
+        if (str(body.publication_id)) q = q.eq('publication_id', body.publication_id!);
+        if (str(body.campaign_id))    q = q.eq('campaign_id', body.campaign_id!);
+        const { data, error } = await q.order('captured_at', { ascending: false }).limit(cap(body.limit, 300, 1000));
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ snapshots: data ?? [] });
+      }
+
       // ── Versions & approvals ─────────────────────────────────────────────
       case 'version_create': {
         const id = str(body.content_item_id); const vtype = str(body.version_type);

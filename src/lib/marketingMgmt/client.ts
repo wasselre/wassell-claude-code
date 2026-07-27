@@ -157,6 +157,19 @@ export const saveSlide = (patch: Record<string, unknown>, id?: string) => call<{
 export const reorderScenes = (order: string[]) => call<{ reordered: number }>('scene_reorder', { order });
 export const reorderSlides = (order: string[]) => call<{ reordered: number }>('slide_reorder', { order });
 
+export interface PublicationRow extends Publication {
+  content_item_id: string; campaign_id: string | null; caption: string | null;
+  mkt_content_items?: { id: string; content_number: string; title: string; content_type: string; status: string } | null;
+}
+export interface PerfSnapshot {
+  id: string; publication_id: string | null; campaign_id: string | null; platform: string | null;
+  captured_at: string; source: string; metrics: Record<string, number | string>;
+  collection_status: string; error: string | null;
+}
+export const fetchPublications = (f: Record<string, unknown> = {}) => call<{ publications: PublicationRow[] }>('publication_list', f);
+export const fetchApprovals = (f: Record<string, unknown> = {}) => call<{ approvals: Approval[] }>('approval_list', f);
+export const fetchPerformance = (f: Record<string, unknown> = {}) => call<{ snapshots: PerfSnapshot[] }>('performance_list', f);
+
 export const fetchAssets = (filters: Record<string, unknown> = {}) => call<{ assets: Array<Record<string, unknown>> }>('asset_list', filters);
 export const saveAsset = (patch: Record<string, unknown>, id?: string) => call<{ asset: Record<string, unknown> }>('asset_save', { id, patch });
 export const linkAsset = (asset_id: string, target_type: string, target_id: string) => call<{ link: unknown }>('asset_link', { asset_id, target_type, target_id });

@@ -18,8 +18,13 @@ import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import {
   ClipboardList, RefreshCw, AlertTriangle, Plus, Search, ArrowLeft, Clock,
-  CheckCircle2, Send, Layers,
+  CheckCircle2, Send, Layers, Target, CalendarDays, Image as ImageIcon,
+  BadgeCheck, BarChart3, Clapperboard,
 } from 'lucide-react';
+import CampaignsTab from './components/CampaignsTab';
+import { ApprovalsTab, PublishingTab, PerformanceTab } from './components/QueueTabs';
+import { CalendarTab, AssetsTab } from './components/PlanningTabs';
+import { SceneEditor, SlideEditor } from './components/ProductionEditor';
 // Generic presentation primitives shared with the intelligence page — importing
 // rather than duplicating; they carry no intelligence-specific types.
 import { Section, Stat, CaveatStrip, EmptyHint, Spinner, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
@@ -30,7 +35,8 @@ import {
   type MgmtOverview, type ContentItem, type ContentDetail, type ContentStatus, type ContentType,
 } from '@/lib/marketingMgmt/client';
 
-type Tab = 'overview' | 'content';
+type Tab = 'overview' | 'campaigns' | 'content' | 'calendar' | 'production'
+  | 'assets' | 'publishing' | 'approvals' | 'performance';
 
 /** Board columns: the production spine, not all 18 states (terminal and
  *  exception states are reachable from the item itself). */
@@ -113,6 +119,11 @@ export default function MarketingManagementPage() {
     finally { setBusy(false); }
   };
 
+  const inProduction = useMemo(
+    () => content.filter((c) => ['approved_for_production','raw_assets_required','recording',
+      'designing','editing','internal_review','revision_requested'].includes(c.status)),
+    [content]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return q ? content.filter((c) => c.title.toLowerCase().includes(q) || c.content_number.toLowerCase().includes(q)) : content;
@@ -149,7 +160,17 @@ export default function MarketingManagementPage() {
       {error && <CaveatStrip>{isAr ? 'تعذّر التحميل: ' : 'Failed to load: '}{error}</CaveatStrip>}
 
       <nav className="flex flex-wrap items-center gap-1.5">
-        {([['overview', ClipboardList, 'نظرة عامة', 'Overview'], ['content', Layers, 'المحتوى', 'Content']] as const).map(
+        {([
+          ['overview', ClipboardList, 'نظرة عامة', 'Overview'],
+          ['campaigns', Target, 'الحملات', 'Campaigns'],
+          ['content', Layers, 'المحتوى', 'Content'],
+          ['calendar', CalendarDays, 'التقويم', 'Calendar'],
+          ['production', Clapperboard, 'الإنتاج', 'Production'],
+          ['assets', ImageIcon, 'المواد الخام', 'Raw Assets'],
+          ['publishing', Send, 'النشر', 'Publishing'],
+          ['approvals', BadgeCheck, 'الاعتمادات', 'Approvals'],
+          ['performance', BarChart3, 'الأداء', 'Performance'],
+        ] as const).map(
           ([id, Icon, ar, en]) => {
             const active = tab === id;
             return (
@@ -290,10 +311,54 @@ export default function MarketingManagementPage() {
             </>
           )}
 
+          {tab === 'campaigns' && (
+            <CampaignsTab isAr={isAr} onOpenContent={(id) => { setTab('content'); void openItem(id); }} />
+          )}
+          {tab === 'calendar' && (
+            <CalendarTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
+              onOpenContent={(id) => { setTab('content'); void openItem(id); }} />
+          )}
+          {tab === 'assets' && <AssetsTab isAr={isAr} onError={(m: string) => addToast(m, 'error')} />}
+          {tab === 'publishing' && <PublishingTab isAr={isAr} onError={(m: string) => addToast(m, 'error')} />}
+          {tab === 'approvals' && <ApprovalsTab isAr={isAr} onError={(m: string) => addToast(m, 'error')} />}
+          {tab === 'performance' && <PerformanceTab isAr={isAr} onError={(m: string) => addToast(m, 'error')} />}
+
+          {tab === 'production' && (
+            detail ? (
+              <ContentDetailPanel detail={detail} isAr={isAr} busy={busy}
+                onBack={() => setDetail(null)} onMove={move} onCompleteTask={completeTask}
+                onChanged={() => { void openItem(detail.item.id); }}
+                onError={(m: string) => addToast(m, 'error')} />
+            ) : (
+              <Section title={isAr ? 'الإنتاج' : 'Production'}
+                subtitle={isAr ? 'اختر عملاً قيد الإنتاج لتحرير مشاهده أو شرائحه' : 'Pick an in-production item to edit its scenes or slides'}>
+                {inProduction.length === 0 ? (
+                  <EmptyHint>{isAr ? 'لا شيء قيد الإنتاج حالياً' : 'Nothing in production right now'}</EmptyHint>
+                ) : (
+                  <ul className="divide-y divide-sand/40">
+                    {inProduction.map((c) => (
+                      <li key={c.id}>
+                        <button type="button" onClick={() => void openItem(c.id)}
+                          className="flex w-full items-center justify-between gap-2 py-2.5 text-start hover:bg-cream-light">
+                          <span className="min-w-0 truncate text-[13px] text-charcoal">{c.content_number} · {c.title}</span>
+                          <span className="shrink-0 text-[11.5px] text-charcoal/50">
+                            {isAr ? STATUS_LABEL[c.status].ar : STATUS_LABEL[c.status].en}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+            )
+          )}
+
           {tab === 'content' && (
             detail ? (
               <ContentDetailPanel detail={detail} isAr={isAr} busy={busy}
-                onBack={() => setDetail(null)} onMove={move} onCompleteTask={completeTask} />
+                onBack={() => setDetail(null)} onMove={move} onCompleteTask={completeTask}
+                onChanged={() => { void openItem(detail.item.id); }}
+                onError={(m: string) => addToast(m, 'error')} />
             ) : (
               <Section title={isAr ? 'لوحة المحتوى' : 'Content board'}
                 right={
@@ -365,12 +430,18 @@ export default function MarketingManagementPage() {
 }
 
 function ContentDetailPanel({
-  detail, isAr, busy, onBack, onMove, onCompleteTask,
+  detail, isAr, busy, onBack, onMove, onCompleteTask, onChanged, onError,
 }: {
   detail: ContentDetail; isAr: boolean; busy: boolean;
   onBack: () => void; onMove: (id: string, to: ContentStatus) => void; onCompleteTask: (id: string) => void;
+  onChanged: () => void; onError: (m: string) => void;
 }) {
   const i = detail.item;
+  // One central content entity, different production surface by type — this is
+  // the specialisation point, NOT a second parallel system for video vs posts.
+  const isVideo = ['reel','tiktok_video','snapchat_video','long_form_video','paid_video_ad',
+    'property_tour','drone_video','presenter_video','ai_video','motion_graphics'].includes(i.content_type);
+  const isCarousel = ['carousel','static_image','infographic','paid_image_ad'].includes(i.content_type);
   const done = detail.tasks.filter((t) => t.status === 'completed').length;
   return (
     <div className="space-y-4">
@@ -398,6 +469,15 @@ function ContentDetailPanel({
           {isAr ? 'الانتقالات غير المسموحة سترفضها قاعدة البيانات.' : 'Invalid transitions are rejected by the database.'}
         </p>
       </Section>
+
+      {isVideo && (
+        <SceneEditor contentItemId={i.id} scenes={detail.scenes} isAr={isAr}
+          onChanged={onChanged} onError={onError} />
+      )}
+      {isCarousel && (
+        <SlideEditor contentItemId={i.id} slides={detail.slides} isAr={isAr}
+          onChanged={onChanged} onError={onError} />
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Section title={isAr ? 'قائمة الإنتاج' : 'Production checklist'}>
