@@ -149,6 +149,9 @@ async function handleWhatsappReply(job) {
   // forced job skips the schedule/human-active gates. Auto-triggered jobs
   // re-check right before spending a session (a human may have replied in the
   // seconds since the webhook enqueued).
+  // `forced` covers the takeover-enable click. Ongoing messages in an
+  // AI-managed chat come through the normal path, and the gate itself returns
+  // 'chat_ai_managed' for those, so the re-check below passes for them too.
   const forced = p.forced === true;
   if (!forced) {
     const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });

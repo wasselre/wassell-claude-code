@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageCircle, RefreshCw, Search, Plus } from 'lucide-react';
+import { MessageCircle, RefreshCw, Search, Plus, Bot } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import StartChatModal from './StartChatModal';
 import { buildClientPrefChips, buildGeoNameMap, isClosedChat, type ClientPrefChip } from '../lib/prefChips';
@@ -423,6 +423,17 @@ function ChatRow({
           >
             {name}
           </h3>
+          {/* AI takeover marker — at a glance, who owns this conversation:
+              the agent or a human. Set from the chat's header toggle. */}
+          {(data.ai_managed as boolean | undefined) === true && (
+            <span
+              className="inline-flex items-center gap-0.5 rounded-full bg-green-500/15 px-1.5 py-px text-[9px] font-semibold text-green-700 shrink-0"
+              title={isAr ? 'المساعد الذكي يدير هذه المحادثة' : 'The AI agent manages this conversation'}
+            >
+              <Bot size={9} />
+              {isAr ? 'مساعد' : 'AI'}
+            </span>
+          )}
           <span className="ms-auto text-[10px] text-charcoal/50 shrink-0" dir="ltr">
             {lastAt ? formatRelative(lastAt, isAr) : ''}
           </span>

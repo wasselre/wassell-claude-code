@@ -47,6 +47,9 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
   const status = (data?.status as string | null | undefined) ?? 'active';
   const lastMessageAt = (data?.last_message_at as string | null | undefined) ?? null;
   const clientLinkId = (data?.client_link as string | null | undefined) ?? null;
+  // AI takeover for THIS conversation (set from the header toggle). While on,
+  // the agent answers every inbound message regardless of global policy.
+  const aiManaged = (data?.ai_managed as boolean | undefined) === true;
 
   // Look up the linked client (if any) so we can render its name without
   // a round-trip. `records.clients` is already in the store.
@@ -279,7 +282,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                   <NotebookPen size={12} />
                   {isAr ? 'تسجيل تواصل' : 'Log interaction'}
                 </button>
-                <AiHandoverButton chatRecordId={recordId} isAr={isAr} />
+                <AiHandoverButton chatRecordId={recordId} aiManaged={aiManaged} isAr={isAr} />
               </>
             ) : (
               <button
@@ -558,20 +561,24 @@ function StatusPicker({
 }
 
 /**
- * "Let the AI answer this chat" — hands the conversation to the WhatsApp agent
- * (a real Claude Code session on the wa-agent worker) regardless of the hour.
+ * AI TAKEOVER TOGGLE for this conversation.
  *
- * The schedule and human-active gates exist to stop the agent acting UNINVITED;
- * a rep pressing this IS the invitation, so the server enqueues with `force`.
- * The kill switch and the per-chat reply cap still apply — when either blocks,
- * the endpoint returns queued:false with a reason we surface as a toast rather
- * than pretending it worked.
+ * On = the agent owns the chat and answers every inbound message until a human
+ * turns it off; the global policy (schedule, automatic-reply switch, reply cap)
+ * does not apply, because a person explicitly assigned this conversation.
+ * Off = back to the humans.
+ *
+ * The state is `data.ai_managed` on the chat record, so it reads from the store
+ * and stays in sync across the list and the thread without a extra fetch.
  */
-function AiHandoverButton({ chatRecordId, isAr }: { chatRecordId: string; isAr: boolean }) {
+function AiHandoverButton({
+  chatRecordId, aiManaged, isAr,
+}: { chatRecordId: string; aiManaged: boolean; isAr: boolean }) {
   const addToast = useAppStore((s) => s.addToast);
   const [busy, setBusy] = useState(false);
 
-  const handover = async () => {
+  const toggle = async () => {
+    const next = !aiManaged;
     setBusy(true);
     try {
       const session = supabase ? (await supabase.auth.getSession()).data.session : null;
@@ -581,24 +588,24 @@ function AiHandoverButton({ chatRecordId, isAr }: { chatRecordId: string; isAr: 
           'Content-Type': 'application/json',
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({ chat_record_id: chatRecordId }),
+        body: JSON.stringify({ chat_record_id: chatRecordId, enabled: next }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
         addToast(
-          isAr ? `تعذر التحويل: ${body?.error ?? res.status}` : `Handover failed: ${body?.error ?? res.status}`,
+          isAr ? `تعذر التغيير: ${body?.error ?? res.status}` : `Failed: ${body?.error ?? res.status}`,
           'error',
         );
         return;
       }
-      if (body.queued === false) {
-        addToast(body.reason ?? (isAr ? 'المساعد غير متاح حالياً' : 'Agent unavailable'), 'error');
-        return;
-      }
       addToast(
-        isAr
-          ? 'المساعد الذكي يقرأ المحادثة الآن وسيرد خلال دقائق'
-          : 'The AI agent is reading this conversation and will reply shortly',
+        next
+          ? (isAr
+              ? 'المساعد الذكي يدير هذه المحادثة الآن — سيرد على كل رسالة حتى توقفه'
+              : 'The AI agent now manages this conversation until you stop it')
+          : (isAr
+              ? 'تم إيقاف المساعد — المحادثة رجعت للفريق'
+              : 'Agent stopped — the conversation is back with the team'),
         'success',
       );
     } catch (err) {
@@ -610,13 +617,23 @@ function AiHandoverButton({ chatRecordId, isAr }: { chatRecordId: string; isAr: 
 
   return (
     <button
-      onClick={() => void handover()}
+      onClick={() => void toggle()}
       disabled={busy}
-      className="inline-flex items-center gap-1 rounded-full border border-copper/40 bg-copper/10 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/20 disabled:opacity-50"
-      title={isAr ? 'دع المساعد الذكي يرد على هذه المحادثة' : 'Let the AI agent answer this conversation'}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-medium transition-colors disabled:opacity-50 ${
+        aiManaged
+          ? 'border-green-500/50 bg-green-500/15 text-green-700 hover:bg-green-500/25'
+          : 'border-copper/40 bg-copper/10 text-copper hover:bg-copper/20'
+      }`}
+      title={
+        aiManaged
+          ? (isAr ? 'إيقاف المساعد وإرجاع المحادثة للفريق' : 'Stop the agent and hand the chat back')
+          : (isAr ? 'تسليم المحادثة للمساعد الذكي' : 'Hand this conversation to the AI agent')
+      }
     >
       {busy ? <Loader2 size={12} className="animate-spin" /> : <Bot size={12} />}
-      {isAr ? 'رد بالمساعد الذكي' : 'AI reply'}
+      {aiManaged
+        ? (isAr ? 'المساعد يدير المحادثة — إيقاف' : 'AI managing — stop')
+        : (isAr ? 'تسليم للمساعد الذكي' : 'Hand to AI')}
     </button>
   );
 }

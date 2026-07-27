@@ -1,16 +1,20 @@
 /**
  * POST /api/whatsapp/ai-handover
  *
- * "Let the AI handle this chat" — the button in the chat header. A rep is
- * explicitly inviting the agent in, so this enqueues with `force`, which skips
- * EVERY policy gate: schedule, human-active, reply cap, and the automatic-reply
- * switch itself. Those settings govern when the agent acts on its OWN; none of
- * them gets a vote on a human asking for a reply right now.
+ * TAKEOVER TOGGLE for one conversation — not a one-shot reply.
  *
- * Body: { chat_wid }  — or { chat_record_id }.
+ * `{ chat_record_id, enabled: true }`  → the agent owns this chat from now on:
+ *   every inbound message gets an AI reply until a human turns it back off.
+ *   While a chat is AI-managed the global policy does NOT apply (schedule,
+ *   automatic-reply switch, don't-talk-over-a-rep, reply cap) — a human
+ *   explicitly assigned this conversation, and that outranks the policy.
  *
- * Auth: the caller's JWT. We gate on being able to SEE the chat record under
- * RLS before using service role to enqueue.
+ * `{ enabled: false }` → hand it back to the humans.
+ *
+ * Enabling also enqueues one job immediately, so the agent answers whatever is
+ * already waiting instead of idling until the customer writes again.
+ *
+ * Auth: the caller's JWT, gated on being able to SEE the chat under RLS.
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -21,10 +25,12 @@ export const config = { runtime: 'edge' };
 
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') return jsonError(405, `Method ${req.method} not allowed`);
-  return withAuth(req, async () => {
-    let body: { chat_wid?: string; chat_record_id?: string };
+  return withAuth(req, async (user) => {
+    let body: { chat_wid?: string; chat_record_id?: string; enabled?: boolean };
     try { body = (await req.json()) as typeof body; }
     catch { return jsonError(400, 'invalid JSON body'); }
+
+    const enabled = body.enabled !== false;   // default true (turning it on)
 
     const url = process.env.SUPABASE_URL ?? process.env.VITE_SUPABASE_URL;
     const anon = process.env.SUPABASE_ANON_KEY ?? process.env.VITE_SUPABASE_ANON_KEY;
@@ -34,7 +40,7 @@ export default async function handler(req: Request): Promise<Response> {
       global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } },
     });
 
-    // Resolve + authorize in one step: if RLS hides the chat, this returns null.
+    // Resolve + authorize together: RLS hiding the chat yields null.
     let q = scoped.from('records').select('id, data');
     q = body.chat_record_id ? q.eq('id', body.chat_record_id) : q.eq('data->>wid', body.chat_wid ?? '');
     const { data: chat, error } = await q.maybeSingle();
@@ -46,23 +52,28 @@ export default async function handler(req: Request): Promise<Response> {
     if (!chatWid) return jsonError(400, 'chat has no wid');
     const digits = chatWid.split('@')[0] ?? '';
 
-    const { data: jobId, error: rpcErr } = await getServiceSupabase().rpc('whatsapp_ai_enqueue', {
+    const svc = getServiceSupabase();
+    const { error: modeErr } = await svc.rpc('whatsapp_ai_set_chat_mode', {
+      p_chat_record_id: chat.id,
+      p_enabled: enabled,
+      p_user_id: user.userId,
+    });
+    if (modeErr) return jsonError(500, `could not set chat mode: ${modeErr.message}`);
+
+    if (!enabled) return jsonOk({ ai_managed: false });
+
+    // Answer what's already waiting. Forced, so it runs regardless of policy.
+    const { data: jobId, error: rpcErr } = await svc.rpc('whatsapp_ai_enqueue', {
       p_chat_wid: chatWid,
       p_chat_record_id: chat.id,
       p_phone: (d.phone as string) ?? `+${digits}`,
       p_device_id: (d.device_id as string) ?? 'sales',
-      p_trigger_message: 'تحويل يدوي من المندوب',
+      p_trigger_message: 'تسليم المحادثة للمساعد الذكي',
       p_force: true,
     });
     if (rpcErr) return jsonError(500, `enqueue failed: ${rpcErr.message}`);
-    if (!jobId) {
-      // Forced enqueues bypass every policy gate, so the only way back is the
-      // debounce returning nothing — i.e. something is already running.
-      return jsonOk({
-        queued: false,
-        reason: 'المساعد يعمل على هذه المحادثة بالفعل',
-      });
-    }
-    return jsonOk({ queued: true, job_id: jobId });
+    // No job id means one is already running for this chat — the takeover is
+    // still on, which is what the rep asked for.
+    return jsonOk({ ai_managed: true, job_id: jobId ?? null, already_running: !jobId });
   });
 }
