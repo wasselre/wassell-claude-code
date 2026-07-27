@@ -54,7 +54,7 @@ function buildHtml(p: SnapshotPayload): string {
       <div style="font-size:13px;color:${BRAND.charcoal}">
         ${isAr ? 'ميزانيتك' : 'Budget'}: <b>${fmt(p.budget.budget_max)} ${cur}</b> ·
         ${isAr ? 'نطاق السوق المعروض' : 'Asking range'}: ${fmt(p.budget.p25_price)}–${fmt(p.budget.p75_price)} ${cur}
-        (${isAr ? 'الوسيط' : 'median'} ${fmt(p.budget.median_price)} ${cur})
+        (${isAr ? 'المتوسط' : 'median'} ${fmt(p.budget.median_price)} ${cur})
       </div>
       <div style="margin-top:6px;font-weight:700;color:${p.budget.position === 'within' ? '#047857' : p.budget.position === 'below' ? '#b45309' : '#9f1239'}">
         ${p.budget.position === 'within' ? (isAr ? '✓ ميزانيتك ضمن النطاق السائد' : '✓ Within the prevailing range')
@@ -72,7 +72,7 @@ function buildHtml(p: SnapshotPayload): string {
           <th style="padding:6px 10px;text-align:${isAr ? 'right' : 'left'}">${isAr ? 'الإعلان' : 'Listing'}</th>
           <th style="padding:6px 10px;text-align:${isAr ? 'left' : 'right'}">${isAr ? 'المساحة' : 'Area'}</th>
           <th style="padding:6px 10px;text-align:${isAr ? 'left' : 'right'}">ر.س/م²</th>
-          <th style="padding:6px 10px;text-align:${isAr ? 'left' : 'right'}">${isAr ? 'مقابل الوسيط' : 'vs median'}</th>
+          <th style="padding:6px 10px;text-align:${isAr ? 'left' : 'right'}">${isAr ? 'مقابل المتوسط' : 'vs median'}</th>
         </tr></thead>
         <tbody>${p.bestValue.slice(0, 8).map((l) => `
           <tr style="border-top:1px solid ${BRAND.sand}66">
@@ -105,7 +105,7 @@ function buildHtml(p: SnapshotPayload): string {
             <th style="padding:7px 10px;text-align:${isAr ? 'right' : 'left'}">${isAr ? 'الحي' : 'District'}</th>
             <th style="padding:7px 10px;text-align:${isAr ? 'right' : 'left'}">${isAr ? 'النوع' : 'Type'}</th>
             <th style="padding:7px 10px;text-align:${isAr ? 'left' : 'right'}">${isAr ? 'إعلانات' : 'Listings'}</th>
-            <th style="padding:7px 10px;text-align:${isAr ? 'left' : 'right'}">${isAr ? 'الوسيط ر.س/م²' : 'Median /m²'}</th>
+            <th style="padding:7px 10px;text-align:${isAr ? 'left' : 'right'}">${isAr ? 'المتوسط ر.س/م²' : 'Median /m²'}</th>
             <th style="padding:7px 10px;text-align:${isAr ? 'left' : 'right'}">P25–P75 /m²</th>
             <th style="padding:7px 10px;text-align:${isAr ? 'right' : 'left'}">${isAr ? 'الثقة' : 'Confidence'}</th>
           </tr></thead>

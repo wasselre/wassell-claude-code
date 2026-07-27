@@ -63,9 +63,9 @@ export default function BenchmarkTab({ isAr }: { isAr: boolean }) {
                 <Th>{isAr ? 'الحي' : 'District'}</Th>
                 <Th>{isAr ? 'النوع' : 'Type'}</Th>
                 <Th end>{isAr ? 'إعلانات' : 'Listings'}</Th>
-                <Th end>{isAr ? 'وسيط ر.س/م²' : 'Median /m²'}</Th>
+                <Th end>{isAr ? 'متوسط ر.س/م²' : 'Median /m²'}</Th>
                 <Th end>P25–P75 /m²</Th>
-                <Th end>{isAr ? 'وسيط السعر' : 'Median price'}</Th>
+                <Th end>{isAr ? 'متوسط السعر' : 'Median price'}</Th>
                 <Th end>{isAr ? 'تكرار' : 'Dup.'}</Th>
                 <Th>{isAr ? 'الثقة' : 'Confidence'}</Th>
               </tr>

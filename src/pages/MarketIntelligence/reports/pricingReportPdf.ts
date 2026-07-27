@@ -52,7 +52,7 @@ export async function generatePricingReportPdf(rows: PricingReportRow[], isAr: b
       <div style="margin-top:18px;font-size:11px;color:${BRAND.charcoal}99;line-height:1.7">
         <b>${isAr ? 'منهجية' : 'Methodology'}:</b>
         ${isAr
-          ? 'سعرنا/م² محسوب من وحدات مشاريعنا. سعر السوق هو وسيط الأسعار المعروضة (وليست صفقات فعلية) للحي والنوع نفسه. الموضع إرشادي. "${cur}" = ريال سعودي.'.replace('${cur}', cur)
+          ? 'سعرنا/م² محسوب من وحدات مشاريعنا. سعر السوق هو متوسط الأسعار المعروضة (وليست صفقات فعلية) للحي والنوع نفسه. الموضع إرشادي. "${cur}" = ريال سعودي.'.replace('${cur}', cur)
           : 'Our /m² is computed from our project units. Market /m² is the median of current asking prices (not transactions) for the same district and type. Position is indicative.'}
       </div>
     </div>

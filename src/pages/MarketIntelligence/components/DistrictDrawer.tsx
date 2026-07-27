@@ -65,8 +65,8 @@ export default function DistrictDrawer({ districtId, districtName, isAr, onClose
                     <thead className="bg-cream/60 text-[12px] text-charcoal/60"><tr>
                       <th className="px-3 py-2 text-start font-semibold">{isAr ? 'النوع' : 'Type'}</th>
                       <th className="px-3 py-2 text-end font-semibold">{isAr ? 'إعلانات' : 'Listings'}</th>
-                      <th className="px-3 py-2 text-end font-semibold">{isAr ? 'وسيط /م²' : 'Median /m²'}</th>
-                      <th className="px-3 py-2 text-end font-semibold">{isAr ? 'وسيط السعر' : 'Median price'}</th>
+                      <th className="px-3 py-2 text-end font-semibold">{isAr ? 'متوسط /م²' : 'Median /m²'}</th>
+                      <th className="px-3 py-2 text-end font-semibold">{isAr ? 'متوسط السعر' : 'Median price'}</th>
                       <th className="px-3 py-2 text-start font-semibold">{isAr ? 'الثقة' : 'Conf.'}</th>
                     </tr></thead>
                     <tbody>

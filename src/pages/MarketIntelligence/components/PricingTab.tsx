@@ -25,7 +25,7 @@ export default function PricingTab({ isAr }: { isAr: boolean }) {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <CaveatStrip>
-          {isAr ? 'يقارن وحدات مشاريعنا بوسيط الأسعار المعروضة (وليست صفقات فعلية) لنفس الحي والنوع.' : 'Compares our project units against the median asking price (not transactions) for the same district and type.'}
+          {isAr ? 'يقارن وحدات مشاريعنا بمتوسط الأسعار المعروضة (وليست صفقات فعلية) لنفس الحي والنوع.' : 'Compares our project units against the median asking price (not transactions) for the same district and type.'}
         </CaveatStrip>
         <button onClick={async () => { setExporting(true); try { await generatePricingReportPdf(rows, isAr, snap); } finally { setExporting(false); } }}
           disabled={exporting || rows.length === 0}
