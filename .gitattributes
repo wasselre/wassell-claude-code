@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts must keep LF: a CRLF shebang is "bad interpreter" inside a
+# Linux container (wa-agent/entrypoint.sh ships in the Docker build context).
+*.sh text eol=lf

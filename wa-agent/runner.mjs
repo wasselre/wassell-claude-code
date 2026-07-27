@@ -390,8 +390,45 @@ async function tick() {
   }
 }
 
+/**
+ * Requeue jobs this machine was running when it died.
+ *
+ * `claude_jobs_recover_orphaned` deliberately skips jobs whose `claimed_by`
+ * matches the caller — another lane's live work is not an orphan. But WORKER is
+ * derived from FLY_MACHINE_ID, which SURVIVES a restart, so a job killed by a
+ * deploy was claimed by the same id the new process reports: the sweep never
+ * touched it and it sat in 'running' forever. That also wedged the chat, since
+ * `whatsapp_ai_enqueue` debounces on any pending/running job for it — one
+ * deploy at the wrong moment and that customer could never get an AI reply
+ * again (live 2026-07-27).
+ *
+ * At boot we hold nothing by definition, so anything still 'running' under our
+ * own id is abandoned and safe to reclaim.
+ */
+const MAX_JOB_ATTEMPTS = 3;
+async function recoverOwnStaleJobs() {
+  const { data, error } = await supa
+    .from('claude_jobs')
+    .select('id, attempts, payload')
+    .eq('status', 'running')
+    .eq('claimed_by', WORKER);
+  if (error) { console.error('[wa-agent] stale-job scan failed:', error.message); return; }
+  for (const job of data ?? []) {
+    const retry = (job.attempts ?? 0) < MAX_JOB_ATTEMPTS;
+    const patch = retry
+      ? { status: 'pending', claimed_by: null, started_at: null,
+          error: `recovered: ${WORKER} restarted mid-job (attempt ${job.attempts ?? 0})` }
+      : { status: 'failed', finished_at: new Date().toISOString(),
+          error: `recovered: ${WORKER} restarted mid-job ${job.attempts ?? 0} times — not retried` };
+    const { error: upErr } = await supa.from('claude_jobs').update(patch).eq('id', job.id).eq('status', 'running');
+    if (upErr) console.error(`[wa-agent] could not recover job=${job.id}:`, upErr.message);
+    else console.warn(`[wa-agent] ${retry ? 'requeued' : 'failed'} stale job=${job.id} chat=${job.payload?.chat_wid ?? '?'}`);
+  }
+}
+
 async function main() {
   console.log(`[wa-agent] started worker=${WORKER} poll=${POLL_MS}ms`);
+  await recoverOwnStaleJobs().catch((e) => console.error('[wa-agent] recovery threw:', e));
   for (;;) {
     if (stopping) break;
     try { await tick(); } catch (e) { console.error('[wa-agent] tick error:', e); }

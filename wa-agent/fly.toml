@@ -27,6 +27,13 @@ primary_region = 'bom'
     method = 'GET'
     path = '/'
 
+# The Claude CLI's session store. A resumed session is the agent's memory of the
+# conversation, and it lived on the machine's ephemeral disk — so every deploy
+# silently reset every customer conversation to turn one. Keep this mounted.
+[mounts]
+  source = 'wa_agent_state'
+  destination = '/home/agent/.claude'
+
 [[vm]]
   size = 'shared-cpu-1x'
   memory = '1gb'

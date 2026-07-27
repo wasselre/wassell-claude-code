@@ -6,7 +6,7 @@
 FROM node:22-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates curl \
+      git ca-certificates curl gosu \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -35,16 +35,31 @@ COPY skill/SKILL.md /app/repo/.claude/skills/whatsapp-reply/SKILL.md
 # so the flag is required; therefore the process must not be root.
 RUN useradd -m -u 10001 -s /bin/bash agent \
     && chown -R agent:agent /app
-USER agent
 ENV HOME=/home/agent
 
+# `/home/agent/.claude` is a Fly VOLUME (see fly.toml) so conversation state
+# outlives a deploy. Without it every machine replacement wiped the CLI's
+# session store, every resume failed with "No conversation found with session
+# ID", and each customer message restarted the agent cold — which is why it
+# contradicted itself and re-asked what it had already been told (live
+# 2026-07-27). Fly mounts volumes root-owned, so the entrypoint runs as root
+# purely to chown the mount, then drops to `agent` for the actual process.
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 # Sessions run with cwd=/app/repo; give them a git identity so the CLI is happy.
-RUN cd /app/repo && git init -q \
+# Run as `agent` so the repo it works in is owned by the user that works in it.
+RUN gosu agent sh -c 'cd /app/repo && git init -q \
     && git config user.email "agent@wassel.re" \
-    && git config user.name "Wassel WA Agent"
+    && git config user.name "Wassel WA Agent"'
+
+# Pre-create the mountpoint so a machine booted WITHOUT the volume still has a
+# writable (if ephemeral) session dir rather than failing outright.
+RUN mkdir -p /home/agent/.claude && chown -R agent:agent /home/agent
 
 ENV NODE_ENV=production
 ENV PORT=8080
 EXPOSE 8080
 
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["node", "runner.mjs"]
