@@ -66,8 +66,10 @@ def find_chrome() -> str:
 
 CHROME = find_chrome()
 
-COPPER = "#B8734F"; CHARCOAL = "#4A4E54"; CHOC = "#4A2C2A"
-SAND = "#D4B896"; CREAM = "#F5EDE0"; GOLD = "#C09B5F"; TERRA = "#8E4E3A"
+# Official Wassel brand palette (COLOR PALETTE guide, 2026-07). Copper Bronze
+# unchanged; terracotta/chocolate/sand/cream/charcoal/gold refreshed.
+COPPER = "#B8734F"; CHARCOAL = "#3F3F3F"; CHOC = "#6B4226"
+SAND = "#E8D9C0"; CREAM = "#F8F5E9"; GOLD = "#D9B57F"; TERRA = "#A6482A"
 
 SCAFFOLD = """<!DOCTYPE html>
 <html dir="rtl" lang="ar">
