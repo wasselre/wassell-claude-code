@@ -281,8 +281,10 @@ export default function Sidebar({ mobileOpen = false, onMobileClose }: SidebarPr
               profile.page_access (see src/lib/customPages.ts). Defaults match
               prior behavior: Sales Tasks open to all, Sales Process + Sales
               Manager admin-only — but each is now grantable/revocable per
-              profile in Settings → Profiles. */}
-          {CUSTOM_PAGES.filter((pg) => canPage(pg.id)).map((pg) => {
+              profile in Settings → Profiles. Entries flagged
+              `hidden_from_sidebar` keep their route + access rules but get no
+              nav link. */}
+          {CUSTOM_PAGES.filter((pg) => !pg.hidden_from_sidebar && canPage(pg.id)).map((pg) => {
             const Icon = pg.icon;
             const label = isAr ? pg.label_ar : pg.label_en;
             return (

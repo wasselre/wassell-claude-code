@@ -45,6 +45,14 @@ export interface CustomPageDef {
   label_en: string;
   icon: ComponentType<LucideProps>;
   default_access: 'all' | 'admin';
+  /**
+   * Hide the sidebar entry while keeping the page alive (2026-07-27, user
+   * request: "for now just hide these from the side bar"). NON-DESTRUCTIVE —
+   * the route, its guard, and the Settings → Profiles access toggle all stay
+   * exactly as they were, so a direct URL still works for anyone who has
+   * access. Restore = delete the flag from the entry.
+   */
+  hidden_from_sidebar?: boolean;
 }
 
 export const CUSTOM_PAGES: CustomPageDef[] = [
@@ -82,6 +90,7 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Sales Tasks',
     icon: ClipboardList,
     default_access: 'all',
+    hidden_from_sidebar: true,
   },
   {
     id: 'sales_studio',
@@ -90,6 +99,7 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Sales Studio',
     icon: Layers,
     default_access: 'admin',
+    hidden_from_sidebar: true,
   },
   {
     id: 'sales_process',
@@ -98,6 +108,7 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Workflow Map',
     icon: Activity,
     default_access: 'admin',
+    hidden_from_sidebar: true,
   },
   {
     id: 'sales_manager',
@@ -106,6 +117,7 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_en: 'Sales Manager',
     icon: BarChart3,
     default_access: 'admin',
+    hidden_from_sidebar: true,
   },
   {
     id: 'market_intelligence',

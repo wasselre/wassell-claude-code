@@ -1,7 +1,7 @@
 # PRD: Sales Studio 2.0 (Sales Strategy Layer)
 
 **Status:** Live
-**Last updated:** 2026-06-21
+**Last updated:** 2026-07-27 (**Hidden from the sidebar:** the `sales_studio` entry in `src/lib/customPages.ts` carries `hidden_from_sidebar: true`, so no nav link renders. The route `/sales/studio` (and its `experiments` / `processes/:id` children), its `RequirePageAccess` guard, and the per-profile access toggle are unchanged — a direct URL still opens Studio for anyone permitted. Restore = delete the flag.) | Previously 2026-06-21
 **Related PRDs:** [sales-process.md](sales-process.md) (the executor + config layer it overlays), [followups-workspace.md](followups-workspace.md), [data-storage.md](data-storage.md)
 
 ## What it is (in plain English)
