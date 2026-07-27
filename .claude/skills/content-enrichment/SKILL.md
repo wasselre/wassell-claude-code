@@ -39,6 +39,30 @@ Combine caption + transcript + ocr_text and decide:
 2. `is_general_branding` — true when the post is a national day (يوم التأسيس / اليوم الوطني / Founding Day), sports/match support, leadership/allegiance, quality certification, or pure brand-value content.
 3. Structured fields (only from evidence — never invent): `content_type` (project_launch|offer|walkthrough|testimonial|teaser|brand|event), `objective`, `offer`, `financing`, `payment_plan`, `price`, `unit_types` (array), `location`, `district`, `amenities` (array), `selling_points` (array), `ctas` (array), `language` (ar|en|mixed|none), `campaign_message` (one line).
 
+### What counts as an `offer` (be strict)
+`offer` is for a **commercial incentive** — a concrete benefit the buyer receives:
+a discount, an installment or payment plan, cashback, a waived or free item, a
+gift, or a time-limited deal. Examples: `خصم 10%`, `تقسيط حتى 60 شهر`,
+`إعفاء من رسوم التسجيل`, `دفعة أولى 5%`.
+
+These are **NOT offers** — each has its own field:
+
+| Text | Field |
+|---|---|
+| `تملك الفخامة` / `Own The Luxury`, `عزنا بطبعنا`, `حياة برفاه` | `selling_points` |
+| `راعي ماسي` / `Diamond Sponsor` (sponsorship badge) | `selling_points` |
+| `انتظرونا` / `Stay Tuned` / `SOON` (teaser) | `selling_points`, and `content_type: teaser` |
+| `تحكم ذكي` / `Smart Control`, `مساحات رحبة`, `مجتمع متكامل` | `amenities` |
+| `مواقع حيوية` / `Prime Locations` | `selling_points` |
+
+**Most posts contain no offer at all.** Leaving `offer` empty is the normal and
+correct answer — an empty field is far more useful than a slogan recorded as a
+commercial term, because these values feed price/offer trend analysis and a
+"new offer detected" alert. A tagline logged as an offer produces a false alert.
+
+`financing` and `payment_plan` follow the same rule: a real financing product or
+instalment structure, not a claim that a project is "affordable".
+
 ### Critical attribution rules
 - Choose `primary_project_index` ONLY from the candidate list. If evidence doesn't clearly point to one candidate, return `-1`.
 - **Brand-name / project-name collision:** many developers name projects after their own brand (e.g. the account "العجلان ريفييرا" and projects "ريفييرا 44/57/59"). A brand logo or tagline that merely echoes the developer name in `account` is NOT project evidence. Require a CONCRETE project reference — a project-specific name that is not just the brand word, OR a unit/price/offer/payment-plan, OR a district tied to that project — before choosing a project. National/founding/sports/brand-value posts are general branding even when a candidate name appears in the OCR.

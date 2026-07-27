@@ -26,12 +26,14 @@ export interface VisualFields {
   phones: string[];
   urls: string[];
   offers: string[];
+  amenities: string[];
+  selling_points: string[];
   dates: string[];
   ctas: string[];
 }
 export interface VisualResult { index: number; fields: VisualFields }
 
-const EMPTY: VisualFields = { visible_text: '', project_names: [], developer_names: [], prices: [], payment_plans: [], unit_types: [], districts: [], locations: [], phones: [], urls: [], offers: [], dates: [], ctas: [] };
+const EMPTY: VisualFields = { visible_text: '', project_names: [], developer_names: [], prices: [], payment_plans: [], unit_types: [], districts: [], locations: [], phones: [], urls: [], offers: [], amenities: [], selling_points: [], dates: [], ctas: [] };
 
 const TOOL: Anthropic.Tool = {
   name: 'record_visual_text',
@@ -56,7 +58,36 @@ const TOOL: Anthropic.Tool = {
             locations: { type: 'array', items: { type: 'string' } },
             phones: { type: 'array', items: { type: 'string' } },
             urls: { type: 'array', items: { type: 'string' } },
-            offers: { type: 'array', items: { type: 'string' } },
+            // `offers` previously had NO description, and there was nowhere to put
+            // a feature or a slogan — so every promotional line on a creative
+            // landed here. Measured: 288 of 301 extracted "offers" were not
+            // offers (108 were the sponsorship badge "Diamond Sponsor / راعي
+            // ماسي"). A tight definition plus the two buckets below fixes the
+            // cause rather than filtering the symptom downstream.
+            offers: {
+              type: 'array', items: { type: 'string' },
+              description: 'COMMERCIAL INCENTIVES ONLY — a concrete benefit the buyer receives: '
+                + 'a discount, an installment/payment plan, cashback, a waived or free item, '
+                + 'a gift, or a time-limited deal. e.g. "خصم 10%", "تقسيط حتى 60 شهر", '
+                + '"إعفاء من رسوم التسجيل". A line is NOT an offer if it is a slogan '
+                + '("تملك الفخامة", "Own The Luxury"), a sponsorship badge ("راعي ماسي", '
+                + '"Diamond Sponsor"), a teaser ("انتظرونا", "Stay Tuned", "SOON"), or a '
+                + 'feature ("تحكم ذكي", "مساحات رحبة") — those go in selling_points or '
+                + 'amenities. If nothing qualifies, return an empty array.',
+            },
+            amenities: {
+              type: 'array', items: { type: 'string' },
+              description: 'Physical features or facilities of the property/community, '
+                + 'e.g. "تحكم ذكي / Smart Control", "مساحات رحبة", "مسبح", "نادي صحي", '
+                + '"مجتمع متكامل".',
+            },
+            selling_points: {
+              type: 'array', items: { type: 'string' },
+              description: 'Brand slogans, taglines and value claims that are not a '
+                + 'concrete commercial benefit, e.g. "تملك الفخامة / Own The Luxury", '
+                + '"عزنا بطبعنا", "حياة برفاه", "مواقع حيوية / Prime Locations". '
+                + 'Sponsorship badges and teasers belong here too, not in offers.',
+            },
             dates: { type: 'array', items: { type: 'string' } },
             ctas: { type: 'array', items: { type: 'string' }, description: 'calls to action e.g. "احجز الآن"' },
           },
@@ -89,7 +120,12 @@ export async function extractVisualText(images: Array<{ buffer: Buffer; mime: st
     content.push({ type: 'text', text: `Image ${i}:` });
     content.push({ type: 'image', source: { type: 'base64', media_type: mediaType(im.mime), data: im.buffer.toString('base64') } });
   });
-  content.push({ type: 'text', text: 'For EACH image above, in order, read all visible Arabic and English text and extract the real-estate promotional fields. Call record_visual_text with one array entry per image. If an image has no legible text, return an empty visible_text for it. Do not invent values not visible in the image.' });
+  content.push({ type: 'text', text: 'For EACH image above, in order, read all visible Arabic and English text and extract the real-estate promotional fields. '
+    + 'Call record_visual_text with one array entry per image. If an image has no legible text, return an empty visible_text for it. '
+    + 'Do not invent values not visible in the image. '
+    + 'Be strict about `offers`: it is for COMMERCIAL INCENTIVES only (a discount, an installment plan, cashback, something free or waived, a time-limited deal). '
+    + 'Slogans, sponsorship badges, teasers and product features are NOT offers — put them in selling_points or amenities. '
+    + 'Most creatives contain NO offer at all; an empty offers array is the normal and correct answer.' });
 
   const msg = await client.messages.create({
     model: MODEL, max_tokens: 4096,
