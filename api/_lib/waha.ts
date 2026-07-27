@@ -111,7 +111,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!res.ok) {
     let body: unknown;
     try { body = await res.json(); } catch { body = await res.text().catch(() => null); }
-    throw new WahaError(res.status, `WAHA ${init.method ?? 'GET'} ${path} failed: ${res.status}`, body);
+    // Put WAHA's own explanation in the MESSAGE, not just the body. The status
+    // alone is close to useless — a bare "failed: 422" was shown to the operator
+    // while the body said `Session "wassel_main" does not exist`, and that one
+    // line was the whole diagnosis. The toast is often the only thing anyone sees.
+    const detail = typeof body === 'string'
+      ? body
+      : (body && typeof body === 'object' && 'message' in body
+          ? String((body as { message: unknown }).message)
+          : (body != null ? JSON.stringify(body) : ''));
+    const suffix = detail ? ` ${detail.slice(0, 200)}` : '';
+    throw new WahaError(res.status, `WAHA ${init.method ?? 'GET'} ${path} failed: ${res.status}${suffix}`, body);
   }
   // Some WAHA endpoints (start/stop) return empty bodies.
   const text = await res.text();

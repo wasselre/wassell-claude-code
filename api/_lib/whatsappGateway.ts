@@ -192,10 +192,52 @@ export async function listMessages(
     : haberchat.listMessages(deviceId, chatWid, opts));
 }
 
+/**
+ * The device a send should actually go out on.
+ *
+ * A chat records the device it was LAST SEEN on, and under WAHA the device id IS
+ * the gateway session name. Re-pairing onto a new session (`wassel_main` →
+ * `sales`, 2026-07-24) therefore stranded every older conversation: 263 of 310
+ * chats still pointed at `wassel_main`, so every send from them died with WAHA
+ * 422 `Session "wassel_main" does not exist` — the same number, just an id the
+ * gateway had retired.
+ *
+ * Historical attribution is worth keeping on the message rows, but it must not
+ * decide where a NEW message goes: if the chat's device is not an active row,
+ * send on the active default instead. Returns the input unchanged whenever it is
+ * active, so multi-number setups keep routing per chat.
+ */
+async function sendDeviceId(deviceId: string | null | undefined): Promise<string | null | undefined> {
+  if (!deviceId) return deviceId;
+  const svc = svcClient();
+  if (!svc) return deviceId;
+  try {
+    return await withTimeout((async () => {
+      const { data } = await svc
+        .from('whatsapp_numbers')
+        .select('is_active')
+        .eq('device_id', deviceId)
+        .maybeSingle();
+      if ((data as { is_active?: boolean } | null)?.is_active) return deviceId;
+      const fallback = await resolveDefaultDeviceId();
+      if (fallback && fallback !== deviceId) {
+        console.warn(`[whatsappGateway] device "${deviceId}" is retired/unknown — sending on "${fallback}"`);
+        return fallback;
+      }
+      return deviceId;
+    })(), 2500, deviceId);
+  } catch {
+    // Never let device resolution break a send.
+    return deviceId;
+  }
+}
+
 export async function sendMessage(input: Parameters<typeof haberchat.sendMessage>[0]): ReturnType<typeof haberchat.sendMessage> {
-  return dispatch(async () => (await providerFor(input.deviceId)) === 'waha'
-    ? waha.sendMessage(input)
-    : haberchat.sendMessage(input));
+  const deviceId = await sendDeviceId(input.deviceId);
+  const next = deviceId === input.deviceId ? input : { ...input, deviceId };
+  return dispatch(async () => (await providerFor(next.deviceId)) === 'waha'
+    ? waha.sendMessage(next)
+    : haberchat.sendMessage(next));
 }
 
 /**
