@@ -18,11 +18,23 @@
  * Actions:
  *   overview | filters | benchmarks | district | demand_supply | opportunities
  *   | best_value | client_report | pricing_report | recompute
+ *   | area_stats | map_districts | geo_coverage | client_area
+ *
+ * AREA vs DISTRICT — the two are computed differently and that is deliberate.
+ * The district benchmarks key off the scraped location.district TEXT field; the
+ * area actions resolve membership by COORDINATES through wassell_geo_match (the
+ * same predicate the Project Finder uses). ~3.9% of in-scope ads carry no
+ * coordinates and are therefore invisible to an area calculation — geo_coverage
+ * returns that number so the UI can state it instead of letting a smaller count
+ * read as a smaller market.
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 import { makeServiceClient } from './_lib/serviceClient.js';
+// .js extension is REQUIRED — src/lib is shared with the browser, but the
+// deployed Node ESM bundle will not resolve an extensionless relative import.
+import { canonPropertyType } from '../src/lib/market/propertyType.js';
 
 export const config = { runtime: 'edge' };
 
@@ -72,6 +84,11 @@ interface Body {
   requirements?: { districts?: string[]; property_type?: string; budget_max?: number; budget_min?: number; bedrooms?: number };
   // pricing_report / best_value
   our_project_id?: string;
+  // area_stats / client_area — client-preference location_items[] (opaque here;
+  // the SQL compiler validates each item and reports its status back).
+  items?: unknown;
+  active_only?: boolean;
+  client_id?: string;
 }
 
 async function latestSnapshot(sb: SupabaseClient): Promise<string | null> {
@@ -108,6 +125,10 @@ export default async function handler(req: Request): Promise<Response> {
         case 'client_report': return await clientReport(sb, body);
         case 'pricing_report': return await pricingReport(sb);
         case 'recompute': return await recompute(user.userId);
+        case 'area_stats': return await areaStats(sb, body);
+        case 'map_districts': return await mapDistricts(sb, body);
+        case 'geo_coverage': return await geoCoverage(sb);
+        case 'client_area': return await clientArea(sb, body);
         default: return jsonError(400, `unknown action: ${action}`);
       }
     } catch (err) {
@@ -447,4 +468,96 @@ async function recompute(userId: string): Promise<Response> {
   const r2 = await svc.rpc('wassell_refresh_demand_supply');
   if (r2.error) return jsonError(500, `demand/supply refresh failed: ${r2.error.message}`);
   return jsonOk({ ok: true, benchmark_segments: r1.data, demand_segments: r2.data });
+}
+
+// ── area_stats ──────────────────────────────────────────────────────────────
+// Live statistics for ANY area expressible as client-preference location_items.
+// The heavy lifting is entirely in SQL (wassell_market_area_stats), which reuses
+// wassell_geo_match so the area means exactly what it means in the Finder.
+async function areaStats(sb: SupabaseClient, body: Body): Promise<Response> {
+  const items = Array.isArray(body.items) ? body.items : [];
+  const filters: Record<string, unknown> = {};
+  if (str(body.property_type)) filters.property_type = str(body.property_type);
+  if (str(body.bedrooms_bucket)) filters.bedrooms_bucket = str(body.bedrooms_bucket);
+  if (str(body.city_id)) filters.city_id = str(body.city_id);
+  if (strArr(body.district_ids).length) filters.district_ids = strArr(body.district_ids);
+  if (typeof body.active_only === 'boolean') filters.active_only = body.active_only;
+
+  const { data, error } = await sb.rpc('wassell_market_area_stats', {
+    p_items: items, p_filters: filters,
+  });
+  if (error) return jsonError(500, `area stats failed: ${error.message}`);
+  return jsonOk(data ?? {});
+}
+
+// ── map_districts ───────────────────────────────────────────────────────────
+// One round trip for all three map layers: the choropleth metric, our units, and
+// client demand, each keyed to a district outline.
+async function mapDistricts(sb: SupabaseClient, body: Body): Promise<Response> {
+  const filters: Record<string, unknown> = {};
+  if (str(body.property_type)) filters.property_type = str(body.property_type);
+  if (str(body.bedrooms_bucket)) filters.bedrooms_bucket = str(body.bedrooms_bucket);
+  if (str(body.city_id)) filters.city_id = str(body.city_id);
+
+  const { data, error } = await sb.rpc('wassell_market_map_districts', { p_filters: filters });
+  if (error) return jsonError(500, `map districts failed: ${error.message}`);
+  return jsonOk({ districts: data ?? [] });
+}
+
+// ── geo_coverage ────────────────────────────────────────────────────────────
+// The honesty number for every area figure: how many in-scope ads have no
+// coordinates and therefore cannot appear inside any area.
+async function geoCoverage(sb: SupabaseClient): Promise<Response> {
+  const { data, error } = await sb.rpc('wassell_market_geo_coverage');
+  if (error) return jsonError(500, `geo coverage failed: ${error.message}`);
+  return jsonOk(data ?? {});
+}
+
+// ── client_area ─────────────────────────────────────────────────────────────
+// The market as the CLIENT defined it: read their saved location_items through
+// the caller's RLS (a rep who cannot see the client gets nothing), then run the
+// exact same area statistics over them.
+async function clientArea(sb: SupabaseClient, body: Body): Promise<Response> {
+  const clientId = str(body.client_id);
+  if (!clientId) return jsonError(400, 'client_id is required');
+
+  const { data: rec, error: recErr } = await sb
+    .from('unified_records').select('id, data').eq('id', clientId).maybeSingle();
+  if (recErr) return jsonError(500, `client lookup failed: ${recErr.message}`);
+  if (!rec) return jsonError(404, 'client not found or not visible to you');
+
+  const data = (rec.data ?? {}) as Record<string, unknown>;
+  const items = Array.isArray(data.location_items) ? data.location_items : [];
+
+  // preferred_unit_type is a MULTISELECT (e.g. ["فيلا"]) of raw labels, and the
+  // benchmark segments are keyed by the canonical type — so take the first
+  // choice and canon it. Sending the raw label straight through would silently
+  // match no segment and render an empty panel that looks like "no market here".
+  const rawPref = Array.isArray(data.preferred_unit_type)
+    ? data.preferred_unit_type.find((x): x is string => typeof x === 'string')
+    : str(data.preferred_unit_type);
+  const prefType = str(body.property_type) ?? (rawPref ? canonPropertyType(rawPref) : undefined);
+
+  const filters: Record<string, unknown> = {};
+  if (prefType) filters.property_type = prefType;
+  if (str(body.bedrooms_bucket)) filters.bedrooms_bucket = str(body.bedrooms_bucket);
+  if (typeof body.active_only === 'boolean') filters.active_only = body.active_only;
+
+  const { data: stats, error } = await sb.rpc('wassell_market_area_stats', {
+    p_items: items, p_filters: filters,
+  });
+  if (error) return jsonError(500, `client area stats failed: ${error.message}`);
+
+  const budget = (data.budget ?? {}) as Record<string, unknown>;
+  return jsonOk({
+    client_id: clientId,
+    client_name: str(data.client_name) ?? null,
+    has_location_prefs: items.length > 0,
+    location_items: items,
+    budget_min: num(budget.min) ?? null,
+    budget_max: num(budget.max) ?? null,
+    preferred_unit_type: prefType ?? null,
+    preferred_unit_type_raw: rawPref ?? null,
+    stats: stats ?? {},
+  });
 }

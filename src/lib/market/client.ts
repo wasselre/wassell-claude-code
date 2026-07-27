@@ -78,3 +78,96 @@ export const fetchClientReport = (requirements: { districts?: string[]; property
   call<ClientReportData>('client_report', { requirements });
 
 export const recomputeBenchmarks = () => call<{ ok: true; benchmark_segments: number; demand_segments: number }>('recompute');
+
+// ── Area statistics (the map surface) ───────────────────────────────────────
+// An "area" is any set of client-preference location_items — districts, a road
+// band ("north of X up to 5 km"), a radius around a landmark, a freehand
+// polygon, plus exclusions. Membership is resolved server-side by the SAME
+// predicate the Project Finder uses, so what you measure is what you'd match.
+
+export interface AreaBand {
+  median?: number | null; p10?: number | null; p25?: number | null;
+  p75?: number | null; p90?: number | null; min?: number | null; max?: number | null;
+}
+export interface AreaTypeRow {
+  property_type: string; count: number;
+  median_price: number | null; median_price_per_sqm: number | null;
+  p25_price_per_sqm: number | null; p75_price_per_sqm: number | null; median_area: number | null;
+}
+export interface AreaBedroomRow {
+  bedrooms_bucket: string; count: number;
+  median_price: number | null; median_price_per_sqm: number | null;
+}
+export interface AreaDistrictRow {
+  district_id: string; district_name: string | null; district_name_en: string | null;
+  city_name: string | null; count: number; median_price_per_sqm: number | null;
+}
+export interface AreaStats {
+  raw_count: number;
+  deduped_count: number;
+  duplicate_ratio: number;
+  confidence_grade: 'high' | 'medium' | 'low';
+  confidence_reason: string;
+  active_only: boolean;
+  has_geometry: boolean;
+  /** Per-item compile status — an item with a non-'ok' status contributed NOTHING. */
+  geo_items: Array<{ item_id: string; kind: string; polarity: string; validation_status: string }>;
+  price: AreaBand;
+  price_per_sqm: AreaBand;
+  median_area: number | null;
+  by_type: AreaTypeRow[];
+  by_bedrooms: AreaBedroomRow[];
+  districts: AreaDistrictRow[];
+  our_inventory: {
+    project_count?: number; unit_count?: number; available_units?: number;
+    median_price_per_sqm?: number | null; median_price?: number | null;
+  };
+  demand: { active_clients?: number; basis?: string };
+  snapshot_date: string;
+}
+
+export interface AreaFilters {
+  property_type?: string;
+  bedrooms_bucket?: string;
+  city_id?: string;
+  district_ids?: string[];
+  /** Default true — delisted ads are excluded from "current asking market". */
+  active_only?: boolean;
+}
+
+export const fetchAreaStats = (items: unknown[], filters: AreaFilters = {}) =>
+  call<AreaStats>('area_stats', { items, ...filters });
+
+export interface MapDistrict {
+  district_id: string; district_name: string | null; district_name_en: string | null;
+  city_id: string | null; city_name: string | null;
+  listing_count: number; duplicate_ratio: number; confidence_grade: 'high' | 'medium' | 'low';
+  median_price: number | null; median_price_per_sqm: number | null;
+  p25_price_per_sqm: number | null; p75_price_per_sqm: number | null; median_area: number | null;
+  our_units: number; demand_clients: number;
+  centroid: [number, number] | null;
+  /** GeoJSON geometry (Polygon | MultiPolygon), simplified server-side. */
+  outline: { type: string; coordinates: unknown } | null;
+}
+export const fetchMapDistricts = (f: { property_type?: string; bedrooms_bucket?: string; city_id?: string } = {}) =>
+  call<{ districts: MapDistrict[] }>('map_districts', f);
+
+export interface GeoCoverage {
+  in_scope: number; with_coordinates: number;
+  without_coordinates: number; pct_without_coordinates: number;
+}
+export const fetchGeoCoverage = () => call<GeoCoverage>('geo_coverage');
+
+export interface ClientAreaData {
+  client_id: string;
+  client_name: string | null;
+  has_location_prefs: boolean;
+  location_items: unknown[];
+  budget_min: number | null;
+  budget_max: number | null;
+  preferred_unit_type: string | null;
+  preferred_unit_type_raw: string | null;
+  stats: AreaStats;
+}
+export const fetchClientArea = (client_id: string, f: AreaFilters = {}) =>
+  call<ClientAreaData>('client_area', { client_id, ...f });

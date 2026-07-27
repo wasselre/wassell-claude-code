@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useParams, useSearchParams, useLocation, useNavigate } from 'react-router-dom';
-import { ArrowLeft, LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText } from 'lucide-react';
+import { ArrowLeft, LayoutGrid, SlidersHorizontal, ListChecks, Clock, MessageCircle, Phone, Link2, FileText, LineChart } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
 import { useCanViewRecord, useCanEditRecord } from '@/hooks/usePermission';
 import { phoneFieldSlugs } from '@/lib/haberchat/normalize';
@@ -24,12 +24,14 @@ import PreferencesTab from './components/tabs/PreferencesTab';
 import ClientOptionsTab from './components/tabs/ClientOptionsTab';
 import TimelineTab from './components/tabs/TimelineTab';
 import SalesNotesTab from './components/tabs/SalesNotesTab';
+import MarketTab from './components/tabs/MarketTab';
 
-type TabKey = 'overview' | 'preferences' | 'options' | 'timeline' | 'whatsapp' | 'calls' | 'related' | 'notes';
+type TabKey = 'overview' | 'preferences' | 'market' | 'options' | 'timeline' | 'whatsapp' | 'calls' | 'related' | 'notes';
 
 const TABS: { key: TabKey; label_ar: string; label_en: string; icon: typeof LayoutGrid }[] = [
   { key: 'overview', label_ar: 'نظرة عامة', label_en: 'Overview', icon: LayoutGrid },
   { key: 'preferences', label_ar: 'التفضيلات', label_en: 'Preferences', icon: SlidersHorizontal },
+  { key: 'market', label_ar: 'سوق العميل', label_en: 'Their Market', icon: LineChart },
   { key: 'options', label_ar: 'الخيارات', label_en: 'Options', icon: ListChecks },
   { key: 'timeline', label_ar: 'الجدول الزمني', label_en: 'Timeline', icon: Clock },
   { key: 'whatsapp', label_ar: 'واتساب', label_en: 'WhatsApp', icon: MessageCircle },
@@ -172,6 +174,9 @@ export default function ClientDetailPage() {
           />
         )}
         {activeTab === 'preferences' && <PreferencesTab client={client} clientsModel={clientsModel} isAr={isAr} canEdit={canEdit} />}
+        {activeTab === 'market' && (
+          <MarketTab client={client} isAr={isAr} onOpenPreferences={() => setActiveTab('preferences')} />
+        )}
         {activeTab === 'options' && (
           <ClientOptionsTab
             client={client}

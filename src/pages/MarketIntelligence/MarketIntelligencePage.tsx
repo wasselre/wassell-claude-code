@@ -14,13 +14,14 @@ import { LineChart, RefreshCw, Building2, Users, MapPin, ShieldCheck, AlertTrian
 import { fetchOverview, recomputeBenchmarks } from '@/lib/market/client';
 import { resolveEffectiveProfile } from '@/lib/permissions';
 import type { MarketOverview } from '@/lib/market/types';
+import MapTab from './components/MapTab';
 import BenchmarkTab from './components/BenchmarkTab';
 import DemandSupplyTab from './components/DemandSupplyTab';
 import OpportunitiesTab from './components/OpportunitiesTab';
 import PricingTab from './components/PricingTab';
 import { CaveatStrip } from './components/shared';
 
-type Tab = 'overview' | 'benchmarks' | 'demand' | 'opportunities' | 'pricing';
+type Tab = 'overview' | 'map' | 'benchmarks' | 'demand' | 'opportunities' | 'pricing';
 
 export default function MarketIntelligencePage() {
   const { t } = useTranslation();
@@ -62,6 +63,7 @@ export default function MarketIntelligencePage() {
 
   const tabs: { id: Tab; label: string }[] = useMemo(() => [
     { id: 'overview', label: isAr ? 'نظرة عامة' : 'Overview' },
+    { id: 'map', label: isAr ? 'الخريطة' : 'Map' },
     { id: 'benchmarks', label: isAr ? 'مؤشرات الأسعار' : 'Benchmarks' },
     { id: 'demand', label: isAr ? 'الطلب والعرض' : 'Demand × Supply' },
     { id: 'opportunities', label: isAr ? 'الفرص' : 'Opportunities' },
@@ -115,6 +117,7 @@ export default function MarketIntelligencePage() {
       {error && <CaveatStrip>{error}</CaveatStrip>}
 
       {tab === 'overview' && <OverviewCards overview={overview} loading={loading} isAr={isAr} t={t} />}
+      {tab === 'map' && <MapTab isAr={isAr} />}
       {tab === 'benchmarks' && <BenchmarkTab isAr={isAr} />}
       {tab === 'demand' && <DemandSupplyTab isAr={isAr} />}
       {tab === 'opportunities' && <OpportunitiesTab isAr={isAr} />}
