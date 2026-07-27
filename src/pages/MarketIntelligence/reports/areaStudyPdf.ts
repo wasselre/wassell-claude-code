@@ -17,8 +17,17 @@ import { propertyTypeLabel } from '@/lib/market/propertyType';
 
 const BRAND = { chocolate: '#4A2C2A', copper: '#B8734F', sand: '#D4B896', cream: '#F5EDE0', charcoal: '#4A4E54' };
 
-/** The real Wassel horizontal logo, white version, for the chocolate header. */
+/**
+ * The real Wassel horizontal lockup, white version, for the chocolate header.
+ *
+ * The asset is TRIMMED to its artwork (≈3.4:1). The brand pack ships it on a
+ * 2000×2000 square where the lockup occupies a 1961×575 band — sizing that by
+ * height renders the mark at ~29% of the box and it reads as a stray mote in
+ * the corner, which is exactly what shipped first. If this file is ever replaced
+ * from the brand pack, trim the transparent padding again.
+ */
 const LOGO_WHITE = '/assets/logo-horizontal-white.png';
+const LOGO_HEIGHT_PX = 54;
 
 export interface AreaStudyPayload {
   stats: AreaStats;
@@ -173,7 +182,7 @@ function buildHtml(p: AreaStudyPayload): string {
   return `
   <div dir="${dir}" style="width:794px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal};padding-bottom:22px">
     <div style="background:${BRAND.chocolate};color:#fff;padding:18px 30px;display:flex;justify-content:space-between;align-items:center">
-      <img src="${LOGO_WHITE}" alt="" style="height:46px;width:auto;display:block" />
+      <img src="${LOGO_WHITE}" alt="" style="height:${LOGO_HEIGHT_PX}px;width:auto;display:block" />
       <div style="text-align:${end}">
         <div style="font-size:15px;font-weight:700">${isAr ? 'دراسة سوق لمنطقة محددة' : 'Area Market Study'}</div>
         <div style="font-size:11px;opacity:.8">${stats.snapshot_date}</div>

@@ -87,7 +87,7 @@ function buildHtml(p: SnapshotPayload): string {
   return `
   <div dir="${dir}" style="width:794px;min-height:1123px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal};padding:0">
     <div style="background:${BRAND.chocolate};color:#fff;padding:20px 32px;display:flex;justify-content:space-between;align-items:center">
-      <img src="/assets/logo-horizontal-white.png" alt="" style="height:48px;width:auto;display:block" />
+      <img src="/assets/logo-horizontal-white.png" alt="" style="height:54px;width:auto;display:block" />
       <div style="text-align:${isAr ? 'left' : 'right'}">
         <div style="font-size:15px;font-weight:700">${isAr ? 'تقرير سوق إرشادي' : 'Indicative Market Report'}</div>
       </div>

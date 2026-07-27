@@ -33,7 +33,7 @@ export async function generatePricingReportPdf(rows: PricingReportRow[], isAr: b
   const html = `
   <div dir="${dir}" style="width:794px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal}">
     <div style="background:${BRAND.chocolate};color:#fff;padding:20px 32px;display:flex;justify-content:space-between;align-items:center">
-      <img src="/assets/logo-horizontal-white.png" alt="" style="height:48px;width:auto;display:block" />
+      <img src="/assets/logo-horizontal-white.png" alt="" style="height:54px;width:auto;display:block" />
       <div style="text-align:${isAr ? 'left' : 'right'}">
         <div style="font-size:15px;font-weight:700">${isAr ? 'تقرير تسعير المشاريع' : 'Project Pricing Report'}</div>
         <div style="font-size:11px;opacity:.8">${isAr ? `لقطة السوق: ${snapshot ?? '—'}` : `Market snapshot: ${snapshot ?? '—'}`}</div>
