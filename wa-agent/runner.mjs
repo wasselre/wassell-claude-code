@@ -112,10 +112,19 @@ async function renewLease() {
 }
 
 // ── claude session ──────────────────────────────────────────────────────────
-function runClaude(prompt, cwd) {
+/**
+ * Run a Claude session. `resumeId` continues an existing one — that is what
+ * makes a follow-up message cheap: the chat, client and call history are
+ * already in context, so the turn is short instead of a cold start.
+ *
+ * JSON output (rather than text) so we get back the session_id to resume next
+ * time and the token usage that drives rotation.
+ */
+function runClaude(prompt, cwd, resumeId = null) {
   return new Promise((resolve) => {
     // Prompt via STDIN so multiline Arabic survives shell quoting.
-    const args = ['-p', '--dangerously-skip-permissions', '--output-format', 'text'];
+    const args = ['-p', '--dangerously-skip-permissions', '--output-format', 'json'];
+    if (resumeId) args.push('--resume', resumeId);
     const env = { ...process.env };
     // The app's server-side API key is NOT valid for the CLI; if present the CLI
     // prefers it and 401s. Same scrub as the study runner.
@@ -129,13 +138,26 @@ function runClaude(prompt, cwd) {
     let out = '', err = '';
     const timer = setTimeout(() => {
       try { process.kill(-child.pid, 'SIGKILL'); } catch { try { child.kill('SIGKILL'); } catch {} }
-      resolve({ code: -1, out, err: err + '\n[wa-agent] session timeout' });
+      resolve({ code: -1, out, err: err + '\n[wa-agent] session timeout', sessionId: null, tokens: 0 });
     }, SESSION_TIMEOUT_MS);
     child.stdin.write(prompt); child.stdin.end();
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
-    child.on('close', (code) => { clearTimeout(timer); currentChild = null; resolve({ code, out, err }); });
-    child.on('error', (e) => { clearTimeout(timer); currentChild = null; resolve({ code: -2, out, err: String(e) }); });
+    child.on('close', (code) => {
+      clearTimeout(timer); currentChild = null;
+      // --output-format json prints one envelope: { session_id, result, usage, ... }
+      let sessionId = null, tokens = 0, text = out;
+      try {
+        const j = JSON.parse(out.trim());
+        sessionId = j.session_id ?? null;
+        text = typeof j.result === 'string' ? j.result : out;
+        const u = j.usage ?? {};
+        tokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
+               + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
+      } catch { /* non-JSON (crash / auth error) - keep raw text for diagnosis */ }
+      resolve({ code, out: text, err, sessionId, tokens });
+    });
+    child.on('error', (e) => { clearTimeout(timer); currentChild = null; resolve({ code: -2, out, err: String(e), sessionId: null, tokens: 0 }); });
   });
 }
 
@@ -236,7 +258,44 @@ async function handleWhatsappReply(job) {
     'Arabic, for the rep). Writing this file is the LAST thing you do.',
   ].join('\n');
 
-  const { code, out, err } = await runClaude(prompt, '/app/repo');
+  // Resumed turn: the session already holds the history, the skill and the
+  // tools. Repeating them would waste the very tokens we are conserving.
+  const resumePrompt = [
+    'New message(s) arrived in the same WhatsApp conversation you are already handling.',
+    '',
+    `Latest: ${String(p.trigger_message || '(see the thread)').slice(0, 500)}`,
+    '',
+    'Read any new messages from the DB, reply per the same rules, and write the',
+    'sentinel JSON to exactly this path when done:',
+    `  ${sentinel}`,
+    'Same keys as before: sent, reply, handoff, summary.',
+  ].join('\n');
+
+  // ---- one living session per conversation --------------------------------
+  const { data: sess } = await supa.rpc('whatsapp_ai_session_get', {
+    p_chat_wid: chatWid,
+    p_max_tokens: Number(process.env.SESSION_MAX_TOKENS || 250000),
+  });
+  const sRow = Array.isArray(sess) ? sess[0] : sess;
+  const resumeId = sRow?.session_id ?? null;
+  if (resumeId) console.log(`[wa-agent] resuming ${resumeId} (turn ${(sRow.turns ?? 0) + 1}, ~${sRow.context_tokens} tok)`);
+  else console.log(`[wa-agent] new session (${sRow?.reason ?? 'no_session'})`);
+
+  let { code, out, err, sessionId, tokens } = await runClaude(
+    resumeId ? resumePrompt : prompt, '/app/repo', resumeId);
+
+  // A resume fails if the CLI dropped that session's state. Cold-start once
+  // rather than losing the customer's turn.
+  if (resumeId && (code !== 0 || /No conversation found|session.*not found/i.test(err || ''))) {
+    console.warn('[wa-agent] resume failed, starting fresh:', (err || '').slice(-200));
+    ({ code, out, err, sessionId, tokens } = await runClaude(prompt, '/app/repo', null));
+    if (sessionId) await supa.rpc('whatsapp_ai_session_put', {
+      p_chat_wid: chatWid, p_session_id: sessionId, p_tokens: tokens, p_is_new: true,
+      p_error: 'previous session could not be resumed' });
+  } else if (sessionId) {
+    await supa.rpc('whatsapp_ai_session_put', {
+      p_chat_wid: chatWid, p_session_id: sessionId, p_tokens: tokens, p_is_new: !resumeId });
+  }
   if (!existsSync(sentinel)) {
     throw new Error(`session ended (code ${code}) without sentinel: ${(err || out).slice(-500)}`);
   }
