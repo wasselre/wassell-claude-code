@@ -208,7 +208,9 @@ export default function MarketingManagementPage() {
                   <Stat label={isAr ? 'إيراد منسوب' : 'Revenue'} value={money(k.revenue_attributed)}
                         hint={isAr ? 'المسجَّل فقط' : 'recorded only'} tone="muted" />
                 </div>
-                <div className="mt-3"><CaveatStrip>{ov.coverage.note}</CaveatStrip></div>
+                <div className="mt-3">
+                  <CaveatStrip>{isAr ? (ov.coverage.note_ar ?? ov.coverage.note) : ov.coverage.note}</CaveatStrip>
+                </div>
               </Section>
 
               {ov.alerts.length > 0 && (

@@ -499,6 +499,8 @@ export interface MICoverage {
   orgs_with_facts: number;
   attribution: { confirmed: number; speculative: number };
   note: string;
+  /** Arabic rendering of `note`. Optional: an older deployment omits it. */
+  note_ar?: string;
 }
 export interface IntelligenceIndex {
   generated_at: string;

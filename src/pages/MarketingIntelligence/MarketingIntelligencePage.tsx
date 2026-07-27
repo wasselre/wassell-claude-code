@@ -138,7 +138,7 @@ export default function MarketingIntelligencePage() {
               hint={isAr ? 'غير محتسب في أي رقم' : 'excluded from every count'}
             />
           </div>
-          <div className="mt-3"><CaveatStrip>{cov.note}</CaveatStrip></div>
+          <div className="mt-3"><CaveatStrip>{isAr ? (cov.note_ar ?? cov.note) : cov.note}</CaveatStrip></div>
         </Section>
       )}
 

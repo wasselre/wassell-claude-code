@@ -121,7 +121,13 @@ export interface MgmtOverview {
   recently_published: Array<{ id: string; platform: string; published_at: string; published_url: string | null; title: string; content_number: string; has_performance: boolean }>;
   alerts: MgmtAlert[];
   workload: Array<{ assigned_user_id: string; open_tasks: number; overdue_tasks: number }>;
-  coverage: { campaigns_total: number; content_total: number; publications_total: number; assets_total: number; note: string };
+  coverage: {
+    campaigns_total: number; content_total: number; publications_total: number; assets_total: number;
+    /** The caveat travels with the data because it is the denominator for every
+     *  number beside it. `note` is English; `note_ar` may be absent on an
+     *  older deployment, so callers fall back to `note`. */
+    note: string; note_ar?: string;
+  };
 }
 export interface ContentDetail {
   item: ContentItem; versions: ContentVersion[]; tasks: ContentTask[];
