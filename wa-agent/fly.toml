@@ -27,12 +27,19 @@ primary_region = 'bom'
     method = 'GET'
     path = '/'
 
-# The Claude CLI's session store. A resumed session is the agent's memory of the
+# The Claude CLI's session state. A resumed session is the agent's memory of the
 # conversation, and it lived on the machine's ephemeral disk — so every deploy
 # silently reset every customer conversation to turn one. Keep this mounted.
+#
+# The whole HOME, not just ~/.claude: the CLI splits its state across
+# `~/.claude/projects/<cwd>/<session>.jsonl` (the transcript) AND `~/.claude.json`
+# (the index that makes a session id resumable). Mounting only ~/.claude kept the
+# transcripts and lost the index, and --resume then fails with
+# "Claude configuration file not found at: /home/agent/.claude.json" — verified
+# by restarting the machine, 2026-07-27. Persist both or persist neither.
 [mounts]
   source = 'wa_agent_state'
-  destination = '/home/agent/.claude'
+  destination = '/home/agent'
 
 [[vm]]
   size = 'shared-cpu-1x'

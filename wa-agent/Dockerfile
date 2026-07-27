@@ -37,13 +37,13 @@ RUN useradd -m -u 10001 -s /bin/bash agent \
     && chown -R agent:agent /app
 ENV HOME=/home/agent
 
-# `/home/agent/.claude` is a Fly VOLUME (see fly.toml) so conversation state
-# outlives a deploy. Without it every machine replacement wiped the CLI's
-# session store, every resume failed with "No conversation found with session
-# ID", and each customer message restarted the agent cold — which is why it
-# contradicted itself and re-asked what it had already been told (live
-# 2026-07-27). Fly mounts volumes root-owned, so the entrypoint runs as root
-# purely to chown the mount, then drops to `agent` for the actual process.
+# `/home/agent` is a Fly VOLUME (see fly.toml) so conversation state outlives a
+# deploy. Without it every machine replacement wiped the CLI's session store,
+# every resume failed with "No conversation found with session ID", and each
+# customer message restarted the agent cold — which is why it contradicted
+# itself and re-asked what it had already been told (live 2026-07-27). Fly
+# mounts volumes root-owned, so the entrypoint runs as root purely to chown the
+# mount, then drops to `agent` for the actual process.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
@@ -53,8 +53,8 @@ RUN gosu agent sh -c 'cd /app/repo && git init -q \
     && git config user.email "agent@wassel.re" \
     && git config user.name "Wassel WA Agent"'
 
-# Pre-create the mountpoint so a machine booted WITHOUT the volume still has a
-# writable (if ephemeral) session dir rather than failing outright.
+# Pre-create the session dir so a machine booted WITHOUT the volume still has a
+# writable (if ephemeral) home rather than failing outright.
 RUN mkdir -p /home/agent/.claude && chown -R agent:agent /home/agent
 
 ENV NODE_ENV=production
