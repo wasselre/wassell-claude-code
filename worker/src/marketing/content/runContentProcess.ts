@@ -10,7 +10,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { computeCommonTokens, type ProjectAlias } from '../pipeline.js';
 import { extractMedia } from './mediaExtract.js';
 import { downloadAndStore, fetchBytes, uploadBytes } from './contentStore.js';
-import { toTempFile, cleanup, probeDurationMs, extractAudio, sampleFrames } from './ffmpegMedia.js';
+import { toTempFile, cleanup, probeDurationMs, hasAudioStream, extractAudio, sampleFrames } from './ffmpegMedia.js';
 import { downloadYouTube, YtDownloadError } from './ytdlp.js';
 import { transcribeAudioUrl } from './falTranscribe.js';
 import { readFile } from 'node:fs/promises';
@@ -138,6 +138,20 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
         // transcription (idempotent: skip if a done transcript exists for this media+model)
         const { data: existingTx } = await sb.from('mkt_transcripts').select('id, status, text').eq('content_media_id', ref.mediaId).maybeSingle();
         if (existingTx?.status === 'done') { transcriptText += ' ' + (existingTx.text ?? ''); stats.transcribed++; }
+        else if (!(await hasAudioStream(tmp.path))) {
+          // A SILENT video, not a broken step. Recorded as a completed
+          // transcript with empty text — the same shape the music-only guard
+          // produces — so downstream reads "no speech evidence" (true) rather
+          // than "transcription failed" (false). Counted as transcribed because
+          // the question "what is said in this video?" HAS been answered.
+          await sb.rpc('mkt_transcript_upsert', {
+            p_media: ref.mediaId, p_post: contentPostId, p_provider: 'none', p_model: 'none',
+            p_language: null, p_text: '', p_segments: '[]', p_duration_ms: durationMs,
+            p_confidence: null, p_cost: 0, p_status: 'done',
+            p_failure: null, p_source_checksum: ref.checksum, p_raw: null,
+          });
+          stats.transcribed++;
+        }
         else {
           try {
             const audio = await extractAudio(tmp.path);

@@ -42,6 +42,28 @@ export async function probeDurationMs(videoPath: string): Promise<number | null>
   } catch { return null; }
 }
 
+/**
+ * Does this file carry an audio stream at all?
+ *
+ * A silent video is COMMON in real-estate marketing — 14 of 74 collected
+ * Instagram Reels have no audio track whatsoever (measured 2026-07-27). Without
+ * this probe, extractAudio asks ffmpeg to write an audio-only file from a source
+ * with nothing to copy; ffmpeg emits "Output file does not contain any stream"
+ * and exits 234, which the caller then records as a transcription FAILURE.
+ *
+ * That is a mislabel, not a malfunction: "this video is silent" is a fact about
+ * the creative, and it should read as an empty transcript rather than a broken
+ * step. Returns true when unprobeable, so a genuine ffprobe problem still takes
+ * the normal error path instead of being silently reclassified as "no audio".
+ */
+export async function hasAudioStream(videoPath: string): Promise<boolean> {
+  try {
+    const out = await run('ffprobe', ['-v', 'error', '-select_streams', 'a',
+      '-show_entries', 'stream=codec_type', '-of', 'default=noprint_wrappers=1:nokey=1', videoPath], 30_000);
+    return out.trim().length > 0;
+  } catch { return true; }
+}
+
 /** Extract a compact 16 kHz mono m4a audio track (Whisper's preferred input). */
 export async function extractAudio(videoPath: string): Promise<Buffer> {
   const dir = await mkdtemp(join(tmpdir(), 'mkt-audio-'));
