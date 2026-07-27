@@ -24,7 +24,12 @@ const cfg = JSON.parse(readFileSync(envPath, 'utf-8'));
 const res = await fetch(`${cfg.APP_URL}/api/whatsapp/ai-send`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json; charset=utf-8', 'x-wassel-ai-secret': cfg.AI_SECRET },
-  body: JSON.stringify({ chat_wid: cfg.chatWid, body: text, device_id: cfg.deviceId, job_id: cfg.jobId }),
+  body: JSON.stringify({
+    chat_wid: cfg.chatWid, body: text, device_id: cfg.deviceId, job_id: cfg.jobId,
+    // Manual handover: the rep invited the AI in, so the schedule/human-active
+    // gates must not veto the send they asked for.
+    force: cfg.forced === true,
+  }),
 });
 const out = await res.json().catch(() => ({}));
 console.log(JSON.stringify(out));

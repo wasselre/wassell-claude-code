@@ -34,6 +34,7 @@ import ProfilePage from '@/pages/ProfilePage';
 import MenuArrangementPage from '@/pages/Settings/MenuArrangementPage';
 import WebhookSlugsPage from '@/pages/Settings/WebhookSlugsPage';
 import WhatsAppNumbersPage from '@/pages/Settings/WhatsAppNumbersPage';
+import WhatsAppAiPage from '@/pages/Settings/WhatsAppAiPage';
 import DocumentTemplatesPage from '@/pages/DocumentTemplates/DocumentTemplatesPage';
 import WebsiteSettingsPage from '@/pages/Settings/WebsiteSettingsPage';
 import ProjectDetailsListPage from '@/pages/Settings/ProjectDetailsListPage';
@@ -384,6 +385,7 @@ export default function App() {
           <Route path="/settings/menu" element={<RequireAdmin><MenuArrangementPage /></RequireAdmin>} />
           <Route path="/settings/webhooks" element={<RequireAdmin><WebhookSlugsPage /></RequireAdmin>} />
           <Route path="/settings/whatsapp-numbers" element={<RequireAdmin><WhatsAppNumbersPage /></RequireAdmin>} />
+          <Route path="/settings/whatsapp-ai" element={<RequireAdmin><WhatsAppAiPage /></RequireAdmin>} />
           <Route path="/settings/document-templates" element={<RequireAdmin><DocumentTemplatesPage /></RequireAdmin>} />
           <Route path="/settings/website" element={<RequireAdmin><WebsiteSettingsPage /></RequireAdmin>} />
           <Route path="/settings/project-details" element={<RequireAdmin><ProjectDetailsListPage /></RequireAdmin>} />

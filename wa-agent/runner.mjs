@@ -91,11 +91,16 @@ async function handleWhatsappReply(job) {
   const chatWid = p.chat_wid;
   if (!chatWid) throw new Error('payload.chat_wid is required');
 
-  // Re-check the gate right before spending a session on it (a human may have
-  // replied in the seconds since the webhook enqueued).
-  const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
-  const g = Array.isArray(gate) ? gate[0] : gate;
-  if (g?.should_reply !== true) return { skipped: true, reason: g?.reason ?? 'blocked' };
+  // A rep pressing "hand this chat to the AI" is an explicit invitation, so a
+  // forced job skips the schedule/human-active gates. Auto-triggered jobs
+  // re-check right before spending a session (a human may have replied in the
+  // seconds since the webhook enqueued).
+  const forced = p.forced === true;
+  if (!forced) {
+    const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
+    const g = Array.isArray(gate) ? gate[0] : gate;
+    if (g?.should_reply !== true) return { skipped: true, reason: g?.reason ?? 'blocked' };
+  }
 
   const workDir = mkdtempSync(path.join(tmpdir(), 'wa-agent-'));
   const sentinel = path.join(workDir, 'result.json');
@@ -107,6 +112,7 @@ async function handleWhatsappReply(job) {
     // (one Arabic→schema mapping layer for both channels), which authenticates
     // with its own secret.
     TOOL_SECRET: process.env.RETELL_WEBHOOK_SECRET ?? '',
+    forced,
     chatWid,
     chatRecordId: p.chat_record_id ?? null, deviceId: p.device_id ?? 'sales', jobId: job.id,
   }));

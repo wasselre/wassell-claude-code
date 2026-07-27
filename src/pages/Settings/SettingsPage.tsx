@@ -6,7 +6,7 @@ import {
   Hammer, Zap, LayoutDashboard, Languages,
   Shield, Briefcase, Users, ChevronRight,
   Settings, ScrollText, ListOrdered, MessageCircle, Webhook,
-  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film,
+  Globe, LayoutTemplate, FileText, MapPin, Activity, Megaphone, Film, Bot,
 } from 'lucide-react';
 
 interface SettingsCard {
@@ -141,6 +141,17 @@ const CARDS: SettingsCard[] = [
     color: '#25D366',
     bg: '#25D36614',
     route: '/settings/whatsapp-numbers',
+    adminOnly: true,
+  },
+  {
+    titleAr: 'المساعد الذكي للواتساب',
+    titleEn: 'WhatsApp AI Agent',
+    descAr: 'متى يرد المساعد على العملاء وحدود الأمان',
+    descEn: 'When the agent answers customers, and its safety limits',
+    icon: Bot,
+    color: '#B8734F',
+    bg: '#B8734F14',
+    route: '/settings/whatsapp-ai',
     adminOnly: true,
   },
   {

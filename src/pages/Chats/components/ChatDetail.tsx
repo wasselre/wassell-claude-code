@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown, NotebookPen } from 'lucide-react';
+import { ArrowLeft, ArrowRight, MessageCircle, Phone, Hash, Star, User, UserPlus, Check, CheckCheck, RotateCcw, Loader2, ListChecks, Megaphone, ChevronDown, NotebookPen, Bot } from 'lucide-react';
 import { useAppStore } from '@/stores/appStore';
+import { supabase } from '@/lib/supabase';
 import { matchRecordByPhone, phoneFieldSlugs } from '@/lib/haberchat/normalize';
 import ClientOptionsModal from '@/components/clients/ClientOptionsModal';
 import MessageThread from './MessageThread';
@@ -278,6 +279,7 @@ export default function ChatDetail({ recordId }: { recordId: string }) {
                   <NotebookPen size={12} />
                   {isAr ? 'تسجيل تواصل' : 'Log interaction'}
                 </button>
+                <AiHandoverButton chatRecordId={recordId} isAr={isAr} />
               </>
             ) : (
               <button
@@ -552,6 +554,70 @@ function StatusPicker({
         </>
       )}
     </div>
+  );
+}
+
+/**
+ * "Let the AI answer this chat" — hands the conversation to the WhatsApp agent
+ * (a real Claude Code session on the wa-agent worker) regardless of the hour.
+ *
+ * The schedule and human-active gates exist to stop the agent acting UNINVITED;
+ * a rep pressing this IS the invitation, so the server enqueues with `force`.
+ * The kill switch and the per-chat reply cap still apply — when either blocks,
+ * the endpoint returns queued:false with a reason we surface as a toast rather
+ * than pretending it worked.
+ */
+function AiHandoverButton({ chatRecordId, isAr }: { chatRecordId: string; isAr: boolean }) {
+  const addToast = useAppStore((s) => s.addToast);
+  const [busy, setBusy] = useState(false);
+
+  const handover = async () => {
+    setBusy(true);
+    try {
+      const session = supabase ? (await supabase.auth.getSession()).data.session : null;
+      const res = await fetch('/api/whatsapp/ai-handover', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ chat_record_id: chatRecordId }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        addToast(
+          isAr ? `تعذر التحويل: ${body?.error ?? res.status}` : `Handover failed: ${body?.error ?? res.status}`,
+          'error',
+        );
+        return;
+      }
+      if (body.queued === false) {
+        addToast(body.reason ?? (isAr ? 'المساعد غير متاح حالياً' : 'Agent unavailable'), 'error');
+        return;
+      }
+      addToast(
+        isAr
+          ? 'المساعد الذكي يقرأ المحادثة الآن وسيرد خلال دقائق'
+          : 'The AI agent is reading this conversation and will reply shortly',
+        'success',
+      );
+    } catch (err) {
+      addToast(isAr ? `خطأ: ${String(err)}` : `Error: ${String(err)}`, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={() => void handover()}
+      disabled={busy}
+      className="inline-flex items-center gap-1 rounded-full border border-copper/40 bg-copper/10 px-2 py-0.5 font-medium text-copper transition-colors hover:bg-copper/20 disabled:opacity-50"
+      title={isAr ? 'دع المساعد الذكي يرد على هذه المحادثة' : 'Let the AI agent answer this conversation'}
+    >
+      {busy ? <Loader2 size={12} className="animate-spin" /> : <Bot size={12} />}
+      {isAr ? 'رد بالمساعد الذكي' : 'AI reply'}
+    </button>
   );
 }
 
