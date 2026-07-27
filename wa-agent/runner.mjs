@@ -102,7 +102,12 @@ async function handleWhatsappReply(job) {
   const envJson = path.join(workDir, 'env.json');
   // Per-job context for the session's tools (send.mjs reads it via WA_ENV_JSON).
   writeFileSync(envJson, JSON.stringify({
-    SUPABASE_URL, SERVICE_KEY, APP_URL, AI_SECRET, chatWid,
+    SUPABASE_URL, SERVICE_KEY, APP_URL, AI_SECRET,
+    // save.mjs writes the client record through the Retell agent-tools server
+    // (one Arabic→schema mapping layer for both channels), which authenticates
+    // with its own secret.
+    TOOL_SECRET: process.env.RETELL_WEBHOOK_SECRET ?? '',
+    chatWid,
     chatRecordId: p.chat_record_id ?? null, deviceId: p.device_id ?? 'sales', jobId: job.id,
   }));
   process.env.WA_ENV_JSON = envJson;   // inherited by the spawned session
