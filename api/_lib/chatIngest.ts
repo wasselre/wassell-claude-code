@@ -52,9 +52,61 @@ export interface ChatMessageRow {
 }
 
 /**
+ * The STABLE identity of a WhatsApp message.
+ *
+ * A message id is `<true|false>_<chatId>_<HASH>[_<participant>]`, and the
+ * `<chatId>` segment carries the ADDRESSING MODE the reporting gateway happened
+ * to use — `<phone>@c.us` or `<lid>@lid` — for the very same message. So the id
+ * is NOT stable: the same message reported by two gateways (or by the REST
+ * store vs the webhook) yields two different ids, which defeats both the
+ * `onConflict: id` dedupe and any ack lookup keyed on the id.
+ *
+ * The trailing HASH is WhatsApp's own message id and is the part that does not
+ * move. Returns null for ids that aren't in this shape (Haberchat-era rows are
+ * bare hex with no underscores — those ARE their own identity).
+ */
+export function messageIdHash(id: string): string | null {
+  if (!/^(true|false)_[^_]+@[a-z.]+_/i.test(id)) return null;
+  return id.split('_')[2] ?? null;
+}
+
+/**
+ * Find an already-stored row for the same physical message under a DIFFERENT
+ * addressing mode. Matched on the trailing hash plus direction: the hash is
+ * WhatsApp's globally-unique message id, and pinning the direction too means a
+ * stray collision still cannot merge an inbound with an outbound.
+ */
+async function findRowByHash(id: string, flow: 'in' | 'out'): Promise<string | null> {
+  const hash = messageIdHash(id);
+  if (!hash) return null;
+  const supa = getServiceSupabase();
+  // `like '%<hash>'` is an ends-with probe; the exact `_<hash>` boundary is
+  // re-checked below because LIKE's `_` is itself a single-char wildcard.
+  const { data } = await supa
+    .from('chat_messages')
+    .select('id')
+    .eq('flow', flow)
+    .like('id', `%${hash}`)
+    .limit(5);
+  // `_<hash>` is the WAHA shape; a bare `<hash>` is the Haberchat-era shape,
+  // where the id WAS the hash. Both are the same message.
+  const match = (data as { id: string }[] | null)?.find(
+    (r) => r.id !== id && (r.id.endsWith(`_${hash}`) || r.id === hash),
+  );
+  return match?.id ?? null;
+}
+
+/**
  * Upsert a chat_messages row. onConflict:id so a retried/duplicated webhook
  * never creates a second row. Returns `{ isNew }` so the caller can make the
  * unread bump idempotent (only a genuinely new inbound message bumps unread).
+ *
+ * Also collapses the SAME message arriving under a different addressing mode
+ * onto the row we already hold (see `messageIdHash`). Two gateways paired to
+ * one number — a re-pair that left the old companion linked, or a store-sourced
+ * backfill racing the webhook — otherwise write the message twice, into two
+ * different conversation records, and split its acks across both (live
+ * 2026-07-27). The row we already have wins; the late copy only fills gaps.
  */
 export async function upsertChatMessage(row: ChatMessageRow): Promise<{ isNew: boolean }> {
   const supa = getServiceSupabase();
@@ -63,11 +115,32 @@ export async function upsertChatMessage(row: ChatMessageRow): Promise<{ isNew: b
     .select('id')
     .eq('id', row.id)
     .maybeSingle();
-  const isNew = !existing;
+
+  if (existing) {
+    const { error } = await supa.from('chat_messages').upsert(row, { onConflict: 'id', ignoreDuplicates: false });
+    if (error) console.error('[chatIngest] chat_messages upsert failed:', error.message);
+    return { isNew: false };
+  }
+
+  // Not under this id — is it already here under the other addressing mode?
+  const twinId = await findRowByHash(row.id, row.flow);
+  if (twinId) {
+    console.warn(`[chatIngest] duplicate addressing for one message: "${row.id}" is already stored as "${twinId}" — dropping the copy`);
+    // Deliberately NOT merged field-by-field. It is the same message, so the
+    // established row already has the body; and its media ref would be
+    // `wf_<other session>/…`, i.e. bytes on a gateway that is not the one we
+    // download from — copying that in would swap a working ref for a 404.
+    //
+    // The ack is the exception: it is the one thing the echo knows that the
+    // established row (written optimistically at send time as 'pending') does
+    // not. applyAck only ever ratchets forward, so this cannot regress a state.
+    if (row.flow === 'out' && row.ack) await applyAck(twinId, row.ack);
+    return { isNew: false };
+  }
 
   const { error } = await supa.from('chat_messages').upsert(row, { onConflict: 'id', ignoreDuplicates: false });
   if (error) console.error('[chatIngest] chat_messages upsert failed:', error.message);
-  return { isNew };
+  return { isNew: true };
 }
 
 /**
@@ -146,14 +219,37 @@ export async function bumpConversationRecord(args: {
 }
 
 /** Apply an ack, never downgrading past the current rank. */
+/**
+ * Apply a delivery receipt to the message it belongs to.
+ *
+ * The ack's `id` is addressed however the REPORTING gateway addresses that chat,
+ * which is not necessarily how the row was stored — an ack for
+ * `true_<lid>@lid_<HASH>` is the receipt for a row saved as
+ * `true_<phone>@c.us_<HASH>`. Matching on the id alone therefore updated nothing
+ * and left 34 of 75 delivered messages showing a permanent "pending" clock to
+ * the rep (live 2026-07-27). So: try the exact id, then fall back to the stable
+ * hash (see `messageIdHash`).
+ */
 export async function applyAck(wid: string, ack: string): Promise<void> {
   const rank = ACK_ORDER[ack as keyof typeof ACK_ORDER];
   if (rank == null) return;
   const supa = getServiceSupabase();
-  const { data: current } = await supa.from('chat_messages').select('ack').eq('id', wid).maybeSingle();
-  const currentRank = current?.ack ? (ACK_ORDER[current.ack as keyof typeof ACK_ORDER] ?? -1) : -1;
+
+  let target = wid;
+  let { data: current } = await supa.from('chat_messages').select('ack').eq('id', wid).maybeSingle();
+
+  if (!current) {
+    // An ack only ever describes a message WE sent.
+    const twinId = await findRowByHash(wid, 'out');
+    if (!twinId) return; // Genuinely unknown message — nothing to mark.
+    target = twinId;
+    ({ data: current } = await supa.from('chat_messages').select('ack').eq('id', target).maybeSingle());
+    if (!current) return;
+  }
+
+  const currentRank = current.ack ? (ACK_ORDER[current.ack as keyof typeof ACK_ORDER] ?? -1) : -1;
   if (rank <= currentRank) return;
-  const { error } = await supa.from('chat_messages').update({ ack }).eq('id', wid);
+  const { error } = await supa.from('chat_messages').update({ ack }).eq('id', target);
   if (error) console.error('[chatIngest] ack update failed:', error.message);
 }
 

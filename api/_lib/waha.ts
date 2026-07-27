@@ -161,6 +161,28 @@ export function resolveWahaPhone(msg: WahaMessageRaw): string | null {
 }
 
 /**
+ * The COUNTERPARTY's phone, in either direction.
+ *
+ * Inbound, that is the sender (`resolveWahaPhone`). Outbound it is the
+ * recipient, and `to` is null on GOWS — the phone lives at
+ * `_data.Info.RecipientAlt`, mirroring SenderAlt. Without the outbound leg a
+ * LID-addressed message we SENT could not be resolved at all, so it was filed
+ * under `<lid>@lid` and spawned a phantom conversation record beside the real
+ * one (live 2026-07-27). Inbound never hit this because SenderAlt is usually
+ * present — the resolution was one-legged, not absent.
+ */
+export function resolveWahaCounterpartyPhone(msg: WahaMessageRaw, flow: 'in' | 'out'): string | null {
+  if (flow === 'in') return resolveWahaPhone(msg);
+  const info = msg._data?.Info;
+  for (const cand of [info?.RecipientAlt, info?.Chat, typeof msg.to === 'string' ? msg.to : null]) {
+    if (typeof cand !== 'string' || !cand) continue;
+    const m = cand.match(/^\+?(\d+)@(?:s\.whatsapp\.net|c\.us)$/);
+    if (m) return `+${m[1]}`;
+  }
+  return null;
+}
+
+/**
  * Resolve a WhatsApp LID (`<n>@lid`) to its phone number via WAHA's LID map
  * (`GET /api/{session}/lids/{lid}` → `{lid, pn}`).
  *
@@ -246,7 +268,16 @@ export interface WahaMessageRaw {
   ackName?: string | null;
   replyTo?: { id?: string; body?: string | null; participant?: string | null } | null;
   _data?: {
-    Info?: { Sender?: string | null; SenderAlt?: string | null; PushName?: string | null; Type?: string | null; MediaType?: string | null } | null;
+    Info?: {
+      Sender?: string | null;
+      SenderAlt?: string | null;
+      // The counterparty on a message WE sent (the mirror of SenderAlt).
+      Chat?: string | null;
+      RecipientAlt?: string | null;
+      PushName?: string | null;
+      Type?: string | null;
+      MediaType?: string | null;
+    } | null;
   } | null;
   [k: string]: unknown;
 }

@@ -31,7 +31,7 @@ import {
   uuidV5FromWidSync,
   type ChatMessageRow,
 } from '../_lib/chatIngest.js';
-import { resolveWahaPhone, resolveLidToPhone, type WahaMessageRaw } from '../_lib/waha.js';
+import { resolveWahaCounterpartyPhone, resolveLidToPhone, type WahaMessageRaw } from '../_lib/waha.js';
 
 export const config = {
   runtime: 'edge',
@@ -89,6 +89,15 @@ export default async function handler(req: Request): Promise<Response> {
   if (event.id && seenEvent(`${type}:${event.id}`)) {
     return json({ ok: true, dedup: true });
   }
+
+  // A session we have no active number for is a gateway nobody registered —
+  // in practice an old companion device still linked to the same WhatsApp
+  // account after a re-pair, reporting every message a second time under its
+  // own addressing mode. Ingest is now duplicate-safe (chatIngest merges on the
+  // message hash), so this does NOT drop the event; it exists so the operator
+  // can SEE the stray gateway instead of inferring it from doubled rows a week
+  // later. Diagnosed exactly that way on 2026-07-27.
+  void warnIfForeignSession(session);
 
   let handlerError: string | undefined;
   try {
@@ -148,7 +157,7 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   // Resolution ladder: plain @c.us → nested SenderAlt → WAHA's LID map. The
   // last step is required: a real inbound arrives identified ONLY by LID with
   // no SenderAlt (verified live 2026-07-19).
-  let counterpartyPhone = phoneFromJid(rawChat) ?? (flow === 'in' ? resolveWahaPhone(p) : null);
+  let counterpartyPhone = phoneFromJid(rawChat) ?? resolveWahaCounterpartyPhone(p, flow);
   if (!counterpartyPhone && rawChat.endsWith('@lid')) {
     counterpartyPhone = await resolveLidToPhone(session, rawChat);
   }
@@ -272,7 +281,7 @@ async function handleReaction(event: WahaEvent, session: string): Promise<void> 
   // ("false_<ourOwnLid>_<hash>"), so deriving the chat from it resolved to our
   // OWN number and filed every reaction into the self-chat (live 2026-07-19).
   const rawChat = String(p.from ?? '') || (chatIdFromMessageId(targetId) ?? '');
-  let counterpartyPhone = phoneFromJid(rawChat) ?? (flow === 'in' ? resolveWahaPhone(p) : null);
+  let counterpartyPhone = phoneFromJid(rawChat) ?? resolveWahaCounterpartyPhone(p, flow);
   if (!counterpartyPhone && rawChat.endsWith('@lid')) {
     counterpartyPhone = await resolveLidToPhone(session, rawChat);
   }
@@ -425,6 +434,31 @@ function seenEvent(id: string): boolean {
     if (evicted) seen.delete(evicted);
   }
   return false;
+}
+
+/**
+ * Warn once per session per warm instance when events arrive from a WAHA
+ * session that has no active `whatsapp_numbers` row. Fire-and-forget and
+ * failure-tolerant: this is diagnostics, and must never delay or fail ingest.
+ */
+const warnedSessions = new Set<string>();
+async function warnIfForeignSession(session: string): Promise<void> {
+  if (!session || warnedSessions.has(session)) return;
+  warnedSessions.add(session);
+  try {
+    const { data } = await getServiceSupabase()
+      .from('whatsapp_numbers')
+      .select('is_active')
+      .eq('device_id', session)
+      .maybeSingle();
+    if (!(data as { is_active?: boolean } | null)?.is_active) {
+      console.warn(
+        `[webhook.waha] events from UNREGISTERED session "${session}" — a stray gateway is still linked to this WhatsApp account. Unlink it (WhatsApp → Linked Devices) or add it to whatsapp_numbers.`,
+      );
+    }
+  } catch (err) {
+    console.error('[webhook.waha] foreign-session check failed:', err instanceof Error ? err.message : String(err));
+  }
 }
 
 async function verifyHmacSha512(body: string, secret: string, headerHex: string | null): Promise<boolean> {
