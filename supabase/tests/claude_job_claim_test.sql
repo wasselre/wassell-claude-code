@@ -40,6 +40,15 @@ BEGIN
     RAISE EXCEPTION 'FAILED: the lease-holder preference tie-break is gone — the singleton will starve its own queue again';
   END IF;
 
+  -- Interactive work must outrank backfill. Collapsing these back into one
+  -- class left a rep's client_study queued behind 32 marketing jobs (~43 min)
+  -- in production on 2026-07-27.
+  IF position('v_interactive_kinds' IN v_def) = 0
+     OR position('v_batch_kinds' IN v_def) = 0 THEN
+    RAISE EXCEPTION 'FAILED: interactive/batch tiers collapsed — a human-waiting job can now queue behind backfill';
+  END IF;
+  RAISE NOTICE 'PASS: interactive work outranks backfill';
+
   -- It must remain a tie-break inside ORDER BY, NOT a filter in WHERE.
   -- If this ever moves into the WHERE clause, a dead wa-agent stalls
   -- whatsapp_reply permanently.
@@ -86,6 +95,17 @@ BEGIN
     RAISE EXCEPTION 'FAILED: with no lease-scoped work the holder refused to help — a dead wa-agent would now stall customer replies';
   END IF;
   RAISE NOTICE 'PASS: fallback preserved when the holder has no work of its own';
+
+  -- A rep's study must beat older backfill.
+  WITH sim(kind, age_min) AS (VALUES ('mkt_content_enrichment', 45), ('client_study', 1))
+  SELECT kind INTO v_holder FROM sim
+  ORDER BY CASE WHEN kind IN ('ping','client_study') THEN 0
+                WHEN kind IN ('mkt_content_enrichment','mkt_campaign_summary') THEN 2
+                ELSE 1 END, age_min DESC LIMIT 1;
+  IF v_holder <> 'client_study' THEN
+    RAISE EXCEPTION 'FAILED: backfill outranked a human-waiting study (picked %)', v_holder;
+  END IF;
+  RAISE NOTICE 'PASS: a 1-minute-old study beats 45-minute-old backfill';
   RAISE NOTICE 'ALL CLAIM-SCHEDULING TESTS PASSED';
 END $$;
 
