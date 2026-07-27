@@ -152,8 +152,11 @@ function runClaude(prompt, cwd, resumeId = null) {
         sessionId = j.session_id ?? null;
         text = typeof j.result === 'string' ? j.result : out;
         const u = j.usage ?? {};
-        tokens = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0)
-               + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
+        // Context GROWTH only. cache_read_input_tokens is the cached prefix
+        // re-read on every internal tool call — counting it measured 232k after
+        // a SINGLE turn (live 2026-07-27), which would have rotated the session
+        // on the very next message and made resume dead code.
+        tokens = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.output_tokens ?? 0);
       } catch { /* non-JSON (crash / auth error) - keep raw text for diagnosis */ }
       resolve({ code, out: text, err, sessionId, tokens });
     });
