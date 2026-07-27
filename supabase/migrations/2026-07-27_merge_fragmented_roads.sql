@@ -157,3 +157,24 @@ DROP TABLE IF EXISTS public._road_merge_referenced;
 
 -- Statement timeout: run steps 1..6 as SEPARATE statements. Wrapping the whole
 -- thing in one transaction exceeded the statement timeout on wassell-prod.
+
+-- ============================================================================
+-- Step 7 (same day) — ST_LineMerge: stitch contiguous segments into runs.
+-- ============================================================================
+-- ST_Union in step 3 NODES the inputs, so a merged road came out as many short
+-- fragments (الدائري الشمالي = 155). That matters beyond tidiness: Google Maps
+-- can only draw a flowing dash as repeated `icons` on a Polyline, one Polyline
+-- per line part, each costing a set() per animation frame — 155 parts made the
+-- selected-road animation unaffordable.
+--
+-- ST_LineMerge rejoins segments that share endpoints. Verified across all 123
+-- roads BEFORE applying: 3747 parts -> 713, ZERO roads changed length (checked
+-- to the millimetre) and no geometry changed type. Network length is identical
+-- before and after the whole day's work: 3347.1 km.
+UPDATE public.geo_elements
+SET geom = ST_Multi(ST_LineMerge(geom)),
+    notes = concat_ws(' | ', nullif(notes, ''), 'ST_LineMerge stitched contiguous segments 2026-07-27'),
+    updated_at = now()
+WHERE element_type IN ('roads_major', 'ring_roads', 'metro_lines')
+  AND is_active
+  AND ST_NumGeometries(ST_LineMerge(geom)) < ST_NumGeometries(geom);

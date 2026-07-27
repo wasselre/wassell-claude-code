@@ -83,6 +83,16 @@ const TERRACOTTA = '#8E4E3A'; // landmark pins + element-rule areas
  *  invisible against the basemap (live report 2026-07-27). Rich Chocolate Brown
  *  is the darkest brand colour and nothing else on this map comes close to it. */
 const ROAD_HIGHLIGHT = '#4A2C2A';
+/** Flowing-dash animation on the selected road. Google Maps can only draw dashes
+ *  as repeated `icons` on a Polyline (Data layers can't dash at all), and each
+ *  frame costs one `set()` PER line part — so this is deliberately bounded:
+ *  only the longest DASH_MAX_PARTS parts animate (the static core still covers
+ *  the whole road), and the tick is slow enough to read as flow without running
+ *  a hot loop. ST_LineMerge on the road data (2026-07-27) cut the worst road
+ *  from 155 parts to 57, which is what makes this affordable at all. */
+const DASH_MAX_PARTS = 60;
+const DASH_REPEAT_PX = 24;
+const DASH_TICK_MS = 90;
 
 /** Element types shown as landmark pins on the picker — the sales-relevant
  *  anchors (all curated + verified in geo_elements). Roads/metro/parks are
@@ -420,6 +430,8 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
     const layers: google.maps.Data[] = [];
     const markers: google.maps.Marker[] = [];
     const bounds = new google.maps.LatLngBounds();
+    /** Every line part across all selected roads, ranked later for the dash layer. */
+    const dashCandidates: Array<{ path: google.maps.LatLngLiteral[]; len: number }> = [];
 
     for (const r of selectedRoads) {
       const feature = { type: 'Feature' as const, geometry: r.geojson, properties: {} };
@@ -438,6 +450,12 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
         if (line.length < 2) continue;
         for (const p of line) bounds.extend(p);
         if (line.length > longest.length) longest = line;
+        // rough planar length, only ever used to RANK parts for the dash layer
+        let len = 0;
+        for (let i = 1; i < line.length; i++) {
+          len += Math.abs(line[i]!.lat - line[i - 1]!.lat) + Math.abs(line[i]!.lng - line[i - 1]!.lng);
+        }
+        dashCandidates.push({ path: line, len });
       }
       if (longest.length && r.name) {
         markers.push(new google.maps.Marker({
@@ -450,7 +468,52 @@ export default function DistrictMapPicker({ cityId, items, onApply, onClose, isA
       }
     }
     if (!bounds.isEmpty()) map.fitBounds(bounds, 80);
+
+    // Flowing white dashes along the road — the "this one is live" cue. Bounded
+    // to the longest DASH_MAX_PARTS parts; the static core below already covers
+    // every part, so an un-dashed stub is invisible in practice.
+    const reduceMotion = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const dashLines: google.maps.Polyline[] = [];
+    if (!reduceMotion) {
+      const chosen = dashCandidates.sort((a, b) => b.len - a.len).slice(0, DASH_MAX_PARTS);
+      for (const { path } of chosen) {
+        dashLines.push(new google.maps.Polyline({
+          map,
+          path,
+          strokeOpacity: 0, // the line itself is invisible — only the dashes show
+          zIndex: 9,
+          clickable: false,
+          icons: [{
+            icon: {
+              path: 'M 0,-1 0,1',
+              strokeColor: '#FFFFFF',
+              strokeOpacity: 0.95,
+              strokeWeight: 4,
+              scale: 3,
+            },
+            offset: '0px',
+            repeat: `${DASH_REPEAT_PX}px`,
+          }],
+        }));
+      }
+    }
+    let step = 0;
+    const timer = dashLines.length
+      ? setInterval(() => {
+          step = (step + 2) % DASH_REPEAT_PX;
+          for (const pl of dashLines) {
+            const icons = pl.get('icons') as google.maps.IconSequence[];
+            if (!icons?.[0]) continue;
+            icons[0].offset = `${step}px`;
+            pl.set('icons', icons); // set() is what triggers the redraw
+          }
+        }, DASH_TICK_MS)
+      : null;
+
     return () => {
+      if (timer) clearInterval(timer);
+      dashLines.forEach((l) => l.setMap(null));
       layers.forEach((l) => l.setMap(null));
       markers.forEach((m) => m.setMap(null));
     };
