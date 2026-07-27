@@ -20,7 +20,9 @@ RUN npm install --omit=dev
 
 # Runner + the tools sessions call.
 COPY runner.mjs ./
-COPY tools ./tools
+# The skill documents these as /app/wa-agent/tools/* (matching the repo layout).
+# Put them exactly there — a session should never have to hunt for its own tools.
+COPY tools /app/wa-agent/tools
 
 # The skill lives where a session started in /app/repo will find it.
 RUN mkdir -p /app/repo/.claude/skills/whatsapp-reply

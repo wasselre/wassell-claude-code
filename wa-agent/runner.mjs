@@ -159,9 +159,50 @@ async function handleWhatsappReply(job) {
     if (g?.should_reply !== true) return { skipped: true, reason: g?.reason ?? 'blocked' };
   }
 
+  // PRE-FETCH the context the session always needs.
+  //
+  // Latency is the thing that makes or breaks this on WhatsApp: a customer
+  // waiting 3+ minutes reads as broken. Measured live 2026-07-27 — 165s and
+  // 324s per reply — and a large slice was the session making three sequential
+  // db.mjs round-trips (chat, client, calls), each booting its own node process,
+  // before it could start reasoning. Handing it the context up front removes
+  // those entirely; the session still has db.mjs for anything extra.
+  const ctx = { conversation: [], client: null, calls: [], error: null };
+  try {
+    const { data: msgs } = await supa
+      .from('chat_messages')
+      .select('flow, kind, body, media_caption, date')
+      .eq('chat_wid', chatWid)
+      .order('date', { ascending: false })
+      .limit(40);
+    ctx.conversation = (msgs ?? []).reverse();
+
+    const { data: chatRec } = await supa
+      .from('records').select('data').eq('id', p.chat_record_id ?? '').maybeSingle();
+    const clientId = chatRec?.data?.client_link ?? null;
+    if (clientId) {
+      const { data: cl } = await supa.from('records').select('id, data').eq('id', clientId).maybeSingle();
+      if (cl) ctx.client = { id: cl.id, ...cl.data };
+    }
+
+    const phone = p.phone ?? ('+' + String(chatWid).split('@')[0]);
+    const { data: calls } = await supa
+      .from('call_logs')
+      .select('direction, status, duration_seconds, agent_name, creation_time, summary')
+      .eq('contact_phone', phone)
+      .order('creation_time', { ascending: false })
+      .limit(5);
+    ctx.calls = calls ?? [];
+  } catch (err) {
+    // Never block the reply on pre-fetch — the session can still query itself.
+    ctx.error = err instanceof Error ? err.message : String(err);
+    console.error('[wa-agent] context pre-fetch failed:', ctx.error);
+  }
+
   const workDir = mkdtempSync(path.join(tmpdir(), 'wa-agent-'));
   const sentinel = path.join(workDir, 'result.json');
   const envJson = path.join(workDir, 'env.json');
+  writeFileSync(path.join(workDir, 'context.json'), JSON.stringify(ctx, null, 1));
   // Per-job context for the session's tools (send.mjs reads it via WA_ENV_JSON).
   writeFileSync(envJson, JSON.stringify({
     SUPABASE_URL, SERVICE_KEY, APP_URL, AI_SECRET,
@@ -169,6 +210,7 @@ async function handleWhatsappReply(job) {
     // (one Arabic→schema mapping layer for both channels), which authenticates
     // with its own secret.
     TOOL_SECRET: process.env.RETELL_WEBHOOK_SECRET ?? '',
+    contextFile: path.join(workDir, 'context.json'),
     forced,
     chatWid,
     chatRecordId: p.chat_record_id ?? null, deviceId: p.device_id ?? 'sales', jobId: job.id,
@@ -181,6 +223,12 @@ async function handleWhatsappReply(job) {
     'You are running HEADLESS on the WhatsApp queue. Nobody can answer questions —',
     'decide everything yourself per the skill. Job context is in:',
     `  ${path.join(workDir, 'env.json')}`,
+    '',
+    'The conversation, the client record and the recent CALL SUMMARIES are ALREADY',
+    'fetched for you here — read this file FIRST and do not re-query them:',
+    `  ${path.join(workDir, 'context.json')}`,
+    'Speed matters: a customer is waiting. Only query the DB for something this',
+    'file does not contain.',
     'When you have sent the reply (or decided not to), write JSON to exactly:',
     `  ${sentinel}`,
     'with keys: "sent" (boolean), "reply" (the Arabic text you sent, or null),',

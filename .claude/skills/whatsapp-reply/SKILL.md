@@ -23,7 +23,21 @@ Read it first:
 cat <env.json path>
 ```
 
-## Step 1 — read the conversation and the client
+## Step 1 — read the context (ALREADY FETCHED — do not re-query)
+
+The runner hands you `context.json` (path in `env.json.contextFile`) containing
+**the conversation, the linked client record, and the last 5 call summaries**:
+
+```bash
+cat <contextFile path>
+```
+
+Read that FIRST. A customer is waiting on WhatsApp — every extra query costs
+them seconds. Only fall back to the queries below for something `context.json`
+does not contain (or if it reports an `error`).
+
+<details>
+<summary>Fallback queries (only if context.json is missing something)</summary>
 
 Use the bundled DB helper (read-only SQL, service-role, no MCP needed):
 
@@ -56,6 +70,8 @@ visit while they wait on something you owe them reads as ignoring them.
 Where the call and the client record disagree (e.g. the record says budget 4M but
 on the call he said under 2.5M), **trust the call** — it is more recent and more
 specific — and note the discrepancy in your summary so a human can fix the record.
+
+</details>
 
 **Read the whole history before replying** — chat AND calls. Never re-ask
 something the customer already answered on either channel; that is the fastest
