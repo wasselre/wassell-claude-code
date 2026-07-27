@@ -17,10 +17,20 @@ import { propertyTypeLabel } from '@/lib/market/propertyType';
 
 const BRAND = { chocolate: '#4A2C2A', copper: '#B8734F', sand: '#D4B896', cream: '#F5EDE0', charcoal: '#4A4E54' };
 
+/** The real Wassel horizontal logo, white version, for the chocolate header. */
+const LOGO_WHITE = '/assets/logo-horizontal-white.png';
+
 export interface AreaStudyPayload {
   stats: AreaStats;
   coverage: GeoCoverage | null;
-  /** Human-readable description of the area, e.g. "شمال الدائري الشمالي (حتى 5 كم)". */
+  /**
+   * Description of the area as the picker labelled it, e.g.
+   * "شمال الدائري الشمالي (حتى 5 كم)". For a DRAWN shape this is the picker's
+   * CHIP label, which truncates to three district names plus "+8" — fine in a
+   * chip, meaningless in a client-facing title, so the heading below is derived
+   * from the resolved districts instead and this is only used when it reads
+   * cleanly (a rule, not a truncated list).
+   */
   areaLabel: string;
   isAr: boolean;
   clientName?: string | null;
@@ -45,6 +55,39 @@ const money = (n: number | null | undefined) => {
 const confLabel = (g: string, isAr: boolean) =>
   g === 'high' ? (isAr ? 'مرتفعة' : 'High') : g === 'medium' ? (isAr ? 'متوسطة' : 'Medium') : (isAr ? 'منخفضة' : 'Low');
 
+/**
+ * The title a client should read.
+ *
+ * A picker chip label like "منطقة مرسومة: الازدهار، التعاون، الحمراء +8" leaks an
+ * internal truncation into a document someone is meant to take seriously — "+8"
+ * is not a place. So: name the districts when there are few enough to name, and
+ * otherwise say plainly how many the area covers and which city, leaving the
+ * full list to the districts section further down.
+ */
+function areaHeading(p: AreaStudyPayload): string {
+  const { isAr, stats } = p;
+  const ds = stats.districts ?? [];
+  const label = (p.areaLabel ?? '').trim();
+  const truncated = /\+\s*\d+\s*$/.test(label);
+
+  // A rule ("north of X up to 5 km", "within 3 km of Y") already reads well.
+  if (label && !truncated && !/^منطقة مرسومة|^Drawn area|^منطقة مستثناة|^Excluded area/.test(label)) {
+    return label;
+  }
+
+  const city = ds.find((d) => d.city_name)?.city_name ?? null;
+  const names = ds.map((d) => (isAr ? d.district_name : (d.district_name_en || d.district_name)))
+    .filter((n): n is string => !!n);
+
+  if (!names.length) return isAr ? 'المنطقة المحددة' : 'Selected area';
+  if (names.length <= 4) {
+    return isAr ? `أحياء ${names.join('، ')}` : names.join(', ');
+  }
+  return isAr
+    ? `منطقة تغطي ${names.length} حياً${city ? ` في ${city}` : ''}`
+    : `An area covering ${names.length} districts${city ? ` in ${city}` : ''}`;
+}
+
 function buildHtml(p: AreaStudyPayload): string {
   const { isAr, stats } = p;
   const dir = isAr ? 'rtl' : 'ltr';
@@ -68,10 +111,13 @@ function buildHtml(p: AreaStudyPayload): string {
       <td style="padding:6px 10px;text-align:${end}">${fmt(t.median_area)}</td>
     </tr>`).join('');
 
+  // The bare number beside each district was unreadable — it is the count of
+  // listings THAT DISTRICT contributes to the area. Spell it out.
   const districtChips = (stats.districts ?? []).slice(0, 18).map((d) => `
-    <span style="display:inline-block;background:${BRAND.cream};border-radius:999px;padding:3px 9px;margin:2px;font-size:11px">
+    <span style="display:inline-block;background:${BRAND.cream};border-radius:999px;padding:3px 10px;margin:2px;font-size:11px">
       ${(isAr ? d.district_name : (d.district_name_en || d.district_name)) ?? '—'}
-      <b style="color:${BRAND.charcoal}99">${fmt(d.count)}</b>
+      <span style="color:${BRAND.charcoal}88">·</span>
+      <b>${fmt(d.count)}</b><span style="color:${BRAND.charcoal}88"> ${isAr ? 'إعلان' : 'ads'}</span>
     </span>`).join('');
 
   const bMax = p.budget?.max ?? null;
@@ -118,18 +164,20 @@ function buildHtml(p: AreaStudyPayload): string {
       <div style="font-size:12.5px;line-height:1.9;white-space:pre-wrap">${p.commentary.replace(/</g, '&lt;')}</div>
     </div>` : '';
 
+  // No min-height: forcing a full A4 made a one-page study spill a blank second
+  // page (the rasterized height landed a hair over 297mm).
   return `
-  <div dir="${dir}" style="width:794px;min-height:1123px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal}">
-    <div style="background:${BRAND.chocolate};color:#fff;padding:20px 30px;display:flex;justify-content:space-between;align-items:center">
-      <div>
-        <div style="font-size:21px;font-weight:700">${isAr ? 'وصل العقارية' : 'Wassel Real Estate'}</div>
-        <div style="font-size:12px;opacity:.85">${isAr ? 'دراسة سوق لمنطقة محددة' : 'Area Market Study'}</div>
+  <div dir="${dir}" style="width:794px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal};padding-bottom:22px">
+    <div style="background:${BRAND.chocolate};color:#fff;padding:18px 30px;display:flex;justify-content:space-between;align-items:center">
+      <img src="${LOGO_WHITE}" alt="" style="height:46px;width:auto;display:block" />
+      <div style="text-align:${end}">
+        <div style="font-size:15px;font-weight:700">${isAr ? 'دراسة سوق لمنطقة محددة' : 'Area Market Study'}</div>
+        <div style="font-size:11px;opacity:.8">${stats.snapshot_date}</div>
       </div>
-      <div style="width:44px;height:44px;border:2px solid ${BRAND.copper};border-radius:10px"></div>
     </div>
 
     <div style="padding:24px 30px">
-      <h1 style="font-size:19px;color:${BRAND.chocolate};margin:0 0 3px">${p.areaLabel || (isAr ? 'المنطقة المحددة' : 'Selected area')}</h1>
+      <h1 style="font-size:19px;color:${BRAND.chocolate};margin:0 0 3px">${areaHeading(p)}</h1>
       <div style="font-size:12px;color:${BRAND.charcoal}99">
         ${isAr ? 'نوع العقار' : 'Property type'}: ${p.propertyType ? propertyTypeLabel(p.propertyType, isAr) : (isAr ? 'الكل' : 'All')}
         ${p.bedrooms && p.bedrooms !== 'all' ? ` · ${p.bedrooms} ${isAr ? 'غرف' : 'bd'}` : ''}
@@ -180,7 +228,10 @@ function buildHtml(p: AreaStudyPayload): string {
 
       ${districtChips ? `
       <div style="margin-top:16px">
-        <div style="font-weight:700;color:${BRAND.chocolate};margin-bottom:5px">${isAr ? 'الأحياء التي تغطيها المنطقة' : 'Districts covered'}</div>
+        <div style="font-weight:700;color:${BRAND.chocolate};margin-bottom:2px">${isAr ? 'الأحياء التي تغطيها المنطقة' : 'Districts covered'}</div>
+        <div style="font-size:10.5px;color:${BRAND.charcoal}99;margin-bottom:5px">
+          ${isAr ? 'الرقم بجانب كل حي هو عدد الإعلانات التي يساهم بها في هذه المنطقة.' : 'The number beside each district is how many listings it contributes to this area.'}
+        </div>
         <div>${districtChips}</div>
       </div>` : ''}
 
@@ -206,6 +257,16 @@ export async function downloadAreaStudyPdf(payload: AreaStudyPayload): Promise<v
   container.innerHTML = buildHtml(payload);
   document.body.appendChild(container);
   try {
+    // The logo must be DECODED before html2canvas runs, or it rasterizes an
+    // empty gap where the brand mark should be. Never let a failed decode block
+    // the export — a study without a logo still beats no study — but say so.
+    await Promise.all(
+      Array.from(container.querySelectorAll('img')).map((img) =>
+        img.decode().catch((err) => {
+          console.error('[areaStudyPdf] logo failed to load; exporting without it', err);
+        }),
+      ),
+    );
     // Let the Amiri webfont settle before rasterizing (same wait as the snapshot).
     await new Promise<void>((r) => setTimeout(r, 400));
     const el = container.firstElementChild as HTMLElement;
@@ -214,7 +275,9 @@ export async function downloadAreaStudyPdf(payload: AreaStudyPayload): Promise<v
     const w = 210;
     const h = (canvas.height * w) / canvas.width;
     const img = canvas.toDataURL('image/png');
-    if (h <= 297) {
+    // 1mm of slack: a study that rasterizes to 297.4mm is one page, not two with
+    // a blank sliver — which is exactly what the old exact compare produced.
+    if (h <= 298) {
       pdf.addImage(img, 'PNG', 0, 0, w, h);
     } else {
       let remaining = h;
@@ -222,7 +285,7 @@ export async function downloadAreaStudyPdf(payload: AreaStudyPayload): Promise<v
       while (remaining > 0) {
         pdf.addImage(img, 'PNG', 0, position, w, h);
         remaining -= 297;
-        if (remaining > 0) { pdf.addPage(); position -= 297; }
+        if (remaining > 1) { pdf.addPage(); position -= 297; } else break;
       }
     }
     pdf.save(`wassel-area-study-${payload.stats.snapshot_date}.pdf`);

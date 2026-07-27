@@ -32,9 +32,12 @@ export async function generatePricingReportPdf(rows: PricingReportRow[], isAr: b
 
   const html = `
   <div dir="${dir}" style="width:794px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal}">
-    <div style="background:${BRAND.chocolate};color:#fff;padding:22px 32px">
-      <div style="font-size:22px;font-weight:700">${isAr ? 'وصل العقارية — تقرير تسعير المشاريع' : 'Wassel — Project Pricing Report'}</div>
-      <div style="font-size:13px;opacity:.85">${isAr ? `لقطة السوق: ${snapshot ?? '—'}` : `Market snapshot: ${snapshot ?? '—'}`}</div>
+    <div style="background:${BRAND.chocolate};color:#fff;padding:20px 32px;display:flex;justify-content:space-between;align-items:center">
+      <img src="/assets/logo-horizontal-white.png" alt="" style="height:48px;width:auto;display:block" />
+      <div style="text-align:${isAr ? 'left' : 'right'}">
+        <div style="font-size:15px;font-weight:700">${isAr ? 'تقرير تسعير المشاريع' : 'Project Pricing Report'}</div>
+        <div style="font-size:11px;opacity:.8">${isAr ? `لقطة السوق: ${snapshot ?? '—'}` : `Market snapshot: ${snapshot ?? '—'}`}</div>
+      </div>
     </div>
     <div style="padding:26px 32px">
       <table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid ${BRAND.sand}66">
@@ -63,6 +66,14 @@ export async function generatePricingReportPdf(rows: PricingReportRow[], isAr: b
   container.innerHTML = html;
   document.body.appendChild(container);
   try {
+    // Decode the logo first — html2canvas would otherwise rasterize a gap.
+    await Promise.all(
+      Array.from(container.querySelectorAll('img')).map((im) =>
+        im.decode().catch((err) => {
+          console.error('[pricingReportPdf] logo failed to load; exporting without it', err);
+        }),
+      ),
+    );
     await new Promise<void>((r) => setTimeout(r, 400));
     const el = container.firstElementChild as HTMLElement;
     const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true });

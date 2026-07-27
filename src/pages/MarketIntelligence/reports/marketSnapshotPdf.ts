@@ -86,12 +86,11 @@ function buildHtml(p: SnapshotPayload): string {
 
   return `
   <div dir="${dir}" style="width:794px;min-height:1123px;box-sizing:border-box;background:#fff;font-family:Amiri,serif;color:${BRAND.charcoal};padding:0">
-    <div style="background:${BRAND.chocolate};color:#fff;padding:22px 32px;display:flex;justify-content:space-between;align-items:center">
-      <div>
-        <div style="font-size:22px;font-weight:700">${isAr ? 'وصل العقارية' : 'Wassel Real Estate'}</div>
-        <div style="font-size:13px;opacity:.85">${isAr ? 'تقرير سوق إرشادي' : 'Indicative Market Report'}</div>
+    <div style="background:${BRAND.chocolate};color:#fff;padding:20px 32px;display:flex;justify-content:space-between;align-items:center">
+      <img src="/assets/logo-horizontal-white.png" alt="" style="height:48px;width:auto;display:block" />
+      <div style="text-align:${isAr ? 'left' : 'right'}">
+        <div style="font-size:15px;font-weight:700">${isAr ? 'تقرير سوق إرشادي' : 'Indicative Market Report'}</div>
       </div>
-      <div style="width:46px;height:46px;border:2px solid ${BRAND.copper};border-radius:10px"></div>
     </div>
     <div style="padding:26px 32px">
       <h1 style="font-size:20px;color:${BRAND.chocolate};margin:0 0 4px">${p.heading}</h1>
@@ -132,6 +131,14 @@ export async function generateMarketSnapshotPdf(payload: SnapshotPayload): Promi
   container.innerHTML = buildHtml(payload);
   document.body.appendChild(container);
   try {
+    // Decode the logo first — html2canvas would otherwise rasterize a gap.
+    await Promise.all(
+      Array.from(container.querySelectorAll('img')).map((im) =>
+        im.decode().catch((err) => {
+          console.error('[marketSnapshotPdf] logo failed to load; exporting without it', err);
+        }),
+      ),
+    );
     // Let the Amiri webfont settle before rasterizing.
     await new Promise<void>((r) => setTimeout(r, 400));
     const el = container.firstElementChild as HTMLElement;

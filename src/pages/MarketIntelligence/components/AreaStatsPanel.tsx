@@ -210,15 +210,23 @@ export default function AreaStatsPanel({ stats, coverage, loading, isAr, budget,
       {/* Districts touched */}
       {stats.districts?.length > 0 && (
         <div className="card p-4">
-          <div className="mb-2 flex items-center gap-1.5 text-sm font-bold text-charcoal">
+          <div className="mb-0.5 flex items-center gap-1.5 text-sm font-bold text-charcoal">
             <MapPin size={14} className="text-copper" />
             {isAr ? 'الأحياء التي تغطيها المنطقة' : 'Districts this area covers'}
+          </div>
+          {/* The bare number read as noise — say what it counts. */}
+          <div className="mb-2 text-[11px] text-charcoal/45">
+            {isAr
+              ? 'الرقم بجانب كل حي هو عدد الإعلانات التي يساهم بها في هذه المنطقة.'
+              : 'The number beside each district is how many listings it contributes to this area.'}
           </div>
           <div className="flex flex-wrap gap-1.5">
             {stats.districts.slice(0, 24).map((d) => (
               <span key={d.district_id} className="rounded-full bg-cream px-2.5 py-1 text-[11px] text-charcoal/75">
                 {isAr ? d.district_name : (d.district_name_en || d.district_name)}
-                <b className="ms-1 text-charcoal/50">{nf(d.count)}</b>
+                <span className="mx-1 text-charcoal/30">·</span>
+                <b>{nf(d.count)}</b>
+                <span className="ms-0.5 text-charcoal/45">{isAr ? 'إعلان' : 'ads'}</span>
               </span>
             ))}
           </div>
