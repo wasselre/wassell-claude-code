@@ -68,24 +68,28 @@ function areaHeading(p: AreaStudyPayload): string {
   const { isAr, stats } = p;
   const ds = stats.districts ?? [];
   const label = (p.areaLabel ?? '').trim();
-  const truncated = /\+\s*\d+\s*$/.test(label);
-
-  // A rule ("north of X up to 5 km", "within 3 km of Y") already reads well.
-  if (label && !truncated && !/^منطقة مرسومة|^Drawn area|^منطقة مستثناة|^Excluded area/.test(label)) {
-    return label;
-  }
-
   const city = ds.find((d) => d.city_name)?.city_name ?? null;
   const names = ds.map((d) => (isAr ? d.district_name : (d.district_name_en || d.district_name)))
     .filter((n): n is string => !!n);
 
-  if (!names.length) return isAr ? 'المنطقة المحددة' : 'Selected area';
-  if (names.length <= 4) {
-    return isAr ? `أحياء ${names.join('، ')}` : names.join(', ');
+  // Decide from the RESOLVED DISTRICTS, not from what the label string looks
+  // like. Sniffing for "+N" caught the drawn-shape case but would still have let
+  // eleven hand-picked districts through as one "+"-joined run-on title.
+  if (names.length > 4) {
+    return isAr
+      ? `منطقة تغطي ${names.length} حياً${city ? ` في ${city}` : ''}`
+      : `An area covering ${names.length} districts${city ? ` in ${city}` : ''}`;
   }
-  return isAr
-    ? `منطقة تغطي ${names.length} حياً${city ? ` في ${city}` : ''}`
-    : `An area covering ${names.length} districts${city ? ` in ${city}` : ''}`;
+
+  // Few enough to name. Prefer the picker's label when it is a RULE ("north of
+  // X up to 5 km"), since that says something the district names do not — but
+  // never when it carries the chip truncation.
+  const truncated = /\+\s*\d+\s*$/.test(label);
+  const isShapeLabel = /^منطقة مرسومة|^Drawn area|^منطقة مستثناة|^Excluded area/.test(label);
+  if (label && !truncated && !isShapeLabel) return label;
+
+  if (!names.length) return isAr ? 'المنطقة المحددة' : 'Selected area';
+  return isAr ? `أحياء ${names.join('، ')}` : names.join(', ');
 }
 
 function buildHtml(p: AreaStudyPayload): string {
