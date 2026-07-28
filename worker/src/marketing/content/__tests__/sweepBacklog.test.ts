@@ -8,7 +8,7 @@ import { sweepContentBacklog } from '../sweepBacklog.js';
 // for that table. Enough to pin the STAGE SELECTION, which is the part that
 // decides whether a post is ever processed at all.
 // ---------------------------------------------------------------------------
-interface Canned { posts?: unknown[]; media?: unknown[]; visual?: unknown[]; inFlight?: unknown[]; jobCount?: number; ocrCount?: number; leaseWon?: boolean }
+interface Canned { posts?: unknown[]; media?: unknown[]; visual?: unknown[]; inFlight?: unknown[]; ocrInFlight?: unknown[]; jobCount?: number; ocrCount?: number; leaseWon?: boolean }
 
 /** PostgREST's server-side row cap. The fake enforces it so a `.limit()` that
  *  exceeds it cannot silently pass in tests while truncating in production. */
@@ -34,7 +34,7 @@ function fakeSb(c: Canned) {
       if (table === 'mkt_content_posts') return resolve({ data: page(c.posts ?? []), error: null });
       if (table === 'mkt_content_media') return resolve({ data: page(c.media ?? []), error: null });
       if (table === 'mkt_visual_text') return resolve({ data: page(c.visual ?? []), error: null });
-      if (table === 'claude_jobs') return resolve({ data: [], error: null, count: c.ocrCount ?? 0 });
+      if (table === 'claude_jobs') return resolve({ data: page(c.ocrInFlight ?? []), error: null, count: c.ocrCount ?? 0 });
       if (table === 'mkt_collection_jobs') {
         // head+count call vs the params scan — the params scan asks for data.
         return resolve({ data: page(c.inFlight ?? []), error: null, count: c.jobCount ?? 0 });
@@ -64,8 +64,13 @@ function fakeSb(c: Canned) {
 }
 
 const post = (id: string) => ({ id, post_type: 'image' });
-const stored = (id: string, kind: string) => ({ content_post_id: id, media_kind: kind, download_status: 'stored', updated_at: new Date(0).toISOString() });
-const failed = (id: string, kind: string, ageMs: number) => ({ content_post_id: id, media_kind: kind, download_status: 'failed', updated_at: new Date(Date.now() - ageMs).toISOString() });
+/** Media rows carry a real id — OCR coverage is tracked per media, so a fixture
+ *  without ids lets `undefined === undefined` pass tests that prove nothing. */
+const stored = (pid: string, kind: string, mid = `${pid}-m0`) =>
+  ({ id: mid, content_post_id: pid, media_kind: kind, download_status: 'stored', updated_at: new Date(0).toISOString() });
+const failed = (pid: string, kind: string, ageMs: number, mid = `${pid}-mf`) =>
+  ({ id: mid, content_post_id: pid, media_kind: kind, download_status: 'failed', updated_at: new Date(Date.now() - ageMs).toISOString() });
+const ocrd = (mid: string) => ({ content_media_id: mid });
 const HOUR = 60 * 60 * 1000;
 
 describe('sweepContentBacklog', () => {
@@ -91,7 +96,7 @@ describe('sweepContentBacklog', () => {
   });
 
   it('promotes a post to full processing once media AND visual text exist', async () => {
-    const { sb, enqueued } = fakeSb({ posts: [post('p1')], media: [stored('p1', 'image')], visual: [{ content_post_id: 'p1' }] });
+    const { sb, enqueued } = fakeSb({ posts: [post('p1')], media: [stored('p1', 'image')], visual: [ocrd('p1-m0')] });
     const stats = await sweepContentBacklog(sb, 'w1');
     expect(stats.content_process).toBe(1);
     expect(stats.visual_ocr).toBe(0);
@@ -138,7 +143,7 @@ describe('sweepContentBacklog', () => {
     const many = Array.from({ length: 1200 }, (_, i) => post(`p${i}`));
     // The first 1,000 are done; only the tail past the cap still needs media.
     const done = many.slice(0, 1000).map((p) => stored(p.id, 'image'));
-    const { sb, enqueued } = fakeSb({ posts: many, media: done, visual: many.slice(0, 1000).map((p) => ({ content_post_id: p.id })) });
+    const { sb, enqueued } = fakeSb({ posts: many, media: done, visual: many.slice(0, 1000).map((p) => ocrd(p.id + '-m0')) });
     const stats = await sweepContentBacklog(sb, 'w1');
     expect(stats.media_recover).toBe(200);
     expect(enqueued.filter((e) => (e.p_params as { media_only?: boolean }).media_only)).toHaveLength(200);
@@ -146,6 +151,36 @@ describe('sweepContentBacklog', () => {
     // ones stage 3 promotes — so paging has to hold for every stage, not just
     // the one that surfaced the bug.
     expect(stats.content_process).toBeGreaterThan(0);
+  });
+
+  it('re-offers a post whose OTHER images are still unread', async () => {
+    // The stranded-images regression. Coverage used to be a per-POST question —
+    // "does this post have any visual_text?" — so reading ONE image of a
+    // five-image carousel marked the whole post finished and the rest were never
+    // offered again. Measured live: 36 posts holding 303 permanently unread
+    // images. Coverage is per MEDIA.
+    const { sb, ocrInserts } = fakeSb({
+      posts: [post('p1')],
+      media: [stored('p1', 'image', 'p1-a'), stored('p1', 'image', 'p1-b')],
+      visual: [ocrd('p1-a')],
+    });
+    const stats = await sweepContentBacklog(sb, 'w1');
+    expect(stats.visual_ocr).toBe(1);
+    expect((ocrInserts[0].payload as { post_ids: string[] }).post_ids).toEqual(['p1']);
+  });
+
+  it('does not re-enqueue a post already sitting in an OCR batch', async () => {
+    // Stage 2 had no in-flight guard, so every tick re-queued posts that were
+    // already spoken for. The lane then spent its capacity proving there was
+    // nothing to do: 13 of 15 consecutive jobs returned images: 0.
+    const { sb, ocrInserts } = fakeSb({
+      posts: [post('p1')],
+      media: [stored('p1', 'image')],
+      ocrInFlight: [{ payload: { post_ids: ['p1'] } }],
+    });
+    const stats = await sweepContentBacklog(sb, 'w1');
+    expect(stats.visual_ocr).toBe(0);
+    expect(ocrInserts).toHaveLength(0);
   });
 
   it('does nothing when another machine holds the sweep lease', async () => {

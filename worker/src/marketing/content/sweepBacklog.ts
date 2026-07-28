@@ -158,6 +158,9 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   // ── current state of those posts: media + visual text + already-queued jobs ─
   const storedAny = new Set<string>();
   const storedImagey = new Set<string>();
+  /** Every stored image/thumbnail, with its post. OCR coverage is a per-MEDIA
+   *  fact, not a per-post one — see the hasVisualText note below. */
+  const imageyMedia: Array<{ id: string; pid: string }> = [];
   const lastAttemptAt = new Map<string, number>();
   // Chunked at 100 posts, not 200: a carousel can carry many media rows, and a
   // chunk that reaches the 1,000-row cap would truncate silently — the same trap
@@ -166,9 +169,9 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
     // Failed rows are read too, not just stored ones: their timestamp is how we
     // know a post was already ATTEMPTED. Selecting only stored rows would make
     // a permanently-dead URL look identical to a post nobody has tried yet.
-    const data = await pageAll<{ content_post_id: string; media_kind: string; download_status: string; updated_at: string }>(
+    const data = await pageAll<{ id: string; content_post_id: string; media_kind: string; download_status: string; updated_at: string }>(
       (from, to) => sb.from('mkt_content_media')
-        .select('content_post_id, media_kind, download_status, updated_at')
+        .select('id, content_post_id, media_kind, download_status, updated_at')
         .in('content_post_id', ids).order('id', { ascending: true }).range(from, to),
       10_000, 'media scan');
     for (const m of data) {
@@ -177,19 +180,33 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
       if (at > (lastAttemptAt.get(pid) ?? 0)) lastAttemptAt.set(pid, at);
       if (m.download_status !== 'stored') continue;
       storedAny.add(pid);
-      if (m.media_kind === 'image' || m.media_kind === 'thumbnail') storedImagey.add(pid);
+      if (m.media_kind === 'image' || m.media_kind === 'thumbnail') {
+        storedImagey.add(pid);
+        imageyMedia.push({ id: m.id, pid });
+      }
     }
   }
-  const hasVisualText = new Set<string>();
-  for (const ids of chunk(postIds, 100)) {
-    // Paged for the same reason as the media scan: one post can hold many
-    // visual-text rows (six frames per video), so a chunk can reach the cap.
-    const data = await pageAll<{ content_post_id: string }>(
-      (from, to) => sb.from('mkt_visual_text').select('content_post_id')
-        .in('content_post_id', ids).order('id', { ascending: true }).range(from, to),
+  // OCR coverage is tracked per MEDIA. Tracking it per POST — "does this post
+  // have any visual_text at all?" — marks a five-image carousel finished the
+  // moment ONE of its images is read, and the post is then never offered again,
+  // so the other four are stranded permanently. Measured live: 36 posts holding
+  // 303 unread images had already been written off that way.
+  const ocrdMedia = new Set<string>();
+  const mediaIds = imageyMedia.map((m) => m.id);
+  for (const ids of chunk(mediaIds, 100)) {
+    const data = await pageAll<{ content_media_id: string }>(
+      (from, to) => sb.from('mkt_visual_text').select('content_media_id')
+        .in('content_media_id', ids).order('id', { ascending: true }).range(from, to),
       10_000, 'visual-text scan');
-    for (const v of data) hasVisualText.add(v.content_post_id);
+    for (const v of data) ocrdMedia.add(v.content_media_id);
   }
+  /** Posts with at least one stored image nobody has read yet. */
+  const postsNeedingOcr = new Set<string>();
+  for (const m of imageyMedia) if (!ocrdMedia.has(m.id)) postsNeedingOcr.add(m.pid);
+  /** Retained for stage 3: "this post has SOME visual text" is the right test
+   *  for whether an enrichment run would find OCR evidence to work with. */
+  const hasVisualText = new Set<string>();
+  for (const m of imageyMedia) if (ocrdMedia.has(m.id)) hasVisualText.add(m.pid);
   // Already-queued content_process work — never enqueue a second job for a post
   // that is already owned by one (that is how a queue turns into a retry storm).
   const inFlight = new Set<string>();
@@ -223,7 +240,22 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   }
 
   // ── stage 2: OCR on the free lane ─────────────────────────────────────────
-  const needOcr = postIds.filter((id) => storedImagey.has(id) && !hasVisualText.has(id));
+  // Posts already sitting in a queued/running OCR batch are EXCLUDED. Stages 1
+  // and 3 always had this guard; stage 2 did not, so every tick re-enqueued
+  // posts that were already spoken for. The lane then burned its capacity
+  // proving there was nothing to do: 13 of 15 consecutive jobs returned
+  // `images: 0, skipped_already_ocr: 7-10`. The queue looked busy and the
+  // corpus barely moved — 13 jobs advanced it by 18 images.
+  const ocrInFlight = new Set<string>();
+  {
+    const rows = await pageAll<{ payload: { post_ids?: string[] } | null }>(
+      (from, to) => sb.from('claude_jobs').select('payload')
+        .eq('kind', 'mkt_visual_ocr').in('status', ['pending', 'running'])
+        .order('id', { ascending: true }).range(from, to),
+      OCR_QUEUE_HIGH_WATER + PAGE, 'ocr in-flight scan');
+    for (const r of rows) for (const pid of r.payload?.post_ids ?? []) ocrInFlight.add(pid);
+  }
+  const needOcr = postIds.filter((id) => postsNeedingOcr.has(id) && !ocrInFlight.has(id));
   if (needOcr.length > 0) {
     const { count: ocrQueued } = await sb.from('claude_jobs')
       .select('id', { count: 'exact', head: true })

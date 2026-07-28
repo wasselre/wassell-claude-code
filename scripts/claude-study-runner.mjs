@@ -404,8 +404,7 @@ async function handleMktVisualOcr(job) {
     .select('id, content_post_id, media_kind, stored_url')
     .in('content_post_id', postIds)
     .eq('download_status', 'stored')
-    .in('media_kind', ['image', 'thumbnail'])
-    .limit(OCR_BATCH_MAX);
+    .in('media_kind', ['image', 'thumbnail']);
   if (mErr) throw new Error(`media query failed: ${mErr.message}`);
   if (!media || media.length === 0) throw new Error('no stored images for the requested posts');
 
@@ -413,7 +412,11 @@ async function handleMktVisualOcr(job) {
   const { data: existing } = await supa.from('mkt_visual_text')
     .select('content_media_id').in('content_media_id', media.map((m) => m.id));
   const done = new Set((existing ?? []).map((r) => r.content_media_id));
-  const todo = media.filter((m) => !done.has(m.id));
+  // Cap AFTER the filter, never before. Capping first took an arbitrary 12 rows
+  // and then removed the finished ones, so a batch whose first 12 happened to be
+  // done reported "nothing to do" while unread images sat behind the cap — and
+  // the post was never offered again.
+  const todo = media.filter((m) => !done.has(m.id)).slice(0, OCR_BATCH_MAX);
   if (todo.length === 0) return { batch: postIds.length, images: 0, skipped_already_ocr: media.length };
 
   const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-ocr-'));
