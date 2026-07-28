@@ -35,7 +35,10 @@ type Item = ContentItem & {
 };
 
 export function ContentContextPanel({ item, isAr, onSaved, onError }: {
-  item: Item; isAr: boolean; onSaved: () => void; onError: (m: string) => void;
+  item: Item; isAr: boolean;
+  /** The UPDATED row, merged in place by the page — no refetch per field. */
+  onSaved: (updated: ContentItem) => void;
+  onError: (m: string) => void;
 }) {
   const [plans, setPlans] = useState<MktPlan[]>([]);
   const [goals, setGoals] = useState<MktGoal[]>([]);
@@ -71,7 +74,7 @@ export function ContentContextPanel({ item, isAr, onSaved, onError }: {
 
   const save = async (patch: Record<string, unknown>, key: string) => {
     setSaving((s) => new Set(s).add(key));
-    try { await updateContent(item.id, patch); onSaved(); refreshMissing(); }
+    try { const r = await updateContent(item.id, patch); onSaved(r.item); refreshMissing(); }
     catch (e) { onError(err(e)); }
     finally { setSaving((s) => { const n = new Set(s); n.delete(key); return n; }); }
   };
@@ -97,7 +100,9 @@ export function ContentContextPanel({ item, isAr, onSaved, onError }: {
         initiative_id: k === 'init' ? id : null,
         note: uf.note || null,
       });
-      setAdding(false); setUf({ usage_kind: 'paid_ad' }); onSaved();
+      // A usage link is not part of the content row, so there is nothing to
+      // merge and nothing to refetch. The form closing is the confirmation.
+      setAdding(false); setUf({ usage_kind: 'paid_ad' });
     } catch (e) { onError(err(e)); }
   };
 

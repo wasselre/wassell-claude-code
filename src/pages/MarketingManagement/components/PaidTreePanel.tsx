@@ -53,14 +53,18 @@ export function PaidTreePanel({ campaignId, isAr, onError, onToast }: {
   const [addingPc, setAddingPc] = useState(false);
   const [pf, setPf] = useState<Record<string, string>>({ platform: 'meta' });
 
-  const load = useCallback(() => {
-    setLoading(true);
+  /** Spinner on the FIRST load only. Flipping `loading` on every refresh returns
+   *  a spinner instead of the tree, which unmounts it — so adding an ad
+   *  collapsed the ad group you were working in. Refreshes now swap the data
+   *  underneath and leave what is open, open. */
+  const load = useCallback((spinner = false) => {
+    if (spinner) setLoading(true);
     fetchPaidTree(campaignId)
       .then((r) => setTree(r.platform_campaigns as PC[]))
       .catch((e) => onError(err(e)))
-      .finally(() => setLoading(false));
+      .finally(() => { if (spinner) setLoading(false); });
   }, [campaignId, onError]);
-  useEffect(load, [load]);
+  useEffect(() => { load(true); }, [load]);
 
   useEffect(() => {
     // Only approved-or-later content may be an ad creative; the DB enforces it,

@@ -81,14 +81,26 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
   const [pName, setPName] = useState(''); const [pType, setPType] = useState('annual');
   const [pFrom, setPFrom] = useState(''); const [pTo, setPTo] = useState('');
 
-  const load = useCallback(() => {
-    setLoading(true);
+  /** `spinner` is opt-in and only the FIRST load asks for it. A refetch that
+   *  flips `loading` replaces this whole section with a spinner, which remounts
+   *  everything inside it — including an open editor, whose uncontrolled inputs
+   *  then reset and lose focus. Structural changes (create, approve, archive)
+   *  refetch quietly; field edits do not refetch at all. */
+  const load = useCallback((spinner = false) => {
+    if (spinner) setLoading(true);
     fetchPlanningOverview()
       .then((r) => { setCurrent(r.current_strategy); setVersions(r.strategies); setPlans(r.plans); })
       .catch((e) => onError(err(e)))
-      .finally(() => setLoading(false));
+      .finally(() => { if (spinner) setLoading(false); });
   }, [onError]);
-  useEffect(load, [load]);
+  useEffect(() => { load(true); }, [load]);
+
+  /** Field saves return the updated row; merge it and re-render nothing else.
+   *  This is what keeps the completeness badge live without a round trip. */
+  const patchVersion = useCallback((updated: StrategyVersion) => {
+    setVersions((vs) => vs.map((v) => (v.id === updated.id ? updated : v)));
+    setCurrent((c) => (c && c.id === updated.id ? updated : c));
+  }, []);
 
   const createStrategy = async () => {
     if (!sName.trim()) return;
@@ -199,7 +211,7 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
 
                   {open && (
                     <div className="border-t border-sand/40 p-3">
-                      <StrategyEditor version={v} isAr={isAr} onSaved={load} onError={onError} />
+                      <StrategyEditor version={v} isAr={isAr} onSaved={patchVersion} onError={onError} />
 
                       {/* Approve lives HERE, inside the opened version — not on the
                           collapsed row. Approving supersedes the incumbent, and
@@ -552,8 +564,10 @@ export function PortfolioTab({ isAr, onError, onToast }: {
   const [creating, setCreating] = useState(false);
   const [openPaid, setOpenPaid] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    setLoading(true);
+  /** Spinner on the first load only — see the note on the strategy tab's load.
+   *  A refresh after creating something must not unmount an open ad structure. */
+  const load = useCallback((spinner = false) => {
+    if (spinner) setLoading(true);
     Promise.all([fetchPortfolio(planId || undefined), fetchPlanningOverview()])
       .then(([p, o]) => {
         setInits(p.initiatives); setProgs(p.programs); setCamps(p.campaigns);
@@ -561,9 +575,11 @@ export function PortfolioTab({ isAr, onError, onToast }: {
         setGoals(o.plans.flatMap((pl) => pl.mkt_goals ?? []));
       })
       .catch((e) => onError(err(e)))
-      .finally(() => setLoading(false));
+      .finally(() => { if (spinner) setLoading(false); });
   }, [planId, onError]);
-  useEffect(load, [load]);
+  // Must call load(true): useEffect(load, [load]) would pass React's own
+  // argument-less invocation, leaving `loading` stuck true forever.
+  useEffect(() => { load(true); }, [load]);
 
   // Three buckets, not two. A campaign with campaign_class = null is NOT
   // organic — it is unclassified, which is exactly what the legacy rows are.

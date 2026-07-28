@@ -30,6 +30,7 @@ import { ContentFields, VersionWriter } from './components/ContentEditor';
 import { ContentSummary, ContentResults } from './components/ContentSummary';
 import { StrategyPlanningTab, PortfolioTab, ReviewsTab } from './components/PlanningV2';
 import { CapacityView } from './components/CapacityView';
+import { SectionBoundary } from './components/SectionBoundary';
 import { ContentContextPanel } from './components/ContentContextPanel';
 import { useProjectOptions } from '@/lib/marketingMgmt/projects';
 import { PRIORITY_LABEL, PLATFORM_LABEL, ASSET_TYPE_LABEL, CONTENT_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
@@ -51,6 +52,24 @@ type Tab = 'overview' | 'strategy' | 'portfolio' | 'campaigns' | 'content' | 'ca
 const BOARD: ContentStatus[] = ['idea','brief','writing','awaiting_script_approval',
   'approved_for_production','recording','designing','editing','internal_review',
   'awaiting_final_approval','approved','ready_to_publish','scheduled','published'];
+
+/** Section nav. At module scope so the error boundary can name the section that
+ *  failed from the SAME source the tab bar renders from — a second copy of these
+ *  labels would drift the moment a section is renamed. */
+const NAV = [
+  ['overview', ClipboardList, 'نظرة عامة', 'Overview'],
+  ['strategy', Compass, 'الاستراتيجية والتخطيط', 'Strategy & Planning'],
+  ['portfolio', Boxes, 'المحفظة', 'Portfolio'],
+  ['campaigns', Target, 'الحملات', 'Campaigns'],
+  ['content', Layers, 'المحتوى', 'Content'],
+  ['calendar', CalendarDays, 'التقويم', 'Calendar'],
+  ['production', Clapperboard, 'الإنتاج', 'Production'],
+  ['assets', ImageIcon, 'المواد الخام', 'Raw Assets'],
+  ['publishing', Send, 'النشر', 'Publishing'],
+  ['approvals', BadgeCheck, 'الاعتمادات', 'Approvals'],
+  ['performance', BarChart3, 'الأداء', 'Performance'],
+  ['reviews', ClipboardCheck, 'المراجعات', 'Reviews'],
+] as const;
 
 export default function MarketingManagementPage() {
   const { language, users, addToast } = useAppStore();
@@ -77,6 +96,13 @@ export default function MarketingManagementPage() {
       .finally(() => setLoading(false));
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  /** Merge a field-level update without refetching. content_detail runs eleven
+   *  parallel queries; doing that on every blur is what made typing feel like
+   *  the page kept reloading. */
+  const patchItem = useCallback((item: ContentItem) => {
+    setDetail((d) => (d && d.item.id === item.id ? { ...d, item } : d));
+  }, []);
 
   const openItem = async (id: string) => {
     setBusy(true);
@@ -185,20 +211,7 @@ export default function MarketingManagementPage() {
       {error && <CaveatStrip>{isAr ? 'تعذّر التحميل: ' : 'Failed to load: '}{error}</CaveatStrip>}
 
       <nav className="flex flex-wrap items-center gap-1.5">
-        {([
-          ['overview', ClipboardList, 'نظرة عامة', 'Overview'],
-          ['strategy', Compass, 'الاستراتيجية والتخطيط', 'Strategy & Planning'],
-          ['portfolio', Boxes, 'المحفظة', 'Portfolio'],
-          ['campaigns', Target, 'الحملات', 'Campaigns'],
-          ['content', Layers, 'المحتوى', 'Content'],
-          ['calendar', CalendarDays, 'التقويم', 'Calendar'],
-          ['production', Clapperboard, 'الإنتاج', 'Production'],
-          ['assets', ImageIcon, 'المواد الخام', 'Raw Assets'],
-          ['publishing', Send, 'النشر', 'Publishing'],
-          ['approvals', BadgeCheck, 'الاعتمادات', 'Approvals'],
-          ['performance', BarChart3, 'الأداء', 'Performance'],
-          ['reviews', ClipboardCheck, 'المراجعات', 'Reviews'],
-        ] as const).map(
+        {NAV.map(
           ([id, Icon, ar, en]) => {
             const active = tab === id;
             return (
@@ -214,7 +227,10 @@ export default function MarketingManagementPage() {
       </nav>
 
       {loading && !ov ? <Spinner label={isAr ? 'جارٍ التحميل…' : 'Loading…'} /> : (
-        <>
+        // One failing section must not blank the page. Keyed by tab, so leaving a
+        // broken section and returning retries it instead of showing a stale error.
+        <SectionBoundary isAr={isAr} resetKey={tab}
+          label={(NAV.find(([id]) => id === tab)?.[isAr ? 2 : 3] as string) ?? tab}>
           {tab === 'overview' && k && ov && (
             <>
               <Section title={isAr ? 'مؤشرات هذا الشهر' : 'This month'}
@@ -377,6 +393,7 @@ export default function MarketingManagementPage() {
               <ContentDetailPanel detail={detail} isAr={isAr} busy={busy}
                 onBack={() => setDetail(null)} onMove={move} onCompleteTask={completeTask}
                 onChanged={() => { void openItem(detail.item.id); }}
+                onItemPatched={patchItem}
                 onError={(m: string) => addToast(m, 'error')} />
             ) : (
               <Section title={isAr ? 'الإنتاج' : 'Production'}
@@ -407,6 +424,7 @@ export default function MarketingManagementPage() {
               <ContentDetailPanel detail={detail} isAr={isAr} busy={busy}
                 onBack={() => setDetail(null)} onMove={move} onCompleteTask={completeTask}
                 onChanged={() => { void openItem(detail.item.id); }}
+                onItemPatched={patchItem}
                 onError={(m: string) => addToast(m, 'error')} />
             ) : (
               <Section title={isAr ? 'لوحة المحتوى' : 'Content board'}
@@ -504,7 +522,7 @@ export default function MarketingManagementPage() {
               </Section>
             )
           )}
-        </>
+        </SectionBoundary>
       )}
     </div>
   );
@@ -513,11 +531,18 @@ export default function MarketingManagementPage() {
 type DetailTab = 'overview' | 'write' | 'produce' | 'tasks' | 'publish';
 
 function ContentDetailPanel({
-  detail, isAr, busy, onBack, onMove, onCompleteTask, onChanged, onError,
+  detail, isAr, busy, onBack, onMove, onCompleteTask, onChanged, onItemPatched, onError,
 }: {
   detail: ContentDetail; isAr: boolean; busy: boolean;
   onBack: () => void; onMove: (id: string, to: ContentStatus) => void; onCompleteTask: (id: string) => void;
-  onChanged: () => void; onError: (m: string) => void;
+  /** Structural change — a version, scene, publication or link was added, so the
+   *  whole detail is refetched. */
+  onChanged: () => void;
+  /** A FIELD changed. The updated row is merged in place: refetching
+   *  content_detail on every blur fires eleven queries and re-renders the panel
+   *  mid-typing, which is what made the form feel like it kept reloading. */
+  onItemPatched: (item: ContentItem) => void;
+  onError: (m: string) => void;
 }) {
   const i = detail.item;
   const [sub, setSub] = useState<DetailTab>('overview');
@@ -566,8 +591,8 @@ function ContentDetailPanel({
           {/* Strategic context first: it is what the approval gate checks, so
               seeing it before the creative fields is the difference between
               filling it in and discovering it as a rejection. */}
-          <ContentContextPanel item={i} isAr={isAr} onSaved={onChanged} onError={onError} />
-          <ContentFields item={i} assets={detail.assets} isAr={isAr} onSaved={onChanged} onError={onError} />
+          <ContentContextPanel item={i} isAr={isAr} onSaved={onItemPatched} onError={onError} />
+          <ContentFields item={i} assets={detail.assets} isAr={isAr} onSaved={onItemPatched} onError={onError} />
         </div>
       )}
 

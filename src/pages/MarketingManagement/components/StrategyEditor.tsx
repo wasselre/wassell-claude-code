@@ -90,7 +90,13 @@ const LISTS = {
 type ListKey = keyof typeof LISTS;
 
 export function StrategyEditor({ version, isAr, onSaved, onError }: {
-  version: StrategyVersion; isAr: boolean; onSaved: () => void; onError: (m: string) => void;
+  version: StrategyVersion; isAr: boolean;
+  /** Receives the UPDATED row so the parent can patch its copy in place. It must
+   *  not refetch: a refetch on every field blur swaps this whole section for a
+   *  spinner, which remounts the editor, resets uncontrolled inputs and steals
+   *  focus mid-typing. */
+  onSaved: (updated: StrategyVersion) => void;
+  onError: (m: string) => void;
 }) {
   const users = useAppStore((s) => s.users);
   const readOnly = version.status !== 'draft' && version.status !== 'in_review';
@@ -100,8 +106,8 @@ export function StrategyEditor({ version, isAr, onSaved, onError }: {
   const save = async (patch: Record<string, unknown>, key: string) => {
     setSaving((s) => new Set(s).add(key));
     try {
-      await saveStrategy(patch, version.id);
-      onSaved();
+      const r = await saveStrategy(patch, version.id);
+      onSaved(r.strategy);
       setSaved((s) => new Set(s).add(key));
       setTimeout(() => setSaved((s) => { const n = new Set(s); n.delete(key); return n; }), 1800);
     } catch (e) { onError(err(e)); }

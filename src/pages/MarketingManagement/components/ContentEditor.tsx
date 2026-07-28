@@ -61,7 +61,11 @@ function Group({ title, hint, defaultOpen = true, children }: {
 
 export function ContentFields({ item, assets, isAr, onSaved, onError }: {
   item: ContentItem; assets: AssetLink[]; isAr: boolean;
-  onSaved: () => void; onError: (m: string) => void;
+  /** Receives the UPDATED row so the page can merge it without refetching
+   *  content_detail — eleven queries per blur is what made typing feel like a
+   *  reload. */
+  onSaved: (updated: ContentItem) => void;
+  onError: (m: string) => void;
 }) {
   const users = useAppStore((s) => s.users);
   const projects = useProjectOptions();
@@ -77,8 +81,8 @@ export function ContentFields({ item, assets, isAr, onSaved, onError }: {
   const save = async (patch: Record<string, unknown>, key: string) => {
     setSaving((s) => new Set(s).add(key));
     try {
-      await updateContent(item.id, patch);
-      onSaved();
+      const r = await updateContent(item.id, patch);
+      onSaved(r.item);
       // Confirm rather than just stopping: a spinner that vanishes is
       // indistinguishable from a save that never happened.
       setSaved((s) => new Set(s).add(key));
@@ -137,7 +141,12 @@ export function ContentFields({ item, assets, isAr, onSaved, onError }: {
     const next = new Set(current);
     if (next.has(p)) next.delete(p); else next.add(p);
     setSaving((s) => new Set(s).add('platforms'));
-    try { await setPlatforms(item.id, [...next]); onSaved(); }
+    // setPlatforms returns the platform list, not the row — so hand the page the
+    // item with exactly what the server now holds. Still no refetch.
+    try {
+      await setPlatforms(item.id, [...next]);
+      onSaved({ ...item, mkt_content_platforms: [...next].map((platform) => ({ platform })) });
+    }
     catch (e) { onError(e instanceof Error ? e.message : String(e)); }
     finally { setSaving((s) => { const n = new Set(s); n.delete('platforms'); return n; }); }
   };
