@@ -17,6 +17,18 @@ import {
   fetchPublications, fetchContentList, fetchAssets, processAssets,
   STATUS_LABEL, type PublicationRow, type ContentItem, type ContentStatus,
 } from '@/lib/marketingMgmt/client';
+import { fetchPlanningOverview, fetchPlanDetail, type ChannelPlan } from '@/lib/marketingMgmt/v2';
+import { lbl, PLATFORM_LABEL } from '@/lib/marketingMgmt/labels';
+
+/** Monday of the ISO week containing an ISO date. Capacity is planned in ISO
+ *  weeks; the month grid below draws Sunday-start weeks (KSA convention). The
+ *  two genuinely do not line up, so the capacity summary is its own strip rather
+ *  than being painted onto grid rows it would misrepresent. */
+function isoMonday(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
+  return d.toISOString().slice(0, 10);
+}
 
 // ── Calendar ────────────────────────────────────────────────────────────────
 interface Entry {
@@ -31,6 +43,19 @@ export function CalendarTab({ isAr, onOpenContent, onError }: {
   const [content, setContent] = useState<ContentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [cursor, setCursor] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const [channels, setChannels] = useState<ChannelPlan[]>([]);
+
+  // Channel ceilings come from the ACTIVE plan. Without one there is no
+  // configured capacity, and the strip says so rather than showing zeros.
+  useEffect(() => {
+    fetchPlanningOverview()
+      .then((o) => {
+        const active = o.plans.find((p) => p.status === 'active') ?? o.plans[0];
+        return active ? fetchPlanDetail(active.id) : null;
+      })
+      .then((d) => { if (d) setChannels(d.channels); })
+      .catch(() => { /* capacity is additive here; the calendar still works */ });
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -73,6 +98,30 @@ export function CalendarTab({ isAr, onOpenContent, onError }: {
     return cells;
   }, [cursor, entries]);
 
+  /** Scheduled load per ISO week per platform for the visible month, against the
+   *  channel ceiling where one is configured. Counts PUBLICATIONS only: planned
+   *  content with no publication has not taken a slot yet. */
+  const weekLoad = useMemo(() => {
+    const ym = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+    const byWeek = new Map<string, Map<string, number>>();
+    for (const e of entries) {
+      if (e.kind !== 'publication' || !e.platform || !e.date.startsWith(ym)) continue;
+      const wk = isoMonday(e.date);
+      if (!byWeek.has(wk)) byWeek.set(wk, new Map());
+      const m = byWeek.get(wk)!;
+      m.set(e.platform, (m.get(e.platform) ?? 0) + 1);
+    }
+    return [...byWeek.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([week, plats]) => ({
+        week,
+        rows: [...plats.entries()].map(([platform, used]) => {
+          const ch = channels.find((c) => c.platform === platform);
+          return { platform, used, cap: ch?.max_per_week ?? null };
+        }).sort((a, b) => b.used - a.used),
+      }));
+  }, [entries, cursor, channels]);
+
   const monthLabel = cursor.toLocaleDateString(isAr ? 'ar-SA' : 'en-GB', { month: 'long', year: 'numeric' });
   const shift = (n: number) => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1));
 
@@ -99,6 +148,45 @@ export function CalendarTab({ isAr, onOpenContent, onError }: {
           <CaveatStrip>
             {isAr ? 'لا يوجد نشر مخطط هذا الشهر — فجوة في التقويم.' : 'Nothing planned this month — a gap in the calendar.'}
           </CaveatStrip>
+        </div>
+      )}
+
+      {/* Channel load per ISO week. Kept as its own strip rather than painted on
+          the grid, because capacity is planned Monday-to-Sunday and the grid
+          draws Sunday-start weeks — overlaying them would misstate which days a
+          number covers. A platform with no channel plan reads "—", never 0. */}
+      {weekLoad.length > 0 && (
+        <div className="mb-3 rounded-xl border border-sand/50 bg-cream-light/40 p-2.5">
+          <div className="mb-1.5 text-[11px] font-medium text-charcoal/55">
+            {isAr ? 'الحمل الأسبوعي على القنوات (أسابيع الاثنين–الأحد)'
+                  : 'Weekly channel load (Monday–Sunday weeks)'}
+          </div>
+          <ul className="space-y-1">
+            {weekLoad.map((w) => (
+              <li key={w.week} className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11.5px]">
+                <span className="min-w-[92px] tabular-nums text-charcoal/60">{w.week}</span>
+                {w.rows.map((r) => {
+                  const over = r.cap != null && r.used > r.cap;
+                  return (
+                    <span key={r.platform}
+                      className={`rounded px-1.5 py-0.5 tabular-nums ${
+                        over ? 'bg-red-50 font-medium text-red-700' : 'bg-white text-charcoal/65'}`}>
+                      {lbl(PLATFORM_LABEL, r.platform, isAr)} {r.used}
+                      {r.cap != null
+                        ? `/${r.cap}`
+                        : <span className="text-charcoal/30"> / —</span>}
+                    </span>
+                  );
+                })}
+              </li>
+            ))}
+          </ul>
+          {channels.length === 0 && (
+            <p className="mt-1.5 text-[10.5px] text-charcoal/45">
+              {isAr ? 'لا توجد خطط قنوات معرّفة، لذا لا سقف للمقارنة — أضفها من «سعة القنوات» أعلاه.'
+                    : 'No channel plans defined, so there is no ceiling to compare against — add them in Channel capacity above.'}
+            </p>
+          )}
         </div>
       )}
       <div className="overflow-x-auto">
