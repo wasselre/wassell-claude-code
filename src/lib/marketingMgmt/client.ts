@@ -10,7 +10,9 @@ async function authHeader(): Promise<Record<string, string>> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function call<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
+/** Exported so the v2 planning module can share one transport, one auth header
+ *  and one error-mapping path rather than growing a second copy. */
+export async function call<T>(action: string, payload: Record<string, unknown> = {}): Promise<T> {
   const res = await fetch('/api/marketing-mgmt', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...(await authHeader()) },

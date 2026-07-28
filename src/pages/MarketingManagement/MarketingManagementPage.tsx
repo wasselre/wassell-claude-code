@@ -20,6 +20,7 @@ import {
   ClipboardList, RefreshCw, AlertTriangle, Plus, Search, ArrowLeft, Clock,
   CheckCircle2, Send, Layers, Target, CalendarDays, Image as ImageIcon,
   BadgeCheck, BarChart3, Clapperboard, CalendarPlus, Link as LinkIcon,
+  Compass, Boxes, ClipboardCheck,
 } from 'lucide-react';
 import CampaignsTab from './components/CampaignsTab';
 import { ApprovalsTab, PublishingTab, PerformanceTab } from './components/QueueTabs';
@@ -27,6 +28,7 @@ import { CalendarTab, AssetsTab } from './components/PlanningTabs';
 import { SceneEditor, SlideEditor } from './components/ProductionEditor';
 import { ContentFields, VersionWriter } from './components/ContentEditor';
 import { ContentSummary, ContentResults } from './components/ContentSummary';
+import { StrategyPlanningTab, PortfolioTab, ReviewsTab } from './components/PlanningV2';
 import { useProjectOptions } from '@/lib/marketingMgmt/projects';
 import { PRIORITY_LABEL, PLATFORM_LABEL, ASSET_TYPE_LABEL, CONTENT_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
 // Generic presentation primitives shared with the intelligence page — importing
@@ -39,8 +41,8 @@ import {
   type MgmtOverview, type ContentItem, type ContentDetail, type ContentStatus, type ContentType,
 } from '@/lib/marketingMgmt/client';
 
-type Tab = 'overview' | 'campaigns' | 'content' | 'calendar' | 'production'
-  | 'assets' | 'publishing' | 'approvals' | 'performance';
+type Tab = 'overview' | 'strategy' | 'portfolio' | 'campaigns' | 'content' | 'calendar'
+  | 'production' | 'assets' | 'publishing' | 'approvals' | 'performance' | 'reviews';
 
 /** Board columns: the production spine, not all 18 states (terminal and
  *  exception states are reachable from the item itself). */
@@ -183,6 +185,8 @@ export default function MarketingManagementPage() {
       <nav className="flex flex-wrap items-center gap-1.5">
         {([
           ['overview', ClipboardList, 'نظرة عامة', 'Overview'],
+          ['strategy', Compass, 'الاستراتيجية والتخطيط', 'Strategy & Planning'],
+          ['portfolio', Boxes, 'المحفظة', 'Portfolio'],
           ['campaigns', Target, 'الحملات', 'Campaigns'],
           ['content', Layers, 'المحتوى', 'Content'],
           ['calendar', CalendarDays, 'التقويم', 'Calendar'],
@@ -191,6 +195,7 @@ export default function MarketingManagementPage() {
           ['publishing', Send, 'النشر', 'Publishing'],
           ['approvals', BadgeCheck, 'الاعتمادات', 'Approvals'],
           ['performance', BarChart3, 'الأداء', 'Performance'],
+          ['reviews', ClipboardCheck, 'المراجعات', 'Reviews'],
         ] as const).map(
           ([id, Icon, ar, en]) => {
             const active = tab === id;
@@ -340,6 +345,18 @@ export default function MarketingManagementPage() {
           {tab === 'calendar' && (
             <CalendarTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
               onOpenContent={(id) => { setTab('content'); void openItem(id); }} />
+          )}
+          {tab === 'strategy' && (
+            <StrategyPlanningTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
+              onToast={(m: string) => addToast(m, 'success')} />
+          )}
+          {tab === 'portfolio' && (
+            <PortfolioTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
+              onToast={(m: string) => addToast(m, 'success')} />
+          )}
+          {tab === 'reviews' && (
+            <ReviewsTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
+              onToast={(m: string) => addToast(m, 'success')} />
           )}
           {tab === 'assets' && <AssetsTab isAr={isAr} onError={(m: string) => addToast(m, 'error')} />}
           {tab === 'publishing' && <PublishingTab isAr={isAr} onError={(m: string) => addToast(m, 'error')} />}

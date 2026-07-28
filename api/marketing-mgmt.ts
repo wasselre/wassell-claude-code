@@ -52,12 +52,142 @@ const CONTENT_EDITABLE = [
   // 2026-08-21 marketing fields
   'organic_or_paid', 'funnel_stage', 'content_angle', 'offer_message',
   'cta_destination', 'tracking_link', 'next_action', 'blocker', 'final_asset_id',
+  // v2 strategic context. origin_* is settable because a draft may be
+  // reclassified; the DB CHECK keeps kind and FK in agreement, and reuse goes
+  // through mkt_content_usage rather than rewriting these.
+  'plan_id', 'primary_goal_id', 'primary_pillar_id', 'strategic_purpose',
+  'origin_kind', 'origin_program_id', 'origin_campaign_id', 'reactive_trigger',
+] as const;
+
+/** Copy only allow-listed keys. Everything the v2 layer writes goes through
+ *  this, so ids, generated numbers, approval stamps and needs_classification
+ *  can never be set by a caller. */
+function pick(src: unknown, allowed: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!src || typeof src !== 'object') return out;
+  const o = src as Record<string, unknown>;
+  for (const k of allowed) if (Object.prototype.hasOwnProperty.call(o, k)) out[k] = o[k];
+  return out;
+}
+
+// status is NOT here: it moves via strategy_approve, which also supersedes the
+// incumbent. approver_user_id / approved_at are stamped server-side.
+const STRATEGY_EDITABLE = [
+  'name_ar', 'name_en', 'summary_ar', 'summary_en', 'effective_date', 'expires_at',
+  'positioning', 'organic_paid_strategy', 'priority_audiences', 'customer_problems',
+  'value_propositions', 'priority_markets', 'property_categories', 'funnel',
+  'channel_roles', 'content_principles', 'measurement_principles',
+  'strategic_priorities', 'not_priorities', 'assumptions', 'risks',
+  'owner_user_id', 'archived_at',
+] as const;
+
+const PLAN_EDITABLE = [
+  'plan_type', 'parent_plan_id', 'strategy_version_id', 'name_ar', 'name_en',
+  'summary_ar', 'summary_en', 'status', 'period_start', 'period_end', 'priorities',
+  'budget', 'channel_budgets', 'team_capacity', 'production_capacity',
+  'priority_audiences', 'priority_locations', 'property_types', 'assumptions',
+  'risks', 'dependencies', 'review_frequency', 'owner_user_id', 'archived_at',
+] as const;
+
+const GOAL_EDITABLE = [
+  'plan_id', 'parent_goal_id', 'goal_category', 'name_ar', 'name_en', 'description',
+  'metric', 'unit', 'baseline_value', 'target_value', 'start_date', 'end_date',
+  'owner_user_id', 'measurement_frequency', 'source_of_truth', 'scope', 'status',
+  'actual_value', 'forecast_value', 'result', 'notes', 'assumptions', 'archived_at',
+] as const;
+
+const TARGET_PERIOD_EDITABLE = [
+  'label', 'period_start', 'period_end', 'target_value', 'actual_value',
+  'forecast_value', 'notes',
+] as const;
+
+const INITIATIVE_EDITABLE = [
+  'plan_id', 'primary_goal_id', 'name_ar', 'name_en', 'problem_or_opportunity',
+  'hypothesis', 'target_audiences', 'scope', 'locations', 'property_types',
+  'channels', 'start_date', 'review_date', 'end_date', 'budget', 'owner_user_id',
+  'status', 'expected_contribution', 'actual_contribution', 'lessons', 'archived_at',
+] as const;
+
+const PROGRAM_EDITABLE = [
+  'plan_id', 'initiative_id', 'primary_goal_id', 'name_ar', 'name_en', 'purpose',
+  'target_audience', 'content_pillars', 'platforms', 'accounts', 'formats',
+  'cadence', 'commitment_count', 'commitment_unit', 'kpi_targets', 'owner_user_id',
+  'review_frequency', 'status', 'start_date', 'lessons', 'archived_at',
+] as const;
+
+const CHANNEL_PLAN_EDITABLE = [
+  'plan_id', 'platform', 'account_handle', 'max_per_day', 'max_per_week',
+  'format_mix', 'pillar_mix', 'reactive_reserve', 'same_project_max_per_week', 'notes',
+] as const;
+
+const ALLOCATION_EDITABLE = [
+  'channel_plan_id', 'week_start', 'allocation_kind', 'program_id', 'campaign_id',
+  'slots_requested', 'slots_granted', 'note',
+] as const;
+
+const PLATFORM_CAMPAIGN_EDITABLE = [
+  'campaign_id', 'platform', 'name', 'platform_config', 'config_schema_version',
+  'objective', 'budget', 'budget_kind', 'start_date', 'end_date', 'destination_url',
+  'conversion_event', 'tracking_template', 'status', 'external_id', 'owner_user_id',
+] as const;
+
+const AD_GROUP_EDITABLE = [
+  'platform_campaign_id', 'name', 'targeting', 'targeting_schema_version',
+  'budget', 'bid_strategy', 'start_date', 'end_date', 'status', 'external_id',
+] as const;
+
+const AD_EDITABLE = [
+  'ad_group_id', 'name', 'content_item_id', 'primary_text', 'headline',
+  'description', 'cta_label', 'destination_url', 'status', 'external_id',
+] as const;
+
+const REVIEW_EDITABLE = [
+  'plan_id', 'review_type', 'period_start', 'period_end', 'summary', 'what_worked',
+  'what_did_not', 'lessons', 'status', 'reviewer_user_id', 'held_at',
+] as const;
+
+const REVIEW_DECISION_EDITABLE = [
+  'review_id', 'initiative_id', 'program_id', 'campaign_id', 'goal_id', 'decision',
+  'rationale', 'goal_forecast_before', 'goal_forecast_after', 'budget_change',
+  'capacity_change',
+] as const;
+
+const USAGE_EDITABLE = [
+  'content_item_id', 'usage_kind', 'campaign_id', 'program_id', 'initiative_id',
+  'publication_id', 'note',
+] as const;
+
+/** Campaign columns a user may edit: the v1 set, verified against the live
+ *  table's columns, plus the v2 portfolio fields. campaign_save previously
+ *  forwarded ANY key — the same hole that was closed on content_update — so id,
+ *  created_by_user_id, needs_classification and the review-owned decision
+ *  columns were all writable by a caller. They are not on this list.
+ *  `decision` is set by review_decide, never by editing the campaign. */
+const CAMPAIGN_EDITABLE = [
+  // v1
+  'code', 'name_ar', 'name_en', 'campaign_type', 'channel_mix', 'status', 'priority',
+  'start_date', 'end_date', 'objective', 'offer', 'main_message', 'hooks', 'cta',
+  'landing_url', 'positioning', 'content_pillars', 'target_audience', 'budget',
+  'target_leads', 'target_revenue', 'target_sales', 'target_appointments',
+  'target_cpl', 'target_cpa', 'target_roas', 'owner_user_id', 'archived_at',
+  // v2 portfolio
+  'plan_id', 'initiative_id', 'program_id', 'primary_goal_id', 'campaign_class',
+  'funnel_stage', 'deliverables', 'lessons',
 ] as const;
 
 interface Body {
   action?: string;
   id?: string;
   platforms?: unknown[];
+  // v2 planning layer
+  plan_id?: string;
+  goal_id?: string;
+  channel_plan_id?: string;
+  week_start?: string;
+  periods?: unknown[];
+  user_id?: string;
+  role?: string;
+  version_number?: number;
   campaign_id?: string;
   content_item_id?: string;
   project_id?: string;
@@ -198,7 +328,7 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ campaign: c.data, content: items.data ?? [], tasks: tasks.data ?? [], performance: perf.data ?? [] });
       }
       case 'campaign_save': {
-        const patch = body.patch ?? {};
+        const patch = pick(body.patch, CAMPAIGN_EDITABLE);
         const id = str(body.id);
         const q = id
           ? sb.from('mkt_internal_campaigns').update(patch).eq('id', id).select().maybeSingle()
@@ -546,6 +676,299 @@ export default async function handler(req: Request): Promise<Response> {
           .eq('source_id', sId).order('created_at', { ascending: false });
         const bad = rlsAware(error); if (bad) return bad;
         return jsonOk({ responses: data ?? [] });
+      }
+
+      // ══ v2 planning layer ═══════════════════════════════════════════════
+      // Every write goes through pick() with an explicit allow-list, so no
+      // caller can set an id, a generated number, an approval stamp or the
+      // needs_classification flag by hand. RLS still decides who may write at
+      // all; this only decides WHAT may be written.
+
+      case 'planning_overview': {
+        // One call for the Strategy & Planning tab.
+        const [current, strategies, plans] = await Promise.all([
+          sb.from('mkt_strategy_versions').select('*').eq('status', 'approved').maybeSingle(),
+          sb.from('mkt_strategy_versions').select('*').order('version_number', { ascending: false }).limit(50),
+          sb.from('mkt_plans').select('*, mkt_goals(id,goal_category,name_ar,target_value,actual_value,result,status)')
+            .is('archived_at', null).order('period_start', { ascending: false }).limit(100),
+        ]);
+        const bad = rlsAware(strategies.error); if (bad) return bad;
+        return jsonOk({
+          current_strategy: current.data ?? null,
+          strategies: strategies.data ?? [],
+          plans: plans.data ?? [],
+        });
+      }
+
+      case 'strategy_save': {
+        const patch = pick(body.patch, STRATEGY_EDITABLE);
+        if (!body.id && !patch.name_ar) return jsonError(400, 'name_ar required');
+        const q = body.id
+          ? sb.from('mkt_strategy_versions').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_strategy_versions').insert({
+              ...patch,
+              // Next version number, computed server-side so two editors cannot
+              // both claim the same one.
+              version_number: (body.version_number as number | undefined)
+                ?? ((await sb.from('mkt_strategy_versions').select('version_number')
+                      .order('version_number', { ascending: false }).limit(1).maybeSingle()
+                    ).data?.version_number ?? 0) + 1,
+              created_by_user_id: appUserId,
+            }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ strategy: data });
+      }
+
+      case 'strategy_approve': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        // Supersede the incumbent first: exactly one approved strategy may
+        // exist, so approving a new one without retiring the old would hit the
+        // unique index. Two statements, one intent.
+        const prior = await sb.from('mkt_strategy_versions').select('id')
+          .eq('status', 'approved').maybeSingle();
+        if (prior.data?.id && prior.data.id !== id) {
+          const sup = await sb.from('mkt_strategy_versions')
+            .update({ status: 'superseded' }).eq('id', prior.data.id);
+          const badSup = rlsAware(sup.error); if (badSup) return badSup;
+        }
+        const { data, error } = await sb.from('mkt_strategy_versions')
+          .update({ status: 'approved', approver_user_id: appUserId, approved_at: new Date().toISOString(),
+                    supersedes_version_id: prior.data?.id ?? null })
+          .eq('id', id).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ strategy: data, superseded: prior.data?.id ?? null });
+      }
+
+      case 'plan_detail': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const [plan, goals, inits, progs, camps, channels, reviews] = await Promise.all([
+          sb.from('mkt_plans').select('*').eq('id', id).maybeSingle(),
+          sb.from('mkt_goals').select('*, mkt_goal_target_periods(*)').eq('plan_id', id)
+            .is('archived_at', null).order('goal_category'),
+          sb.from('mkt_initiatives').select('*').eq('plan_id', id).is('archived_at', null),
+          sb.from('mkt_programs').select('*').eq('plan_id', id).is('archived_at', null),
+          sb.from('mkt_internal_campaigns').select('*').eq('plan_id', id).is('archived_at', null),
+          sb.from('mkt_channel_plans').select('*, mkt_capacity_allocations(*)').eq('plan_id', id),
+          sb.from('mkt_reviews').select('*, mkt_review_decisions(*)').eq('plan_id', id)
+            .order('period_start', { ascending: false }),
+        ]);
+        const bad = rlsAware(plan.error); if (bad) return bad;
+        if (!plan.data) return jsonError(404, 'plan not found');
+        return jsonOk({
+          plan: plan.data, goals: goals.data ?? [], initiatives: inits.data ?? [],
+          programs: progs.data ?? [], campaigns: camps.data ?? [],
+          channels: channels.data ?? [], reviews: reviews.data ?? [],
+        });
+      }
+
+      case 'plan_save': {
+        const patch = pick(body.patch, PLAN_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_plans').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_plans').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ plan: data });
+      }
+
+      case 'plan_approve': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const { data, error } = await sb.from('mkt_plans')
+          .update({ status: 'approved', approver_user_id: appUserId, approved_at: new Date().toISOString() })
+          .eq('id', id).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ plan: data });
+      }
+
+      case 'goal_save': {
+        const patch = pick(body.patch, GOAL_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_goals').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_goals').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ goal: data });
+      }
+
+      case 'goal_targets_set': {
+        // Replace the whole allocation for a goal in one call. Deliberately a
+        // replace: a per-period upsert would leave orphaned months behind when
+        // someone re-plans the year, and the sum is only meaningful as a set.
+        const goalId = str(body.goal_id); if (!goalId) return jsonError(400, 'goal_id required');
+        const rows = Array.isArray(body.periods) ? body.periods : [];
+        const del = await sb.from('mkt_goal_target_periods').delete().eq('goal_id', goalId);
+        const badDel = rlsAware(del.error); if (badDel) return badDel;
+        if (rows.length) {
+          const ins = await sb.from('mkt_goal_target_periods').insert(
+            rows.map((r) => ({ ...pick(r as Record<string, unknown>, TARGET_PERIOD_EDITABLE), goal_id: goalId })));
+          const badIns = rlsAware(ins.error); if (badIns) return badIns;
+        }
+        const { data } = await sb.from('mkt_goal_target_periods').select('*')
+          .eq('goal_id', goalId).order('period_start');
+        return jsonOk({ periods: data ?? [] });
+      }
+
+      case 'goal_pacing': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const [pacing, rollup] = await Promise.all([
+          sb.rpc('mkt_goal_pacing', { p_goal_id: id }),
+          sb.rpc('mkt_goal_rollup', { p_goal_id: id }),
+        ]);
+        const bad = rlsAware(pacing.error); if (bad) return bad;
+        return jsonOk({ pacing: pacing.data ?? null, rollup: rollup.data ?? null });
+      }
+
+      case 'portfolio_list': {
+        const planId = str(body.plan_id);
+        const q = <T extends { eq: unknown }>(b: T) => (planId ? (b as { eq: (a: string, b: string) => T }).eq('plan_id', planId) : b);
+        const [inits, progs, camps] = await Promise.all([
+          q(sb.from('mkt_initiatives').select('*, mkt_programs(id,name_ar,status), mkt_internal_campaigns(id,code,name_ar,campaign_class,status)').is('archived_at', null)),
+          q(sb.from('mkt_programs').select('*').is('archived_at', null)),
+          q(sb.from('mkt_internal_campaigns').select('*').is('archived_at', null)),
+        ]);
+        const bad = rlsAware(inits.error); if (bad) return bad;
+        return jsonOk({ initiatives: inits.data ?? [], programs: progs.data ?? [], campaigns: camps.data ?? [] });
+      }
+
+      case 'initiative_save': {
+        const patch = pick(body.patch, INITIATIVE_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_initiatives').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_initiatives').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ initiative: data });
+      }
+
+      case 'program_save': {
+        const patch = pick(body.patch, PROGRAM_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_programs').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_programs').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ program: data });
+      }
+
+      case 'channel_plan_save': {
+        const patch = pick(body.patch, CHANNEL_PLAN_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_channel_plans').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_channel_plans').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ channel_plan: data });
+      }
+
+      case 'capacity_allocate': {
+        const patch = pick(body.patch, ALLOCATION_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_capacity_allocations').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_capacity_allocations').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ allocation: data });
+      }
+
+      case 'capacity_status': {
+        const chan = str(body.channel_plan_id); const week = str(body.week_start);
+        if (!chan || !week) return jsonError(400, 'channel_plan_id and week_start required');
+        const { data, error } = await sb.rpc('mkt_capacity_status',
+          { p_channel_plan_id: chan, p_week_start: week });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ status: data ?? null });
+      }
+
+      case 'platform_campaign_save': {
+        const patch = pick(body.patch, PLATFORM_CAMPAIGN_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_platform_campaigns').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_platform_campaigns').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ platform_campaign: data });
+      }
+
+      case 'ad_group_save': {
+        const patch = pick(body.patch, AD_GROUP_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_ad_groups').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_ad_groups').insert(patch).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ ad_group: data });
+      }
+
+      case 'ad_save': {
+        const patch = pick(body.patch, AD_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_ads').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_ads').insert(patch).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ ad: data });
+      }
+
+      case 'paid_tree': {
+        const campId = str(body.campaign_id); if (!campId) return jsonError(400, 'campaign_id required');
+        const { data, error } = await sb.from('mkt_platform_campaigns')
+          .select('*, mkt_ad_groups(*, mkt_ads(*))').eq('campaign_id', campId).order('platform');
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ platform_campaigns: data ?? [] });
+      }
+
+      case 'review_save': {
+        const patch = pick(body.patch, REVIEW_EDITABLE);
+        const q = body.id
+          ? sb.from('mkt_reviews').update(patch).eq('id', body.id).select().maybeSingle()
+          : sb.from('mkt_reviews').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const { data, error } = await q;
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ review: data });
+      }
+
+      case 'review_decide': {
+        const patch = pick(body.patch, REVIEW_DECISION_EDITABLE);
+        const { data, error } = await sb.from('mkt_review_decisions').insert(patch).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ decision: data });
+      }
+
+      case 'pillar_list': {
+        const { data, error } = await sb.from('mkt_content_pillars').select('*')
+          .eq('is_active', true).order('sort_order');
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ pillars: data ?? [] });
+      }
+
+      case 'content_usage_add': {
+        const patch = pick(body.patch, USAGE_EDITABLE);
+        const { data, error } = await sb.from('mkt_content_usage')
+          .insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ usage: data });
+      }
+
+      case 'content_missing_context': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const { data, error } = await sb.rpc('mkt_content_missing_context', { p_content_item_id: id });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ missing: (data as string[] | null) ?? [] });
+      }
+
+      case 'generate_v2_alerts': {
+        const { data, error } = await sb.rpc('mkt_mgmt_generate_v2_alerts');
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ rules: data ?? [] });
+      }
+
+      case 'set_marketing_role': {
+        const uid = str(body.user_id); if (!uid) return jsonError(400, 'user_id required');
+        const { error } = await sb.rpc('mkt_set_role_grant',
+          { p_user_id: uid, p_role: str(body.role) ?? null });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ ok: true });
       }
 
       default:
