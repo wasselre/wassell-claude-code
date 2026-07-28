@@ -158,7 +158,20 @@ export default async function handler(req: Request): Promise<Response> {
     console.error('[whatsapp-ai-send] AUDIT INSERT FAILED — this message will look human-sent:', auditErr.message, wid);
   }
 
-  return json({ sent: true, wid, chat_wid: chatWid, audit_ok: !auditErr });
+  // QUEUED, not sent (WA-30). The worker delivers this seconds-to-minutes from
+  // now and it can still fail permanently — 463, a wedged gateway, a retired
+  // session. Returning `sent: true` here told the agent's own transcript, and
+  // the job result, that the customer had been contacted when nothing had left
+  // the building yet. `sent` is kept alongside for the skill's existing check,
+  // but it now reports what this endpoint actually did.
+  return json({
+    queued: true,
+    sent: false,
+    delivery: 'queued',
+    wid,
+    chat_wid: chatWid,
+    audit_ok: !auditErr,
+  });
 }
 
 function constantTimeEqual(a: string, b: string): boolean {

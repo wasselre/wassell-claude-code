@@ -25,6 +25,7 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { getServiceSupabase } from './supabaseServer.js';
+import { uuidV5FromWidSync } from './chatIngest.js';
 import { logServerActivity } from './activityLogger.js';
 
 /** Keep the country code and the last two digits: `+9665•••••67`. */
@@ -185,6 +186,74 @@ export async function authorizeWhatsappSend(args: {
   }
 
   return { ok: true, chatWid, conversationId: null, clientId: null, isNewConversation: true };
+}
+
+/**
+ * Persist the outbound message ITSELF, at send time.
+ *
+ * Until now nothing did. The row was created only when WhatsApp echoed our own
+ * send back through the inbound webhook, so if that echo was lost — a gateway
+ * restart, a webhook 500, an addressing change, a re-pair — the customer had
+ * the message and the CRM had no idea it existed: no bubble, no
+ * reconcile_outbound_whatsapp, no 24-hour deadline, no supersede. And with no
+ * send log either, it could not be detected after the fact (WA-04).
+ *
+ * Writing it here is safe against double-creation because the id we store is
+ * the one WAHA assigns, which is exactly the id the echo carries — so the
+ * webhook's upsert merges onto this row rather than adding a second one, and
+ * the hash-dedupe added on 2026-07-27 catches it even if the echo comes back
+ * under the other addressing mode.
+ *
+ * A FAILED send is persisted too, under a synthetic `failed:<key>` id. That is
+ * the whole of WA-15: the old code marked the bubble failed in memory only, so
+ * it vanished on refresh and the rep could not tell a failed send from one they
+ * never typed. `chat_messages` held zero ack='failed' rows across all time.
+ */
+export async function recordOutboundMessage(args: {
+  chatWid: string;
+  deviceId: string;
+  body?: string | null;
+  mediaFileId?: string | null;
+  mediaCaption?: string | null;
+  quotedWid?: string | null;
+  reference: string;
+  /** The gateway's message id when it accepted; absent when it did not. */
+  messageWid?: string | null;
+  outcome: 'accepted' | 'failed';
+}): Promise<void> {
+  const supa = getServiceSupabase();
+  const digits = args.chatWid.split('@')[0] ?? '';
+  const id = args.messageWid || `failed:${args.reference}`;
+  const kind = args.mediaFileId ? 'document' : 'text';
+
+  const { error } = await supa.from('chat_messages').upsert({
+    id,
+    chat_wid: args.chatWid,
+    conversation_record_id: uuidV5FromWidSync(args.chatWid),
+    device_id: args.deviceId,
+    flow: 'out',
+    kind,
+    subtype: null,
+    body: args.body ?? null,
+    from_phone: null,
+    to_phone: `+${digits}`,
+    // 'sent' is what we can honestly claim: the gateway accepted it. The
+    // delivered/read progression arrives later on the ack webhook.
+    ack: args.outcome === 'accepted' ? 'sent' : 'failed',
+    date: new Date().toISOString(),
+    media_file_id: args.mediaFileId ?? null,
+    media_mime: null,
+    media_size: null,
+    media_caption: args.mediaCaption ?? null,
+    reference: args.reference,
+    quoted: args.quotedWid ? { wid: args.quotedWid, body: null, kind: 'text' } : null,
+  }, { onConflict: 'id', ignoreDuplicates: false });
+
+  if (error) {
+    // Loud, but never fatal: the message HAS gone to the customer at this
+    // point, and failing the request would tell the rep the opposite.
+    console.error('[whatsappSendAuth] could not persist outbound message:', error.message, id);
+  }
 }
 
 /**

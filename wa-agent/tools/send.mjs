@@ -34,5 +34,10 @@ const res = await fetch(`${cfg.APP_URL}/api/whatsapp/ai-send`, {
 const out = await res.json().catch(() => ({}));
 console.log(JSON.stringify(out));
 if (out.blocked) { console.error(`BLOCKED (${out.reason}) — a human is handling this chat. Send nothing more.`); process.exit(3); }
-if (!res.ok || !out.sent) { console.error(`send failed: ${out.error ?? res.status}`); process.exit(1); }
+// Accepted means QUEUED, not delivered (WA-30). The endpoint hands the message
+// to the send queue and a worker delivers it seconds-to-minutes later, so this
+// exit code means "handed over successfully", not "the customer has it".
+// `out.sent` is still honoured for an older deployment that returns it true.
+const accepted = out.queued === true || out.sent === true;
+if (!res.ok || !accepted) { console.error(`send failed: ${out.error ?? res.status}`); process.exit(1); }
 process.exit(0);

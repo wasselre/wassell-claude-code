@@ -21,7 +21,7 @@
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
 import { sendMessage, resolveDefaultDeviceId, maybeScheduleWaha, HaberchatError } from '../_lib/whatsappGateway.js';
-import { authorizeWhatsappSend, logSendAttempt } from '../_lib/whatsappSendAuth.js';
+import { authorizeWhatsappSend, logSendAttempt, recordOutboundMessage } from '../_lib/whatsappSendAuth.js';
 
 export const config = {
   runtime: 'edge',
@@ -104,6 +104,11 @@ export default async function handler(req: Request): Promise<Response> {
         const result = await sendMessage({
           deviceId, phone, group, channel, body, mediaFileId, mediaCaption, quotedWid, reference, deliverAt,
         });
+        // The message now exists for the CRM whether or not the echo returns.
+        await recordOutboundMessage({
+          chatWid: auth.chatWid, deviceId, body, mediaFileId, mediaCaption, quotedWid,
+          reference, messageWid: result.wid, outcome: 'accepted',
+        });
         await logSendAttempt({
           user, chatWid: auth.chatWid, clientId: auth.clientId, conversationId: auth.conversationId,
           deviceId, source, outcome: 'accepted', messageWid: result.wid, hasMedia: !!mediaFileId,
@@ -111,6 +116,12 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk(result);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
+        // A failed send survives a refresh now — it used to be marked failed in
+        // the browser's memory only and disappear entirely on reload.
+        await recordOutboundMessage({
+          chatWid: auth.chatWid, deviceId, body, mediaFileId, mediaCaption, quotedWid,
+          reference, outcome: 'failed',
+        });
         // Recorded BEFORE returning: a send that failed at the gateway is
         // exactly the event that previously left no trace anywhere.
         await logSendAttempt({
