@@ -19,7 +19,7 @@ import { useProject } from '@/lib/marketingMgmt/projects';
 import {
   PLATFORM_LABEL, PUBLICATION_STATUS_LABEL, ORGANIC_PAID_LABEL, FUNNEL_STAGE_LABEL, lbl,
 } from '@/lib/marketingMgmt/labels';
-import { STATUS_LABEL, type ContentDetail, type ContentStatus } from '@/lib/marketingMgmt/client';
+import { STATUS_LABEL, CONTENT_STATUSES, type ContentDetail, type ContentStatus } from '@/lib/marketingMgmt/client';
 
 /** Which state each status can be reached FROM — used to explain an absent move.
  *  Mirrors mkt_content_status_allowed for MESSAGING ONLY; the buttons themselves
@@ -150,10 +150,28 @@ export function ContentSummary({ detail, isAr, busy, onMove, onError }: {
       {/* ── status moves: only the legal ones ── */}
       <div className="mt-3 border-t border-sand/40 pt-3">
         {allowed === null ? (
-          <CaveatStrip>
-            {isAr ? 'تعذّر تحديد الانتقالات المسموحة — قاعدة البيانات تفتقد دالة mkt_content_next_statuses. طبّق آخر ترحيل.'
-                  : 'Cannot determine legal transitions — the database is missing mkt_content_next_statuses. Apply the latest migration.'}
-          </CaveatStrip>
+          /* The RPC is missing, so this build is deployed ahead of its migration.
+             Fall back to the OLD behaviour — offer every status, let the database
+             reject the wrong ones — because showing NO buttons would remove a
+             control that works today. Deliberately not a local copy of the
+             transition map: a wrong guess here is worse than offering a move
+             Postgres refuses with a clear message. */
+          <>
+            <div className="mb-2">
+              <CaveatStrip>
+                {isAr ? 'قاعدة البيانات تفتقد دالة mkt_content_next_statuses، لذا تُعرض كل الحالات وسترفض القاعدة غير المسموح منها. طبّق آخر ترحيل لعرض الخطوات الصحيحة فقط.'
+                      : 'The database is missing mkt_content_next_statuses, so every status is listed and the database rejects invalid ones. Apply the latest migration to see only the legal steps.'}
+              </CaveatStrip>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {CONTENT_STATUSES.filter((s) => s !== i.status).map((s) => (
+                <button key={s} type="button" disabled={busy} onClick={() => onMove(i.id, s)}
+                  className="rounded-lg border border-sand/60 bg-white px-2 py-1 text-[11px] text-charcoal/70 hover:border-copper/50 hover:text-charcoal disabled:opacity-40">
+                  {isAr ? STATUS_LABEL[s].ar : STATUS_LABEL[s].en}
+                </button>
+              ))}
+            </div>
+          </>
         ) : (
           <>
             <div className="mb-1.5 text-[11px] font-medium text-charcoal/50">
