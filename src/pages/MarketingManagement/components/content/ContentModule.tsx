@@ -492,6 +492,11 @@ export function ContentDetail({ id, isAr, onBack, onError, onToast, onChanged }:
               {st!.blockers.length} {isAr ? 'معوّق' : 'blocker(s)'}
             </span>
           )}
+          {(st?.waiting_on_predecessor ?? 0) > 0 && (
+            <span className="text-charcoal/50">
+              {st!.waiting_on_predecessor} {isAr ? 'بانتظار خطوة سابقة' : 'waiting on an earlier step'}
+            </span>
+          )}
         </div>
 
         <div className="mt-2 flex flex-wrap gap-1">
@@ -556,6 +561,13 @@ function OverviewTab({ d, isAr, types, onJump }: {
           </div>
           <div className="mt-0.5 text-[13px] font-medium text-charcoal">{st.next_action.title}</div>
         </div>
+      )}
+
+      {(st?.waiting_on_predecessor ?? 0) > 0 && (st?.blockers?.length ?? 0) === 0 && (
+        <p className="text-[11.5px] text-charcoal/55">
+          {isAr ? `${st!.waiting_on_predecessor} خطوة تنتظر ما قبلها — لا شيء عالق، فقط لم يحن دورها.`
+                : `${st!.waiting_on_predecessor} step(s) are queued behind an earlier one — nothing is stuck.`}
+        </p>
       )}
 
       {(st?.blockers?.length ?? 0) > 0 && (

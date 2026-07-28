@@ -15,8 +15,10 @@
 --   * re-parents its tasks and scenes onto that deliverable, preserving every
 --     column — no task is deleted, renumbered or re-titled
 --   * marks the legacy tasks with template_key='legacy_fixed_12' so they are
---     distinguishable from generated ones forever, and gives the ones that were
---     sitting at status='blocked' with no reason a REAL dependency
+--     distinguishable from generated ones forever, and gives the 22 rows sitting
+--     at status='blocked' a REAL dependency — they already carried the reason
+--     "waiting for the previous task", but named no task, so the claim was
+--     unfalsifiable and finishing a step could not unblock the next
 --   * copies the five fixed craft columns into mkt_content_roles
 --   * maps any existing content versions onto the deliverable and any
 --     final_asset_id into an asset link
@@ -143,9 +145,10 @@ BEGIN
            template_key = COALESCE(template_key, 'legacy_fixed_12')
      WHERE content_item_id = c.id AND deliverable_id IS NULL;
 
-    -- Those 24 rows are 'blocked' with neither a reason nor a dependency, which
-    -- is the state the fixed-12 generator left them in. Chain each to its
-    -- predecessor so "blocked" becomes a fact the UI can explain.
+    -- The fixed-12 generator left these rows blocked with the reason "waiting
+    -- for the previous task" and NO depends_on_task_id — so the sentence was
+    -- true but unfalsifiable, and completing a step could not unblock the next.
+    -- Chain each to its predecessor so the claim points at something.
     UPDATE public.mkt_content_tasks t
        SET depends_on_task_id = p.id
       FROM public.mkt_content_tasks p

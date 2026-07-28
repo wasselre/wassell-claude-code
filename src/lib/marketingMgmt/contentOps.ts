@@ -56,6 +56,10 @@ export interface ContentState {
   is_activatable: boolean;
   deliverables: number;
   tasks_done: number; tasks_total: number;
+  /** Steps queued behind an unfinished predecessor. Counted, not listed: a
+   *  dependency wait is the plan working, and eleven identical rows saying so
+   *  buried the one blocker that mattered. */
+  waiting_on_predecessor: number;
   /** null when there are no tasks — not 0%. */
   progress_pct: number | null;
   next_action: { id: string; title: string; task_type: string;

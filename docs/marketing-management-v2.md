@@ -693,7 +693,9 @@ carousel 8, a static post 6, a text post 5, and a raw asset 4 **with no publishi
 
 Non-destructive and self-validating: snapshots four tables, gives each brief one deliverable,
 re-parents its tasks and scenes, marks the legacy tasks `template_key='legacy_fixed_12'`, and chains
-the 24 rows that sat at `status='blocked'` with neither a reason nor a dependency to a real one. It
+the 22 rows that sat at `status='blocked'` to a real predecessor — they already carried the reason
+"waiting for the previous task", but named no task, so the claim was unfalsifiable and finishing a
+step could not unblock the next. It
 asserts afterwards that no item lacks a deliverable, no brief got two, no task or scene was orphaned
 and the task count did not fall. C-00008 and C-00011 both survive with their 12 tasks and their
 scenes.
