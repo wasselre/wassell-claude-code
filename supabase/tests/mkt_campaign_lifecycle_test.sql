@@ -14,7 +14,7 @@ DO $$
 DECLARE
   v_user uuid; v_sv uuid; v_plan uuid; v_goal uuid; v_other_plan uuid; v_other_goal uuid;
   v_org uuid; v_paid uuid; v_pc uuid; v_ag uuid;
-  v_c1 uuid; v_c2 uuid; v_c3 uuid;
+  v_c1 uuid; v_c2 uuid; v_c3 uuid; v_c4 uuid; v_c5 uuid;
   v_counts jsonb; v_prog jsonb; v_next jsonb; n int; v_code1 text; v_code2 text;
 BEGIN
   SELECT id INTO v_user FROM public.users LIMIT 1;
@@ -258,6 +258,44 @@ BEGIN
   IF v_prog->'outcome'->>'state' <> 'measured' OR (v_prog->'outcome'->>'done')::numeric <> 0 THEN
     RAISE EXCEPTION 'FAILED: a measured zero was not reported as measured: %', v_prog->'outcome'; END IF;
   RAISE NOTICE 'PASS: a measured zero is a result, not a missing reading';
+
+  -- ══ 8. Publication progress, once anything is actually approved ═══════════
+  -- Every fixture item so far sits at 'idea', so publication could only ever
+  -- report no_target — which proves the empty state and nothing else.
+  v_prog := public.mkt_campaign_progress(v_org);
+  IF v_prog->'publication'->>'state' <> 'no_target' THEN
+    RAISE EXCEPTION 'FAILED: nothing approved should read no_target: %', v_prog->'publication'; END IF;
+
+  -- THREE separate guards stand between 'idea' and 'approved': the activation
+  -- gate, the context gate, and the content status machine. All three are the
+  -- content module's own rules and are covered by its tests; what is under test
+  -- HERE is the campaign's counting arithmetic. So the two rows are INSERTED at
+  -- their target status rather than transitioned — which sidesteps the status
+  -- machine entirely — with the two context gates off for those inserts only.
+  -- DISABLE TRIGGER is transactional and the whole thing rolls back.
+  ALTER TABLE public.mkt_content_items DISABLE TRIGGER mkt_ci_zz_activation_gate;
+  ALTER TABLE public.mkt_content_items DISABLE TRIGGER mkt_ci_zz_context_gate;
+  INSERT INTO public.mkt_content_items (title, content_type, status, origin_campaign_id, campaign_id)
+  VALUES ('TEST معتمد', 'reel', 'approved', v_org, v_org) RETURNING id INTO v_c4;
+  INSERT INTO public.mkt_content_items (title, content_type, status, origin_campaign_id, campaign_id)
+  VALUES ('TEST منشور', 'static_image', 'published', v_org, v_org) RETURNING id INTO v_c5;
+  ALTER TABLE public.mkt_content_items ENABLE TRIGGER mkt_ci_zz_context_gate;
+  ALTER TABLE public.mkt_content_items ENABLE TRIGGER mkt_ci_zz_activation_gate;
+
+  v_counts := public.mkt_campaign_content_counts(v_org);
+  -- 'published' still counts as approved: publishing must not shrink the
+  -- denominator, or publication progress would move BACKWARDS as work ships.
+  IF (v_counts->>'approved_content_count')::int <> 2 THEN
+    RAISE EXCEPTION 'FAILED: a published item stopped counting as approved: %', v_counts; END IF;
+  IF (v_counts->>'published_content_count')::int <> 1 THEN
+    RAISE EXCEPTION 'FAILED: published count wrong: %', v_counts; END IF;
+
+  v_prog := public.mkt_campaign_progress(v_org);
+  IF v_prog->'publication'->>'state' <> 'measured'
+     OR (v_prog->'publication'->>'done')::int <> 1
+     OR (v_prog->'publication'->>'total')::int <> 2 THEN
+    RAISE EXCEPTION 'FAILED: publication progress wrong: %', v_prog->'publication'; END IF;
+  RAISE NOTICE 'PASS: publication reads 1 of 2 approved, and publishing does not shrink the denominator';
 
   RAISE NOTICE 'ALL CAMPAIGN LIFECYCLE TESTS PASSED';
 END $$;
