@@ -275,6 +275,17 @@ export function AssetDetail({ asset, isAr, onClose }: {
   const proc = PROC_LABEL[asset.processing_status ?? 'not_attempted'];
   const video = isVideo(asset.mime_type);
 
+  /** The stored "description" is `<kind>: ` + the first 240 chars of the OCR
+   *  and transcript joined. For a video with no OCR that is literally the
+   *  transcript's opening, so rendering both shows the same words twice. */
+  const summaryIsTranscriptPrefix = (() => {
+    const d = (asset.ai_description ?? '').trim();
+    const t = (asset.transcript ?? '').trim();
+    if (!d || !t) return false;
+    const body = d.replace(/^[a-z_]+(\s*\(\d+\s*frames?\))?:\s*/i, '');
+    return t.replace(/\s+/g, ' ').startsWith(body.slice(0, 60).replace(/\s+/g, ' '));
+  })();
+
   const download = async () => {
     if (!asset.file_id) return;
     setDownloading(true);
@@ -366,13 +377,19 @@ export function AssetDetail({ asset, isAr, onClose }: {
           </p>
         )}
 
-        <Found title={isAr ? 'وصف الذكاء الاصطناعي' : 'AI description'}
-          body={asset.ai_description} status={asset.processing_status} isAr={isAr} />
-        {video && (
-          <Found title={isAr ? 'التفريغ الصوتي' : 'Transcript'}
-            body={asset.transcript} status={asset.processing_status} isAr={isAr} />
+        {/* NOT called "AI description", whatever the column is named. The
+            worker builds this by concatenating the OCR and the transcript and
+            truncating to 240 characters — "built from what was READ, not
+            invented", in its own words. Labelling an excerpt as a model's
+            description would be the screen claiming an analysis nobody ran.
+            Suppressed entirely when it is just the transcript's opening, which
+            is what it is for a video with no OCR: the same text twice under two
+            different headings is worse than one heading. */}
+        {!summaryIsTranscriptPrefix && (
+          <Found title={isAr ? 'خلاصة ما قُرئ' : 'Extract of what was read'}
+            body={asset.ai_description} status={asset.processing_status} isAr={isAr} />
         )}
-        {!video && isAudio(asset.mime_type) && (
+        {(video || isAudio(asset.mime_type)) && (
           <Found title={isAr ? 'التفريغ الصوتي' : 'Transcript'}
             body={asset.transcript} status={asset.processing_status} isAr={isAr} />
         )}
