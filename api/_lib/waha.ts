@@ -27,7 +27,7 @@
  */
 
 import { makeServiceClient } from './serviceClient.js';
-import type { HaberchatDevice, HaberchatChat, HaberchatMessage } from './haberchat.js';
+import type { HaberchatDevice, HaberchatChat, HaberchatMessage } from './whatsappTypes.js';
 
 const OUTBOUND_BUCKET = 'wassel-files';
 const OUTBOUND_PREFIX = 'waha-outbound';
