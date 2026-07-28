@@ -130,7 +130,16 @@ export function CreateDrawer({
           // No code: the database issues it. A form that asked for one was
           // asking the user to invent an identifier.
           name_ar: (f.name_ar ?? "").trim(),
-          campaign_type: cls, campaign_class: cls, channel_mix: cls,
+          // campaign_class is the organic/paid operating structure.
+          // campaign_type is a DIFFERENT question — what the campaign is FOR (a
+          // launch, an offer, retargeting) — and this form does not ask it, so
+          // it is not sent. Writing the class into it was wrong on its own
+          // terms, and since the campaign-lifecycle migration the CHECK
+          // constraint refuses 'organic'/'paid' there, which made every create
+          // from this drawer fail with 23514. channel_mix is derived from the
+          // class by trigger; sending it too would be a second place for the
+          // same fact to go stale.
+          campaign_class: cls,
           status: 'draft',
           plan_id: f.plan_id, primary_goal_id: f.primary_goal_id,
           initiative_id: f.initiative_id || null, program_id: f.program_id || null,

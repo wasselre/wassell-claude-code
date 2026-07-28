@@ -402,6 +402,13 @@ const DB_MESSAGES: Record<string, Msg> = {
     ar: 'نوع الحملة يجب أن يكون عضوية أو مدفوعة.',
     en: 'A campaign type must be organic or paid.',
   },
+  // campaign_type is the campaign's PURPOSE (a launch, an offer, retargeting).
+  // It stopped accepting 'organic'/'paid' when those moved to campaign_class,
+  // so a caller still sending them there gets a sentence rather than a 23514.
+  mkt_internal_campaigns_campaign_type_check: {
+    ar: 'غرض الحملة غير صالح. «عضوية» و«مدفوعة» تُحدَّد في نوع الحملة، لا في غرضها.',
+    en: 'That campaign purpose is not valid. Organic and paid belong to the campaign type, not its purpose.',
+  },
   mkt_plan_active_needs_strategy: {
     ar: 'لا يمكن اعتماد الخطة أو تفعيلها قبل ربطها بنسخة استراتيجية معتمدة.',
     en: 'A plan cannot be approved or activated until it is bound to an approved strategy version.',
