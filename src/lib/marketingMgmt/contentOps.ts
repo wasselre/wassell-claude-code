@@ -318,6 +318,45 @@ export const bulkSchedule = (ids: string[], start_at: string, interval_mins = 14
   call<{ result: BulkScheduleResult }>('deliverable_bulk_schedule',
     { ids, start_at, interval_mins });
 
+// ── saved views ────────────────────────────────────────────────────────────
+/** The board's filter set, stored as jsonb so adding a filter later does not
+ *  need a migration and does not silently drop what older views were saved
+ *  with. Unknown keys are ignored on read and preserved on write. */
+export interface BoardFilters {
+  q?: string;
+  owner?: string;
+  platform?: string;
+  onlyBlocked?: boolean;
+  [k: string]: unknown;
+}
+
+export interface SavedView {
+  id: string; name: string;
+  /** The author. A shared view is still theirs — everyone sees it, only they
+   *  can change it. */
+  owner_user_id: string;
+  is_shared: boolean;
+  /** The AUTHOR's default. Adopting someone else's view as your own default
+   *  would need a per-user preference row, which does not exist yet. */
+  is_default: boolean;
+  filters: BoardFilters;
+  view_mode: 'pipeline' | 'table' | 'calendar';
+  sort_order: number;
+  created_at: string; updated_at: string;
+}
+
+export const fetchSavedViews = () =>
+  call<{ views: SavedView[] }>('saved_view_list');
+
+/** Save-or-update by NAME: pressing save on a name you already used updates
+ *  that view rather than failing on a unique violation. */
+export const saveView = (patch: {
+  name: string; filters: BoardFilters;
+  view_mode?: string; is_shared?: boolean; is_default?: boolean;
+}) => call<{ view: SavedView }>('saved_view_save', { patch });
+
+export const deleteView = (id: string) => call<{ ok: boolean }>('saved_view_delete', { id });
+
 export const linkAsset = (asset_id: string, target_id: string,
                           target_type = 'deliverable', role?: string) =>
   call<{ link: AssetLink }>('content_asset_link', { asset_id, target_id, target_type, patch: { role } });

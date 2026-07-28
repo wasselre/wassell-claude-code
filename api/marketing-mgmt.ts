@@ -2155,6 +2155,43 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ result: data });
       }
 
+      case 'saved_view_list': {
+        // Own views plus anything shared. RLS decides which is which; the
+        // endpoint does not filter again, because two places deciding
+        // visibility is how they end up disagreeing.
+        const { data, error } = await sb.from('mkt_content_saved_views')
+          .select('*').order('sort_order').order('name');
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ views: data ?? [] });
+      }
+
+      case 'saved_view_save': {
+        // Save-or-update by name in one call. Read-then-write from the client
+        // is a race, and a unique violation is not a sensible thing to show
+        // someone who pressed Save on a name they had used before.
+        const p = body.patch ?? {};
+        const { data, error } = await sb.rpc('mkt_content_save_view', {
+          p_name: str(p.name as string | undefined) ?? '',
+          p_filters: (p.filters && typeof p.filters === 'object' && !Array.isArray(p.filters))
+            ? p.filters : {},
+          p_view_mode: str(p.view_mode as string | undefined) ?? 'pipeline',
+          p_is_shared: p.is_shared === true,
+          p_is_default: p.is_default === true,
+        });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ view: data });
+      }
+
+      case 'saved_view_delete': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        // No ownership check here: the RLS delete policy is owner-only, so a
+        // request for someone else's view deletes nothing. Re-checking in the
+        // endpoint would be a second opinion that can drift from the first.
+        const { error } = await sb.from('mkt_content_saved_views').delete().eq('id', id);
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ ok: true });
+      }
+
       case 'content_asset_unlink': {
         const assetId = str(body.asset_id);
         const targetId = str(body.target_id ?? body.deliverable_id);

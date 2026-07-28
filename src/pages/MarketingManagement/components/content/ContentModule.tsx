@@ -29,6 +29,7 @@ import { lbl } from '@/lib/marketingMgmt/labels';
 import {
   fetchContentBoard, fetchContentDetail, saveBrief, saveDeliverable,
   fetchSocialAccounts, type SocialAccount,
+  fetchSavedViews, saveView, deleteView,
   generateDeliverableTasks, fetchArtifactTypes, saveArtifact, decideArtifact,
   saveContentTask, savePublication, markPublished, recordResult,
   bulkAssign, bulkSchedule, duplicateContent,
@@ -37,6 +38,7 @@ import {
   BRIEF_MISSING_LABEL, blockerLabel,
   type ContentBrief, type ContentOpsDetail, type Deliverable, type Artifact,
   type ArtifactType, type ContentTask, type VideoScene,
+  type SavedView, type BoardFilters,
 } from '@/lib/marketingMgmt/contentOps';
 
 const FIELD = 'w-full rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] '
@@ -137,6 +139,12 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [types, setTypes] = useState<ArtifactType[]>([]);
+  const [views, setViews] = useState<SavedView[]>([]);
+  const [activeView, setActiveView] = useState<string | null>(null);
+  const [savingView, setSavingView] = useState(false);
+  const [viewName, setViewName] = useState('');
+  const [viewShared, setViewShared] = useState(false);
+  const [viewDefault, setViewDefault] = useState(false);
   const [sheet, setSheet] = useState<'assign' | 'schedule' | 'duplicate' | null>(null);
   /** Kept on screen rather than toasted: a bulk run reports per-row outcomes,
    *  and a toast that vanishes cannot show which rows are still blocked. */
@@ -150,6 +158,41 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
   }, [onError]);
   useEffect(() => { load(true); }, [load]);
   useEffect(() => { fetchArtifactTypes().then((r) => setTypes(r.types)).catch(() => {}); }, []);
+
+  /** Load the saved views once and apply the author's default, if they have
+   *  one. Applying it here rather than in the filter state's initialiser means
+   *  the board renders unfiltered first and then narrows, which is honest about
+   *  what is happening — a board that silently opens filtered looks empty. */
+  useEffect(() => {
+    let cancelled = false;
+    fetchSavedViews().then((r) => {
+      if (cancelled) return;
+      setViews(r.views);
+      const def = r.views.find((v) => v.is_default);
+      if (def) applyView(def);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+    // applyView is stable enough for a one-shot load; re-running on it would
+    // re-apply the default every time a view is saved.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const currentFilters = (): BoardFilters => ({
+    q: q || undefined, owner: owner || undefined,
+    platform: platform || undefined, onlyBlocked: onlyBlocked || undefined,
+  });
+
+  function applyView(v: SavedView) {
+    const f = v.filters ?? {};
+    setQ(typeof f.q === 'string' ? f.q : '');
+    setOwner(typeof f.owner === 'string' ? f.owner : '');
+    setPlatform(typeof f.platform === 'string' ? f.platform : '');
+    setOnlyBlocked(f.onlyBlocked === true);
+    if (v.view_mode === 'pipeline' || v.view_mode === 'table' || v.view_mode === 'calendar') {
+      setView(v.view_mode);
+    }
+    setActiveView(v.id);
+  }
 
   const ownerName = (id: string | null) => {
     if (!id) return null;
@@ -280,24 +323,57 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
           </div>
         )}
 
+        <SavedViewBar
+          views={views} activeView={activeView} isAr={isAr}
+          hasFilters={Boolean(q || owner || platform || onlyBlocked)}
+          onApply={applyView}
+          onClearFilters={() => { setQ(''); setOwner(''); setPlatform('');
+                                  setOnlyBlocked(false); setActiveView(null); }}
+          saving={savingView} setSaving={setSavingView}
+          name={viewName} setName={setViewName}
+          shared={viewShared} setShared={setViewShared}
+          isDefault={viewDefault} setIsDefault={setViewDefault}
+          onSave={async () => {
+            try {
+              const r = await saveView({
+                name: viewName.trim(), filters: currentFilters(),
+                view_mode: view, is_shared: viewShared, is_default: viewDefault,
+              });
+              const list = await fetchSavedViews();
+              setViews(list.views); setActiveView(r.view.id);
+              setSavingView(false); setViewName(''); setViewShared(false); setViewDefault(false);
+              onToast(isAr ? 'حُفظ العرض' : 'View saved');
+            } catch (e) { onError(err(e)); }
+          }}
+          onDelete={async (id) => {
+            try {
+              await deleteView(id);
+              const list = await fetchSavedViews();
+              setViews(list.views);
+              if (activeView === id) setActiveView(null);
+              onToast(isAr ? 'حُذف العرض' : 'View deleted');
+            } catch (e) { onError(err(e)); }
+          }} />
+
         <div className="mb-3 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[190px] flex-1">
             <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-charcoal/35 start-3" />
-            <input type="search" value={q} onChange={(e) => setQ(e.target.value)}
+            <input type="search" value={q} onChange={(e) => { setQ(e.target.value); setActiveView(null); }}
               placeholder={isAr ? 'بحث بالعنوان أو الرقم…' : 'Search by title or ID…'}
               className="w-full rounded-xl border border-sand/60 bg-white py-2 text-[12.5px] focus:border-copper focus:outline-none ps-9 pe-3" />
           </div>
-          <select value={owner} onChange={(e) => setOwner(e.target.value)} className={`${FIELD} w-auto`}>
+          <select value={owner} onChange={(e) => { setOwner(e.target.value); setActiveView(null); }} className={`${FIELD} w-auto`}>
             <option value="">{isAr ? 'كل المسؤولين' : 'All owners'}</option>
             {users.map((u) => <option key={u.id} value={u.id}>{(isAr ? u.name_ar : u.name_en) || u.name_en}</option>)}
           </select>
-          <select value={platform} onChange={(e) => setPlatform(e.target.value)} className={`${FIELD} w-auto`}>
+          <select value={platform} onChange={(e) => { setPlatform(e.target.value); setActiveView(null); }} className={`${FIELD} w-auto`}>
             <option value="">{isAr ? 'كل المنصات' : 'All platforms'}</option>
             {Object.keys(PLATFORM_LABEL).map((p) => (
               <option key={p} value={p}>{lbl(PLATFORM_LABEL, p, isAr)}</option>))}
           </select>
           <label className="inline-flex items-center gap-1.5 text-[11.5px] text-charcoal/70">
-            <input type="checkbox" checked={onlyBlocked} onChange={(e) => setOnlyBlocked(e.target.checked)} />
+            <input type="checkbox" checked={onlyBlocked}
+              onChange={(e) => { setOnlyBlocked(e.target.checked); setActiveView(null); }} />
             {isAr ? 'غير المكتمل فقط' : 'Incomplete only'}
           </label>
           <span className="text-[11.5px] tabular-nums text-charcoal/50">{filtered.length}/{rows.length}</span>
@@ -386,6 +462,122 @@ export function ContentBoard({ isAr, onOpen, onError, onToast }: {
           <CalendarView rows={filtered} isAr={isAr} onOpen={onOpen} />
         )}
       </Section>
+    </div>
+  );
+}
+
+/**
+ * Saved views.
+ *
+ * A saved view is a name for a slice someone actually works from — "my reels
+ * awaiting a caption", "everything blocked this week". It stores the filters,
+ * the layout, and nothing else.
+ *
+ * Two things the UI is careful about:
+ *
+ *  * The active chip DESELECTS the moment any filter is touched. A chip that
+ *    stays lit while the filters have moved on tells the reader they are
+ *    looking at the saved view when they are not.
+ *  * Save is save-or-update BY NAME, so re-saving a name you already used is
+ *    an update, not a unique-violation error. The name box is pre-filled with
+ *    the active view's name for exactly that reason.
+ */
+function SavedViewBar({
+  views, activeView, isAr, hasFilters, onApply, onClearFilters,
+  saving, setSaving, name, setName, shared, setShared, isDefault, setIsDefault,
+  onSave, onDelete,
+}: {
+  views: SavedView[]; activeView: string | null; isAr: boolean; hasFilters: boolean;
+  onApply: (v: SavedView) => void; onClearFilters: () => void;
+  saving: boolean; setSaving: (b: boolean) => void;
+  name: string; setName: (s: string) => void;
+  shared: boolean; setShared: (b: boolean) => void;
+  isDefault: boolean; setIsDefault: (b: boolean) => void;
+  onSave: () => void; onDelete: (id: string) => void;
+}) {
+  const users = useAppStore((s) => s.users);
+  const meId = useAppStore((s) => s.currentUserId);
+  /** Falls open when the id is unknown rather than hiding the delete control on
+   *  views the user does own — RLS refuses a delete they are not entitled to. */
+  const mine = (v: SavedView) => !meId || v.owner_user_id === meId;
+  const authorName = (id: string) => {
+    const u = users.find((x) => x.id === id);
+    return u ? ((isAr ? u.name_ar : u.name_en) || u.name_en) : '—';
+  };
+
+  if (views.length === 0 && !hasFilters && !saving) return null;
+
+  return (
+    <div className="mb-2.5 flex flex-wrap items-center gap-1.5">
+      {views.map((v) => (
+        <span key={v.id}
+          className={`group inline-flex items-center gap-1 rounded-full border ps-2.5 pe-1 py-0.5 text-[11.5px] ${
+            activeView === v.id
+              ? 'border-copper bg-copper text-white'
+              : 'border-sand/60 bg-white text-charcoal/70 hover:border-copper/50'}`}>
+          <button type="button" onClick={() => onApply(v)} className="inline-flex items-center gap-1">
+            {v.name}
+            {v.is_default && (
+              <span title={isAr ? 'العرض الافتراضي' : 'your default view'} className="opacity-70">★</span>)}
+            {/* A shared view says whose it is, because you cannot edit it. */}
+            {v.is_shared && !mine(v) && (
+              <span className="opacity-60">· {authorName(v.owner_user_id)}</span>)}
+          </button>
+          {mine(v) && (
+            <button type="button"
+              onClick={() => { if (window.confirm(isAr ? `حذف العرض «${v.name}»؟` : `Delete the view “${v.name}”?`)) onDelete(v.id); }}
+              aria-label={isAr ? `حذف ${v.name}` : `Delete ${v.name}`}
+              className={`rounded-full px-1 opacity-0 transition group-hover:opacity-100 ${
+                activeView === v.id ? 'hover:bg-white/20' : 'hover:bg-sand/40'}`}>
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+
+      {hasFilters && (
+        <button type="button" onClick={onClearFilters}
+          className="rounded-full border border-dashed border-sand/70 px-2.5 py-0.5 text-[11px] text-charcoal/55 hover:border-copper/50">
+          {isAr ? 'مسح المرشّحات' : 'Clear filters'}
+        </button>
+      )}
+
+      {saving ? (
+        <span className="inline-flex flex-wrap items-center gap-1.5 rounded-xl border border-copper/40 bg-copper/5 px-2 py-1.5">
+          <input value={name} onChange={(e) => setName(e.target.value)} autoFocus
+            onKeyDown={(e) => { if (e.key === 'Enter' && name.trim()) onSave();
+                                if (e.key === 'Escape') setSaving(false); }}
+            placeholder={isAr ? 'اسم العرض' : 'View name'}
+            className="w-40 rounded-lg border border-sand/60 bg-white px-2 py-1 text-[11.5px] focus:border-copper focus:outline-none" />
+          <label className="inline-flex items-center gap-1 text-[11px] text-charcoal/70">
+            <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />
+            {isAr ? 'للفريق' : 'share'}
+          </label>
+          <label className="inline-flex items-center gap-1 text-[11px] text-charcoal/70">
+            <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
+            {isAr ? 'افتراضي' : 'default'}
+          </label>
+          <Button onClick={onSave} disabled={!name.trim()}>{isAr ? 'حفظ' : 'Save'}</Button>
+          <button type="button" onClick={() => setSaving(false)}
+            className="text-[11px] text-charcoal/50 hover:underline">
+            {isAr ? 'إلغاء' : 'Cancel'}
+          </button>
+        </span>
+      ) : hasFilters ? (
+        <button type="button"
+          onClick={() => {
+            // Pre-fill with the active view's name so re-saving updates it
+            // rather than quietly creating a near-duplicate.
+            const active = views.find((v) => v.id === activeView);
+            setName(active && mine(active) ? active.name : '');
+            setShared(active?.is_shared ?? false);
+            setIsDefault(active?.is_default ?? false);
+            setSaving(true);
+          }}
+          className="rounded-full border border-copper/50 px-2.5 py-0.5 text-[11px] font-medium text-copper hover:bg-copper/10">
+          {isAr ? '+ احفظ هذا العرض' : '+ Save this view'}
+        </button>
+      ) : null}
     </div>
   );
 }

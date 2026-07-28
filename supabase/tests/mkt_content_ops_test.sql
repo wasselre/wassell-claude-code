@@ -27,7 +27,7 @@ DECLARE
   v_acc_ig uuid; v_acc_tt uuid;
   v_art uuid; v_art2 uuid; v_cap uuid; v_media uuid; v_asset uuid; v_file uuid;
   v_pub_ig uuid; m text[]; j jsonb;
-  v_copy uuid; v_dels uuid[]; v_when timestamptz; n int;
+  v_copy uuid; v_dels uuid[]; v_when timestamptz; n int; v_view uuid;
 BEGIN
   SELECT id INTO v_user FROM public.users LIMIT 1;
   SELECT id INTO v_org FROM public.mkt_organizations LIMIT 1;
@@ -309,6 +309,54 @@ BEGIN
     RAISE EXCEPTION 'FAILED S3: blockers not reported per deliverable: %', j;
   END IF;
   RAISE NOTICE 'PASS S3: bulk scheduling reported what still cannot publish, per deliverable';
+
+  -- ══ T. Saved views ════════════════════════════════════════════════════════
+  -- The name is the identity from the user's point of view, so re-saving a name
+  -- must update rather than collide.
+  INSERT INTO public.mkt_content_saved_views (name, owner_user_id, filters, view_mode)
+  VALUES ('TEST ريلزاتي', v_user, '{"platform":"instagram","onlyBlocked":true}'::jsonb, 'table')
+  RETURNING id INTO v_view;
+  BEGIN
+    INSERT INTO public.mkt_content_saved_views (name, owner_user_id)
+    VALUES ('  test ريلزاتي  ', v_user);
+    RAISE EXCEPTION 'FAILED T: a duplicate name differing only by case/space was accepted';
+  EXCEPTION WHEN unique_violation THEN
+    RAISE NOTICE 'PASS T: one view per name per person, trimmed and case-insensitive';
+  END;
+
+  -- Setting a new default retires the old one instead of raising a constraint
+  -- error at somebody doing something completely ordinary.
+  UPDATE public.mkt_content_saved_views SET is_default = true WHERE id = v_view;
+  INSERT INTO public.mkt_content_saved_views (name, owner_user_id, is_default)
+  VALUES ('TEST المحجوب', v_user, true);
+  SELECT count(*) INTO n FROM public.mkt_content_saved_views
+   WHERE owner_user_id = v_user AND is_default;
+  IF n <> 1 THEN RAISE EXCEPTION 'FAILED T2: % defaults for one person', n; END IF;
+  IF (SELECT is_default FROM public.mkt_content_saved_views WHERE id = v_view) THEN
+    RAISE EXCEPTION 'FAILED T2: the previous default was not cleared';
+  END IF;
+  RAISE NOTICE 'PASS T2: exactly one default per person, swapped silently';
+
+  -- filters is jsonb precisely so a view saved by a newer client is not
+  -- truncated by an older one.
+  UPDATE public.mkt_content_saved_views
+     SET filters = filters || '{"a_filter_that_does_not_exist_yet":"kept"}'::jsonb
+   WHERE id = v_view;
+  IF (SELECT filters->>'a_filter_that_does_not_exist_yet'
+        FROM public.mkt_content_saved_views WHERE id = v_view) <> 'kept'
+     OR (SELECT filters->>'platform'
+        FROM public.mkt_content_saved_views WHERE id = v_view) <> 'instagram' THEN
+    RAISE EXCEPTION 'FAILED T3: filters did not round-trip intact';
+  END IF;
+  RAISE NOTICE 'PASS T3: unknown filter keys survive a round trip';
+
+  BEGIN
+    INSERT INTO public.mkt_content_saved_views (name, owner_user_id, filters)
+    VALUES ('TEST bad', v_user, '["not","an","object"]'::jsonb);
+    RAISE EXCEPTION 'FAILED T4: a non-object filters payload was accepted';
+  EXCEPTION WHEN check_violation THEN
+    RAISE NOTICE 'PASS T4: filters must be a json object';
+  END;
 
   RAISE NOTICE 'ALL CONTENT-OPS TESTS PASSED';
 END $$;
