@@ -2,6 +2,7 @@
 // Separate from src/lib/marketing/client.ts, which serves external competitor
 // intelligence (ذكاء التسويق). Same bearer-attached, one-wrapper-per-action shape.
 import { supabase } from '@/lib/supabase';
+import { useAppStore } from '@/stores/appStore';
 
 async function authHeader(): Promise<Record<string, string>> {
   if (!supabase) return {};
@@ -19,11 +20,19 @@ export async function call<T>(action: string, payload: Record<string, unknown> =
     body: JSON.stringify({ action, ...payload }),
   });
   if (!res.ok) {
-    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    const b = (await res.json().catch(() => ({}))) as { error?: string; error_ar?: string };
     // 403 = the DB refused on capability, 409 = a rule rejected it (invalid
     // status jump, locked version, unfinished dependency). Both are meaningful
     // to the user, so surface the server's own words rather than a generic.
-    throw new Error(b?.error ?? `marketing-mgmt ${action} failed (${res.status})`);
+    //
+    // The endpoint translates database rejections into a sentence in BOTH
+    // languages — a raw Postgres message names internal tables and tells the
+    // reader nothing to do. Pick the side that matches the interface. Reading
+    // the store rather than taking a parameter keeps every existing call site
+    // unchanged; `getState` is a plain read, so this is not a subscription.
+    const isAr = useAppStore.getState().language === 'ar';
+    const msg = (isAr ? b?.error_ar || b?.error : b?.error);
+    throw new Error(msg ?? `marketing-mgmt ${action} failed (${res.status})`);
   }
   return (await res.json()) as T;
 }
@@ -82,11 +91,36 @@ export interface ContentItem {
   mkt_content_platforms?: Array<{ platform: string }>;
 }
 export interface Campaign {
-  id: string; code: string; name_ar: string; name_en: string | null;
+  id: string;
+  /** Issued by the database from a sequence. Never typed, never editable. */
+  code: string;
+  name_ar: string; name_en: string | null;
   campaign_type: string; status: string; channel_mix: string; priority: string;
   start_date: string | null; end_date: string | null; owner_user_id: string | null;
   objective: string | null; target_leads: number | null; target_revenue: number | null;
   budget: number | null; created_at: string;
+  /** organic | paid, or null on a legacy row nobody has classified yet. NULL
+   *  means "we were never told", which is a different statement from
+   *  needs_classification — see that field. */
+  campaign_class?: 'organic' | 'paid' | null;
+  /** Derived by trigger: this record has no plan or no primary goal. It says
+   *  nothing about whether the campaign is organic or paid. */
+  needs_classification?: boolean;
+  plan_id?: string | null; initiative_id?: string | null; program_id?: string | null;
+  primary_goal_id?: string | null;
+  funnel_stage?: string | null;
+  target_audience?: string | null; main_message?: string | null; offer?: string | null;
+  cta?: string | null; landing_url?: string | null; positioning?: string | null;
+  hooks?: string[]; content_pillars?: string[];
+  deliverables?: unknown[]; actual_results?: Record<string, unknown>;
+  lessons?: string | null; decision?: string | null;
+  target_sales?: number | null; target_appointments?: number | null;
+  target_cpl?: number | null; target_cpa?: number | null; target_roas?: number | null;
+  // 2026-08-26 operational fields
+  budget_kind?: 'daily' | 'lifetime' | null;
+  conversion_objective?: string | null; tracking_template?: string | null;
+  locations?: unknown[]; property_types?: unknown[];
+  period_override_reason?: string | null; period_override_at?: string | null;
   mkt_internal_campaign_projects?: Array<{ project_id: string }>;
   mkt_content_items?: Array<{ id: string; status: string }>;
 }

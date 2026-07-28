@@ -1,7 +1,10 @@
 # Marketing Management v2 — architecture decision record
 
-**Status:** design approved for implementation; database migrations written, **not yet applied**.
-**Date:** 2026-07-28
+**Status:** implemented and applied to production. Plan↔strategy binding and the three-class goal
+model landed 2026-08-25 (`2026-08-25_01`, `_02`, `_03`); verified by
+`supabase/tests/mkt_plan_strategy_goal_test.sql` — 24 checks, run against production inside a
+transaction that rolled back.
+**Date:** 2026-07-28, last revised 2026-08-25
 **Scope:** `/marketing-management` (إدارة التسويق). Does not touch `/marketing-intelligence` (ذكاء التسويق).
 
 ---
@@ -220,15 +223,61 @@ lives as JSONB in `records` and no FK is possible. This is pre-existing and docu
 
 ### 4.3 Goals: three kinds, never conflated
 
+The column is **`goal_class`** (renamed from `goal_category` on 2026-08-25, when the old name was
+freed up for an optional *theme*: acquisition, conversion, brand, …). The class is what kind of
+thing the goal **is**; the theme is what it is **about**.
+
 ```
-goal_category = 'outcome' → 300 qualified organic leads / month
-goal_category = 'kpi'     → 500,000 qualified impressions / month
-goal_category = 'output'  → one original analytics report / week
+goal_class = 'outcome'           → 300 qualified organic leads / month   هدف نتيجة
+goal_class = 'kpi'               → 12% lead→appointment conversion       مؤشر أداء
+goal_class = 'output_commitment' → 48 published videos this year         التزام تنفيذي
 ```
+
+Each renders differently, because each is judged differently — an outcome by result against target,
+a KPI by its current reading and direction, a commitment by done-vs-required. One shared
+target/actual/forecast card for all three is what made every goal look alike.
+
+**A goal is not just a number.** `metric` and `unit` are separate columns and both are required to
+activate, so a target of `900` cannot stand alone — 900 *of what* has to be answerable.
+`aggregation_method` says how readings combine, and `source_of_truth` is a **key from a fixed list**,
+not prose (existing free text was moved to `source_of_truth_note` and left visible).
+
+**A missing baseline is not zero.** `baseline_state` ∈ known | unknown | not_applicable is required;
+`known` additionally requires a number (`mkt_goal_baseline_known_has_value`). Nothing converts an
+absent baseline into 0.
+
+**Actuals are evidence, not entry.** `mkt_goal_measurements` is append-only (UPDATE and DELETE both
+raise); `mkt_goal_actual()` combines the readings by the goal's aggregation method, and a trigger
+refreshes the cached `mkt_goals.actual_value`. `actual_value` is deliberately **absent** from the
+API's `GOAL_EDITABLE` list, so the only way the number moves is by recording a reading. With no
+readings the answer is `{value: null, is_measured: false}` — unmeasured, not zero.
 
 `mkt_goal_target_periods` holds an explicit row per period. Seasonality is the default, not an
 exception: an annual goal of 3,600 may be allocated 200 in January and 450 in December. Nothing in
 the schema or the API divides a target by twelve.
+
+**Allocation validation follows the metric.** `mkt_goal_allocation_status()` only requires periods to
+sum to the target when `aggregation_method = 'sum'`. For a rate, percentage or "latest reading"
+metric, `difference` and `consistent` come back **null** with a note — demanding that monthly
+conversion rates add up to an annual conversion rate is the classic spreadsheet error, and the
+function refuses to make it.
+
+### 4.3.1 A plan is bound to an exact strategy version
+
+`mkt_plans.strategy_version_id` points at one immutable version, and **a plan never follows the
+strategy forward on its own**. Approving a newer version leaves every existing plan where it is.
+
+- `mkt_tg_plan_needs_approved_strategy` refuses `approved`/`active` unless the bound version is
+  itself `approved`. `mkt_plan_missing_requirements()` names the same blockers the trigger raises,
+  so the screen and the database can never disagree about why a button is disabled.
+- Moving a plan is an explicit act: `mkt_plan_rebase_strategy(plan, version, reason)`, surfaced as a
+  confirmation showing current vs proposed. There is no automatic migration path.
+- Every change appends to `mkt_plan_strategy_links` (from, to, plan status at the time, reason, who,
+  when). The table is append-only — UPDATE and DELETE raise. `changed_at` defaults to
+  `clock_timestamp()`, not `now()`, so entries written in one transaction are still strictly ordered.
+
+Legacy plans with no strategy were **flagged** (`needs_classification = true`), never given an
+invented binding.
 
 ### 4.4 Origin versus usage
 
@@ -249,7 +298,7 @@ origin_kind stays 'program'.
 |---|---|
 | Strategy version | draft → in_review → approved → superseded / archived |
 | Plan | draft → in_review → approved → active → completed / cancelled / archived |
-| Goal | draft → active → achieved / missed / abandoned; result on_track \| at_risk \| off_track |
+| Goal | draft → active → achieved / missed / abandoned; result on_track \| at_risk \| off_track. `active` is gated on a complete definition (`mkt_goal_missing_requirements` empty) |
 | Initiative | proposed → active → paused / completed / cancelled; decision continue\|change\|scale\|pause\|stop |
 | Program | draft → active → paused → retired / archived (no end date required) |
 | Campaign | existing states preserved unchanged |
@@ -386,3 +435,94 @@ named as a migration holding record, and is never presented as an approved Wasse
 - No change to `/marketing-intelligence` data or behaviour.
 - No new top-level route: `/marketing-management` is preserved.
 - No AI generation of strategy, plans or goals.
+
+## Part 13 — Portfolio rebuild (2026-08-26)
+
+### The bug that started it
+
+Creating a campaign from Portfolio → `غير مصنّفة` → `جديد` failed with a raw Postgres message:
+
+```
+null value in column "code" of relation "mkt_internal_campaigns" violates not-null constraint
+```
+
+Three separate faults produced it:
+
+1. `PortfolioCreateForm` rendered for **every** tab, and its submit treated any kind other than
+   `initiatives`/`programs` as a campaign — including `unclassified`.
+2. The code input only rendered for the organic and paid tabs, so the unclassified path posted a
+   campaign with no `code`. `code` is `NOT NULL` with no default.
+3. `rlsAware` had no `23502` branch, so PostgREST's own sentence reached the screen.
+
+None of these is fixed by adding a code box. `Unclassified` is a **state legacy rows are in**, not a
+creatable type; and an identifier the user has to invent is a defect in the schema.
+
+### What changed
+
+**Identity.** `mkt_campaign_code_seq` + `mkt_next_campaign_code()` issue `CMP-nnnn`. It is the column
+DEFAULT *and* a `BEFORE INSERT` refill (PostgREST sends explicit nulls, which skip a DEFAULT).
+`nextval` is atomic and does not roll back, so two concurrent creates cannot collide — no `MAX + 1`,
+no browser-side counter. `code` was removed from `CAMPAIGN_EDITABLE`: a code a caller can set is a
+code a caller can change. Existing hand-typed codes (`k`, `z`, `مينا 52`) are untouched; the sequence
+starts above any existing `CMP-nnnn`.
+
+**Two incompleteness states, permanently separated.**
+
+| Condition | Means | Arabic |
+|---|---|---|
+| `campaign_class IS NULL` | nobody ever said organic or paid | `النوع غير محدد` |
+| `needs_classification = true` | no plan or no primary goal | `السياق الاستراتيجي ناقص` |
+
+An explicitly organic campaign with no goal is the second, and used to be labelled as the first.
+`needs_classification` stopped being a one-time backfill flag and is now DERIVED by trigger on all
+three portfolio tables, so it cannot drift.
+
+**Integrity added.** A campaign's primary goal must belong to its own plan (initiatives and programs
+already enforced this; campaigns had the gap). A new campaign must declare organic or paid. Dates
+outside the plan period now need a RECORDED override (`period_override_reason` + who + when) instead
+of a flat refusal real launches could not express. `mkt_camp_active_complete` gates activation on
+plan + goal + owner + class + both dates. Deleting a record that carries content, ads, publications,
+measurements or attribution is refused with a reason — archive is the supported path.
+
+**Programs.** The recurring commitment is four explicit fields — `commitment_count` of `output_type`
+every `every_n_periods` `commitment_unit` — so "3 project videos every week" is data the UI composes a
+sentence from. Positive-value CHECKs on both counts. Still no end date.
+
+**Errors.** `dbError()` maps `MKT:<token>` (raised by our own triggers/RPCs) and named constraints to
+bilingual, actionable sentences, plus generics for `23502 / 23505 / 23503 / 23514 / 42501`. The
+original error is always `console.error`-logged with code, details and hint. **No PostgREST text,
+table name or constraint name reaches a user.** The client picks the Arabic or English side from the
+interface language.
+
+**Interface.** Three primary views replace the five filter tabs:
+`خريطة المحفظة` (plan → goal → initiative → programs/campaigns, with goal-direct work shown in place,
+and an "outside the hierarchy" group so unattached records stay visible), `القائمة`, and
+`بحاجة للاستكمال` with a filter per missing thing. One `إنشاء` menu offers exactly four types;
+Unclassified is not among them. All three record types open a drawer that edits, transitions, archives,
+shows related records, results, review decisions, and the completion checklist the database enforces.
+
+**One campaign system.** `CampaignsTab` lost its own create form (which asked for a code and never
+asked for a plan, a goal or a type — the second creation path that filled the portfolio with
+unattached campaigns). Both screens now read the same `portfolio_map` payload, render the same
+`CampaignCard`, and edit through the same `RecordDrawer` and the same API actions. Portfolio =
+strategic hierarchy and portfolio health; Campaigns = execution detail.
+
+### Files
+
+| File | Role |
+|---|---|
+| `supabase/migrations/2026-08-26_01_mkt_portfolio_integrity.sql` | sequence, triggers, CHECKs, delete guards, missing-requirements fns, `mkt_campaign_classify` |
+| `supabase/migrations/2026-08-26_02_mkt_portfolio_fields.sql` | `budget_kind`, `conversion_objective`, `tracking_template`, `locations`, `property_types` |
+| `supabase/tests/mkt_portfolio_test.sql` | 23 assertions; each fails against the pre-2026-08-26 schema |
+| `scripts/check-mkt-portfolio-embeds.mjs` | runs every PostgREST select/RPC the endpoint sends against the live DB |
+| `api/marketing-mgmt.ts` | `dbError`, `requirePortfolioContext`, `portfolio_map`, `portfolio_detail`, `campaign_classify`, `portfolio_secondary_goals_set`, `campaign_projects_set`, `portfolio_missing_requirements` |
+| `src/pages/MarketingManagement/components/portfolio/` | `PortfolioView`, `CreateDrawer`, `RecordDrawer`, `cards`, `shared` |
+
+### Known limitation found while doing this
+
+`campaign_list` and `campaign_detail` embedded `mkt_content_items(id,status)` on
+`mkt_internal_campaigns`. Since `origin_campaign_id` was added in `2026-08-22_03`, there are TWO
+foreign keys between those tables and PostgREST rejected the embed with `PGRST201` — meaning the
+Campaigns tab had been failing to load since v2 landed. Disambiguated to
+`mkt_content_items!campaign_id(...)`. Reading the select string could not have found this; running it
+did.

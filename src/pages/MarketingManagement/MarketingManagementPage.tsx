@@ -358,7 +358,8 @@ export default function MarketingManagementPage() {
           )}
 
           {tab === 'campaigns' && (
-            <CampaignsTab isAr={isAr} onOpenContent={(id) => { setTab('content'); void openItem(id); }} />
+            <CampaignsTab isAr={isAr} onOpenContent={(id) => { setTab('content'); void openItem(id); }}
+              onGoToPortfolio={() => setTab('portfolio')} />
           )}
           {tab === 'calendar' && (
             <div className="space-y-4">

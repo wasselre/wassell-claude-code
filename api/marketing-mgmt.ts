@@ -89,11 +89,26 @@ const PLAN_EDITABLE = [
   'risks', 'dependencies', 'review_frequency', 'owner_user_id', 'archived_at',
 ] as const;
 
+// actual_value is DELIBERATELY absent. It is a cache of
+// mkt_goal_actual(), refreshed by trigger when a measurement is recorded, so the
+// only way the number moves is by entering evidence. Letting a form overwrite it
+// would make "actual" a claim rather than a reading.
 const GOAL_EDITABLE = [
-  'plan_id', 'parent_goal_id', 'goal_category', 'name_ar', 'name_en', 'description',
-  'metric', 'unit', 'baseline_value', 'target_value', 'start_date', 'end_date',
-  'owner_user_id', 'measurement_frequency', 'source_of_truth', 'scope', 'status',
-  'actual_value', 'forecast_value', 'result', 'notes', 'assumptions', 'archived_at',
+  'plan_id', 'parent_goal_id', 'goal_class', 'goal_category',
+  'name_ar', 'name_en', 'description',
+  'metric', 'unit', 'baseline_value', 'baseline_date', 'baseline_state',
+  'target_value', 'start_date', 'end_date',
+  'owner_user_id', 'measurement_frequency', 'source_of_truth', 'source_of_truth_note',
+  'aggregation_method', 'scope', 'status',
+  'linked_initiative_id', 'linked_program_id', 'linked_campaign_id',
+  'forecast_value', 'result', 'notes', 'assumptions', 'needs_classification', 'archived_at',
+] as const;
+
+/** A measurement is evidence, so only the observation itself is settable —
+ *  entered_by and created_at are stamped server-side. */
+const MEASUREMENT_EDITABLE = [
+  'goal_id', 'value', 'measured_at', 'period_start', 'period_end',
+  'source_key', 'evidence',
 ] as const;
 
 const TARGET_PERIOD_EDITABLE = [
@@ -108,10 +123,16 @@ const INITIATIVE_EDITABLE = [
   'status', 'expected_contribution', 'actual_contribution', 'lessons', 'archived_at',
 ] as const;
 
+/** `end_date` is not here and there is no such column: a program is ongoing.
+ *  The recurring commitment is four explicit fields — how many (commitment_count)
+ *  of what (output_type) every how many (every_n_periods) of which period
+ *  (commitment_unit) — so "3 project videos every week" is data the UI composes
+ *  a sentence from, not a sentence someone has to parse. */
 const PROGRAM_EDITABLE = [
   'plan_id', 'initiative_id', 'primary_goal_id', 'name_ar', 'name_en', 'purpose',
   'target_audience', 'content_pillars', 'platforms', 'accounts', 'formats',
-  'cadence', 'commitment_count', 'commitment_unit', 'kpi_targets', 'owner_user_id',
+  'cadence', 'commitment_count', 'commitment_unit', 'output_type', 'every_n_periods',
+  'kpi_targets', 'owner_user_id',
   'review_frequency', 'status', 'start_date', 'lessons', 'archived_at',
 ] as const;
 
@@ -162,17 +183,32 @@ const USAGE_EDITABLE = [
  *  forwarded ANY key — the same hole that was closed on content_update — so id,
  *  created_by_user_id, needs_classification and the review-owned decision
  *  columns were all writable by a caller. They are not on this list.
- *  `decision` is set by review_decide, never by editing the campaign. */
+ *  `decision` is set by review_decide, never by editing the campaign.
+ *
+ *  `code` is DELIBERATELY absent. It is issued by the database from a sequence
+ *  (mkt_next_campaign_code) so two concurrent creates cannot collide, and a
+ *  code that a caller could set is a code a caller could change — which would
+ *  break every printed reference to a campaign. `needs_classification` is
+ *  absent for the same reason it is absent on goals: it is derived by trigger
+ *  from whether a plan and a primary goal are present, so setting it by hand
+ *  could only ever make it a lie.
+ *
+ *  `campaign_class` IS settable so creation can declare organic or paid, but a
+ *  NULL class is refused on insert by the database — and a legacy null is
+ *  cleared through campaign_classify, not through a plain edit. */
 const CAMPAIGN_EDITABLE = [
   // v1
-  'code', 'name_ar', 'name_en', 'campaign_type', 'channel_mix', 'status', 'priority',
+  'name_ar', 'name_en', 'campaign_type', 'channel_mix', 'status', 'priority',
   'start_date', 'end_date', 'objective', 'offer', 'main_message', 'hooks', 'cta',
   'landing_url', 'positioning', 'content_pillars', 'target_audience', 'budget',
   'target_leads', 'target_revenue', 'target_sales', 'target_appointments',
   'target_cpl', 'target_cpa', 'target_roas', 'owner_user_id', 'archived_at',
   // v2 portfolio
   'plan_id', 'initiative_id', 'program_id', 'primary_goal_id', 'campaign_class',
-  'funnel_stage', 'deliverables', 'lessons',
+  'funnel_stage', 'deliverables', 'actual_results', 'lessons',
+  // 2026-08-26 operational fields
+  'budget_kind', 'conversion_objective', 'tracking_template',
+  'locations', 'property_types', 'period_override_reason',
 ] as const;
 
 interface Body {
@@ -188,7 +224,11 @@ interface Body {
   user_id?: string;
   role?: string;
   version_number?: number;
+  strategy_version_id?: string;
+  reason?: string;
   campaign_id?: string;
+  initiative_id?: string;
+  campaign_class?: string;
   content_item_id?: string;
   project_id?: string;
   limit?: number;
@@ -258,27 +298,231 @@ const str = (v: unknown): string | undefined => (typeof v === 'string' && v.trim
 const cap = (n: unknown, def: number, max: number) =>
   typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : def;
 
-/** RLS returns an empty result rather than an error when a capability is
- *  missing, which would read as "no data" instead of "not allowed". Translate
- *  PostgREST's RLS rejection into an honest 403. */
-function rlsAware(error: { message: string; code?: string } | null): Response | null {
+// ── Database errors, translated ────────────────────────────────────────────
+//
+// A raw Postgres message is not an error message for a user. `null value in
+// column "code" of relation "mkt_internal_campaigns" violates not-null
+// constraint` names an internal table and an internal column, tells the user
+// nothing they can act on, and reveals the schema to anyone who can reach the
+// endpoint. Every rejection below is therefore translated into a sentence that
+// says what to do, in both languages — and the original error is ALWAYS logged
+// server-side with its code, details and hint, so debugging loses nothing.
+//
+// Two sources of truth for the mapping:
+//   1. `MKT:<token>` — raised deliberately by our own triggers and RPCs.
+//   2. A constraint name parsed out of Postgres's own text, for the CHECK and
+//      unique constraints declared in the migrations.
+// Anything unrecognised falls back to a generic sentence. It never falls back
+// to echoing Postgres.
+
+interface Msg { ar: string; en: string }
+
+const DB_MESSAGES: Record<string, Msg> = {
+  // deliberate rejections from mkt_* triggers and RPCs
+  'MKT:campaign_class_required': {
+    ar: 'يجب تحديد نوع الحملة: عضوية أو مدفوعة.',
+    en: 'A campaign must be either organic or paid.',
+  },
+  'MKT:goal_other_plan': {
+    ar: 'الهدف المختار يتبع خطة أخرى. اختر هدفاً من نفس الخطة.',
+    en: 'That goal belongs to a different plan. Choose a goal from the selected plan.',
+  },
+  'MKT:initiative_other_plan': {
+    ar: 'المبادرة المختارة تتبع خطة أخرى. اختر مبادرة من نفس الخطة.',
+    en: 'That initiative belongs to a different plan. Choose one from the selected plan.',
+  },
+  'MKT:program_other_plan': {
+    ar: 'البرنامج المختار يتبع خطة أخرى. اختر برنامجاً من نفس الخطة.',
+    en: 'That program belongs to a different plan. Choose one from the selected plan.',
+  },
+  'MKT:dates_outside_plan': {
+    ar: 'تواريخ الحملة خارج فترة الخطة. عدّل التواريخ أو سجّل سبب الاستثناء.',
+    en: 'The dates fall outside the plan period. Adjust them, or record a reason for the exception.',
+  },
+  'MKT:has_dependents': {
+    ar: 'لا يمكن الحذف: السجل مرتبط بمحتوى أو إعلانات أو نشر أو قياسات. استخدم الأرشفة بدلاً من الحذف.',
+    en: 'Cannot delete: this record still carries content, ads, publications or measurements. Archive it instead.',
+  },
+  'MKT:campaign_code_unavailable': {
+    ar: 'تعذّر توليد رمز حملة جديد. أبلغ الدعم الفني.',
+    en: 'Could not issue a new campaign code. Please report this.',
+  },
+  'MKT:not_permitted': {
+    ar: 'دورك في التسويق لا يسمح بهذا الإجراء.',
+    en: 'Your marketing role does not permit this action.',
+  },
+  'MKT:not_found': { ar: 'السجل غير موجود.', en: 'That record no longer exists.' },
+
+  // named constraints, in the same words the forms use
+  mkt_camp_active_complete: {
+    ar: 'لا يمكن تفعيل الحملة قبل تحديد الخطة والهدف والمسؤول والنوع وتاريخي البداية والنهاية.',
+    en: 'A campaign cannot be activated until its plan, goal, owner, type and both dates are set.',
+  },
+  mkt_init_active_complete: {
+    ar: 'لا يمكن تفعيل المبادرة قبل تحديد الخطة والهدف الرئيسي والمسؤول.',
+    en: 'An initiative cannot be activated until its plan, primary goal and owner are set.',
+  },
+  mkt_prog_active_complete: {
+    ar: 'لا يمكن تفعيل البرنامج قبل تحديد الخطة والهدف الرئيسي والمسؤول.',
+    en: 'A program cannot be activated until its plan, primary goal and owner are set.',
+  },
+  campaign_dates_ordered: {
+    ar: 'تاريخ النهاية لا يمكن أن يسبق تاريخ البداية.',
+    en: 'The end date cannot come before the start date.',
+  },
+  mkt_init_date_order: {
+    ar: 'تاريخ النهاية لا يمكن أن يسبق تاريخ البداية.',
+    en: 'The end date cannot come before the start date.',
+  },
+  mkt_goal_date_order: {
+    ar: 'تاريخ النهاية لا يمكن أن يسبق تاريخ البداية.',
+    en: 'The end date cannot come before the start date.',
+  },
+  mkt_plan_period_order: {
+    ar: 'نهاية فترة الخطة لا يمكن أن تسبق بدايتها.',
+    en: 'The plan period cannot end before it starts.',
+  },
+  mkt_prog_commitment_positive: {
+    ar: 'عدد المخرجات المتكررة يجب أن يكون أكبر من صفر.',
+    en: 'The recurring output count must be greater than zero.',
+  },
+  mkt_prog_every_n_positive: {
+    ar: 'عدد الفترات بين كل تكرار يجب أن يكون أكبر من صفر.',
+    en: 'The repeat interval must be greater than zero.',
+  },
+  mkt_prog_commitment_pair: {
+    ar: 'حدّد عدد المخرجات والفترة معاً، أو اتركهما فارغين معاً.',
+    en: 'Set both the output count and the period, or neither.',
+  },
+  mkt_internal_campaigns_budget_check: {
+    ar: 'الميزانية لا يمكن أن تكون بالسالب.',
+    en: 'A budget cannot be negative.',
+  },
+  mkt_camp_class_check: {
+    ar: 'نوع الحملة يجب أن يكون عضوية أو مدفوعة.',
+    en: 'A campaign type must be organic or paid.',
+  },
+  mkt_plan_active_needs_strategy: {
+    ar: 'لا يمكن اعتماد الخطة أو تفعيلها قبل ربطها بنسخة استراتيجية معتمدة.',
+    en: 'A plan cannot be approved or activated until it is bound to an approved strategy version.',
+  },
+  mkt_internal_campaigns_code_key: {
+    ar: 'رمز الحملة مستخدم بالفعل.',
+    en: 'That campaign code is already in use.',
+  },
+};
+
+/** Generic per-SQLSTATE text, used when nothing more specific is recognised. */
+const CODE_MESSAGES: Record<string, Msg> = {
+  '23502': {
+    ar: 'حقل مطلوب لم يُملأ. راجع الحقول الإلزامية ثم أعد المحاولة.',
+    en: 'A required value is missing. Fill in the required fields and try again.',
+  },
+  '23505': {
+    ar: 'هذه القيمة مستخدمة بالفعل في سجل آخر.',
+    en: 'That value is already used by another record.',
+  },
+  '23503': {
+    ar: 'السجل المرتبط غير موجود أو ما زال قيد الاستخدام.',
+    en: 'A referenced record is missing or still in use.',
+  },
+  '23514': {
+    ar: 'العملية ترفضها قواعد النظام في هذه الحالة.',
+    en: 'The rules for this record do not allow that change.',
+  },
+  '42501': {
+    ar: 'دورك في التسويق لا يسمح بهذا الإجراء.',
+    en: 'Your marketing role does not permit this action.',
+  },
+};
+
+const GENERIC: Msg = {
+  ar: 'تعذّر حفظ التغيير. حُفظت تفاصيل الخطأ للمراجعة.',
+  en: 'The change could not be saved. The details have been logged for review.',
+};
+
+/** Bilingual error body. The client picks a side by the interface language, so
+ *  neither the server nor the UI has to guess which one the reader wants. */
+function jsonErrorBi(status: number, m: Msg): Response {
+  return new Response(JSON.stringify({ error: m.en, error_ar: m.ar }), {
+    status, headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+type PgErr = { message?: string; code?: string; details?: string | null; hint?: string | null };
+
+/** Translate a database rejection, and log the original.
+ *
+ *  RLS returns an empty result rather than an error when a capability is
+ *  missing, which would read as "no data" instead of "not allowed" — so a
+ *  permission failure is turned into an honest 403 here rather than an empty
+ *  list at the screen. */
+function dbError(error: PgErr | null, where: string): Response | null {
   if (!error) return null;
-  const m = error.message ?? '';
-  if (error.code === '42501' || /row-level security|permission denied/i.test(m)) {
-    return jsonError(403, 'your marketing role does not permit this action');
+  const raw = error.message ?? '';
+  const code = error.code ?? '';
+
+  // Everything internal goes to the log, never to the response.
+  console.error('[marketing-mgmt] db error', {
+    action: where, code, message: raw, details: error.details ?? null, hint: error.hint ?? null,
+  });
+
+  const token = raw.match(/MKT:[a-z_]+/)?.[0];
+  // Permission is checked FIRST: it is also in DB_MESSAGES, and answering 409
+  // for it would tell the caller "your data is wrong" when the truth is "you are
+  // not allowed", which is the one distinction this endpoint exists to keep.
+  if (token === 'MKT:not_permitted') return jsonErrorBi(403, DB_MESSAGES['MKT:not_permitted']!);
+  if (token === 'MKT:not_found') return jsonErrorBi(404, DB_MESSAGES['MKT:not_found']!);
+  if (token && DB_MESSAGES[token]) return jsonErrorBi(409, DB_MESSAGES[token]!);
+
+  const constraint = raw.match(/constraint "([a-zA-Z0-9_]+)"/)?.[1];
+  if (constraint && DB_MESSAGES[constraint]) return jsonErrorBi(409, DB_MESSAGES[constraint]!);
+
+  if (code === '42501' || /row-level security|permission denied/i.test(raw)) {
+    return jsonErrorBi(403, CODE_MESSAGES['42501']!);
   }
-  if (error.code === '23514' || /check_violation|violates check constraint/i.test(m)) {
-    return jsonError(409, m);   // invalid status jump, locked version, etc.
+  if (CODE_MESSAGES[code]) return jsonErrorBi(409, CODE_MESSAGES[code]!);
+
+  // 42703 = undefined_column / 42883 = undefined_function / PGRST20x = schema
+  // cache. In this codebase that means the app deployed ahead of its migration,
+  // which otherwise surfaces as a bare 500 and reads like a bug in the form.
+  // Name the remedy without quoting the missing object at the user.
+  if (code === '42703' || code === '42883' || code === 'PGRST202' || code === 'PGRST204') {
+    return jsonErrorBi(503, {
+      ar: 'قاعدة البيانات لا تحتوي على تحديث يتوقعه هذا الإصدار من التطبيق. طبّق آخر ملف ترحيل ثم أعد المحاولة.',
+      en: 'The database is missing an update this build expects. Apply the latest migration, then retry.',
+    });
   }
-  if (error.code === '23503') return jsonError(409, 'referenced record is missing or still in use');
-  // 42703 = undefined_column / 42883 = undefined_function. In this codebase that
-  // means the app deployed ahead of its migration, which otherwise surfaces as a
-  // bare 500 and reads like a bug in the form. Name the actual remedy.
-  if (error.code === '42703' || error.code === '42883') {
-    return jsonError(503, `${m} — the database is missing an object this build expects. `
-      + 'Apply the latest supabase/migrations file, then retry.');
+  return jsonErrorBi(500, GENERIC);
+}
+
+/** Kept as the name every existing call site uses. `where` defaults to the
+ *  action, which the handler binds once per request. */
+let currentAction = '';
+const rlsAware = (error: PgErr | null): Response | null => dbError(error, currentAction);
+
+/** A NEW portfolio object must say where it sits in the plan.
+ *
+ *  The database allows a draft with no plan and no goal — legacy rows are
+ *  exactly that, and refusing to save them would strand records nobody can
+ *  fix. But nothing NEW should be created loose: an unattached campaign is how
+ *  the "unclassified" pile grew in the first place. So the rule lives here, at
+ *  the creation boundary, while the database enforces the harder rule that
+ *  nothing INCOMPLETE can go active. */
+function requirePortfolioContext(patch: Record<string, unknown>, kind: 'campaign' | 'program' | 'initiative'): Response | null {
+  if (!patch.plan_id) {
+    return jsonErrorBi(400, { ar: 'اختر الخطة قبل الإنشاء.', en: 'Choose a plan before creating this.' });
   }
-  return jsonError(500, m || 'database error');
+  if (!patch.primary_goal_id) {
+    return jsonErrorBi(400, {
+      ar: 'اختر الهدف الرئيسي قبل الإنشاء — لا يُنشأ عنصر بلا هدف.',
+      en: 'Choose a primary goal before creating this — nothing is created without one.',
+    });
+  }
+  if (kind === 'campaign' && patch.campaign_class !== 'organic' && patch.campaign_class !== 'paid') {
+    return jsonErrorBi(400, DB_MESSAGES['MKT:campaign_class_required']!);
+  }
+  return null;
 }
 
 export default async function handler(req: Request): Promise<Response> {
@@ -286,6 +530,7 @@ export default async function handler(req: Request): Promise<Response> {
   return withAuth(req, async (user) => {
     const body = (await req.json().catch(() => ({}))) as Body;
     const action = body.action ?? '';
+    currentAction = action;
     let sb: SupabaseClient;
     try { sb = callerClient(req); } catch { return jsonError(500, 'supabase env missing'); }
     const appUserId = await resolveAppUserId(sb, user.userId);
@@ -307,7 +552,7 @@ export default async function handler(req: Request): Promise<Response> {
       case 'campaign_list': {
         const { data, error } = await sb
           .from('mkt_internal_campaigns')
-          .select('*, mkt_internal_campaign_projects(project_id), mkt_content_items(id,status)')
+          .select('*, mkt_internal_campaign_projects(project_id), mkt_content_items!campaign_id(id,status)')
           .is('archived_at', null)
           .order('created_at', { ascending: false })
           .limit(cap(body.limit, 100, 500));
@@ -330,6 +575,9 @@ export default async function handler(req: Request): Promise<Response> {
       case 'campaign_save': {
         const patch = pick(body.patch, CAMPAIGN_EDITABLE);
         const id = str(body.id);
+        if (!id) {
+          const bad = requirePortfolioContext(patch, 'campaign'); if (bad) return bad;
+        }
         const q = id
           ? sb.from('mkt_internal_campaigns').update(patch).eq('id', id).select().maybeSingle()
           : sb.from('mkt_internal_campaigns').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
@@ -692,7 +940,7 @@ export default async function handler(req: Request): Promise<Response> {
           // list of versions a reviewer has to consider.
           sb.from('mkt_strategy_versions').select('*').is('archived_at', null)
             .order('version_number', { ascending: false }).limit(50),
-          sb.from('mkt_plans').select('*, mkt_goals(id,goal_category,name_ar,target_value,actual_value,result,status)')
+          sb.from('mkt_plans').select('*, mkt_goals(id,goal_class,goal_category,name_ar,unit,target_value,actual_value,result,status,needs_classification)')
             .is('archived_at', null).order('period_start', { ascending: false }).limit(100),
         ]);
         const bad = rlsAware(strategies.error); if (bad) return bad;
@@ -747,8 +995,11 @@ export default async function handler(req: Request): Promise<Response> {
         const id = str(body.id); if (!id) return jsonError(400, 'id required');
         const [plan, goals, inits, progs, camps, channels, reviews] = await Promise.all([
           sb.from('mkt_plans').select('*').eq('id', id).maybeSingle(),
+          // Grouped by CLASS, not by theme: outcomes, then KPIs, then output
+          // commitments read as three different kinds of thing, which is the
+          // whole point of splitting them.
           sb.from('mkt_goals').select('*, mkt_goal_target_periods(*)').eq('plan_id', id)
-            .is('archived_at', null).order('goal_category'),
+            .is('archived_at', null).order('goal_class'),
           sb.from('mkt_initiatives').select('*').eq('plan_id', id).is('archived_at', null),
           sb.from('mkt_programs').select('*').eq('plan_id', id).is('archived_at', null),
           sb.from('mkt_internal_campaigns').select('*').eq('plan_id', id).is('archived_at', null),
@@ -812,14 +1063,103 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ periods: data ?? [] });
       }
 
+      case 'plan_strategy_context': {
+        // Everything a plan form needs to show WHICH strategy version it is
+        // bound to, plus the current approved one to offer as the default.
+        const id = str(body.id);
+        const [current, versions, links, missing] = await Promise.all([
+          sb.from('mkt_strategy_versions')
+            .select('id,version_number,name_ar,name_en,status,effective_date,approved_at')
+            .eq('status', 'approved').maybeSingle(),
+          sb.from('mkt_strategy_versions')
+            .select('id,version_number,name_ar,name_en,status,effective_date,approved_at')
+            .is('archived_at', null).order('version_number', { ascending: false }),
+          id ? sb.from('mkt_plan_strategy_links').select('*').eq('plan_id', id)
+                 .order('changed_at', { ascending: false })
+             : Promise.resolve({ data: [], error: null }),
+          id ? sb.rpc('mkt_plan_missing_requirements', { p_plan_id: id })
+             : Promise.resolve({ data: null, error: null }),
+        ]);
+        const bad = rlsAware(versions.error); if (bad) return bad;
+        return jsonOk({
+          current_approved: current.data ?? null,
+          versions: versions.data ?? [],
+          history: links.data ?? [],
+          missing: (missing.data as string[] | null) ?? null,
+        });
+      }
+
+      case 'plan_rebase_strategy': {
+        const id = str(body.id); const to = str(body.strategy_version_id);
+        if (!id || !to) return jsonError(400, 'id and strategy_version_id required');
+        const { data, error } = await sb.rpc('mkt_plan_rebase_strategy',
+          { p_plan_id: id, p_new_version_id: to, p_reason: str(body.reason) ?? null });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ result: data });
+      }
+
+      case 'plan_missing_requirements': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const { data, error } = await sb.rpc('mkt_plan_missing_requirements', { p_plan_id: id });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ missing: (data as string[] | null) ?? [] });
+      }
+
+      case 'goal_detail': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const [goal, periods, measurements, missing, actual, alloc, dates] = await Promise.all([
+          sb.from('mkt_goals').select('*').eq('id', id).maybeSingle(),
+          sb.from('mkt_goal_target_periods').select('*').eq('goal_id', id).order('period_start'),
+          sb.from('mkt_goal_measurements').select('*').eq('goal_id', id)
+            .order('measured_at', { ascending: false }),
+          sb.rpc('mkt_goal_missing_requirements', { p_goal_id: id }),
+          sb.rpc('mkt_goal_actual', { p_goal_id: id }),
+          sb.rpc('mkt_goal_allocation_status', { p_goal_id: id }),
+          sb.rpc('mkt_goal_effective_dates', { p_goal_id: id }),
+        ]);
+        const bad = rlsAware(goal.error); if (bad) return bad;
+        if (!goal.data) return jsonError(404, 'goal not found');
+        return jsonOk({
+          goal: goal.data, periods: periods.data ?? [], measurements: measurements.data ?? [],
+          missing: (missing.data as string[] | null) ?? [],
+          actual: actual.data ?? null, allocation: alloc.data ?? null, dates: dates.data ?? null,
+        });
+      }
+
+      case 'goal_measure': {
+        // The ONLY way an actual value moves. Append-only in the database; the
+        // trigger recomputes the goal's cached actual by its aggregation method.
+        const patch = pick(body.patch, MEASUREMENT_EDITABLE);
+        if (!patch.goal_id || patch.value === undefined || patch.value === null) {
+          return jsonError(400, 'goal_id and value required');
+        }
+        const { data, error } = await sb.from('mkt_goal_measurements')
+          .insert({ ...patch, entered_by_user_id: appUserId }).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        const { data: actual } = await sb.rpc('mkt_goal_actual', { p_goal_id: patch.goal_id });
+        return jsonOk({ measurement: data, actual: actual ?? null });
+      }
+
+      case 'goal_missing_requirements': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const { data, error } = await sb.rpc('mkt_goal_missing_requirements', { p_goal_id: id });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ missing: (data as string[] | null) ?? [] });
+      }
+
       case 'goal_pacing': {
         const id = str(body.id); if (!id) return jsonError(400, 'id required');
-        const [pacing, rollup] = await Promise.all([
+        const [pacing, rollup, alloc, actual] = await Promise.all([
           sb.rpc('mkt_goal_pacing', { p_goal_id: id }),
           sb.rpc('mkt_goal_rollup', { p_goal_id: id }),
+          sb.rpc('mkt_goal_allocation_status', { p_goal_id: id }),
+          sb.rpc('mkt_goal_actual', { p_goal_id: id }),
         ]);
         const bad = rlsAware(pacing.error); if (bad) return bad;
-        return jsonOk({ pacing: pacing.data ?? null, rollup: rollup.data ?? null });
+        return jsonOk({
+          pacing: pacing.data ?? null, rollup: rollup.data ?? null,
+          allocation: alloc.data ?? null, actual: actual.data ?? null,
+        });
       }
 
       case 'portfolio_list': {
@@ -834,8 +1174,198 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonOk({ initiatives: inits.data ?? [], programs: progs.data ?? [], campaigns: camps.data ?? [] });
       }
 
+      // ── Portfolio ────────────────────────────────────────────────────────
+      case 'portfolio_map': {
+        // ONE round trip for the whole portfolio screen: the plan header, the
+        // hierarchy, and the counts. Split across three calls the header could
+        // describe a different plan from the tree under it, which is exactly
+        // how a "0 campaigns" heading ends up above a list of campaigns.
+        const planId = str(body.plan_id);
+        const scoped = <T extends { eq: unknown }>(b: T) =>
+          (planId ? (b as { eq: (a: string, b: string) => T }).eq('plan_id', planId) : b);
+        const [plans, strategies, goals, inits, progs, camps] = await Promise.all([
+          sb.from('mkt_plans')
+            .select('id,name_ar,name_en,plan_type,status,period_start,period_end,strategy_version_id,owner_user_id,needs_classification')
+            .is('archived_at', null).order('period_start', { ascending: false }),
+          sb.from('mkt_strategy_versions')
+            .select('id,version_number,name_ar,name_en,status,effective_date,approved_at')
+            .is('archived_at', null).order('version_number', { ascending: false }),
+          scoped(sb.from('mkt_goals')
+            .select('id,plan_id,goal_class,goal_category,name_ar,name_en,metric,unit,target_value,actual_value,status,owner_user_id,parent_goal_id')
+            .is('archived_at', null)),
+          scoped(sb.from('mkt_initiatives').select('*').is('archived_at', null)),
+          scoped(sb.from('mkt_programs').select('*').is('archived_at', null)),
+          scoped(sb.from('mkt_internal_campaigns')
+            .select('*, mkt_internal_campaign_projects(project_id), mkt_content_items!campaign_id(id,status)')
+            .is('archived_at', null)),
+        ]);
+        const bad = rlsAware(plans.error ?? goals.error ?? inits.error ?? progs.error ?? camps.error);
+        if (bad) return bad;
+
+        // Delivery against a program's recurring commitment is COUNTED from the
+        // content that program actually originated. It is not embedded on the
+        // program row because mkt_content_items reaches campaigns through two
+        // different foreign keys and programs through one — keeping this as its
+        // own query avoids an ambiguous embed and keeps the shape obvious.
+        const progIds = (progs.data ?? []).map((p: { id: string }) => p.id);
+        const output = progIds.length
+          ? await sb.from('mkt_content_items')
+              .select('id,status,origin_program_id,created_at,planned_publish_at')
+              .in('origin_program_id', progIds).is('archived_at', null).limit(2000)
+          : { data: [], error: null };
+        const badOut = rlsAware(output.error); if (badOut) return badOut;
+
+        return jsonOk({
+          plans: plans.data ?? [], strategies: strategies.data ?? [],
+          goals: goals.data ?? [], initiatives: inits.data ?? [],
+          programs: progs.data ?? [], campaigns: camps.data ?? [],
+          program_output: output.data ?? [],
+        });
+      }
+
+      case 'campaign_classify': {
+        // The ONLY supported way a legacy null class becomes organic or paid.
+        // Deliberately not a field on campaign_save: the point is that somebody
+        // decided, on a record where the system had never been told.
+        const id = str(body.id ?? body.campaign_id);
+        const cls = str(body.campaign_class);
+        if (!id || !cls) return jsonError(400, 'id and campaign_class required');
+        const { data, error } = await sb.rpc('mkt_campaign_classify', {
+          p_campaign_id: id, p_class: cls,
+          p_plan_id: str(body.plan_id) ?? null,
+          p_goal_id: str(body.goal_id) ?? null,
+          p_initiative_id: str(body.initiative_id) ?? null,
+        });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ result: data });
+      }
+
+      case 'portfolio_detail': {
+        // One record — initiative, program or campaign — with everything the
+        // detail drawer shows: its own row, its children, its secondary goals,
+        // its review decisions, and the completion checklist the database will
+        // actually enforce.
+        const kind = str(body.target_type); const id = str(body.id);
+        if (!kind || !id) return jsonError(400, 'target_type and id required');
+
+        if (kind === 'initiative') {
+          const [row, progs, camps, secondary, decisions, missing, projects] = await Promise.all([
+            sb.from('mkt_initiatives').select('*').eq('id', id).maybeSingle(),
+            sb.from('mkt_programs').select('*').eq('initiative_id', id).is('archived_at', null),
+            sb.from('mkt_internal_campaigns').select('*').eq('initiative_id', id).is('archived_at', null),
+            sb.from('mkt_activity_goals').select('*').eq('initiative_id', id),
+            sb.from('mkt_review_decisions').select('*').eq('initiative_id', id).order('created_at', { ascending: false }),
+            sb.rpc('mkt_initiative_missing_requirements', { p_initiative_id: id }),
+            sb.from('mkt_initiative_projects').select('project_id').eq('initiative_id', id),
+          ]);
+          const bad = rlsAware(row.error); if (bad) return bad;
+          if (!row.data) return jsonError(404, 'initiative not found');
+          return jsonOk({
+            kind, row: row.data, programs: progs.data ?? [], campaigns: camps.data ?? [],
+            secondary_goals: secondary.data ?? [], decisions: decisions.data ?? [],
+            projects: (projects.data ?? []).map((p: { project_id: string }) => p.project_id),
+            missing: (missing.data as string[] | null) ?? [],
+          });
+        }
+
+        if (kind === 'program') {
+          const [row, camps, secondary, decisions, missing, content] = await Promise.all([
+            sb.from('mkt_programs').select('*').eq('id', id).maybeSingle(),
+            sb.from('mkt_internal_campaigns').select('*').eq('program_id', id).is('archived_at', null),
+            sb.from('mkt_activity_goals').select('*').eq('program_id', id),
+            sb.from('mkt_review_decisions').select('*').eq('program_id', id).order('created_at', { ascending: false }),
+            sb.rpc('mkt_program_missing_requirements', { p_program_id: id }),
+            // Delivery against the recurring commitment is COUNTED from content
+            // this program actually originated. A program that produced nothing
+            // shows nothing produced, never a comfortable zero-of-zero.
+            sb.from('mkt_content_items').select('id,status,created_at,planned_publish_at')
+              .eq('origin_program_id', id).is('archived_at', null)
+              .order('created_at', { ascending: false }).limit(400),
+          ]);
+          const bad = rlsAware(row.error); if (bad) return bad;
+          if (!row.data) return jsonError(404, 'program not found');
+          return jsonOk({
+            kind, row: row.data, campaigns: camps.data ?? [],
+            secondary_goals: secondary.data ?? [], decisions: decisions.data ?? [],
+            content: content.data ?? [], missing: (missing.data as string[] | null) ?? [],
+          });
+        }
+
+        if (kind === 'campaign') {
+          const [row, content, secondary, decisions, missing, projects, perf] = await Promise.all([
+            sb.from('mkt_internal_campaigns').select('*').eq('id', id).maybeSingle(),
+            sb.from('mkt_content_items').select('id,content_number,title,content_type,status,due_date')
+              .eq('campaign_id', id).is('archived_at', null),
+            sb.from('mkt_activity_goals').select('*').eq('campaign_id', id),
+            sb.from('mkt_review_decisions').select('*').eq('campaign_id', id).order('created_at', { ascending: false }),
+            sb.rpc('mkt_campaign_missing_requirements', { p_campaign_id: id }),
+            sb.from('mkt_internal_campaign_projects').select('project_id').eq('campaign_id', id),
+            sb.from('mkt_performance_snapshots').select('*').eq('campaign_id', id)
+              .order('captured_at', { ascending: false }).limit(200),
+          ]);
+          const bad = rlsAware(row.error); if (bad) return bad;
+          if (!row.data) return jsonError(404, 'campaign not found');
+          return jsonOk({
+            kind, row: row.data, content: content.data ?? [],
+            secondary_goals: secondary.data ?? [], decisions: decisions.data ?? [],
+            projects: (projects.data ?? []).map((p: { project_id: string }) => p.project_id),
+            performance: perf.data ?? [], missing: (missing.data as string[] | null) ?? [],
+          });
+        }
+        return jsonError(400, 'target_type must be initiative, program or campaign');
+      }
+
+      case 'portfolio_secondary_goals_set': {
+        // A set, so the write is a replace — dropping one is the common edit and
+        // an upsert alone would never remove anything.
+        const kind = str(body.target_type); const id = str(body.id);
+        if (!kind || !id) return jsonError(400, 'target_type and id required');
+        const col = kind === 'initiative' ? 'initiative_id'
+          : kind === 'program' ? 'program_id'
+          : kind === 'campaign' ? 'campaign_id' : null;
+        if (!col) return jsonError(400, 'target_type must be initiative, program or campaign');
+        const ids = Array.isArray(body.asset_ids) ? body.asset_ids.filter((x): x is string => typeof x === 'string') : [];
+        const del = await sb.from('mkt_activity_goals').delete().eq(col, id).eq('relation', 'secondary');
+        const badDel = rlsAware(del.error); if (badDel) return badDel;
+        if (ids.length) {
+          const ins = await sb.from('mkt_activity_goals')
+            .insert(ids.map((g) => ({ [col]: id, goal_id: g, relation: 'secondary' })));
+          const badIns = rlsAware(ins.error); if (badIns) return badIns;
+        }
+        return jsonOk({ goal_ids: ids });
+      }
+
+      case 'campaign_projects_set': {
+        const id = str(body.id ?? body.campaign_id);
+        if (!id) return jsonError(400, 'id required');
+        const ids = Array.isArray(body.asset_ids) ? body.asset_ids.filter((x): x is string => typeof x === 'string') : [];
+        const del = await sb.from('mkt_internal_campaign_projects').delete().eq('campaign_id', id);
+        const badDel = rlsAware(del.error); if (badDel) return badDel;
+        if (ids.length) {
+          const ins = await sb.from('mkt_internal_campaign_projects')
+            .insert(ids.map((p) => ({ campaign_id: id, project_id: p })));
+          const badIns = rlsAware(ins.error); if (badIns) return badIns;
+        }
+        return jsonOk({ project_ids: ids });
+      }
+
+      case 'portfolio_missing_requirements': {
+        const kind = str(body.target_type); const id = str(body.id);
+        if (!kind || !id) return jsonError(400, 'target_type and id required');
+        const fn = kind === 'initiative' ? ['mkt_initiative_missing_requirements', 'p_initiative_id']
+          : kind === 'program' ? ['mkt_program_missing_requirements', 'p_program_id']
+          : kind === 'campaign' ? ['mkt_campaign_missing_requirements', 'p_campaign_id'] : null;
+        if (!fn) return jsonError(400, 'target_type must be initiative, program or campaign');
+        const { data, error } = await sb.rpc(fn[0]!, { [fn[1]!]: id });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ missing: (data as string[] | null) ?? [] });
+      }
+
       case 'initiative_save': {
         const patch = pick(body.patch, INITIATIVE_EDITABLE);
+        if (!body.id) {
+          const badCtx = requirePortfolioContext(patch, 'initiative'); if (badCtx) return badCtx;
+        }
         const q = body.id
           ? sb.from('mkt_initiatives').update(patch).eq('id', body.id).select().maybeSingle()
           : sb.from('mkt_initiatives').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
@@ -846,6 +1376,9 @@ export default async function handler(req: Request): Promise<Response> {
 
       case 'program_save': {
         const patch = pick(body.patch, PROGRAM_EDITABLE);
+        if (!body.id) {
+          const badCtx = requirePortfolioContext(patch, 'program'); if (badCtx) return badCtx;
+        }
         const q = body.id
           ? sb.from('mkt_programs').update(patch).eq('id', body.id).select().maybeSingle()
           : sb.from('mkt_programs').insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();

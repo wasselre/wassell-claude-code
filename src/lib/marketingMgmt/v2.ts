@@ -30,6 +30,14 @@ export interface StrategyVersion {
   is_migration_holder: boolean; created_at: string; archived_at: string | null;
 }
 
+/** The identity slice of a strategy version — exactly what plan_strategy_context
+ *  selects. Typed narrowly so nothing reads a field the endpoint never sent. */
+export interface StrategyVersionRef {
+  id: string; version_number: number;
+  name_ar: string; name_en: string | null;
+  status: string; effective_date: string | null; approved_at: string | null;
+}
+
 export interface MktPlan {
   id: string; plan_type: 'annual' | 'quarterly' | 'monthly' | 'project' | 'custom';
   parent_plan_id: string | null; strategy_version_id: string | null;
@@ -44,15 +52,82 @@ export interface MktPlan {
 export interface MktGoal {
   id: string; plan_id: string; parent_goal_id: string | null;
   /** The mandatory three-way split. An output commitment is never an outcome. */
-  goal_category: 'outcome' | 'kpi' | 'output';
+  goal_class: 'outcome' | 'kpi' | 'output_commitment';
+  /** Thematic grouping — what the goal is ABOUT. Separate from the class, optional. */
+  goal_category: string | null;
   name_ar: string; name_en: string | null; description: string | null;
   metric: string | null; unit: string | null;
   baseline_value: number | null; target_value: number | null;
+  baseline_date: string | null;
+  /** known | unknown | not_applicable — a missing baseline is never zero. */
+  baseline_state: 'known' | 'unknown' | 'not_applicable' | null;
   start_date: string | null; end_date: string | null; owner_user_id: string | null;
   measurement_frequency: string | null; source_of_truth: string | null; scope: string | null;
-  status: string; actual_value: number | null; forecast_value: number | null;
+  /** Free text kept apart from the structured key, so prose is never mistaken for a wired source. */
+  source_of_truth_note: string | null;
+  /** Decides how measurements combine. Only 'sum' makes period allocation additive. */
+  aggregation_method: 'sum' | 'latest' | 'average' | 'rate' | 'min' | 'max' | 'custom' | null;
+  status: string;
+  /** Read-only cache of mkt_goal_actual(); only a recorded measurement moves it. */
+  actual_value: number | null; forecast_value: number | null;
   result: 'on_track' | 'at_risk' | 'off_track' | null; notes: string | null;
+  needs_classification: boolean;
+  linked_initiative_id: string | null;
+  linked_program_id: string | null;
+  linked_campaign_id: string | null;
   mkt_goal_target_periods?: GoalTargetPeriod[];
+  mkt_goal_measurements?: GoalMeasurement[];
+}
+
+/** Append-only evidence. The database refuses UPDATE and DELETE on this table. */
+export interface GoalMeasurement {
+  id: string; goal_id: string; value: number;
+  measured_at: string; period_start: string | null; period_end: string | null;
+  source_key: string | null; evidence: string | null;
+  entered_by_user_id: string | null; created_at: string;
+}
+
+/** mkt_goal_actual(). `value` is null and `is_measured` false when nothing has
+ *  been recorded — a goal with no evidence is unmeasured, not at zero. */
+export interface GoalActual {
+  value: number | null;
+  measurements: number;
+  is_measured: boolean;
+  method: string | null;
+  last_measured_at: string | null;
+}
+
+/** mkt_goal_allocation_status(). `difference` and `consistent` are null when the
+ *  metric is not additive — periods of a rate goal are independent targets. */
+export interface GoalAllocation {
+  goal_id: string;
+  periods: number;
+  has_allocation: boolean;
+  is_additive: boolean;
+  target: number | null;
+  allocated: number | null;
+  difference: number | null;
+  consistent: boolean | null;
+  note: string | null;
+}
+
+/** mkt_goal_effective_dates(): a goal inherits the plan's window unless it overrides it. */
+export interface GoalEffectiveDates {
+  start: string | null; end: string | null;
+  start_overridden: boolean; end_overridden: boolean;
+  plan_start: string | null; plan_end: string | null;
+}
+
+/** One row per rebase. Append-only, so the trail of what a plan was written
+ *  against survives every later change. */
+export interface PlanStrategyLink {
+  id: string; plan_id: string;
+  from_strategy_version_id: string | null;
+  to_strategy_version_id: string | null;
+  plan_status_at_change: string | null;
+  reason: string | null;
+  changed_by_user_id: string | null;
+  changed_at: string;
 }
 
 export interface GoalTargetPeriod {
@@ -79,10 +154,40 @@ export interface Program {
   id: string; plan_id: string | null; initiative_id: string | null;
   primary_goal_id: string | null; name_ar: string; name_en: string | null;
   purpose: string | null; target_audience: string | null;
-  /** No end date by design — a program must never be a permanent campaign. */
-  cadence: string | null; commitment_count: number | null; commitment_unit: string | null;
+  /** No end date by design — a program must never be a permanent campaign.
+   *  The recurring commitment is four fields: how many (commitment_count) of
+   *  what (output_type) every how many (every_n_periods) of which period
+   *  (commitment_unit). `cadence` is the legacy free-text summary. */
+  cadence: string | null;
+  commitment_count: number | null;
+  commitment_unit: 'day' | 'week' | 'month' | 'quarter' | null;
+  output_type: string | null;
+  every_n_periods: number | null;
+  content_pillars?: unknown[]; accounts?: unknown[]; formats?: unknown[];
+  kpi_targets?: unknown[]; lessons?: string | null;
+  needs_classification?: boolean;
   platforms: unknown[]; owner_user_id: string | null; review_frequency: string | null;
   status: string; start_date: string | null; decision: string | null;
+}
+
+/** "3 project videos every 2 weeks" — composed from the four fields so the
+ *  sentence is a rendering of data, never a second place the data is stored.
+ *  Returns null when there is no commitment, so the card can say so instead of
+ *  printing a plausible-looking zero. */
+export function commitmentSentence(p: {
+  commitment_count: number | null; commitment_unit: string | null;
+  output_type: string | null; every_n_periods: number | null;
+}, isAr: boolean): string | null {
+  if (p.commitment_count == null || !p.commitment_unit) return null;
+  const every = p.every_n_periods && p.every_n_periods > 1 ? p.every_n_periods : 1;
+  const what = p.output_type?.trim();
+  if (isAr) {
+    const unit = { day: 'يوم', week: 'أسبوع', month: 'شهر', quarter: 'ربع' }[p.commitment_unit] ?? p.commitment_unit;
+    const period = every > 1 ? `كل ${every} ${unit}` : `كل ${unit}`;
+    return `${p.commitment_count} ${what || 'مخرج'} ${period}`;
+  }
+  const unit = every > 1 ? `${every} ${p.commitment_unit}s` : p.commitment_unit;
+  return `${p.commitment_count} ${what || 'output'}${p.commitment_count === 1 ? '' : 's'} every ${unit}`;
 }
 
 export interface ChannelPlan {
@@ -168,6 +273,21 @@ export const savePlan = (patch: Record<string, unknown>, id?: string) =>
   call<{ plan: MktPlan }>('plan_save', { id, patch });
 export const approvePlan = (id: string) => call<{ plan: MktPlan }>('plan_approve', { id });
 
+/** Which strategy version this plan is written against, which versions exist,
+ *  and the full rebase history. `id` is optional so a NEW plan form can still
+ *  offer the current approved version as its default. */
+export const fetchPlanStrategyContext = (id?: string) => call<{
+  current_approved: StrategyVersionRef | null;
+  versions: StrategyVersionRef[];
+  history: PlanStrategyLink[];
+  missing: string[] | null;
+}>('plan_strategy_context', { id });
+/** Explicit, never automatic. A plan does not follow the strategy forward on its own. */
+export const rebasePlanStrategy = (id: string, strategy_version_id: string, reason?: string) =>
+  call<{ result: Record<string, unknown> }>('plan_rebase_strategy', { id, strategy_version_id, reason });
+export const fetchPlanMissing = (id: string) =>
+  call<{ missing: string[] }>('plan_missing_requirements', { id });
+
 export const saveGoal = (patch: Record<string, unknown>, id?: string) =>
   call<{ goal: MktGoal }>('goal_save', { id, patch });
 /** Replaces the WHOLE allocation: seasonality is only meaningful as a set, and a
@@ -175,7 +295,21 @@ export const saveGoal = (patch: Record<string, unknown>, id?: string) =>
 export const setGoalTargets = (goal_id: string, periods: Array<Record<string, unknown>>) =>
   call<{ periods: GoalTargetPeriod[] }>('goal_targets_set', { goal_id, periods });
 export const fetchGoalPacing = (id: string) =>
-  call<{ pacing: GoalPacing | null; rollup: Record<string, unknown> | null }>('goal_pacing', { id });
+  call<{
+    pacing: GoalPacing | null; rollup: Record<string, unknown> | null;
+    allocation: GoalAllocation | null; actual: GoalActual | null;
+  }>('goal_pacing', { id });
+/** Everything one goal needs to render its own class-specific card. */
+export const fetchGoalDetail = (id: string) => call<{
+  goal: MktGoal; periods: GoalTargetPeriod[]; measurements: GoalMeasurement[];
+  missing: string[]; actual: GoalActual | null; allocation: GoalAllocation | null;
+  dates: GoalEffectiveDates | null;
+}>('goal_detail', { id });
+/** The ONLY way an actual value moves — append a measurement, never edit a number. */
+export const recordGoalMeasurement = (patch: Record<string, unknown>) =>
+  call<{ measurement: GoalMeasurement; actual: GoalActual | null }>('goal_measure', { patch });
+export const fetchGoalMissing = (id: string) =>
+  call<{ missing: string[] }>('goal_missing_requirements', { id });
 
 export const fetchPortfolio = (plan_id?: string) => call<{
   initiatives: Initiative[]; programs: Program[]; campaigns: Campaign[];
@@ -184,6 +318,73 @@ export const saveInitiative = (patch: Record<string, unknown>, id?: string) =>
   call<{ initiative: Initiative }>('initiative_save', { id, patch });
 export const saveProgram = (patch: Record<string, unknown>, id?: string) =>
   call<{ program: Program }>('program_save', { id, patch });
+
+// ── portfolio (2026-08-26) ─────────────────────────────────────────────────
+export type PortfolioKind = 'initiative' | 'program' | 'campaign';
+
+/** Everything the portfolio screen renders, in one round trip. Split across
+ *  calls, the plan header could describe a different plan from the tree under
+ *  it — which is how a "0 campaigns" heading ends up above a list of them. */
+export const fetchPortfolioMap = (plan_id?: string) => call<{
+  plans: PlanRef[]; strategies: StrategyVersionRef[]; goals: MktGoal[];
+  initiatives: Initiative[]; programs: Program[]; campaigns: Campaign[];
+  /** Content each program originated — the evidence behind its delivery
+   *  progress. Empty means nothing produced, which the card says out loud. */
+  program_output: Array<{
+    id: string; status: string; origin_program_id: string | null;
+    created_at: string; planned_publish_at: string | null;
+  }>;
+}>('portfolio_map', { plan_id });
+
+/** The identity + period slice of a plan, exactly what portfolio_map selects. */
+export interface PlanRef {
+  id: string; name_ar: string; name_en: string | null;
+  plan_type: string; status: string;
+  period_start: string; period_end: string;
+  strategy_version_id: string | null; owner_user_id: string | null;
+  needs_classification: boolean;
+}
+
+export interface SecondaryGoalLink {
+  id: string; goal_id: string; relation: string;
+  initiative_id: string | null; program_id: string | null; campaign_id: string | null;
+}
+
+export interface PortfolioDetail {
+  kind: PortfolioKind;
+  row: Record<string, unknown>;
+  programs?: Program[];
+  campaigns?: Campaign[];
+  content?: Array<Record<string, unknown>>;
+  performance?: Array<Record<string, unknown>>;
+  projects?: string[];
+  secondary_goals: SecondaryGoalLink[];
+  decisions: ReviewDecision[];
+  /** What the DATABASE will refuse to activate without. The same list the
+   *  CHECK constraints enforce, so the checklist can never promise something
+   *  the save will then reject. */
+  missing: string[];
+}
+
+export const fetchPortfolioDetail = (target_type: PortfolioKind, id: string) =>
+  call<PortfolioDetail>('portfolio_detail', { target_type, id });
+
+/** The ONLY way a legacy null campaign_class becomes organic or paid. */
+export const classifyCampaign = (
+  id: string, campaign_class: 'organic' | 'paid',
+  ctx: { plan_id?: string; goal_id?: string; initiative_id?: string } = {},
+) => call<{ result: { class_before: string | null; class_after: string;
+  needs_classification: boolean; missing: string[] } }>('campaign_classify',
+  { id, campaign_class, ...ctx });
+
+export const setSecondaryGoals = (target_type: PortfolioKind, id: string, goal_ids: string[]) =>
+  call<{ goal_ids: string[] }>('portfolio_secondary_goals_set', { target_type, id, asset_ids: goal_ids });
+
+export const setCampaignProjects = (id: string, project_ids: string[]) =>
+  call<{ project_ids: string[] }>('campaign_projects_set', { id, asset_ids: project_ids });
+
+export const fetchPortfolioMissing = (target_type: PortfolioKind, id: string) =>
+  call<{ missing: string[] }>('portfolio_missing_requirements', { target_type, id });
 
 export const saveChannelPlan = (patch: Record<string, unknown>, id?: string) =>
   call<{ channel_plan: ChannelPlan }>('channel_plan_save', { id, patch });
@@ -225,10 +426,117 @@ export const PLAN_TYPE_LABEL: Record<string, { ar: string; en: string }> = {
   custom:    { ar: 'مخصصة', en: 'Custom' },
 };
 
+export const GOAL_CLASS_LABEL: Record<string, { ar: string; en: string }> = {
+  outcome:           { ar: 'هدف نتيجة', en: 'Outcome goal' },
+  kpi:               { ar: 'مؤشر أداء', en: 'KPI target' },
+  output_commitment: { ar: 'التزام تنفيذي', en: 'Output commitment' },
+};
+
+/** One line telling the user which of the three they are actually creating. */
+export const GOAL_CLASS_HINT: Record<string, { ar: string; en: string }> = {
+  outcome: {
+    ar: 'نتيجة أعمال نسعى إليها — تُقاس بالمحصلة، لا بحجم العمل.',
+    en: 'A business result we are aiming at — judged by the outcome, not by effort.',
+  },
+  kpi: {
+    ar: 'مؤشر نراقبه باستمرار — له قراءة حالية واتجاه، وليس بالضرورة إنجازاً ينتهي.',
+    en: 'A number we watch continuously — it has a current reading and a trend, not a finish line.',
+  },
+  output_commitment: {
+    ar: 'كمية عمل التزمنا بتنفيذها خلال الفترة — تُقاس بالإنجاز مقابل المطلوب.',
+    en: 'An amount of work we committed to deliver in the period — completed vs required.',
+  },
+};
+
+/** Thematic grouping — what the goal is ABOUT, not what kind of record it is. */
 export const GOAL_CATEGORY_LABEL: Record<string, { ar: string; en: string }> = {
-  outcome: { ar: 'نتيجة أعمال', en: 'Business outcome' },
-  kpi:     { ar: 'مؤشر أداء', en: 'KPI target' },
-  output:  { ar: 'التزام إنتاج', en: 'Output commitment' },
+  acquisition: { ar: 'استقطاب', en: 'Acquisition' },
+  conversion:  { ar: 'تحويل', en: 'Conversion' },
+  brand:       { ar: 'علامة', en: 'Brand' },
+  reach:       { ar: 'وصول', en: 'Reach' },
+  engagement:  { ar: 'تفاعل', en: 'Engagement' },
+  retention:   { ar: 'ولاء', en: 'Retention' },
+  efficiency:  { ar: 'كفاءة', en: 'Efficiency' },
+  revenue:     { ar: 'إيراد', en: 'Revenue' },
+  other:       { ar: 'أخرى', en: 'Other' },
+};
+
+export const BASELINE_STATE_LABEL: Record<string, { ar: string; en: string }> = {
+  known:          { ar: 'معروف', en: 'Known' },
+  unknown:        { ar: 'غير معروف', en: 'Unknown' },
+  not_applicable: { ar: 'لا ينطبق', en: 'Not applicable' },
+};
+
+export const AGGREGATION_LABEL: Record<string, { ar: string; en: string }> = {
+  sum:     { ar: 'مجموع الفترات', en: 'Sum of periods' },
+  latest:  { ar: 'آخر قراءة', en: 'Latest reading' },
+  average: { ar: 'المتوسط', en: 'Average' },
+  rate:    { ar: 'معدل (آخر قراءة)', en: 'Rate (latest)' },
+  min:     { ar: 'الأدنى', en: 'Minimum' },
+  max:     { ar: 'الأعلى', en: 'Maximum' },
+  custom:  { ar: 'حساب مخصص', en: 'Custom' },
+};
+
+/** Only 'sum' makes period targets add up to the goal target. Say so in the form. */
+export const AGGREGATION_HINT: Record<string, { ar: string; en: string }> = {
+  sum:     { ar: 'مستهدفات الفترات يجب أن تساوي المستهدف الكلي.', en: 'Period targets must add up to the overall target.' },
+  latest:  { ar: 'القيمة الحالية هي آخر قراءة مسجّلة — لا تُجمع.', en: 'The current value is the last reading — periods do not add up.' },
+  average: { ar: 'القيمة هي متوسط القراءات — لا تُجمع.', en: 'The value is the average of readings — periods do not add up.' },
+  rate:    { ar: 'نسبة أو معدل — جمع الفترات بلا معنى.', en: 'A rate or percentage — summing periods is meaningless.' },
+  min:     { ar: 'أدنى قراءة مسجّلة.', en: 'The lowest recorded reading.' },
+  max:     { ar: 'أعلى قراءة مسجّلة.', en: 'The highest recorded reading.' },
+  custom:  { ar: 'حساب خارج النظام — تُدخل القراءة يدوياً.', en: 'Computed outside the system — readings entered manually.' },
+};
+
+export const MEASUREMENT_FREQUENCY_LABEL: Record<string, { ar: string; en: string }> = {
+  daily:         { ar: 'يومي', en: 'Daily' },
+  weekly:        { ar: 'أسبوعي', en: 'Weekly' },
+  monthly:       { ar: 'شهري', en: 'Monthly' },
+  quarterly:     { ar: 'ربع سنوي', en: 'Quarterly' },
+  on_completion: { ar: 'عند اكتمال الحملة', en: 'At campaign completion' },
+  manual:        { ar: 'يدوي عند الحاجة', en: 'Manual / ad hoc' },
+};
+
+/** Where a number actually comes from. Prose stays in source_of_truth_note so it
+ *  is never mistaken for a wired source. */
+export const SOURCE_OF_TRUTH_LABEL: Record<string, { ar: string; en: string }> = {
+  crm_leads:             { ar: 'عملاء محتملون (CRM)', en: 'CRM leads' },
+  crm_appointments:      { ar: 'مواعيد (CRM)', en: 'CRM appointments' },
+  crm_sales:             { ar: 'مبيعات (CRM)', en: 'CRM sales' },
+  meta_ads:              { ar: 'إعلانات ميتا', en: 'Meta Ads' },
+  tiktok_ads:            { ar: 'إعلانات تيك توك', en: 'TikTok Ads' },
+  snapchat_ads:          { ar: 'إعلانات سناب', en: 'Snapchat Ads' },
+  google_ads:            { ar: 'إعلانات جوجل', en: 'Google Ads' },
+  instagram_organic:     { ar: 'إنستغرام عضوي', en: 'Instagram organic' },
+  tiktok_organic:        { ar: 'تيك توك عضوي', en: 'TikTok organic' },
+  publication_snapshots: { ar: 'قراءات أداء المنشورات', en: 'Publication snapshots' },
+  google_analytics:      { ar: 'جوجل أناليتكس', en: 'Google Analytics' },
+  manual_verified:       { ar: 'إدخال يدوي موثّق', en: 'Manual verified entry' },
+  other:                 { ar: 'مصدر آخر', en: 'Other source' },
+};
+
+/** What a goal still needs before it can be activated, in the user's language. */
+export const GOAL_MISSING_LABEL: Record<string, { ar: string; en: string }> = {
+  plan:                  { ar: 'الخطة', en: 'Plan' },
+  goal_class:            { ar: 'تصنيف الهدف', en: 'Goal classification' },
+  metric:                { ar: 'المقياس', en: 'Metric' },
+  unit:                  { ar: 'الوحدة', en: 'Unit' },
+  target:                { ar: 'المستهدف', en: 'Target' },
+  owner:                 { ar: 'المسؤول', en: 'Owner' },
+  measurement_frequency: { ar: 'دورية القياس', en: 'Measurement frequency' },
+  source_of_truth:       { ar: 'مصدر القياس', en: 'Source of truth' },
+  aggregation_method:    { ar: 'طريقة التجميع', en: 'Aggregation method' },
+  baseline_state:        { ar: 'حالة خط الأساس', en: 'Baseline state' },
+  start_date:            { ar: 'تاريخ البداية', en: 'Start date' },
+  end_date:              { ar: 'تاريخ النهاية', en: 'End date' },
+};
+
+/** What a plan still needs before it can be approved or activated. */
+export const PLAN_MISSING_LABEL: Record<string, { ar: string; en: string }> = {
+  strategy_version:          { ar: 'نسخة الاستراتيجية', en: 'Strategy version' },
+  approved_strategy_version: { ar: 'نسخة استراتيجية معتمدة', en: 'An approved strategy version' },
+  owner:                     { ar: 'المسؤول', en: 'Owner' },
+  at_least_one_goal:         { ar: 'هدف واحد على الأقل', en: 'At least one goal' },
 };
 
 export const PLAN_STATUS_LABEL: Record<string, { ar: string; en: string }> = {
@@ -280,6 +588,75 @@ export const CADENCE_UNIT_LABEL: Record<string, { ar: string; en: string }> = {
   week:    { ar: 'أسبوعياً', en: 'per week' },
   month:   { ar: 'شهرياً', en: 'per month' },
   quarter: { ar: 'ربع سنوي', en: 'per quarter' },
+};
+
+// ── portfolio vocabulary (2026-08-26) ──────────────────────────────────────
+
+export const CAMPAIGN_STATUS_LABEL: Record<string, { ar: string; en: string }> = {
+  draft:     { ar: 'مسودة', en: 'Draft' },
+  planned:   { ar: 'مخططة', en: 'Planned' },
+  active:    { ar: 'نشطة', en: 'Active' },
+  paused:    { ar: 'متوقفة مؤقتاً', en: 'Paused' },
+  completed: { ar: 'مكتملة', en: 'Completed' },
+  cancelled: { ar: 'ملغاة', en: 'Cancelled' },
+  archived:  { ar: 'مؤرشفة', en: 'Archived' },
+};
+
+/** organic | paid — WHAT KIND of campaign this is. A null here means the record
+ *  predates the rule and nobody has said; it is NOT the same as an incomplete
+ *  strategic context, and the two must never share a label. */
+export const CAMPAIGN_CLASS_LABEL: Record<string, { ar: string; en: string }> = {
+  organic: { ar: 'عضوية', en: 'Organic' },
+  paid:    { ar: 'مدفوعة', en: 'Paid' },
+};
+
+/** The two incompleteness states, in the words the brief settled on. */
+export const CLASS_MISSING_LABEL = { ar: 'النوع غير محدد', en: 'Type not set' };
+export const CONTEXT_MISSING_LABEL = { ar: 'السياق الاستراتيجي ناقص', en: 'Strategic context incomplete' };
+
+export const FUNNEL_STAGE_LABEL: Record<string, { ar: string; en: string }> = {
+  awareness:     { ar: 'وعي', en: 'Awareness' },
+  consideration: { ar: 'تفكير', en: 'Consideration' },
+  decision:      { ar: 'قرار', en: 'Decision' },
+  retention:     { ar: 'ولاء', en: 'Retention' },
+};
+
+export const BUDGET_KIND_LABEL: Record<string, { ar: string; en: string }> = {
+  daily:    { ar: 'يومية', en: 'Daily' },
+  lifetime: { ar: 'إجمالية', en: 'Lifetime' },
+};
+
+/** What a portfolio record still needs before it can be activated. The keys are
+ *  exactly what mkt_*_missing_requirements returns. */
+export const PORTFOLIO_MISSING_LABEL: Record<string, { ar: string; en: string }> = {
+  not_found:             { ar: 'السجل غير موجود', en: 'Record not found' },
+  campaign_class:        { ar: 'نوع الحملة (عضوية أو مدفوعة)', en: 'Campaign type (organic or paid)' },
+  plan:                  { ar: 'الخطة', en: 'Plan' },
+  primary_goal:          { ar: 'الهدف الرئيسي', en: 'Primary goal' },
+  owner:                 { ar: 'المسؤول', en: 'Owner' },
+  start_date:            { ar: 'تاريخ البداية', en: 'Start date' },
+  end_date:              { ar: 'تاريخ النهاية', en: 'End date' },
+  objective:             { ar: 'الهدف من الحملة', en: 'Objective' },
+  deliverables:          { ar: 'المخرجات المطلوبة', en: 'Deliverables' },
+  commitment:            { ar: 'الالتزام المتكرر', en: 'Recurring commitment' },
+  output_type:           { ar: 'نوع المخرج', en: 'Output type' },
+  purpose:               { ar: 'الغرض', en: 'Purpose' },
+  hypothesis:            { ar: 'الفرضية', en: 'Hypothesis' },
+  expected_contribution: { ar: 'المساهمة المتوقعة', en: 'Expected contribution' },
+  execution:             { ar: 'برنامج أو حملة واحدة على الأقل', en: 'At least one program or campaign' },
+};
+
+/** The Needs-Attention filters. Each is a question with a yes/no answer on a
+ *  record, so a count next to it is a real count and not an impression. */
+export const ATTENTION_FILTER_LABEL: Record<string, { ar: string; en: string }> = {
+  class_missing:      { ar: 'النوع غير محدد', en: 'Type missing' },
+  plan_missing:       { ar: 'بلا خطة', en: 'Plan missing' },
+  goal_missing:       { ar: 'بلا هدف رئيسي', en: 'Primary goal missing' },
+  owner_missing:      { ar: 'بلا مسؤول', en: 'Owner missing' },
+  dates_missing:      { ar: 'بلا تواريخ', en: 'Dates missing' },
+  commitment_missing: { ar: 'برنامج بلا التزام متكرر', en: 'Program commitment missing' },
+  deliverables_missing: { ar: 'حملة بلا مخرجات', en: 'Campaign deliverables missing' },
+  no_execution:       { ar: 'مبادرة بلا تنفيذ', en: 'Initiative with no execution' },
 };
 
 /** What the approval gate can report missing, in the user's language. */

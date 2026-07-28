@@ -18,7 +18,7 @@ import { Section } from '@/pages/MarketingIntelligence/components/shared';
 import { lbl } from '@/lib/marketingMgmt/labels';
 import {
   fetchPlanningOverview, fetchPortfolio, fetchPillars, fetchMissingContext, addContentUsage,
-  MISSING_CONTEXT_LABEL, ORIGIN_KIND_LABEL, GOAL_CATEGORY_LABEL,
+  MISSING_CONTEXT_LABEL, ORIGIN_KIND_LABEL, GOAL_CLASS_LABEL,
   type MktPlan, type MktGoal, type Initiative, type Program, type ContentPillar,
 } from '@/lib/marketingMgmt/v2';
 import { updateContent, type ContentItem, type Campaign } from '@/lib/marketingMgmt/client';
@@ -154,7 +154,7 @@ export function ContentContextPanel({ item, isAr, onSaved, onError }: {
             <option value="">{isAr ? '— بلا هدف —' : '— no goal —'}</option>
             {planGoals.map((g) => (
               <option key={g.id} value={g.id}>
-                {g.name_ar} · {lbl(GOAL_CATEGORY_LABEL, g.goal_category, isAr)}
+                {g.name_ar} · {lbl(GOAL_CLASS_LABEL, g.goal_class, isAr)}
               </option>))}
           </select>
         </label>
