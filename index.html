@@ -2,11 +2,25 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Favicon — the Wassel castle logo. Same PNG used in the sidebar and
-         auth pages, so we only maintain one source of truth for the mark. -->
-    <link rel="icon" type="image/png" href="/assets/logo-castle.png" />
-    <link rel="apple-touch-icon" href="/assets/logo-castle.png" />
+    <!-- `viewport-fit=cover` is what makes env(safe-area-inset-*) resolve to
+         real values on notched iPhones; without it the installed app
+         letterboxes and every inset reads 0. See the "INSTALLED /
+         HOME-SCREEN APP" block in src/index.css. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Icons are generated from the brand mark by scripts/generate-app-icons.mjs.
+         They are pre-flattened onto Soft Cream because iOS renders any
+         transparency in a home-screen icon as solid BLACK. -->
+    <link rel="icon" type="image/png" href="/assets/icon-192.png" />
+    <link rel="apple-touch-icon" href="/assets/icon-180.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Home Screen install (iOS). `apple-mobile-web-app-title` is what shows
+         under the icon — kept short so it doesn't truncate. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="وصل" />
     <meta name="theme-color" content="#B8734F" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

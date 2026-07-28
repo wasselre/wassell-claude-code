@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "ignoreCommand": "git diff --quiet \"${VERCEL_GIT_PREVIOUS_SHA:-HEAD^}\" HEAD -- . ':!docs/prd/models' ':!docs/prd/workflows'",
   "rewrites": [
-    { "source": "/((?!api/)(?!assets/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/)(?!assets/)(?!manifest\\.webmanifest$).*)", "destination": "/index.html" }
   ],
   "headers": [
     {

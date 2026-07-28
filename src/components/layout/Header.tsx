@@ -95,7 +95,10 @@ export default function Header({ onMenuClick }: HeaderProps = {}) {
   };
 
   return (
-    <header className="sticky top-0 z-30 bg-cream-light/80 backdrop-blur-md">
+    // `safe-top` keeps the header's contents clear of the notch when the app
+    // runs standalone from the Home Screen; the translucent background still
+    // extends up behind the status bar. Inert in a normal browser tab.
+    <header className="safe-top sticky top-0 z-30 bg-cream-light/80 backdrop-blur-md">
       <div className="flex items-center justify-between gap-3 px-4 md:px-8 py-4">
         <div className="flex items-center gap-3 min-w-0">
           {onMenuClick && (

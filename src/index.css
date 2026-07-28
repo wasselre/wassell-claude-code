@@ -52,7 +52,11 @@
 
   .main-content {
     margin-inline-start: var(--sidebar-width);
+    /* 100vh on iOS is the height WITHOUT the browser chrome, so it overflows
+       by the toolbar's height in Safari. `dvh` tracks the actual visible
+       viewport; the vh line stays as the fallback for older engines. */
     min-height: 100vh;
+    min-height: 100dvh;
     background: var(--cream-light);
     transition: margin-inline-start 0.25s ease;
   }
@@ -312,6 +316,48 @@
     border-color: var(--copper);
     background: rgba(184, 115, 79, 0.08);
     color: var(--copper);
+  }
+}
+
+/* ======= INSTALLED / HOME-SCREEN APP (iOS) =======
+   Only meaningful once the app is added to the Home Screen and runs
+   standalone. `env(safe-area-inset-*)` resolves to 0 everywhere else
+   (including desktop and in-browser Safari), so these rules are inert
+   until they're needed — no breakpoint guard required.
+
+   Requires `viewport-fit=cover` on the viewport meta tag; without it iOS
+   reports every inset as 0 and the app letterboxes instead. */
+
+/* Opt-in helpers for surfaces that sit against a screen edge. */
+.safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* The off-canvas drawer spans the full screen height, so it has to clear
+   both the notch and the home indicator itself. */
+.sidebar {
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* iOS auto-zooms the viewport when a focused field's text is under 16px, and
+   never zooms back out — which leaves the rep stranded on a horizontally
+   scrolled page after every tap into a form. `max()` raises only the fields
+   that would trigger it and leaves larger text alone.
+
+   `!important` is load-bearing: Tailwind's `text-sm`/`text-xs` utilities are
+   class selectors and would otherwise outrank a bare element selector. This
+   is a device-correctness floor, not a style choice — checkboxes and radios
+   are excluded because their size comes from width/height, not font-size. */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  select,
+  textarea {
+    font-size: max(16px, 1em) !important;
   }
 }
 

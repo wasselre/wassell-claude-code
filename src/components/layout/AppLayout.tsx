@@ -29,7 +29,9 @@ export default function AppLayout() {
       )}
       <div className="main-content">
         <Header onMenuClick={() => setMobileSidebarOpen(true)} />
-        <main className="px-4 md:px-8 py-6">
+        {/* `safe-bottom` keeps the last row of content above the home
+            indicator when running standalone from the Home Screen. */}
+        <main className="safe-bottom px-4 md:px-8 py-6">
           <Outlet />
         </main>
       </div>
