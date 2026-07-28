@@ -71,6 +71,18 @@ Everything was reachable only by query. This page is that surface.
   enqueue them, so a missed enqueue self-heals on the next tick instead of stranding
   a post permanently. It orders its stages media → OCR → enrich so the free OCR lane
   always reads the images before the metered vision path would have.
+- **Failure is not an exit.** The sweep scans posts at `collected` *and* `failed`.
+  A post reaches `failed` when its job exhausts its attempts — but that is a
+  statement about one attempt, not about whether the work is still possible, and
+  media recovery frequently succeeds afterwards. Scoping the scan to `collected`
+  quietly made `failed` a terminal state no code path could leave: 906 posts sat
+  there, 899 of them already holding stored media, one enqueue short of processing.
+  Twice now the same mistake has cost this pipeline its self-healing property
+  (stage 2's OCR scope was the first), and both times the tell was identical — a
+  status is an event, so gating recovery on one is the very thing this bullet says
+  the pipeline does not do. Re-entry stays bounded: stage 1 re-attempts at most once
+  per 6h, stage 3 requires stored media, so a permanently-dead post costs ~4
+  attempts a day rather than one per tick.
 - Bilingual AR/EN with full RTL/LTR; no horizontal body scroll at 375px.
 
 ## User flows
