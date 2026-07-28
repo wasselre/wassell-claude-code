@@ -227,7 +227,39 @@ export async function bumpConversationRecord(args: {
   //    WhatsApp task as "waiting for customer" (+24h deadline) and retires
   //    stale reach-out tasks (booking / no-show-recovery calls).
   // Both RPCs are idempotent — webhook retries re-stamp, never duplicate.
-  const clientLink = typeof prevData.client_link === 'string' ? prevData.client_link : null;
+  // Resolve the client link HERE if the conversation does not carry one yet.
+  //
+  // This used to happen only in the browser (appStore.bumpParentFromMessage /
+  // relinkChatsAgainstClients), so a conversation created by the webhook stayed
+  // unlinked until somebody opened the app — and the reconcile below is gated
+  // on that link. At night and at weekends, exactly when the AI is answering,
+  // a customer's reply therefore changed no follow-up state at all: not marked
+  // replied, the 24-hour checkpoint still running, escalation still able to
+  // chase someone who had already answered (WA-09).
+  //
+  // find_client_id_by_phone is the SAME matcher the rest of the server uses
+  // (ksa_phone_canon on both sides), so this cannot invent a link the app would
+  // not have made. A phone that matches nothing stays unlinked — most inbound
+  // on unlinked chats is genuinely not a client, and guessing would be worse
+  // than leaving it.
+  let clientLink = typeof prevData.client_link === 'string' ? prevData.client_link : null;
+  if (!clientLink) {
+    const digits = args.chatWid.split('@')[0] ?? '';
+    if (/^\d{8,15}$/.test(digits)) {
+      const { data: matched, error: matchErr } = await supa.rpc('find_client_id_by_phone', { p_phone: `+${digits}` });
+      if (matchErr) {
+        console.error('[chatIngest] find_client_id_by_phone failed:', matchErr.message);
+      } else if (typeof matched === 'string' && matched) {
+        clientLink = matched;
+        const { error: linkErr } = await supa
+          .from('records')
+          .update({ data: { ...nextData, client_link: matched } })
+          .eq('id', recordId);
+        if (linkErr) console.error('[chatIngest] persisting client_link failed:', linkErr.message);
+        else console.warn(`[chatIngest] linked conversation ${args.chatWid} to client ${matched} server-side`);
+      }
+    }
+  }
   if (clientLink && UUID_RE.test(clientLink)) {
     const rpcName = args.lastFlow === 'in' ? 'reconcile_inbound_whatsapp' : 'reconcile_outbound_whatsapp';
     try {
