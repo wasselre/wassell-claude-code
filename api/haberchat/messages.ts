@@ -21,6 +21,7 @@
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
 import { sendMessage, resolveDefaultDeviceId, maybeScheduleWaha, HaberchatError } from '../_lib/whatsappGateway.js';
+import { authorizeWhatsappSend, logSendAttempt } from '../_lib/whatsappSendAuth.js';
 
 export const config = {
   runtime: 'edge',
@@ -63,6 +64,61 @@ export default async function handler(req: Request): Promise<Response> {
       }
       if (t <= Date.now() + 30_000) {
         return jsonError(400, 'deliverAt must be at least 1 minute in the future');
+      }
+    }
+
+    // AUTHORIZATION (WA-01). A valid JWT is not permission to message a
+    // customer. The send is authorized against the CONVERSATION under the
+    // caller's own RLS — the same rule that decides which chats they can open —
+    // and starting a brand-new conversation additionally requires `create` on
+    // the chats model, so cold outreach is a privilege rather than a side
+    // effect of knowing a phone number.
+    //
+    // Groups and channels are not gated here: the composer refuses them
+    // outright, so `phone` is the only reachable send path.
+    const source = typeof input.source === 'string' ? input.source : 'composer';
+
+    if (phone && !group && !channel) {
+      const auth = await authorizeWhatsappSend({ req, user, phone, source: source as 'composer' });
+      if (!auth.ok) {
+        await logSendAttempt({
+          user, chatWid: `${phone.replace(/\D/g, '')}@c.us`, deviceId, source,
+          outcome: 'denied', reason: auth.reason,
+        });
+        return jsonError(auth.status, auth.error);
+      }
+
+      try {
+        const scheduled = deliverAt
+          ? await maybeScheduleWaha({ deviceId, phone, body, mediaFileId, mediaCaption, reference, deliverAt }, user.userId)
+          : null;
+        if (scheduled) {
+          await logSendAttempt({
+            user, chatWid: auth.chatWid, clientId: auth.clientId, conversationId: auth.conversationId,
+            deviceId, source, outcome: 'accepted', reason: 'scheduled',
+            messageWid: scheduled.wid, hasMedia: !!mediaFileId,
+          });
+          return jsonOk(scheduled);
+        }
+
+        const result = await sendMessage({
+          deviceId, phone, group, channel, body, mediaFileId, mediaCaption, quotedWid, reference, deliverAt,
+        });
+        await logSendAttempt({
+          user, chatWid: auth.chatWid, clientId: auth.clientId, conversationId: auth.conversationId,
+          deviceId, source, outcome: 'accepted', messageWid: result.wid, hasMedia: !!mediaFileId,
+        });
+        return jsonOk(result);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Recorded BEFORE returning: a send that failed at the gateway is
+        // exactly the event that previously left no trace anywhere.
+        await logSendAttempt({
+          user, chatWid: auth.chatWid, clientId: auth.clientId, conversationId: auth.conversationId,
+          deviceId, source, outcome: 'failed', hasMedia: !!mediaFileId, error: msg,
+        });
+        if (err instanceof HaberchatError) return jsonError(err.status === 401 ? 502 : err.status, err.message);
+        return jsonError(500, msg);
       }
     }
 
