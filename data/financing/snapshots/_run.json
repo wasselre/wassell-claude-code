@@ -1,0 +1,415 @@
+{
+ "run_started_at": "2026-07-28T18:47:47.389Z",
+ "run_finished_at": "2026-07-28T18:49:47.245Z",
+ "total": 45,
+ "ok": 33,
+ "blocked": 9,
+ "failed": 3,
+ "sources": [
+  {
+   "key": "sama_rlp_chapter_iv",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 11297,
+   "content_hash": "11ffa67aaa6297e608c639f2987233c24c748410209ed99347815434047369e3",
+   "error": null
+  },
+  {
+   "key": "sama_rlp_full",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 358767,
+   "content_hash": "c53a6aceb7066c76ba4188c61b38fd0b19578cacdf92e4ac66119cd4254e1345",
+   "error": null
+  },
+  {
+   "key": "sama_ref_implementing_regulation",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 24290,
+   "content_hash": "a6945d0e267e93e40cbac597aa863b4d161fe521f7a8c1977638439fb44b31d9",
+   "error": null
+  },
+  {
+   "key": "sama_ltv_article_11",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 4981,
+   "content_hash": "00c41eaa3260e2f2f9fe0c61bbc92d8f2e1b8c4a4db70d73ebb7366daed607e9",
+   "error": null
+  },
+  {
+   "key": "sama_ltv_circular_2016",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 4170,
+   "content_hash": "482571f87f101c8a4dec57b5dc8c6cd9b92a34591a9ebfc7724dcf5672541416",
+   "error": null
+  },
+  {
+   "key": "sama_ltv_circular_2018",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 4934,
+   "content_hash": "a44d22c74fc8c9be9881f299655c0e5574f942da8eac7d53cfb6f74f07de4145",
+   "error": null
+  },
+  {
+   "key": "sama_ltv_circular_2017",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 4436,
+   "content_hash": "0fee150269be790888fe9d25f1688a7551f54d36f7d91e758b353dabc8a3812b",
+   "error": null
+  },
+  {
+   "key": "sama_consumer_financing_regulations",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 50385,
+   "content_hash": "8479d50867cac3038e261adf48765efeb55981190b5111d4314b689e9a43fd7d",
+   "error": null
+  },
+  {
+   "key": "sama_apr_annex",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 8081,
+   "content_hash": "6857e3b463f74551442abb83782b71bf9332469460f103bf5f7a46e03ec15af0",
+   "error": null
+  },
+  {
+   "key": "sama_apr_rules",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 14351,
+   "content_hash": "94229040754db446f6d0c4d3f6d15ebdd5d9defa202995a7ae290d460d1063d1",
+   "error": null
+  },
+  {
+   "key": "sama_saibor_definition",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 30868,
+   "content_hash": "c70a85c6c8be2d5dd454628820209ca7a9b031f2d76e45d5a420aee44331bd61",
+   "error": null
+  },
+  {
+   "key": "sama_licensed_finance_entities",
+   "status": "fetch_blocked",
+   "http_status": 200,
+   "blocked_reason": "server_error_page",
+   "chars": 478,
+   "content_hash": "ca353cb4bd76375859b6c8e3ee01338c59f3c353b15e7393df6509c7038a9dcf",
+   "error": null
+  },
+  {
+   "key": "sama_licensed_banks",
+   "status": "fetch_blocked",
+   "http_status": 404,
+   "blocked_reason": "not_found",
+   "chars": 2657,
+   "content_hash": "2ba8c9a62be19bfb5f4d160c5bca747bbbba555537a0bfbda26d1b2b034aa900",
+   "error": null
+  },
+  {
+   "key": "zatca_rett_guideline",
+   "status": "fetch_failed",
+   "http_status": null,
+   "blocked_reason": null,
+   "chars": 0,
+   "content_hash": null,
+   "error": "page.goto: Download is starting\nCall log:\n\u001b[2m  - navigating to \"https://zatca.gov.sa/en/HelpCenter/guidelines/Documents/Detailed-Guideline-for-RETT-In-accordance-with-provision-of-RETT-Law-and-its-Implementing-Regulations.pdf\", waiting until \"domcontentloaded\"\u001b[22m\n"
+  },
+  {
+   "key": "zatca_rett_landing",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 1441,
+   "content_hash": "a5eee6494a8c041a043e256df59df201154e514c07dfcb3d187005f9f3cc6d27",
+   "error": null
+  },
+  {
+   "key": "sakani_housing_support",
+   "status": "fetch_blocked",
+   "http_status": 200,
+   "blocked_reason": "empty_body",
+   "chars": 0,
+   "content_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+   "error": null
+  },
+  {
+   "key": "redf_home",
+   "status": "fetch_failed",
+   "http_status": null,
+   "blocked_reason": null,
+   "chars": 0,
+   "content_hash": null,
+   "error": "page.goto: net::ERR_TIMED_OUT at https://www.redf.gov.sa/en\nCall log:\n\u001b[2m  - navigating to \"https://www.redf.gov.sa/en\", waiting until \"domcontentloaded\"\u001b[22m\n"
+  },
+  {
+   "key": "alrajhi_home_finance",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5087,
+   "content_hash": "d3021adaadc52a6ca0bb4ded007bea40bc2abf888312aa7e586a0b7ee3f1f04c",
+   "error": null
+  },
+  {
+   "key": "alrajhi_off_plan",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5538,
+   "content_hash": "c5c88d1a0880f06ab91d0830ccf1c32d96e43d02687491ab5d8305f7475114bd",
+   "error": null
+  },
+  {
+   "key": "alrajhi_flexible",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 4274,
+   "content_hash": "10de51bfb08a84f2aea924f03abea97bfb6d69df0bd4859546edba6518344865",
+   "error": null
+  },
+  {
+   "key": "alrajhi_buyout",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5015,
+   "content_hash": "ace51f2509538c4f10dfecb117cd82f7df3ff54a242032856331fe3eee889d29",
+   "error": null
+  },
+  {
+   "key": "alrajhi_property_power",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5267,
+   "content_hash": "c0e37daf1cec69efe17e4730257629b2ac97fa5ae0f317321a96ce9ccd2276d8",
+   "error": null
+  },
+  {
+   "key": "alrajhi_tharwa",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 3854,
+   "content_hash": "58b5afcb7b8138e7725329dc0dab8e782d651a636530aa73467821ce0abb2af7",
+   "error": null
+  },
+  {
+   "key": "snb_home_finance",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5130,
+   "content_hash": "67ab2b729c775ed0232b63dd43ec39b7e10c9f5245b756b5e1b68f771e904bf5",
+   "error": null
+  },
+  {
+   "key": "snb_murabaha_home",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 4311,
+   "content_hash": "214406b7b4d30746fde588c6012394dec98ea2cc4cb497df360fa60dc08bb2ba",
+   "error": null
+  },
+  {
+   "key": "snb_pricing",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5301,
+   "content_hash": "4d127c182e0eee7119e7520c29c2daae007b8ae7780fd581a8331a2067c31c2f",
+   "error": null
+  },
+  {
+   "key": "snb_residential_products",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 20461,
+   "content_hash": "6e450c548f0f266d604643ee3a4b2fbc86ed475378c2d215cf0b55a2eb0db4b7",
+   "error": null
+  },
+  {
+   "key": "riyad_real_estate",
+   "status": "fetch_blocked",
+   "http_status": 404,
+   "blocked_reason": "not_found",
+   "chars": 411,
+   "content_hash": "e9b6e64bab5ddc54f4ae0408480db059fe1f85abfb96762efd8cb5be82c2bedc",
+   "error": null
+  },
+  {
+   "key": "riyad_personal_financing",
+   "status": "fetch_blocked",
+   "http_status": 404,
+   "blocked_reason": "not_found",
+   "chars": 411,
+   "content_hash": "e9b6e64bab5ddc54f4ae0408480db059fe1f85abfb96762efd8cb5be82c2bedc",
+   "error": null
+  },
+  {
+   "key": "alinma_real_estate",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 3136,
+   "content_hash": "20a50794698ae84bc050c3d0d5fd3f7b2b4dc04e6f1345b209ef14bf59670a3d",
+   "error": null
+  },
+  {
+   "key": "albilad_real_estate",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 3880,
+   "content_hash": "5365aa97b758027b511fe1c71a2d51251920c4686a912134fa348ef59e451f82",
+   "error": null
+  },
+  {
+   "key": "albilad_index",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 1805,
+   "content_hash": "5c107b868a14c0caa6fa37af69935640458cecfcacc53ec11061805db64b2793",
+   "error": null
+  },
+  {
+   "key": "bsf_real_estate",
+   "status": "fetch_blocked",
+   "http_status": 200,
+   "blocked_reason": "access_denied",
+   "chars": 519,
+   "content_hash": "43821cfc46621924c6d15d70c1c321fca381b5100673356620c7db5d871b6c47",
+   "error": null
+  },
+  {
+   "key": "bsf_saibor",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 1693,
+   "content_hash": "f068ba01546bd0f47d286b173dc5c30b69f194e23dbcdd55f88c9b557766b774",
+   "error": null
+  },
+  {
+   "key": "sab_home_products",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 4708,
+   "content_hash": "2ccc0526e42066a73ea28ba0432bea6949e3b2e7709239a0856386070701c649",
+   "error": null
+  },
+  {
+   "key": "sab_subsidised",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5123,
+   "content_hash": "68f394a6f591ade3d679689d8cb9feb3e48f5055d75e68fdd2a05209cb0d2059",
+   "error": null
+  },
+  {
+   "key": "anb_real_estate",
+   "status": "fetch_blocked",
+   "http_status": 200,
+   "blocked_reason": "empty_body",
+   "chars": 171,
+   "content_hash": "fe2bd6ad3cf544b1efcac437a15904590533ee6a0d1a59bb5c833778b66d5e91",
+   "error": null
+  },
+  {
+   "key": "aljazira_real_estate",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 5237,
+   "content_hash": "96c9e9cfd217cbd4ee9d7285a0e40506a918a28ed69475464f1cf11d02de1df5",
+   "error": null
+  },
+  {
+   "key": "saib_real_estate",
+   "status": "fetch_blocked",
+   "http_status": 404,
+   "blocked_reason": "not_found",
+   "chars": 2557,
+   "content_hash": "11c30785ab5e5fbf173a93adeb62495801652d05a7389c9d319373f08e26d758",
+   "error": null
+  },
+  {
+   "key": "bidaya_products",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 1854,
+   "content_hash": "74308541fcfec939f0f10a8cd83d5791242820ad846782ee3bd7f7bda9894612",
+   "error": null
+  },
+  {
+   "key": "dgf_products",
+   "status": "fetch_failed",
+   "http_status": null,
+   "blocked_reason": null,
+   "chars": 0,
+   "content_hash": null,
+   "error": "page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.dgf.com.sa/en/\nCall log:\n\u001b[2m  - navigating to \"https://www.dgf.com.sa/en/\", waiting until \"domcontentloaded\"\u001b[22m\n"
+  },
+  {
+   "key": "amlak_products",
+   "status": "fetch_blocked",
+   "http_status": 404,
+   "blocked_reason": "not_found",
+   "chars": 753,
+   "content_hash": "7260f108db591619e1fb57943abc73454dce2cacfd93ee3464c601ef3f63f66a",
+   "error": null
+  },
+  {
+   "key": "dar_altamleek_products",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 1381,
+   "content_hash": "1b8899bd0bdacd31183a31e8ddaec0a1df4599b77ea0aaeaeb622eaa44ff7f71",
+   "error": null
+  },
+  {
+   "key": "shl_products",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 2027,
+   "content_hash": "6fa17bd357e801d46428ff3152bd698f3ab68cba555d3cdd24d1e73d31fb4cb2",
+   "error": null
+  },
+  {
+   "key": "src_home",
+   "status": "ok",
+   "http_status": 200,
+   "blocked_reason": null,
+   "chars": 635,
+   "content_hash": "fd4ff595a9cc8d5fcd03589b0c8cbca00691b455c48270437a0ce86b1a1ed309",
+   "error": null
+  }
+ ]
+}

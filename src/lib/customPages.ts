@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
 import type { LucideProps } from 'lucide-react';
-import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, ClipboardList as ClipboardListIcon } from 'lucide-react';
+import { ClipboardList, Activity, BarChart3, Layers, LineChart, UserCheck, ListChecks, Compass, Megaphone, Radar, Calculator, ClipboardList as ClipboardListIcon } from 'lucide-react';
 
 /**
  * Registry of custom (non-model) app pages whose sidebar visibility + route
@@ -36,7 +36,8 @@ export type CustomPageId =
   | 'market_intelligence'
   | 'posts_content'
   | 'marketing_intelligence'
-  | 'marketing_management';
+  | 'marketing_management'
+  | 'financing_calculator';
 
 export interface CustomPageDef {
   id: CustomPageId;
@@ -158,6 +159,18 @@ export const CUSTOM_PAGES: CustomPageDef[] = [
     label_ar: 'ذكاء التسويق',
     label_en: 'Marketing Intelligence',
     icon: Radar,
+    default_access: 'admin',
+  },
+  {
+    // The financing calculator reads customer salary, debt and card limits —
+    // the most sensitive data the app holds. Opt-in per profile rather than
+    // open by default, so a rep sees it only once someone decides they should.
+    // (The `fin_*` RLS policies are the real gate; this controls the surface.)
+    id: 'financing_calculator',
+    route: '/financing',
+    label_ar: 'حاسبة التمويل',
+    label_en: 'Financing Calculator',
+    icon: Calculator,
     default_access: 'admin',
   },
 ];

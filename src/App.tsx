@@ -69,6 +69,7 @@ import MarketIntelligencePage from '@/pages/MarketIntelligence/MarketIntelligenc
 import MarketingIntelligencePage from '@/pages/MarketingIntelligence/MarketingIntelligencePage';
 import MarketingManagementPage from '@/pages/MarketingManagement/MarketingManagementPage';
 import ProjectFinderPage from '@/pages/ProjectFinder/ProjectFinderPage';
+import FinancingPage from '@/pages/Financing/FinancingPage';
 import PostsContentPage from '@/pages/PostsContent/PostsContentPage';
 import SalesStudioHomePage from '@/pages/SalesStudio/SalesStudioHomePage';
 import ProcessJourneyPage from '@/pages/SalesStudio/ProcessJourneyPage';
@@ -332,6 +333,9 @@ export default function App() {
           <Route path="/marketing-management" element={<RequirePageAccess pageId="marketing_management"><MarketingManagementPage /></RequirePageAccess>} />
           {/* Standalone Project Finder — structured-field discovery tool, no client required. */}
           <Route path="/project-finder" element={<RequirePageAccess pageId="project_finder"><ProjectFinderPage /></RequirePageAccess>} />
+          {/* Financing calculator. Query params let a client / project / unit
+              page deep-link straight into a pre-filled scenario. */}
+          <Route path="/financing" element={<RequirePageAccess pageId="financing_calculator"><FinancingPage /></RequirePageAccess>} />
           {/* Marketing content writer — project-grounded social/brochure posts. */}
           <Route path="/marketing/posts" element={<RequirePageAccess pageId="posts_content"><PostsContentPage /></RequirePageAccess>} />
           <Route path="/model/:modelName" element={<RecordListDispatcher />} />

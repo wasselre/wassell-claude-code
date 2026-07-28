@@ -1,0 +1,17 @@
+{
+ "source_key": "zatca_rett_guideline",
+ "url": "https://zatca.gov.sa/en/HelpCenter/guidelines/Documents/Detailed-Guideline-for-RETT-In-accordance-with-provision-of-RETT-Law-and-its-Implementing-Regulations.pdf",
+ "final_url": null,
+ "http_status": null,
+ "status": "fetch_failed",
+ "blocked_reason": null,
+ "title": null,
+ "text": "",
+ "links": [],
+ "tables": [],
+ "content_hash": null,
+ "fetched_at": "2026-07-28T18:48:07.518Z",
+ "session_id": "71e29f77-0310-4154-b0c4-ff9f0df86d8d",
+ "error": "page.goto: Download is starting\nCall log:\n\u001b[2m  - navigating to \"https://zatca.gov.sa/en/HelpCenter/guidelines/Documents/Detailed-Guideline-for-RETT-In-accordance-with-provision-of-RETT-Law-and-its-Implementing-Regulations.pdf\", waiting until \"domcontentloaded\"\u001b[22m\n",
+ "duration_ms": 4215
+}

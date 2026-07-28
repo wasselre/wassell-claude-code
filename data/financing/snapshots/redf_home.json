@@ -1,0 +1,17 @@
+{
+ "source_key": "redf_home",
+ "url": "https://www.redf.gov.sa/en",
+ "final_url": null,
+ "http_status": null,
+ "status": "fetch_failed",
+ "blocked_reason": null,
+ "title": null,
+ "text": "",
+ "links": [],
+ "tables": [],
+ "content_hash": null,
+ "fetched_at": "2026-07-28T18:48:11.733Z",
+ "session_id": "9d7a9e8c-914e-4865-8f6d-447ba585c23c",
+ "error": "page.goto: net::ERR_TIMED_OUT at https://www.redf.gov.sa/en\nCall log:\n\u001b[2m  - navigating to \"https://www.redf.gov.sa/en\", waiting until \"domcontentloaded\"\u001b[22m\n",
+ "duration_ms": 33152
+}

@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import { Phone, ListChecks, MessageCircle, User as UserIcon } from 'lucide-react';
+import { Phone, ListChecks, MessageCircle, User as UserIcon, Calculator } from 'lucide-react';
 import { telUrl } from '../lib/phoneLinks';
+import { useCanAccessPage } from '@/hooks/usePermission';
 
 interface QuickActionsProps {
   clientId: string;
@@ -28,6 +29,7 @@ const L = {
   nextFollowup: { ar: 'المتابعة التالية', en: 'Next follow-up' },
   whatsapp: { ar: 'واتساب', en: 'WhatsApp' },
   call: { ar: 'اتصال', en: 'Call' },
+  financing: { ar: 'حاسبة التمويل', en: 'Financing' },
 } as const;
 
 /**
@@ -49,6 +51,9 @@ export default function ClientQuickActions({
   const isHeader = variant === 'header';
   const tel = telUrl(phone);
   const t = (k: keyof typeof L) => (isAr ? L[k].ar : L[k].en);
+  // The financing action only appears for profiles granted the calculator page —
+  // it reads salary and debt data, so it is not a universal quick action.
+  const canFinance = useCanAccessPage('financing_calculator');
 
   const btn = isHeader
     ? 'inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-bold transition disabled:opacity-40 disabled:cursor-not-allowed'
@@ -98,6 +103,19 @@ export default function ClientQuickActions({
         <MessageCircle size={16} />
         {isHeader && <span>{t('whatsapp')}</span>}
       </button>
+
+      {canFinance && (
+        <button
+          type="button"
+          title={t('financing')}
+          aria-label={t('financing')}
+          onClick={() => navigate(`/financing?client=${clientId}`)}
+          className={`${btn} ${isHeader ? 'bg-copper/15 text-copper hover:bg-copper/25' : 'text-copper hover:bg-copper/10'}`}
+        >
+          <Calculator size={16} />
+          {isHeader && <span>{t('financing')}</span>}
+        </button>
+      )}
 
       <a
         href={tel ?? undefined}

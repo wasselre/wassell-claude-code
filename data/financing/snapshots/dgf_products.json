@@ -1,0 +1,17 @@
+{
+ "source_key": "dgf_products",
+ "url": "https://www.dgf.com.sa/en/",
+ "final_url": null,
+ "http_status": null,
+ "status": "fetch_failed",
+ "blocked_reason": null,
+ "title": null,
+ "text": "",
+ "links": [],
+ "tables": [],
+ "content_hash": null,
+ "fetched_at": "2026-07-28T18:49:23.038Z",
+ "session_id": "0fa45ae4-8199-4622-a59c-790184f68606",
+ "error": "page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.dgf.com.sa/en/\nCall log:\n\u001b[2m  - navigating to \"https://www.dgf.com.sa/en/\", waiting until \"domcontentloaded\"\u001b[22m\n",
+ "duration_ms": 4252
+}

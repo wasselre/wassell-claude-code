@@ -1,0 +1,17 @@
+{
+ "source_key": "sama_licensed_finance_entities",
+ "url": "https://www.sama.gov.sa/en-US/Finance/pages/financinglicencedentities.aspx",
+ "final_url": "https://www.sama.gov.sa/en-US/Finance/pages/financinglicencedentities.aspx",
+ "http_status": 200,
+ "status": "fetch_blocked",
+ "blocked_reason": "server_error_page",
+ "title": "البنك المركزي السعودي | Saudi Central Bank",
+ "text": "عزيزي المستفيد ،\nحدث خطأ ما في طلبك، نرجو تزويدنا بمعلومات الطلب عن طريق إرسال الرقم التالي :\n16469394091874783289\nعلى البريد الالكتروني للدعم الفني: SAMASD@SAMA.GOV.SA\n\nنشكر لكم تفهمكم ..\n\nDear beneficiary,\nSomething went wrong in your request, please provide us with the request details by sending the following ID: 16469394091874783289\n\nto the help-desk email: SAMASD@SAMA.GOV.SA\n\nThank you for your understanding.\n\nReturn to the previous page\nBack\nللعودة للصفحة السابقة\nعودة",
+ "links": [],
+ "tables": [],
+ "content_hash": "ca353cb4bd76375859b6c8e3ee01338c59f3c353b15e7393df6509c7038a9dcf",
+ "fetched_at": "2026-07-28T18:48:06.755Z",
+ "session_id": "d56bfe60-555a-4e48-93c2-9982186a2c59",
+ "error": null,
+ "duration_ms": 17141
+}

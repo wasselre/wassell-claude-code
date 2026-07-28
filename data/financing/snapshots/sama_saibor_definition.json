@@ -1,0 +1,3257 @@
+{
+ "source_key": "sama_saibor_definition",
+ "url": "https://rulebook.sama.gov.sa/en/saudi-arabian-benchmark-saiborsaibid",
+ "final_url": "https://rulebook.sama.gov.sa/en/saudi-arabian-benchmark-saiborsaibid",
+ "http_status": 200,
+ "status": "ok",
+ "blocked_reason": null,
+ "title": "Saudi Arabian Benchmark (SAIBOR/SAIBID) | SAMA Rulebook",
+ "text": "Skip to main content\nCareers\nContact Us\nSitemap\nHome\nAbout SAMA\nMedia Center\nSupervision\nStatistics\nPublications\nMonetary Policy\nCurrency\nPayment Systems\nE-Services\nHome\nAbout SAMA\nOverview\nOverview\nOur History\nSaudi Central Bank Law\nSaudi Central Bank Functions\nSaudi Central Bank Strategy\nOrganizational Structure\nSaudi Central Bank Management\nMembers of the Board of Directors of the Saudi Central Bank\nSaudi Central Bank Leadership\nOther\nInternational Relations\nMemoranda of Understanding\nRelevant Links\nMedia Center\nNews\nNews\nSpeeches\nSupervision\nRulebook\nLicenses and Permits\nLicensed Entities\nThe Regulatory Sandbox\nOverview\nPermitted Fintechs\nGuidebook\nJoin the Regulatory Sandbox​\nHolidays and Working Hours\nStatistics\nStatistics\nSaudi Central Bank Portal For Open Data\nMonthly Statistics\nPublication Timeline\nEconomic Indicators\nWeekly Money Supply\nWeekly Points of Sale Transactions\nReserve Assets\nData Template on International Reserves and Foreign Currency Liquidity\nSaudi Central Bank survey\nPublications\nEconomic Reports\nAnnual Report\nInflation Report\nKey Economic Developments Report\nEconomic Research\nWorking Papers\nJoint Research Program\nFinancial Reports\nFinancial Stability Report\nFinance Sector Performance Report\nAnnual Financial Report\nOther Reports\nNational Payments Usage Study Report\nMonetary Policy\nMonetary Policy Tools\nRepo Rate\nReverse Repo Rate\nReserve Requirement on Demand Deposits\nReserve Requirement on Saving Deposits\nMonetary Operations\nOpen Market Operations\nThe Weekly Average of Repo and Reverse Repo\nCurrency\nSaudi Currency History\nOverview\nSecurity Features\nSecurity Features for Fifth Issue\nSecurity Features for Sixth Issue\nSaudi Currency Issues\nPilgrims’ Receipts\nFirst Issue\nSecond Issue\nThird Issue\nFourth Issue\nFifth Issue\nSixth Issue\nSpecial Issues\nExchange Rates\nMonthly Exchange Rates\nExchange Rate\nCurrency Converter\nSaudi Riyal Symbol\nOverview\nSaudi Riyal Symbol Guidelines\nPayment Systems\nSADAD\nmada\nSarie\nEsal\nE-Services\nMain navigation\nSAMA Rulebook\nView Updates\nSearch\nTerms and conditions\nENTIRE SECTION\n\t\nCUSTOM PRINT\n\t\nPRINT / SAVE AS PDF\nSAMA Rulebook\nBanking Sector\nBusiness Activities and Financial Conduct\nOperational Rules\nSaudi Arabian Benchmark (SAIBOR/SAIBID)\nBook traversal links for Saudi Arabian Benchmark (SAIBOR/SAIBID)\n Download Original PDF\nSaudi Arabian Benchmark (SAIBOR/SAIBID)\nNo: 430418800000\tDate(g): 13/12/2021 | Date(h): 9/5/1443\t\nStatus: In-Force\nThis benchmark has been issued by circular No. (430418800000), dated 9/5/1443H, corresponding to 13/12/2021G.\n1. Introduction\n\nTo maintain the quality and soundness of the Saudi Arabian Benchmark \"SAIBOR/SAIBID\", banks were instructed in 2017 to form a SAIBOR technical working group (TWG) under the supervision of SAMA. The TWG includes representatives from Saudi Banks, the benchmark administrator and the Saudi Central Bank. The members were tasked to review the integrity and robustness of the current Saudi Arabian Interbank Offered Rate (SAIBOR) and identify areas for enhancement.\n\nThe enhancements to SAIBOR/SAIBID below are compatible with International Organization of Securities Commissions (IOSCO) principles for financial benchmarks. These enhancements were the results of the TWG assessment of the existing methodology and the results of the contributor banks surveys, feedback from a public market consultation performed by the benchmark administrator on the key changes being made to the methodology and the results of the benchmark administrator testing phase to demonstrate how the enhanced methodology would perform as compared to existing SAIBOR.\n\nThe enhancement issued by SAMA in exercise of the authority vested under the Saudi Central Bank Law issued via Royal Decree No. M/36 dated 11/04/1442H, and the Banking Control Law issued 22/02/1386H.\n\nThese requirements supersedes the previous requirements provided in Circular No. 30986/67 issued in 17/05/1440H.\n\n2. Definition of SAIBOR/SAIBID\n\nSAIBOR - The Saudi Arabian Interbank Offered Rate (\"SAIBOR\") benchmark is an indicative offer rate at which contributor panel banks would be able to borrow unsecured interbank funds in Saudi Riyals, anchored in transactions where possible together with a historical spread adjustment. A waterfall methodology is applied to enable a rate to be published in a wide range of market circumstances.\n\nSAIBID - SAIBID is a benchmark representing the realized cost of contributor panel banks' wholesale unsecured funding in Saudi Riyals, anchored in transactions where possible. A waterfall methodology is applied to enable a rate to be published in a wide range of market circumstances.\n\n3. Bank Calculation Methodology\n3.1\tSAIBOR and SAIBID will be based on contributor bank submissions, determined using a standardized waterfall methodology, as summarized below.\n \n\n \tSAIBID Submission\tSAIBOR Submission\nLevel 1\nWhere a SAIBOR contributor bank has sufficient eligible transactions\tVolume Weighted Average Price (VWAP) only\tVWAP plus Spread Percentage\nLevel 2\nWhere a SAIBOR contributor bank has insufficient eligible transactions to make a Level 1 submission\tVWAP (including credit spread adjustment)\tVWAP (including credit spread adjustment) plus Spread Percentage\nLevel 3\nThe SAIBOR contributor banks may only provide a Level 3 submission if there are insufficient eligible transactions to make a submission at Level 1 or Level 2. If there are transactions that would be eligible for Level 1 or Level 2, except that they took place prior to a move in policy rates, then the process described below under SAMA Policy Rate Moves shall be followed for the purpose of Level 3.\tSubject to process described SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day.\tSubject to process described in SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day and will include the Spread Percentage\n\n\n3.2\t\nThe key terms set out in the above table and subsequently in this document will be defined as following:\n \n■\tSpread Percentage: As of the date of this Circular, the Spread Percentage is 16 per cent and represents the difference between SAIBOR and SAIBID across all relevant tenors for the most recent five years of publicly available data. The Spread Percentage will be applied to each submission in order to create the SAIBOR submission. The appropriateness of the level of Spread Percentage will be reviewed regularly on at least an annual basis and more frequently if required by market conditions. Under the review process, the benchmark administrator will consult with the panel of contributing banks and will amend the Spread Percentage subject to approval by SAMA.\n \n■\tSpread Cap: the Spread Percentage may be subject to a cap to be introduced and specified at the discretion of SAMA should market conditions require it. Following any such introduction of a Spread Cap, it shall be reviewed regularly on at least an annual basis and more frequently if required by market conditions. Under the review process, the benchmark administrator will consult with the contributing banks and will introduce or amend (as relevant) the Spread Cap subject to approval by SAMA.\n \n■\tCredit Spread Adjustment (Level 2): Saudi Riyal repo transactions used in Level 2 may be collateralized with any type of Saudi Riyal fixed income security. Such a secured transaction will typically be priced at a lower rate than an equivalent unsecured transaction. In order to maintain consistency with Level 1 submissions and the objective of SAIBOR, a contributor bank will use expert judgment to include a suitable credit premium in the VWAP created from the secured repo transaction(s) before making the Level 2 submission. Expert judgment may not be used for any other purpose for a Level 2 submission and is subject to the submission procedures and recording keeping requirements described under \"Expert Judgment\" below. The credit premium should reflect the nature and credit quality of the collateral used in the repo transaction(s) and result in a submission rate that is equivalent to an unsecured transaction rate.\n \n■\tBusiness Day: A \"business day\" for the purposes of a SAIBOR submission is defined as the 24 hour period from the start of the submission window on the previous business day until the start of the submission window on the current day of the submission.\n \n■\tExpert Judgment:\n \n \t-\tWhere expert judgment is used, the panel banks have the flexibility to determine its own expert judgment approach.\n \n \t-\tExpert judgment approach must be properly documented in the SAIBOR internal submission procedures developed by each SAIBOR contributor bank. These submission procedures are subject to appropriate internal governance processes1. Each contributor bank will notify SAMA and the benchmark administrator of its submission procedures by no later than 31 December 2021 and at least annually thereafter. In addition, each contributor bank will notify SAMA and the benchmark administrator following any significant change to its submission procedures. In each case, notice will be provided by a contributor bank by submitting a copy of its submission procedures to SAMA and the benchmark administrator2. When submitting such submission procedures to SAMA and the benchmark administrator each contributor bank shall include a statement stating that the version of the submission procedures provided has been approved by its Board or its Board delegated authority.\n \n \t-\tThe SAIBOR internal submission procedures and records detailing the factors and judgment used in each daily submission must be available at all times to be shared with SAMA and/or the administrator upon request.\n \n3.3\tContributor banks are required to implement a process whereby the Head of Asset and Liability Management (ALM) or similar position in the bank (without any role in proprietary trading) takes the responsibility for submission of the SAIBOR/SAIBID rates on a daily basis to the benchmark administrator independently without any influence from the bank's Treasurer or the Deputy Treasurer. Banks are required to obtain SAMA's approval for individuals in these roles as per SAMA circulated requirements for Appointments to Senior Positions in Financial Institutions Supervised by the Saudi Central Bank using SAMA standard fit and proper application.\n \n3.4\tContributor banks must develop and implement reasonable submission procedures based on the applicable SAIBOR/SAIBID methodologies. The overall submission procedures should at a minimum include the following:\n \n \t■\tEligible transaction and other data inputs in calculating submissions\n \n \t■\tRecord the level of the waterfall used to calculate the submission;\n \n \t■\tProcedures to detect and evaluate the bona-fide nature of such transactions and inputs;\n \n \t■\tPolicies guiding and detailing the use of expert judgment, including documentation;\n \n \t■\tMaintaining reports, records and underlying documentation supporting submissions;\n \n \t■\tProcedures for pre-submission validation of eligible inputs and procedures for review by senior staff to check inputs before submission.\n \n3.5\tThe submission procedures should be approved by the Board or Board delegated authority and should be consistently applied. Each contributor bank should ensure that its Internal Audit Department undertakes an annual review of the process and of the methodologies and report to the relevant contributor bank's Senior Management, Audit Committee and the Board on the compliance with the established policies and procedures.\n \n\n1 For the avoidance of doubt, each contributor bank's submission procedures shall property document its SAIBOR and SAIBID submission procedures in respect of the SAIBOR and SAIBID contributions to the benchmark administrator as detailed further in paragraph 2.4 below, including (but not limited to) eligible transaction and other data inputs in calculating submissions for Level 1, 2, and 3 submissions and policies guiding and detailing its expert judgment approach.\n2 Copies of each contributor bank's submission procedures should be provided to: (1) SAMA at the following email address: BankingDataSection@SAMA.GOV.SA; and (2) the benchmark administrator at the following email address: FRCompliance@lseg.com.\n\n4. Minimum Eligible Transaction Size\n\nA minimum size for each individual eligible transaction of SAR 10mm for the O/N, 1 week, 1 month and 3 month SAIBOR tenors. For 6 month and 12 month SAIBOR tenors, there is no minimum size for individual transactions to be eligible but the aggregate transaction size (that is, the combined size of all transactions used in the VWAP calculation for Level 1 or Level 2) must be equal to or greater than SAR 50mm in order for the VWAP to qualify for a SAIBOR submission.\n\n5. Transaction Tenor Criteria\nBenchmark submissions are currently computed for 6 tenors\n \nTenor\tPermitted maturity range\nOvernight\t1 business day, and must be an overnight transaction\n1 week\t5 business days\n1 month\tFrom 25 to 35 calendar days inclusive\n3 month\tFrom 80 to 100 calendar days inclusive\n6 month\tFrom 150 to 210 calendar days inclusive\n12 month\tFrom 330 to 390 calendar days inclusive\n \nThe qualifying ranges can be progressively tightened as the market deepens.\n \n6. Transaction Window and Publication\n\nSAIBOR will be published at 12:00pm KSA time. The transaction window for data collection will be as of 11:00am of the previous business day up and until 11:00am of the current business day. Subsequently, contributor banks will be able to submit their contributions to the benchmark administrator from 11:00am up until 11:50am.\n\n7. Final Calculations and Averaging\nUnder the enhanced methodology, the following Minimum Contribution Criteria shall apply. \n \n\nContributions Received\tNumber of High\nContributions\nTrimmed\tNumber of Low\nContributions\nTrimmed\n5 or more\t2\t2\n4 or fewer\tN/A\tN/A\n\n\n■\t\nWhere 5 or more contributions are received, the contributions will be applied with a trimming methodology where the 2 highest and lowest contributions, per tenor, are excluded from the calculation, once the trimming methodology has been applied, the SAIBOR rates will be calculated as an average of the remaining rate and published to 5 decimal places.\n \n■\tIf fewer than 5 contributions are received by the time that SAIBOR is due to be published, the fallback arrangement described below will apply.\n \n \tFallback Arrangement\n \n■\tIf the minimum 5 contributions are not received by 11:50am KSA time, a fallback arrangement is triggered. Triggering the fallback arrangement extends the contribution window by 30 minutes from 12:00pm to 12:30pm KSA time to accept additional contributions from contributor banks who have not contributed.\n \n■\tIf the minimum contributions are reached by 12:30pm KSA time, the benchmark will be released. If not, the previous day's SAIBOR value will be republished together with a flag indicating a republication.\n \n8. Contributor Banks Standards for Submission and Data Keeping\nBanks expected to: \n \n■\tSubmit SAIBOR/ SAIBID will reflect the true price of unsecured wholesale liquidity in the KSA Market.3\n \n■\tMaintain records and evidence to substantiate the rates submitted to the benchmark administrator.\n \n■\tIn case of significant perceived credit deterioration of a SAIBOR and SAIBID contributing bank, Saudi Central Bank and the benchmark administrator will review the eligibility of the bank concerned.\n \n\n3 Wholesale liquidity is defined as unsecured SAR funding from all sources for the banks with maturities of less than one year excluding retail deposits less than SAR 10million and equity.\n\n9. Reporting to SAMA\n\nContributor banks are required to provide a monthly report on their interbank transactions using the SAMA SAIBOR/SAIBID monthly return (attached) within five (5) working days after the end of each month to BankingDataSection@SAMA.GOV.SA.\n\nAnnex 1: Eligibility Detailed Criteria\nWaterfall Level\tEligible Transaction Types\tEligible Counterparty\tMinimum Transaction Size\tMinimum No. of Transactions\nLevel 1\t\n■ Unsecured wholesale Saudi Riyal deposits received or raised by the SAIBOR contributor bank from an eligible counterparty.\n \n■ Domestic primary and secondary market transactions by a SAIBOR contributor bank where it raises funds via unsecured certificates of deposit (CDs) and commercial paper (CPs) where such instruments are:\nDenominated in Saudi Riyals;\nThe transactions take place in the domestic KSA market; and\nIssued by the relevant SAIBOR contributor bank itself.\nExclusions:\n- Structured deposits\n- Internal transactions such as transactions with a subsidiary (including a subsidiary that is a fund and including transactions between contributor bank branches and its head office).\n- Unsecured deposits made by SAMA unless expressly advised otherwise by SAMA and where transacted at market prices.\n- Transactions which have been Entered into outside of the applicable lookback period. See Lookback Period below.\n- Transactions that occurs before a move in the repo or reverse repo policy rates by SAMA. See SAMA Policy Rate Moves below.\n \n\t\n■ Banks\n■ AH central banks4\n■ Government Related Entities (GREs)\n■ Non-bank Financial Institutions\n■ Corporates and all retail segments (that meet the required minimum threshold amount)\n\t\n■ O/N, 1 week, 1 month and 3 month SAIBOR tenors - minimum size for individual transactions of SAR 10mm\n■ 6 month and 12 month SAIBOR tenors:\n■ no minimum size for individual transactions.\n■ -aggregate transaction size of all transactions used in the VWAP calculation must be equal to or greater than SAR 50mm.\n\t\n■ Transactions with a minimum of 2 different counterparties, provided if only one eligible transaction has taken place following a move in policy rates by SAMA during the Lookback Period, that single transaction shall be used to make a Level 1 submission.\n\nLevel 2\t\n■ Saudi Riyal repo transactions (excluding those with SAMA) which have the economic effect of the contributing bank being the receiver (i.e. borrower) of Saudi Riyals. All types of Saudi Riyal fixed income securities are permitted collateral for an eligible repo transaction.\nExclusions:\n- Internal transactions such as with a subsidiary (including a subsidiary that is a fund and including transactions between contributor banks between contributor banks branches and its head office).\n- Repo transactions with SAMA.\n- Transactions that occurs before a move in the repo or reverse repo policy rates by SAMA. See SAMA Policy Rate Moves below.\n\tAs per Level 1\tAs per Level 1\tA Level 2 submission may be made using a single eligible repo transaction.\nLevel 3\t\nSubject to the \"Sama Policy Rate Moves\", acceptable Level 3 inputs that may be used to form the expert judgment used to determine a Level 3 submission are5:\n■ Transactions that are outside the specified tenor buckets;\n■ Interpolation/extrapolation (from transactions in the markets underlying Level 1 and Level 2);\n■ Other market instruments: interest rate swaps, money market operation rates, forward rate agreement/single period swaps, overnight-indexed swaps, SAMA bills;\n■ Macro-economic factors (monetary policy change, policy rate change in major economies & significant economic data);\n■ Credit standing i.e. a published and verifiable change in the credit standing of the bank; and\n■ Other factors: those that can be evidenced and verified, as agreed with a contributor panel bank's internal compliance and risk.\n \nThe key terms set out in the above table be defined as following: \n \n■\tLookback Period: When identifying eligible transactions for Level 1 or Level 2, a SAIBOR contributor bank must first use transactions executed during the last business day. If there are insufficient eligible transactions in the last business day, the SAIBOR contributor bank may extend the period to the last two business days. This process may be repeated, extending the period by one business day at a time, until either sufficient eligible transactions have been obtained or until a maximum of five business days has been reached.\n \n \tFor the avoidance of doubt, the process of looking back by one extra day at a time (up to a maximum of 5 business days and subject to any moves in policy rates by SAMA) must be completed for Level 1 before the contributor bank moves to Level 2. If sufficient eligible transactions are found in the Lookback Period for Level 1, these will be used to create a submission even if more recent transactions exist that would be eligible for Level 2.\nBanks are allowed to use Level 3 inputs without any restriction on maximum number of business days.\n \n■\tSAMA Policy Rate Moves: No transaction that occurs before a move in the repo or reverse repo policy rates by SAMA will be an eligible transaction for Level 1 or Level 2. This also applies intraday: any transaction that occurs before a policy rate during a business day will not be an eligible transaction. The following process shall apply following a policy rate move by SAMA:\n \n \t1.\tEligible transactions that take place after the policy rate move will be used to make a Level 1 submission. If there are insufficient eligible transactions (see Level 1 eligibility criteria above) following such a move during the maximum five day look back period, Level 2 will be used.\n \n \t2.\tEligible transactions that take place after the policy rate move will be used to make a Level 2 submission. If there are insufficient eligible transactions (see Level 2 eligibility criteria above) following such a move during the maximum five day look back period, Level 3 will be used.\n \n \t3.\tWhere Level 3 is used following a policy rate move by SAMA, both Level 1 eligible transactions and also Level 1 transactions that would have been eligible except for the fact that they took place before the move in policy rates by SAMA will be used, when exercising expert judgment, to create a VWAP, subject to the process described under Lookback Period above. The VWAP will then be adjusted by the SAIBOR contributor bank to adjust for the effect of the move in policy rates. Such adjustment will be in accordance with the contributor bank's documented internal submission procedures. Submissions for SAIBOR will include the Spread Percentage adjustment to the final VWAP and submissions for SAIBID will exclude the Spread Percentage adjustment to the final VWAP.\n \n \t4.\tWhere Level 3 is used following a policy rate move by SAMA and there are insufficient Level 1 eligible transactions (see Level 1 eligibility criteria above) to create a submission even when including Level 1 transactions that took place before the move in policy rates, then both Level 2 eligible transactions and also Level 2 transactions that would have been eligible except for the fact that they took place before the move in policy rates by SAMA will be used to create a VWAP, subject to the process described under Lookback Period above and including the adjustment for the credit premium detailed above under \"Credit Spread Adjustment (Level 2)\". For the purposes of exercising expert judgment, the VWAP will then be adjusted by the SAIBOR contributor bank to adjust for the effect of the move in policy rates. Such adjustment will be in accordance with the contributor bank's documented internal submission procedures. Submissions for SAIBOR will include the Spread Percentage adjustment to the final VWAP and submissions for SAIBID will exclude the Spread Percentage adjustment to the final VWAP.\n \n \t5.\tIf there are insufficient transactions for both Level 1 and Level 2 including transactions that took place prior to a policy move by SAMA, expert judgment alone will be used by a SAIBOR contributor bank to make a submission.\n \n \t6.\tWhere a VWAP is adjusted at Level 3 as described above, the size of the adjustment should not exceed the size of the move in policy rates by SAMA except where the SAIBOR contributor bank has strong reasons to believe that a larger adjustment is required to ensure that the submission is representative of current market conditions. In all cases where expert judgment is used including such VWAP adjustments, a contributor bank must record all the factors used in determining the submission it makes as detailed under \"Expert Judgment\" above.\n \n\n4 Including SAMA deposits but only where transacted at market prices and are specified for inclusion by SAMA\n5 Level 3 should represent the Bid-side of the market but SAIBOR submissions determined using Level 3 should include the Spread Percentage (see table in Section 2.2)\n\nSAMA SAIBOR/SAIBID Monthly Return\nInstruction guidelines \n \nHow to report the data \n \nScope of consolidation \n \nThe information is asked at the solo domestic level of each bank. \n \nReference date \n \nThe reference date should be 30/31 of each month. \n \nCompleteness of the analysis \n \nPlease provide your responses on the relevant cells in the excel file without modifying the format of the templates. \n \nQuantitative information \n \nThe quantitative responses should be amounts in SAR '000. The Bank's input for SAIBOR/SAIBID rate each day should be included in all tabs 'SAIBOR', 'SAIBID' and 'Other info’ \n \nQualitative information \n \nPlease provide specific responses to the qualitative questions at a sufficient level of detail to achieve the objectives of the return. \n \nSample data \n \nWe have taken a sample example to demostrate how the return should be filled. \n \nContact persons \n \nKindly refer to SAMA's SAIBOR/SAIBID circular for report submission details which can be found under \"Reporting to SAMA\" \n \nDeadline for submission \n \n5 working days \n \n\nName of the Bank                \nReporting period\n\n\nSAR Interbank Lending Transactions (SAIBOR) \n \n\nTrade Date\t \tTransaction rate\tName of the counterparty (kindly use official name)\tMaturity date\tDuration in number of days\tBank's input for SAIBOR rate\tIf transaction rate is different from input rate, state reasons\t \n29/05/21\t100,000\t1.10\tABC Bank\t30/05/21\t1\t1.25\t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \n\n\nName of the Bank                \nReporting period\n\n\nSAR Interbank Borrowing Transactions (SAIBID)  \n \n\nTrade Date\t \tTransaction rate\tName of the counterparty (kindly use official name)\tMaturity date\tDuration in number of days\tBank's input for SAIBOR rate\tIf transaction rate is different from input rate, state reasons\t \n29/05/21\t100,000\t0.75\tABC Bank\t30/05/21\t1\t0.80\t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \t \n \n\n\nName of the Bank                \nReporting period\n\n\nList all bid/offer transactions undertaken at the bank's offered/bid rates\n \n\nDate\tBank's input for SAIBOR rate\tNumber of transactions not undertaken at offered rates\nNumber of transactions\tName of customers (kindly use Official name)\tRate offered\t \tTenor (no. of days)\tReasons for  not undertaking\n29/05/21\t1.25\t1\tABC Bank\t1.30\t100,000\t30\tCustomers negotiating a lower rate\n29/05/21\t1.25\t2\tCBA Bank\t1.45\t50,000\t90\tNo interest in 90 days\n29/05/21\t1.25\t4\tDEF Bank\t1.25\t50,000\t7\tCustomers demanding a lower rate than SAIBOR\n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \n\n\nDate\tBank's input for SAIBOR rate\tNumber of transactions not undertaken at offered rates\nNumber of transactions\tName of customers (kindly use Official name)\tRate offered\t \tTenor (no. of days)\tReasons for  not undertaking\n29/05/21\t0.90\t1\tABC Bank\t0.90\t75,000\t60\tBanks not willing to offer at SAIBOR rate\n \t \t \t \t \t \t \t \n\n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \n \t \t \t \t \t \t \t \nBook traversal links for Saudi Arabian Benchmark (SAIBOR/SAIBID)\nSAMA Rulebook (Soft Launch)\nLaws and Implementing Regulations\nAll Financial Institutions\nBanking Sector\nLaws and Regulations\nLicensing Provisions\nAnti Money Laundering and Combating the Financing of Terrorism\nCyber Risk Control\nGovernance and Internal Control\nPrudential and Supervisory Requirements\nBusiness Activities and Financial Conduct\nBanknotes, Currency, and Cash Movement\nOperational Rules\nAccount Opening Rules\nRules Governing Bancassurance Activities\nProfit Sharing Investment Accounts Rules\nRegulation of Agent Banking in the Kingdom of Saudi Arabia\nGuide to Rules Governing Banks’ Remittance Centers\nRegulation on Branch Network\nGoverning Rules for Electronic Issuance and Authenticity Verification of Banking Documents\nSaudi Arabian Benchmark (SAIBOR/SAIBID)\n1. Introduction\n2. Definition of SAIBOR/SAIBID\n3. Bank Calculation Methodology\n4. Minimum Eligible Transaction Size\n5. Transaction Tenor Criteria\n6. Transaction Window and Publication\n7. Final Calculations and Averaging\n8. Contributor Banks Standards for Submission and Data Keeping\n9. Reporting to SAMA\nAnnex 1: Eligibility Detailed Criteria\nSAMA SAIBOR/SAIBID Monthly Return\nCharging Policy for Cross Currency Payments Using \"AFAQ\" Service\nInitial Public Offering (IPO) Rules for Receiving and Lending Banks\nInstructions on Periods of Issuing the Clearance Letter and Executing Requests for Account Transfer and Debt Transfer\nOperating Rules for Cross Currency Payments using AFAQ Service\nInstructions for Banking Obligations and Transactions in Accordance with the Bankruptcy Law and Its Implementing Regulations\nThe requirements and Information Needed for Customers’ Bank Account Statements\nInstructions on the Working Hours of Bank Branches, Self-Service Centers, and Remittance Centers in Shopping Centers\nRules of Saudi Arabian Riyal Interbank Express Indirect Participation\nFinancial Sector Safety and Security Guidelines CCTV Specifications Summary\nDepositors Protection Fund(DPF) Rules\nBanking Products and Finance Activities\nFinancial Market Activities\nConsumer Protection\nModel Contracts\nEnforcement and Financial Penalties\nBanking Sector Circulars\nFinance Sector\nPayment Systems and Payment Services Providers\nMoney Exchange Sector\nCredit Bureaus\nRegulatory Sandbox\nSAMA Circulars\n.\nImportant Links\nAbout the Saudi Central Bank\nMedia Center\nE-Services\nOpen Data Platform\nCareers\nHelp & Support\nPrivacy Policy\nTerms & Conditions\nSitemap\nComplaints\nContact US\nAddress & Contact\nKingdom of Saudi Arabia - Riyadh\n+966 11 463 3000\n+966 11 466 2936 / 466-2966\nBranches\nFollow us on\n\n© 2026 Saudi Central Bank (SAMA). All rights reserved.\n\nBack to top\nBACK TO TOP",
+ "links": [
+  {
+   "text": "Skip to main content",
+   "href": "https://rulebook.sama.gov.sa/en/saudi-arabian-benchmark-saiborsaibid#main-content"
+  },
+  {
+   "text": "",
+   "href": "https://www.sama.gov.sa/en-US"
+  },
+  {
+   "text": "Careers",
+   "href": "http://careers.sama.gov.sa/ar/"
+  },
+  {
+   "text": "Contact Us",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/contactus.aspx"
+  },
+  {
+   "text": "Sitemap",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/sitemap.aspx"
+  },
+  {
+   "text": "",
+   "href": "https://www.sama.gov.sa/en-US/pages/default.aspx#"
+  },
+  {
+   "text": "",
+   "href": "https://www.sama.gov.sa/en-US/pages/default.aspx#"
+  },
+  {
+   "text": "",
+   "href": "https://rulebook.sama.gov.sa/ar/%D8%A2%D9%84%D9%8A%D8%A9-%D8%A7%D8%AD%D8%AA%D8%B3%D8%A7%D8%A8-%D8%A7%D9%84%D9%85%D8%A4%D8%B4%D8%B1-%D8%A7%D9%84%D9%85%D8%B1%D8%AC%D8%B9%D9%8A-%D8%A7%D9%84%D8%B3%D8%B9%D9%88%D8%AF%D9%8A-%D8%B3%D8%A7%D9%8A%D8%A8%D9%88%D8%B1%D8%B3%D8%A7%D9%8A%D8%A8%D8%AF"
+  },
+  {
+   "text": "Home",
+   "href": "https://www.sama.gov.sa/en-US"
+  },
+  {
+   "text": "About SAMA",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/default.aspx"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Overview.aspx"
+  },
+  {
+   "text": "Our History",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/SAMAHistory.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Law",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/bank-law.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Functions",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/SAMAFunction.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Strategy",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Strategy.aspx"
+  },
+  {
+   "text": "Organizational Structure",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Organization_Structure.aspx"
+  },
+  {
+   "text": "Members of the Board of Directors of the Saudi Central Bank",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/boardOfDirectors.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Leaders",
+   "href": "https://www.sama.gov.sa/en-US/About/LeaderShips/Pages/default.aspx"
+  },
+  {
+   "text": "International Relations",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Relations_with_regional_and_international_organizations.aspx"
+  },
+  {
+   "text": "Memoranda of Understanding",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Memorandums_of_understanding-.aspx"
+  },
+  {
+   "text": "Relevant Links",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Links.aspx"
+  },
+  {
+   "text": "Media Center",
+   "href": "https://www.sama.gov.sa/en-US/MediaCenter"
+  },
+  {
+   "text": "News",
+   "href": "https://www.sama.gov.sa/en-US/MediaCenter/News/Pages/allnews.aspx"
+  },
+  {
+   "text": "Speeches",
+   "href": "https://www.sama.gov.sa/en-US/MediaCenter/News/Pages/speeches.aspx"
+  },
+  {
+   "text": "Rulebook",
+   "href": "https://rulebook.sama.gov.sa/en"
+  },
+  {
+   "text": "Licensed Entities",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/LicenseEntities/Pages/default.aspx"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/SandBox/Pages/RegulatorySandbox.aspx"
+  },
+  {
+   "text": "Permitted Fintechs",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/SandBox/Pages/Permitted-Fintechs.aspx"
+  },
+  {
+   "text": "Guidebook",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/SandBox/Documents/Regulatory_Sandbox-Application_Guidance_Notes_EN.pdf"
+  },
+  {
+   "text": "Join the Regulatory Sandbox​",
+   "href": "https://www.sama.gov.sa/en-US/Pages/ServiceDetails.aspx?serviceid=96"
+  },
+  {
+   "text": "Holidays and Working Hours",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/Pages/holidayschedules.aspx"
+  },
+  {
+   "text": "Statistics",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Pages/default.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Portal For Open Data",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Pages/Summary.aspx"
+  },
+  {
+   "text": "Monthly Statistics",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/MonthlyStatistics.aspx"
+  },
+  {
+   "text": "Publication Timeline",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Pages/AdvancedReleaseCalendar.aspx"
+  },
+  {
+   "text": "Weekly Money Supply",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/WeeklyMoneySupply.aspx"
+  },
+  {
+   "text": "Weekly Points of Sale Transactions",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
+  },
+  {
+   "text": "Reserve Assets",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/reserve_assets.aspx"
+  },
+  {
+   "text": "Data Template on International Reserves and Foreign Currency Liquidity",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/International_Reserves.aspx"
+  },
+  {
+   "text": "Saudi Central Bank survey",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/Central%C2%A0_Bank_Survey.aspx"
+  },
+  {
+   "text": "Publications",
+   "href": "https://www.sama.gov.sa/en-US/Publications"
+  },
+  {
+   "text": "Annual Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/AnnualReport.aspx"
+  },
+  {
+   "text": "Inflation Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/InflationReport.aspx"
+  },
+  {
+   "text": "Key Economic Developments Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/DevelopmentReports.aspx"
+  },
+  {
+   "text": "Working Papers",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicResearch/Pages/WorkingPapers.aspx"
+  },
+  {
+   "text": "Joint Research Program",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicResearch/Pages/Joint_Research_Program.aspx"
+  },
+  {
+   "text": "Financial Stability Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/FinanceReports/Pages/FinancialStability.aspx"
+  },
+  {
+   "text": "Finance Sector Performance Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/FinanceReports/Pages/FinancialPerformanceReport.aspx"
+  },
+  {
+   "text": "Annual Financial Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/FinanceReports/Pages/default.aspx"
+  },
+  {
+   "text": "National Payments Usage Study Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/OtherReports/Pages/default.aspx"
+  },
+  {
+   "text": "Monetary Policy",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/Pages/default.aspx"
+  },
+  {
+   "text": "Repo Rate",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/RepoRate.aspx"
+  },
+  {
+   "text": "Reverse Repo Rate",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/ReverseRepoRate.aspx"
+  },
+  {
+   "text": "Reserve Requirement on Demand Deposits",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/DemandDeposits.aspx"
+  },
+  {
+   "text": "Reserve Requirement on Saving Deposits",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/SavingDeposits.aspx"
+  },
+  {
+   "text": "Open Market Operations",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryOperations/OpenMarketOperations/Pages/default.aspx"
+  },
+  {
+   "text": "The Weekly Average of Repo and Reverse Repo",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryOperations/Pages/AverageWeeklyRepoRate.aspx"
+  },
+  {
+   "text": "Currency",
+   "href": "https://www.sama.gov.sa/en-US/Currency"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/HistoricalInfo.aspx"
+  },
+  {
+   "text": "Security Features for Fifth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SecurityFeatures/Pages/securityfeature.aspx"
+  },
+  {
+   "text": "Security Features for Sixth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SecurityFeatures/Pages/SixthIssueSecurityFeatures.aspx"
+  },
+  {
+   "text": "Pilgrims’ Receipts",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/Pilgriams.aspx"
+  },
+  {
+   "text": "First Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/FirstIssue.aspx"
+  },
+  {
+   "text": "Second Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/SecondIssue.aspx"
+  },
+  {
+   "text": "Third Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/ThirdIssue.aspx"
+  },
+  {
+   "text": "Fourth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/FourthIssue.aspx"
+  },
+  {
+   "text": "Fifth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/FifthIssue.aspx"
+  },
+  {
+   "text": "Sixth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/SixthIssue.aspx"
+  },
+  {
+   "text": "Special Issues",
+   "href": "https://www.sama.gov.sa/en-US/currency/pages/specialissue.aspx"
+  },
+  {
+   "text": "Monthly Exchange Rates",
+   "href": "https://www.sama.gov.sa/en-US/Currency/FinExc/Pages/ExchangeRatesGregorian.aspx"
+  },
+  {
+   "text": "Exchange Rate",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/Currency.aspx"
+  },
+  {
+   "text": "Currency Converter",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/CurrencyConverter.aspx"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SRS/Pages/default.aspx"
+  },
+  {
+   "text": "Saudi Riyal Symbol Guidelines",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SRS/Documents/Guidelines.pdf"
+  },
+  {
+   "text": "SADAD",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/SADAD.aspx"
+  },
+  {
+   "text": "mada",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/MADDA.aspx"
+  },
+  {
+   "text": "Sarie",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/SARIE.aspx"
+  },
+  {
+   "text": "Esal",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/ESAL.aspx"
+  },
+  {
+   "text": "E-Services",
+   "href": "https://www.sama.gov.sa/en-US/Pages/LandingServices.aspx"
+  },
+  {
+   "text": "",
+   "href": "https://www.sama.gov.sa/en-US/pages/default.aspx#"
+  },
+  {
+   "text": "",
+   "href": "https://rulebook.sama.gov.sa/ar/%D8%A2%D9%84%D9%8A%D8%A9-%D8%A7%D8%AD%D8%AA%D8%B3%D8%A7%D8%A8-%D8%A7%D9%84%D9%85%D8%A4%D8%B4%D8%B1-%D8%A7%D9%84%D9%85%D8%B1%D8%AC%D8%B9%D9%8A-%D8%A7%D9%84%D8%B3%D8%B9%D9%88%D8%AF%D9%8A-%D8%B3%D8%A7%D9%8A%D8%A8%D9%88%D8%B1%D8%B3%D8%A7%D9%8A%D8%A8%D8%AF"
+  },
+  {
+   "text": "Home",
+   "href": "https://www.sama.gov.sa/en-US"
+  },
+  {
+   "text": "About SAMA",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/default.aspx"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Overview.aspx"
+  },
+  {
+   "text": "Our History",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/SAMAHistory.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Law",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/bank-law.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Functions",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/SAMAFunction.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Strategy",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Strategy.aspx"
+  },
+  {
+   "text": "Organizational Structure",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Organization_Structure.aspx"
+  },
+  {
+   "text": "Members of the Board of Directors of the Saudi Central Bank",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/boardOfDirectors.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Leadership",
+   "href": "https://www.sama.gov.sa/en-US/About/LeaderShips/Pages/default.aspx"
+  },
+  {
+   "text": "International Relations",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Relations_with_regional_and_international_organizations.aspx"
+  },
+  {
+   "text": "Memoranda of Understanding",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Memorandums_of_understanding-.aspx"
+  },
+  {
+   "text": "Relevant Links",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Links.aspx"
+  },
+  {
+   "text": "Media Center",
+   "href": "https://www.sama.gov.sa/en-US/MediaCenter"
+  },
+  {
+   "text": "News",
+   "href": "https://www.sama.gov.sa/en-US/MediaCenter/News/Pages/allnews.aspx"
+  },
+  {
+   "text": "Speeches",
+   "href": "https://www.sama.gov.sa/en-US/MediaCenter/News/Pages/speeches.aspx"
+  },
+  {
+   "text": "Rulebook",
+   "href": "https://rulebook.sama.gov.sa/en"
+  },
+  {
+   "text": "Licensed Entities",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/LicenseEntities/Pages/default.aspx"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/SandBox/Pages/RegulatorySandbox.aspx"
+  },
+  {
+   "text": "Permitted Fintechs",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/SandBox/Pages/Permitted-Fintechs.aspx"
+  },
+  {
+   "text": "Guidebook",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/SandBox/Documents/Regulatory_Sandbox-Application_Guidance_Notes_EN.pdf"
+  },
+  {
+   "text": "Join the Regulatory Sandbox​",
+   "href": "https://www.sama.gov.sa/en-US/Pages/ServiceDetails.aspx?serviceid=96"
+  },
+  {
+   "text": "Holidays and Working Hours",
+   "href": "https://www.sama.gov.sa/en-US/Supervision/Pages/holidayschedules.aspx"
+  },
+  {
+   "text": "Statistics",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Pages/default.aspx"
+  },
+  {
+   "text": "Saudi Central Bank Portal For Open Data",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Pages/Summary.aspx"
+  },
+  {
+   "text": "Monthly Statistics",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/MonthlyStatistics.aspx"
+  },
+  {
+   "text": "Publication Timeline",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Pages/AdvancedReleaseCalendar.aspx"
+  },
+  {
+   "text": "Weekly Money Supply",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/WeeklyMoneySupply.aspx"
+  },
+  {
+   "text": "Weekly Points of Sale Transactions",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
+  },
+  {
+   "text": "Reserve Assets",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/reserve_assets.aspx"
+  },
+  {
+   "text": "Data Template on International Reserves and Foreign Currency Liquidity",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/International_Reserves.aspx"
+  },
+  {
+   "text": "Saudi Central Bank survey",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/Central%C2%A0_Bank_Survey.aspx"
+  },
+  {
+   "text": "Publications",
+   "href": "https://www.sama.gov.sa/en-US/Publications"
+  },
+  {
+   "text": "Annual Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/AnnualReport.aspx"
+  },
+  {
+   "text": "Inflation Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/InflationReport.aspx"
+  },
+  {
+   "text": "Key Economic Developments Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicReports/Pages/DevelopmentReports.aspx"
+  },
+  {
+   "text": "Working Papers",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicResearch/Pages/WorkingPapers.aspx"
+  },
+  {
+   "text": "Joint Research Program",
+   "href": "https://www.sama.gov.sa/en-US/Publications/EconomicResearch/Pages/Joint_Research_Program.aspx"
+  },
+  {
+   "text": "Financial Stability Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/FinanceReports/Pages/FinancialStability.aspx"
+  },
+  {
+   "text": "Finance Sector Performance Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/FinanceReports/Pages/FinancialPerformanceReport.aspx"
+  },
+  {
+   "text": "Annual Financial Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/FinanceReports/Pages/default.aspx"
+  },
+  {
+   "text": "National Payments Usage Study Report",
+   "href": "https://www.sama.gov.sa/en-US/Publications/OtherReports/Pages/default.aspx"
+  },
+  {
+   "text": "Monetary Policy",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/Pages/default.aspx"
+  },
+  {
+   "text": "Repo Rate",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/RepoRate.aspx"
+  },
+  {
+   "text": "Reverse Repo Rate",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/ReverseRepoRate.aspx"
+  },
+  {
+   "text": "Reserve Requirement on Demand Deposits",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/DemandDeposits.aspx"
+  },
+  {
+   "text": "Reserve Requirement on Saving Deposits",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryPolicyTools/Pages/SavingDeposits.aspx"
+  },
+  {
+   "text": "Open Market Operations",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryOperations/OpenMarketOperations/Pages/default.aspx"
+  },
+  {
+   "text": "The Weekly Average of Repo and Reverse Repo",
+   "href": "https://www.sama.gov.sa/en-US/MonetaryPolicy/MonetaryOperations/Pages/AverageWeeklyRepoRate.aspx"
+  },
+  {
+   "text": "Currency",
+   "href": "https://www.sama.gov.sa/en-US/Currency"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/HistoricalInfo.aspx"
+  },
+  {
+   "text": "Security Features for Fifth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SecurityFeatures/Pages/securityfeature.aspx"
+  },
+  {
+   "text": "Security Features for Sixth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SecurityFeatures/Pages/SixthIssueSecurityFeatures.aspx"
+  },
+  {
+   "text": "Pilgrims’ Receipts",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/Pilgriams.aspx"
+  },
+  {
+   "text": "First Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/FirstIssue.aspx"
+  },
+  {
+   "text": "Second Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/SecondIssue.aspx"
+  },
+  {
+   "text": "Third Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/ThirdIssue.aspx"
+  },
+  {
+   "text": "Fourth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/FourthIssue.aspx"
+  },
+  {
+   "text": "Fifth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/FifthIssue.aspx"
+  },
+  {
+   "text": "Sixth Issue",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/SixthIssue.aspx"
+  },
+  {
+   "text": "Special Issues",
+   "href": "https://www.sama.gov.sa/en-US/currency/pages/specialissue.aspx"
+  },
+  {
+   "text": "Monthly Exchange Rates",
+   "href": "https://www.sama.gov.sa/en-US/Currency/FinExc/Pages/ExchangeRatesGregorian.aspx"
+  },
+  {
+   "text": "Exchange Rate",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/Currency.aspx"
+  },
+  {
+   "text": "Currency Converter",
+   "href": "https://www.sama.gov.sa/en-US/Currency/Pages/CurrencyConverter.aspx"
+  },
+  {
+   "text": "Overview",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SRS/Pages/default.aspx"
+  },
+  {
+   "text": "Saudi Riyal Symbol Guidelines",
+   "href": "https://www.sama.gov.sa/en-US/Currency/SRS/Documents/Guidelines.pdf"
+  },
+  {
+   "text": "SADAD",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/SADAD.aspx"
+  },
+  {
+   "text": "mada",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/MADDA.aspx"
+  },
+  {
+   "text": "Sarie",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/SARIE.aspx"
+  },
+  {
+   "text": "Esal",
+   "href": "https://www.sama.gov.sa/en-US/payment/Pages/ESAL.aspx"
+  },
+  {
+   "text": "E-Services",
+   "href": "https://www.sama.gov.sa/en-US/Pages/LandingServices.aspx"
+  },
+  {
+   "text": "Careers",
+   "href": "http://careers.sama.gov.sa/ar/"
+  },
+  {
+   "text": "Contact Us",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/contactus.aspx"
+  },
+  {
+   "text": "Sitemap",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/sitemap.aspx"
+  },
+  {
+   "text": "SAMA Rulebook",
+   "href": "https://rulebook.sama.gov.sa/en"
+  },
+  {
+   "text": "View Updates",
+   "href": "https://rulebook.sama.gov.sa/en/view-revision-updates"
+  },
+  {
+   "text": "Search",
+   "href": "https://rulebook.sama.gov.sa/en/search"
+  },
+  {
+   "text": "Terms and conditions",
+   "href": "https://rulebook.sama.gov.sa/en/terms-and-conditions"
+  },
+  {
+   "text": "Entire section",
+   "href": "https://rulebook.sama.gov.sa/en/entiresection/3464"
+  },
+  {
+   "text": "Custom print",
+   "href": "https://rulebook.sama.gov.sa/en/saudi-arabian-benchmark-saiborsaibid#"
+  },
+  {
+   "text": "SAMA Rulebook",
+   "href": "https://rulebook.sama.gov.sa/en"
+  },
+  {
+   "text": "Banking Sector",
+   "href": "https://rulebook.sama.gov.sa/en/banking-sector-0"
+  },
+  {
+   "text": "Business Activities and Financial Conduct",
+   "href": "https://rulebook.sama.gov.sa/en/business-activities-and-financial-conduct-1"
+  },
+  {
+   "text": "Operational Rules",
+   "href": "https://rulebook.sama.gov.sa/en/operational-rules"
+  },
+  {
+   "text": "Saudi Arabian Benchmark (SAIBOR/SAIBID)",
+   "href": "https://rulebook.sama.gov.sa/en/saudi-arabian-benchmark-saiborsaibid"
+  },
+  {
+   "text": "‹ Chapter Four: Final Provisions",
+   "href": "https://rulebook.sama.gov.sa/en/chapter-four-final-provisions"
+  },
+  {
+   "text": "Up",
+   "href": "https://rulebook.sama.gov.sa/en/operational-rules"
+  },
+  {
+   "text": "1. Introduction ›",
+   "href": "https://rulebook.sama.gov.sa/en/1-introduction-34"
+  },
+  {
+   "text": "Download Original PDF",
+   "href": "https://rulebook.sama.gov.sa/sites/default/files/en_net_file_store/SAMA_EN_3464_VER1.pdf"
+  },
+  {
+   "text": "circular No. (430418800000), dated 9/5/1443H, corresponding to 13/12/2021G",
+   "href": "https://rulebook.sama.gov.sa/en/node/11072"
+  },
+  {
+   "text": "the Saudi Central Bank Law issued via Royal Decree No. M/36 dated 11/04/1442H",
+   "href": "https://rulebook.sama.gov.sa/en/node/1293"
+  },
+  {
+   "text": "the Banking Control Law issued 22/02/1386H",
+   "href": "https://rulebook.sama.gov.sa/en/node/996"
+  },
+  {
+   "text": "Circular No. 30986/67 issued in 17/05/1440H",
+   "href": "https://rulebook.sama.gov.sa/en/node/7570"
+  },
+  {
+   "text": "SAMA Policy Rate Moves",
+   "href": "https://rulebook.sama.gov.sa/en/node/3507"
+  },
+  {
+   "text": "SAMA Policy Rate Moves",
+   "href": "https://rulebook.sama.gov.sa/en/node/3507"
+  },
+  {
+   "text": "SAMA Policy Rate Moves",
+   "href": "https://rulebook.sama.gov.sa/en/node/3507"
+  },
+  {
+   "text": "requirements for Appointments to Senior Positions in Financial Institutions Supervised by the Saudi Central Bank",
+   "href": "https://rulebook.sama.gov.sa/en/node/1997"
+  },
+  {
+   "text": "SAMA standard fit and proper application",
+   "href": "https://rulebook.sama.gov.sa/en/node/2188"
+  },
+  {
+   "text": "BankingDataSection@SAMA.GOV.SA",
+   "href": "mailto:BankingDataSection@SAMA.GOV.SA"
+  },
+  {
+   "text": "FRCompliance@lseg.com",
+   "href": "mailto:FRCompliance@lseg.com"
+  },
+  {
+   "text": "BankingDataSection@SAMA.GOV.SA.",
+   "href": "mailto:BankingDataSection@SAMA.GOV.SA"
+  },
+  {
+   "text": "‹ Chapter Four: Final Provisions",
+   "href": "https://rulebook.sama.gov.sa/en/chapter-four-final-provisions"
+  },
+  {
+   "text": "Up",
+   "href": "https://rulebook.sama.gov.sa/en/operational-rules"
+  },
+  {
+   "text": "1. Introduction ›",
+   "href": "https://rulebook.sama.gov.sa/en/1-introduction-34"
+  },
+  {
+   "text": "Laws and Implementing Regulations",
+   "href": "https://rulebook.sama.gov.sa/en/laws-and-implementing-regulations"
+  },
+  {
+   "text": "All Financial Institutions",
+   "href": "https://rulebook.sama.gov.sa/en/all-financial-institutions"
+  },
+  {
+   "text": "Banking Sector",
+   "href": "https://rulebook.sama.gov.sa/en/banking-sector-0"
+  },
+  {
+   "text": "Laws and Regulations",
+   "href": "https://rulebook.sama.gov.sa/en/laws-and-regulations-2"
+  },
+  {
+   "text": "Licensing Provisions",
+   "href": "https://rulebook.sama.gov.sa/en/licensing-provisions-2"
+  },
+  {
+   "text": "Anti Money Laundering and Combating the Financing of Terrorism",
+   "href": "https://rulebook.sama.gov.sa/en/anti-money-laundering-and-combating-financing-terrorism-2"
+  },
+  {
+   "text": "Cyber Risk Control",
+   "href": "https://rulebook.sama.gov.sa/en/cyber-risk-control-4"
+  },
+  {
+   "text": "Governance and Internal Control",
+   "href": "https://rulebook.sama.gov.sa/en/governance-and-internal-control-1"
+  },
+  {
+   "text": "Prudential and Supervisory Requirements",
+   "href": "https://rulebook.sama.gov.sa/en/prudential-and-supervisory-requirements-3"
+  },
+  {
+   "text": "Business Activities and Financial Conduct",
+   "href": "https://rulebook.sama.gov.sa/en/business-activities-and-financial-conduct-1"
+  },
+  {
+   "text": "Banknotes, Currency, and Cash Movement",
+   "href": "https://rulebook.sama.gov.sa/en/banknotes-currency-and-cash-movement"
+  },
+  {
+   "text": "Operational Rules",
+   "href": "https://rulebook.sama.gov.sa/en/operational-rules"
+  },
+  {
+   "text": "Account Opening Rules",
+   "href": "https://rulebook.sama.gov.sa/en/account-opening-rules"
+  },
+  {
+   "text": "Rules Governing Bancassurance Activities",
+   "href": "https://rulebook.sama.gov.sa/en/rules-governing-bancassurance-activities"
+  },
+  {
+   "text": "Profit Sharing Investment Accounts Rules",
+   "href": "https://rulebook.sama.gov.sa/en/profit-sharing-investment-accounts-rules"
+  },
+  {
+   "text": "Regulation of Agent Banking in the Kingdom of Saudi Arabia",
+   "href": "https://rulebook.sama.gov.sa/en/regulation-agent-banking-kingdom-saudi-arabia"
+  },
+  {
+   "text": "Guide to Rules Governing Banks’ Remittance Centers",
+   "href": "https://rulebook.sama.gov.sa/en/guide-rules-governing-banks%E2%80%99-remittance-centers"
+  },
+  {
+   "text": "Regulation on Branch Network",
+   "href": "https://rulebook.sama.gov.sa/en/regulation-branch-network"
+  },
+  {
+   "text": "Governing Rules for Electronic Issuance and Authenticity Verification of Banking Documents",
+   "href": "https://rulebook.sama.gov.sa/en/governing-rules-electronic-issuance-and-authenticity-verification-banking-documents"
+  },
+  {
+   "text": "Saudi Arabian Benchmark (SAIBOR/SAIBID)",
+   "href": "https://rulebook.sama.gov.sa/en/saudi-arabian-benchmark-saiborsaibid"
+  },
+  {
+   "text": "1. Introduction",
+   "href": "https://rulebook.sama.gov.sa/en/1-introduction-34"
+  },
+  {
+   "text": "2. Definition of SAIBOR/SAIBID",
+   "href": "https://rulebook.sama.gov.sa/en/2-definition-saiborsaibid"
+  },
+  {
+   "text": "3. Bank Calculation Methodology",
+   "href": "https://rulebook.sama.gov.sa/en/3-bank-calculation-methodology"
+  },
+  {
+   "text": "4. Minimum Eligible Transaction Size",
+   "href": "https://rulebook.sama.gov.sa/en/4-minimum-eligible-transaction-size"
+  },
+  {
+   "text": "5. Transaction Tenor Criteria",
+   "href": "https://rulebook.sama.gov.sa/en/5-transaction-tenor-criteria"
+  },
+  {
+   "text": "6. Transaction Window and Publication",
+   "href": "https://rulebook.sama.gov.sa/en/6-transaction-window-and-publication"
+  },
+  {
+   "text": "7. Final Calculations and Averaging",
+   "href": "https://rulebook.sama.gov.sa/en/7-final-calculations-and-averaging"
+  },
+  {
+   "text": "8. Contributor Banks Standards for Submission and Data Keeping",
+   "href": "https://rulebook.sama.gov.sa/en/8-contributor-banks-standards-submission-and-data-keeping"
+  },
+  {
+   "text": "9. Reporting to SAMA",
+   "href": "https://rulebook.sama.gov.sa/en/9-reporting-sama"
+  },
+  {
+   "text": "Annex 1: Eligibility Detailed Criteria",
+   "href": "https://rulebook.sama.gov.sa/en/annex-1-eligibility-detailed-criteria"
+  },
+  {
+   "text": "SAMA SAIBOR/SAIBID Monthly Return",
+   "href": "https://rulebook.sama.gov.sa/en/sama-saiborsaibid-monthly-return"
+  },
+  {
+   "text": "Charging Policy for Cross Currency Payments Using \"AFAQ\" Service",
+   "href": "https://rulebook.sama.gov.sa/en/charging-policy-cross-currency-payments-using-afaq-service"
+  },
+  {
+   "text": "Initial Public Offering (IPO) Rules for Receiving and Lending Banks",
+   "href": "https://rulebook.sama.gov.sa/en/initial-public-offering-ipo-rules-receiving-and-lending-banks"
+  },
+  {
+   "text": "Instructions on Periods of Issuing the Clearance Letter and Executing Requests for Account Transfer and Debt Transfer",
+   "href": "https://rulebook.sama.gov.sa/en/instructions-periods-issuing-clearance-letter-and-executing-requests-account-transfer-and-debt-0"
+  },
+  {
+   "text": "Operating Rules for Cross Currency Payments using AFAQ Service",
+   "href": "https://rulebook.sama.gov.sa/en/operating-rules-cross-currency-payments-using-afaq-service"
+  },
+  {
+   "text": "Instructions for Banking Obligations and Transactions in Accordance with the Bankruptcy Law and Its Implementing Regulat",
+   "href": "https://rulebook.sama.gov.sa/en/instructions-banking-obligations-and-transactions-accordance-bankruptcy-law-and-its-implementing"
+  },
+  {
+   "text": "The requirements and Information Needed for Customers’ Bank Account Statements",
+   "href": "https://rulebook.sama.gov.sa/en/requirements-and-information-needed-customers%E2%80%99-bank-account-statements"
+  },
+  {
+   "text": "Instructions on the Working Hours of Bank Branches, Self-Service Centers, and Remittance Centers in Shopping Centers",
+   "href": "https://rulebook.sama.gov.sa/en/instructions-working-hours-bank-branches-self-service-centers-and-remittance-centers-shopping"
+  },
+  {
+   "text": "Rules of Saudi Arabian Riyal Interbank Express Indirect Participation",
+   "href": "https://rulebook.sama.gov.sa/en/rules-saudi-arabian-riyal-interbank-express-indirect-participation"
+  },
+  {
+   "text": "Financial Sector Safety and Security Guidelines CCTV Specifications Summary",
+   "href": "https://rulebook.sama.gov.sa/en/financial-sector-safety-and-security-guidelines-cctv-specifications-summary"
+  },
+  {
+   "text": "Depositors Protection Fund(DPF) Rules",
+   "href": "https://rulebook.sama.gov.sa/en/depositors-protection-funddpf-rules"
+  },
+  {
+   "text": "Banking Products and Finance Activities",
+   "href": "https://rulebook.sama.gov.sa/en/banking-products-and-finance-activities"
+  },
+  {
+   "text": "Financial Market Activities",
+   "href": "https://rulebook.sama.gov.sa/en/financial-market-activities"
+  },
+  {
+   "text": "Consumer Protection",
+   "href": "https://rulebook.sama.gov.sa/en/consumer-protection"
+  },
+  {
+   "text": "Model Contracts",
+   "href": "https://rulebook.sama.gov.sa/en/model-contracts-0"
+  },
+  {
+   "text": "Enforcement and Financial Penalties",
+   "href": "https://rulebook.sama.gov.sa/en/enforcement-and-financial-penalties-1"
+  },
+  {
+   "text": "Banking Sector Circulars",
+   "href": "https://rulebook.sama.gov.sa/en/banking-sector-circulars"
+  },
+  {
+   "text": "Finance Sector",
+   "href": "https://rulebook.sama.gov.sa/en/finance-sector-0"
+  },
+  {
+   "text": "Payment Systems and Payment Services Providers",
+   "href": "https://rulebook.sama.gov.sa/en/payment-systems-and-payment-services-providers"
+  },
+  {
+   "text": "Money Exchange Sector",
+   "href": "https://rulebook.sama.gov.sa/en/money-exchange-sector-0"
+  },
+  {
+   "text": "Credit Bureaus",
+   "href": "https://rulebook.sama.gov.sa/en/credit-bureaus"
+  },
+  {
+   "text": "Regulatory Sandbox",
+   "href": "https://rulebook.sama.gov.sa/en/regulatory-sandbox"
+  },
+  {
+   "text": "SAMA Circulars",
+   "href": "https://rulebook.sama.gov.sa/en/sama-circulars"
+  },
+  {
+   "text": "",
+   "href": "https://www.sama.gov.sa/en-US"
+  },
+  {
+   "text": "About the Saudi Central Bank",
+   "href": "https://www.sama.gov.sa/en-US/About/Pages/Overview.aspx"
+  },
+  {
+   "text": "Media Center",
+   "href": "https://www.sama.gov.sa/en-US/MediaCenter/Pages/default.aspx"
+  },
+  {
+   "text": "E-Services",
+   "href": "https://www.sama.gov.sa/en-US/Pages/LandingServices.aspx"
+  },
+  {
+   "text": "Open Data Platform",
+   "href": "https://www.sama.gov.sa/en-US/Statistics/Pages/Summary.aspx"
+  },
+  {
+   "text": "Careers",
+   "href": "http://careers.sama.gov.sa/ar/"
+  },
+  {
+   "text": "Privacy Policy",
+   "href": "https://www.sama.gov.sa/en-US/pages/privacy_policy.aspx"
+  },
+  {
+   "text": "Terms & Conditions",
+   "href": "https://www.sama.gov.sa/en-US/pages/privacypolicy.aspx"
+  },
+  {
+   "text": "Sitemap",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/sitemap.aspx"
+  },
+  {
+   "text": "Complaints",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/contactus.aspx?displaycomplaints=true"
+  },
+  {
+   "text": "Contact US",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/contactus.aspx"
+  },
+  {
+   "text": "Kingdom of Saudi Arabia - Riyadh",
+   "href": "https://www.sama.gov.sa/en-US/pages/default.aspx#!"
+  },
+  {
+   "text": "+966 11 463 3000",
+   "href": "https://www.sama.gov.sa/en-US/pages/default.aspx#!"
+  },
+  {
+   "text": "+966 11 466 2936 / 466-2966",
+   "href": "https://www.sama.gov.sa/en-US/pages/default.aspx#!"
+  },
+  {
+   "text": "Branches",
+   "href": "https://www.sama.gov.sa/en-US/PortalServices/Pages/contactus.aspx?displaybranches=true"
+  },
+  {
+   "text": "",
+   "href": "https://x.com/SAMA_GOV"
+  },
+  {
+   "text": "",
+   "href": "https://www.facebook.com/SAMAGOV0"
+  },
+  {
+   "text": "",
+   "href": "https://www.linkedin.com/company/saudi-central-bank-sama"
+  },
+  {
+   "text": "",
+   "href": "https://www.youtube.com/@SAMAGOV0"
+  },
+  {
+   "text": "",
+   "href": "https://www.instagram.com/sama_gov/"
+  },
+  {
+   "text": "Back to top",
+   "href": "https://rulebook.sama.gov.sa/en/saudi-arabian-benchmark-saiborsaibid#!"
+  }
+ ],
+ "tables": [
+  [
+   [
+    "Entire section",
+    "Custom print",
+    "Text Only",
+    "Rich Text",
+    "Print / Save as PDF"
+   ]
+  ],
+  [
+   [
+    "No: 430418800000",
+    "Date(g): 13/12/2021 | Date(h): 9/5/1443",
+    "Status: In-Force"
+   ]
+  ],
+  [
+   [
+    "3.1",
+    "SAIBOR and SAIBID will be based on contributor bank submissions, determined using a standardized waterfall methodology, as summarized below."
+   ],
+   [
+    "SAIBID SubmissionSAIBOR SubmissionLevel 1Where a SAIBOR contributor bank has sufficient eligible transactionsVolume Weighted Average Price (VWAP) onlyVWAP plus Spread PercentageLevel 2Where a SAIBOR contributor bank has insufficient eligible transactions to make a Level 1 submissionVWAP (including credit spread adjustment)VWAP (including credit spread adjustment) plus Spread PercentageLevel 3The SAIBOR contributor banks may only provide a Level 3 submission if there are insufficient eligible transactions to make a submission at Level 1 or Level 2. If there are transactions that would be eligible for Level 1 or Level 2, except that they took place prior to a move in policy rates, then the process described below under SAMA Policy Rate Moves shall be followed for the purpose of Level 3.Subject to process described SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day.Subject to process described in SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day and will include the Spread Percentage",
+    "",
+    "SAIBID Submission",
+    "SAIBOR Submission",
+    "Level 1Where a SAIBOR contributor bank has sufficient eligible transactions",
+    "Volume Weighted Average Price (VWAP) only",
+    "VWAP plus Spread Percentage",
+    "Level 2Where a SAIBOR contributor bank has insufficient eligible transactions to make a Level 1 submission",
+    "VWAP (including credit spread adjustment)",
+    "VWAP (including credit spread adjustment) plus Spread Percentage",
+    "Level 3The SAIBOR contributor banks may only provide a Level 3 submission if there are insufficient eligible transactions to make a submission at Level 1 or Level 2. If there are transactions that would be eligible for Level 1 or Level 2, except that they took place prior to a move in policy rates, then the process described below under SAMA Policy Rate Moves shall be followed for the purpose of Level 3.",
+    "Subject to process described SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day.",
+    "Subject to process described in SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day and will include the Spread Percentage"
+   ],
+   [
+    "",
+    "SAIBID Submission",
+    "SAIBOR Submission"
+   ],
+   [
+    "Level 1Where a SAIBOR contributor bank has sufficient eligible transactions",
+    "Volume Weighted Average Price (VWAP) only",
+    "VWAP plus Spread Percentage"
+   ],
+   [
+    "Level 2Where a SAIBOR contributor bank has insufficient eligible transactions to make a Level 1 submission",
+    "VWAP (including credit spread adjustment)",
+    "VWAP (including credit spread adjustment) plus Spread Percentage"
+   ],
+   [
+    "Level 3The SAIBOR contributor banks may only provide a Level 3 submission if there are insufficient eligible transactions to make a submission at Level 1 or Level 2. If there are transactions that would be eligible for Level 1 or Level 2, except that they took place prior to a move in policy rates, then the process described below under SAMA Policy Rate Moves shall be followed for the purpose of Level 3.",
+    "Subject to process described SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day.",
+    "Subject to process described in SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day and will include the Spread Percentage"
+   ],
+   [
+    "3.2",
+    "The key terms set out in the above table and subsequently in this document will be defined as following:"
+   ],
+   [
+    "■",
+    "Spread Percentage: As of the date of this Circular, the Spread Percentage is 16 per cent and represents the difference between SAIBOR and SAIBID across all relevant tenors for the most recent five years of publicly available data. The Spread Percentage will be applied to each submission in order to create the SAIBOR submission. The appropriateness of the level of Spread Percentage will be reviewed regularly on at least an annual basis and more frequently if required by market conditions. Under the review process, the benchmark administrator will consult with the panel of contributing banks and will amend the Spread Percentage subject to approval by SAMA."
+   ],
+   [
+    "■",
+    "Spread Cap: the Spread Percentage may be subject to a cap to be introduced and specified at the discretion of SAMA should market conditions require it. Following any such introduction of a Spread Cap, it shall be reviewed regularly on at least an annual basis and more frequently if required by market conditions. Under the review process, the benchmark administrator will consult with the contributing banks and will introduce or amend (as relevant) the Spread Cap subject to approval by SAMA."
+   ],
+   [
+    "■",
+    "Credit Spread Adjustment (Level 2): Saudi Riyal repo transactions used in Level 2 may be collateralized with any type of Saudi Riyal fixed income security. Such a secured transaction will typically be priced at a lower rate than an equivalent unsecured transaction. In order to maintain consistency with Level 1 submissions and the objective of SAIBOR, a contributor bank will use expert judgment to include a suitable credit premium in the VWAP created from the secured repo transaction(s) before making the Level 2 submission. Expert judgment may not be used for any other purpose for a Level 2 submission and is subject to the submission procedures and recording keeping requirements described under \"Expert Judgment\" below. The credit premium should reflect the nature and credit quality of the collateral used in the repo transaction(s) and result in a submission rate that is equivalent to an unsecured transaction rate."
+   ],
+   [
+    "■",
+    "Business Day: A \"business day\" for the purposes of a SAIBOR submission is defined as the 24 hour period from the start of the submission window on the previous business day until the start of the submission window on the current day of the submission."
+   ],
+   [
+    "■",
+    "Expert Judgment:"
+   ],
+   [
+    "",
+    "-",
+    "Where expert judgment is used, the panel banks have the flexibility to determine its own expert judgment approach."
+   ],
+   [
+    "",
+    "-",
+    "Expert judgment approach must be properly documented in the SAIBOR internal submission procedures developed by each SAIBOR contributor bank. These submission procedures are subject to appropriate internal governance processes1. Each contributor bank will notify SAMA and the benchmark administrator of its submission procedures by no later than 31 December 2021 and at least annually thereafter. In addition, each contributor bank will notify SAMA and the benchmark administrator following any significant change to its submission procedures. In each case, notice will be provided by a contributor bank by submitting a copy of its submission procedures to SAMA and the benchmark administrator2. When submitting such submission procedures to SAMA and the benchmark administrator each contributor bank shall include a statement stating that the version of the submission procedures provided has been approved by its Board or its Board delegated authority."
+   ],
+   [
+    "",
+    "-",
+    "The SAIBOR internal submission procedures and records detailing the factors and judgment used in each daily submission must be available at all times to be shared with SAMA and/or the administrator upon request."
+   ],
+   [
+    "3.3",
+    "Contributor banks are required to implement a process whereby the Head of Asset and Liability Management (ALM) or similar position in the bank (without any role in proprietary trading) takes the responsibility for submission of the SAIBOR/SAIBID rates on a daily basis to the benchmark administrator independently without any influence from the bank's Treasurer or the Deputy Treasurer. Banks are required to obtain SAMA's approval for individuals in these roles as per SAMA circulated requirements for Appointments to Senior Positions in Financial Institutions Supervised by the Saudi Central Bank using SAMA standard fit and proper application."
+   ],
+   [
+    "3.4",
+    "Contributor banks must develop and implement reasonable submission procedures based on the applicable SAIBOR/SAIBID methodologies. The overall submission procedures should at a minimum include the following:"
+   ],
+   [
+    "",
+    "■",
+    "Eligible transaction and other data inputs in calculating submissions"
+   ],
+   [
+    "",
+    "■",
+    "Record the level of the waterfall used to calculate the submission;"
+   ],
+   [
+    "",
+    "■",
+    "Procedures to detect and evaluate the bona-fide nature of such transactions and inputs;"
+   ],
+   [
+    "",
+    "■",
+    "Policies guiding and detailing the use of expert judgment, including documentation;"
+   ],
+   [
+    "",
+    "■",
+    "Maintaining reports, records and underlying documentation supporting submissions;"
+   ],
+   [
+    "",
+    "■",
+    "Procedures for pre-submission validation of eligible inputs and procedures for review by senior staff to check inputs before submission."
+   ],
+   [
+    "3.5",
+    "The submission procedures should be approved by the Board or Board delegated authority and should be consistently applied. Each contributor bank should ensure that its Internal Audit Department undertakes an annual review of the process and of the methodologies and report to the relevant contributor bank's Senior Management, Audit Committee and the Board on the compliance with the established policies and procedures."
+   ]
+  ],
+  [
+   [
+    "",
+    "SAIBID Submission",
+    "SAIBOR Submission"
+   ],
+   [
+    "Level 1Where a SAIBOR contributor bank has sufficient eligible transactions",
+    "Volume Weighted Average Price (VWAP) only",
+    "VWAP plus Spread Percentage"
+   ],
+   [
+    "Level 2Where a SAIBOR contributor bank has insufficient eligible transactions to make a Level 1 submission",
+    "VWAP (including credit spread adjustment)",
+    "VWAP (including credit spread adjustment) plus Spread Percentage"
+   ],
+   [
+    "Level 3The SAIBOR contributor banks may only provide a Level 3 submission if there are insufficient eligible transactions to make a submission at Level 1 or Level 2. If there are transactions that would be eligible for Level 1 or Level 2, except that they took place prior to a move in policy rates, then the process described below under SAMA Policy Rate Moves shall be followed for the purpose of Level 3.",
+    "Subject to process described SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day.",
+    "Subject to process described in SAMA Policy Rate Moves below, expert judgment will estimate the VWAP that would have been calculated had unsecured eligible transactions occurred in the last business day and will include the Spread Percentage"
+   ]
+  ],
+  [
+   [
+    "Tenor",
+    "Permitted maturity range"
+   ],
+   [
+    "Overnight",
+    "1 business day, and must be an overnight transaction"
+   ],
+   [
+    "1 week",
+    "5 business days"
+   ],
+   [
+    "1 month",
+    "From 25 to 35 calendar days inclusive"
+   ],
+   [
+    "3 month",
+    "From 80 to 100 calendar days inclusive"
+   ],
+   [
+    "6 month",
+    "From 150 to 210 calendar days inclusive"
+   ],
+   [
+    "12 month",
+    "From 330 to 390 calendar days inclusive"
+   ]
+  ],
+  [
+   [
+    "Under the enhanced methodology, the following Minimum Contribution Criteria shall apply."
+   ],
+   [
+    "Contributions ReceivedNumber of HighContributionsTrimmedNumber of LowContributionsTrimmed5 or more224 or fewerN/AN/A",
+    "Contributions Received",
+    "Number of HighContributionsTrimmed",
+    "Number of LowContributionsTrimmed",
+    "5 or more",
+    "2",
+    "2",
+    "4 or fewer",
+    "N/A",
+    "N/A"
+   ],
+   [
+    "Contributions Received",
+    "Number of HighContributionsTrimmed",
+    "Number of LowContributionsTrimmed"
+   ],
+   [
+    "5 or more",
+    "2",
+    "2"
+   ],
+   [
+    "4 or fewer",
+    "N/A",
+    "N/A"
+   ],
+   [
+    "■",
+    "Where 5 or more contributions are received, the contributions will be applied with a trimming methodology where the 2 highest and lowest contributions, per tenor, are excluded from the calculation, once the trimming methodology has been applied, the SAIBOR rates will be calculated as an average of the remaining rate and published to 5 decimal places."
+   ],
+   [
+    "■",
+    "If fewer than 5 contributions are received by the time that SAIBOR is due to be published, the fallback arrangement described below will apply."
+   ],
+   [
+    "",
+    "Fallback Arrangement"
+   ],
+   [
+    "■",
+    "If the minimum 5 contributions are not received by 11:50am KSA time, a fallback arrangement is triggered. Triggering the fallback arrangement extends the contribution window by 30 minutes from 12:00pm to 12:30pm KSA time to accept additional contributions from contributor banks who have not contributed."
+   ],
+   [
+    "■",
+    "If the minimum contributions are reached by 12:30pm KSA time, the benchmark will be released. If not, the previous day's SAIBOR value will be republished together with a flag indicating a republication."
+   ]
+  ],
+  [
+   [
+    "Contributions Received",
+    "Number of HighContributionsTrimmed",
+    "Number of LowContributionsTrimmed"
+   ],
+   [
+    "5 or more",
+    "2",
+    "2"
+   ],
+   [
+    "4 or fewer",
+    "N/A",
+    "N/A"
+   ]
+  ],
+  [
+   [
+    "Banks expected to:"
+   ],
+   [
+    "■",
+    "Submit SAIBOR/ SAIBID will reflect the true price of unsecured wholesale liquidity in the KSA Market.3"
+   ],
+   [
+    "■",
+    "Maintain records and evidence to substantiate the rates submitted to the benchmark administrator."
+   ],
+   [
+    "■",
+    "In case of significant perceived credit deterioration of a SAIBOR and SAIBID contributing bank, Saudi Central Bank and the benchmark administrator will review the eligibility of the bank concerned."
+   ]
+  ],
+  [
+   [
+    "Waterfall Level",
+    "Eligible Transaction Types",
+    "Eligible Counterparty",
+    "Minimum Transaction Size",
+    "Minimum No. of Transactions"
+   ],
+   [
+    "Level 1",
+    "■ Unsecured wholesale Saudi Riyal deposits received or raised by the SAIBOR contributor bank from an eligible counterparty. ■ Domestic primary and secondary market transactions by a SAIBOR contributor bank where it raises funds via unsecured certificates of deposit (CDs) and commercial paper (CPs) where such instruments are:Denominated in Saudi Riyals;The transactions take place in the domestic KSA market; andIssued by the relevant SAIBOR contributor bank itself.Exclusions:- Structured deposits- Internal transactions such as transactions with a subsidiary (including a subsidiary that is a fund and including transactions between contributor bank branches and its head office).- Unsecured deposits made by SAMA unless expressly advised otherwise by SAMA and where transacted at market prices.- Transactions which have been Entered into outside of the applicable lookback period. See Lookback Period below.- Transactions that occurs before a move in the repo or reverse repo policy rates by SAMA. See SAMA Policy Rate Moves below.",
+    "■ Banks■ AH central banks4■ Government Related Entities (GREs)■ Non-bank Financial Institutions■ Corporates and all retail segments (that meet the required minimum threshold amount)",
+    "■ O/N, 1 week, 1 month and 3 month SAIBOR tenors - minimum size for individual transactions of SAR 10mm■ 6 month and 12 month SAIBOR tenors:■ no minimum size for individual transactions.■ -aggregate transaction size of all transactions used in the VWAP calculation must be equal to or greater than SAR 50mm.",
+    "■ Transactions with a minimum of 2 different counterparties, provided if only one eligible transaction has taken place following a move in policy rates by SAMA during the Lookback Period, that single transaction shall be used to make a Level 1 submission."
+   ],
+   [
+    "Level 2",
+    "■ Saudi Riyal repo transactions (excluding those with SAMA) which have the economic effect of the contributing bank being the receiver (i.e. borrower) of Saudi Riyals. All types of Saudi Riyal fixed income securities are permitted collateral for an eligible repo transaction.Exclusions:- Internal transactions such as with a subsidiary (including a subsidiary that is a fund and including transactions between contributor banks between contributor banks branches and its head office).- Repo transactions with SAMA.- Transactions that occurs before a move in the repo or reverse repo policy rates by SAMA. See SAMA Policy Rate Moves below.",
+    "As per Level 1",
+    "As per Level 1",
+    "A Level 2 submission may be made using a single eligible repo transaction."
+   ],
+   [
+    "Level 3",
+    "Subject to the \"Sama Policy Rate Moves\", acceptable Level 3 inputs that may be used to form the expert judgment used to determine a Level 3 submission are5:■ Transactions that are outside the specified tenor buckets;■ Interpolation/extrapolation (from transactions in the markets underlying Level 1 and Level 2);■ Other market instruments: interest rate swaps, money market operation rates, forward rate agreement/single period swaps, overnight-indexed swaps, SAMA bills;■ Macro-economic factors (monetary policy change, policy rate change in major economies & significant economic data);■ Credit standing i.e. a published and verifiable change in the credit standing of the bank; and■ Other factors: those that can be evidenced and verified, as agreed with a contributor panel bank's internal compliance and risk."
+   ]
+  ],
+  [
+   [
+    "The key terms set out in the above table be defined as following:"
+   ],
+   [
+    "■",
+    "Lookback Period: When identifying eligible transactions for Level 1 or Level 2, a SAIBOR contributor bank must first use transactions executed during the last business day. If there are insufficient eligible transactions in the last business day, the SAIBOR contributor bank may extend the period to the last two business days. This process may be repeated, extending the period by one business day at a time, until either sufficient eligible transactions have been obtained or until a maximum of five business days has been reached."
+   ],
+   [
+    "",
+    "For the avoidance of doubt, the process of looking back by one extra day at a time (up to a maximum of 5 business days and subject to any moves in policy rates by SAMA) must be completed for Level 1 before the contributor bank moves to Level 2. If sufficient eligible transactions are found in the Lookback Period for Level 1, these will be used to create a submission even if more recent transactions exist that would be eligible for Level 2.Banks are allowed to use Level 3 inputs without any restriction on maximum number of business days."
+   ],
+   [
+    "■",
+    "SAMA Policy Rate Moves: No transaction that occurs before a move in the repo or reverse repo policy rates by SAMA will be an eligible transaction for Level 1 or Level 2. This also applies intraday: any transaction that occurs before a policy rate during a business day will not be an eligible transaction. The following process shall apply following a policy rate move by SAMA:"
+   ],
+   [
+    "",
+    "1.",
+    "Eligible transactions that take place after the policy rate move will be used to make a Level 1 submission. If there are insufficient eligible transactions (see Level 1 eligibility criteria above) following such a move during the maximum five day look back period, Level 2 will be used."
+   ],
+   [
+    "",
+    "2.",
+    "Eligible transactions that take place after the policy rate move will be used to make a Level 2 submission. If there are insufficient eligible transactions (see Level 2 eligibility criteria above) following such a move during the maximum five day look back period, Level 3 will be used."
+   ],
+   [
+    "",
+    "3.",
+    "Where Level 3 is used following a policy rate move by SAMA, both Level 1 eligible transactions and also Level 1 transactions that would have been eligible except for the fact that they took place before the move in policy rates by SAMA will be used, when exercising expert judgment, to create a VWAP, subject to the process described under Lookback Period above. The VWAP will then be adjusted by the SAIBOR contributor bank to adjust for the effect of the move in policy rates. Such adjustment will be in accordance with the contributor bank's documented internal submission procedures. Submissions for SAIBOR will include the Spread Percentage adjustment to the final VWAP and submissions for SAIBID will exclude the Spread Percentage adjustment to the final VWAP."
+   ],
+   [
+    "",
+    "4.",
+    "Where Level 3 is used following a policy rate move by SAMA and there are insufficient Level 1 eligible transactions (see Level 1 eligibility criteria above) to create a submission even when including Level 1 transactions that took place before the move in policy rates, then both Level 2 eligible transactions and also Level 2 transactions that would have been eligible except for the fact that they took place before the move in policy rates by SAMA will be used to create a VWAP, subject to the process described under Lookback Period above and including the adjustment for the credit premium detailed above under \"Credit Spread Adjustment (Level 2)\". For the purposes of exercising expert judgment, the VWAP will then be adjusted by the SAIBOR contributor bank to adjust for the effect of the move in policy rates. Such adjustment will be in accordance with the contributor bank's documented internal submission procedures. Submissions for SAIBOR will include the Spread Percentage adjustment to the final VWAP and submissions for SAIBID will exclude the Spread Percentage adjustment to the final VWAP."
+   ],
+   [
+    "",
+    "5.",
+    "If there are insufficient transactions for both Level 1 and Level 2 including transactions that took place prior to a policy move by SAMA, expert judgment alone will be used by a SAIBOR contributor bank to make a submission."
+   ],
+   [
+    "",
+    "6.",
+    "Where a VWAP is adjusted at Level 3 as described above, the size of the adjustment should not exceed the size of the move in policy rates by SAMA except where the SAIBOR contributor bank has strong reasons to believe that a larger adjustment is required to ensure that the submission is representative of current market conditions. In all cases where expert judgment is used including such VWAP adjustments, a contributor bank must record all the factors used in determining the submission it makes as detailed under \"Expert Judgment\" above."
+   ]
+  ],
+  [
+   [
+    "Instruction guidelines"
+   ],
+   [
+    "How to report the data"
+   ],
+   [
+    "Scope of consolidation"
+   ],
+   [
+    "The information is asked at the solo domestic level of each bank."
+   ],
+   [
+    "Reference date"
+   ],
+   [
+    "The reference date should be 30/31 of each month."
+   ],
+   [
+    "Completeness of the analysis"
+   ],
+   [
+    "Please provide your responses on the relevant cells in the excel file without modifying the format of the templates."
+   ],
+   [
+    "Quantitative information"
+   ],
+   [
+    "The quantitative responses should be amounts in SAR '000. The Bank's input for SAIBOR/SAIBID rate each day should be included in all tabs 'SAIBOR', 'SAIBID' and 'Other info’"
+   ],
+   [
+    "Qualitative information"
+   ],
+   [
+    "Please provide specific responses to the qualitative questions at a sufficient level of detail to achieve the objectives of the return."
+   ],
+   [
+    "Sample data"
+   ],
+   [
+    "We have taken a sample example to demostrate how the return should be filled."
+   ],
+   [
+    "Contact persons"
+   ],
+   [
+    "Kindly refer to SAMA's SAIBOR/SAIBID circular for report submission details which can be found under \"Reporting to SAMA\""
+   ],
+   [
+    "Deadline for submission"
+   ],
+   [
+    "5 working days"
+   ],
+   [
+    "Name of the Bank Reporting period",
+    "Name of the Bank",
+    "Reporting period"
+   ],
+   [
+    "Name of the Bank"
+   ],
+   [
+    "Reporting period"
+   ],
+   [
+    "SAR Interbank Lending Transactions (SAIBOR)"
+   ],
+   [
+    "Trade Date Transaction rateName of the counterparty (kindly use official name)Maturity dateDuration in number of daysBank's input for SAIBOR rateIf transaction rate is different from input rate, state reasons 29/05/21100,0001.10ABC Bank30/05/2111.25",
+    "Trade Date",
+    "",
+    "Transaction rate",
+    "Name of the counterparty (kindly use official name)",
+    "Maturity date",
+    "Duration in number of days",
+    "Bank's input for SAIBOR rate",
+    "If transaction rate is different from input rate, state reasons",
+    "",
+    "29/05/21",
+    "100,000",
+    "1.10",
+    "ABC Bank",
+    "30/05/21",
+    "1",
+    "1.25",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "Trade Date",
+    "",
+    "Transaction rate",
+    "Name of the counterparty (kindly use official name)",
+    "Maturity date",
+    "Duration in number of days",
+    "Bank's input for SAIBOR rate",
+    "If transaction rate is different from input rate, state reasons",
+    ""
+   ],
+   [
+    "29/05/21",
+    "100,000",
+    "1.10",
+    "ABC Bank",
+    "30/05/21",
+    "1",
+    "1.25",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "Name of the Bank Reporting period",
+    "Name of the Bank",
+    "Reporting period"
+   ],
+   [
+    "Name of the Bank"
+   ],
+   [
+    "Reporting period"
+   ],
+   [
+    "SAR Interbank Borrowing Transactions (SAIBID)"
+   ],
+   [
+    "Trade Date Transaction rateName of the counterparty (kindly use official name)Maturity dateDuration in number of daysBank's input for SAIBOR rateIf transaction rate is different from input rate, state reasons 29/05/21100,0000.75ABC Bank30/05/2110.80",
+    "Trade Date",
+    "",
+    "Transaction rate",
+    "Name of the counterparty (kindly use official name)",
+    "Maturity date",
+    "Duration in number of days",
+    "Bank's input for SAIBOR rate",
+    "If transaction rate is different from input rate, state reasons",
+    "",
+    "29/05/21",
+    "100,000",
+    "0.75",
+    "ABC Bank",
+    "30/05/21",
+    "1",
+    "0.80",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "Trade Date",
+    "",
+    "Transaction rate",
+    "Name of the counterparty (kindly use official name)",
+    "Maturity date",
+    "Duration in number of days",
+    "Bank's input for SAIBOR rate",
+    "If transaction rate is different from input rate, state reasons",
+    ""
+   ],
+   [
+    "29/05/21",
+    "100,000",
+    "0.75",
+    "ABC Bank",
+    "30/05/21",
+    "1",
+    "0.80",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "Name of the Bank Reporting period",
+    "Name of the Bank",
+    "Reporting period"
+   ],
+   [
+    "Name of the Bank"
+   ],
+   [
+    "Reporting period"
+   ],
+   [
+    "List all bid/offer transactions undertaken at the bank's offered/bid rates"
+   ],
+   [
+    "DateBank's input for SAIBOR rateNumber of transactions not undertaken at offered ratesNumber of transactionsName of customers (kindly use Official name)Rate offered Tenor (no. of days)Reasons for not undertaking29/05/211.251ABC Bank1.30100,00030Customers negotiating a lower rate29/05/211.252CBA Bank1.4550,00090No interest in 90 days29/05/211.254DEF Bank1.2550,0007Customers demanding a lower rate than SAIBOR",
+    "Date",
+    "Bank's input for SAIBOR rate",
+    "Number of transactions not undertaken at offered rates",
+    "Number of transactions",
+    "Name of customers (kindly use Official name)",
+    "Rate offered",
+    "",
+    "Tenor (no. of days)",
+    "Reasons for not undertaking",
+    "29/05/21",
+    "1.25",
+    "1",
+    "ABC Bank",
+    "1.30",
+    "100,000",
+    "30",
+    "Customers negotiating a lower rate",
+    "29/05/21",
+    "1.25",
+    "2",
+    "CBA Bank",
+    "1.45",
+    "50,000",
+    "90",
+    "No interest in 90 days",
+    "29/05/21",
+    "1.25",
+    "4",
+    "DEF Bank",
+    "1.25",
+    "50,000",
+    "7",
+    "Customers demanding a lower rate than SAIBOR",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "Date",
+    "Bank's input for SAIBOR rate",
+    "Number of transactions not undertaken at offered rates"
+   ],
+   [
+    "Number of transactions",
+    "Name of customers (kindly use Official name)",
+    "Rate offered",
+    "",
+    "Tenor (no. of days)",
+    "Reasons for not undertaking"
+   ],
+   [
+    "29/05/21",
+    "1.25",
+    "1",
+    "ABC Bank",
+    "1.30",
+    "100,000",
+    "30",
+    "Customers negotiating a lower rate"
+   ],
+   [
+    "29/05/21",
+    "1.25",
+    "2",
+    "CBA Bank",
+    "1.45",
+    "50,000",
+    "90",
+    "No interest in 90 days"
+   ],
+   [
+    "29/05/21",
+    "1.25",
+    "4",
+    "DEF Bank",
+    "1.25",
+    "50,000",
+    "7",
+    "Customers demanding a lower rate than SAIBOR"
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "DateBank's input for SAIBOR rateNumber of transactions not undertaken at offered ratesNumber of transactionsName of customers (kindly use Official name)Rate offered Tenor (no. of days)Reasons for not undertaking29/05/210.901ABC Bank0.9075,00060Banks not willing to offer at SAIBOR rate",
+    "Date",
+    "Bank's input for SAIBOR rate",
+    "Number of transactions not undertaken at offered rates",
+    "Number of transactions",
+    "Name of customers (kindly use Official name)",
+    "Rate offered",
+    "",
+    "Tenor (no. of days)",
+    "Reasons for not undertaking",
+    "29/05/21",
+    "0.90",
+    "1",
+    "ABC Bank",
+    "0.90",
+    "75,000",
+    "60",
+    "Banks not willing to offer at SAIBOR rate",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "Date",
+    "Bank's input for SAIBOR rate",
+    "Number of transactions not undertaken at offered rates"
+   ],
+   [
+    "Number of transactions",
+    "Name of customers (kindly use Official name)",
+    "Rate offered",
+    "",
+    "Tenor (no. of days)",
+    "Reasons for not undertaking"
+   ],
+   [
+    "29/05/21",
+    "0.90",
+    "1",
+    "ABC Bank",
+    "0.90",
+    "75,000",
+    "60",
+    "Banks not willing to offer at SAIBOR rate"
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  ],
+  [
+   [
+    "Name of the Bank"
+   ],
+   [
+    "Reporting period"
+   ]
+  ],
+  [
+   [
+    "Trade Date",
+    "",
+    "Transaction rate",
+    "Name of the counterparty (kindly use official name)",
+    "Maturity date",
+    "Duration in number of days",
+    "Bank's input for SAIBOR rate",
+    "If transaction rate is different from input rate, state reasons",
+    ""
+   ],
+   [
+    "29/05/21",
+    "100,000",
+    "1.10",
+    "ABC Bank",
+    "30/05/21",
+    "1",
+    "1.25",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  ],
+  [
+   [
+    "Name of the Bank"
+   ],
+   [
+    "Reporting period"
+   ]
+  ],
+  [
+   [
+    "Trade Date",
+    "",
+    "Transaction rate",
+    "Name of the counterparty (kindly use official name)",
+    "Maturity date",
+    "Duration in number of days",
+    "Bank's input for SAIBOR rate",
+    "If transaction rate is different from input rate, state reasons",
+    ""
+   ],
+   [
+    "29/05/21",
+    "100,000",
+    "0.75",
+    "ABC Bank",
+    "30/05/21",
+    "1",
+    "0.80",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  ],
+  [
+   [
+    "Name of the Bank"
+   ],
+   [
+    "Reporting period"
+   ]
+  ],
+  [
+   [
+    "Date",
+    "Bank's input for SAIBOR rate",
+    "Number of transactions not undertaken at offered rates"
+   ],
+   [
+    "Number of transactions",
+    "Name of customers (kindly use Official name)",
+    "Rate offered",
+    "",
+    "Tenor (no. of days)",
+    "Reasons for not undertaking"
+   ],
+   [
+    "29/05/21",
+    "1.25",
+    "1",
+    "ABC Bank",
+    "1.30",
+    "100,000",
+    "30",
+    "Customers negotiating a lower rate"
+   ],
+   [
+    "29/05/21",
+    "1.25",
+    "2",
+    "CBA Bank",
+    "1.45",
+    "50,000",
+    "90",
+    "No interest in 90 days"
+   ],
+   [
+    "29/05/21",
+    "1.25",
+    "4",
+    "DEF Bank",
+    "1.25",
+    "50,000",
+    "7",
+    "Customers demanding a lower rate than SAIBOR"
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  ],
+  [
+   [
+    "Date",
+    "Bank's input for SAIBOR rate",
+    "Number of transactions not undertaken at offered rates"
+   ],
+   [
+    "Number of transactions",
+    "Name of customers (kindly use Official name)",
+    "Rate offered",
+    "",
+    "Tenor (no. of days)",
+    "Reasons for not undertaking"
+   ],
+   [
+    "29/05/21",
+    "0.90",
+    "1",
+    "ABC Bank",
+    "0.90",
+    "75,000",
+    "60",
+    "Banks not willing to offer at SAIBOR rate"
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ],
+   [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+   ]
+  ]
+ ],
+ "content_hash": "c70a85c6c8be2d5dd454628820209ca7a9b031f2d76e45d5a420aee44331bd61",
+ "fetched_at": "2026-07-28T18:48:05.889Z",
+ "session_id": "661c9653-39d6-43f5-850a-396e29bcbbd7",
+ "error": null,
+ "duration_ms": 19447
+}

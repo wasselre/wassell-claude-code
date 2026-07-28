@@ -11,7 +11,11 @@
     "sync:prds": "node scripts/sync-model-workflow-prds.mjs",
     "backfill:reels": "node scripts/backfill-reel-analysis.mjs",
     "typecheck:api": "tsc --noEmit -p tsconfig.api.json",
-    "study-runner": "node scripts/claude-study-runner.mjs"
+    "study-runner": "node scripts/claude-study-runner.mjs",
+    "financing:fetch": "node scripts/financing/fetch-sources.mjs",
+    "financing:seed": "node scripts/financing/seed.mjs",
+    "financing:refresh": "node scripts/financing/fetch-sources.mjs && node scripts/financing/seed.mjs --trigger=scheduled",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.0",

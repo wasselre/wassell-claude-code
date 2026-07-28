@@ -1,0 +1,27 @@
+{
+ "source_key": "anb_real_estate",
+ "url": "https://anb.com.sa/en/web/anb/real-estate-finance",
+ "final_url": "https://anb.com.sa/en/web/anb/real-estate-finance",
+ "http_status": 200,
+ "status": "fetch_blocked",
+ "blocked_reason": "empty_body",
+ "title": "",
+ "text": "The Website is under maintenance\n\n \n\nDear valued customer,\n\n \n\nSorry, the Website is under maintenance.\n\n \n\n\t\n\nالموقع تحت الصيانة\n\n \n\nعميلنا العزيز,\n\n \n\nالموقع تحت الصيانة",
+ "links": [],
+ "tables": [
+  [
+   [
+    ""
+   ],
+   [
+    "The Website is under maintenance Dear valued customer, Sorry, the Website is under maintenance.",
+    "الموقع تحت الصيانة عميلنا العزيز, الموقع تحت الصيانة"
+   ]
+  ]
+ ],
+ "content_hash": "fe2bd6ad3cf544b1efcac437a15904590533ee6a0d1a59bb5c833778b66d5e91",
+ "fetched_at": "2026-07-28T18:49:06.852Z",
+ "session_id": "5c430c48-cf47-4a98-87d8-3d9be5f82425",
+ "error": null,
+ "duration_ms": 16186
+}
