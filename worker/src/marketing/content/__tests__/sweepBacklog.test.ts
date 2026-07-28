@@ -10,6 +10,10 @@ import { sweepContentBacklog } from '../sweepBacklog.js';
 // ---------------------------------------------------------------------------
 interface Canned { posts?: unknown[]; media?: unknown[]; visual?: unknown[]; inFlight?: unknown[]; jobCount?: number; ocrCount?: number; leaseWon?: boolean }
 
+/** PostgREST's server-side row cap. The fake enforces it so a `.limit()` that
+ *  exceeds it cannot silently pass in tests while truncating in production. */
+const DB_MAX_ROWS = 1000;
+
 function fakeSb(c: Canned) {
   const enqueued: Array<Record<string, unknown>> = [];
   const ocrInserts: Array<Record<string, unknown>> = [];
@@ -17,16 +21,23 @@ function fakeSb(c: Canned) {
   const builder = (table: string, op: 'select' | 'update' | 'insert' | 'upsert') => {
     const b: Record<string, unknown> = {};
     const chain = () => b;
+    let range: [number, number] | null = null;
     for (const m of ['select', 'eq', 'in', 'lt', 'order', 'limit', 'neq']) b[m] = chain;
+    b.range = (from: number, to: number) => { range = [from, to]; return b; };
+    // Emulates the server: honour .range() and NEVER return more than the cap.
+    const page = (rows: unknown[]) => {
+      const [from, to] = range ?? [0, DB_MAX_ROWS - 1];
+      return rows.slice(from, Math.min(to + 1, from + DB_MAX_ROWS));
+    };
     b.then = (resolve: (v: unknown) => unknown) => {
       if (table === 'mkt_settings') return resolve({ data: c.leaseWon === false ? [] : [{ key: 'x' }], error: null });
-      if (table === 'mkt_content_posts') return resolve({ data: c.posts ?? [], error: null });
-      if (table === 'mkt_content_media') return resolve({ data: c.media ?? [], error: null });
-      if (table === 'mkt_visual_text') return resolve({ data: c.visual ?? [], error: null });
+      if (table === 'mkt_content_posts') return resolve({ data: page(c.posts ?? []), error: null });
+      if (table === 'mkt_content_media') return resolve({ data: page(c.media ?? []), error: null });
+      if (table === 'mkt_visual_text') return resolve({ data: page(c.visual ?? []), error: null });
       if (table === 'claude_jobs') return resolve({ data: [], error: null, count: c.ocrCount ?? 0 });
       if (table === 'mkt_collection_jobs') {
         // head+count call vs the params scan — the params scan asks for data.
-        return resolve({ data: c.inFlight ?? [], error: null, count: c.jobCount ?? 0 });
+        return resolve({ data: page(c.inFlight ?? []), error: null, count: c.jobCount ?? 0 });
       }
       return resolve({ data: [], error: null, count: 0 });
     };
@@ -116,6 +127,25 @@ describe('sweepContentBacklog', () => {
     const stats = await sweepContentBacklog(sb, 'w1');
     expect(stats.media_recover).toBe(0);
     expect(enqueued).toHaveLength(0);
+  });
+
+  it('sees past the 1,000-row PostgREST cap', async () => {
+    // The regression this pins: the scan asked for 3,000 rows, PostgREST capped
+    // it at 1,000 without saying so, and because the scan is ordered oldest-
+    // first every returned post already had media. needMedia computed to ZERO
+    // and the sweep logged `media_recover=0` while 103 newer posts sat
+    // unrecovered. Nothing errored; the number was just quietly wrong.
+    const many = Array.from({ length: 1200 }, (_, i) => post(`p${i}`));
+    // The first 1,000 are done; only the tail past the cap still needs media.
+    const done = many.slice(0, 1000).map((p) => stored(p.id, 'image'));
+    const { sb, enqueued } = fakeSb({ posts: many, media: done, visual: many.slice(0, 1000).map((p) => ({ content_post_id: p.id })) });
+    const stats = await sweepContentBacklog(sb, 'w1');
+    expect(stats.media_recover).toBe(200);
+    expect(enqueued.filter((e) => (e.p_params as { media_only?: boolean }).media_only)).toHaveLength(200);
+    // The 1,000 already-complete posts are past the cap too, and they are the
+    // ones stage 3 promotes — so paging has to hold for every stage, not just
+    // the one that surfaced the bug.
+    expect(stats.content_process).toBeGreaterThan(0);
   });
 
   it('does nothing when another machine holds the sweep lease', async () => {

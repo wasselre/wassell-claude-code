@@ -107,6 +107,30 @@ const chunk = <T>(xs: T[], n: number): T[][] => {
   return out;
 };
 
+/** PostgREST caps every response at `db-max-rows` (1,000 on this project) and
+ *  says nothing when it truncates — `.limit(3000)` silently returns 1,000. That
+ *  cap already cost this codebase months of under-reported counts (see the
+ *  Silent Failures notes), and it cost this sweep too: ordered oldest-first, the
+ *  scan returned the 1,000 oldest posts, all of which already had media, so
+ *  `needMedia` computed to ZERO while 103 newer posts sat unrecovered and the
+ *  log cheerfully read `media_recover=0`. Always page; never trust one call. */
+const PAGE = 1000;
+async function pageAll<T>(
+  run: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+  max: number,
+  what: string,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; from < max; from += PAGE) {
+    const { data, error } = await run(from, Math.min(from + PAGE, max) - 1);
+    if (error) throw new Error(`sweep: ${what} failed: ${error.message}`);
+    const rows = data ?? [];
+    out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
+
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
   const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, skipped_queue_full: false, skipped_not_leader: false };
 
@@ -120,27 +144,34 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
 
   // Oldest first: a post's media URLs expire with age, so the oldest unrecovered
   // post is the one closest to being permanently unrecoverable.
-  const { data: posts, error: postErr } = await sb.from('mkt_content_posts')
-    .select('id, post_type')
-    .eq('processing_status', 'collected')
-    .order('published_at', { ascending: true, nullsFirst: false })
-    .limit(SCAN_LIMIT);
-  if (postErr) throw new Error(`sweep: post scan failed: ${postErr.message}`);
-  if (!posts || posts.length === 0) return stats;
-  const postIds = posts.map((p) => p.id as string);
+  const posts = await pageAll<{ id: string }>(
+    (from, to) => sb.from('mkt_content_posts')
+      .select('id, post_type')
+      .eq('processing_status', 'collected')
+      .order('published_at', { ascending: true, nullsFirst: false })
+      .order('id', { ascending: true })   // total order — a tie on published_at must not reshuffle between pages
+      .range(from, to),
+    SCAN_LIMIT, 'post scan');
+  if (posts.length === 0) return stats;
+  const postIds = posts.map((p) => p.id);
 
   // ── current state of those posts: media + visual text + already-queued jobs ─
   const storedAny = new Set<string>();
   const storedImagey = new Set<string>();
   const lastAttemptAt = new Map<string, number>();
-  for (const ids of chunk(postIds, 200)) {
+  // Chunked at 100 posts, not 200: a carousel can carry many media rows, and a
+  // chunk that reaches the 1,000-row cap would truncate silently — the same trap
+  // as the post scan. Paged as well, so even a pathological chunk is complete.
+  for (const ids of chunk(postIds, 100)) {
     // Failed rows are read too, not just stored ones: their timestamp is how we
     // know a post was already ATTEMPTED. Selecting only stored rows would make
     // a permanently-dead URL look identical to a post nobody has tried yet.
-    const { data, error } = await sb.from('mkt_content_media')
-      .select('content_post_id, media_kind, download_status, updated_at').in('content_post_id', ids);
-    if (error) throw new Error(`sweep: media scan failed: ${error.message}`);
-    for (const m of data ?? []) {
+    const data = await pageAll<{ content_post_id: string; media_kind: string; download_status: string; updated_at: string }>(
+      (from, to) => sb.from('mkt_content_media')
+        .select('content_post_id, media_kind, download_status, updated_at')
+        .in('content_post_id', ids).order('id', { ascending: true }).range(from, to),
+      10_000, 'media scan');
+    for (const m of data) {
       const pid = m.content_post_id as string;
       const at = Date.parse((m.updated_at as string) ?? '') || 0;
       if (at > (lastAttemptAt.get(pid) ?? 0)) lastAttemptAt.set(pid, at);
@@ -150,19 +181,29 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
     }
   }
   const hasVisualText = new Set<string>();
-  for (const ids of chunk(postIds, 200)) {
-    const { data, error } = await sb.from('mkt_visual_text').select('content_post_id').in('content_post_id', ids);
-    if (error) throw new Error(`sweep: visual-text scan failed: ${error.message}`);
-    for (const v of data ?? []) hasVisualText.add(v.content_post_id as string);
+  for (const ids of chunk(postIds, 100)) {
+    // Paged for the same reason as the media scan: one post can hold many
+    // visual-text rows (six frames per video), so a chunk can reach the cap.
+    const data = await pageAll<{ content_post_id: string }>(
+      (from, to) => sb.from('mkt_visual_text').select('content_post_id')
+        .in('content_post_id', ids).order('id', { ascending: true }).range(from, to),
+      10_000, 'visual-text scan');
+    for (const v of data) hasVisualText.add(v.content_post_id);
   }
   // Already-queued content_process work — never enqueue a second job for a post
   // that is already owned by one (that is how a queue turns into a retry storm).
   const inFlight = new Set<string>();
   {
-    const { data } = await sb.from('mkt_collection_jobs')
-      .select('params').eq('kind', 'content_process').in('status', ['queued', 'running']).limit(2000);
-    for (const j of data ?? []) {
-      const pid = (j.params as { content_post_id?: string } | null)?.content_post_id;
+    // Paged, and errors surface: a truncated in-flight set means re-enqueueing
+    // posts that already have a job. That errs in the safe direction (the work
+    // is idempotent) but it wastes queue slots the depth guard then counts.
+    const data = await pageAll<{ params: { content_post_id?: string } | null }>(
+      (from, to) => sb.from('mkt_collection_jobs')
+        .select('params').eq('kind', 'content_process').in('status', ['queued', 'running'])
+        .order('id', { ascending: true }).range(from, to),
+      QUEUE_HIGH_WATER + PAGE, 'in-flight scan');
+    for (const j of data) {
+      const pid = j.params?.content_post_id;
       if (pid) inFlight.add(pid);
     }
   }
