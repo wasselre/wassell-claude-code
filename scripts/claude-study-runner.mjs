@@ -110,7 +110,27 @@ const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: f
 //   'interactive'            → ping, client_study
 // The DB decides what each lane may claim; this process keeps every handler so
 // it can ADOPT the other lane's work if that lease goes unheld.
-const LEASE = process.env.RUNNER_LEASE || 'marketing_intelligence';
+//
+// SLOTS. A lease name is a singleton by construction (claude_runner_lease has
+// lease_name as its PRIMARY KEY), so lane capacity is not "how many machines
+// exist" — it is "how many lease NAMES may claim this lane's kinds". Scaling a
+// single-lease app to N machines gets one worker and N-1 processes that wait out
+// the TTL and exit 0, which looks like capacity in the Fly dashboard and is not.
+//
+// A RUNNER_LEASE ending in '#' means "take a slot on this lane": the machine id
+// is appended, giving every machine its own lease name with no coordination,
+// no slot registry and no race — Fly already guarantees the id is unique.
+//
+//   RUNNER_LEASE=marketing_intelligence   → one session  (the original runner)
+//   RUNNER_LEASE=marketing_intelligence#  → one session PER MACHINE, so fleet
+//                                           size is literally `fly scale count N`
+//
+// The database recognises slots by pattern, so N is a deployment decision and
+// changing it needs no migration. What does NOT change: one live session per
+// lease name, and claims are FOR UPDATE SKIP LOCKED so two slots can never take
+// the same job.
+const LEASE_BASE = process.env.RUNNER_LEASE || 'marketing_intelligence';
+const LEASE = LEASE_BASE.endsWith('#') ? `${LEASE_BASE}${HOSTNAME}` : LEASE_BASE;
 const LEASE_TTL_S = 120;          // lease dies 120s after the last heartbeat
 const HEARTBEAT_MS = 30_000;      // renew every 30s (4x margin)
 const SHUTDOWN_GRACE_MS = 60_000; // let the in-flight Claude session finish

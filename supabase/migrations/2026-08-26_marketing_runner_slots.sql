@@ -1,30 +1,40 @@
 -- ============================================================================
--- A SECOND marketing-intelligence runner (2026-07-28)
+-- Slot-based capacity for the marketing-intelligence lane (2026-07-28)
 --
--- 2,302 posts sit at 'awaiting_intelligence'. The enrichment lane reads 15 per
--- job at a median of 134s, one session at a time, so the backlog is ~6 hours of
--- wall clock. Requested: run two.
+-- claude_runner_lease has lease_name as its PRIMARY KEY, so one name is one live
+-- session, always. Capacity on a lane is therefore NOT how many machines exist —
+-- it is how many lease NAMES may claim that lane's kinds. Scaling a single-lease
+-- app to N machines produces one worker and N-1 processes that wait out the TTL
+-- and exit 0: it looks like capacity in the Fly dashboard and is not.
 --
--- `fly scale count 2` on wassel-claude-runner does NOT do this. claude_runner_lease
--- has lease_name as its PRIMARY KEY, so a second machine asking for
--- 'marketing_intelligence' waits out the TTL and exits 0 by design. Capacity on
--- this lane is a function of how many lease NAMES may claim batch kinds, not how
--- many machines exist.
+-- This makes the marketing lane match a FAMILY of names — the original plus any
+-- 'marketing_intelligence#<machine-id>' slot. A runner started with
+-- RUNNER_LEASE='marketing_intelligence#' appends its own machine id, so every
+-- machine gets a distinct lease with no coordination, no slot registry and no
+-- race. Fleet size becomes `fly scale count N`, and changing it never needs
+-- another migration.
 --
--- So: 'marketing_intelligence_2' becomes a second name that may claim the same
--- kinds. What does NOT change:
---   * each lease_name is still exactly one live session (PK + CAS acquire)
---   * claims are still FOR UPDATE SKIP LOCKED — two runners cannot take one job
+-- The escape in LIKE 'marketing\_intelligence#%' is deliberate: an unescaped _
+-- is a single-character wildcard, which would also match names this lane must
+-- not own.
+--
+-- UNCHANGED, and load-bearing:
+--   * one live session per lease name (PK + compare-and-set acquire)
+--   * claims are FOR UPDATE SKIP LOCKED, so two slots never take the same job
 --   * a worker holding no lease still cannot claim lease-scoped work
---   * orphan adoption still works, and now triggers only when NEITHER marketing
---     lease has a live holder, so a second runner booting is not mistaken for an
---     outage
+--   * orphan adoption now fires only when NO slot is live, so a slot restarting
+--     is not read as an outage
 --
--- Deploy the machine with RUNNER_LEASE=marketing_intelligence_2. To go back to
--- one, stop that machine — no migration needed; an unheld lease name is inert.
+-- CAPACITY WARNING. Slots share one Claude subscription with the lanes that
+-- serve people: 'whatsapp_reply' (customers) and 'interactive' (reps' client
+-- studies). There is no per-lane quota. A large marketing fleet that exhausts
+-- the subscription parks those lanes too — jobs stop politely via
+-- claude_job_block rather than failing, but they stop. Raise the fleet on
+-- evidence: watch claude_jobs.status='blocked_subscription_limit' across a full
+-- drain before increasing it.
 --
--- Written against the LIVE definition (pg_get_functiondef), not the repo copy,
--- because this function has been edited in production more than once.
+-- Written against the LIVE pg_get_functiondef, not the repo copy — this function
+-- has been edited in production more than once.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION public.claude_job_claim_next(p_worker text)
@@ -40,12 +50,10 @@ DECLARE
   v_ocr_kinds         constant text[] := ARRAY['mkt_visual_ocr'];
   v_lease_kinds       constant text[] := ARRAY['ping','client_study','mkt_content_enrichment',
                                                'mkt_campaign_summary','mkt_visual_ocr'];
-  -- The marketing lane may now be held by MORE THAN ONE lease name, so two
-  -- runners can enrich concurrently. Every other guarantee is unchanged: each
-  -- lease_name is still a singleton (PRIMARY KEY on claude_runner_lease), the
-  -- claim below is still FOR UPDATE SKIP LOCKED so two claimers never take the
-  -- same job, and a worker holding no lease still cannot touch lease-scoped work.
-  v_marketing_leases  constant text[] := ARRAY['marketing_intelligence','marketing_intelligence_2'];
+  -- A lease NAME is the unit of capacity, not a machine. The marketing lane now
+  -- matches a FAMILY of names: the original plus any 'marketing_intelligence#<id>'
+  -- slot. Fleet size therefore lives in `fly scale count`, and growing or
+  -- shrinking it never needs another migration.
   v_holds_interactive boolean; v_holds_marketing boolean; v_holds_ocr boolean;
   v_interactive_orphan boolean; v_marketing_orphan boolean; v_ocr_orphan boolean;
   v_holds_any boolean; v_no_leases boolean;
@@ -55,16 +63,18 @@ BEGIN
 
   SELECT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name='interactive'
       AND l.released_at IS NULL AND l.expires_at > now() AND l.owner_id = p_worker) INTO v_holds_interactive;
-  SELECT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name = ANY (v_marketing_leases)
+  SELECT EXISTS (SELECT 1 FROM public.claude_runner_lease l
+      WHERE (l.lease_name = 'marketing_intelligence' OR l.lease_name LIKE 'marketing\_intelligence#%')
       AND l.released_at IS NULL AND l.expires_at > now() AND l.owner_id = p_worker) INTO v_holds_marketing;
   SELECT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name='ocr'
       AND l.released_at IS NULL AND l.expires_at > now() AND l.owner_id = p_worker) INTO v_holds_ocr;
 
   SELECT NOT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name='interactive'
       AND l.released_at IS NULL AND l.expires_at > now()) INTO v_interactive_orphan;
-  -- Orphaned only when NO marketing lease at all has a live holder — otherwise a
-  -- second runner starting up would look like an outage and let other lanes adopt.
-  SELECT NOT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name = ANY (v_marketing_leases)
+  -- Orphaned only when NO slot at all is live, so one slot restarting is never
+  -- mistaken for the lane being down.
+  SELECT NOT EXISTS (SELECT 1 FROM public.claude_runner_lease l
+      WHERE (l.lease_name = 'marketing_intelligence' OR l.lease_name LIKE 'marketing\_intelligence#%')
       AND l.released_at IS NULL AND l.expires_at > now()) INTO v_marketing_orphan;
   SELECT NOT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name='ocr'
       AND l.released_at IS NULL AND l.expires_at > now()) INTO v_ocr_orphan;

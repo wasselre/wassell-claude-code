@@ -1,0 +1,58 @@
+# The marketing-intelligence SLOT POOL — fleet size is `fly scale count N`.
+#
+#   wassel-claude-runner          lease 'marketing_intelligence'      1 session
+#   wassel-claude-marketing-pool  lease 'marketing_intelligence#<id>' N sessions  ← this
+#   wassel-claude-interactive     lease 'interactive'                 reps' studies
+#   wassel-claude-ocr             lease 'ocr'                         image reading
+#   wassel-wa-agent               lease 'whatsapp_reply'              customers
+#
+# Every machine appends its own id to the lease name (see the SLOTS note in
+# scripts/claude-study-runner.mjs), so N machines are N lease names are N
+# concurrent sessions — no coordination, no slot registry, no race. Scaling is:
+#
+#   flyctl scale count 20 --app wassel-claude-marketing-pool
+#
+# and it needs no migration, because the database matches slots by pattern
+# (supabase/migrations/2026-08-26_marketing_runner_slots.sql). Scale to 0 to
+# park the pool; an unheld lease name is inert.
+#
+# REQUIRES THAT MIGRATION. Without it a slot acquires its lease and then claims
+# nothing, because claude_job_claim_next does not recognise the name — it idles
+# politely and costs you money for nothing.
+#
+# CAPACITY, READ BEFORE RAISING N. These sessions share ONE Claude subscription
+# with the lanes that serve people: whatsapp_reply (customers, at any hour) and
+# interactive (reps). There is no per-lane quota. A pool large enough to exhaust
+# the subscription parks those lanes too — gracefully, via claude_job_block, but
+# it parks them. Before increasing N, watch a full drain for
+# claude_jobs.status='blocked_subscription_limit'. Zero across a drain means
+# there is headroom; anything above zero means you have found the ceiling.
+#
+# Deploy from the repo root (the build context needs scripts/ and .claude/):
+#   flyctl deploy --config runner/fly.marketing-pool.toml --app wassel-claude-marketing-pool
+app = 'wassel-claude-marketing-pool'
+
+# MUST stay above the runner's SHUTDOWN_GRACE_MS (60s) — Fly's 5s default would
+# SIGKILL mid-shutdown and orphan the in-flight session. With a pool this matters
+# more, not less: a rolling deploy restarts every slot.
+kill_timeout = '90s'
+primary_region = 'sin'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  POLL_MS = '10000'
+  RUNNER_ENV = 'fly'
+  # The trailing '#' is what makes this a slot: the machine id is appended.
+  RUNNER_LEASE = 'marketing_intelligence#'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+
+[deploy]
+  strategy = 'immediate'
+
+[processes]
+  app = 'node scripts/claude-study-runner.mjs'
