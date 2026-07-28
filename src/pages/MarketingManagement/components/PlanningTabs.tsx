@@ -8,11 +8,13 @@
  * lying about what is actually scheduled.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Image as ImageIcon, Link2, Plus, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Image as ImageIcon, Link2, Search, FileText, Film, Music } from 'lucide-react';
+import AssetUploader from './AssetUploader';
+import { signViewUrl } from '@/lib/files/client';
 import Button from '@/components/ui/Button';
 import { Section, Stat, EmptyHint, Spinner, CaveatStrip, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
 import {
-  fetchPublications, fetchContentList, fetchAssets, saveAsset,
+  fetchPublications, fetchContentList, fetchAssets,
   STATUS_LABEL, type PublicationRow, type ContentItem, type ContentStatus,
 } from '@/lib/marketingMgmt/client';
 
@@ -144,17 +146,54 @@ export function CalendarTab({ isAr, onOpenContent, onError }: {
 }
 
 // ── Raw assets ──────────────────────────────────────────────────────────────
-const ASSET_TYPES = ['property_photo','property_video','drone_footage','presenter_footage',
-  'developer_footage','construction_footage','floor_plan','brochure','logo','audio','voice_over',
-  'testimonial','render','ai_generated','screenshot','document','music','brand_template','custom'] as const;
+/**
+ * Files are REAL here: AssetUploader puts bytes in the wassel-files bucket via
+ * the Files subsystem and links the resulting files.id to the asset row.
+ * Previews come from signViewUrl because that bucket is private — an <img src>
+ * straight at storage would 400, so thumbnails are signed on demand and only
+ * for image assets, which keeps the request count to what is actually shown.
+ */
+function AssetThumb({ fileId, mime, isAr }: { fileId: string | null; mime: string | null; isAr: boolean }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const isImage = (mime ?? '').startsWith('image/');
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!fileId || !isImage) return;
+    signViewUrl(fileId)
+      .then((r) => { if (!cancelled) setUrl(r.url); })
+      .catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; };
+  }, [fileId, isImage]);
+
+  const Icon = (mime ?? '').startsWith('video/') ? Film
+    : (mime ?? '').startsWith('audio/') ? Music
+    : isImage ? ImageIcon : FileText;
+
+  if (!fileId) {
+    return (
+      <span title={isAr ? 'سجل بلا ملف' : 'record with no file'}
+        className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 text-amber-600">
+        <FileText className="h-4 w-4" />
+      </span>
+    );
+  }
+  if (isImage && url && !failed) {
+    return <img src={url} alt="" loading="lazy"
+      className="h-9 w-9 shrink-0 rounded-lg border border-sand/50 object-cover" />;
+  }
+  return (
+    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-sand/50 bg-cream text-charcoal/45">
+      <Icon className="h-4 w-4" />
+    </span>
+  );
+}
 
 export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: string) => void }) {
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [q, setQ] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ asset_name: '', asset_type: 'property_photo', usage_rights: 'owned' });
 
   const load = useCallback((query?: string) => {
     setLoading(true);
@@ -165,32 +204,17 @@ export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: strin
   }, [onError]);
   useEffect(() => { load(); }, [load]);
 
-  const create = async () => {
-    if (!form.asset_name.trim()) return;
-    setBusy(true);
-    try {
-      // processing_status starts 'not_attempted' — the DB default. It is NOT
-      // 'completed', because nothing has extracted metadata/OCR/transcript yet.
-      await saveAsset({ ...form, processing_status: 'not_attempted' });
-      setCreating(false); setForm({ asset_name: '', asset_type: 'property_photo', usage_rights: 'owned' });
-      load();
-    } catch (e) { onError(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
-  };
-
   if (loading) return <Spinner label={isAr ? 'جارٍ التحميل…' : 'Loading…'} />;
+  const noFile = rows.filter((r) => !r.file_id).length;
   const unprocessed = rows.filter((r) => r.processing_status === 'not_attempted').length;
 
   return (
     <div className="space-y-4">
-      <CaveatStrip>
-        {isAr
-          ? 'رفع الملفات وتوليد المصغّرات والنسخ والوصف الآلي غير مفعّلة بعد — تُسجَّل الأصول هنا يدوياً وحالة المعالجة "لم تُحاول".'
-          : 'File upload, thumbnails, transcription and AI description are not wired yet — assets are registered manually and their processing state reads "not attempted".'}
-      </CaveatStrip>
-
       <Section title={isAr ? 'مكتبة المواد الخام' : 'Raw asset library'}
-        right={<Button onClick={() => setCreating((v) => !v)}><Plus className="h-4 w-4" />{isAr ? 'أصل جديد' : 'New asset'}</Button>}>
+        subtitle={isAr ? 'ملف واحد، استخدامات متعددة — لا تُنسخ الملفات لتظهر في مكان آخر'
+                       : 'One file, many uses — files are never duplicated to appear elsewhere'}>
+        <AssetUploader isAr={isAr} onUploaded={() => load(q)} />
+
         <div className="mb-3 flex flex-wrap gap-2">
           <div className="relative min-w-[220px] flex-1">
             <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-charcoal/30 start-3" />
@@ -202,46 +226,55 @@ export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: strin
           <Button variant="secondary" onClick={() => load(q)}>{isAr ? 'بحث' : 'Search'}</Button>
         </div>
 
-        {creating && (
-          <div className="mb-3 grid gap-2 rounded-xl border border-copper/30 bg-copper/5 p-3 sm:grid-cols-4">
-            <input value={form.asset_name} onChange={(e) => setForm({ ...form, asset_name: e.target.value })}
-              placeholder={isAr ? 'اسم الأصل' : 'Asset name'}
-              className="rounded-lg border border-sand/60 bg-white px-3 py-1.5 text-[13px] focus:border-copper focus:outline-none sm:col-span-2" />
-            <select value={form.asset_type} onChange={(e) => setForm({ ...form, asset_type: e.target.value })}
-              className="rounded-lg border border-sand/60 bg-white px-3 py-1.5 text-[13px]">
-              {ASSET_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <Button onClick={create} disabled={busy || !form.asset_name.trim()}>{isAr ? 'إضافة' : 'Add'}</Button>
-          </div>
-        )}
-
         <div className="mb-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
           <Stat label={isAr ? 'الإجمالي' : 'Total'} value={rows.length} />
           <Stat label={isAr ? 'متاحة' : 'Available'} value={rows.filter((r) => r.usage_status === 'available').length} />
-          <Stat label={isAr ? 'لم تُعالَج' : 'Unprocessed'} value={unprocessed} tone={unprocessed > 0 ? 'warn' : 'default'} />
-          <Stat label={isAr ? 'حقوق منتهية' : 'Expired rights'} value={rows.filter((r) => r.usage_status === 'expired_rights').length} />
+          <Stat label={isAr ? 'سجل بلا ملف' : 'Record without file'} value={noFile} tone={noFile > 0 ? 'warn' : 'default'} />
+          <Stat label={isAr ? 'بلا تحليل' : 'Not analysed'} value={unprocessed} tone={unprocessed > 0 ? 'warn' : 'default'}
+                hint={isAr ? 'لا قراءة صور ولا تفريغ بعد' : 'no OCR or transcript yet'} />
         </div>
 
-        {rows.length === 0 ? <EmptyHint>{isAr ? 'لا مواد بعد' : 'No assets yet'}</EmptyHint> : (
+        {rows.length === 0 ? (
+          <EmptyHint>{isAr ? 'لا مواد بعد — ارفع ملفاً للبدء' : 'No assets yet — upload a file to begin'}</EmptyHint>
+        ) : (
           <ul className="divide-y divide-sand/40">
-            {rows.map((a) => (
-              <li key={String(a.id)} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
-                <span className="flex min-w-0 items-center gap-2">
-                  <ImageIcon className="h-3.5 w-3.5 shrink-0 text-charcoal/30" />
-                  <span className="truncate text-[13px] text-charcoal">{String(a.asset_name)}</span>
-                </span>
-                <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-charcoal/50">
-                  <span>{String(a.asset_type)}</span>
-                  <span className={a.processing_status === 'not_attempted' ? 'text-amber-700' : ''}>
-                    {String(a.processing_status)}
+            {rows.map((a) => {
+              const w = a.width as number | null, h = a.height as number | null;
+              const dur = a.duration_ms as number | null;
+              const size = a.size_bytes as number | null;
+              return (
+                <li key={String(a.id)} className="flex flex-wrap items-center gap-3 py-2.5">
+                  <AssetThumb fileId={(a.file_id as string) ?? null} mime={(a.mime_type as string) ?? null} isAr={isAr} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] text-charcoal">{String(a.asset_name)}</span>
+                    <span className="block text-[11px] text-charcoal/45">
+                      {String(a.asset_type)}
+                      {w && h ? ` · ${w}×${h}` : ''}
+                      {dur ? ` · ${Math.round(dur / 1000)}s` : ''}
+                      {size ? ` · ${(size / 1024 / 1024).toFixed(1)} MB` : ''}
+                    </span>
                   </span>
-                  <span>{a.created_at ? fmtDate(String(a.created_at), isAr) : '—'}</span>
-                </span>
-              </li>
-            ))}
+                  <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-charcoal/50">
+                    {!a.file_id && (
+                      <span className="text-amber-700">{isAr ? 'بلا ملف' : 'no file'}</span>
+                    )}
+                    <span className={a.processing_status === 'not_attempted' ? 'text-amber-700' : ''}>
+                      {String(a.processing_status)}
+                    </span>
+                    <span>{a.created_at ? fmtDate(String(a.created_at), isAr) : '—'}</span>
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Section>
+
+      <CaveatStrip>
+        {isAr
+          ? 'الأبعاد والمدة تُقاس من الملف فعلياً عند الرفع. أما قراءة النص من الصور والتفريغ الصوتي والوصف الآلي فلم تُنفَّذ بعد — لذلك تبقى الحالة «لم تُحاول»، وهي ليست «لا يوجد نص».'
+          : 'Dimensions and duration are measured from the file itself on upload. OCR, transcription and AI description are not wired yet — which is why the state reads "not attempted", and that is not the same as "no text found".'}
+      </CaveatStrip>
     </div>
   );
 }
