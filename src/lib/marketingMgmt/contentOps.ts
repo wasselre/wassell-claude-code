@@ -225,6 +225,15 @@ export const saveDeliverable = (patch: Record<string, unknown>, id?: string, con
 export const generateDeliverableTasks = (deliverable_id: string, replace = false) =>
   call<{ created: number }>('deliverable_generate_tasks', { deliverable_id, replace });
 
+/** The accounts a deliverable can publish from. Needed to satisfy the
+ *  `platform_account` blocker, which had no picker anywhere. */
+export interface SocialAccount {
+  id: string; platform: string; handle: string | null;
+  display_name: string | null; is_own_account: boolean | null;
+}
+export const fetchSocialAccounts = () =>
+  call<{ accounts: SocialAccount[] }>('social_account_list');
+
 export const fetchDeliverableBlockers = (deliverable_id: string) =>
   call<{ blockers: string[]; attainment: Attainment | null }>('deliverable_blockers', { deliverable_id });
 

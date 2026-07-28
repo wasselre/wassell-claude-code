@@ -81,6 +81,19 @@ const DELIVERABLE_EDITABLE = [
   'archived_at',
 ] as const;
 
+/** publication_save spread `body.patch` straight into the row — the same hole
+ *  already closed on content_update, campaign_save and deliverable_save. A
+ *  caller could set created_by_user_id, published_by_user_id or retry_count.
+ *  `status` stays settable: mkt_tg_publication_gate and the status CHECK
+ *  police it, and blocking it here would make scheduling impossible. */
+const PUBLICATION_EDITABLE = [
+  'content_item_id', 'deliverable_id', 'version_id', 'platform', 'social_account_id',
+  'project_id', 'campaign_id', 'channel', 'scheduled_for', 'scheduled_timezone',
+  'published_at', 'status', 'caption', 'hashtags', 'first_comment',
+  'asset_file_id', 'published_url', 'platform_post_id', 'publish_method',
+  'destination_url', 'utm', 'ad_id', 'error_message',
+] as const;
+
 /** An artifact version is created, never edited into a different shape.
  *  approval_state / approved_by / approved_at are absent on purpose: they move
  *  only through artifact_decide, so a caller cannot approve their own draft by
@@ -934,12 +947,15 @@ export default async function handler(req: Request): Promise<Response> {
       case 'version_create': {
         const id = str(body.content_item_id); const vtype = str(body.version_type);
         if (!id || !vtype) return jsonError(400, 'content_item_id + version_type required');
-        const { data: prev } = await sb.from('mkt_content_versions')
-          .select('version_number').eq('content_item_id', id).eq('version_type', vtype)
-          .order('version_number', { ascending: false }).limit(1);
-        const next = (prev?.[0]?.version_number ?? 0) + 1;
+        // deliverable_id was never sent, and mkt_approved_artifact() looks a
+        // version up BY deliverable — so the approved_<artifact> publish
+        // blockers could not be cleared for any deliverable, by anyone, ever.
+        // Numbering is left to mkt_tg_artifact_version_number, which scopes per
+        // deliverable when one is given and per item otherwise; counting here
+        // always numbered per item and would collide once both exist.
         const { data, error } = await sb.from('mkt_content_versions').insert({
-          content_item_id: id, version_type: vtype, version_number: next,
+          content_item_id: id, deliverable_id: str(body.deliverable_id) ?? null,
+          version_type: vtype,
           payload: body.payload ?? {}, file_id: str(body.file_id) ?? null,
           change_summary: str(body.change_summary) ?? null, created_by_user_id: appUserId,
         }).select().maybeSingle();
@@ -1053,9 +1069,21 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       // ── Publishing / performance / attribution ───────────────────────────
+      case 'social_account_list': {
+        // mkt_deliverable_schedule_blockers demands a `platform_account`, and
+        // social_account_id was in no allow-list and no screen — so that blocker
+        // could never be cleared and nothing could be scheduled. 29 accounts sat
+        // in production with nothing in the interface able to reference them.
+        const { data, error } = await sb.from('mkt_social_accounts')
+          .select('id,platform,handle,display_name,is_own_account')
+          .order('platform').limit(500);
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ accounts: data ?? [] });
+      }
+
       case 'publication_save': {
         const id = str(body.id);
-        const patch = { ...(body.patch ?? {}) } as Record<string, unknown>;
+        const patch = pick(body.patch, PUBLICATION_EDITABLE);
         if (patch.status === 'published' && !patch.published_at) {
           patch.published_at = new Date().toISOString();
           patch.published_by_user_id = appUserId;

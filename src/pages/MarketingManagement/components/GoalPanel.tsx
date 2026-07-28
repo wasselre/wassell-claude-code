@@ -19,7 +19,7 @@
  *     Both render as "غير مقيس" with the reason, never as 0.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, AlertTriangle, Plus, Lock, TrendingUp, TrendingDown, Minus } from 'lucide-react';
+import { ChevronDown, AlertTriangle, Plus, Lock, TrendingUp, TrendingDown, Minus, Archive } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
 import { Stat, EmptyHint, CaveatStrip, Spinner, fmtDate }
@@ -575,6 +575,8 @@ export function GoalRow({ goal: seed, isAr, onError, onToast, onChanged }: {
   const [tab, setTab] = useState<'summary' | 'definition' | 'measure' | 'allocation'>('summary');
   const [d, setD] = useState<Awaited<ReturnType<typeof fetchGoalDetail>> | null>(null);
   const [loading, setLoading] = useState(false);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -654,8 +656,45 @@ export function GoalRow({ goal: seed, isAr, onError, onToast, onChanged }: {
               )}
 
               {tab === 'definition' && (
-                <GoalDefinitionForm goal={goal} isAr={isAr} onError={onError}
-                  onSaved={() => { void load(); onChanged(); }} />
+                <div className="space-y-3">
+                  <GoalDefinitionForm goal={goal} isAr={isAr} onError={onError}
+                    onSaved={() => { void load(); onChanged(); }} />
+                  {/* A goal created by mistake was permanent: GOAL_EDITABLE has
+                      always accepted archived_at and no screen ever offered it.
+                      Archive, not delete — measurements and target periods hang
+                      off this row and deleting would take the evidence with it. */}
+                  <div className="flex flex-wrap items-center gap-2 border-t border-sand/40 pt-2.5">
+                    {confirmArchive ? (
+                      <>
+                        <span className="text-[11.5px] text-charcoal/70">
+                          {isAr ? `أرشفة «${goal.name_ar}»؟ تختفي من الخطة وتبقى قراءاتها.`
+                                : `Archive “${goal.name_ar}”? It leaves the plan; its readings are kept.`}
+                        </span>
+                        <button type="button" disabled={archiving}
+                          onClick={async () => {
+                            setArchiving(true);
+                            try {
+                              await saveGoal({ archived_at: new Date().toISOString() }, goal.id);
+                              onToast(isAr ? 'أُرشف الهدف' : 'Goal archived');
+                              onChanged();
+                            } catch (e) { onError(err(e)); } finally { setArchiving(false); }
+                          }}
+                          className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1 text-[11.5px] font-medium text-amber-800">
+                          {isAr ? 'تأكيد الأرشفة' : 'Confirm archive'}
+                        </button>
+                        <button type="button" onClick={() => setConfirmArchive(false)}
+                          className="text-[11.5px] text-charcoal/50 hover:underline">
+                          {isAr ? 'إلغاء' : 'Cancel'}
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => setConfirmArchive(true)}
+                        className="inline-flex items-center gap-1.5 text-[11.5px] text-charcoal/45 hover:text-amber-700 hover:underline">
+                        <Archive className="h-3.5 w-3.5" />{isAr ? 'أرشفة الهدف' : 'Archive goal'}
+                      </button>
+                    )}
+                  </div>
+                </div>
               )}
 
               {tab === 'measure' && (

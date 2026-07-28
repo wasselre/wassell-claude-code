@@ -28,6 +28,7 @@ import { Section, Stat, EmptyHint, Spinner, fmtDate }
 import { lbl } from '@/lib/marketingMgmt/labels';
 import {
   fetchContentBoard, fetchContentDetail, saveBrief, saveDeliverable,
+  fetchSocialAccounts, type SocialAccount,
   generateDeliverableTasks, fetchArtifactTypes, saveArtifact, decideArtifact,
   saveContentTask, savePublication, markPublished, recordResult,
   bulkAssign, bulkSchedule, duplicateContent,
@@ -1006,6 +1007,14 @@ function DeliverablesTab({ d, isAr, types, sel, setSel, onError, onToast, onChan
   const [f, setF] = useState({ platform: 'instagram', format: 'reel', language: 'ar', distribution: 'organic' });
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState<Set<string>>(new Set());
+  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
+
+  // Loaded once for the publishing-account picker. A failure here must be
+  // visible: an empty list is indistinguishable from "this platform has no
+  // accounts", and that is exactly the confusion that hid this gap.
+  useEffect(() => {
+    fetchSocialAccounts().then((r) => setAccounts(r.accounts)).catch((e) => onError(err(e)));
+  }, [onError]);
 
   const add = async () => {
     setBusy(true);
@@ -1117,6 +1126,36 @@ function DeliverablesTab({ d, isAr, types, sel, setSel, onError, onToast, onChan
                             {Object.keys(PLATFORM_LABEL).map((p) => (
                               <option key={p} value={p}>{lbl(PLATFORM_LABEL, p, isAr)}</option>))}
                           </select>
+                        </Field>
+                        {/* mkt_deliverable_schedule_blockers demands a
+                            `platform_account`, and social_account_id appeared in
+                            no screen — so that blocker could never be cleared
+                            and nothing could be scheduled, while 29 accounts sat
+                            in the database unreachable. Filtered to the chosen
+                            platform: offering an Instagram account for a TikTok
+                            deliverable is a guaranteed mis-post. */}
+                        <Field label={isAr ? 'حساب النشر' : 'Publishing account'} required>
+                          <select defaultValue={x.social_account_id ?? ''}
+                            disabled={saving.has(`${x.id}:social_account_id`) || !x.platform}
+                            className={`${FIELD} ${x.social_account_id ? '' : 'border-amber-300'}`}
+                            onChange={(e) => void patch(x.id, { social_account_id: e.target.value || null }, 'social_account_id')}>
+                            <option value="">{isAr ? '— غير محدد —' : '— not set —'}</option>
+                            {accounts.filter((a) => a.platform === x.platform).map((a) => (
+                              <option key={a.id} value={a.id}>
+                                {a.handle || a.display_name || a.id.slice(0, 8)}
+                                {a.is_own_account === false ? (isAr ? ' (خارجي)' : ' (external)') : ''}
+                              </option>))}
+                          </select>
+                          {!x.platform && (
+                            <span className="mt-0.5 block text-[10.5px] text-charcoal/40">
+                              {isAr ? 'اختر المنصة أولاً.' : 'Choose the platform first.'}
+                            </span>
+                          )}
+                          {x.platform && accounts.filter((a) => a.platform === x.platform).length === 0 && (
+                            <span className="mt-0.5 block text-[10.5px] text-amber-700">
+                              {isAr ? 'لا حسابات مسجّلة لهذه المنصة.' : 'No accounts registered for this platform.'}
+                            </span>
+                          )}
                         </Field>
                         <Field label={isAr ? 'المسؤول' : 'Owner'}>
                           <select defaultValue={x.owner_user_id ?? ''} disabled={saving.has(`${x.id}:owner_user_id`)} className={FIELD}
