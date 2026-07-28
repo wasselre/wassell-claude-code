@@ -1696,7 +1696,67 @@ async function marketingOpsPollLoop(): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────
 // HTTP server: /healthz for Fly health checks, /wake for API ping.
 // ─────────────────────────────────────────────────────────────────────────
+/**
+ * WAHA reverse proxy (WA-06).
+ *
+ * WAHA refuses Vercel's egress with 403 while accepting Fly, so every gateway
+ * call from the app is forwarded through a worker that attaches the real key.
+ * That proxy lived on `wassel-wa-agent` — which runs exactly ONE machine by
+ * design, because a second would spawn a second Claude session for the same
+ * customer. So a singleton constraint that exists for the AI was silently also
+ * the availability ceiling for ALL sending, chat-list loads and history loads:
+ * every wa-agent deploy or reboot took WhatsApp down with it.
+ *
+ * This app already runs five machines and already holds both WAHA secrets, so
+ * hosting the proxy here makes it highly available without touching the AI
+ * runner's singleton guarantee — the two concerns simply stop sharing a
+ * machine. Fly load-balances across the five.
+ *
+ * Auth is the shared WHATSAPP_AI_SECRET, as before; without it this would be an
+ * open relay to the WhatsApp gateway.
+ */
+async function handleWahaProxy(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+  const secret = process.env.WHATSAPP_AI_SECRET ?? '';
+  if (!secret || req.headers['x-wassel-proxy-secret'] !== secret) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'unauthorized' }));
+    return;
+  }
+  const base = (process.env.WAHA_URL ?? '').replace(/\/+$/, '');
+  const key = process.env.WAHA_API_KEY ?? '';
+  if (!base || !key) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'WAHA_URL / WAHA_API_KEY not set on the worker' }));
+    return;
+  }
+  try {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    const body = chunks.length ? Buffer.concat(chunks) : undefined;
+    const upstream = await fetch(`${base}${url.pathname.slice('/waha'.length)}${url.search}`, {
+      method: req.method,
+      headers: {
+        'X-Api-Key': key,
+        ...(req.headers['content-type'] ? { 'Content-Type': String(req.headers['content-type']) } : {}),
+      },
+      body: req.method === 'GET' || req.method === 'HEAD' ? undefined : body,
+    });
+    const buf = Buffer.from(await upstream.arrayBuffer());
+    res.writeHead(upstream.status, { 'Content-Type': upstream.headers.get('content-type') ?? 'application/octet-stream' });
+    res.end(buf);
+  } catch (err) {
+    console.error('[worker] waha proxy error:', err);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: `proxy failed: ${err instanceof Error ? err.message : String(err)}` }));
+  }
+}
+
 const server = http.createServer((req, res) => {
+  const reqUrl = new URL(req.url ?? '/', 'http://localhost');
+  if (reqUrl.pathname.startsWith('/waha/')) {
+    void handleWahaProxy(req, res, reqUrl);
+    return;
+  }
   if (req.method === 'GET' && req.url === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(

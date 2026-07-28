@@ -144,6 +144,15 @@ async function handleMessage(event: WahaEvent, session: string): Promise<void> {
   }
   const flow: 'in' | 'out' = p.fromMe ? 'out' : 'in';
 
+  // WhatsApp Status posts and broadcasts are not conversations. Ingesting them
+  // created customer-looking chats in the list — 9 of them — and one shadowed a
+  // real contact's phone, so the same person appeared twice with the status row
+  // outranking the actual conversation (WA-23).
+  const rawId = String(p.id ?? '');
+  if (/@(status|broadcast)/.test(rawId) || /@(status|broadcast)$/.test(String(p.from ?? ''))) {
+    return;
+  }
+
   // Counterparty phone → canonical <digits>@c.us chat wid.
   //
   // Primary source is the CHAT ID embedded in the message id

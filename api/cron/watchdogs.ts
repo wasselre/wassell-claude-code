@@ -44,6 +44,11 @@ const WATCHDOG_RPCS = [
   // was the one kind of stuck job with no backstop when the Fly worker is down
   // — every other queue self-healed. (WA-16, audit 2026-07-28.)
   'scheduled_whatsapp_watchdog',
+  // Not a sweep — a health READ. It was written for exactly this purpose and
+  // then never called from anywhere, so an inbound stall (the failure that
+  // hides every other failure) had no detector at all. Its result lands in this
+  // endpoint's response and its log line. (WA-17.)
+  'whatsapp_inbound_health',
 ] as const;
 
 interface RpcOutcome {

@@ -554,12 +554,35 @@ export async function sendMessage(input: {
   return { wid, status: 'sent', reference: input.reference ?? null };
 }
 
+/**
+ * The recipient's chat id — the LAST place a phone number can still be wrong.
+ *
+ * This used to strip non-digits and append `@c.us`, with no country-code logic
+ * at all, so a local-format number became `0558333733@c.us`: an unroutable id
+ * for a chat nobody has. Normalization existed only in the browser, which is
+ * the one caller that did not need it — every server-side sender (workflows,
+ * document send, integrations) passes a raw record field straight through
+ * (WA-21).
+ *
+ * Same rules as SQL ksa_phone_canon and the browser's normalizePhone, so all
+ * three agree on what "the same number" means. A number that cannot be
+ * canonicalized is REJECTED rather than guessed at: sending to the wrong person
+ * is worse than not sending.
+ */
 function toChatId(target: string, isGroup: boolean, isChannel: boolean): string {
   if (target.includes('@')) return target; // already a wid
-  const digits = target.replace(/[^\d]/g, '');
-  if (isGroup) return `${digits}@g.us`;
-  if (isChannel) return `${digits}@newsletter`;
-  return `${digits}@c.us`;
+  const raw = target.replace(/[^\d]/g, '');
+  if (isGroup) return `${raw}@g.us`;
+  if (isChannel) return `${raw}@newsletter`;
+
+  let d = raw;
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('0')) d = `966${d.slice(1)}`;
+  else if (d.length === 9) d = `966${d}`;
+  if (d.length < 8 || d.length > 15) {
+    throw new WahaError(400, `unroutable recipient "${target}" — not a usable phone number`);
+  }
+  return `${d}@c.us`;
 }
 
 /**
