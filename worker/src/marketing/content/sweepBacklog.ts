@@ -151,7 +151,12 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
       .order('id', { ascending: true }).range(from, to),
     50_000, 'ocr media scan');
   const read = new Set<string>();
-  for (const batch of chunk(media.map((m) => m.id), 1000)) {
+  // 200 ids per `.in()`, not 1000. PostgREST puts the list in the QUERY STRING,
+  // so 1,000 UUIDs is a ~37 KB URL and the server answers 400 Bad Request — the
+  // whole sweep then threw on every tick and enqueued nothing, while the OCR
+  // queue sat empty with 625 images unread. The failure was loud in the function
+  // and invisible in the outcome, which is the worst combination.
+  for (const batch of chunk(media.map((m) => m.id), 200)) {
     const rows = await pageAll<{ content_media_id: string }>(
       (from, to) => sb.from('mkt_visual_text').select('content_media_id')
         .in('content_media_id', batch).order('id', { ascending: true }).range(from, to),
