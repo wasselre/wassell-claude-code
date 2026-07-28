@@ -14,9 +14,14 @@
 -- race. Fleet size becomes `fly scale count N`, and changing it never needs
 -- another migration.
 --
--- The escape in LIKE 'marketing\_intelligence#%' is deliberate: an unescaped _
--- is a single-character wildcard, which would also match names this lane must
--- not own.
+-- Membership is starts_with(), NOT LIKE. The obvious pattern
+-- LIKE 'marketing\_intelligence#%' looks correct and is not: verified against
+-- this database, 'marketingXintelligence#abc' MATCHED it, because the backslash
+-- escape did not take effect and _ stayed a single-character wildcard. A lane
+-- membership test is exactly the wrong place for a silent wildcard, and
+-- starts_with() has no pattern semantics at all to get wrong. Checked live:
+-- slot matches true; the plain name, the old '_2' name, 'ocr' and the X-variant
+-- all false.
 --
 -- UNCHANGED, and load-bearing:
 --   * one live session per lease name (PK + compare-and-set acquire)
@@ -64,7 +69,7 @@ BEGIN
   SELECT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name='interactive'
       AND l.released_at IS NULL AND l.expires_at > now() AND l.owner_id = p_worker) INTO v_holds_interactive;
   SELECT EXISTS (SELECT 1 FROM public.claude_runner_lease l
-      WHERE (l.lease_name = 'marketing_intelligence' OR l.lease_name LIKE 'marketing\_intelligence#%')
+      WHERE (l.lease_name = 'marketing_intelligence' OR starts_with(l.lease_name, 'marketing_intelligence#'))
       AND l.released_at IS NULL AND l.expires_at > now() AND l.owner_id = p_worker) INTO v_holds_marketing;
   SELECT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name='ocr'
       AND l.released_at IS NULL AND l.expires_at > now() AND l.owner_id = p_worker) INTO v_holds_ocr;
@@ -74,7 +79,7 @@ BEGIN
   -- Orphaned only when NO slot at all is live, so one slot restarting is never
   -- mistaken for the lane being down.
   SELECT NOT EXISTS (SELECT 1 FROM public.claude_runner_lease l
-      WHERE (l.lease_name = 'marketing_intelligence' OR l.lease_name LIKE 'marketing\_intelligence#%')
+      WHERE (l.lease_name = 'marketing_intelligence' OR starts_with(l.lease_name, 'marketing_intelligence#'))
       AND l.released_at IS NULL AND l.expires_at > now()) INTO v_marketing_orphan;
   SELECT NOT EXISTS (SELECT 1 FROM public.claude_runner_lease l WHERE l.lease_name='ocr'
       AND l.released_at IS NULL AND l.expires_at > now()) INTO v_ocr_orphan;
