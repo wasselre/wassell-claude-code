@@ -1008,12 +1008,15 @@ function DeliverablesTab({ d, isAr, types, sel, setSel, onError, onToast, onChan
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState<Set<string>>(new Set());
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
+  const [monitored, setMonitored] = useState(0);
 
   // Loaded once for the publishing-account picker. A failure here must be
   // visible: an empty list is indistinguishable from "this platform has no
   // accounts", and that is exactly the confusion that hid this gap.
   useEffect(() => {
-    fetchSocialAccounts().then((r) => setAccounts(r.accounts)).catch((e) => onError(err(e)));
+    fetchSocialAccounts()
+      .then((r) => { setAccounts(r.accounts); setMonitored(r.monitored_count ?? 0); })
+      .catch((e) => onError(err(e)));
   }, [onError]);
 
   const add = async () => {
@@ -1143,7 +1146,6 @@ function DeliverablesTab({ d, isAr, types, sel, setSel, onError, onToast, onChan
                             {accounts.filter((a) => a.platform === x.platform).map((a) => (
                               <option key={a.id} value={a.id}>
                                 {a.handle || a.display_name || a.id.slice(0, 8)}
-                                {a.is_own_account === false ? (isAr ? ' (خارجي)' : ' (external)') : ''}
                               </option>))}
                           </select>
                           {!x.platform && (
@@ -1151,9 +1153,15 @@ function DeliverablesTab({ d, isAr, types, sel, setSel, onError, onToast, onChan
                               {isAr ? 'اختر المنصة أولاً.' : 'Choose the platform first.'}
                             </span>
                           )}
-                          {x.platform && accounts.filter((a) => a.platform === x.platform).length === 0 && (
-                            <span className="mt-0.5 block text-[10.5px] text-amber-700">
-                              {isAr ? 'لا حسابات مسجّلة لهذه المنصة.' : 'No accounts registered for this platform.'}
+                          {/* An empty select with no explanation is what hid this
+                              gap in the first place. The accounts table holds
+                              only competitor accounts we MONITOR, so say that
+                              rather than implying the platform has none. */}
+                          {x.platform && accounts.length === 0 && (
+                            <span className="mt-0.5 block text-[10.5px] leading-snug text-amber-700">
+                              {isAr
+                                ? `لا حسابات نشر مسجّلة لنا بعد. الحسابات الـ${monitored} الموجودة هي حسابات منافسين نراقبها، ولا يصح النشر منها.`
+                                : `None of our own publishing accounts are registered yet. The ${monitored} on file are competitor accounts we monitor, and must not be published from.`}
                             </span>
                           )}
                         </Field>

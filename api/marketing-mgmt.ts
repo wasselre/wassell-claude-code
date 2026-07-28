@@ -1085,14 +1085,31 @@ export default async function handler(req: Request): Promise<Response> {
       // ── Publishing / performance / attribution ───────────────────────────
       case 'social_account_list': {
         // mkt_deliverable_schedule_blockers demands a `platform_account`, and
-        // social_account_id was in no allow-list and no screen — so that blocker
-        // could never be cleared and nothing could be scheduled. 29 accounts sat
-        // in production with nothing in the interface able to reference them.
+        // social_account_id appeared in no screen — but the picker this was
+        // written for cannot simply list mkt_social_accounts.
+        //
+        // That table is the INTELLIGENCE system's register of accounts we
+        // MONITOR. All 29 rows in production belong to org_type developer or
+        // marketer — 15 competitor developers plus Riva — and not one is ours.
+        // Offering them as publishing targets would let someone schedule Wassel
+        // content onto a competitor's handle, which is worse than the missing
+        // picker it was meant to fix.
+        //
+        // There is no own-account flag to filter on yet (see
+        // docs/marketing-management-v2.md), so this returns the monitored rows
+        // with `is_own: false` on every one and the caller shows none of them.
+        // It reports the count so the screen can say WHY it is empty —
+        // "no publishing accounts registered", not a silent blank select.
         const { data, error } = await sb.from('mkt_social_accounts')
-          .select('id,platform,handle,display_name,is_own_account')
+          .select('id,platform,handle,display_name,organization_id')
           .order('platform').limit(500);
         const bad = rlsAware(error); if (bad) return bad;
-        return jsonOk({ accounts: data ?? [] });
+        const rows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+        return jsonOk({
+          accounts: [],
+          monitored_count: rows.length,
+          reason: 'no_own_accounts_registered',
+        });
       }
 
       case 'publication_save': {

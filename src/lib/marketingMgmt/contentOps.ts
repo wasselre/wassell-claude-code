@@ -225,14 +225,21 @@ export const saveDeliverable = (patch: Record<string, unknown>, id?: string, con
 export const generateDeliverableTasks = (deliverable_id: string, replace = false) =>
   call<{ created: number }>('deliverable_generate_tasks', { deliverable_id, replace });
 
-/** The accounts a deliverable can publish from. Needed to satisfy the
- *  `platform_account` blocker, which had no picker anywhere. */
+/** The accounts a deliverable can publish FROM — ours, not the ones we monitor.
+ *
+ *  mkt_social_accounts is the intelligence system's register of competitor
+ *  accounts; every row in production belongs to a developer or marketer org and
+ *  none is ours. So `accounts` is currently always empty and `monitored_count`
+ *  is what the screen uses to explain the emptiness instead of showing a blank
+ *  select. Registering our own accounts needs a migration — see
+ *  docs/marketing-management-v2.md. */
 export interface SocialAccount {
   id: string; platform: string; handle: string | null;
-  display_name: string | null; is_own_account: boolean | null;
+  display_name: string | null;
 }
 export const fetchSocialAccounts = () =>
-  call<{ accounts: SocialAccount[] }>('social_account_list');
+  call<{ accounts: SocialAccount[]; monitored_count: number; reason?: string }>(
+    'social_account_list');
 
 export const fetchDeliverableBlockers = (deliverable_id: string) =>
   call<{ blockers: string[]; attainment: Attainment | null }>('deliverable_blockers', { deliverable_id });
