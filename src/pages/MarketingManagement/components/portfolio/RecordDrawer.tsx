@@ -31,19 +31,27 @@ import {
   GOAL_CLASS_LABEL,
   type PortfolioKind, type PortfolioDetail, type PlanRef, type MktGoal, type Initiative,
 } from '@/lib/marketingMgmt/v2';
-import { saveCampaign, STATUS_LABEL, type ContentStatus } from '@/lib/marketingMgmt/client';
+import {
+  saveCampaign, fetchCampaignNextStatuses, STATUS_LABEL,
+  type ContentStatus, type NextStatus,
+} from '@/lib/marketingMgmt/client';
 import { useProjectOptions } from '@/lib/marketingMgmt/projects';
 import { PaidTreePanel } from '../PaidTreePanel';
+import { CampaignStatusBar } from './StatusBar';
 import {
   Drawer, Field, FIELD, MissingChips, Pill, ClassMissingBadge, err, dash, ownerName,
 } from './shared';
 
-/** Statuses each kind may move to. The database has no transition table for
- *  these three, so this is a UI convention — but the CHECK constraints decide
- *  whether 'active' is reachable, and a rejection there is surfaced as the
- *  completion checklist rather than a raw error. */
+/** Statuses an INITIATIVE or PROGRAM may move to. Neither has a transition
+ *  table, so this is a UI convention; the CHECK constraints still decide whether
+ *  'active' is reachable, and a rejection is surfaced as the completion
+ *  checklist rather than a raw error.
+ *
+ *  Campaigns are NOT driven from here — they have a real machine
+ *  (mkt_campaign_status_allowed) and go through CampaignStatusBar. The campaign
+ *  row below is dead but kept because PortfolioKind requires all three keys. */
 const NEXT_STATUS: Record<PortfolioKind, string[]> = {
-  campaign:   ['draft', 'planned', 'active', 'paused', 'completed', 'cancelled'],
+  campaign:   [],
   initiative: ['proposed', 'active', 'paused', 'completed', 'cancelled'],
   program:    ['draft', 'active', 'paused', 'retired'],
 };
@@ -110,6 +118,19 @@ export function RecordDrawer({
 
   const kind = target?.kind ?? 'campaign';
   const saveFn = kind === 'initiative' ? saveInitiative : kind === 'program' ? saveProgram : saveCampaign;
+
+  /** The campaign status machine's legal moves, from the database. Fetched
+   *  separately because portfolio_detail is shared by all three kinds and only
+   *  campaigns have a transition table. */
+  const [nextStatuses, setNextStatuses] = useState<NextStatus[]>([]);
+  useEffect(() => {
+    if (!target || target.kind !== 'campaign') { setNextStatuses([]); return; }
+    let live = true;
+    fetchCampaignNextStatuses(target.id)
+      .then((r) => { if (live) setNextStatuses(r.next_statuses); })
+      .catch((e) => onError(err(e)));
+    return () => { live = false; };
+  }, [target, onError]);
 
   const persist = async (patch: Record<string, unknown>, toast: string) => {
     if (!target) return;
@@ -255,14 +276,27 @@ export function RecordDrawer({
               <Pill map={STATUS_MAP[kind]} value={status} isAr={isAr}
                 tone={status === 'active' ? 'good' : 'neutral'} />
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {NEXT_STATUS[kind].filter((s) => s !== status).map((s) => (
-                <button key={s} type="button" disabled={busy} onClick={() => move(s)}
-                  className="rounded-lg border border-sand/60 bg-white px-2 py-1 text-[11px] text-charcoal/70 hover:border-copper/50 disabled:opacity-40">
-                  → {lbl(STATUS_MAP[kind], s, isAr)}
-                </button>))}
-            </div>
-            {d.missing.length > 0 && (
+            {/* A campaign's status is a MACHINE, and the legal moves come from
+                the same function the rejecting trigger consults — so this cannot
+                offer draft → completed, and cannot route through the generic
+                save (which no longer accepts `status` at all, and would have
+                made every one of these buttons a silent no-op with a success
+                toast). Initiatives and programs still have no transition table,
+                so they keep the UI convention below. */}
+            {kind === 'campaign' ? (
+              <CampaignStatusBar campaignId={target.id} status={status} next={nextStatuses}
+                isAr={isAr} onChanged={() => { load(); onChanged(); }}
+                onError={onError} onToast={onToast} />
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {NEXT_STATUS[kind].filter((s) => s !== status).map((s) => (
+                  <button key={s} type="button" disabled={busy} onClick={() => move(s)}
+                    className="rounded-lg border border-sand/60 bg-white px-2 py-1 text-[11px] text-charcoal/70 hover:border-copper/50 disabled:opacity-40">
+                    → {lbl(STATUS_MAP[kind], s, isAr)}
+                  </button>))}
+              </div>
+            )}
+            {kind !== 'campaign' && d.missing.length > 0 && (
               <p className="mt-1.5 text-[11px] text-amber-700">
                 {isAr ? 'التفعيل مرفوض من قاعدة البيانات حتى تكتمل القائمة أعلاه.'
                       : 'The database will refuse activation until the checklist above is complete.'}
