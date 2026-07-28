@@ -27,7 +27,7 @@ export interface StrategyVersion {
   strategic_priorities: unknown[]; not_priorities: unknown[];
   assumptions: unknown[]; risks: unknown[];
   owner_user_id: string | null; approver_user_id: string | null; approved_at: string | null;
-  is_migration_holder: boolean; created_at: string;
+  is_migration_holder: boolean; created_at: string; archived_at: string | null;
 }
 
 export interface MktPlan {

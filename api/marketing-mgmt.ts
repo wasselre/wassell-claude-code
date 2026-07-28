@@ -688,7 +688,10 @@ export default async function handler(req: Request): Promise<Response> {
         // One call for the Strategy & Planning tab.
         const [current, strategies, plans] = await Promise.all([
           sb.from('mkt_strategy_versions').select('*').eq('status', 'approved').maybeSingle(),
-          sb.from('mkt_strategy_versions').select('*').order('version_number', { ascending: false }).limit(50),
+          // Archived drafts are hidden: a throwaway draft should not clutter the
+          // list of versions a reviewer has to consider.
+          sb.from('mkt_strategy_versions').select('*').is('archived_at', null)
+            .order('version_number', { ascending: false }).limit(50),
           sb.from('mkt_plans').select('*, mkt_goals(id,goal_category,name_ar,target_value,actual_value,result,status)')
             .is('archived_at', null).order('period_start', { ascending: false }).limit(100),
         ]);

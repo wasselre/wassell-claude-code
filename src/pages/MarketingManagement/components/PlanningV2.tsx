@@ -30,6 +30,7 @@ import {
 } from '@/lib/marketingMgmt/v2';
 import { saveCampaign, type Campaign } from '@/lib/marketingMgmt/client';
 import { PaidTreePanel } from './PaidTreePanel';
+import { StrategyEditor, StrategyCompleteness } from './StrategyEditor';
 
 const FIELD = 'w-full rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] '
   + 'text-charcoal focus:border-copper focus:outline-none';
@@ -73,6 +74,7 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [openPlan, setOpenPlan] = useState<string | null>(null);
+  const [openVersion, setOpenVersion] = useState<string | null>(null);
   const [creatingStrategy, setCreatingStrategy] = useState(false);
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [sName, setSName] = useState(''); const [sPos, setSPos] = useState('');
@@ -106,6 +108,18 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
         ? (isAr ? 'اعتُمدت، واستُبدلت النسخة السابقة' : 'Approved; the previous version was superseded')
         : (isAr ? 'اعتُمدت الاستراتيجية' : 'Strategy approved'));
       load();
+    } catch (e) { onError(err(e)); } finally { setBusy(false); }
+  };
+
+  /** Archiving a draft hides it from the version list. Only drafts: the
+   *  immutability trigger refuses to touch an approved or superseded version,
+   *  and it should — plans were executed under it. */
+  const archive = async (id: string) => {
+    setBusy(true);
+    try {
+      await saveStrategy({ archived_at: new Date().toISOString() }, id);
+      setOpenVersion(null);
+      onToast(isAr ? 'أُرشفت المسودة' : 'Draft archived'); load();
     } catch (e) { onError(err(e)); } finally { setBusy(false); }
   };
 
@@ -147,42 +161,74 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
           </div>
         )}
 
-        {!current ? (
+        {!current && (
           <CaveatStrip>
             {isAr ? 'لا توجد استراتيجية معتمدة. الخطط يمكن أن تُكتب كمسودات، لكنها لا تصبح نشطة بلا استراتيجية معتمدة.'
                   : 'No approved strategy. Plans can be drafted, but none can become active without one.'}
           </CaveatStrip>
-        ) : (
-          <div className="rounded-xl border border-copper/25 bg-copper/5 p-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[13px] font-semibold text-charcoal">
-                {isAr ? 'النسخة' : 'Version'} {current.version_number} · {current.name_ar}
-              </span>
-              <Pill map={STRATEGY_STATUS_LABEL} value={current.status} isAr={isAr} tone="good" />
-            </div>
-            {current.positioning && <p className="mt-1 text-[12.5px] text-charcoal/75">{current.positioning}</p>}
-            <p className="mt-1 text-[11px] text-charcoal/45">
-              {isAr ? 'اعتُمدت' : 'Approved'} {fmtDate(current.approved_at, isAr)}
-            </p>
-          </div>
         )}
 
-        {versions.length > 1 && (
-          <ul className="mt-3 divide-y divide-sand/40">
-            {versions.filter((v) => v.id !== current?.id).map((v) => (
-              <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-[12.5px]">
-                <span className="text-charcoal/80">v{v.version_number} · {v.name_ar}</span>
-                <span className="flex items-center gap-2">
-                  <Pill map={STRATEGY_STATUS_LABEL} value={v.status} isAr={isAr} />
-                  {v.status === 'draft' && (
-                    <button type="button" disabled={busy} onClick={() => void approve(v.id)}
-                      className="text-[11.5px] font-medium text-copper hover:underline disabled:opacity-40">
-                      {isAr ? 'اعتماد' : 'Approve'}
-                    </button>
+        {versions.length === 0 ? (
+          <EmptyHint>{isAr ? 'لا نسخ بعد' : 'No versions yet'}</EmptyHint>
+        ) : (
+          <ul className="mt-2 space-y-2">
+            {versions.map((v) => {
+              const isCurrent = v.id === current?.id;
+              const open = openVersion === v.id;
+              return (
+                <li key={v.id} className={`rounded-xl border ${isCurrent
+                  ? 'border-copper/30 bg-copper/5' : 'border-sand/50 bg-white'}`}>
+                  <button type="button" onClick={() => setOpenVersion(open ? null : v.id)}
+                    className="flex w-full flex-wrap items-center justify-between gap-2 px-3 py-2.5 text-start">
+                    <span className="min-w-0">
+                      <span className={`block truncate text-[13px] ${isCurrent ? 'font-semibold text-charcoal' : 'text-charcoal/80'}`}>
+                        {isAr ? 'النسخة' : 'Version'} {v.version_number} · {v.name_ar}
+                      </span>
+                      <StrategyCompleteness version={v} isAr={isAr} />
+                    </span>
+                    <span className="flex shrink-0 items-center gap-2">
+                      {isCurrent && v.approved_at && (
+                        <span className="text-[10.5px] text-charcoal/45">
+                          {isAr ? 'اعتُمدت' : 'approved'} {fmtDate(v.approved_at, isAr)}
+                        </span>)}
+                      <Pill map={STRATEGY_STATUS_LABEL} value={v.status} isAr={isAr}
+                        tone={isCurrent ? 'good' : 'neutral'} />
+                      <ChevronDown className={`h-4 w-4 text-charcoal/30 transition-transform ${open ? 'rotate-180' : ''}`} />
+                    </span>
+                  </button>
+
+                  {open && (
+                    <div className="border-t border-sand/40 p-3">
+                      <StrategyEditor version={v} isAr={isAr} onSaved={load} onError={onError} />
+
+                      {/* Approve lives HERE, inside the opened version — not on the
+                          collapsed row. Approving supersedes the incumbent, and
+                          doing that from a row you never opened is approving
+                          something you have not read. */}
+                      {(v.status === 'draft' || v.status === 'in_review') && (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-sand/40 pt-3">
+                          <Button onClick={() => void approve(v.id)} disabled={busy}>
+                            <Check className="h-4 w-4" />
+                            {current
+                              ? (isAr ? 'اعتماد واستبدال الحالية' : 'Approve and supersede the current one')
+                              : (isAr ? 'اعتماد هذه النسخة' : 'Approve this version')}
+                          </Button>
+                          <button type="button" disabled={busy} onClick={() => void archive(v.id)}
+                            className="text-[11.5px] text-charcoal/45 hover:text-red-600 disabled:opacity-40">
+                            {isAr ? 'أرشفة المسودة' : 'Archive draft'}
+                          </button>
+                          {current && (
+                            <span className="text-[11px] text-charcoal/45">
+                              {isAr ? `ستصبح النسخة ${current.version_number} مُستبدلة`
+                                    : `Version ${current.version_number} becomes superseded`}
+                            </span>)}
+                        </div>
+                      )}
+                    </div>
                   )}
-                </span>
-              </li>
-            ))}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Section>
