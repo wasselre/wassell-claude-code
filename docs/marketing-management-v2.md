@@ -526,3 +526,100 @@ foreign keys between those tables and PostgREST rejected the embed with `PGRST20
 Campaigns tab had been failing to load since v2 landed. Disambiguated to
 `mkt_content_items!campaign_id(...)`. Reading the select string could not have found this; running it
 did.
+
+---
+
+## Part 14 — Campaign taxonomy, content counting and the status machine (2026-08-27)
+
+`2026-08-27_01_mkt_campaign_lifecycle.sql`. Four defects, two of them visible on screen.
+
+### 14.1 Class, purpose and channel_mix were one question wearing three hats
+
+`campaign_type` accepted **both** `'organic'/'paid'` **and** `'project_launch'/'awareness'/…` — a
+CLASS and a PURPOSE in one column. That is the whole of `MKT:campaign_class_required`: the form
+offered "type", the user picked `organic`, the form felt complete, and `campaign_class` stayed NULL
+for `mkt_tg_campaign_portfolio_valid` to reject.
+
+```
+campaign_class  organic | paid      how the campaign operates      عضوية / مدفوعة
+campaign_type   project_launch, promotional_offer, awareness,      what it is FOR
+                lead_generation, retargeting, construction_update,
+                investor, seasonal, custom
+channel_mix     DERIVED from campaign_class by trigger. Legacy. Never asked.
+```
+
+`channel_mix = 'both'` cannot be created: organic and paid are **sibling campaigns under one
+initiative**, not one campaign with a mixed channel. Pre-existing `'both'` rows are preserved and
+flagged, never auto-split.
+
+**Backfill used explicit evidence only.** `campaign_type='paid'` IS a statement about the class, so
+it became `campaign_class='paid'`. It is NOT a statement about purpose, so purpose became NULL
+rather than a guess, and `needs_classification` widened to cover a missing class, a missing purpose
+or a legacy `'both'`.
+
+### 14.2 "Campaign content" meant four different things
+
+Four relationships, counted separately by `mkt_campaign_content_counts()` and **deduplicated by
+content id** — an item reachable three ways is one item:
+
+| | reached by |
+|---|---|
+| produced | `origin_campaign_id` |
+| reused | `mkt_content_usage.campaign_id` |
+| legacy | `campaign_id` only, and not explained by either of the above |
+| paid creative | `mkt_ads → mkt_ad_groups → mkt_platform_campaigns` |
+
+Legacy is **historical by construction**: `mkt_ci_origin_sync` keeps `campaign_id` and
+`origin_campaign_id` in lockstep on every write, so no new row can land in that bucket. The test has
+to disable that trigger to build one.
+
+### 14.3 One percentage was hiding three different answers
+
+The old "Completion %" was `published ÷ content`, i.e. `0/0 → 0%` for a campaign with no content —
+identical to one that planned twelve items and shipped none, and to one nobody has measured. Three
+measures now, each able to decline to answer:
+
+```
+deliverables   7 of 12 completed          (from the campaign's own deliverables[])
+publication    5 of 8 approved published  (approved = approved|ready_to_publish|scheduled|published,
+                                           so publishing never shrinks the denominator)
+outcome        42 of 100 qualified leads  (target vs actual_results)
+
+no_target      nobody has said what done means
+awaiting_data  a target exists, nothing measured yet
+measured       a real reading — which may legitimately be 0
+```
+
+### 14.4 Status was a free-text column
+
+It was in the API save allow-list, so a generic save could move a campaign from `archived` to
+`active`. It now moves **only** through `campaign_transition`, against
+`mkt_campaign_status_allowed()`:
+
+```
+draft → planned|cancelled     planned → active|draft|cancelled
+active → paused|completed|cancelled     paused → active|completed|cancelled
+completed → archived    cancelled → archived    archived → (terminal)
+```
+
+`mkt_campaign_next_statuses()` returns each legal move **with its blockers**, so the UI can show a
+blocked action greyed out with the reason rather than hiding it. Advancing to `planned`/`active`
+runs `mkt_campaign_activation_blockers()`; a **paid** campaign additionally needs at least one
+`mkt_platform_campaigns` row, because otherwise it has nowhere to spend. Every transition appends to
+`mkt_campaign_status_history` (append-only, `clock_timestamp()` so same-transaction rows still
+order).
+
+| File | Role |
+|---|---|
+| `supabase/migrations/2026-08-27_01_mkt_campaign_lifecycle.sql` | the whole of Part 14 |
+| `supabase/tests/mkt_campaign_lifecycle_test.sql` | 19 assertions, verified against production inside a rolled-back transaction |
+| `src/pages/MarketingManagement/components/portfolio/progress.tsx` | the three measures |
+| `src/pages/MarketingManagement/components/portfolio/StatusBar.tsx` | legal transitions + blocker reasons |
+
+### Known limitation found while doing this
+
+`api/` is **not typechecked**: `tsconfig.json` has `include: ["src"]`. `api/marketing-mgmt.ts` alone
+had three type errors, one of them real — `Body.decision` omitted `'pending'`, making the branch
+that leaves `decided_at` null look unreachable even though `mkt_approvals` explicitly allows that
+value. Fixed there, but **48 errors remain across the other 25 files in `api/`**, so wiring the
+directory into CI is its own piece of work.
