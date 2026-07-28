@@ -112,13 +112,32 @@ export async function upsertChatMessage(row: ChatMessageRow): Promise<{ isNew: b
   const supa = getServiceSupabase();
   const { data: existing } = await supa
     .from('chat_messages')
-    .select('id')
+    .select('id, ack')
     .eq('id', row.id)
     .maybeSingle();
 
   if (existing) {
-    const { error } = await supa.from('chat_messages').upsert(row, { onConflict: 'id', ignoreDuplicates: false });
-    if (error) console.error('[chatIngest] chat_messages upsert failed:', error.message);
+    // An echo must not DESTROY what the send already recorded.
+    //
+    // The webhook builds its row with `reference: null` (WAHA has no send-time
+    // reference of its own) and an ack straight from the payload. Upserting
+    // that verbatim over an existing row wiped the idempotency key the send
+    // path had just written — about a second after it was written — so a
+    // replay of the same logical send no longer recognised itself and
+    // delivered a second message (live 2026-07-28). The same overwrite could
+    // walk a 'read' ack back to 'pending'.
+    //
+    // So the echo fills gaps and advances state; it never blanks a field the
+    // send path owns.
+    const patch: Record<string, unknown> = { ...row };
+    if (row.reference == null) delete patch.reference;
+    const prevAck = (existing as { ack?: string | null }).ack ?? null;
+    const prevRank = prevAck ? (ACK_ORDER[prevAck as keyof typeof ACK_ORDER] ?? -1) : -1;
+    const nextRank = row.ack ? (ACK_ORDER[row.ack as keyof typeof ACK_ORDER] ?? -1) : -1;
+    if (nextRank <= prevRank) delete patch.ack;
+
+    const { error } = await supa.from('chat_messages').update(patch).eq('id', row.id);
+    if (error) console.error('[chatIngest] chat_messages merge failed:', error.message);
     return { isNew: false };
   }
 
