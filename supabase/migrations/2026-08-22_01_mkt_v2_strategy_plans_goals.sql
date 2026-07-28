@@ -238,8 +238,13 @@ BEGIN
     IF p IS NULL THEN
       RAISE EXCEPTION 'parent plan does not exist' USING ERRCODE='foreign_key_violation';
     END IF;
-    IF public.mkt_plan_rank(NEW.plan_type) > public.mkt_plan_rank(p.plan_type) THEN
-      RAISE EXCEPTION 'a % plan cannot sit under a % plan', NEW.plan_type, p.plan_type
+    -- >= not >: a parent must cover a STRICTLY longer period. With > an annual
+    -- plan nested happily under another annual plan (4 > 4 is false). Caught by
+    -- the acceptance test against production.
+    IF public.mkt_plan_rank(NEW.plan_type) >= public.mkt_plan_rank(p.plan_type) THEN
+      RAISE EXCEPTION
+        'a % plan cannot sit under a % plan — a parent must cover a longer period',
+        NEW.plan_type, p.plan_type
         USING ERRCODE='check_violation';
     END IF;
     IF NEW.period_start < p.period_start OR NEW.period_end > p.period_end THEN

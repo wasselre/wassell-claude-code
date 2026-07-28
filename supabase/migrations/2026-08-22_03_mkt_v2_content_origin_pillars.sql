@@ -200,18 +200,18 @@ BEGIN
   IF c IS NULL THEN RETURN ARRAY['content item not found']; END IF;
 
   IF c.strategic_purpose IS NULL OR btrim(c.strategic_purpose) = '' THEN
-    missing := missing || 'strategic_purpose'; END IF;
-  IF c.plan_id IS NULL          THEN missing := missing || 'plan'; END IF;
-  IF c.primary_goal_id IS NULL  THEN missing := missing || 'primary_goal'; END IF;
-  IF c.origin_kind IS NULL      THEN missing := missing || 'origin'; END IF;
-  IF c.primary_pillar_id IS NULL THEN missing := missing || 'primary_pillar'; END IF;
+    missing := array_append(missing, 'strategic_purpose'); END IF;
+  IF c.plan_id IS NULL          THEN missing := array_append(missing, 'plan'); END IF;
+  IF c.primary_goal_id IS NULL  THEN missing := array_append(missing, 'primary_goal'); END IF;
+  IF c.origin_kind IS NULL      THEN missing := array_append(missing, 'origin'); END IF;
+  IF c.primary_pillar_id IS NULL THEN missing := array_append(missing, 'primary_pillar'); END IF;
   IF c.target_audience IS NULL OR btrim(c.target_audience) = '' THEN
-    missing := missing || 'audience'; END IF;
+    missing := array_append(missing, 'audience'); END IF;
   -- Either a CTA destination or CTA text satisfies "intended result". Choosing
   -- 'none' is itself a deliberate answer and passes; saying nothing at all does
   -- not. This is why the check is on absence, not on the value.
   IF c.cta_destination IS NULL AND (c.cta IS NULL OR btrim(c.cta) = '') THEN
-    missing := missing || 'intended_result_or_cta'; END IF;
+    missing := array_append(missing, 'intended_result_or_cta'); END IF;
 
   RETURN missing;
 END $$;
