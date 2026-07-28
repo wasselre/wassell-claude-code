@@ -181,10 +181,24 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
 
   // Oldest first: a post's media URLs expire with age, so the oldest unrecovered
   // post is the one closest to being permanently unrecoverable.
+  //
+  // 'failed' is in scope, not just 'collected'. A post lands on 'failed' when its
+  // job exhausts attempts — but the sweep's whole premise is that state is
+  // recoverable later (stage 1 re-downloads media the job could not get). Scoping
+  // the scan to 'collected' meant that the moment a post failed it left the
+  // sweep's view PERMANENTLY, even after the media it was missing had since been
+  // stored. Measured: 906 posts sat at 'failed', and 899 of them already had at
+  // least one STORED media row — recovered by this very sweep, after the status
+  // had already been written. They were one enqueue away from processing and
+  // nothing could ever issue it. Same class of bug as the header note above, and
+  // as stage 2's global scope: a status is an event, and gating self-healing on
+  // an event is how work gets stranded. Both re-entry paths stay bounded — stage
+  // 1 by RETRY_AFTER_MS, stage 3 by requiring stored media — so the genuinely
+  // dead (7 of the 906) cost one attempt per cooldown, not a retry storm.
   const posts = await pageAll<{ id: string }>(
     (from, to) => sb.from('mkt_content_posts')
       .select('id, post_type')
-      .eq('processing_status', 'collected')
+      .in('processing_status', ['collected', 'failed'])
       .order('published_at', { ascending: true, nullsFirst: false })
       .order('id', { ascending: true })   // total order — a tie on published_at must not reshuffle between pages
       .range(from, to),
