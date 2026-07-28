@@ -1889,6 +1889,62 @@ async function logWahaRemediation(session: string, reason: string, outcome: stri
   if (logErr) console.error('[worker] remediation log failed:', logErr.message);
 }
 
+/**
+ * Write the chat_messages row for a message this worker just delivered.
+ *
+ * Twin of api/_lib/whatsappSendAuth.ts#recordOutboundMessage — the worker is a
+ * standalone package and cannot import from api/_lib (same posture as
+ * worker/src/imageGen.ts). Change both together.
+ *
+ * The conversation id is READ from `records` rather than recomputed: the uuidv5
+ * derivation lives in three places already and a fourth copy here would be a
+ * fourth thing to drift.
+ */
+async function persistQueuedOutbound(
+  job: ScheduledWhatsappJob,
+  result: Record<string, unknown>,
+): Promise<void> {
+  const ids = Array.isArray(result.ids) ? (result.ids as string[]) : [];
+  if (ids.length === 0) return;
+
+  const { data: conv } = await supabase
+    .from('records')
+    .select('id')
+    .eq('data->>wid', job.chatWid)
+    .maybeSingle();
+  const conversationId = (conv as { id?: string } | null)?.id;
+  if (!conversationId) {
+    console.warn(`[worker] no conversation record for ${job.chatWid} — outbound row skipped`);
+    return;
+  }
+
+  const digits = job.chatWid.split('@')[0] ?? '';
+  const hasBody = Boolean(job.body && job.body.trim());
+  const rows = ids.map((id, i) => ({
+    id,
+    chat_wid: job.chatWid,
+    conversation_record_id: conversationId,
+    device_id: job.deviceId,
+    flow: 'out' as const,
+    // A row carries the text only when it IS the text part: runScheduledWhatsappJob
+    // sends the body first, then each media item.
+    kind: hasBody && i === 0 ? 'text' : 'document',
+    body: hasBody && i === 0 ? job.body : null,
+    from_phone: null,
+    to_phone: `+${digits}`,
+    ack: 'sent',
+    date: new Date().toISOString(),
+    reference: job.reference,
+  }));
+
+  const { error } = await supabase.from('chat_messages').upsert(rows, { onConflict: 'id', ignoreDuplicates: false });
+  if (error) {
+    // Loud but never fatal — the customer already has the message, and failing
+    // the job here would mark a delivered send as failed.
+    console.error('[worker] could not persist queued outbound rows:', error.message);
+  }
+}
+
 async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
   if (!wahaSend) return false;
   const { data, error } = await supabase.rpc('scheduled_whatsapp_claim_due', {
@@ -1918,6 +1974,19 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
       const result = await runScheduledWhatsappJob(wahaSend, job);
       const { error: doneErr } = await supabase.rpc('scheduled_whatsapp_complete', { p_job_id: job.id, p_result: result });
       if (doneErr) console.error(`[worker] scheduled_whatsapp_complete failed: ${doneErr.message}`);
+
+      // WA-04 (queued half) — persist the outbound message HERE too.
+      //
+      // The API endpoint writes its own row at send time, but every QUEUED send
+      // goes out from this worker instead: AI replies, scheduled messages, the
+      // media fan-out. Those were still relying on WhatsApp echoing our send
+      // back through the inbound webhook, so a lost echo meant the customer had
+      // the message and the CRM did not — and that is worst precisely here,
+      // where the AI is answering with nobody watching.
+      //
+      // Keyed by the id WAHA returned, which is the id the echo carries, so the
+      // webhook upsert merges onto this row instead of adding a second bubble.
+      await persistQueuedOutbound(job, result);
 
       // WA-10 — give the AI audit row the REAL message id.
       //
