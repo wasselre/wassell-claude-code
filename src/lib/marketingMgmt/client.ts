@@ -178,6 +178,9 @@ export const fetchPerformance = (f: Record<string, unknown> = {}) => call<{ snap
 
 export const fetchAssets = (filters: Record<string, unknown> = {}) => call<{ assets: Array<Record<string, unknown>> }>('asset_list', filters);
 export const saveAsset = (patch: Record<string, unknown>, id?: string) => call<{ asset: Record<string, unknown> }>('asset_save', { id, patch });
+/** Queue analysis. Omit ids to sweep every un-analysed asset that has a file. */
+export const processAssets = (asset_ids?: string[], limit = 50) =>
+  call<{ queued: number }>('asset_process', { asset_ids, limit });
 export const linkAsset = (asset_id: string, target_type: string, target_id: string) => call<{ link: unknown }>('asset_link', { asset_id, target_type, target_id });
 
 export const savePublication = (patch: Record<string, unknown>, id?: string) => call<{ publication: Publication }>('publication_save', { id, patch });

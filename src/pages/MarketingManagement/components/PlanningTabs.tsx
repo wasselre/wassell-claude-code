@@ -8,13 +8,13 @@
  * lying about what is actually scheduled.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Image as ImageIcon, Link2, Search, FileText, Film, Music } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Image as ImageIcon, Link2, Search, FileText, Film, Music, Sparkles } from 'lucide-react';
 import AssetUploader from './AssetUploader';
 import { signViewUrl } from '@/lib/files/client';
 import Button from '@/components/ui/Button';
 import { Section, Stat, EmptyHint, Spinner, CaveatStrip, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
 import {
-  fetchPublications, fetchContentList, fetchAssets,
+  fetchPublications, fetchContentList, fetchAssets, processAssets,
   STATUS_LABEL, type PublicationRow, type ContentItem, type ContentStatus,
 } from '@/lib/marketingMgmt/client';
 
@@ -193,6 +193,7 @@ function AssetThumb({ fileId, mime, isAr }: { fileId: string | null; mime: strin
 export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: string) => void }) {
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
+  const [analysing, setAnalysing] = useState(false);
   const [q, setQ] = useState('');
 
   const load = useCallback((query?: string) => {
@@ -204,9 +205,20 @@ export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: strin
   }, [onError]);
   useEffect(() => { load(); }, [load]);
 
+  const analyse = async () => {
+    setAnalysing(true);
+    try {
+      const r = await processAssets();
+      onError(isAr ? `تم إدراج ${r.queued} أصل للتحليل` : `${r.queued} assets queued for analysis`);
+      load(q);
+    } catch (e) { onError(e instanceof Error ? e.message : String(e)); }
+    finally { setAnalysing(false); }
+  };
+
   if (loading) return <Spinner label={isAr ? 'جارٍ التحميل…' : 'Loading…'} />;
   const noFile = rows.filter((r) => !r.file_id).length;
   const unprocessed = rows.filter((r) => r.processing_status === 'not_attempted').length;
+  const inFlight = rows.filter((r) => r.processing_status === 'pending' || r.processing_status === 'processing').length;
 
   return (
     <div className="space-y-4">
@@ -224,6 +236,11 @@ export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: strin
               className="w-full rounded-xl border border-sand/60 bg-white py-2 text-[13px] focus:border-copper focus:outline-none ps-9 pe-3" />
           </div>
           <Button variant="secondary" onClick={() => load(q)}>{isAr ? 'بحث' : 'Search'}</Button>
+          <Button onClick={analyse} disabled={analysing || unprocessed === 0}>
+            <Sparkles className="h-4 w-4" />
+            {analysing ? (isAr ? 'جارٍ الإدراج…' : 'Queueing…')
+                       : (isAr ? `تحليل ${unprocessed}` : `Analyse ${unprocessed}`)}
+          </Button>
         </div>
 
         <div className="mb-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4">
@@ -231,7 +248,8 @@ export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: strin
           <Stat label={isAr ? 'متاحة' : 'Available'} value={rows.filter((r) => r.usage_status === 'available').length} />
           <Stat label={isAr ? 'سجل بلا ملف' : 'Record without file'} value={noFile} tone={noFile > 0 ? 'warn' : 'default'} />
           <Stat label={isAr ? 'بلا تحليل' : 'Not analysed'} value={unprocessed} tone={unprocessed > 0 ? 'warn' : 'default'}
-                hint={isAr ? 'لا قراءة صور ولا تفريغ بعد' : 'no OCR or transcript yet'} />
+                hint={inFlight > 0 ? (isAr ? `${inFlight} قيد التحليل` : `${inFlight} in flight`)
+                                   : (isAr ? 'لا قراءة صور ولا تفريغ بعد' : 'no OCR or transcript yet')} />
         </div>
 
         {rows.length === 0 ? (
@@ -272,8 +290,8 @@ export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: strin
 
       <CaveatStrip>
         {isAr
-          ? 'الأبعاد والمدة تُقاس من الملف فعلياً عند الرفع. أما قراءة النص من الصور والتفريغ الصوتي والوصف الآلي فلم تُنفَّذ بعد — لذلك تبقى الحالة «لم تُحاول»، وهي ليست «لا يوجد نص».'
-          : 'Dimensions and duration are measured from the file itself on upload. OCR, transcription and AI description are not wired yet — which is why the state reads "not attempted", and that is not the same as "no text found".'}
+          ? 'الأبعاد والمدة تُقاس من الملف عند الرفع. التحليل (قراءة النص من الصور، التفريغ الصوتي، الوصف) يعمل في الخلفية على العامل نفسه المستخدم لمحتوى المنافسين. الحالات صريحة: «لم تُحاول» تعني لم يُنظر بعد، «غير مدعوم» تعني لا يوجد محلل لهذا النوع، و«جزئي» تعني قُرئ بعضه فقط — ولا شيء منها يعني «لا يوجد نص».'
+          : 'Dimensions and duration are measured from the file on upload. Analysis (image OCR, transcription, description) runs in the background on the same worker used for competitor content. The states are explicit: "not attempted" means nobody looked yet, "unsupported" means there is no analyser for that type, and "degraded" means only part was read — none of them mean "no text found".'}
       </CaveatStrip>
     </div>
   );

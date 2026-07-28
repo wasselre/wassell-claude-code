@@ -74,6 +74,7 @@ interface Body {
   order?: string[];
   // assets
   asset_id?: string;
+  asset_ids?: string[];
   // publications / performance
   publication_id?: string;
   metrics?: Record<string, unknown>;
@@ -383,6 +384,18 @@ export default async function handler(req: Request): Promise<Response> {
         const { data, error } = await q;
         const bad = rlsAware(error); if (bad) return bad;
         return jsonOk({ asset: data });
+      }
+      case 'asset_process': {
+        // Queue OCR / transcript / description for specific assets, or for every
+        // un-analysed asset that actually has a file. The RPC is capability-gated
+        // and idempotent — it never double-queues an asset already in flight.
+        const ids = Array.isArray(body.asset_ids) ? body.asset_ids.filter((x): x is string => typeof x === 'string') : null;
+        const { data, error } = await sb.rpc('mkt_asset_enqueue_processing', {
+          p_asset_ids: ids && ids.length ? ids : null,
+          p_limit: cap(body.limit, 50, 500),
+        });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ queued: data ?? 0 });
       }
       case 'asset_link': {
         const aId = str(body.asset_id); const tType = str(body.target_type); const tId = str(body.target_id);

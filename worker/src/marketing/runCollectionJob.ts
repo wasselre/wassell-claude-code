@@ -22,6 +22,7 @@ import {
 import { runOrganizationDiscovery } from './discovery/discoveryEngine.js';
 import { runContentProcess } from './content/runContentProcess.js';
 import { runCampaignGroup } from './content/runCampaignGroup.js';
+import { runAssetProcess } from './assets/runAssetProcess.js';
 
 export interface CollectionJob {
   id: string; kind: string; provider: ProviderKey; social_account_id: string | null;
@@ -291,6 +292,26 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       // throw, so those never become a retry storm.
       if (r.fatal_errors.length > 0) {
         throw new ProviderError(`content_process ${postId} did not complete: ${r.fatal_errors.slice(0, 3).join('; ')}`);
+      }
+    } else if (job.kind === 'asset_process') {
+      // Raw-asset analysis: OCR / transcript / description for one uploaded file.
+      // Terminal state is written by runAssetProcess through the completion RPC,
+      // so the honest-state vocabulary lives in one place.
+      const assetId = job.params.asset_id as string | undefined;
+      if (!assetId) throw new ProviderError('asset_process needs asset_id', 'config_invalid');
+      const r = await runAssetProcess(sb, assetId);
+      stats.received = 1;
+      stats.inserted = r.status === 'completed' ? 1 : 0;
+      stats.skipped = r.status === 'unsupported' ? 1 : 0;
+      if (r.notes.length) stats.errors.push(...r.notes.slice(0, 5));
+      apifyCost = { usage_total_usd: r.cost_usd, status: r.status, kind: r.kind,
+                    ocr_chars: r.ocr_chars, transcript_chars: r.transcript_chars,
+                    frames: r.frames_analyzed, degraded: r.status !== 'completed' };
+      // 'failed' means the analyser broke — surface it as a failed JOB so the
+      // queue shows it, exactly like content_process. 'unsupported' and
+      // 'degraded' are legitimate outcomes and must not retry-storm.
+      if (r.status === 'failed') {
+        throw new ProviderError(`asset_process ${assetId} failed: ${r.notes.slice(0,2).join('; ') || 'unknown'}`);
       }
     } else if (job.kind === 'campaign_group') {
       // Deterministic cross-platform campaign grouping for one org (organic + paid).
