@@ -189,6 +189,54 @@ export async function authorizeWhatsappSend(args: {
 }
 
 /**
+ * Has this exact logical send already gone out?
+ *
+ * `reference` is our own idempotency key. It used to be generated, echoed back
+ * and thrown away — WAHA has no send-time reference of its own, and the webhook
+ * explicitly stores null — so the field the workflow engine's comment called
+ * "the idempotency key" guaranteed nothing at all (WA-12). Two things could
+ * therefore deliver the same message twice: a proxy timeout AFTER WhatsApp had
+ * accepted (the caller sees a failure and retries a send that already
+ * succeeded), and any caller re-issuing a request with the same key.
+ *
+ * Now that the send row is persisted at send time (WA-04) the key is durable,
+ * so a repeat is answered with the ORIGINAL result instead of a second message.
+ *
+ * Deliberately not a UNIQUE index: the worker writes several rows sharing one
+ * reference for a multi-part send (body, then each media item), so uniqueness
+ * on the column would reject legitimate traffic. The guarantee lives where the
+ * one-row-per-send invariant actually holds.
+ */
+export async function findPriorSendByReference(
+  reference: string,
+  chatWid: string,
+): Promise<{ wid: string } | null> {
+  if (!reference) return null;
+  const supa = getServiceSupabase();
+  const { data, error } = await supa
+    .from('chat_messages')
+    .select('id, ack')
+    .eq('reference', reference)
+    .eq('chat_wid', chatWid)
+    .eq('flow', 'out')
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    // Fail OPEN: an idempotency lookup that breaks must not block a rep from
+    // messaging a customer. The cost is the pre-existing duplicate risk, not a
+    // new one.
+    console.error('[whatsappSendAuth] idempotency lookup failed (allowing send):', error.message);
+    return null;
+  }
+  const row = data as { id: string; ack: string | null } | null;
+  if (!row) return null;
+  // A previous attempt that FAILED should be retryable — replaying it would
+  // strand the message forever on a transient fault.
+  if (row.ack === 'failed') return null;
+  return { wid: row.id };
+}
+
+/**
  * Persist the outbound message ITSELF, at send time.
  *
  * Until now nothing did. The row was created only when WhatsApp echoed our own

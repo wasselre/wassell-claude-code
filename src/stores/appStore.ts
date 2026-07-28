@@ -1576,6 +1576,10 @@ function bumpParentFromMessage(row: DbChatMessageRow, wasKnown: boolean): void {
  *  Supabase handles. */
 let globalChatsChannel: ReturnType<NonNullable<typeof supabase>['channel']> | null = null;
 
+/** In-flight composer sends, keyed by (chat|body|attachment) → idempotency key.
+ *  See sendChatMessage: this is what makes a double-click one message. */
+const inFlightSends = new Map<string, string>();
+
 /**
  * Sweep every unlinked chat and try to link it to a client. Called from
  * saveRecord when the user saves a clients record (new or edit) so a
@@ -5039,7 +5043,22 @@ export const useAppStore = create<AppState>((set, get) => ({
          : 'document')
         : 'text');
 
-    const clientId = uuid();
+    // IDEMPOTENCY KEY (WA-12). The server treats `reference` as the identity of
+    // one logical send and replays the original result instead of sending
+    // twice. That only works if a repeat carries the SAME key — and a
+    // double-click minted a fresh uuid each time, so two requests looked like
+    // two different messages and the customer received both.
+    //
+    // Keyed on (chat, body, attachment): the same text to the same chat while
+    // the first attempt is still in flight is a double-click, not someone
+    // deliberately sending the same sentence twice inside a second. The key is
+    // released when the attempt settles, so genuinely repeating yourself still
+    // works.
+    const dedupeKey = `${chatWid}|${body ?? ''}|${mediaFileId ?? ''}`;
+    const inFlight = inFlightSends.get(dedupeKey);
+    if (inFlight) console.warn('[sendChatMessage] identical send already in flight — reusing its idempotency key');
+    const clientId = inFlight ?? uuid();
+    inFlightSends.set(dedupeKey, clientId);
     const placeholder: ChatMessage = {
       id: `pending:${clientId}`,
       chat_wid: chatWid,
@@ -5105,6 +5124,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const msg = err instanceof Error ? err.message : String(err);
       get().addToast(msg, 'error');
       throw err;
+    } finally {
+      // Released whichever way it ended: a failed attempt must be retryable
+      // with a fresh key, or the chat would be stuck refusing that message.
+      inFlightSends.delete(dedupeKey);
     }
   },
 

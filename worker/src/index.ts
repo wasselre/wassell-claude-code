@@ -1945,6 +1945,60 @@ async function persistQueuedOutbound(
   }
 }
 
+/**
+ * Make a permanently-failed queued send VISIBLE (WA-13).
+ *
+ * A terminal failure used to update a row in scheduled_whatsapp_jobs and stop
+ * there: no toast, no task, no alert. 37 messages died that way and were found
+ * only by reading the table — including AI replies, where the agent had already
+ * recorded "sent" in its own transcript. Both the customer and the CRM believed
+ * contact had been made.
+ *
+ * The thread is where a rep will actually see it, so the failure is written as
+ * a failed message bubble in the conversation it belongs to, carrying the
+ * reason. A synthetic `failed:<job>` id keeps it distinct from any real message
+ * and out of the hash-dedupe (messageIdHash returns null for it).
+ */
+async function surfaceTerminalSendFailure(job: ScheduledWhatsappJob, reason: string): Promise<void> {
+  const { data: conv } = await supabase
+    .from('records').select('id').eq('data->>wid', job.chatWid).maybeSingle();
+  const conversationId = (conv as { id?: string } | null)?.id;
+  const digits = job.chatWid.split('@')[0] ?? '';
+
+  if (conversationId) {
+    const { error } = await supabase.from('chat_messages').upsert({
+      id: `failed:${job.id}`,
+      chat_wid: job.chatWid,
+      conversation_record_id: conversationId,
+      device_id: job.deviceId,
+      flow: 'out',
+      kind: 'text',
+      body: job.body ?? '[media]',
+      from_phone: null,
+      to_phone: `+${digits}`,
+      ack: 'failed',
+      date: new Date().toISOString(),
+      reference: job.reference,
+    }, { onConflict: 'id', ignoreDuplicates: false });
+    if (error) console.error('[worker] could not surface failed send in the thread:', error.message);
+  } else {
+    console.warn(`[worker] no conversation record for ${job.chatWid} — failed send not surfaced in a thread`);
+  }
+
+  const { error: logErr } = await supabase.from('activity_log').insert({
+    category: 'whatsapp',
+    event_type: 'send_failed',
+    target_record_id: conversationId ?? null,
+    target_label: `whatsapp send failed: +${digits.slice(0, 4)}${'•'.repeat(Math.max(0, digits.length - 6))}${digits.slice(-2)}`,
+    summary_ar: 'فشل إرسال رسالة واتساب نهائياً',
+    summary_en: 'WhatsApp message permanently failed to send',
+    details: { job_id: job.id, reason, attempts: job.attempts, device_id: job.deviceId, conversation_id: conversationId ?? null },
+    status: 'error',
+    error: reason,
+  });
+  if (logErr) console.error('[worker] failed-send log failed:', logErr.message);
+}
+
 async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
   if (!wahaSend) return false;
   const { data, error } = await supabase.rpc('scheduled_whatsapp_claim_due', {
@@ -2023,6 +2077,7 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
           p_error: `cold_outreach_locked: WhatsApp is refusing first contact with this number (error 463). Message manually from the phone once, or wait for the customer to write first. Original: ${msg.slice(0, 300)}`,
         });
         if (failErr) console.error(`[worker] scheduled_whatsapp_fail failed: ${failErr.message}`);
+        await surfaceTerminalSendFailure(job, 'WhatsApp is refusing first contact with this number (error 463)');
         continue;
       }
 
@@ -2039,6 +2094,7 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
       }
       const { error: failErr } = await supabase.rpc('scheduled_whatsapp_fail', { p_job_id: job.id, p_error: msg });
       if (failErr) console.error(`[worker] scheduled_whatsapp_fail failed: ${failErr.message}`);
+      await surfaceTerminalSendFailure(job, msg.slice(0, 300));
     }
   }
   return true;

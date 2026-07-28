@@ -21,7 +21,7 @@
 
 import { withAuth, jsonOk, jsonError } from '../_lib/auth.js';
 import { sendMessage, resolveDefaultDeviceId, maybeScheduleWaha, HaberchatError } from '../_lib/whatsappGateway.js';
-import { authorizeWhatsappSend, logSendAttempt, recordOutboundMessage } from '../_lib/whatsappSendAuth.js';
+import { authorizeWhatsappSend, logSendAttempt, recordOutboundMessage, findPriorSendByReference } from '../_lib/whatsappSendAuth.js';
 
 export const config = {
   runtime: 'edge',
@@ -86,6 +86,21 @@ export default async function handler(req: Request): Promise<Response> {
           outcome: 'denied', reason: auth.reason,
         });
         return jsonError(auth.status, auth.error);
+      }
+
+      // IDEMPOTENCY (WA-12). If this exact key already produced a message in
+      // this chat, return THAT result rather than sending a second one. The
+      // case that matters is a timeout after WhatsApp already accepted: the
+      // caller sees a failure and retries a send that actually succeeded.
+      const prior = await findPriorSendByReference(reference, auth.chatWid);
+      if (prior) {
+        console.warn(`[messages] replaying prior send for reference ${reference} — not sending again`);
+        await logSendAttempt({
+          user, chatWid: auth.chatWid, clientId: auth.clientId, conversationId: auth.conversationId,
+          deviceId, source, outcome: 'accepted', reason: 'idempotent_replay',
+          messageWid: prior.wid, hasMedia: !!mediaFileId,
+        });
+        return jsonOk({ wid: prior.wid, status: 'sent', reference, replayed: true });
       }
 
       try {
