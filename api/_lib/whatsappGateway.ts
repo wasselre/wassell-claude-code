@@ -103,9 +103,11 @@ export async function providerFor(deviceId: string | null | undefined): Promise<
       .eq('device_id', deviceId)
       .maybeSingle();
     if (error) return TIMED_OUT;
-    // An unknown device id is a real answer, not a failure: it predates the
-    // numbers table, so Haberchat remains the correct reading of it.
-    return data?.provider === 'waha' ? 'waha' : 'haberchat';
+    // Haberchat is RETIRED (2026-07-28, confirmed by the operator: never
+    // falling back). An unknown device id used to read as 'haberchat' because
+    // that was the older default; routing anything there now guarantees a
+    // failure, so an unrecognised device resolves to the live provider.
+    return data?.provider === 'haberchat' ? 'haberchat' : 'waha';
   })(), 2500, TIMED_OUT);
 
   if (resolved === TIMED_OUT) {
