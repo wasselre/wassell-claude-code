@@ -1797,7 +1797,29 @@ interface ScheduledWaRow {
 // requeued with backoff up to 3 total attempts instead of failing permanently.
 // App-level errors (bad media ref, partial send) still fail on the first try.
 const SCHEDULED_WA_MAX_ATTEMPTS = 3;
+
+/**
+ * WhatsApp error 463 — the reach-out time-lock on a contact we hold no token
+ * for. It is a PERMANENT refusal by WhatsApp's servers, and it arrives wrapped
+ * in a WAHA 500:
+ *
+ *   WAHA /api/sendText failed: 500 {"statusCode":500,…,
+ *     "message":"2 UNKNOWN: server returned error 463",…}
+ *
+ * Classifying on the status alone therefore called it transient and did the two
+ * worst possible things: retried it three times (each retry re-arms the lock,
+ * per WAHA #1992 / whatsmeow #1074) and restarted the WhatsApp session, which
+ * fixes nothing because the refusal is server-side. 11 of the 37 permanently
+ * failed jobs are 463s that were treated this way (WA-07, audit 2026-07-28).
+ *
+ * Matched on the body, BEFORE the generic 5xx rule.
+ */
+function isColdOutreachLock(msg: string): boolean {
+  return /server returned error 463\b/.test(msg) || /\berror 463\b/.test(msg);
+}
+
 function isTransientWahaSendError(msg: string): boolean {
+  if (isColdOutreachLock(msg)) return false;
   return /^WAHA \/api\/\w+ failed: 5\d\d/.test(msg) || /fetch failed|ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up/i.test(msg);
 }
 
@@ -1806,18 +1828,65 @@ function isTransientWahaSendError(msg: string): boolean {
 // so kick a restart before the retry lands. Debounced per session so a burst of
 // failing jobs triggers ONE restart, not one per job.
 const WAHA_RESTART_DEBOUNCE_MS = 10 * 60_000;
-const lastWahaRestartAt = new Map<string, number>();
-async function maybeRestartWahaSessionAfterSendFailure(session: string): Promise<void> {
-  if (!wahaSend) return;
-  const last = lastWahaRestartAt.get(session) ?? 0;
-  if (Date.now() - last < WAHA_RESTART_DEBOUNCE_MS) return;
-  lastWahaRestartAt.set(session, Date.now());
-  try {
-    await restartSession(wahaSend, session);
-    console.warn(`[worker] restarted WAHA session '${session}' after a 5xx send failure`);
-  } catch (err) {
-    console.error(`[worker] WAHA session restart '${session}' failed:`, err instanceof Error ? err.message : String(err));
+
+/**
+ * Restarting a WhatsApp session is a heavy, disruptive act — it drops whatever
+ * the other machines have in flight on that session — and it must happen at
+ * most once across the fleet.
+ *
+ * The old guard was a process-local Map. wassel-deck-worker runs FIVE machines,
+ * each with its own copy, so a session that briefly stopped being WORKING could
+ * receive up to five concurrent restarts, and a burst of 5xx sends five more.
+ * Repeatedly restarting an active session risks losing the pairing — the exact
+ * failure the Doha move was meant to end (WA-08, audit 2026-07-28).
+ *
+ * A Postgres advisory lock is the fleet-wide equivalent: whoever takes it acts,
+ * everyone else moves on. It is released when the transaction/session ends, so
+ * a machine dying mid-restart cannot wedge the lock forever.
+ */
+async function withSessionRemediationLock(session: string, fn: () => Promise<void>): Promise<boolean> {
+  const { data, error } = await supabase.rpc('waha_try_remediation_lock', {
+    p_session: session,
+    p_min_interval_seconds: Math.floor(WAHA_RESTART_DEBOUNCE_MS / 1000),
+  });
+  if (error) {
+    console.error(`[worker] remediation lock rpc failed for '${session}':`, error.message);
+    return false;
   }
+  if (data !== true) return false;   // another machine owns it, or too soon
+  await fn();
+  return true;
+}
+
+async function maybeRestartWahaSessionAfterSendFailure(session: string, reason: string): Promise<void> {
+  if (!wahaSend) return;
+  await withSessionRemediationLock(session, async () => {
+    try {
+      await restartSession(wahaSend!, session);
+      console.warn(`[worker] restarted WAHA session '${session}' (${reason})`);
+      await logWahaRemediation(session, reason, 'restarted', null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[worker] WAHA session restart '${session}' failed:`, msg);
+      await logWahaRemediation(session, reason, 'failed', msg);
+    }
+  });
+}
+
+/** Every restart is recorded — who, why, and whether it worked. Restarts were
+ *  previously invisible outside a worker log line nobody watches. */
+async function logWahaRemediation(session: string, reason: string, outcome: string, error: string | null): Promise<void> {
+  const { error: logErr } = await supabase.from('activity_log').insert({
+    category: 'whatsapp',
+    event_type: 'session_remediation',
+    target_label: `waha session: ${session}`,
+    summary_ar: `إعادة تشغيل جلسة واتساب ${session} (${outcome})`,
+    summary_en: `WhatsApp session ${session} remediation (${outcome})`,
+    details: { session, reason, outcome, worker: env.WORKER_ID },
+    status: outcome === 'restarted' ? 'success' : 'error',
+    error,
+  });
+  if (logErr) console.error('[worker] remediation log failed:', logErr.message);
 }
 
 async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
@@ -1852,8 +1921,22 @@ async function claimAndRunOneScheduledWhatsapp(): Promise<boolean> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[worker] scheduled WhatsApp job=${job.id} FAILED (attempt ${job.attempts}):`, msg);
+
+      // WhatsApp refused this RECIPIENT, not this request. Retrying deepens the
+      // lock and restarting the session does nothing — so fail once, loudly,
+      // with a reason a human can act on.
+      if (isColdOutreachLock(msg)) {
+        console.warn(`[worker] job=${job.id} hit the WhatsApp cold-outreach lock (463) — permanent for now, NOT retried`);
+        const { error: failErr } = await supabase.rpc('scheduled_whatsapp_fail', {
+          p_job_id: job.id,
+          p_error: `cold_outreach_locked: WhatsApp is refusing first contact with this number (error 463). Message manually from the phone once, or wait for the customer to write first. Original: ${msg.slice(0, 300)}`,
+        });
+        if (failErr) console.error(`[worker] scheduled_whatsapp_fail failed: ${failErr.message}`);
+        continue;
+      }
+
       if (isTransientWahaSendError(msg) && job.attempts < SCHEDULED_WA_MAX_ATTEMPTS) {
-        await maybeRestartWahaSessionAfterSendFailure(job.deviceId);
+        await maybeRestartWahaSessionAfterSendFailure(job.deviceId, `5xx send failure on job ${job.id}`);
         const delayS = 120 * job.attempts; // 2 min, then 4 min
         const { error: rqErr } = await supabase.rpc('scheduled_whatsapp_requeue', { p_job_id: job.id, p_error: msg, p_delay_s: delayS });
         if (!rqErr) {
@@ -1906,8 +1989,11 @@ async function runWahaSessionWatchdog(): Promise<void> {
       try {
         const st = await getSessionStatus(wahaSend, session);
         if (st.status !== 'WORKING') {
-          console.warn(`[worker] waha session '${session}' status=${st.status} → restarting`);
-          await restartSession(wahaSend, session).catch((e: unknown) => console.error(`[worker] waha restart '${session}' failed:`, (e as Error).message));
+          // Behind the same fleet-wide lock as the send-failure path: all five
+          // machines run this watchdog on the same interval and would otherwise
+          // observe one flap and issue five restarts.
+          console.warn(`[worker] waha session '${session}' status=${st.status}`);
+          await maybeRestartWahaSessionAfterSendFailure(session, `watchdog saw status=${st.status}`);
         } else if (st.activityTs) {
           const ageMin = Math.round((Date.now() - st.activityTs) / 60000);
           if (ageMin > 30) console.warn(`[worker] waha session '${session}' WORKING but last activity ${ageMin}m ago (watch for zombie)`);
