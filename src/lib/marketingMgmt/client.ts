@@ -62,8 +62,13 @@ export interface ContentItem {
   status: ContentStatus; priority: string; purpose: string | null;
   project_id: string | null; campaign_id: string | null;
   owner_user_id: string | null; due_date: string | null; planned_publish_at: string | null;
+  writer_user_id: string | null; designer_user_id: string | null;
+  editor_user_id: string | null; presenter_user_id: string | null;
+  photographer_user_id: string | null;
   language: string; hook: string | null; main_idea: string | null; cta: string | null;
   caption: string | null; hashtags: string[]; created_at: string;
+  target_audience: string | null; content_pillar: string | null;
+  reference_links: string[]; production_notes: string | null;
   source_insight_id: string | null; source_url: string | null;
   mkt_content_platforms?: Array<{ platform: string }>;
 }

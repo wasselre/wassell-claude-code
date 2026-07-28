@@ -41,6 +41,16 @@ import { withAuth, jsonError, jsonOk } from './_lib/auth.js';
 
 export const config = { runtime: 'edge' };
 
+/** Columns a user may edit on a content item. See content_update for why. */
+const CONTENT_EDITABLE = [
+  'title', 'content_type', 'priority', 'purpose', 'project_id', 'campaign_id',
+  'owner_user_id', 'writer_user_id', 'designer_user_id', 'editor_user_id',
+  'presenter_user_id', 'photographer_user_id',
+  'due_date', 'planned_publish_at', 'language', 'target_audience', 'content_pillar',
+  'hook', 'main_idea', 'cta', 'caption', 'hashtags', 'reference_links',
+  'production_notes', 'archived_at',
+] as const;
+
 interface Body {
   action?: string;
   id?: string;
@@ -240,8 +250,17 @@ export default async function handler(req: Request): Promise<Response> {
       }
       case 'content_update': {
         const id = str(body.id); if (!id) return jsonError(400, 'id required');
-        const patch = { ...(body.patch ?? {}) };
-        delete (patch as Record<string, unknown>).status;   // status only via content_transition
+        // Allow-list, not deny-list. `status` moves only through content_transition
+        // (the DB rejects invalid jumps), and identity/provenance columns —
+        // content_number, created_by_user_id, created_at, source_* — are not
+        // editable at all: the spec's claim that external evidence stays
+        // traceable to internal execution is only true if nothing can rewrite
+        // the link after the fact.
+        const patch: Record<string, unknown> = {};
+        for (const k of CONTENT_EDITABLE) {
+          if (body.patch && Object.prototype.hasOwnProperty.call(body.patch, k)) patch[k] = body.patch[k];
+        }
+        if (Object.keys(patch).length === 0) return jsonError(400, 'no editable fields in patch');
         const { data, error } = await sb.from('mkt_content_items').update(patch).eq('id', id).select().maybeSingle();
         const bad = rlsAware(error); if (bad) return bad;
         return jsonOk({ item: data });

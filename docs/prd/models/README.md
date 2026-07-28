@@ -4,7 +4,7 @@
 
 # Models — auto-generated index
 
-**46 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
+**48 models.** Auto-generated from Supabase by `npm run sync:prds`. Do not hand-edit.
 
 | Model | API name | Storage | Group | Sections | Fields | Custom UI | Updated |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -37,6 +37,8 @@
 | [Our Projects](our-projects.md) | `our_projects` | JSONB | Projects | 5 | 15 | no | 2026-06-29 |
 | [Ownership Transfer](ownership-transfer.md) | `ownership_transfer` | JSONB | New Group | 1 | 8 | no | 2026-06-17 |
 | [Phone Calls](phone-calls.md) | `phone_calls` | JSONB | New Group | 2 | 15 | no | 2026-06-16 |
+| [Post Batches](posts-batches.md) | `posts_batches` | JSONB | — | 1 | 13 | no | 2026-07-26 |
+| [Posts Content](posts-content.md) | `posts_content` | JSONB | — | 4 | 30 | no | 2026-07-26 |
 | [Project Details](project-details.md) | `project_details` | JSONB | — | 2 | 61 | yes | 2026-06-08 |
 | [Prompt Library](prompt-snippets.md) | `prompt_snippets` | JSONB | Designs | 1 | 4 | no | 2026-06-08 |
 | [Real Estate Offices](real-estate-offices.md) | `real_estate_offices` | JSONB | Unresponded Requests | 1 | 6 | no | 2026-06-28 |

@@ -25,6 +25,7 @@ import CampaignsTab from './components/CampaignsTab';
 import { ApprovalsTab, PublishingTab, PerformanceTab } from './components/QueueTabs';
 import { CalendarTab, AssetsTab } from './components/PlanningTabs';
 import { SceneEditor, SlideEditor } from './components/ProductionEditor';
+import { ContentFields, VersionWriter } from './components/ContentEditor';
 // Generic presentation primitives shared with the intelligence page — importing
 // rather than duplicating; they carry no intelligence-specific types.
 import { Section, Stat, CaveatStrip, EmptyHint, Spinner, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
@@ -472,6 +473,11 @@ function ContentDetailPanel({
         </p>
       </Section>
 
+      <ContentFields item={i} isAr={isAr} onSaved={onChanged} onError={onError} />
+
+      <VersionWriter item={i} versions={detail.versions} isAr={isAr}
+        onChanged={onChanged} onError={onError} />
+
       {isVideo && (
         <SceneEditor contentItemId={i.id} scenes={detail.scenes} isAr={isAr}
           onChanged={onChanged} onError={onError} />
@@ -522,21 +528,8 @@ function ContentDetailPanel({
           )}
         </Section>
 
-        <Section title={isAr ? 'النسخ' : 'Versions'}>
-          {detail.versions.length === 0 ? <EmptyHint>{isAr ? 'لا نسخ بعد' : 'No versions yet'}</EmptyHint> : (
-            <ul className="divide-y divide-sand/40">
-              {detail.versions.map((v) => (
-                <li key={v.id} className="flex items-center justify-between gap-2 py-2 text-[12.5px]">
-                  <span className="text-charcoal/80">{v.version_type} v{v.version_number}</span>
-                  <span className="flex shrink-0 items-center gap-2 text-[11px]">
-                    <span className="text-charcoal/50">{v.approval_state}</span>
-                    {v.is_locked && <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-emerald-700">{isAr ? 'مقفل' : 'locked'}</span>}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Section>
+        {/* Versions are written and listed in VersionWriter above — a second,
+            read-only copy here would just drift from it. */}
 
         <Section title={isAr ? 'النشر' : 'Publications'}>
           {detail.publications.length === 0 ? <EmptyHint>{isAr ? 'لم يُجدول بعد' : 'Not scheduled yet'}</EmptyHint> : (
