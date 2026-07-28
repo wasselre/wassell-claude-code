@@ -170,19 +170,25 @@ async function handleWhatsappReply(job) {
   const chatWid = p.chat_wid;
   if (!chatWid) throw new Error('payload.chat_wid is required');
 
-  // A rep pressing "hand this chat to the AI" is an explicit invitation, so a
-  // forced job skips the schedule/human-active gates. Auto-triggered jobs
-  // re-check right before spending a session (a human may have replied in the
-  // seconds since the webhook enqueued).
-  // `forced` covers the takeover-enable click. Ongoing messages in an
-  // AI-managed chat come through the normal path, and the gate itself returns
-  // 'chat_ai_managed' for those, so the re-check below passes for them too.
-  const forced = p.forced === true;
-  if (!forced) {
-    const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
-    const g = Array.isArray(gate) ? gate[0] : gate;
-    if (g?.should_reply !== true) return { skipped: true, reason: g?.reason ?? 'blocked' };
-  }
+  // THE GATE IS NOT OPTIONAL, and nothing in the job payload may turn it off.
+  //
+  // `payload.forced` used to skip it. claude_jobs accepts an INSERT from any
+  // authenticated user, so anyone with a login could write
+  //   {kind:'whatsapp_reply', payload:{chat_wid:'<any number>@c.us', forced:true}}
+  // and have the agent send a WhatsApp message from the company number to an
+  // arbitrary recipient — past the kill switch, working hours, the
+  // don't-talk-over-a-human check and the reply cap (WA-02, audit 2026-07-28).
+  //
+  // A rep genuinely handing over a chat is still honoured, but through
+  // PERSISTED STATE rather than a flag in a client-writable row:
+  // /api/whatsapp/ai-handover authorizes the caller against the chat under RLS
+  // and writes `ai_managed` on the conversation, and the gate's own first branch
+  // returns 'chat_ai_managed' for it. So the authorized path passes the gate on
+  // its merits and the forged one does not.
+  const { data: gate } = await supa.rpc('whatsapp_ai_should_reply', { p_chat_wid: chatWid });
+  const g = Array.isArray(gate) ? gate[0] : gate;
+  if (g?.should_reply !== true) return { skipped: true, reason: g?.reason ?? 'blocked' };
+  const forced = g?.reason === 'chat_ai_managed';
 
   // PRE-FETCH the context the session always needs.
   //
