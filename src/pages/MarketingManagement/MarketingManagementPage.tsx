@@ -33,6 +33,7 @@ import { ContentBoard, ContentDetail as ContentDetailView } from './components/c
 import { CapacityView } from './components/CapacityView';
 import { SectionBoundary } from './components/SectionBoundary';
 import { ContentContextPanel } from './components/ContentContextPanel';
+import { AssetThumb, AssetLightbox, type AssetRow } from './components/AssetPreview';
 import { PLATFORM_LABEL, ASSET_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
 // Generic presentation primitives shared with the intelligence page — importing
 // rather than duplicating; they carry no intelligence-specific types.
@@ -637,6 +638,7 @@ function LinkedAssets({ detail, isAr, onChanged, onError }: {
   const [all, setAll] = useState<Array<Record<string, unknown>>>([]);
   const [pick, setPick] = useState('');
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<AssetRow | null>(null);
   const linked = new Set(detail.assets.map((a) => a.asset_id));
 
   useEffect(() => {
@@ -657,18 +659,32 @@ function LinkedAssets({ detail, isAr, onChanged, onError }: {
     <Section title={isAr ? 'المواد المرتبطة' : 'Linked assets'}
       subtitle={isAr ? 'من مكتبة المواد الخام — الملف واحد ويُستخدم في أكثر من مكان'
                      : 'From the raw asset library — one file, reused in many places'}>
+      {preview && <AssetLightbox asset={preview} isAr={isAr} onClose={() => setPreview(null)} />}
       {detail.assets.length === 0 ? (
         <EmptyHint>{isAr ? 'لا مواد مرتبطة بعد' : 'No assets linked yet'}</EmptyHint>
       ) : (
         <ul className="divide-y divide-sand/40">
           {detail.assets.map((a) => {
-            const raw = a.mkt_raw_assets ?? {};
+            const row = (a.mkt_raw_assets ?? null) as AssetRow | null;
             const isFinal = detail.item.final_asset_id === a.asset_id;
+            if (!row) {
+              return (
+                <li key={a.asset_id} className="py-2 text-[11.5px] text-charcoal/50">
+                  {isAr ? 'مادة مرتبطة لا يمكنك الاطلاع عليها' : 'A linked asset you cannot view'}
+                </li>
+              );
+            }
             return (
               <li key={a.asset_id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-[12.5px]">
-                <span className="flex min-w-0 items-center gap-2">
-                  <ImageIcon className="h-3.5 w-3.5 shrink-0 text-charcoal/30" />
-                  <span className="truncate text-charcoal">{String(raw.asset_name ?? a.asset_id)}</span>
+                <span className="flex min-w-0 items-center gap-2.5">
+                  <AssetThumb asset={row} isAr={isAr} onClick={() => setPreview(row)} />
+                  <button type="button" onClick={() => setPreview(row)} className="min-w-0 text-start">
+                    <span className="block truncate text-charcoal">{row.asset_name ?? a.asset_id}</span>
+                    <span className="block truncate text-[10.5px] text-charcoal/45">
+                      {row.mime_type ?? '—'}
+                      {row.duration_ms ? ` · ${Math.round(row.duration_ms / 1000)}s` : ''}
+                    </span>
+                  </button>
                   {isFinal && (
                     <span className="shrink-0 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] text-emerald-700">
                       {isAr ? 'الملف النهائي' : 'final'}
@@ -676,7 +692,7 @@ function LinkedAssets({ detail, isAr, onChanged, onError }: {
                   )}
                 </span>
                 <span className="shrink-0 text-[11px] text-charcoal/45">
-                  {lbl(ASSET_TYPE_LABEL, String(raw.asset_type ?? ''), isAr)}
+                  {lbl(ASSET_TYPE_LABEL, String(row.asset_type ?? ''), isAr)}
                 </span>
               </li>
             );

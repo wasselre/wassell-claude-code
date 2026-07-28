@@ -8,9 +8,9 @@
  * lying about what is actually scheduled.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Image as ImageIcon, Link2, Search, FileText, Film, Music, Sparkles } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Link2, Search, Sparkles } from 'lucide-react';
 import AssetUploader from './AssetUploader';
-import { signViewUrl } from '@/lib/files/client';
+import { AssetThumb, AssetDetail, type AssetRow } from './AssetPreview';
 import Button from '@/components/ui/Button';
 import { Section, Stat, EmptyHint, Spinner, CaveatStrip, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
 import {
@@ -241,48 +241,15 @@ export function CalendarTab({ isAr, onOpenContent, onError }: {
  * straight at storage would 400, so thumbnails are signed on demand and only
  * for image assets, which keeps the request count to what is actually shown.
  */
-function AssetThumb({ fileId, mime, isAr }: { fileId: string | null; mime: string | null; isAr: boolean }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-  const isImage = (mime ?? '').startsWith('image/');
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!fileId || !isImage) return;
-    signViewUrl(fileId)
-      .then((r) => { if (!cancelled) setUrl(r.url); })
-      .catch(() => { if (!cancelled) setFailed(true); });
-    return () => { cancelled = true; };
-  }, [fileId, isImage]);
-
-  const Icon = (mime ?? '').startsWith('video/') ? Film
-    : (mime ?? '').startsWith('audio/') ? Music
-    : isImage ? ImageIcon : FileText;
-
-  if (!fileId) {
-    return (
-      <span title={isAr ? 'سجل بلا ملف' : 'record with no file'}
-        className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-dashed border-amber-300 bg-amber-50 text-amber-600">
-        <FileText className="h-4 w-4" />
-      </span>
-    );
-  }
-  if (isImage && url && !failed) {
-    return <img src={url} alt="" loading="lazy"
-      className="h-9 w-9 shrink-0 rounded-lg border border-sand/50 object-cover" />;
-  }
-  return (
-    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-sand/50 bg-cream text-charcoal/45">
-      <Icon className="h-4 w-4" />
-    </span>
-  );
-}
 
 export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: string) => void }) {
   const [rows, setRows] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
   const [analysing, setAnalysing] = useState(false);
   const [q, setQ] = useState('');
+  /** Which row is expanded. Inline rather than a modal: the point of a library
+   *  is to scan it, and a dialog per asset makes comparing two of them a chore. */
+  const [open, setOpen] = useState<string | null>(null);
 
   const load = useCallback((query?: string) => {
     setLoading(true);
@@ -348,27 +315,45 @@ export function AssetsTab({ isAr, onError }: { isAr: boolean; onError: (m: strin
               const w = a.width as number | null, h = a.height as number | null;
               const dur = a.duration_ms as number | null;
               const size = a.size_bytes as number | null;
+              const id = String(a.id);
+              const expanded = open === id;
+              const asset = a as AssetRow;
+              // A phrase from the transcript or the AI description, so a row
+              // says what is IN the file rather than only what it is called.
+              const gist = ((asset.ai_description ?? asset.transcript ?? '') || '').trim();
               return (
-                <li key={String(a.id)} className="flex flex-wrap items-center gap-3 py-2.5">
-                  <AssetThumb fileId={(a.file_id as string) ?? null} mime={(a.mime_type as string) ?? null} isAr={isAr} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13px] text-charcoal">{String(a.asset_name)}</span>
-                    <span className="block text-[11px] text-charcoal/45">
-                      {String(a.asset_type)}
-                      {w && h ? ` · ${w}×${h}` : ''}
-                      {dur ? ` · ${Math.round(dur / 1000)}s` : ''}
-                      {size ? ` · ${(size / 1024 / 1024).toFixed(1)} MB` : ''}
+                <li key={id} className="py-2.5">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <AssetThumb asset={asset} isAr={isAr} onClick={() => setOpen(expanded ? null : id)} />
+                    <button type="button" onClick={() => setOpen(expanded ? null : id)}
+                      className="min-w-0 flex-1 text-start">
+                      <span className="block truncate text-[13px] text-charcoal">{String(a.asset_name)}</span>
+                      <span className="block text-[11px] text-charcoal/45">
+                        {String(a.asset_type)}
+                        {w && h ? ` · ${w}×${h}` : ''}
+                        {dur ? ` · ${Math.round(dur / 1000)}s` : ''}
+                        {size ? ` · ${(size / 1024 / 1024).toFixed(1)} MB` : ''}
+                      </span>
+                      {gist && !expanded && (
+                        <span className="mt-0.5 block truncate text-[11px] text-charcoal/55">{gist}</span>
+                      )}
+                    </button>
+                    <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-charcoal/50">
+                      {!a.file_id && (
+                        <span className="text-amber-700">{isAr ? 'بلا ملف' : 'no file'}</span>
+                      )}
+                      <span className={a.processing_status === 'not_attempted' ? 'text-amber-700' : ''}>
+                        {String(a.processing_status)}
+                      </span>
+                      <span>{a.created_at ? fmtDate(String(a.created_at), isAr) : '—'}</span>
+                      <ChevronDown className={`h-4 w-4 text-charcoal/30 transition-transform ${expanded ? 'rotate-180' : ''}`} />
                     </span>
-                  </span>
-                  <span className="flex shrink-0 items-center gap-3 text-[11.5px] text-charcoal/50">
-                    {!a.file_id && (
-                      <span className="text-amber-700">{isAr ? 'بلا ملف' : 'no file'}</span>
-                    )}
-                    <span className={a.processing_status === 'not_attempted' ? 'text-amber-700' : ''}>
-                      {String(a.processing_status)}
-                    </span>
-                    <span>{a.created_at ? fmtDate(String(a.created_at), isAr) : '—'}</span>
-                  </span>
+                  </div>
+                  {expanded && (
+                    <div className="mt-2.5 rounded-xl border border-sand/50 bg-cream-light/60 p-3">
+                      <AssetDetail asset={asset} isAr={isAr} onClose={() => setOpen(null)} />
+                    </div>
+                  )}
                 </li>
               );
             })}

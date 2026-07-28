@@ -26,6 +26,7 @@ import { useAppStore } from '@/stores/appStore';
 import { Section, Stat, EmptyHint, Spinner, fmtDate }
   from '@/pages/MarketingIntelligence/components/shared';
 import { lbl } from '@/lib/marketingMgmt/labels';
+import { AssetThumb, AssetLightbox, type AssetRow } from '../AssetPreview';
 import {
   fetchContentBoard, fetchContentDetail, saveBrief, saveDeliverable,
   fetchSocialAccounts, type SocialAccount,
@@ -1644,6 +1645,9 @@ function ProductionTab({ d, isAr, deliverable, setSel, onError, onChanged }: {
 }) {
   const users = useAppStore((s) => s.users);
   const [busy, setBusy] = useState<string | null>(null);
+  /** Opened over the page rather than inline: production is a working list and
+   *  expanding a video in the middle of it pushes the tasks off screen. */
+  const [preview, setPreview] = useState<AssetRow | null>(null);
   if (!deliverable) return <NoDeliverable isAr={isAr} />;
 
   const isVideo = ['reel', 'short_video', 'long_form_video', 'story', 'paid_video_ad']
@@ -1661,6 +1665,7 @@ function ProductionTab({ d, isAr, deliverable, setSel, onError, onChanged }: {
 
   return (
     <div className="space-y-3">
+      {preview && <AssetLightbox asset={preview} isAr={isAr} onClose={() => setPreview(null)} />}
       <DeliverablePicker d={d} sel={deliverable.id} setSel={setSel} isAr={isAr} />
 
       <Section title={isAr ? 'المهام' : 'Tasks'}
@@ -1752,14 +1757,37 @@ function ProductionTab({ d, isAr, deliverable, setSel, onError, onChanged }: {
           <EmptyHint>{isAr ? 'لا مواد مرتبطة بهذا المخرَج' : 'No assets linked to this deliverable'}</EmptyHint>
         ) : (
           <ul className="space-y-1.5">
-            {assets.map((a) => (
-              <li key={`${a.asset_id}-${a.target_id}`}
-                className="flex items-center justify-between gap-2 rounded-lg border border-sand/50 bg-white px-2.5 py-1.5">
-                <span className="min-w-0 truncate text-[12px] text-charcoal">
-                  {String((a.mkt_raw_assets as { asset_name?: string } | null)?.asset_name ?? a.asset_id)}
-                </span>
-                <span className="shrink-0 text-[10.5px] text-charcoal/50">{a.role ?? '—'}</span>
-              </li>))}
+            {assets.map((a) => {
+              // The joined row IS the asset; without it there is a link to
+              // something this user cannot see, which is worth saying.
+              const row = (a.mkt_raw_assets ?? null) as AssetRow | null;
+              const key = `${a.asset_id}-${a.target_id}`;
+              if (!row) {
+                return (
+                  <li key={key} className="rounded-lg border border-dashed border-sand/60 bg-cream-light px-2.5 py-1.5 text-[11.5px] text-charcoal/50">
+                    {isAr ? 'مادة مرتبطة لا يمكنك الاطلاع عليها' : 'A linked asset you cannot view'}
+                  </li>
+                );
+              }
+              return (
+                <li key={key} className="rounded-lg border border-sand/50 bg-white px-2.5 py-2">
+                  <div className="flex items-center gap-2.5">
+                    <AssetThumb asset={row} isAr={isAr} onClick={() => setPreview(row)} />
+                    <button type="button" onClick={() => setPreview(row)} className="min-w-0 flex-1 text-start">
+                      <span className="block truncate text-[12px] text-charcoal">
+                        {row.asset_name ?? a.asset_id}
+                      </span>
+                      <span className="block truncate text-[10.5px] text-charcoal/45">
+                        {row.mime_type ?? '—'}
+                        {row.duration_ms ? ` · ${Math.round(row.duration_ms / 1000)}s` : ''}
+                        {row.width && row.height ? ` · ${row.width}×${row.height}` : ''}
+                      </span>
+                    </button>
+                    <span className="shrink-0 text-[10.5px] text-charcoal/50">{a.role ?? '—'}</span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Section>
