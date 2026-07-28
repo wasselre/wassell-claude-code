@@ -301,13 +301,13 @@ interface Body {
   change_summary?: string;
   file_id?: string;
   // content operations: brief -> deliverable -> artifact -> publication -> result
+  // asset_id, target_type and target_id are NOT redeclared here — they already
+  // exist under the approvals and assets groups below, with the same type, and
+  // an interface cannot declare a member twice.
   deliverable_id?: string;
   artifact_type?: string;
-  asset_id?: string;
   replace?: boolean;
   review_comment?: string;
-  target_type?: string;
-  target_id?: string;
   // bulk operations
   ids?: unknown[];
   start_at?: string;
@@ -1728,13 +1728,17 @@ export default async function handler(req: Request): Promise<Response> {
         // Computed state per item. Sequential-safe: these are cheap STABLE
         // reads, and doing them in the database keeps "next action" identical
         // to what the detail page will show.
-        const items = data ?? [];
-        const states = await Promise.all(items.map((it: { id: string }) =>
+        // The embed string is too complex for PostgREST's generated types to
+        // resolve, so `data` widens to GenericStringError[]. Naming the shape we
+        // actually selected is what lets the two maps below read `.id`.
+        // Via unknown: GenericStringError and the real row shape do not overlap,
+        // so a direct assertion is rejected. The runtime value is the selected
+        // row — the error branch was already returned by rlsAware above.
+        const items = (data ?? []) as unknown as Array<Record<string, unknown> & { id: string }>;
+        const states = await Promise.all(items.map((it) =>
           sb.rpc('mkt_content_state', { p_item_id: it.id })));
         return jsonOk({
-          items: items.map((it: Record<string, unknown>, i: number) => ({
-            ...it, state: states[i]?.data ?? null,
-          })),
+          items: items.map((it, i) => ({ ...it, state: states[i]?.data ?? null })),
         });
       }
 
