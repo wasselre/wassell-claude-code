@@ -623,3 +623,96 @@ had three type errors, one of them real — `Body.decision` omitted `'pending'`,
 that leaves `decided_at` null look unreachable even though `mkt_approvals` explicitly allows that
 value. Fixed there, but **48 errors remain across the other 25 files in `api/`**, so wiring the
 directory into CI is its own piece of work.
+
+---
+
+## Part 15 — Content operations: the deliverable layer
+
+**Landed 2026-08-27.** Migrations `2026-08-27_01`…`_04`; tests
+`supabase/tests/mkt_content_ops_test.sql` (21 assertions, verified against production inside a
+rolled-back transaction).
+
+### What was wrong
+
+`mkt_content_items` was three things at once — the strategic idea, the platform output and the
+publication. That is why it carried ONE `language`, ONE `caption`, ONE `cta_destination`, ONE
+`planned_publish_at`, and platforms as a `mkt_content_platforms` multi-select. "The same reel for
+Instagram and TikTok" was a single row, so the two could not have different aspect ratios, captions,
+owners or due dates, and could not be scheduled apart. `mkt_video_scenes` hung off
+`content_item_id`, so they could not even differ in their scenes.
+
+Two other things were decorative rather than real:
+
+* **The fixed twelve tasks.** Verified in production: both existing content items carried
+  `write_brief → … → record_performance` in the same order whether or not any of it applied.
+* **The writing surface** — one dropdown over one universal textarea, including for design files.
+
+### The shape now
+
+```
+brief → deliverables → artifacts (versioned) → publications → results
+```
+
+`mkt_content_items` becomes the BRIEF and gains its strategic fields (`strategy_version_id`,
+`scope_kind`, `audience_insight`, `core_promise`, `evidence`, `desired_action`, `mandatory_info`,
+`prohibited_claims`, `always_on_reason`, reuse lineage, the four stage clocks). Every legacy column
+stays; nothing was dropped.
+
+`mkt_content_deliverables` is one row per platform × account × format × language, carrying the
+fields that differ per output. `platform` is **nullable on purpose**: legacy content has none
+(`mkt_content_platforms` is empty), and a backfill that wrote 'instagram' would be inventing a fact.
+Such rows are flagged `needs_classification` and refused by the scheduling gate.
+
+`mkt_content_versions` **became** the artifact-version table rather than gaining a twin — it already
+had `version_number` / `version_type` / `payload` / `approval_state` / `is_locked` / `superseded_by`.
+Its closed 9-value CHECK was replaced by an FK to `mkt_artifact_types`, so artifact types are DATA:
+adding "subtitle file" is an INSERT. Each type carries `editor_kind`, which is what stops a design
+file being rendered behind a textarea.
+
+`mkt_workflow_templates` + `mkt_workflow_steps` replace the fixed twelve. A video gets 10 steps, a
+carousel 8, a static post 6, a text post 5, and a raw asset 4 **with no publishing step at all**.
+
+### Rules the database enforces
+
+1. **An approved artifact is immutable.** Editing one raises; a change is a new version. The API has
+   no update path for artifacts at all, and `approval_state` is absent from its allow-list so a
+   caller cannot approve their own draft in a patch.
+2. **Approving an upstream artifact marks its dependants stale** rather than letting an approved
+   caption sit against a script that has since been rewritten.
+3. **Scheduling is gated** on approved media, approved copy, a platform, an account and a time —
+   read from the template's `gates_publish` steps, so a text post is never asked for final media.
+   `mkt_deliverable_schedule_blockers()` returns the same list the UI shows.
+4. **A brief cannot leave `idea`** without scope, owner, an approved strategy version, a plan, a goal
+   or a stated always-on reason, an audience, a message, a desired action, and at least one
+   deliverable — `mkt_content_missing_requirements()`, same function, both places.
+5. **`next_action` and blockers are computed** (`mkt_content_state()`), not typed into a column.
+6. **Approving final media registers it in the library** automatically, with a link back to the
+   deliverable.
+
+### Backfill
+
+Non-destructive and self-validating: snapshots four tables, gives each brief one deliverable,
+re-parents its tasks and scenes, marks the legacy tasks `template_key='legacy_fixed_12'`, and chains
+the 24 rows that sat at `status='blocked'` with neither a reason nor a dependency to a real one. It
+asserts afterwards that no item lacks a deliverable, no brief got two, no task or scene was orphaned
+and the task count did not fall. C-00008 and C-00011 both survive with their 12 tasks and their
+scenes.
+
+### What the test suite caught
+
+Three defects that would each have failed for a user rather than a test: `ON CONFLICT` could not
+infer the PARTIAL unique index on `(deliverable_id, step_key)` so task generation raised 42P10 every
+time; the auto-library trigger wrote `asset_type='video'` and `usage_status='used'`, neither of which
+exists in `mkt_raw_assets`' CHECK lists; and `mkt_asset_links.target_type` had no `'deliverable'`
+value, making the core library flow impossible.
+
+### Real limitations
+
+* **No platform publishing API is wired.** Publishing is a manual flow that records the URL
+  afterwards; `publish_method` is `manual`. Nothing here pretends an integration succeeded.
+* **No metrics ingestion.** Results are entered by hand and compared with the deliverable's own KPI
+  target. An unmeasured deliverable renders as unmeasured, never 0%.
+* `كاتب المحتوى` (`/marketing/posts`) remains a separate bulk caption generator persisting to a
+  `posts_batches` model in `records`. It is a generator, not a lifecycle; folding its output into a
+  brief is not done.
+* The two legacy briefs need a human to say which platform they were for.
