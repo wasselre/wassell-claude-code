@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { FileText, Image as ImageIcon, Mic, Video, MapPin, Sticker, Download, Loader2, AlertCircle, MessageSquare, ListChecks, User } from 'lucide-react';
 import AckIndicator from './AckIndicator';
 import { fetchFileBlob } from '@/lib/haberchat/client';
+import { isLegacyHaberchatRef } from '@/lib/chat/legacyMedia';
 import { deviceIdString } from '@/lib/haberchat/normalize';
 import { useAppStore } from '@/stores/appStore';
 import type { ChatMessage } from '@/types';
@@ -177,6 +178,7 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
       <div className="-mx-1">
         {status === 'loading' && <MediaLoadingSkeleton />}
         {status === 'error' && <MediaErrorRow message={error} isAr={isAr} />}
+        {status === 'unavailable' && <MediaUnavailableRow isAr={isAr} />}
         {status === 'ready' && url && (
           <a href={url} target="_blank" rel="noreferrer">
             <img
@@ -200,6 +202,7 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
       <div className="-mx-1">
         {status === 'loading' && <MediaLoadingSkeleton />}
         {status === 'error' && <MediaErrorRow message={error} isAr={isAr} />}
+        {status === 'unavailable' && <MediaUnavailableRow isAr={isAr} />}
         {status === 'ready' && url && (
           <video src={url} controls className="rounded-xl max-w-full max-h-80 bg-black" />
         )}
@@ -216,6 +219,7 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
       <div>
         {status === 'loading' && <MediaLoadingSkeleton compact />}
         {status === 'error' && <MediaErrorRow message={error} isAr={isAr} />}
+        {status === 'unavailable' && <MediaUnavailableRow isAr={isAr} />}
         {status === 'ready' && url && (
           // Definite width, NOT w-full: the bubble sizes to its content, so a
           // percentage width on the only child is circular and collapsed the
@@ -268,7 +272,7 @@ function MediaRenderer({ message, isAr }: { message: ChatMessage; isAr: boolean 
 
 // ─── Media fetching hook ────────────────────────────────────────────
 
-type MediaState = { url: string | null; status: 'loading' | 'ready' | 'error'; error: string | null };
+type MediaState = { url: string | null; status: 'loading' | 'ready' | 'error' | 'unavailable'; error: string | null };
 
 /**
  * Fetch a media blob via the authenticated proxy and expose it as a
@@ -285,6 +289,12 @@ function useMediaBlob(fileId: string | null, deviceId: string | undefined): Medi
   const initial = useMemo<MediaState>(() => {
     if (!fileId) {
       return { url: null, status: 'error', error: 'missing file id' };
+    }
+    // A Haberchat-era attachment is gone for good (see legacyMedia.ts). Say so
+    // straight away rather than spending a request per bubble to be told 403 —
+    // one thread alone holds 34 of these.
+    if (isLegacyHaberchatRef(fileId)) {
+      return { url: null, status: 'unavailable', error: null };
     }
     const cached = cacheKey ? mediaCache.get(cacheKey) : null;
     if (cached) return { url: cached, status: 'ready', error: null };
@@ -336,6 +346,30 @@ function MediaLoadingSkeleton({ compact = false }: { compact?: boolean }) {
       }`}
     >
       <Loader2 size={20} className="animate-spin text-charcoal/40" />
+    </div>
+  );
+}
+
+/**
+ * A Haberchat-era attachment. The provider's account is gone (its file endpoint
+ * 403s on every id), so these bytes are not coming back — this is a statement
+ * of fact, not a failure to retry. Deliberately muted rather than red: nothing
+ * is broken and there is nothing for the rep to do.
+ */
+function MediaUnavailableRow({ isAr }: { isAr: boolean }) {
+  return (
+    <div className="rounded-xl bg-charcoal/5 border border-sand/50 px-3 py-2 text-xs text-charcoal/60 flex items-center gap-2">
+      <FileText size={14} />
+      <div className="flex-1">
+        <div className="font-medium">
+          {isAr ? 'مرفق قديم غير متاح' : 'Older attachment unavailable'}
+        </div>
+        <div className="text-[11px] text-charcoal/45 mt-0.5">
+          {isAr
+            ? 'أُرسل عبر مزوّد الواتساب السابق ولم يعد محفوظًا لدينا'
+            : 'Sent through the previous WhatsApp provider and no longer stored'}
+        </div>
+      </div>
     </div>
   );
 }

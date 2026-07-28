@@ -255,8 +255,24 @@ export async function uploadFile(
   });
 }
 
+/**
+ * A bare 24-char hex id is a Haberchat ObjectId — an attachment from the
+ * retired provider. Its account is gone (the file endpoint answers 403 "The API
+ * token provided is invalid" for every id, checked 2026-07-28), so there is
+ * nothing to fetch.
+ *
+ * This has to be decided on the REF, not the device. 565 such rows sit on chats
+ * whose `device_id` was re-pointed to the live WAHA session on 2026-07-27, so
+ * the provider lookup sends them to WAHA, which answers `404 ENOENT` — a
+ * confusing error about the wrong system for a file neither system has.
+ */
+const HABERCHAT_OBJECT_ID = /^[0-9a-f]{24}$/i;
+
 export async function downloadFile(fileId: string, deviceId?: string): Promise<Response> {
   return dispatch(async () => {
+    if (HABERCHAT_OBJECT_ID.test(fileId)) {
+      throw new HaberchatError(410, 'legacy_media_unavailable: attachment predates the WhatsApp provider change and is no longer stored');
+    }
     // WAHA media refs carry their own prefix (`wt_`/`wf_`), so route on the ref
     // shape first, then fall back to the device's provider.
     if (fileId.startsWith('wt_') || fileId.startsWith('wf_')) return waha.downloadFile(fileId, deviceId);
