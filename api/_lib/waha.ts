@@ -548,9 +548,16 @@ export async function sendMessage(input: {
     payload = { session, chatId, text: input.body, reply_to };
   }
 
-  const raw = await request<{ id?: string; _data?: unknown }>(path, { method: 'POST', body: JSON.stringify(payload) });
-  const wid = raw.id ?? '';
-  if (!wid) throw new WahaError(502, `WAHA ${path} returned no id`);
+  const raw = await request<WahaSendResponse>(path, { method: 'POST', body: JSON.stringify(payload) });
+  const wid = sentMessageWid(raw, chatId);
+
+  // A 2xx from WAHA means WhatsApp ACCEPTED the message. If we cannot read an id
+  // out of the response that is our parsing problem, not a delivery failure, and
+  // it must never be reported as one — a false failure makes the rep send again
+  // and the customer receives the message twice (live 2026-07-28).
+  if (!wid) {
+    console.error(`[waha] ${path} accepted the message but returned no recognisable id:`, JSON.stringify(raw).slice(0, 300));
+  }
   return { wid, status: 'sent', reference: input.reference ?? null };
 }
 
@@ -569,6 +576,42 @@ export async function sendMessage(input: {
  * canonicalized is REJECTED rather than guessed at: sending to the wrong person
  * is worse than not sending.
  */
+
+/**
+ * The send response, across engines.
+ *
+ * NOWEB answers with Baileys' own shape — the id lives at `key.id` and is just
+ * the hash — while GOWS answered with a top-level `id` already serialized. The
+ * Doha gateway runs NOWEB, so after the 2026-07-24 cutover `raw.id` was
+ * undefined on every single send and the adapter threw "returned no id".
+ *
+ * WhatsApp had accepted the message every time. The rep saw a failure, sent
+ * again, and the customer received it twice.
+ */
+interface WahaSendResponse {
+  id?: string | { _serialized?: string; id?: string };
+  key?: { id?: string; remoteJid?: string; fromMe?: boolean };
+  _data?: unknown;
+}
+
+/**
+ * The message id in the SAME serialized form the webhook echo uses
+ * (`<fromMe>_<chatId>_<HASH>`), so the send-time row and the echo collapse onto
+ * one message instead of becoming two bubbles.
+ */
+function sentMessageWid(raw: WahaSendResponse, chatId: string): string {
+  // GOWS: already serialized.
+  if (typeof raw.id === 'string' && raw.id) return raw.id;
+  if (raw.id && typeof raw.id === 'object' && raw.id._serialized) return raw.id._serialized;
+
+  // NOWEB: a bare hash under `key`, plus the pieces to serialize it.
+  const hash = raw.key?.id ?? (raw.id && typeof raw.id === 'object' ? raw.id.id : undefined);
+  if (!hash) return '';
+  const remote = (raw.key?.remoteJid ?? chatId).replace('@s.whatsapp.net', '@c.us');
+  const fromMe = raw.key?.fromMe !== false;
+  return `${fromMe}_${remote}_${hash}`;
+}
+
 function toChatId(target: string, isGroup: boolean, isChannel: boolean): string {
   if (target.includes('@')) return target; // already a wid
   const raw = target.replace(/[^\d]/g, '');

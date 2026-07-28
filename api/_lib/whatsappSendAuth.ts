@@ -273,7 +273,12 @@ export async function recordOutboundMessage(args: {
 }): Promise<void> {
   const supa = getServiceSupabase();
   const digits = args.chatWid.split('@')[0] ?? '';
-  const id = args.messageWid || `failed:${args.reference}`;
+  // An ACCEPTED send with no id is still an accepted send. WhatsApp took the
+  // message; we merely could not read its id back. Recording that as `failed:`
+  // would put a red bubble in front of the rep and invite the resend that
+  // delivered the message twice on 2026-07-28.
+  const id = args.messageWid
+    || (args.outcome === 'accepted' ? `sent:${args.reference}` : `failed:${args.reference}`);
   const kind = args.mediaFileId ? 'document' : 'text';
 
   const { error } = await supa.from('chat_messages').upsert({
