@@ -91,9 +91,11 @@ export default function MyTasksPage() {
   const tasksModel = models.find((m) => m.name === 'tasks');
   const canCreateTask = usePermission(tasksModel?.id ?? '', 'create');
 
+  // Whole records (not just `data`) — the hot-lead rule needs the client's
+  // own `created_at` to tell a brand-new lead from a stale 'جديد' backlog one.
   const clientsById = useMemo(() => {
     const clients = clientsModel ? records[clientsModel.id] ?? [] : [];
-    return new Map(clients.map((c) => [c.id, c.data as Record<string, unknown>]));
+    return new Map(clients.map((c) => [c.id, c]));
   }, [clientsModel, records]);
 
   // Actions = actionable tasks (today/late + replied promotions), minus the
@@ -341,7 +343,7 @@ export default function MyTasksPage() {
             {rows.map((r) => {
               const d = r.data as Record<string, unknown>;
               const clientId = firstId(d.client_id);
-              const client = clientId ? clientsById.get(clientId) : undefined;
+              const client = clientId ? clientsById.get(clientId)?.data as Record<string, unknown> | undefined : undefined;
               const name = (typeof client?.client_name === 'string' && client.client_name)
                 || (typeof d.client_name === 'string' && d.client_name) || (isAr ? 'عميل' : 'Client');
               const phone = (typeof client?.phone_number === 'string' && client.phone_number)

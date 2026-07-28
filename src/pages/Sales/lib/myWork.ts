@@ -97,6 +97,8 @@ export interface FollowupTask {
   createdAtISO: string | null;
   /** Client's current lifecycle stage (from the live client record). */
   clientStage: string | null;
+  /** When the CLIENT RECORD itself was created — gates the hot-lead SLA. */
+  clientCreatedAtISO: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +107,7 @@ export interface FollowupTask {
 
 /**
  * Priority tier of a task within the Actions tab. Lower = hotter.
- *  1 hot     — NEW lead's first booking call (client still جديد): call <5 min.
+ *  1 hot     — brand-new lead's booking call (client record <1h old): call <5 min.
  *  2 replied — customer replied / messaged: ball is in OUR court right now.
  *  3 overdue — scheduled day strictly before today.
  *  4 today   — due today.
@@ -120,6 +122,16 @@ export const HOT_LEAD_SLA_MS = 5 * 60 * 1000;
 export function isHotLead(t: FollowupTask, now: number): boolean {
   if (t.typeKey !== 'appointment_booking_call') return false;
   if (t.clientStage && t.clientStage !== 'جديد') return false;
+  // The CLIENT must actually be new — `client_stage === 'جديد'` alone is a bad
+  // proxy for it. A lead imported months ago and never called still reads
+  // 'جديد', so every retry booking call on the backlog lit up
+  // "عميل جديد — اتصل الآن" with a 5-minute speed-to-lead countdown on a
+  // three-month-old lead (bug 2026-07-28: 113 of the 114 clients then sitting
+  // at 'جديد' were older than a week). Fail CLOSED when the client's creation
+  // date is missing/unparseable: a missing badge just leaves a normal today
+  // task, a false one fakes an emergency.
+  const clientCreated = parseMs(t.clientCreatedAtISO);
+  if (clientCreated == null || now - clientCreated > HOT_LEAD_WINDOW_MS) return false;
   const created = parseMs(t.createdAtISO);
   if (created == null) return false;
   return now - created <= HOT_LEAD_WINDOW_MS;
@@ -170,7 +182,7 @@ function str(v: unknown): string | null {
  */
 export function buildFollowupTasks(
   followups: AppRecord[],
-  clientsById: Map<string, Record<string, unknown>>,
+  clientsById: Map<string, AppRecord>,
   now: number,
 ): FollowupTask[] {
   const out: FollowupTask[] = [];
@@ -193,12 +205,13 @@ export function buildFollowupTasks(
     if ((repliedWhatsapp || earlyMessaged) && bucket !== 'late') bucket = 'today';
     const clientId = firstId(d.client_id);
     const client = clientId ? clientsById.get(clientId) : undefined;
+    const cd = client?.data as Record<string, unknown> | undefined;
     const typeKey = readFollowupType(d);
     out.push({
       followupId: r.id,
       clientId,
-      clientName: str(client?.client_name) ?? str(d.client_name) ?? '',
-      phone: str(client?.phone_number) ?? str(d.client_phone) ?? '',
+      clientName: str(cd?.client_name) ?? str(d.client_name) ?? '',
+      phone: str(cd?.phone_number) ?? str(d.client_phone) ?? '',
       typeKey,
       channel: followupChannel(typeKey),
       scheduledISO: str(d.scheduled_datetime),
@@ -210,7 +223,8 @@ export function buildFollowupTasks(
       salesRep: firstId(d.sales_rep),
       bucket,
       createdAtISO: r.created_at ?? null,
-      clientStage: str(client?.client_stage),
+      clientStage: str(cd?.client_stage),
+      clientCreatedAtISO: client?.created_at ?? null,
     });
   }
   return out;
@@ -223,7 +237,7 @@ export function buildFollowupTasks(
  */
 export function buildWaitingTasks(
   followups: AppRecord[],
-  clientsById: Map<string, Record<string, unknown>>,
+  clientsById: Map<string, AppRecord>,
   now: number,
 ): FollowupTask[] {
   const out: FollowupTask[] = [];
@@ -234,12 +248,13 @@ export function buildWaitingTasks(
     if (str(d.whatsapp_state) !== 'message_sent_waiting_response') continue;
     const clientId = firstId(d.client_id);
     const client = clientId ? clientsById.get(clientId) : undefined;
+    const cd = client?.data as Record<string, unknown> | undefined;
     const typeKey = readFollowupType(d);
     out.push({
       followupId: r.id,
       clientId,
-      clientName: str(client?.client_name) ?? str(d.client_name) ?? '',
-      phone: str(client?.phone_number) ?? str(d.client_phone) ?? '',
+      clientName: str(cd?.client_name) ?? str(d.client_name) ?? '',
+      phone: str(cd?.phone_number) ?? str(d.client_phone) ?? '',
       typeKey,
       channel: followupChannel(typeKey),
       scheduledISO: str(d.scheduled_datetime),
@@ -251,7 +266,8 @@ export function buildWaitingTasks(
       salesRep: firstId(d.sales_rep),
       bucket: followupDayBucket(str(d.scheduled_datetime), now),
       createdAtISO: r.created_at ?? null,
-      clientStage: str(client?.client_stage),
+      clientStage: str(cd?.client_stage),
+      clientCreatedAtISO: client?.created_at ?? null,
     });
   }
   return out.sort((a, b) => {

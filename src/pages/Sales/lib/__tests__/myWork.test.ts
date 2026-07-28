@@ -6,6 +6,9 @@ import {
   isDoneFollowup,
   buildFollowupTasks,
   indexClientFollowups,
+  isHotLead,
+  priorityTier,
+  type FollowupTask,
 } from '../myWork';
 
 // Local noon on a fixed day — using the local Date constructor (no trailing Z)
@@ -74,9 +77,13 @@ describe('isDoneFollowup', () => {
   });
 });
 
+function client(data: Record<string, unknown>, createdAt: string, id = 'c1'): AppRecord {
+  return { id, model_id: 'clients', data, created_by_user_id: 'u', created_at: createdAt, updated_at: createdAt, version: 1 };
+}
+
 describe('buildFollowupTasks', () => {
-  const clientsById = new Map<string, Record<string, unknown>>([
-    ['c1', { client_name: 'Salem', phone_number: '+966500000001' }],
+  const clientsById = new Map<string, AppRecord>([
+    ['c1', client({ client_name: 'Salem', phone_number: '+966500000001' }, YESTERDAY)],
   ]);
 
   it('includes today + late open follow-ups and drops future + done', () => {
@@ -150,6 +157,52 @@ describe('buildFollowupTasks', () => {
     expect(t.phone).toBe('+966500000001');
     expect(t.channel).toBe('whatsapp');
     expect(t.bucket).toBe('late');
+  });
+
+  it('carries the CLIENT record creation date onto the task', () => {
+    const followups = [
+      followup({ client_id: 'c1', scheduled_datetime: EARLIER_TODAY, followup_status: 'open', followup_type: 'appointment_booking_call' }, 'a'),
+    ];
+    expect(buildFollowupTasks(followups, clientsById, NOW)[0].clientCreatedAtISO).toBe(YESTERDAY);
+  });
+});
+
+describe('isHotLead', () => {
+  const FRESH = new Date(NOW - 2 * 60 * 1000).toISOString();   // client made 2 min ago
+  const OLD = new Date(NOW - 90 * 24 * 3600 * 1000).toISOString(); // 3-month-old lead
+
+  const task = (over: Partial<FollowupTask> = {}): FollowupTask => ({
+    followupId: 'f', clientId: 'c1', clientName: 'Salem', phone: '+966500000001',
+    typeKey: 'appointment_booking_call', channel: 'call', scheduledISO: EARLIER_TODAY,
+    followupStatus: 'open', whatsappState: null, clientMessagedAt: null, result: null,
+    priority: null, salesRep: 'u', bucket: 'today',
+    createdAtISO: FRESH, clientStage: 'جديد', clientCreatedAtISO: FRESH,
+    ...over,
+  });
+
+  it('is hot for a booking call on a lead created minutes ago', () => {
+    expect(isHotLead(task(), NOW)).toBe(true);
+    expect(priorityTier(task(), NOW)).toBe(1);
+  });
+
+  // The 2026-07-28 bug: a lead imported in May, never called, still reads
+  // 'جديد'. Completing its booking call spawns a retry task that is seconds
+  // old — which used to render "عميل جديد — اتصل الآن" + a 5-minute SLA.
+  it('is NOT hot for a months-old lead still parked at جديد', () => {
+    const t = task({ clientCreatedAtISO: OLD });
+    expect(isHotLead(t, NOW)).toBe(false);
+    expect(priorityTier(t, NOW)).toBe(4); // ordinary today task
+  });
+
+  it('fails closed when the client record is missing/unresolved', () => {
+    expect(isHotLead(task({ clientCreatedAtISO: null }), NOW)).toBe(false);
+    expect(isHotLead(task({ clientCreatedAtISO: 'not-a-date' }), NOW)).toBe(false);
+  });
+
+  it('still respects the existing stage + type + task-age gates', () => {
+    expect(isHotLead(task({ clientStage: 'عرض سعر' }), NOW)).toBe(false);
+    expect(isHotLead(task({ typeKey: 'whatsapp_follow_up' }), NOW)).toBe(false);
+    expect(isHotLead(task({ createdAtISO: YESTERDAY }), NOW)).toBe(false);
   });
 });
 
