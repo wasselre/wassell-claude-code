@@ -4,7 +4,7 @@
 #
 
 app = 'wassel-deck-worker'
-primary_region = 'bom'
+primary_region = 'sin'
 
 [build]
 
