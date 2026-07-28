@@ -29,6 +29,8 @@ import { SceneEditor, SlideEditor } from './components/ProductionEditor';
 import { ContentFields, VersionWriter } from './components/ContentEditor';
 import { ContentSummary, ContentResults } from './components/ContentSummary';
 import { StrategyPlanningTab, PortfolioTab, ReviewsTab } from './components/PlanningV2';
+import { CapacityView } from './components/CapacityView';
+import { ContentContextPanel } from './components/ContentContextPanel';
 import { useProjectOptions } from '@/lib/marketingMgmt/projects';
 import { PRIORITY_LABEL, PLATFORM_LABEL, ASSET_TYPE_LABEL, CONTENT_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
 // Generic presentation primitives shared with the intelligence page — importing
@@ -343,8 +345,15 @@ export default function MarketingManagementPage() {
             <CampaignsTab isAr={isAr} onOpenContent={(id) => { setTab('content'); void openItem(id); }} />
           )}
           {tab === 'calendar' && (
-            <CalendarTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
-              onOpenContent={(id) => { setTab('content'); void openItem(id); }} />
+            <div className="space-y-4">
+              {/* Capacity sits above the month grid: the calendar is where slots
+                  are decided, so the arithmetic that constrains them belongs here
+                  rather than inside any one campaign. */}
+              <CapacityView isAr={isAr} onError={(m: string) => addToast(m, 'error')}
+                onToast={(m: string) => addToast(m, 'success')} />
+              <CalendarTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
+                onOpenContent={(id) => { setTab('content'); void openItem(id); }} />
+            </div>
           )}
           {tab === 'strategy' && (
             <StrategyPlanningTab isAr={isAr} onError={(m: string) => addToast(m, 'error')}
@@ -553,7 +562,13 @@ function ContentDetailPanel({
       </div>
 
       {sub === 'overview' && (
-        <ContentFields item={i} assets={detail.assets} isAr={isAr} onSaved={onChanged} onError={onError} />
+        <div className="space-y-3">
+          {/* Strategic context first: it is what the approval gate checks, so
+              seeing it before the creative fields is the difference between
+              filling it in and discovering it as a rejection. */}
+          <ContentContextPanel item={i} isAr={isAr} onSaved={onChanged} onError={onError} />
+          <ContentFields item={i} assets={detail.assets} isAr={isAr} onSaved={onChanged} onError={onError} />
+        </div>
       )}
 
       {sub === 'write' && (

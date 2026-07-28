@@ -29,6 +29,7 @@ import {
   type MktReview, type GoalPacing,
 } from '@/lib/marketingMgmt/v2';
 import { saveCampaign, type Campaign } from '@/lib/marketingMgmt/client';
+import { PaidTreePanel } from './PaidTreePanel';
 
 const FIELD = 'w-full rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] '
   + 'text-charcoal focus:border-copper focus:outline-none';
@@ -503,6 +504,7 @@ export function PortfolioTab({ isAr, onError, onToast }: {
   const [goals, setGoals] = useState<MktGoal[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [openPaid, setOpenPaid] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -625,17 +627,35 @@ export function PortfolioTab({ isAr, onError, onToast }: {
                 ? <EmptyHint>{isAr ? 'لا حملات' : 'No campaigns'}</EmptyHint>
                 : <ul className="divide-y divide-sand/40">
                     {(kind === 'organic' ? organic : kind === 'paid' ? paid : unclassified).map((c) => (
-                      <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
-                        <span className="min-w-0">
-                          <span className="block truncate text-[13px] text-charcoal">{c.code} · {c.name_ar}</span>
-                          <span className="text-[11px] text-charcoal/45">
-                            {c.start_date ? fmtDate(c.start_date, isAr) : '—'} → {c.end_date ? fmtDate(c.end_date, isAr) : '—'}
+                      <li key={c.id} className="py-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="min-w-0">
+                            <span className="block truncate text-[13px] text-charcoal">{c.code} · {c.name_ar}</span>
+                            <span className="text-[11px] text-charcoal/45">
+                              {c.start_date ? fmtDate(c.start_date, isAr) : '—'} → {c.end_date ? fmtDate(c.end_date, isAr) : '—'}
+                            </span>
                           </span>
-                        </span>
-                        {(c as Campaign & { needs_classification?: boolean }).needs_classification && (
-                          <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10.5px] text-amber-800">
-                            {isAr ? 'يحتاج تصنيفاً' : 'needs classification'}
-                          </span>)}
+                          <span className="flex shrink-0 items-center gap-2">
+                            {(c as Campaign & { needs_classification?: boolean }).needs_classification && (
+                              <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10.5px] text-amber-800">
+                                {isAr ? 'يحتاج تصنيفاً' : 'needs classification'}
+                              </span>)}
+                            {/* The ad structure hangs off a PAID campaign only — the
+                                database refuses a platform campaign under an organic
+                                parent, so offering it elsewhere would only produce a
+                                rejection. */}
+                            {kind === 'paid' && (
+                              <button type="button" onClick={() => setOpenPaid(openPaid === c.id ? null : c.id)}
+                                className="text-[11.5px] font-medium text-copper hover:underline">
+                                {openPaid === c.id
+                                  ? (isAr ? 'إخفاء الإعلانات' : 'Hide ads')
+                                  : (isAr ? 'بنية الإعلانات' : 'Ad structure')}
+                              </button>)}
+                          </span>
+                        </div>
+                        {kind === 'paid' && openPaid === c.id && (
+                          <PaidTreePanel campaignId={c.id} isAr={isAr} onError={onError} onToast={onToast} />
+                        )}
                       </li>))}
                   </ul>)}
           </>

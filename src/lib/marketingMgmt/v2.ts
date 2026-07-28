@@ -109,6 +109,11 @@ export interface CapacityStatus {
   campaign_available: number | null; campaign_requested: number;
   over_allocated_by: number | null; is_over_allocated: boolean | null;
   campaign_requests: Array<{
+    /** Added to the RPC on 2026-08-24. The UI needs it to grant a different
+     *  amount without re-deriving the row from its own copy of the allocations —
+     *  which is how the conflict banner and the editable list could end up
+     *  describing different weeks. Optional so an older database still types. */
+    allocation_id?: string;
     campaign_id: string; code: string; name_ar: string;
     requested: number; granted: number | null;
   }>;
