@@ -1613,8 +1613,8 @@ async function marketingPollLoop(): Promise<void> {
         // ("this account is due"); the sweep reacts to STATE ("this post has no
         // media"), so a post can never be stranded by a missed enqueue again.
         const sweep = await sweepContentBacklog(supabase, env.WORKER_ID);
-        if (sweep.media_recover || sweep.visual_ocr || sweep.content_process) {
-          console.log(`[worker] content sweep: media_recover=${sweep.media_recover} visual_ocr=${sweep.visual_ocr} content_process=${sweep.content_process}`);
+        if (sweep.media_recover || sweep.visual_ocr || sweep.content_process || sweep.intelligence) {
+          console.log(`[worker] content sweep: media_recover=${sweep.media_recover} visual_ocr=${sweep.visual_ocr} content_process=${sweep.content_process} intelligence=${sweep.intelligence}`);
         }
         // Scheduler heartbeat — ops monitoring flags it offline if this stops ticking.
         await supabase.rpc('mkt_heartbeat', { p_component: 'scheduler', p_detail: { enqueued: enq ?? 0 } });

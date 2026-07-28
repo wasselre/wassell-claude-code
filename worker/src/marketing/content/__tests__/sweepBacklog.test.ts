@@ -8,7 +8,7 @@ import { sweepContentBacklog } from '../sweepBacklog.js';
 // for that table. Enough to pin the STAGE SELECTION, which is the part that
 // decides whether a post is ever processed at all.
 // ---------------------------------------------------------------------------
-interface Canned { posts?: unknown[]; media?: unknown[]; visual?: unknown[]; inFlight?: unknown[]; ocrInFlight?: unknown[]; jobCount?: number; ocrCount?: number; leaseWon?: boolean }
+interface Canned { posts?: unknown[]; media?: unknown[]; visual?: unknown[]; inFlight?: unknown[]; ocrInFlight?: unknown[]; jobCount?: number; ocrCount?: number; enrichQueued?: number; awaitingOrgs?: unknown[]; leaseWon?: boolean }
 
 /** PostgREST's server-side row cap. The fake enforces it so a `.limit()` that
  *  exceeds it cannot silently pass in tests while truncating in production. */
@@ -17,6 +17,7 @@ const DB_MAX_ROWS = 1000;
 function fakeSb(c: Canned) {
   const enqueued: Array<Record<string, unknown>> = [];
   const ocrInserts: Array<Record<string, unknown>> = [];
+  const intelligenceCalls: Array<Record<string, unknown>> = [];
 
   const builder = (table: string, op: 'select' | 'update' | 'insert' | 'upsert') => {
     const b: Record<string, unknown> = {};
@@ -46,10 +47,16 @@ function fakeSb(c: Canned) {
     };
     b.then = (resolve: (v: unknown) => unknown) => {
       if (table === 'mkt_settings') return resolve({ data: c.leaseWon === false ? [] : [{ key: 'x' }], error: null });
-      if (table === 'mkt_content_posts') return resolve({ data: page(c.posts ?? []), error: null });
+      if (table === 'mkt_content_posts') {
+        const awaiting = filters.some((f) => f.col === 'processing_status' && f.vals.includes('awaiting_intelligence'));
+        return resolve({ data: page(awaiting ? (c.awaitingOrgs ?? []) : (c.posts ?? [])), error: null });
+      }
       if (table === 'mkt_content_media') return resolve({ data: page(c.media ?? []), error: null });
       if (table === 'mkt_visual_text') return resolve({ data: page(c.visual ?? []), error: null });
-      if (table === 'claude_jobs') return resolve({ data: page(c.ocrInFlight ?? []), error: null, count: c.ocrCount ?? 0 });
+      if (table === 'claude_jobs') {
+        const isEnrich = filters.some((f) => f.col === 'kind' && f.vals.includes('mkt_content_enrichment'));
+        return resolve({ data: page(c.ocrInFlight ?? []), error: null, count: isEnrich ? (c.enrichQueued ?? 0) : (c.ocrCount ?? 0) });
+      }
       if (table === 'mkt_collection_jobs') {
         // head+count call vs the params scan — the params scan asks for data.
         return resolve({ data: page(c.inFlight ?? []), error: null, count: c.jobCount ?? 0 });
@@ -71,11 +78,17 @@ function fakeSb(c: Canned) {
     },
     rpc: (fn: string, params: Record<string, unknown>) => {
       if (fn === 'mkt_job_enqueue') enqueued.push(params);
+      if (fn === 'mkt_enqueue_intelligence') {
+        intelligenceCalls.push(params);
+        // The real RPC returns how many jobs it created; one per call is enough
+        // to prove the budget is decremented and the loop terminates.
+        return Promise.resolve({ data: 1, error: null });
+      }
       return Promise.resolve({ data: null, error: null });
     },
   } as unknown as SupabaseClient;
 
-  return { sb, enqueued, ocrInserts };
+  return { sb, enqueued, ocrInserts, intelligenceCalls };
 }
 
 const post = (id: string) => ({ id, post_type: 'image' });
@@ -196,6 +209,32 @@ describe('sweepContentBacklog', () => {
     const stats = await sweepContentBacklog(sb, 'w1');
     expect(stats.visual_ocr).toBe(0);
     expect(ocrInserts).toHaveLength(0);
+  });
+
+  it('enqueues intelligence for every org holding unread posts — images and videos alike', async () => {
+    // The RPC does not filter on post_type and the evidence package carries
+    // caption + transcript + frame OCR, so a reel is read from what was said in
+    // it. Videos were never excluded — they were simply never enqueued, because
+    // the only caller was a manual admin button nobody pressed.
+    const { sb, intelligenceCalls } = fakeSb({
+      awaitingOrgs: [{ organization_id: 'org-a' }, { organization_id: 'org-a' }, { organization_id: 'org-b' }],
+    });
+    const stats = await sweepContentBacklog(sb, 'w1');
+    expect(intelligenceCalls.map((c) => c.p_org)).toEqual(['org-a', 'org-b']);
+    expect(stats.intelligence).toBe(2);
+  });
+
+  it('stops enqueueing intelligence once the lane is stocked', async () => {
+    // Stage 4 is the only stage that spends model capacity per post, on a
+    // singleton lane. A deep queue would commit hours of that capacity before
+    // anyone could look at the output.
+    const { sb, intelligenceCalls } = fakeSb({
+      awaitingOrgs: [{ organization_id: 'org-a' }],
+      enrichQueued: 30,
+    });
+    const stats = await sweepContentBacklog(sb, 'w1');
+    expect(intelligenceCalls).toHaveLength(0);
+    expect(stats.intelligence).toBe(0);
   });
 
   it('does nothing when another machine holds the sweep lease', async () => {

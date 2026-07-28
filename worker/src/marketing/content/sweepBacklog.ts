@@ -15,7 +15,7 @@
 // in?) rather than at events (did someone remember to enqueue?), so a missed
 // enqueue self-heals on the next tick instead of stranding a post forever.
 //
-// The three stages mirror the real dependency order, and each is separately
+// The four stages mirror the real dependency order, and each is separately
 // resumable because every underlying write is idempotent:
 //
 //   1. media    — 'collected' post with no stored media  → content_process(media_only)
@@ -23,14 +23,23 @@
 //   2. ocr      — stored images with no visual text      → claude_jobs(mkt_visual_ocr)
 //                 Runs on the OCR lane: no incremental per-token API charge,
 //                 included within the existing Claude subscription.
-//   3. enrich   — media + visual text present            → content_process(full)
+//   3. process  — media + visual text present            → content_process(full)
 //                 Its vision step finds the existing visual text and skips the
 //                 paid API call entirely. Ordering the stages this way is what
 //                 keeps the backlog off metered vision.
+//   4. intelligence — 'awaiting_intelligence'            → claude_jobs(mkt_content_enrichment)
+//                 The read that decides WHICH PROJECT a post is about. Evidence
+//                 is complete by this point; without this stage the facts exist
+//                 and attribute to nothing. Covers images AND videos — the
+//                 evidence package carries caption + transcript + frame OCR.
+//
+// Stages 1-3 were wired here on 2026-07-28. Stage 4's RPC had existed since
+// 2026-07-28 with a single caller: a manual admin button. It therefore ran when
+// someone remembered, and nobody did — 1,732 posts waited with zero jobs queued.
 // ============================================================================
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
+export interface SweepStats { media_recover: number; visual_ocr: number; content_process: number; intelligence: number; skipped_queue_full: boolean; skipped_not_leader: boolean }
 
 /** How long one machine owns the sweep. Must exceed the maintenance interval so
  *  exactly one machine sweeps per tick, and stay short enough that a machine
@@ -97,6 +106,13 @@ const OCR_POSTS_PER_BATCH = 15;
 /** Stop enqueueing entirely above this backlog so the sweep can't outrun the workers. */
 const QUEUE_HIGH_WATER = 900;
 const OCR_QUEUE_HIGH_WATER = 150;
+/** Stage 4 ceilings. Deliberately the tightest in the file: this is the ONLY
+ *  stage that spends model capacity per post, on a singleton lane shared with
+ *  the owner's other work. Enough to keep the lane fed, never enough to build a
+ *  queue that commits hours of capacity before anyone can look at the output. */
+const MAX_ENRICH_JOBS_PER_TICK = 10;
+const ENRICH_QUEUE_HIGH_WATER = 30;
+const ENRICH_POSTS_PER_BATCH = 15;
 /** Minimum gap before re-attempting a post whose media download already failed.
  *  Long enough that a permanently-dead URL costs ~4 attempts a day instead of
  *  288, short enough that a transient outage still self-heals the same day. */
@@ -169,7 +185,7 @@ async function postsWithUnreadImages(sb: SupabaseClient): Promise<string[]> {
 }
 
 export async function sweepContentBacklog(sb: SupabaseClient, workerId: string): Promise<SweepStats> {
-  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, skipped_queue_full: false, skipped_not_leader: false };
+  const stats: SweepStats = { media_recover: 0, visual_ocr: 0, content_process: 0, intelligence: 0, skipped_queue_full: false, skipped_not_leader: false };
 
   if (!(await acquireSweepLease(sb, workerId))) { stats.skipped_not_leader = true; return stats; }
 
@@ -203,7 +219,13 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
       .order('id', { ascending: true })   // total order — a tie on published_at must not reshuffle between pages
       .range(from, to),
     SCAN_LIMIT, 'post scan');
-  if (posts.length === 0) return stats;
+  // NO early return on an empty scan. Stages 1-3 read this 'collected'/'failed'
+  // set and become no-ops without it (every loop below iterates an empty array),
+  // but stages 2 and 4 have their OWN scopes — unread images anywhere in the
+  // corpus, and posts at 'awaiting_intelligence'. Returning here would tie them
+  // to a set they do not depend on, and that is not hypothetical: the corpus is
+  // currently 4 posts at 'collected' against 1,732 awaiting intelligence, so an
+  // early return would disable the intelligence stage exactly when it matters.
   const postIds = posts.map((p) => p.id);
 
   // ── current state of those posts: media + visual text + already-queued jobs ─
@@ -339,6 +361,52 @@ export async function sweepContentBacklog(sb: SupabaseClient, workerId: string):
   for (const id of readyForFull.slice(0, MAX_PROCESS_ENQUEUE)) {
     await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: id, from: 'sweep' }, p_priority: 40, p_requested_by: null, p_fallback_of: null });
     stats.content_process++;
+  }
+
+  // ── stage 4: intelligence — the read that turns evidence into attribution ──
+  // A post at 'awaiting_intelligence' has everything: media stored, video
+  // transcribed, images OCR'd, facts extracted. All that is missing is the
+  // decision about WHICH PROJECT it is about — and without that the facts exist
+  // but attribute to nothing, which is why confirmed attributions looked tiny
+  // beside the fact count.
+  //
+  // `mkt_enqueue_intelligence` has existed since 2026-07-28 and works. Its only
+  // caller was a manual admin action in api/marketing.ts, so in practice it ran
+  // when someone remembered — and nobody did: 1,732 posts sat awaiting a read
+  // with ZERO enrichment jobs queued. Same shape as the other three stages
+  // before today (a capable mechanism nothing invoked), so it belongs on the
+  // same state-driven tick as the rest.
+  //
+  // IMAGES AND VIDEOS BOTH. The RPC does not filter on post_type, and the
+  // evidence package carries caption + transcript (16k) + OCR, so a reel is read
+  // from what was said in it and what was shown on its frames. Video posts were
+  // never excluded — they were simply never enqueued.
+  //
+  // This is the one stage that spends model capacity per post, so it is the most
+  // tightly bounded: it tops the queue up to ENRICH_QUEUE_HIGH_WATER and stops.
+  // The lane is a singleton, drains at its own pace, and parks itself on a
+  // subscription limit (claude_job_block) rather than hammering.
+  const { count: enrichQueued } = await sb.from('claude_jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('kind', 'mkt_content_enrichment').in('status', ['pending', 'running']);
+  let budget = Math.min(MAX_ENRICH_JOBS_PER_TICK, ENRICH_QUEUE_HIGH_WATER - (enrichQueued ?? 0));
+  if (budget > 0) {
+    // The RPC is per-organization, so find the orgs that actually have unread
+    // posts rather than walking every org we know about.
+    const awaiting = await pageAll<{ organization_id: string | null }>(
+      (from, to) => sb.from('mkt_content_posts').select('organization_id')
+        .eq('processing_status', 'awaiting_intelligence')
+        .order('id', { ascending: true }).range(from, to),
+      20_000, 'intelligence org scan');
+    const orgs = [...new Set(awaiting.map((a) => a.organization_id).filter((o): o is string => !!o))];
+    for (const org of orgs) {
+      if (budget <= 0) break;
+      const { data, error } = await sb.rpc('mkt_enqueue_intelligence', { p_org: org, p_batch: ENRICH_POSTS_PER_BATCH, p_max_jobs: budget });
+      if (error) throw new Error(`sweep: intelligence enqueue failed: ${error.message}`);
+      const made = Number(data ?? 0);
+      stats.intelligence += made;
+      budget -= made;
+    }
   }
 
   return stats;
