@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAppStore } from '@/stores/appStore';
 import Button from '@/components/ui/Button';
 import {
-  ClipboardList, RefreshCw, AlertTriangle, Plus, Search, ArrowLeft, Clock,
+  ClipboardList, RefreshCw, AlertTriangle, ArrowLeft, Clock,
   CheckCircle2, Send, Layers, Target, CalendarDays, Image as ImageIcon,
   BadgeCheck, BarChart3, Clapperboard, CalendarPlus, Link as LinkIcon,
   Compass, Boxes, ClipboardCheck,
@@ -29,29 +29,23 @@ import { SceneEditor, SlideEditor } from './components/ProductionEditor';
 import { ContentFields, VersionWriter } from './components/ContentEditor';
 import { ContentSummary, ContentResults } from './components/ContentSummary';
 import { StrategyPlanningTab, PortfolioTab, ReviewsTab } from './components/PlanningV2';
+import { ContentBoard, ContentDetail as ContentDetailView } from './components/content/ContentModule';
 import { CapacityView } from './components/CapacityView';
 import { SectionBoundary } from './components/SectionBoundary';
 import { ContentContextPanel } from './components/ContentContextPanel';
-import { useProjectOptions } from '@/lib/marketingMgmt/projects';
-import { PRIORITY_LABEL, PLATFORM_LABEL, ASSET_TYPE_LABEL, CONTENT_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
+import { PLATFORM_LABEL, ASSET_TYPE_LABEL, lbl } from '@/lib/marketingMgmt/labels';
 // Generic presentation primitives shared with the intelligence page — importing
 // rather than duplicating; they carry no intelligence-specific types.
 import { Section, Stat, CaveatStrip, EmptyHint, Spinner, fmtDate } from '@/pages/MarketingIntelligence/components/shared';
 import {
   fetchOverview, generateAlerts, fetchContentList, fetchContentDetail,
-  createContent, transitionContent, updateTask, savePublication, fetchAssets, linkAsset,
-  STATUS_LABEL, CONTENT_TYPES, PLATFORMS,
-  type MgmtOverview, type ContentItem, type ContentDetail, type ContentStatus, type ContentType,
+  transitionContent, updateTask, savePublication, fetchAssets, linkAsset,
+  STATUS_LABEL, PLATFORMS,
+  type MgmtOverview, type ContentItem, type ContentDetail, type ContentStatus,
 } from '@/lib/marketingMgmt/client';
 
 type Tab = 'overview' | 'strategy' | 'portfolio' | 'campaigns' | 'content' | 'calendar'
   | 'production' | 'assets' | 'publishing' | 'approvals' | 'performance' | 'reviews';
-
-/** Board columns: the production spine, not all 18 states (terminal and
- *  exception states are reachable from the item itself). */
-const BOARD: ContentStatus[] = ['idea','brief','writing','awaiting_script_approval',
-  'approved_for_production','recording','designing','editing','internal_review',
-  'awaiting_final_approval','approved','ready_to_publish','scheduled','published'];
 
 /** Section nav. At module scope so the error boundary can name the section that
  *  failed from the SAME source the tab bar renders from — a second copy of these
@@ -72,21 +66,19 @@ const NAV = [
 ] as const;
 
 export default function MarketingManagementPage() {
-  const { language, users, addToast } = useAppStore();
+  const { language, addToast } = useAppStore();
   const isAr = language === 'ar';
 
   const [tab, setTab] = useState<Tab>('overview');
   const [ov, setOv] = useState<MgmtOverview | null>(null);
   const [content, setContent] = useState<ContentItem[]>([]);
   const [detail, setDetail] = useState<ContentDetail | null>(null);
+  /** The canonical content module owns its own selection; the legacy
+   *  `detail` above still serves the production/calendar tabs. */
+  const [contentId, setContentId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState('');
-  const [projectFilter, setProjectFilter] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newType, setNewType] = useState<ContentType>('reel');
 
   const load = useCallback(() => {
     setLoading(true); setError(null);
@@ -123,16 +115,6 @@ export default function MarketingManagementPage() {
     } finally { setBusy(false); }
   };
 
-  const create = async () => {
-    if (!newTitle.trim()) return;
-    setBusy(true);
-    try {
-      const r = await createContent(newTitle.trim(), newType);
-      addToast(isAr ? `تم الإنشاء مع ${r.tasks_generated} مهمة` : `Created with ${r.tasks_generated} tasks`, 'success');
-      setCreating(false); setNewTitle(''); load(); await openItem(r.item.id);
-    } catch (e) { addToast(e instanceof Error ? e.message : String(e), 'error'); }
-    finally { setBusy(false); }
-  };
 
   const completeTask = async (taskId: string) => {
     setBusy(true);
@@ -155,30 +137,10 @@ export default function MarketingManagementPage() {
   };
 
   // Board cards need a project name and an owner name; both come from data the
-  // store already holds, so neither costs a request.
-  const projectOptions = useProjectOptions();
-  const projectName = useCallback(
-    (id: string | null) => (id ? projectOptions.find((p) => p.id === id)?.name ?? null : null),
-    [projectOptions]);
-  const ownerName = useCallback((id: string | null) => {
-    if (!id) return null;
-    const u = users.find((x) => x.id === id);
-    return u ? ((isAr ? u.name_ar : u.name_en) || u.name_en || u.name_ar) : null;
-  }, [users, isAr]);
-
   const inProduction = useMemo(
     () => content.filter((c) => ['approved_for_production','raw_assets_required','recording',
       'designing','editing','internal_review','revision_requested'].includes(c.status)),
     [content]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return content.filter((c) => {
-      if (projectFilter && c.project_id !== projectFilter) return false;
-      if (!q) return true;
-      return c.title.toLowerCase().includes(q) || c.content_number.toLowerCase().includes(q);
-    });
-  }, [content, query, projectFilter]);
 
   const k = ov?.kpis;
   const money = (v: number | null | undefined) =>
@@ -420,107 +382,19 @@ export default function MarketingManagementPage() {
             )
           )}
 
+          {/* The canonical content module: one board, one detail surface, one
+              service layer. Everything below the brief is per-deliverable. */}
           {tab === 'content' && (
-            detail ? (
-              <ContentDetailPanel detail={detail} isAr={isAr} busy={busy}
-                onBack={() => setDetail(null)} onMove={move} onCompleteTask={completeTask}
-                onChanged={() => { void openItem(detail.item.id); }}
-                onItemPatched={patchItem}
-                onError={(m: string) => addToast(m, 'error')} />
+            contentId ? (
+              <ContentDetailView id={contentId} isAr={isAr}
+                onBack={() => setContentId(null)}
+                onError={(m: string) => addToast(m, 'error')}
+                onToast={(m: string) => addToast(m, 'success')}
+                onChanged={() => {}} />
             ) : (
-              <Section title={isAr ? 'لوحة المحتوى' : 'Content board'}
-                right={
-                  <Button onClick={() => setCreating((v) => !v)}>
-                    <Plus className="h-4 w-4" />{isAr ? 'محتوى جديد' : 'New content'}
-                  </Button>
-                }>
-                {creating && (
-                  <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-copper/30 bg-copper/5 p-3">
-                    <input value={newTitle} onChange={(e) => setNewTitle(e.target.value)}
-                      placeholder={isAr ? 'عنوان المحتوى' : 'Content title'}
-                      className="min-w-[200px] flex-1 rounded-lg border border-sand/60 bg-white px-3 py-1.5 text-[13px] focus:border-copper focus:outline-none" />
-                    <select value={newType} onChange={(e) => setNewType(e.target.value as ContentType)}
-                      className="rounded-lg border border-sand/60 bg-white px-3 py-1.5 text-[13px]">
-                      {CONTENT_TYPES.map((t) => <option key={t} value={t}>{lbl(CONTENT_TYPE_LABEL, t, isAr)}</option>)}
-                    </select>
-                    <Button onClick={create} disabled={busy || !newTitle.trim()}>{isAr ? 'إنشاء' : 'Create'}</Button>
-                  </div>
-                )}
-                <div className="mb-3 flex flex-wrap items-center gap-2">
-                  <div className="relative min-w-[180px] flex-1">
-                    <Search className="pointer-events-none absolute top-1/2 h-4 w-4 -translate-y-1/2 text-charcoal/30 start-3" />
-                    <input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
-                      placeholder={isAr ? 'بحث…' : 'Search…'}
-                      className="w-full rounded-xl border border-sand/60 bg-white py-2 text-[13px] focus:border-copper focus:outline-none ps-9 pe-3" />
-                  </div>
-                  <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
-                    className="rounded-xl border border-sand/60 bg-white px-3 py-2 text-[13px] focus:border-copper focus:outline-none">
-                    <option value="">{isAr ? 'كل المشاريع' : 'All projects'}</option>
-                    {projectOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  </select>
-                  {(projectFilter || query) && (
-                    <button type="button" onClick={() => { setProjectFilter(''); setQuery(''); }}
-                      className="text-[12px] text-copper hover:underline">
-                      {isAr ? 'مسح' : 'Clear'}
-                    </button>
-                  )}
-                  <span className="text-[11.5px] tabular-nums text-charcoal/45">
-                    {filtered.length}/{content.length}
-                  </span>
-                </div>
-                {filtered.length === 0 ? (
-                  <EmptyHint>{isAr ? 'لا يوجد محتوى بعد — ابدأ بإنشاء واحد' : 'No content yet — create one to begin'}</EmptyHint>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <div className="flex gap-3 pb-2" style={{ minWidth: 'min-content' }}>
-                      {BOARD.map((st) => {
-                        const col = filtered.filter((c) => c.status === st);
-                        if (col.length === 0) return null;
-                        return (
-                          <div key={st} className="w-56 shrink-0">
-                            <div className="mb-2 flex items-center justify-between px-1">
-                              <span className="text-[11.5px] font-semibold text-charcoal/70">
-                                {isAr ? STATUS_LABEL[st].ar : STATUS_LABEL[st].en}
-                              </span>
-                              <span className="text-[11px] tabular-nums text-charcoal/40">{col.length}</span>
-                            </div>
-                            <ul className="space-y-2">
-                              {col.map((c) => (
-                                <li key={c.id}>
-                                  <button type="button" onClick={() => void openItem(c.id)}
-                                    className="w-full rounded-xl border border-sand/50 bg-white p-2.5 text-start hover:border-copper/40">
-                                    <div className="text-[12.5px] font-medium text-charcoal line-clamp-2">{c.title}</div>
-                                    {/* enough to triage from the board without opening the item */}
-                                    <div className="mt-1 flex flex-wrap items-center gap-1">
-                                      {projectName(c.project_id) && (
-                                        <span className="max-w-full truncate rounded bg-cream px-1.5 py-0.5 text-[10px] text-charcoal/60">
-                                          {projectName(c.project_id)}
-                                        </span>
-                                      )}
-                                      {c.priority !== 'normal' && (
-                                        <span className={`rounded px-1.5 py-0.5 text-[10px] ${
-                                          c.priority === 'urgent' ? 'bg-red-50 text-red-700'
-                                          : c.priority === 'high' ? 'bg-amber-50 text-amber-800'
-                                          : 'bg-charcoal/5 text-charcoal/50'}`}>
-                                          {lbl(PRIORITY_LABEL, c.priority, isAr)}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="mt-1 flex items-center justify-between gap-2 text-[10.5px] text-charcoal/45">
-                                      <span className="truncate">{ownerName(c.owner_user_id) ?? c.content_number}</span>
-                                      <span className="shrink-0">{c.due_date ? fmtDate(c.due_date, isAr) : '—'}</span>
-                                    </div>
-                                  </button>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-              </Section>
+              <ContentBoard isAr={isAr} onOpen={setContentId}
+                onError={(m: string) => addToast(m, 'error')}
+                onToast={(m: string) => addToast(m, 'success')} />
             )
           )}
         </SectionBoundary>

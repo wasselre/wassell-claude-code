@@ -59,6 +59,56 @@ const CONTENT_EDITABLE = [
   'origin_kind', 'origin_program_id', 'origin_campaign_id', 'reactive_trigger',
 ] as const;
 
+/** The BRIEF's strategic fields. Deliberately excludes the ones that differ per
+ *  platform output — caption, hashtags, cta_destination, planned_publish_at —
+ *  which now live on the deliverable. Writing them here would recreate exactly
+ *  the "one idea, one platform" collapse the deliverable layer removed. */
+const BRIEF_EDITABLE = [
+  'strategy_version_id', 'scope_kind', 'scope_note',
+  'audience_insight', 'core_promise', 'evidence', 'desired_action',
+  'mandatory_info', 'prohibited_claims', 'always_on_reason',
+  'parent_content_item_id', 'reuse_kind',
+  'brief_due_date', 'production_due_date', 'review_due_date',
+  'window_start', 'window_end',
+] as const;
+
+const DELIVERABLE_EDITABLE = [
+  'label', 'platform', 'social_account_id', 'distribution', 'format', 'language',
+  'aspect_ratio', 'target_seconds', 'owner_user_id', 'due_date',
+  'planned_publish_at', 'status', 'primary_kpi', 'kpi_unit', 'kpi_target',
+  'workflow_template_key', 'notes',
+  'caption', 'hashtags', 'first_comment', 'cta_destination', 'destination_url',
+  'archived_at',
+] as const;
+
+/** An artifact version is created, never edited into a different shape.
+ *  approval_state / approved_by / approved_at are absent on purpose: they move
+ *  only through artifact_decide, so a caller cannot approve their own draft by
+ *  putting "approved" in a patch. */
+const ARTIFACT_EDITABLE = [
+  'content_item_id', 'deliverable_id', 'version_type', 'payload', 'file_id',
+  'change_summary', 'owner_user_id', 'parent_version_id',
+] as const;
+
+const CONTENT_TASK_EDITABLE = [
+  'title', 'assigned_user_id', 'reviewer_user_id', 'due_date', 'status',
+  'priority', 'notes', 'attachment_file_id', 'blocked_reason', 'skipped_reason',
+  'depends_on_task_id',
+] as const;
+
+const PUBLICATION_OPS_EDITABLE = [
+  'deliverable_id', 'content_item_id', 'platform', 'social_account_id', 'channel',
+  'scheduled_for', 'scheduled_timezone', 'status', 'publish_method',
+  'destination_url', 'utm', 'first_comment', 'ad_id',
+  'published_at', 'published_url', 'platform_post_id', 'error_message',
+] as const;
+
+const RESULT_EDITABLE = [
+  'content_item_id', 'deliverable_id', 'goal_id', 'kpi_actual', 'measured_at',
+  'metrics', 'leads', 'qualified_leads', 'clicks', 'conversions', 'spend',
+  'cost_per_lead', 'attribution_source', 'learning', 'recommendation',
+] as const;
+
 /** Copy only allow-listed keys. Everything the v2 layer writes goes through
  *  this, so ids, generated numbers, approval stamps and needs_classification
  *  can never be set by a caller. */
@@ -250,6 +300,14 @@ interface Body {
   payload?: Record<string, unknown>;
   change_summary?: string;
   file_id?: string;
+  // content operations: brief -> deliverable -> artifact -> publication -> result
+  deliverable_id?: string;
+  artifact_type?: string;
+  asset_id?: string;
+  replace?: boolean;
+  review_comment?: string;
+  target_type?: string;
+  target_id?: string;
   approval_id?: string;
   // 'pending' is a real decision value: mkt_approvals CHECKs
   // (decision = 'pending' OR decided_at IS NOT NULL), and the handler leaves
@@ -1639,6 +1697,347 @@ export default async function handler(req: Request): Promise<Response> {
         const uid = str(body.user_id); if (!uid) return jsonError(400, 'user_id required');
         const { error } = await sb.rpc('mkt_set_role_grant',
           { p_user_id: uid, p_role: str(body.role) ?? null });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ ok: true });
+      }
+
+      // ── Content operations ───────────────────────────────────────────────
+      // The canonical content module. brief -> deliverables -> artifacts ->
+      // publications -> results. Everything the board and the detail page need,
+      // read through the same gate functions the database enforces, so a
+      // disabled button and its stated reason can never disagree.
+
+      case 'content_board': {
+        // One round trip for the board: every brief with the deliverables that
+        // make its platforms real, plus the computed state per row.
+        const q = sb.from('mkt_content_items')
+          .select('*, mkt_content_deliverables(id,deliverable_number,label,platform,format,'
+                + 'language,distribution,status,due_date,planned_publish_at,owner_user_id,'
+                + 'needs_classification,workflow_template_key,primary_kpi,kpi_unit,kpi_target)')
+          .is('archived_at', null)
+          .order('created_at', { ascending: false })
+          .limit(cap(body.limit, 200, 500));
+        const projectId = str(body.project_id);
+        const { data, error } = await (projectId ? q.eq('project_id', projectId) : q);
+        const bad = rlsAware(error); if (bad) return bad;
+
+        // Computed state per item. Sequential-safe: these are cheap STABLE
+        // reads, and doing them in the database keeps "next action" identical
+        // to what the detail page will show.
+        const items = data ?? [];
+        const states = await Promise.all(items.map((it: { id: string }) =>
+          sb.rpc('mkt_content_state', { p_item_id: it.id })));
+        return jsonOk({
+          items: items.map((it: Record<string, unknown>, i: number) => ({
+            ...it, state: states[i]?.data ?? null,
+          })),
+        });
+      }
+
+      case 'content_ops_detail': {
+        const id = str(body.id ?? body.content_item_id);
+        if (!id) return jsonError(400, 'id required');
+        const [item, dels, arts, tasks, pubs, results, roles, history, assets, state, missing] =
+          await Promise.all([
+            sb.from('mkt_content_items').select('*').eq('id', id).maybeSingle(),
+            sb.from('mkt_content_deliverables').select('*').eq('content_item_id', id)
+              .is('archived_at', null).order('deliverable_number'),
+            sb.from('mkt_content_versions').select('*').eq('content_item_id', id)
+              .order('version_type').order('version_number', { ascending: false }),
+            sb.from('mkt_content_tasks').select('*').eq('content_item_id', id)
+              .order('sort_order').order('created_at'),
+            sb.from('mkt_publications').select('*').eq('content_item_id', id)
+              .order('scheduled_for', { nullsFirst: false }),
+            sb.from('mkt_content_results').select('*').eq('content_item_id', id)
+              .order('measured_at', { ascending: false, nullsFirst: false }),
+            sb.from('mkt_content_roles').select('*').eq('content_item_id', id),
+            sb.from('mkt_content_status_history').select('*').eq('content_item_id', id)
+              .order('changed_at', { ascending: false }).limit(50),
+            sb.from('mkt_asset_links').select('asset_id, target_type, target_id, role, mkt_raw_assets(*)')
+              .eq('target_type', 'content_item').eq('target_id', id),
+            sb.rpc('mkt_content_state', { p_item_id: id }),
+            sb.rpc('mkt_content_missing_requirements', { p_item_id: id }),
+          ]);
+        const bad = rlsAware(item.error); if (bad) return bad;
+        if (!item.data) return jsonError(404, 'content item not found');
+
+        // Per-deliverable extras: scene list, blockers, attainment, and the
+        // assets linked to that specific output.
+        const dRows = dels.data ?? [];
+        const dIds = dRows.map((d: { id: string }) => d.id);
+        const [scenes, slides, dAssets, blockerRows, attainRows] = await Promise.all([
+          dIds.length ? sb.from('mkt_video_scenes').select('*').in('deliverable_id', dIds).order('scene_number')
+                      : Promise.resolve({ data: [], error: null }),
+          dIds.length ? sb.from('mkt_carousel_slides').select('*').in('deliverable_id', dIds).order('slide_number')
+                      : Promise.resolve({ data: [], error: null }),
+          dIds.length ? sb.from('mkt_asset_links').select('asset_id, target_id, role, mkt_raw_assets(*)')
+                          .eq('target_type', 'deliverable').in('target_id', dIds)
+                      : Promise.resolve({ data: [], error: null }),
+          Promise.all(dIds.map((d: string) => sb.rpc('mkt_deliverable_schedule_blockers', { p_deliverable_id: d }))),
+          Promise.all(dIds.map((d: string) => sb.rpc('mkt_deliverable_attainment', { p_deliverable_id: d }))),
+        ]);
+
+        return jsonOk({
+          item: item.data,
+          deliverables: dRows.map((d: Record<string, unknown>, i: number) => ({
+            ...d,
+            blockers: (blockerRows as Array<{ data: unknown }>)[i]?.data ?? [],
+            attainment: (attainRows as Array<{ data: unknown }>)[i]?.data ?? null,
+          })),
+          artifacts: arts.data ?? [],
+          tasks: tasks.data ?? [],
+          publications: pubs.data ?? [],
+          results: results.data ?? [],
+          roles: roles.data ?? [],
+          history: history.data ?? [],
+          scenes: scenes.data ?? [],
+          slides: slides.data ?? [],
+          assets: [...(assets.data ?? []), ...(dAssets.data ?? [])],
+          state: state.data ?? null,
+          missing: (missing.data as string[] | null) ?? [],
+        });
+      }
+
+      case 'brief_save': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        // Two allow-lists on purpose: the legacy CONTENT_EDITABLE set still
+        // owns title/owner/audience, and BRIEF_EDITABLE adds the strategic
+        // fields. Neither can reach a deliverable-only column.
+        const patch = { ...pick(body.patch, CONTENT_EDITABLE), ...pick(body.patch, BRIEF_EDITABLE) };
+        if (Object.keys(patch).length === 0) return jsonError(400, 'nothing to update');
+        const { data, error } = await sb.from('mkt_content_items')
+          .update(patch).eq('id', id).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ item: data });
+      }
+
+      case 'deliverable_save': {
+        const patch = pick(body.patch, DELIVERABLE_EDITABLE);
+        let out;
+        if (body.id) {
+          out = await sb.from('mkt_content_deliverables').update(patch)
+            .eq('id', str(body.id)!).select().maybeSingle();
+        } else {
+          const itemId = str(body.content_item_id);
+          if (!itemId) return jsonError(400, 'content_item_id required');
+          if (!patch.format) return jsonError(400, 'format required');
+          out = await sb.from('mkt_content_deliverables')
+            .insert({ ...patch, content_item_id: itemId, created_by_user_id: appUserId })
+            .select().maybeSingle();
+        }
+        const bad = rlsAware(out.error); if (bad) return bad;
+
+        // A brand-new deliverable gets the tasks its FORMAT calls for. Failing
+        // to generate is surfaced, not swallowed — a deliverable with no
+        // workflow is a deliverable nobody can work on.
+        let generated: number | null = null;
+        if (!body.id && out.data) {
+          const g = await sb.rpc('mkt_generate_deliverable_tasks',
+            { p_deliverable_id: (out.data as { id: string }).id, p_replace: false });
+          if (g.error) return jsonError(409, g.error.message);
+          generated = g.data as number;
+        }
+        return jsonOk({ deliverable: out.data, tasks_generated: generated });
+      }
+
+      case 'deliverable_generate_tasks': {
+        const id = str(body.deliverable_id ?? body.id);
+        if (!id) return jsonError(400, 'deliverable_id required');
+        const { data, error } = await sb.rpc('mkt_generate_deliverable_tasks',
+          { p_deliverable_id: id, p_replace: body.replace === true });
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ created: data });
+      }
+
+      case 'deliverable_blockers': {
+        const id = str(body.deliverable_id ?? body.id);
+        if (!id) return jsonError(400, 'deliverable_id required');
+        const [blockers, attainment] = await Promise.all([
+          sb.rpc('mkt_deliverable_schedule_blockers', { p_deliverable_id: id }),
+          sb.rpc('mkt_deliverable_attainment', { p_deliverable_id: id }),
+        ]);
+        const bad = rlsAware(blockers.error); if (bad) return bad;
+        return jsonOk({ blockers: blockers.data ?? [], attainment: attainment.data ?? null });
+      }
+
+      case 'artifact_types': {
+        // Which artifact types this deliverable's workflow actually calls for,
+        // plus every non-legacy type for anything extra somebody needs. This is
+        // what makes the writing surface type-aware instead of one dropdown.
+        const delId = str(body.deliverable_id);
+        const [all, steps] = await Promise.all([
+          sb.from('mkt_artifact_types').select('*').eq('is_active', true).order('sort_order'),
+          delId
+            ? sb.from('mkt_content_deliverables')
+                .select('format, workflow_template_key').eq('id', delId).maybeSingle()
+            : Promise.resolve({ data: null, error: null }),
+        ]);
+        const bad = rlsAware(all.error); if (bad) return bad;
+        let expected: string[] = [];
+        const d = steps.data as { format?: string; workflow_template_key?: string } | null;
+        if (d) {
+          const tk = d.workflow_template_key
+            ?? (await sb.from('mkt_workflow_templates').select('key')
+                  .eq('format', d.format!).eq('is_active', true).maybeSingle()).data?.key;
+          if (tk) {
+            const ws = await sb.from('mkt_workflow_steps')
+              .select('artifact_type, gates_publish, sort_order')
+              .eq('template_key', tk).not('artifact_type', 'is', null).order('sort_order');
+            expected = (ws.data ?? []).map((s: { artifact_type: string }) => s.artifact_type);
+          }
+        }
+        return jsonOk({ types: all.data ?? [], expected });
+      }
+
+      case 'artifact_save': {
+        // Always an INSERT. Editing an approved version is refused by the
+        // database; this endpoint does not offer an update path at all, so the
+        // only way content changes is a new version with a change summary.
+        const patch = pick(body.patch, ARTIFACT_EDITABLE);
+        if (!patch.content_item_id || !patch.version_type) {
+          return jsonError(400, 'content_item_id and version_type required');
+        }
+        const { data, error } = await sb.from('mkt_content_versions')
+          .insert({ ...patch, owner_user_id: patch.owner_user_id ?? appUserId,
+                    approval_state: 'draft', created_by_user_id: appUserId })
+          .select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ artifact: data });
+      }
+
+      case 'artifact_decide': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const decision = body.decision;
+        if (!decision || !['approved', 'changes_requested', 'rejected', 'pending'].includes(decision)) {
+          return jsonError(400, 'decision must be approved | changes_requested | rejected | pending');
+        }
+        const patch: Record<string, unknown> = {
+          approval_state: decision,
+          review_comment: str(body.review_comment) ?? null,
+        };
+        // Stamped server-side. A client cannot claim someone else approved it.
+        if (decision === 'approved') {
+          patch.approved_by_user_id = appUserId;
+          patch.approved_at = new Date().toISOString();
+        }
+        const { data, error } = await sb.from('mkt_content_versions')
+          .update(patch).eq('id', id).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+
+        // Approving may have marked downstream artifacts stale. Return them so
+        // the screen can say so immediately rather than on the next refresh.
+        const stale = data
+          ? await sb.from('mkt_content_versions')
+              .select('id, version_type, version_number, stale_reason')
+              .eq('content_item_id', (data as { content_item_id: string }).content_item_id)
+              .eq('is_stale', true).eq('approval_state', 'approved')
+          : { data: [] };
+        return jsonOk({ artifact: data, stale: stale.data ?? [] });
+      }
+
+      case 'content_task_save': {
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const patch = pick(body.patch, CONTENT_TASK_EDITABLE);
+        if (Object.keys(patch).length === 0) return jsonError(400, 'nothing to update');
+        const { data, error } = await sb.from('mkt_content_tasks')
+          .update(patch).eq('id', id).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ task: data });
+      }
+
+      case 'deliverable_publication_save': {
+        // Scheduling and publishing are the SAME row moving through states, and
+        // the database gate refuses the move when media/copy/account/time are
+        // not ready. No API-side pre-check: one authority, one error message.
+        const patch = pick(body.patch, PUBLICATION_OPS_EDITABLE);
+        let out;
+        if (body.id) {
+          out = await sb.from('mkt_publications').update(patch)
+            .eq('id', str(body.id)!).select().maybeSingle();
+        } else {
+          if (!patch.deliverable_id) return jsonError(400, 'deliverable_id required');
+          out = await sb.from('mkt_publications')
+            .insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
+        }
+        // A refused schedule is a 409 carrying the database's own sentence,
+        // which already names exactly what is missing.
+        if (out.error && /cannot schedule|must belong to a deliverable/i.test(out.error.message)) {
+          return jsonError(409, out.error.message);
+        }
+        const bad = rlsAware(out.error); if (bad) return bad;
+        return jsonOk({ publication: out.data });
+      }
+
+      case 'deliverable_mark_published': {
+        // The honest manual path. There is no publishing API wired to any
+        // platform, so a human posts it and records what came back; nothing
+        // here pretends an integration succeeded.
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const url = str(body.patch?.published_url as string | undefined);
+        const postId = str(body.patch?.platform_post_id as string | undefined);
+        if (!url && !postId) {
+          return jsonError(400, 'a published URL or platform post id is required to mark it published');
+        }
+        const { data, error } = await sb.from('mkt_publications')
+          .update({
+            status: 'published',
+            published_at: str(body.patch?.published_at as string | undefined) ?? new Date().toISOString(),
+            published_url: url ?? null,
+            platform_post_id: postId ?? null,
+            published_by_user_id: appUserId,
+            publish_method: 'manual',
+          }).eq('id', id).select().maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ publication: data });
+      }
+
+      case 'result_record': {
+        const patch = pick(body.patch, RESULT_EDITABLE);
+        if (!patch.content_item_id) return jsonError(400, 'content_item_id required');
+        let out;
+        if (body.id) {
+          out = await sb.from('mkt_content_results').update({ ...patch, updated_at: new Date().toISOString() })
+            .eq('id', str(body.id)!).select().maybeSingle();
+        } else {
+          out = await sb.from('mkt_content_results')
+            .insert({ ...patch, recorded_by_user_id: appUserId }).select().maybeSingle();
+        }
+        const bad = rlsAware(out.error); if (bad) return bad;
+        const attain = patch.deliverable_id
+          ? await sb.rpc('mkt_deliverable_attainment', { p_deliverable_id: patch.deliverable_id as string })
+          : { data: null };
+        return jsonOk({ result: out.data, attainment: attain.data ?? null });
+      }
+
+      case 'content_asset_link': {
+        // Both directions of the library: an existing asset attaches to a
+        // deliverable without the file being copied anywhere.
+        const assetId = str(body.asset_id);
+        const targetType = str(body.target_type) ?? 'deliverable';
+        const targetId = str(body.target_id ?? body.deliverable_id ?? body.content_item_id);
+        if (!assetId || !targetId) return jsonError(400, 'asset_id and target_id required');
+        if (!['deliverable', 'content_item', 'scene', 'slide'].includes(targetType)) {
+          return jsonError(400, 'unsupported target_type');
+        }
+        const { data, error } = await sb.from('mkt_asset_links')
+          .upsert({
+            asset_id: assetId, target_type: targetType, target_id: targetId,
+            role: str(body.patch?.role as string | undefined) ?? null,
+            created_by_user_id: appUserId,
+          }, { onConflict: 'asset_id,target_type,target_id' })
+          .select('asset_id, target_type, target_id, role, mkt_raw_assets(*)').maybeSingle();
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ link: data });
+      }
+
+      case 'content_asset_unlink': {
+        const assetId = str(body.asset_id);
+        const targetId = str(body.target_id ?? body.deliverable_id);
+        if (!assetId || !targetId) return jsonError(400, 'asset_id and target_id required');
+        const { error } = await sb.from('mkt_asset_links').delete()
+          .eq('asset_id', assetId)
+          .eq('target_type', str(body.target_type) ?? 'deliverable')
+          .eq('target_id', targetId);
         const bad = rlsAware(error); if (bad) return bad;
         return jsonOk({ ok: true });
       }
