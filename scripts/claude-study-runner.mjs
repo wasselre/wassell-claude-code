@@ -382,6 +382,108 @@ async function handleMktContentEnrichment(job) {
   }
 }
 
+// ── OCR lane ────────────────────────────────────────────────────────────────
+// Visual-text extraction on the SUBSCRIPTION instead of the Anthropic API.
+// Runs on its own `ocr` lease so a large OCR backlog cannot queue behind (or
+// ahead of) a rep's client_study — the starvation failure fixed on 2026-08-15.
+//
+// Same shape as content-enrichment: the handler prepares local inputs, the Skill
+// reads them and writes ONE result file, the handler validates and persists.
+// Claude Code reads image files natively, so the images are staged to disk first.
+const OCR_BATCH_MAX = 12;         // images per session; keeps one run bounded
+const OCR_FIELDS = ['project_names','developer_names','prices','payment_plans','unit_types',
+  'districts','locations','phones','urls','offers','amenities','selling_points','dates','ctas'];
+
+async function handleMktVisualOcr(job) {
+  const postIds = Array.isArray(job.payload?.post_ids) ? job.payload.post_ids : [];
+  if (postIds.length === 0) throw new Error('payload.post_ids is required');
+
+  // Only images/frames/thumbnails that are permanently STORED — never the CDN.
+  const { data: media, error: mErr } = await supa
+    .from('mkt_content_media')
+    .select('id, content_post_id, media_kind, stored_url')
+    .in('content_post_id', postIds)
+    .eq('download_status', 'stored')
+    .in('media_kind', ['image', 'thumbnail'])
+    .limit(OCR_BATCH_MAX);
+  if (mErr) throw new Error(`media query failed: ${mErr.message}`);
+  if (!media || media.length === 0) throw new Error('no stored images for the requested posts');
+
+  // Skip anything already OCR'd — reprocessing must never re-spend a session.
+  const { data: existing } = await supa.from('mkt_visual_text')
+    .select('content_media_id').in('content_media_id', media.map((m) => m.id));
+  const done = new Set((existing ?? []).map((r) => r.content_media_id));
+  const todo = media.filter((m) => !done.has(m.id));
+  if (todo.length === 0) return { batch: postIds.length, images: 0, skipped_already_ocr: media.length };
+
+  const workDir = mkdtempSync(path.join(tmpdir(), 'mkt-ocr-'));
+  const manifestFile = path.join(workDir, 'manifest.json').replace(/\\/g, '/');
+  const resultFile = path.join(workDir, 'result.json').replace(/\\/g, '/');
+
+  try {
+    const manifest = [];
+    for (let i = 0; i < todo.length; i++) {
+      const m = todo[i];
+      const res = await fetch(m.stored_url);
+      if (!res.ok) { console.warn(`[runner] ocr: skip media ${m.id} — fetch ${res.status}`); continue; }
+      const buf = Buffer.from(await res.arrayBuffer());
+      const p = path.join(workDir, `${i}.jpg`).replace(/\\/g, '/');
+      writeFileSync(p, buf);
+      manifest.push({ media_id: m.id, post_id: m.content_post_id,
+        source: m.media_kind === 'thumbnail' ? 'thumbnail' : 'image',
+        frame_ts_ms: null, path: p });
+    }
+    if (manifest.length === 0) throw new Error('every image failed to download');
+    writeFileSync(manifestFile, JSON.stringify(manifest));
+
+    const prompt = [
+      `/visual-ocr ${manifestFile} ${resultFile}`,
+      '',
+      'Run headless — read every image listed in the manifest and write ONLY the',
+      'result JSON file. Do not ask questions. Do not print the JSON to stdout.',
+    ].join('\n');
+
+    let rows = null, lastErr = '';
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const { code, out, err } = await runClaude(prompt, ROOT);
+      const combined = `${out}\n${err}`;
+      if (isSubscriptionLimit(combined)) throw new RateLimitError('Claude subscription/usage limit reached');
+      if (!existsSync(resultFile)) { lastErr = `session ended (code ${code}) without result file: ${combined.slice(-300)}`; continue; }
+      let parsed;
+      try { parsed = JSON.parse(readFileSync(resultFile, 'utf-8')); }
+      catch (e) { lastErr = `result JSON parse failed: ${e.message}`; continue; }
+      if (!Array.isArray(parsed) || parsed.length === 0) { lastErr = 'result was not a non-empty array'; continue; }
+      // keep only rows that map back to a manifest entry — a hallucinated
+      // media_id must never reach mkt_visual_text
+      const byId = new Map(manifest.map((x) => [x.media_id, x]));
+      rows = parsed.filter((r) => r && typeof r.media_id === 'string' && byId.has(r.media_id));
+      if (rows.length === 0) { lastErr = 'no result row matched a manifest media_id'; rows = null; continue; }
+      break;
+    }
+    if (!rows) throw new Error(`visual-ocr failed after retry: ${lastErr}`);
+
+    const byId = new Map(manifest.map((x) => [x.media_id, x]));
+    let written = 0;
+    for (const r of rows) {
+      const src = byId.get(r.media_id);
+      const structured = { visible_text: String(r.visible_text ?? '') };
+      for (const f of OCR_FIELDS) structured[f] = Array.isArray(r[f]) ? r[f].map(String) : [];
+      const { error } = await supa.rpc('mkt_visual_text_upsert', {
+        p_media: r.media_id, p_post: src.post_id, p_source: src.source, p_frame_ts_ms: src.frame_ts_ms,
+        p_model: 'claude-runner:visual-ocr', p_text: structured.visible_text, p_structured: structured,
+        p_confidence: null, p_cost: 0,   // subscription — no incremental API charge
+        p_status: 'done', p_failure: null, p_raw: null,
+      });
+      if (error) { console.error(`[runner] ocr upsert failed for ${r.media_id}: ${error.message}`); continue; }
+      written++;
+    }
+    return { batch: postIds.length, images: manifest.length, written,
+             skipped_already_ocr: media.length - todo.length };
+  } finally {
+    try { rmSync(workDir, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
 // ── main loop ───────────────────────────────────────────────────────────────
 let lastWatchdog = 0;
 let cooldownUntil = 0;
@@ -458,6 +560,7 @@ const HANDLERS = {
   client_study: handleClientStudy,
   mkt_content_enrichment: handleMktContentEnrichment,
   mkt_campaign_summary: handleMktCampaignSummary,
+  mkt_visual_ocr: handleMktVisualOcr,
 };
 
 // Upper bound on ONE job. Must sit ABOVE the slowest legitimate session

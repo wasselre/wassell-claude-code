@@ -47,7 +47,21 @@ async function loadAllProjectNames(sb: SupabaseClient): Promise<ProjectAlias[]> 
   return (data ?? []).map((r) => { const d = (r.data ?? {}) as Record<string, unknown>; return { projectId: r.id as string, nameAr: (d.project_name as string) ?? null, nameEn: (d.project_name_en as string) ?? null, tokens: [] }; }).filter((p) => p.nameAr || p.nameEn);
 }
 
-export async function runContentProcess(sb: SupabaseClient, contentPostId: string): Promise<ContentProcessStats> {
+export interface ContentProcessOptions {
+  /**
+   * Media-recovery pass: download + permanently store every media asset, then
+   * STOP — no transcription, no vision, no enrichment.
+   *
+   * Media recovery is the time-critical half of this pipeline: Instagram and
+   * TikTok CDN URLs expire within days, while OCR and enrichment can run at any
+   * later time because they read from permanent storage. Keeping them in one
+   * indivisible job meant a queue backlog, an exhausted credit balance, or a
+   * slow AI lane could cost us the bytes permanently. Split, they cannot.
+   */
+  mediaOnly?: boolean;
+}
+
+export async function runContentProcess(sb: SupabaseClient, contentPostId: string, opts: ContentProcessOptions = {}): Promise<ContentProcessStats> {
   const stats: ContentProcessStats = { post_id: contentPostId, media_total: 0, media_stored: 0, media_failed: 0, videos: 0, transcribed: 0, transcribe_failed: 0, images_analyzed: 0, frames_analyzed: 0, enriched: false, primary_project: null, attributions: 0, status: 'processing', cost_usd: 0, errors: [], fatal_errors: [], degraded: false };
 
   // Terminal "this post did not process" exit. Marks the post failed rather than
@@ -80,7 +94,12 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
       const { data: existing } = await sb.from('mkt_content_media').select('id, download_status, stored_url, checksum_sha256, duration_ms').eq('content_post_id', contentPostId).eq('carousel_index', d.carouselIndex).eq('media_kind', d.kind).maybeSingle();
       if (existing?.download_status === 'stored' && existing.stored_url) {
         let bytes: Buffer | null = null;
-        try { bytes = (await fetchBytes(existing.stored_url as string, d.kind === 'video' ? 90_000 : 45_000)).bytes; } catch { /* stored url unreadable — analysis will skip */ }
+        // A media-only pass never analyses bytes, so re-downloading an already
+        // stored asset would burn bandwidth for nothing. This is what makes the
+        // per-collection recovery sweep cheap enough to run on every post.
+        if (!opts.mediaOnly) {
+          try { bytes = (await fetchBytes(existing.stored_url as string, d.kind === 'video' ? 90_000 : 45_000)).bytes; } catch { /* stored url unreadable — analysis will skip */ }
+        }
         storedRefs.push({ mediaId: existing.id as string, kind: d.kind, carouselIndex: d.carouselIndex, bytes, storedUrl: existing.stored_url as string, durationMs: (existing.duration_ms as number) ?? d.durationMs, checksum: (existing.checksum_sha256 as string) ?? null });
         stats.media_stored++;
         continue;
@@ -104,7 +123,7 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
     const { data: existingVid } = await sb.from('mkt_content_media').select('id, download_status, stored_url, checksum_sha256, duration_ms').eq('content_post_id', contentPostId).eq('carousel_index', 0).eq('media_kind', 'video').maybeSingle();
     if (existingVid?.download_status === 'stored' && existingVid.stored_url) {
       let bytes: Buffer | null = null;
-      try { bytes = (await fetchBytes(existingVid.stored_url as string, 90_000)).bytes; } catch { /* skip */ }
+      if (!opts.mediaOnly) { try { bytes = (await fetchBytes(existingVid.stored_url as string, 90_000)).bytes; } catch { /* skip */ } }
       storedRefs.push({ mediaId: existingVid.id as string, kind: 'video', carouselIndex: 0, bytes, storedUrl: existingVid.stored_url as string, durationMs: (existingVid.duration_ms as number) ?? undefined, checksum: (existingVid.checksum_sha256 as string) ?? null });
       stats.media_stored++;
     } else {
@@ -124,6 +143,23 @@ export async function runContentProcess(sb: SupabaseClient, contentPostId: strin
         stats.media_failed++; stats.errors.push(`youtube: ${reason}`);
       }
     }
+  }
+
+  // ── media-recovery exit (see ContentProcessOptions.mediaOnly) ─────────────
+  // Leaves processing_status at 'collected' on purpose: the media ARE recovered,
+  // but the post genuinely still owes OCR + enrichment, and the backlog sweep
+  // keys off 'collected'. Claiming 'processed' here would hide real work — the
+  // same confidently-wrong bookkeeping that let 1,104 posts sit unnoticed.
+  if (opts.mediaOnly) {
+    if (stats.media_stored === 0) {
+      stats.fatal_errors.push('no media stored — nothing to recover');
+      return failPost();
+    }
+    stats.degraded = stats.media_failed > 0;
+    stats.status = 'media_recovered';
+    await sb.rpc('mkt_content_set_status', { p_post: contentPostId, p_status: 'collected', p_media_count: stats.media_stored });
+    stats.cost_usd = Math.round(stats.cost_usd * 10000) / 10000;
+    return stats;
   }
 
   // ── videos: audio → transcribe; sample frames for vision ──

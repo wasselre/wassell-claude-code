@@ -1,6 +1,6 @@
 # PRD: Marketing Intelligence (ذكاء التسويق)
 
-Last updated: 2026-07-27
+Last updated: 2026-07-28
 
 > Not to be confused with **Market Intelligence** (`market-intelligence.md`, ذكاء السوق),
 > which analyses LISTING data — asking prices, supply, demand. This page analyses
@@ -58,6 +58,19 @@ Everything was reachable only by query. This page is that surface.
   which 66 were false; the noise floors that fixed it are recorded per insight so
   a sceptical reader can check the reasoning instead of guessing.
 - **Insights are dismissed, never deleted** — the evidence trail is the point.
+- **Media recovery is split from understanding, and neither is opt-in.** Downloading
+  a post's media is time-critical (Instagram/TikTok CDN URLs expire within days);
+  OCR and enrichment are not, because they read from permanent storage. Collection
+  therefore enqueues a *media-only* pass for every post it ingests, and a separate
+  backlog sweep drives the rest. Processing used to be gated behind a
+  `process_content` flag that no enqueue path ever set, so 1,104 posts sat at
+  `collected` with zero media rows while their URLs aged out — every collection job
+  green, because collecting was all they were asked to do.
+- **The pipeline is driven by state, not by events.** The sweep asks "which posts
+  lack media / OCR / enrichment?" rather than trusting that something remembered to
+  enqueue them, so a missed enqueue self-heals on the next tick instead of stranding
+  a post permanently. It orders its stages media → OCR → enrich so the free OCR lane
+  always reads the images before the metered vision path would have.
 - Bilingual AR/EN with full RTL/LTR; no horizontal body scroll at 375px.
 
 ## User flows
@@ -98,6 +111,10 @@ Reads only. No write path except dismissing an insight.
 | `api/marketing.ts` | `intelligence_index`, `insight_dismiss` actions |
 | `supabase/migrations/2026-08-13_mkt_intelligence_index.sql` | Index RPC + dismiss RPC |
 | `src/lib/customPages.ts` / `src/App.tsx` | Page registration (`marketing_intelligence`, `/marketing-intelligence`, admin default) |
+| `worker/src/marketing/content/sweepBacklog.ts` | State-driven backlog sweep (media → OCR → enrich) + single-machine sweep lease |
+| `worker/src/marketing/content/runContentProcess.ts` | Per-post pipeline; `mediaOnly` = time-critical media-recovery pass |
+| `worker/src/marketing/runCollectionJob.ts` | Collection enqueues media recovery for every ingested post (no longer opt-in) |
+| `.claude/skills/visual-ocr/SKILL.md` / `scripts/claude-study-runner.mjs` | OCR lane: reads creatives on the Claude subscription, no per-token API charge |
 
 ## Open questions / known limitations
 

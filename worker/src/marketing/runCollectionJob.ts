@@ -189,13 +189,25 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
         try { const id = await ingestPost(ctx, post, orgId, acct!.id as string, runId, index, pubProjects, minIntervalHours, stats, commonTokens); if (id) ingestedIds.push(id); }
         catch (e) { stats.errors.push(`${post.externalId}: ${e instanceof Error ? e.message : String(e)}`); }
       }
-      // Prompt content processing (params.process_content): enqueue content_process
-      // for each freshly-collected post RIGHT NOW, so ephemeral media URLs (TikTok
-      // no-watermark links expire fast) are downloaded within minutes. Higher
-      // priority than routine collection so the download wins the race.
-      if (job.params.process_content === true && orgId) {
+      // Media recovery for each freshly-collected post, RIGHT NOW, so ephemeral
+      // CDN URLs (TikTok no-watermark links, Instagram signed URLs) are downloaded
+      // within minutes. Higher priority than routine collection so the download
+      // wins the race against expiry.
+      //
+      // This used to be gated on `params.process_content === true` — a flag NO
+      // enqueue path ever set. `mkt_enqueue_due_accounts` passes only
+      // {"reason":"scheduled"}, so every scheduled collection ingested posts and
+      // silently never downloaded their media: 1,104 posts sat at 'collected'
+      // with zero media rows while their URLs aged out. Opt-in was the bug, so
+      // recovery is now the default and `process_content: false` is the explicit
+      // opt-OUT (used by validation runs that must not touch storage).
+      //
+      // media_only: recovering bytes is cheap, has no AI cost and is time-critical;
+      // OCR + enrichment are neither, and are driven afterwards by the backlog
+      // sweep off permanent storage. See sweepContentBacklog.
+      if (job.params.process_content !== false && orgId) {
         for (const pid of ingestedIds) {
-          await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: pid, organization_id: orgId, from: 'collection' }, p_priority: 30, p_requested_by: null, p_fallback_of: null });
+          await sb.rpc('mkt_job_enqueue', { p_kind: 'content_process', p_provider: 'internal', p_social_account_id: null, p_params: { content_post_id: pid, organization_id: orgId, from: 'collection', media_only: true }, p_priority: 30, p_requested_by: null, p_fallback_of: null });
         }
       }
       // Only backfill advances the page cursor; incremental leaves it untouched.
@@ -274,7 +286,8 @@ export async function runCollectionJob(ctx: Ctx): Promise<{ status: string; stat
       // sample frames + OCR images → enrich → attribute. Idempotent.
       const postId = job.params.content_post_id as string | undefined;
       if (!postId) throw new ProviderError('content_process needs content_post_id', 'config_invalid');
-      const r = await runContentProcess(sb, postId);
+      // params.media_only: recover the bytes and stop (see ContentProcessOptions).
+      const r = await runContentProcess(sb, postId, { mediaOnly: job.params.media_only === true });
       stats.received = r.media_total;
       stats.inserted = r.media_stored;
       stats.skipped = r.media_failed + r.transcribe_failed;

@@ -1,0 +1,46 @@
+# Fourth Claude Code runner — the OCR lane.
+#
+# Same image and same code as the other runners; only RUNNER_LEASE differs:
+#
+#   wassel-claude-runner      lease 'marketing_intelligence' → mkt_content_enrichment,
+#                                                              mkt_campaign_summary
+#   wassel-claude-interactive lease 'interactive'            → ping, client_study
+#   wassel-claude-ocr         lease 'ocr'                    → mkt_visual_ocr
+#
+# Why a dedicated lane rather than reusing an existing one: OCR is a HIGH-VOLUME
+# batch workload (thousands of images). Sharing a lane with client_study would
+# recreate the starvation fixed on 2026-08-15, where a rep's study sat behind 32
+# marketing jobs. A lane of its own means an OCR backlog of any depth cannot
+# delay a human-waiting job by more than the current job in ITS OWN lane.
+#
+# The singleton guarantee is unchanged and applied PER LANE: still exactly one
+# Claude session per lease, so a second machine in this app exits cleanly at boot.
+# See supabase migration `claude_ocr_lane`.
+#
+# Deploy from the repo root (the build context must include scripts/ and .claude/):
+#   flyctl deploy --config runner/fly.ocr.toml --app wassel-claude-ocr
+app = 'wassel-claude-ocr'
+
+# MUST stay above the runner's SHUTDOWN_GRACE_MS (60s) — Fly's 5s default would
+# SIGKILL mid-shutdown and orphan the in-flight session.
+kill_timeout = '90s'
+primary_region = 'sin'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[env]
+  POLL_MS = '10000'
+  RUNNER_ENV = 'fly'
+  # The whole point of this app.
+  RUNNER_LEASE = 'ocr'
+
+[[vm]]
+  size = 'shared-cpu-1x'
+  memory = '1gb'
+
+[deploy]
+  strategy = 'immediate'
+
+[processes]
+  app = 'node scripts/claude-study-runner.mjs'

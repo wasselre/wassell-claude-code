@@ -39,6 +39,7 @@ import { runRegaLookupJob, type RegaLookupJob } from './runRegaLookupJob.js';
 import { runScheduledWhatsappJob, type ScheduledWhatsappJob } from './runScheduledWhatsappJob.js';
 import { runCollectionJob, type CollectionJob } from './marketing/runCollectionJob.js';
 import { runCreativeCleanup } from './marketing/creativeCleanup.js';
+import { sweepContentBacklog } from './marketing/content/sweepBacklog.js';
 import { getSessionStatus, restartSession, type WahaSendConfig } from './waha.js';
 
 const env = loadEnv();
@@ -1608,6 +1609,13 @@ async function marketingPollLoop(): Promise<void> {
         await supabase.rpc('mkt_jobs_watchdog');
         const { data: enq } = await supabase.rpc('mkt_enqueue_due_accounts');
         if (enq && Number(enq) > 0) console.log(`[worker] marketing scheduler enqueued ${enq} job(s)`);
+        // Second, independent enqueue path. The scheduler only reacts to events
+        // ("this account is due"); the sweep reacts to STATE ("this post has no
+        // media"), so a post can never be stranded by a missed enqueue again.
+        const sweep = await sweepContentBacklog(supabase, env.WORKER_ID);
+        if (sweep.media_recover || sweep.visual_ocr || sweep.content_process) {
+          console.log(`[worker] content sweep: media_recover=${sweep.media_recover} visual_ocr=${sweep.visual_ocr} content_process=${sweep.content_process}`);
+        }
         // Scheduler heartbeat — ops monitoring flags it offline if this stops ticking.
         await supabase.rpc('mkt_heartbeat', { p_component: 'scheduler', p_detail: { enqueued: enq ?? 0 } });
       } catch (e) {
