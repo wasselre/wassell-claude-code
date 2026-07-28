@@ -19,6 +19,15 @@ export interface ProjectOption {
   id: string;
   name: string;
   developer: string | null;
+  /** True when the project is in "مشاريعنا" (Our Projects).
+   *
+   *  `is_public` is not a second list to keep in step — it is maintained on
+   *  all_projects by trigger from Our Projects membership and is read-only in
+   *  the schema, so it cannot drift from that membership. Reading the flag off
+   *  the record the store already holds is therefore both correct and free;
+   *  fetching the our_projects model separately would add a round trip to learn
+   *  something this row already says. */
+  isOurs: boolean;
 }
 
 const asText = (v: unknown): string | null => {
@@ -50,10 +59,22 @@ export function useProjectOptions(): ProjectOption[] {
       // A lookup may hold an id or, on older rows, the plain name.
       const devId = asText(devRaw);
       const developer = devId ? (devById.get(devId) ?? (devById.size && /^[0-9a-f-]{36}$/i.test(devId) ? null : devId)) : null;
-      out.push({ id: r.id, name, developer });
+      out.push({ id: r.id, name, developer, isOurs: r.data.is_public === true });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   }, [models, records]);
+}
+
+/** Only the projects Wassel actually markets — 49 of the ~980 rows in
+ *  all_projects, the rest being the market/competitor catalogue.
+ *
+ *  A campaign of ours is for a project of ours, so offering the whole catalogue
+ *  made the picker a scrolling list nobody could find anything in. Anything
+ *  ALREADY linked is added back by the picker itself, so narrowing the list can
+ *  never make an existing link disappear. */
+export function useOurProjectOptions(): ProjectOption[] {
+  const all = useProjectOptions();
+  return useMemo(() => all.filter((p) => p.isOurs), [all]);
 }
 
 /** Resolve one project id to its option, for display on a content item. */

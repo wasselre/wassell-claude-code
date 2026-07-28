@@ -30,8 +30,9 @@ import {
   type PlanRef, type MktGoal, type Initiative,
 } from '@/lib/marketingMgmt/v2';
 import { saveCampaign } from '@/lib/marketingMgmt/client';
-import { useProjectOptions } from '@/lib/marketingMgmt/projects';
+import { useOurProjectOptions } from '@/lib/marketingMgmt/projects';
 import { Drawer, Field, FIELD, err } from './shared';
+import { ProjectPicker } from './ProjectPicker';
 
 export type CreateKind = 'initiative' | 'program' | 'organic' | 'paid';
 
@@ -52,7 +53,7 @@ export function CreateDrawer({
   onError: (m: string) => void;
 }) {
   const users = useAppStore((s) => s.users);
-  const projects = useProjectOptions();
+  const projects = useOurProjectOptions();
   const [f, setF] = useState<Record<string, string>>({});
   const [projectIds, setProjectIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -386,15 +387,9 @@ export function CreateDrawer({
               <input value={f.audience ?? ''} onChange={(e) => set('audience', e.target.value)} className={FIELD} />
             </Field>
             <Field label={isAr ? 'المشاريع' : 'Projects'} span="sm:col-span-2"
-              hint={isAr ? 'المطوّر يُشتق من المشروع' : 'The developer is derived from the project'}>
-              <select multiple value={projectIds} size={Math.min(5, Math.max(3, projects.length))}
-                onChange={(e) => setProjectIds(Array.from(e.target.selectedOptions, (o) => o.value))}
-                className={`${FIELD} h-auto`}>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}{p.developer ? ` — ${p.developer}` : ''}
-                  </option>))}
-              </select>
+              hint={isAr ? 'من «مشاريعنا» فقط — والمطوّر يُشتق من المشروع'
+                         : 'From Our Projects only — the developer is derived from the project'}>
+              <ProjectPicker options={projects} value={projectIds} onChange={setProjectIds} isAr={isAr} />
             </Field>
 
             {kind === 'organic' ? (

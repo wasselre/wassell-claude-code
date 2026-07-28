@@ -35,7 +35,8 @@ import {
   saveCampaign, fetchCampaignNextStatuses, STATUS_LABEL,
   type ContentStatus, type NextStatus,
 } from '@/lib/marketingMgmt/client';
-import { useProjectOptions } from '@/lib/marketingMgmt/projects';
+import { useOurProjectOptions } from '@/lib/marketingMgmt/projects';
+import { ProjectPicker } from './ProjectPicker';
 import { PaidTreePanel } from '../PaidTreePanel';
 import { CampaignStatusBar } from './StatusBar';
 import { DeliverablesEditor } from './Deliverables';
@@ -75,7 +76,7 @@ export function RecordDrawer({
   onError: (m: string) => void; onToast: (m: string) => void;
 }) {
   const users = useAppStore((s) => s.users);
-  const projects = useProjectOptions();
+  const projects = useOurProjectOptions();
   const [d, setD] = useState<PortfolioDetail | null>(null);
   const [f, setF] = useState<Record<string, unknown>>({});
   const [projectIds, setProjectIds] = useState<string[]>([]);
@@ -519,14 +520,13 @@ export function RecordDrawer({
                 </div>
               </div>
 
+              {/* A project already linked but no longer in Our Projects is kept
+                  visible by the picker — narrowing the list must never make an
+                  existing link quietly disappear on the next save. */}
               <Field label={isAr ? 'المشاريع' : 'Projects'} span="sm:col-span-2"
-                hint={isAr ? 'المطوّر يُشتق من المشروع' : 'The developer is derived from the project'}>
-                <select multiple value={projectIds} size={Math.min(5, Math.max(3, projects.length))}
-                  onChange={(e) => setProjectIds(Array.from(e.target.selectedOptions, (o) => o.value))}
-                  className={`${FIELD} h-auto`}>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>{p.name}{p.developer ? ` — ${p.developer}` : ''}</option>))}
-                </select>
+                hint={isAr ? 'من «مشاريعنا» فقط — والمطوّر يُشتق من المشروع'
+                           : 'From Our Projects only — the developer is derived from the project'}>
+                <ProjectPicker options={projects} value={projectIds} onChange={setProjectIds} isAr={isAr} />
               </Field>
             </section>
           )}
