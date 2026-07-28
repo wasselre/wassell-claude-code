@@ -149,6 +149,22 @@ export async function upsertChatMessage(row: ChatMessageRow): Promise<{ isNew: b
  * to its gateway (Haberchat's chat status is authoritative on the next sync);
  * WAHA passes none because status is fully CRM-owned there.
  */
+/**
+ * A WhatsApp chat id: `<digits>@c.us` (user), `@g.us` (group), `@newsletter`
+ * (channel), `@lid` (LID-addressed), `@broadcast`/`@status` (status posts).
+ *
+ * Anything else must never mint a conversation. One record created on
+ * 2026-04-23 carried an entire 2,705-character serialized chat OBJECT as its
+ * wid — its record id was uuidv5 of that blob, so it could never match a real
+ * conversation, and it sat in the list forever holding the only unread badge in
+ * the system. Cheap to make structurally impossible. (WA-22.)
+ */
+const CHAT_WID_RE = /^[0-9]+@(c\.us|g\.us|lid|newsletter|broadcast|status)$/i;
+
+export function isValidChatWid(wid: string): boolean {
+  return CHAT_WID_RE.test(wid);
+}
+
 export async function bumpConversationRecord(args: {
   chatWid: string;
   deviceId: string;
@@ -158,6 +174,14 @@ export async function bumpConversationRecord(args: {
   incrementUnread: boolean;
   reopenPushBack?: (deviceId: string, chatWid: string) => Promise<void>;
 }): Promise<void> {
+  if (!isValidChatWid(args.chatWid)) {
+    // Loud, not silent: a wid we cannot parse means an upstream shape changed,
+    // and creating a junk conversation would hide that behind a broken row.
+    console.error(
+      `[chatIngest] refusing to create a conversation for a malformed wid (len=${args.chatWid.length}, starts="${args.chatWid.slice(0, 24)}")`,
+    );
+    return;
+  }
   const supa = getServiceSupabase();
   const modelId = await findChatsModelId();
   if (!modelId) return;

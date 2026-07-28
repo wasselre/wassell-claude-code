@@ -40,6 +40,10 @@ const WATCHDOG_RPCS = [
   'data_migration_jobs_watchdog',
   'scheduled_reports_watchdog',
   'conflict_storm_sweep',
+  // WhatsApp sends were the ONE queue missing from this list, so a stuck send
+  // was the one kind of stuck job with no backstop when the Fly worker is down
+  // — every other queue self-healed. (WA-16, audit 2026-07-28.)
+  'scheduled_whatsapp_watchdog',
 ] as const;
 
 interface RpcOutcome {
