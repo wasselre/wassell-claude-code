@@ -289,9 +289,32 @@ async function saveClientInfo(
   };
 
   // Optimistic write: merge onto the FRESH row each attempt.
+  //
+  // The re-read below MUST succeed before a RETRY, and its error must not be
+  // swallowed. It used to read `const { data: fresh } = ...` — dropping the
+  // error — and fall back to `row`, the copy loaded at request start. So a
+  // transient read failure silently downgraded every later attempt into
+  // re-sending the SAME stale version that had just been rejected.
+  //
+  // That is not hypothetical. On 2026-07-27 a Vercel Edge isolate whose response
+  // had already been abandoned (504 at 11:00:19, "did not return an initial
+  // response within 25s") sat re-sending expected=28 against current=31 for 22
+  // hours at ~1,150 aborted transactions/sec — 94.9% of every transaction in the
+  // database. It could never succeed, because it never re-read the version.
+  //
+  // Attempt 0 may use `row`: the caller loaded it moments ago. A RETRY may not —
+  // a version we did not just read is not evidence, and retrying on it is how a
+  // bounded loop turns into a permanent one.
   let lastError: string | null = null;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const { data: fresh } = await supa.from('records').select('id, version, data').eq('id', row.id).maybeSingle();
+    const { data: fresh, error: readErr } = await supa
+      .from('records').select('id, version, data').eq('id', row.id).maybeSingle();
+    if (attempt > 0 && (readErr || !fresh)) {
+      throw new Error(
+        `save_client_info: cannot re-read client ${row.id} to retry after a conflict `
+        + `(${readErr?.message ?? 'row not found'}) — refusing to retry on a stale version`,
+      );
+    }
     const current = (fresh as ClientRow | null) ?? row;
     applied.length = 0; skipped.length = 0;
     const patch = buildPatch(current.data ?? {});
