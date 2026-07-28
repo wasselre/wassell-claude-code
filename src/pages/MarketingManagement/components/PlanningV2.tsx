@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Plus, Check, ChevronDown, ClipboardCheck } from 'lucide-react';
 import Button from '@/components/ui/Button';
+import { useAppStore } from '@/stores/appStore';
 import { Section, Stat, EmptyHint, CaveatStrip, Spinner, fmtDate }
   from '@/pages/MarketingIntelligence/components/shared';
 import { lbl } from '@/lib/marketingMgmt/labels';
@@ -27,6 +28,7 @@ import {
 import { StrategyEditor, StrategyCompleteness } from './StrategyEditor';
 import { GoalRow } from './GoalPanel';
 import { PlanStrategyBinding } from './PlanStrategyBinding';
+import { PlanDefinitionForm } from './PlanDefinition';
 
 export { PortfolioView as PortfolioTab } from './portfolio/PortfolioView';
 
@@ -78,6 +80,8 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
   const [sName, setSName] = useState(''); const [sPos, setSPos] = useState('');
   const [pName, setPName] = useState(''); const [pType, setPType] = useState('annual');
   const [pFrom, setPFrom] = useState(''); const [pTo, setPTo] = useState('');
+  const [pOwner, setPOwner] = useState('');
+  const users = useAppStore((s) => s.users);
 
   /** `spinner` is opt-in and only the FIRST load asks for it. A refetch that
    *  flips `loading` replaces this whole section with a spinner, which remounts
@@ -139,11 +143,12 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
     try {
       await savePlan({
         name_ar: pName.trim(), plan_type: pType, period_start: pFrom, period_end: pTo,
+        owner_user_id: pOwner || null,
         // A draft plan may exist before the strategy is settled, but linking it
         // now is what lets it become active later without a second edit.
         strategy_version_id: current?.id ?? null,
       });
-      setPName(''); setPFrom(''); setPTo(''); setCreatingPlan(false);
+      setPName(''); setPFrom(''); setPTo(''); setPOwner(''); setCreatingPlan(false);
       onToast(isAr ? 'أُنشئت الخطة' : 'Plan created'); load();
     } catch (e) { onError(err(e)); } finally { setBusy(false); }
   };
@@ -259,6 +264,14 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
               <input type="date" value={pFrom} onChange={(e) => setPFrom(e.target.value)} className={FIELD} /></Field>
             <Field label={isAr ? 'إلى' : 'To'}>
               <input type="date" value={pTo} onChange={(e) => setPTo(e.target.value)} className={FIELD} /></Field>
+            {/* Asked for at creation because the approval gate requires it. A
+                plan that is born incomplete makes the user go find the fix. */}
+            <Field label={isAr ? 'المسؤول' : 'Owner'} span="sm:col-span-2">
+              <select value={pOwner} onChange={(e) => setPOwner(e.target.value)} className={FIELD}>
+                <option value="">{isAr ? '— بلا مسؤول —' : '— unassigned —'}</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>{(isAr ? u.name_ar : u.name_en) || u.name_en}</option>))}
+              </select></Field>
             <div className="sm:col-span-4">
               <Button onClick={createPlan} disabled={busy || !pName.trim() || !pFrom || !pTo}>
                 {isAr ? 'إنشاء' : 'Create'}</Button>
@@ -290,7 +303,8 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
                   </span>
                 </button>
                 {openPlan === p.id && (
-                  <PlanDetail planId={p.id} isAr={isAr} onError={onError} onToast={onToast} onChanged={load} />
+                  <PlanDetail planId={p.id} siblings={plans} isAr={isAr}
+                    onError={onError} onToast={onToast} onChanged={load} />
                 )}
               </li>
             ))}
@@ -302,8 +316,8 @@ export function StrategyPlanningTab({ isAr, onError, onToast }: {
 }
 
 // ── one plan: goals, seasonality, approval ────────────────────────────────
-function PlanDetail({ planId, isAr, onError, onToast, onChanged }: {
-  planId: string; isAr: boolean; onError: (m: string) => void;
+function PlanDetail({ planId, siblings, isAr, onError, onToast, onChanged }: {
+  planId: string; siblings: MktPlan[]; isAr: boolean; onError: (m: string) => void;
   onToast: (m: string) => void; onChanged: () => void;
 }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof fetchPlanDetail>> | null>(null);
@@ -355,11 +369,16 @@ function PlanDetail({ planId, isAr, onError, onToast, onChanged }: {
       <PlanStrategyBinding plan={data.plan} isAr={isAr} onError={onError} onToast={onToast}
         onChanged={() => { load(); onChanged(); }} />
 
+      <PlanDefinitionForm plan={data.plan} siblings={siblings} missing={missing} isAr={isAr}
+        onError={onError} onToast={onToast} onChanged={() => { load(); onChanged(); }} />
+
+      {/* A count of zero is a KNOWN zero. Stat renders null as an em dash, which
+          in this codebase means "we cannot see this yet" — a different claim. */}
       <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
-        <Stat label={isAr ? 'الأهداف' : 'Goals'} value={data.goals.length || null} />
-        <Stat label={isAr ? 'المبادرات' : 'Initiatives'} value={data.initiatives.length || null} />
-        <Stat label={isAr ? 'البرامج' : 'Programs'} value={data.programs.length || null} />
-        <Stat label={isAr ? 'الحملات' : 'Campaigns'} value={data.campaigns.length || null} />
+        <Stat label={isAr ? 'الأهداف' : 'Goals'} value={data.goals.length} />
+        <Stat label={isAr ? 'المبادرات' : 'Initiatives'} value={data.initiatives.length} />
+        <Stat label={isAr ? 'البرامج' : 'Programs'} value={data.programs.length} />
+        <Stat label={isAr ? 'الحملات' : 'Campaigns'} value={data.campaigns.length} />
       </div>
 
       {data.plan.status === 'draft' && (

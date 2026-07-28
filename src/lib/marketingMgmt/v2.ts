@@ -583,6 +583,15 @@ export const DECISION_LABEL: Record<string, { ar: string; en: string }> = {
   revise_forecast: { ar: 'تعديل التوقع', en: 'Revise forecast' },
 };
 
+/** How often the plan gets reviewed. Free text in the database; a fixed list
+ *  here because "كل شهر" and "شهري" typed by two people are the same cadence. */
+export const REVIEW_FREQUENCY_LABEL: Record<string, { ar: string; en: string }> = {
+  weekly:    { ar: 'أسبوعياً', en: 'Weekly' },
+  biweekly:  { ar: 'كل أسبوعين', en: 'Every two weeks' },
+  monthly:   { ar: 'شهرياً', en: 'Monthly' },
+  quarterly: { ar: 'ربع سنوي', en: 'Quarterly' },
+};
+
 export const CADENCE_UNIT_LABEL: Record<string, { ar: string; en: string }> = {
   day:     { ar: 'يومياً', en: 'per day' },
   week:    { ar: 'أسبوعياً', en: 'per week' },
