@@ -248,6 +248,21 @@ export type CampaignContentRow = ContentItem & {
   usage_kind?: string; usage_id?: string;
 };
 
+/** A publication of one of this campaign's content items — the campaign's
+ *  actual schedule, as opposed to its flight dates. */
+export interface CampaignPublication {
+  id: string; platform: string; status: string;
+  scheduled_for: string | null; published_at: string | null;
+  published_url: string | null; content_item_id: string | null;
+}
+
+/** A review decision taken on this campaign: continue / change / scale / pause
+ *  / stop, with the reasoning that produced it. */
+export interface CampaignDecision {
+  id: string; review_id: string | null; campaign_id: string | null;
+  decision: string; rationale: string | null; created_at: string;
+}
+
 export const fetchCampaign = (id: string) => call<{
   campaign: Campaign;
   /** The deduplicated union, for readers that just want "the content". */
@@ -259,8 +274,15 @@ export const fetchCampaign = (id: string) => call<{
   progress: CampaignProgress | null;
   status_history: CampaignStatusEvent[];
   next_statuses: NextStatus[];
+  publications: CampaignPublication[];
+  decisions: CampaignDecision[];
   tasks: ContentTask[]; performance: unknown[];
 }>('campaign_detail', { id });
+
+/** Removes the LINK, not the content. A campaign that stops reusing an item has
+ *  not deleted it — it still belongs to whatever produced it. */
+export const removeContentUsage = (id: string) =>
+  call<{ removed: string }>('content_usage_remove', { id });
 
 export const saveCampaign = (patch: Record<string, unknown>, id?: string) => call<{ campaign: Campaign }>('campaign_save', { id, patch });
 

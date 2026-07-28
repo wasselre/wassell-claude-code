@@ -16,19 +16,22 @@
  * there rather than quietly making a different kind of campaign.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Plus, Search } from 'lucide-react';
+import { ArrowLeft, Plus, Search, X } from 'lucide-react';
 import Button from '@/components/ui/Button';
 import { useAppStore } from '@/stores/appStore';
-import { Section, Stat, EmptyHint, Spinner, CaveatStrip }
+import { Section, Stat, EmptyHint, Spinner, CaveatStrip, fmtDate }
   from '@/pages/MarketingIntelligence/components/shared';
-import { lbl } from '@/lib/marketingMgmt/labels';
+import { lbl, CONTENT_TYPE_LABEL } from '@/lib/marketingMgmt/labels';
 import {
-  fetchCampaign, STATUS_LABEL,
-  type Campaign, type ContentStatus, type CampaignContentRow,
+  fetchCampaign, removeContentUsage, createContent, fetchContentList,
+  STATUS_LABEL, CONTENT_TYPES,
+  type Campaign, type ContentStatus, type ContentType, type ContentItem,
+  type CampaignContentRow,
 } from '@/lib/marketingMgmt/client';
 import {
-  fetchPortfolioMap, CAMPAIGN_STATUS_LABEL, CAMPAIGN_CLASS_LABEL, CAMPAIGN_PURPOSE_LABEL,
-  PLAN_STATUS_LABEL,
+  fetchPortfolioMap, addContentUsage,
+  CAMPAIGN_STATUS_LABEL, CAMPAIGN_CLASS_LABEL, CAMPAIGN_PURPOSE_LABEL,
+  PLAN_STATUS_LABEL, DECISION_LABEL,
   type PlanRef, type MktGoal, type Initiative,
 } from '@/lib/marketingMgmt/v2';
 import { CampaignCard, type CardCtx } from './portfolio/cards';
@@ -48,9 +51,12 @@ type Detail = Awaited<ReturnType<typeof fetchCampaign>>;
 
 /** A content group that says WHY these items belong to the campaign. Merging
  *  them invisibly is how "campaign content" stopped meaning anything. */
-function ContentGroup({ title, hint, rows, isAr, onOpen }: {
+function ContentGroup({ title, hint, rows, isAr, onOpen, onRemoveUsage }: {
   title: string; hint: string; rows: CampaignContentRow[]; isAr: boolean;
   onOpen: (id: string) => void;
+  /** Only the reused group passes this: a usage link can be detached, an origin
+   *  cannot — that is what makes it the origin. */
+  onRemoveUsage?: (usageId: string) => void;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -62,9 +68,9 @@ function ContentGroup({ title, hint, rows, isAr, onOpen }: {
       <p className="mb-1.5 text-[10.5px] leading-snug text-charcoal/45">{hint}</p>
       <ul className="divide-y divide-sand/40 rounded-lg border border-sand/50 bg-white">
         {rows.map((it) => (
-          <li key={`${it.id}-${it.usage_id ?? 'own'}`}>
+          <li key={`${it.id}-${it.usage_id ?? 'own'}`} className="flex items-center gap-1 pe-2">
             <button type="button" onClick={() => onOpen(it.id)}
-              className="flex w-full items-center justify-between gap-2 px-2.5 py-2 text-start hover:bg-cream-light">
+              className="flex min-w-0 flex-1 items-center justify-between gap-2 px-2.5 py-2 text-start hover:bg-cream-light">
               <span className="min-w-0 truncate text-[12.5px] text-charcoal">
                 {it.content_number} · {it.title}
               </span>
@@ -72,9 +78,201 @@ function ContentGroup({ title, hint, rows, isAr, onOpen }: {
                 {lbl(STATUS_LABEL as Record<string, { ar: string; en: string }>, it.status as ContentStatus, isAr)}
               </span>
             </button>
+            {onRemoveUsage && it.usage_id && (
+              <button type="button" onClick={() => onRemoveUsage(it.usage_id!)}
+                title={isAr ? 'إزالة ارتباط الاستخدام — المحتوى نفسه يبقى'
+                            : 'Remove the usage link — the content itself stays'}
+                className="shrink-0 rounded p-1 text-charcoal/30 hover:text-red-600">
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </li>))}
       </ul>
     </div>
+  );
+}
+
+/** The two ways content joins a campaign, offered side by side because they are
+ *  genuinely different acts: PRODUCING something here (which sets the origin,
+ *  permanently) versus REUSING something that already exists (which records a
+ *  usage and leaves the origin alone). */
+function ContentActions({ campaign, existing, isAr, busy, onCreated, onReused, onError }: {
+  campaign: Campaign; existing: CampaignContentRow[]; isAr: boolean; busy: boolean;
+  onCreated: (id: string) => void; onReused: () => void; onError: (m: string) => void;
+}) {
+  const [mode, setMode] = useState<'none' | 'create' | 'reuse'>('none');
+  const [title, setTitle] = useState('');
+  const [ctype, setCtype] = useState<ContentType>('reel');
+  const [pick, setPick] = useState('');
+  const [pool, setPool] = useState<ContentItem[]>([]);
+  const [working, setWorking] = useState(false);
+
+  // Only approved-or-later content can be reused: offering a draft would let a
+  // campaign commit to something nobody has signed off.
+  useEffect(() => {
+    if (mode !== 'reuse' || pool.length) return;
+    fetchContentList({ limit: 200 })
+      .then((r) => setPool(r.content.filter((c) =>
+        ['approved', 'ready_to_publish', 'scheduled', 'published'].includes(c.status))))
+      .catch((e) => onError(err(e)));
+  }, [mode, pool.length, onError]);
+
+  const create = async () => {
+    if (!title.trim()) return;
+    setWorking(true);
+    try {
+      // Prefilled with the campaign's strategic context, so the new item starts
+      // attached rather than joining the unclassified pile.
+      const r = await createContent(title.trim(), ctype, {
+        plan_id: campaign.plan_id ?? null,
+        primary_goal_id: campaign.primary_goal_id ?? null,
+        origin_kind: 'campaign',
+        origin_campaign_id: campaign.id,
+        campaign_id: campaign.id,
+        strategic_purpose: campaign.objective ?? null,
+        target_audience: campaign.target_audience ?? null,
+      });
+      setTitle(''); setMode('none');
+      onCreated(r.item.id);
+    } catch (e) { onError(err(e)); } finally { setWorking(false); }
+  };
+
+  const reuse = async () => {
+    if (!pick) return;
+    setWorking(true);
+    try {
+      await addContentUsage({
+        content_item_id: pick, usage_kind: 'campaign', campaign_id: campaign.id,
+      });
+      setPick(''); setMode('none'); onReused();
+    } catch (e) { onError(err(e)); } finally { setWorking(false); }
+  };
+
+  const already = new Set(existing.map((c) => c.id));
+  const options = pool.filter((c) => !already.has(c.id));
+
+  return (
+    <div className="mb-3">
+      <div className="flex flex-wrap gap-2">
+        <Button variant="secondary" disabled={busy}
+          onClick={() => setMode(mode === 'create' ? 'none' : 'create')}>
+          <Plus className="h-4 w-4" />{isAr ? 'أنشئ محتوى لهذه الحملة' : 'Create content for this campaign'}
+        </Button>
+        <Button variant="secondary" disabled={busy}
+          onClick={() => setMode(mode === 'reuse' ? 'none' : 'reuse')}>
+          {isAr ? 'أعد استخدام محتوى معتمد' : 'Reuse approved content'}
+        </Button>
+      </div>
+
+      {mode === 'create' && (
+        <div className="mt-2 grid gap-2 rounded-lg border border-copper/30 bg-white p-2.5 sm:grid-cols-[2fr_1fr_auto]">
+          <input value={title} onChange={(e) => setTitle(e.target.value)}
+            placeholder={isAr ? 'عنوان المحتوى' : 'Content title'}
+            className="rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] text-charcoal focus:border-copper focus:outline-none" />
+          <select value={ctype} onChange={(e) => setCtype(e.target.value as ContentType)}
+            className="rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] text-charcoal focus:border-copper focus:outline-none">
+            {CONTENT_TYPES.map((t) => (
+              <option key={t} value={t}>{lbl(CONTENT_TYPE_LABEL, t, isAr)}</option>))}
+          </select>
+          <Button onClick={create} disabled={working || !title.trim()}>{isAr ? 'إنشاء' : 'Create'}</Button>
+          <p className="text-[10.5px] leading-snug text-charcoal/45 sm:col-span-3">
+            {isAr ? 'يُنشأ بخطة الحملة وهدفها ومصدرها — لا ينضم إلى غير المصنّف.'
+                  : "Created with the campaign's plan, goal and origin — it does not join the unclassified pile."}
+          </p>
+        </div>
+      )}
+
+      {mode === 'reuse' && (
+        <div className="mt-2 grid gap-2 rounded-lg border border-copper/30 bg-white p-2.5 sm:grid-cols-[3fr_auto]">
+          <select value={pick} onChange={(e) => setPick(e.target.value)}
+            className="rounded-lg border border-sand/60 bg-white px-2.5 py-1.5 text-[12.5px] text-charcoal focus:border-copper focus:outline-none">
+            <option value="">{isAr ? '— اختر محتوى معتمداً —' : '— pick approved content —'}</option>
+            {options.map((c) => (
+              <option key={c.id} value={c.id}>{c.content_number} · {c.title}</option>))}
+          </select>
+          <Button onClick={reuse} disabled={working || !pick}>{isAr ? 'أضف' : 'Add'}</Button>
+          <p className="text-[10.5px] leading-snug text-charcoal/45 sm:col-span-2">
+            {options.length === 0
+              ? (isAr ? 'لا يوجد محتوى معتمد متاح لإعادة الاستخدام بعد.'
+                      : 'No approved content is available to reuse yet.')
+              : (isAr ? 'يُسجَّل كاستخدام — المصدر الأصلي للمحتوى لا يتغير.'
+                      : 'Recorded as a usage — the content’s production origin is unchanged.')}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** When the campaign's content is actually going out — distinct from the
+ *  campaign's own flight dates, which say when it is allowed to run. */
+function ScheduleSection({ detail, isAr, onOpenContent }: {
+  detail: Detail; isAr: boolean; onOpenContent: (id: string) => void;
+}) {
+  const c = detail.campaign;
+  const dated = detail.tasks.filter((t) => t.due_date);
+  const pubs = detail.publications;
+
+  return (
+    <Section title={isAr ? 'الجدول' : 'Schedule'}
+      subtitle={isAr ? 'مواعيد الإنتاج والنشر — فترة الحملة تحدّد متى يُسمح لها بالعمل، لا متى يخرج المحتوى'
+                     : 'Production and publication dates — the campaign period says when it may run, not when content goes out'}>
+      <div className="mb-3 rounded-lg border border-sand/50 bg-cream-light px-3 py-2 text-[12px] text-charcoal/70">
+        {isAr ? 'فترة الحملة' : 'Campaign flight'}
+        <span className="mx-2 text-charcoal/30">·</span>
+        {c.start_date && c.end_date
+          ? <span className="tabular-nums">{c.start_date} → {c.end_date}</span>
+          : <span className="text-amber-700">{isAr ? 'بلا تواريخ' : 'no dates set'}</span>}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <h4 className="mb-1 text-[12px] font-semibold text-charcoal/70">
+            {isAr ? 'مواعيد الإنتاج' : 'Production deadlines'}
+          </h4>
+          {dated.length === 0 ? (
+            <EmptyHint>
+              {isAr ? 'لا مهام لها موعد — لا يعني ذلك أنها في موعدها، بل أنه لم يُحدَّد موعد.'
+                    : 'No task has a due date — that is not "on time", it is "no date set".'}
+            </EmptyHint>
+          ) : (
+            <ul className="divide-y divide-sand/40 rounded-lg border border-sand/50 bg-white">
+              {dated.slice(0, 15).map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+                  <span className="min-w-0 truncate text-[12px] text-charcoal/80">{t.title}</span>
+                  <span className="shrink-0 text-[11px] tabular-nums text-charcoal/50">{t.due_date}</span>
+                </li>))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <h4 className="mb-1 text-[12px] font-semibold text-charcoal/70">
+            {isAr ? 'النشر' : 'Publications'}
+          </h4>
+          {pubs.length === 0 ? (
+            <EmptyHint>
+              {isAr ? 'لا نشر مجدول أو منفَّذ بعد.' : 'Nothing scheduled or published yet.'}
+            </EmptyHint>
+          ) : (
+            <ul className="divide-y divide-sand/40 rounded-lg border border-sand/50 bg-white">
+              {pubs.slice(0, 15).map((p) => (
+                <li key={p.id} className="flex items-center justify-between gap-2 px-2.5 py-1.5">
+                  <button type="button" disabled={!p.content_item_id}
+                    onClick={() => p.content_item_id && onOpenContent(p.content_item_id)}
+                    className="min-w-0 truncate text-start text-[12px] text-charcoal/80 hover:text-copper disabled:hover:text-charcoal/80">
+                    {p.platform}
+                  </button>
+                  <span className="shrink-0 text-[11px] tabular-nums text-charcoal/50">
+                    {p.published_at ?? p.scheduled_for ?? (isAr ? 'بلا موعد' : 'no date')}
+                    <span className="ms-1.5 text-charcoal/35">{p.status}</span>
+                  </span>
+                </li>))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </Section>
   );
 }
 
@@ -119,6 +317,19 @@ export default function CampaignsTab({ isAr, onOpenContent, onGoToPortfolio }: {
     try { setDetail(await fetchCampaign(id)); }
     catch (e) { setError(err(e)); }
     finally { setBusy(false); }
+  };
+
+  /** Detaches a reuse link. The content survives — it belongs to whatever
+   *  produced it, and may still be reused by other campaigns. */
+  const removeUsage = async (usageId: string) => {
+    if (!detail) return;
+    setBusy(true);
+    try {
+      await removeContentUsage(usageId);
+      addToast(isAr ? 'أُزيل ارتباط الاستخدام — المحتوى باقٍ'
+                    : 'Usage link removed — the content itself is unchanged', 'success');
+      await openDetail(detail.campaign.id);
+    } catch (e) { addToast(err(e), 'error'); } finally { setBusy(false); }
   };
 
   /** The plan this screen is operating under. Defaults to the ACTIVE plan, so
@@ -238,6 +449,17 @@ export default function CampaignsTab({ isAr, onOpenContent, onGoToPortfolio }: {
             ? `${k.unique_content_count} عنصراً فريداً · منتج ${k.produced_content_count} · معاد استخدامه ${k.reused_content_count} · قديم ${k.legacy_content_count} · إبداعات مدفوعة ${k.paid_creative_count}`
             : `${k.unique_content_count} unique · ${k.produced_content_count} produced · ${k.reused_content_count} reused · ${k.legacy_content_count} legacy · ${k.paid_creative_count} paid creatives`)
             : undefined}>
+          <ContentActions campaign={c} existing={detail.content} isAr={isAr} busy={busy}
+            onError={(m) => addToast(m, 'error')}
+            onCreated={(cid) => {
+              addToast(isAr ? 'أُنشئ المحتوى بسياق الحملة' : 'Content created with the campaign context', 'success');
+              void openDetail(c.id); onOpenContent(cid);
+            }}
+            onReused={() => {
+              addToast(isAr ? 'سُجّل الاستخدام' : 'Usage recorded', 'success');
+              void openDetail(c.id);
+            }} />
+
           {detail.content.length === 0 ? (
             <EmptyHint>{isAr ? 'لا محتوى مرتبط — أنشئ محتوى واربطه بهذه الحملة' : 'No linked content yet'}</EmptyHint>
           ) : (
@@ -246,6 +468,7 @@ export default function CampaignsTab({ isAr, onOpenContent, onGoToPortfolio }: {
                 title={isAr ? 'أُنتج لهذه الحملة' : 'Produced for this campaign'}
                 hint={isAr ? 'مصدره الأصلي هذه الحملة.' : 'This campaign is its production origin.'} />
               <ContentGroup isAr={isAr} onOpen={onOpenContent} rows={detail.reused_content}
+                onRemoveUsage={(uid) => void removeUsage(uid)}
                 title={isAr ? 'أُعيد استخدامه هنا' : 'Reused by this campaign'}
                 hint={isAr ? 'أُنتج في مكان آخر واستُخدم هنا — المصدر الأصلي لا يتغير.'
                            : 'Produced elsewhere and used here; its origin is unchanged.'} />
@@ -253,6 +476,42 @@ export default function CampaignsTab({ isAr, onOpenContent, onGoToPortfolio }: {
                 title={isAr ? 'ارتباط قديم' : 'Legacy-linked'}
                 hint={isAr ? 'مرتبط بالحقل القديم campaign_id قبل فصل المصدر عن الاستخدام.'
                            : 'Linked through the old campaign_id, before origin and usage were separated.'} />
+            </div>
+          )}
+        </Section>
+
+        <ScheduleSection detail={detail} isAr={isAr} onOpenContent={onOpenContent} />
+
+        <Section title={isAr ? 'المراجعات والقرارات' : 'Reviews and decisions'}
+          subtitle={isAr ? 'قرارات المراجعة على هذه الحملة: استمرار، تغيير، توسيع، إيقاف مؤقت، إيقاف'
+                         : 'Review decisions taken on this campaign: continue, change, scale, pause, stop'}>
+          {detail.decisions.length === 0 ? (
+            <EmptyHint>
+              {isAr ? 'لم تُراجَع هذه الحملة بعد — لا قرار يعني عدم المراجعة، لا الموافقة.'
+                    : 'This campaign has not been reviewed — no decision means unreviewed, not approved.'}
+            </EmptyHint>
+          ) : (
+            <ul className="space-y-1.5">
+              {detail.decisions.map((d) => (
+                <li key={d.id} className="rounded-lg border border-sand/50 bg-white px-2.5 py-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center rounded-full border border-copper/30 bg-copper/10 px-2 py-0.5 text-[11px] font-semibold text-copper-500">
+                      {lbl(DECISION_LABEL, d.decision, isAr)}
+                    </span>
+                    <span className="text-[10.5px] text-charcoal/40">{fmtDate(d.created_at, isAr)}</span>
+                  </div>
+                  {d.rationale && (
+                    <p className="mt-1 text-[11.5px] leading-snug text-charcoal/70">{d.rationale}</p>
+                  )}
+                </li>))}
+            </ul>
+          )}
+          {c.lessons && (
+            <div className="mt-2 rounded-lg border border-sand/50 bg-cream-light px-3 py-2">
+              <span className="block text-[10.5px] font-medium uppercase tracking-wide text-charcoal/45">
+                {isAr ? 'الدروس المستفادة' : 'Lessons'}
+              </span>
+              <p className="text-[12px] leading-relaxed text-charcoal/75">{c.lessons}</p>
             </div>
           )}
         </Section>

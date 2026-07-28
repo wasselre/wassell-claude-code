@@ -705,7 +705,8 @@ export default async function handler(req: Request): Promise<Response> {
         // hierarchy — four different meanings of "campaign content" that the old
         // single `campaign_id` query silently flattened into one list.
         const CONTENT_COLS = 'id,content_number,title,content_type,status,due_date,owner_user_id,campaign_id,origin_campaign_id';
-        const [c, produced, legacy, usage, tasks, perf, counts, progress, history, next] = await Promise.all([
+        const [c, produced, legacy, usage, tasks, perf, counts, progress, history, next,
+               publications, decisions] = await Promise.all([
           sb.from('mkt_internal_campaigns').select('*, mkt_internal_campaign_projects(project_id), mkt_internal_campaign_members(user_id,role_in_campaign)').eq('id', id).maybeSingle(),
           sb.from('mkt_content_items').select(CONTENT_COLS).eq('origin_campaign_id', id).is('archived_at', null),
           sb.from('mkt_content_items').select(CONTENT_COLS).eq('campaign_id', id).is('archived_at', null),
@@ -719,6 +720,17 @@ export default async function handler(req: Request): Promise<Response> {
           sb.from('mkt_campaign_status_history').select('*').eq('campaign_id', id)
             .order('changed_at', { ascending: false }).limit(100),
           sb.rpc('mkt_campaign_next_statuses', { p_campaign_id: id }),
+          // Schedule: when the campaign's content is actually going out. Read
+          // through the content items rather than by campaign_id, because a
+          // publication belongs to an item and the item belongs here.
+          sb.from('mkt_publications')
+            .select('id,platform,status,scheduled_for,published_at,published_url,content_item_id')
+            .eq('campaign_id', id).order('scheduled_for', { nullsFirst: false }).limit(200),
+          // Review decisions taken ON this campaign — continue / change / scale
+          // / pause / stop. portfolio_detail already read these; the execution
+          // view had no access to them at all.
+          sb.from('mkt_review_decisions').select('*').eq('campaign_id', id)
+            .order('created_at', { ascending: false }).limit(50),
         ]);
         const bad = rlsAware(c.error ?? produced.error ?? legacy.error ?? tasks.error ?? perf.error); if (bad) return bad;
         if (!c.data) return jsonErrorBi(404, DB_MESSAGES['MKT:not_found']!);
@@ -752,6 +764,8 @@ export default async function handler(req: Request): Promise<Response> {
           progress: progress.data ?? null,
           status_history: history.data ?? [],
           next_statuses: next.data ?? [],
+          publications: publications.data ?? [],
+          decisions: decisions.data ?? [],
           tasks: tasks.data ?? [], performance: perf.data ?? [],
         });
       }
@@ -1710,6 +1724,17 @@ export default async function handler(req: Request): Promise<Response> {
           .insert({ ...patch, created_by_user_id: appUserId }).select().maybeSingle();
         const bad = rlsAware(error); if (bad) return bad;
         return jsonOk({ usage: data });
+      }
+
+      case 'content_usage_remove': {
+        // Removes the LINK, never the content. A campaign that stops reusing an
+        // item has not deleted it — it is still owned by whatever produced it,
+        // and may still be in use by other campaigns. Deleting the row here
+        // would destroy someone else's work.
+        const id = str(body.id); if (!id) return jsonError(400, 'id required');
+        const { error } = await sb.from('mkt_content_usage').delete().eq('id', id);
+        const bad = rlsAware(error); if (bad) return bad;
+        return jsonOk({ removed: id });
       }
 
       case 'content_missing_context': {
